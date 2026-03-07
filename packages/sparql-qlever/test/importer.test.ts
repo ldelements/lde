@@ -36,6 +36,7 @@ describe('Importer', () => {
 
       const result = await importer.import(dataset);
       expect(result).toBeInstanceOf(ImportSuccessful);
+      expect((result as ImportSuccessful).tripleCount).toBe(1);
     }, 30_000);
   });
 });

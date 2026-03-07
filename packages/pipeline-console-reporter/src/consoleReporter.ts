@@ -85,15 +85,20 @@ export class ConsoleReporter implements ProgressReporter {
     distribution: Distribution,
     importedFrom?: Distribution,
     importDuration?: number,
+    tripleCount?: number,
   ): void {
     const s = ora({ discardStdin: false });
     if (importedFrom) {
+      const count =
+        tripleCount !== undefined
+          ? `${compactNumber.format(tripleCount)} triples, `
+          : '';
       const duration =
         importDuration !== undefined
           ? ` in ${chalk.bold(prettyMilliseconds(importDuration))}`
           : '';
       s.start(
-        `Imported ${importedFrom.accessUrl.toString()} (to ${distribution.accessUrl.toString()})${duration}`,
+        `Imported ${importedFrom.accessUrl.toString()} (${count}to ${distribution.accessUrl.toString()})${duration}`,
       );
     } else {
       s.start(

@@ -13,7 +13,7 @@ export interface Importer {
    * Import a {@link Dataset} to a SPARQL server.
    */
   import(
-    dataset: Dataset
+    dataset: Dataset,
   ): Promise<NotSupported | ImportFailed | ImportSuccessful>;
 }
 
@@ -25,14 +25,15 @@ export interface Importer {
 export class ImportSuccessful {
   constructor(
     public readonly distribution: Distribution,
-    public readonly identifier?: string
+    public readonly identifier?: string,
+    public readonly tripleCount?: number,
   ) {}
 }
 
 export class ImportFailed {
   constructor(
     public readonly distribution: Distribution,
-    public readonly error: string
+    public readonly error: string,
   ) {}
 }
 

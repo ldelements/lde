@@ -8,6 +8,7 @@ export class ResolvedDistribution {
     readonly probeResults: ProbeResultType[],
     readonly importedFrom?: Distribution,
     readonly importDuration?: number,
+    readonly tripleCount?: number,
   ) {}
 }
 

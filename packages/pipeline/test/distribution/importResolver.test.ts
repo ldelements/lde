@@ -84,6 +84,7 @@ describe('ImportResolver', () => {
           new ImportSuccessful(
             Distribution.sparql(new URL('http://localhost:7878/sparql')),
             'test-graph',
+            42000,
           ),
         ),
     };
@@ -104,6 +105,7 @@ describe('ImportResolver', () => {
     );
     expect(resolved.probeResults).toHaveLength(1);
     expect(resolved.probeResults[0]).toBeInstanceOf(DataDumpProbeResult);
+    expect(resolved.tripleCount).toBe(42000);
   });
 
   it('sets importedFrom on ResolvedDistribution when import succeeds', async () => {

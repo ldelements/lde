@@ -21,6 +21,7 @@ export interface ProgressReporter {
     distribution: Distribution,
     importedFrom?: Distribution,
     importDuration?: number,
+    tripleCount?: number,
   ): void;
   stageStart?(stage: string): void;
   stageProgress?(update: {

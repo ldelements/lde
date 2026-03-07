@@ -636,6 +636,8 @@ describe('Pipeline', () => {
         sparqlDistribution,
         [],
         importedFromDistribution,
+        1000,
+        42000,
       );
 
       const pipeline = new Pipeline({
@@ -652,7 +654,8 @@ describe('Pipeline', () => {
         dataset,
         sparqlDistribution,
         importedFromDistribution,
-        undefined,
+        1000,
+        42000,
       );
     });
 

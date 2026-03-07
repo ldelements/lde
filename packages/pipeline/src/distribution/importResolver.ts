@@ -82,6 +82,7 @@ export class ImportResolver implements DistributionResolver {
         probeResults,
         importResult.distribution,
         Date.now() - importStart,
+        importResult.tripleCount,
       );
     }
 

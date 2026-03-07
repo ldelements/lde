@@ -161,6 +161,7 @@ export class Pipeline {
       resolved.distribution,
       resolved.importedFrom,
       resolved.importDuration,
+      resolved.tripleCount,
     );
 
     try {
