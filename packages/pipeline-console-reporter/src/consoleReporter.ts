@@ -206,7 +206,11 @@ export class ConsoleReporter implements ProgressReporter {
     },
   ): void {
     if (this.activeSpinner) {
-      this.activeSpinner.suffixText = `took ${chalk.bold(
+      const counts =
+        result.itemsProcessed > 0
+          ? `${compactNumber.format(result.itemsProcessed)} items, ${compactNumber.format(result.quadsGenerated)} quads, `
+          : '';
+      this.activeSpinner.suffixText = `${counts}took ${chalk.bold(
         prettyMilliseconds(result.duration),
       )}`;
       this.activeSpinner.succeed();

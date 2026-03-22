@@ -65,6 +65,40 @@ describe('ConsoleReporter', () => {
     });
   });
 
+  describe('stageComplete', () => {
+    it('includes item and quad counts when items were processed', () => {
+      const reporter = new ConsoleReporter();
+      const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+
+      reporter.stageStart('transform');
+      reporter.stageComplete('transform', {
+        itemsProcessed: 30_000,
+        quadsGenerated: 327_500,
+        duration: 506_000,
+      });
+
+      const output = spy.mock.calls.map((c) => String(c[0])).join('');
+      expect(output).toContain('30K items');
+      expect(output).toContain('327.5K quads');
+    });
+
+    it('omits counts when no items were processed', () => {
+      const reporter = new ConsoleReporter();
+      const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+
+      reporter.stageStart('transform');
+      reporter.stageComplete('transform', {
+        itemsProcessed: 0,
+        quadsGenerated: 0,
+        duration: 1000,
+      });
+
+      const output = spy.mock.calls.map((c) => String(c[0])).join('');
+      expect(output).not.toContain('items');
+      expect(output).toContain('took');
+    });
+  });
+
   describe('concurrent spinners', () => {
     it('stageStart after importStarted does not crash and produces output for both', () => {
       const reporter = new ConsoleReporter();
