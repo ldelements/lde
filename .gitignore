@@ -50,3 +50,5 @@ vitest.config.*.timestamp*
 tsconfig.tsbuildinfo
 vite.base.config.d.ts
 vite.base.config.d.ts.map
+.claude/worktrees
+.claude/settings.local.json
