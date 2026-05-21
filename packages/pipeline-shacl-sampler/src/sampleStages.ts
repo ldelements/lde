@@ -218,10 +218,12 @@ function expandTargetClass(
 ): string[] {
   const iri = targetClass.value;
   for (const { canonical, alias } of namespaceAliases) {
-    const match =
-      (iri.startsWith(canonical) && { from: canonical, to: alias }) ||
-      (iri.startsWith(alias) && { from: alias, to: canonical });
-    if (match) return [iri, match.to + iri.slice(match.from.length)];
+    if (iri.startsWith(canonical)) {
+      return [iri, alias + iri.slice(canonical.length)];
+    }
+    if (iri.startsWith(alias)) {
+      return [iri, canonical + iri.slice(alias.length)];
+    }
   }
   return [iri];
 }
