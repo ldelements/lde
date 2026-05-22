@@ -1,3 +1,9 @@
+## 0.7.9 (2026-05-22)
+
+### 🚀 Features
+
+- **pipeline-shacl-sampler:** support namespace aliases ([#398](https://github.com/ldelements/lde/pull/398))
+
 ## 0.7.8 (2026-05-21)
 
 ### 🧱 Updated Dependencies

@@ -1,3 +1,13 @@
+## 0.29.2 (2026-05-22)
+
+### 🚀 Features
+
+- **pipeline-shacl-sampler:** support namespace aliases ([#398](https://github.com/ldelements/lde/pull/398))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset-registry-client to 0.7.9
+
 ## 0.29.1 (2026-05-21)
 
 ### 🧱 Updated Dependencies
