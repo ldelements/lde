@@ -46,6 +46,39 @@ await new Pipeline({ /* … */, stages }).run();
 | `maxConcurrency`  | `10`              | Maximum concurrent in-flight executor batches per stage.                                                               |
 | `validator`       | —                 | Optional [`Validator`](../pipeline/src/validator.ts) attached to every generated stage (typically a `ShaclValidator`). |
 | `onInvalid`       | `'write'`         | Behaviour when a sampled batch fails validation: `'write'` \| `'skip'` \| `'halt'`. Only used when `validator` is set. |
+| `namespaceAliases`| `[]`              | Namespaces to treat as equivalent when matching `sh:targetClass` and when handing quads to the validator. See [Namespace aliases](#namespace-aliases). |
+
+## Namespace aliases
+
+Some vocabularies publish the same terms under multiple namespaces — most
+notably schema.org, which is reachable at both `http://schema.org/` and
+`https://schema.org/`. SHACL shapes can only declare one of those as the
+`sh:targetClass` namespace, so without help the sampler would silently
+skip resources typed under the other form, and the validator would
+report vacuously-conformant runs against datasets that mix the two.
+
+`namespaceAliases` closes the gap. For every declared pair the sampler:
+
+- broadens its subject-selection SELECT to `?s a ?type . FILTER(?type IN
+  (<canonical/X>, <alias/X>))`, so instances typed under either
+  namespace are picked up;
+- decorates the configured `validator` so any alias-namespace IRI in
+  the sampled quads is rewritten to the canonical form before the SHACL
+  engine sees it, allowing the canonical-namespace
+  `sh:targetClass` / `sh:path` patterns to match.
+
+Defaults to no aliases. To cover schema.org datasets that publish under
+both HTTP and HTTPS:
+
+```ts
+const stages = await shaclSampleStages({
+  shapesFile,
+  validator,
+  namespaceAliases: [
+    { canonical: 'https://schema.org/', alias: 'http://schema.org/' },
+  ],
+});
+```
 
 ## Limitations
 
