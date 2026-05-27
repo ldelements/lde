@@ -1,3 +1,9 @@
+## 0.1.3 (2026-05-27)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-probe to 0.1.4
+
 ## 0.1.2 (2026-05-21)
 
 ### 🧱 Updated Dependencies

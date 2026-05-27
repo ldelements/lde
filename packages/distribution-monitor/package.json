@@ -1,6 +1,6 @@
 {
   "name": "@lde/distribution-monitor",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Monitor DCAT distributions (SPARQL endpoints and data dumps) with periodic probes",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
@@ -29,7 +29,7 @@
   ],
   "dependencies": {
     "@lde/dataset": "0.7.4",
-    "@lde/distribution-probe": "0.1.3",
+    "@lde/distribution-probe": "0.1.4",
     "c12": "^3.3.4",
     "commander": "^14.0.3",
     "cron": "^4.1.0",

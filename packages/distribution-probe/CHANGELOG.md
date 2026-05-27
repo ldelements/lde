@@ -1,3 +1,9 @@
+## 0.1.4 (2026-05-27)
+
+### 🩹 Fixes
+
+- **distribution-probe:** tolerate servers that 406 on specific Accept headers ([#410](https://github.com/ldelements/lde/pull/410), [#12410](https://github.com/ldelements/lde/issues/12410))
+
 ## 0.1.3 (2026-05-21)
 
 ### 🚀 Features
