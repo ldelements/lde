@@ -86,11 +86,20 @@ new ShaclValidator({
 
 #### Named graphs with `SparqlUpdateWriter`
 
-`SparqlUpdateWriter` uses `dataset.iri.toString()` as the named graph URI on
-every write, with no per-call override. A report writer that shares the
-endpoint with the pipeline's main writer would land the SHACL report in the
-same graph as the dataset's data — and `CLEAR GRAPH` on first write per
-dataset would erase it. To keep validation results in a separate graph,
-either point the report writer at a different repository/endpoint, or
-implement a small wrapper `Writer` that swaps `dataset.iri` for a derived
-report-graph IRI before delegating.
+`SparqlUpdateWriter` defaults to `dataset.iri.toString()` as the named graph
+URI. A report writer that shares the endpoint with the pipeline's main
+writer would otherwise land the SHACL report in the same graph as the
+dataset's data — and `CLEAR GRAPH` on first write per dataset would erase
+it. To keep validation results in a separate graph, pass `graphIri` to
+derive the target graph from the dataset:
+
+```ts
+new SparqlUpdateWriter({
+  endpoint,
+  auth,
+  graphIri: (dataset) =>
+    new URL(
+      `https://example.org/shacl-validation/${encodeURIComponent(dataset.iri.toString())}`,
+    ),
+});
+```
