@@ -29,7 +29,7 @@
     "@rdfjs/types": "^2.0.1",
     "@swc-node/register": "1.11.1",
     "@swc/core": "1.15.8",
-    "@swc/helpers": "0.5.21",
+    "@swc/helpers": "0.5.23",
     "@testcontainers/postgresql": "^12.0.0",
     "@types/node": "^25.9.1",
     "@vitest/coverage-v8": "4.1.0",
