@@ -30,8 +30,3 @@ updates:
       - dependency-name: 'vite'
       - dependency-name: 'vitest'
       - dependency-name: '@vitest/*'
-      # comunica 5.2.x has a server-side regression that hangs on CONSTRUCT queries
-      # with multiple OPTIONAL clauses (used by ldkit in dataset-registry-client tests).
-      # Re-evaluate when 5.3 lands or comunica/comunica#new-issue is resolved.
-      - dependency-name: '@comunica/*'
-        versions: ['>=5.2.0 <5.3.0']
