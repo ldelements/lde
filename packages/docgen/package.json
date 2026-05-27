@@ -37,7 +37,7 @@
   "dependencies": {
     "commander": "^14.0.3",
     "jsonld": "^9.0.0",
-    "liquidjs": "^10.26.0",
+    "liquidjs": "^10.27.0",
     "rdf-dereference": "^5.0.0",
     "rdf-serialize": "^5.1.0",
     "stream-to-string": "^1.2.1",
