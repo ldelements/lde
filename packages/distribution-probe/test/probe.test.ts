@@ -166,6 +166,51 @@ describe('probe', () => {
       expect(dumpResult.lastModified).toBeInstanceOf(Date);
     });
 
+    it('sends the declared mime type with a */* fallback in Accept', async () => {
+      // Some servers (notably Dataverse's /api/access/datafile/) reject any
+      // non-*/* Accept with 406, even when they would happily serve the
+      // declared type by default. Sending `<declared>, */*;q=0.5` lets
+      // compliant servers honour the preference and lets quirky servers fall
+      // back to */* so the probe doesn't false-positive a ContentTypeMismatch.
+      let capturedAccept: string | null = null;
+      vi.mocked(fetch).mockImplementation(async (_input, init) => {
+        capturedAccept = new Headers(init?.headers).get('Accept');
+        return new Response('', {
+          status: 200,
+          headers: {
+            'Content-Type': 'text/markdown',
+            'Content-Length': '12345',
+          },
+        });
+      });
+
+      const distribution = new Distribution(
+        new URL('http://example.org/file.md'),
+        'text/markdown',
+      );
+
+      await probe(distribution);
+
+      expect(capturedAccept).toBe('text/markdown, */*;q=0.5');
+    });
+
+    it('sends Accept: */* when no mime type is declared', async () => {
+      let capturedAccept: string | null = null;
+      vi.mocked(fetch).mockImplementation(async (_input, init) => {
+        capturedAccept = new Headers(init?.headers).get('Accept');
+        return new Response('', {
+          status: 200,
+          headers: { 'Content-Length': '12345' },
+        });
+      });
+
+      const distribution = new Distribution(new URL('http://example.org/file'));
+
+      await probe(distribution);
+
+      expect(capturedAccept).toBe('*/*');
+    });
+
     it('does not mutate the distribution', async () => {
       vi.mocked(fetch).mockResolvedValue(
         new Response('', {

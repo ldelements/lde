@@ -316,8 +316,16 @@ async function probeDataDump(
   authHeaders: Headers,
   start: number,
 ): Promise<DataDumpProbeResult | NetworkError> {
+  // Express a preference for the declared media type, but accept anything as a
+  // fallback. Servers that implement RFC 9110 §12.5.1 content negotiation will
+  // pick the declared type (preserving our ability to detect real Content-Type
+  // mismatches). Servers that reject any non-*/* Accept with 406 — notably
+  // Dataverse's /api/access/datafile/ endpoint — fall back to */* and return
+  // the file unchanged.
   const headers = new Headers({
-    Accept: distribution.mimeType ?? '*/*',
+    Accept: distribution.mimeType
+      ? `${distribution.mimeType}, */*;q=0.5`
+      : '*/*',
     'Accept-Encoding': 'identity',
   });
   for (const [key, value] of authHeaders) {
