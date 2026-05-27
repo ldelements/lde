@@ -1,3 +1,32 @@
+## 0.30.0 (2026-05-27)
+
+### 🚀 Features
+
+- ⚠️  **pipeline-shacl-validator:** composable reportWriters in place of reportDir ([#408](https://github.com/ldelements/lde/pull/408))
+
+### ⚠️  Breaking Changes
+
+- **pipeline-shacl-validator:** composable reportWriters in place of reportDir  ([#408](https://github.com/ldelements/lde/pull/408))
+  reportDir is no longer accepted and was required; pass
+  `reportWriters: [new FileWriter({ outputDir: ... })]` to preserve the
+  previous on-disk behaviour.
+  * fix(pipeline-shacl-validator): restore ValidationResult.message and document writer ergonomics
+  Address findings from a recall-biased code review of #408.
+  - Restore ValidationResult.message when violations are routed to reportWriters,
+    so the halt-mode error in Stage.validateBuffer (stage.ts:302) still points at
+    the report destination instead of degrading to a context-free count.
+  - README: actionable guidance for SparqlUpdateWriter named graphs (no per-call
+    override exists, so route to a separate endpoint or wrap the writer).
+  - README: warn about FileWriter filesystem collisions when main writer and
+    report writer share outputDir; the old .validation.<ext> infix prevented this
+    implicitly, the new ergonomics do not.
+  - README: flag that an empty reportWriters default silently discards violation
+    detail, so the trade-off is deliberate rather than surprising.
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset-registry-client to 0.8.0
+
 ## 0.29.2 (2026-05-22)
 
 ### 🚀 Features
