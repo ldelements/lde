@@ -87,7 +87,14 @@ export class ShaclValidator implements Validator {
       }
     }
 
-    return { conforms, violations };
+    // Surface where to look for the report in halt-mode error messages
+    // (read by @lde/pipeline's Stage.validateBuffer when onInvalid:'halt').
+    const message =
+      violations > 0 && this.reportWriters.length > 0
+        ? `Report sent to ${this.reportWriters.length} writer(s)`
+        : undefined;
+
+    return { conforms, violations, ...(message !== undefined && { message }) };
   }
 
   async report(dataset: Dataset): Promise<ValidationReport> {

@@ -49,6 +49,28 @@ describe('ShaclValidator', () => {
     expect(result.violations).toBeGreaterThan(0);
   });
 
+  it('sets a message on the result when reportWriters consumed violations', async () => {
+    // The pipeline's halt-mode error reads ValidationResult.message to point
+    // operators at the report; without writers there is nowhere to point.
+    const writer: Writer = { write: vi.fn() };
+    const validator = new ShaclValidator({
+      shapesFile,
+      reportWriters: [writer],
+    });
+
+    const withViolations = await validator.validate(
+      parseFixture('invalid.ttl'),
+      dataset,
+    );
+    expect(withViolations.message).toMatch(/writer/i);
+
+    const withoutWriters = await new ShaclValidator({ shapesFile }).validate(
+      parseFixture('invalid.ttl'),
+      dataset,
+    );
+    expect(withoutWriters.message).toBeUndefined();
+  });
+
   it('streams report quads to every configured writer on violations', async () => {
     const writer1: Writer = {
       write: vi.fn(async (_dataset, quads) => {

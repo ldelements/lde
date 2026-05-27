@@ -61,10 +61,36 @@ invoked from `ShaclValidator.report(dataset)` — i.e. once the pipeline
 finishes a dataset.
 
 Validators with no `reportWriters` only produce aggregate counts
-(`{ conforms, violations, quadsValidated }`); the report quads are discarded.
+(`{ conforms, violations, quadsValidated }`); the report quads themselves are
+discarded. This is deliberate — callers who only need pass/fail metrics
+don't have to wire up a sink — but it does mean misconfiguring (passing
+`reportWriters: []` while expecting persistence) silently loses violation
+detail. Configure at least one writer in production pipelines.
 
 The bundled `FileWriter` and `SparqlUpdateWriter` already implement the
-`Writer` contract; bring your own for custom destinations. Note that writers
-receive the original `Dataset`, so a `SparqlUpdateWriter` uses `dataset.iri`
-as the named graph by default — wrap or configure your writer if you need
-validation results in a separate graph from the dataset itself.
+`Writer` contract; bring your own for custom destinations.
+
+#### Filesystem collisions with `FileWriter`
+
+`FileWriter` derives its filename from `dataset.iri` only. If the pipeline's
+main writer and a report writer both target the same `outputDir` with the
+same format, they will collide on the same path and the second open will
+truncate the first. Use a separate `outputDir` for validation reports:
+
+```ts
+new ShaclValidator({
+  shapesFile,
+  reportWriters: [new FileWriter({ outputDir: './output/validation' })],
+});
+```
+
+#### Named graphs with `SparqlUpdateWriter`
+
+`SparqlUpdateWriter` uses `dataset.iri.toString()` as the named graph URI on
+every write, with no per-call override. A report writer that shares the
+endpoint with the pipeline's main writer would land the SHACL report in the
+same graph as the dataset's data — and `CLEAR GRAPH` on first write per
+dataset would erase it. To keep validation results in a separate graph,
+either point the report writer at a different repository/endpoint, or
+implement a small wrapper `Writer` that swaps `dataset.iri` for a derived
+report-graph IRI before delegating.
