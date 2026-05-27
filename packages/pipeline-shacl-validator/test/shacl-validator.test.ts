@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { join } from 'node:path';
 import { readFileSync } from 'node:fs';
 import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { Parser } from 'n3';
 import type { Quad } from '@rdfjs/types';
 import { Dataset } from '@lde/dataset';
+import { FileWriter, type Writer } from '@lde/pipeline';
 import { ShaclValidator } from '../src/shacl-validator.js';
 
 const shapesFile = join(__dirname, 'fixtures', 'shapes.ttl');
@@ -21,19 +22,15 @@ function parseFixture(filename: string): Quad[] {
   return parser.parse(content);
 }
 
+async function collectQuads(iterable: AsyncIterable<Quad>): Promise<Quad[]> {
+  const quads: Quad[] = [];
+  for await (const quad of iterable) quads.push(quad);
+  return quads;
+}
+
 describe('ShaclValidator', () => {
-  let reportDir: string;
-
-  beforeEach(async () => {
-    reportDir = await mkdtemp(join(tmpdir(), 'shacl-validator-test-'));
-  });
-
-  afterEach(async () => {
-    await rm(reportDir, { recursive: true, force: true });
-  });
-
   it('returns conforms:true for valid data', async () => {
-    const validator = new ShaclValidator({ shapesFile, reportDir });
+    const validator = new ShaclValidator({ shapesFile });
     const quads = parseFixture('valid.ttl');
 
     const result = await validator.validate(quads, dataset);
@@ -43,7 +40,7 @@ describe('ShaclValidator', () => {
   });
 
   it('returns violations for invalid data', async () => {
-    const validator = new ShaclValidator({ shapesFile, reportDir });
+    const validator = new ShaclValidator({ shapesFile });
     const quads = parseFixture('invalid.ttl');
 
     const result = await validator.validate(quads, dataset);
@@ -52,33 +49,102 @@ describe('ShaclValidator', () => {
     expect(result.violations).toBeGreaterThan(0);
   });
 
-  it('writes a report file for invalid data', async () => {
-    const validator = new ShaclValidator({ shapesFile, reportDir });
-    const quads = parseFixture('invalid.ttl');
+  it('streams report quads to every configured writer on violations', async () => {
+    const writer1: Writer = {
+      write: vi.fn(async (_dataset, quads) => {
+        await collectQuads(quads);
+      }),
+    };
+    const writer2: Writer = {
+      write: vi.fn(async (_dataset, quads) => {
+        await collectQuads(quads);
+      }),
+    };
+    const validator = new ShaclValidator({
+      shapesFile,
+      reportWriters: [writer1, writer2],
+    });
 
-    const result = await validator.validate(quads, dataset);
+    await validator.validate(parseFixture('invalid.ttl'), dataset);
 
-    const files = await readdir(reportDir);
-    expect(files.some((f) => f.endsWith('.validation.ttl'))).toBe(true);
-
-    expect(result.message).toMatch(/\.validation\.ttl$/);
-
-    const content = await readFile(join(reportDir, files[0]), 'utf-8');
-    expect(content).toContain('shacl');
+    expect(writer1.write).toHaveBeenCalledOnce();
+    expect(writer2.write).toHaveBeenCalledOnce();
+    const [received1] = (writer1.write as ReturnType<typeof vi.fn>).mock
+      .calls[0];
+    expect(received1.iri.toString()).toBe(dataset.iri.toString());
   });
 
-  it('does not write a report file for valid data', async () => {
-    const validator = new ShaclValidator({ shapesFile, reportDir });
-    const quads = parseFixture('valid.ttl');
+  it('does not call writers when there are no violations', async () => {
+    const writer: Writer = { write: vi.fn() };
+    const validator = new ShaclValidator({
+      shapesFile,
+      reportWriters: [writer],
+    });
 
-    await validator.validate(quads, dataset);
+    await validator.validate(parseFixture('valid.ttl'), dataset);
 
-    const entries = await readdir(reportDir);
-    expect(entries).toHaveLength(0);
+    expect(writer.write).not.toHaveBeenCalled();
+  });
+
+  it('passes report quads (sh:ValidationResult triples) to writers', async () => {
+    let received: Quad[] = [];
+    const writer: Writer = {
+      write: async (_dataset, quads) => {
+        received = await collectQuads(quads);
+      },
+    };
+    const validator = new ShaclValidator({
+      shapesFile,
+      reportWriters: [writer],
+    });
+
+    await validator.validate(parseFixture('invalid.ttl'), dataset);
+
+    expect(received.length).toBeGreaterThan(0);
+    expect(
+      received.some((q) =>
+        q.predicate.value.startsWith('http://www.w3.org/ns/shacl#'),
+      ),
+    ).toBe(true);
+  });
+
+  it('flushes each writer when report() is called', async () => {
+    const writer: Writer = {
+      write: vi.fn(),
+      flush: vi.fn(),
+    };
+    const validator = new ShaclValidator({
+      shapesFile,
+      reportWriters: [writer],
+    });
+
+    await validator.validate(parseFixture('invalid.ttl'), dataset);
+    await validator.report(dataset);
+
+    expect(writer.flush).toHaveBeenCalledOnce();
+    expect(writer.flush).toHaveBeenCalledWith(dataset);
+  });
+
+  it('flushes writers even when no violations were emitted for the dataset', async () => {
+    // Reports a still-conformant dataset: flush is the lifecycle hook for
+    // "this dataset is done", independent of whether violations occurred.
+    const writer: Writer = {
+      write: vi.fn(),
+      flush: vi.fn(),
+    };
+    const validator = new ShaclValidator({
+      shapesFile,
+      reportWriters: [writer],
+    });
+
+    await validator.validate(parseFixture('valid.ttl'), dataset);
+    await validator.report(dataset);
+
+    expect(writer.flush).toHaveBeenCalledOnce();
   });
 
   it('accumulates results across validate calls', async () => {
-    const validator = new ShaclValidator({ shapesFile, reportDir });
+    const validator = new ShaclValidator({ shapesFile });
     const validQuads = parseFixture('valid.ttl');
     const invalidQuads = parseFixture('invalid.ttl');
 
@@ -92,7 +158,7 @@ describe('ShaclValidator', () => {
   });
 
   it('returns empty report for unseen dataset', async () => {
-    const validator = new ShaclValidator({ shapesFile, reportDir });
+    const validator = new ShaclValidator({ shapesFile });
     const other = new Dataset({
       iri: new URL('http://example.org/other'),
       distributions: [],
@@ -105,7 +171,7 @@ describe('ShaclValidator', () => {
   });
 
   it('returns conforms:true for empty quads', async () => {
-    const validator = new ShaclValidator({ shapesFile, reportDir });
+    const validator = new ShaclValidator({ shapesFile });
 
     const result = await validator.validate([], dataset);
 
@@ -113,28 +179,8 @@ describe('ShaclValidator', () => {
     expect(result.violations).toBe(0);
   });
 
-  it('truncates report file on first write per dataset', async () => {
-    const invalidQuads = parseFixture('invalid.ttl');
-
-    // First run: validate with one validator instance.
-    const validator1 = new ShaclValidator({ shapesFile, reportDir });
-    await validator1.validate(invalidQuads, dataset);
-    const files = await readdir(reportDir);
-    const firstContent = await readFile(join(reportDir, files[0]), 'utf-8');
-
-    // Second run: a fresh validator instance writes to the same reportDir.
-    const validator2 = new ShaclValidator({ shapesFile, reportDir });
-    await validator2.validate(invalidQuads, dataset);
-    const secondContent = await readFile(join(reportDir, files[0]), 'utf-8');
-
-    // The second run should have truncated the file, not appended to it.
-    // Blank node IDs differ between runs (global counter), so exact string
-    // equality isn't possible. A non-truncated (appended) file would be ~2×.
-    expect(secondContent.length).toBeLessThan(firstContent.length * 1.1);
-  });
-
   it('caches shapes across validate calls', async () => {
-    const validator = new ShaclValidator({ shapesFile, reportDir });
+    const validator = new ShaclValidator({ shapesFile });
     const quads = parseFixture('valid.ttl');
 
     await validator.validate(quads, dataset);
@@ -143,5 +189,47 @@ describe('ShaclValidator', () => {
     const report = await validator.report(dataset);
     expect(report.conforms).toBe(true);
     expect(report.quadsValidated).toBe(quads.length * 2);
+  });
+
+  describe('with FileWriter', () => {
+    let outputDir: string;
+
+    beforeEach(async () => {
+      outputDir = await mkdtemp(join(tmpdir(), 'shacl-validator-test-'));
+    });
+
+    afterEach(async () => {
+      await rm(outputDir, { recursive: true, force: true });
+    });
+
+    it('writes a report file when configured with a FileWriter', async () => {
+      const fileWriter = new FileWriter({ outputDir, format: 'turtle' });
+      const validator = new ShaclValidator({
+        shapesFile,
+        reportWriters: [fileWriter],
+      });
+
+      await validator.validate(parseFixture('invalid.ttl'), dataset);
+      await validator.report(dataset);
+
+      const files = await readdir(outputDir);
+      expect(files).toHaveLength(1);
+      const content = await readFile(join(outputDir, files[0]), 'utf-8');
+      expect(content).toContain('shacl');
+    });
+
+    it('does not write a file when there are no violations', async () => {
+      const fileWriter = new FileWriter({ outputDir, format: 'turtle' });
+      const validator = new ShaclValidator({
+        shapesFile,
+        reportWriters: [fileWriter],
+      });
+
+      await validator.validate(parseFixture('valid.ttl'), dataset);
+      await validator.report(dataset);
+
+      const entries = await readdir(outputDir);
+      expect(entries).toHaveLength(0);
+    });
   });
 });

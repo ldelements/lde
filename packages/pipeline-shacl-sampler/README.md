@@ -19,12 +19,15 @@ validate without false-positive ‘missing nested node’ violations.
 ## Usage
 
 ```typescript
-import { Pipeline } from '@lde/pipeline';
+import { Pipeline, FileWriter } from '@lde/pipeline';
 import { shaclSampleStages } from '@lde/pipeline-shacl-sampler';
 import { ShaclValidator } from '@lde/pipeline-shacl-validator';
 
 const shapesFile = 'https://docs.nde.nl/schema-profile/shacl.ttl';
-const validator = new ShaclValidator({ shapesFile, reportDir: './validation' });
+const validator = new ShaclValidator({
+  shapesFile,
+  reportWriters: [new FileWriter({ outputDir: './validation', format: 'turtle' })],
+});
 
 const stages = await shaclSampleStages({
   shapesFile,
@@ -37,16 +40,16 @@ await new Pipeline({ /* … */, stages }).run();
 
 ## Options
 
-| Option            | Default           | Description                                                                                                            |
-| ----------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `shapesFile`      | —                 | URL or local path to the SHACL shapes file. Any format `rdf-dereference` accepts.                                      |
-| `samplesPerClass` | `50`              | Number of top-level resources to sample per `sh:targetClass`.                                                          |
-| `timeout`         | `60000`           | SPARQL query timeout in milliseconds.                                                                                  |
-| `batchSize`       | `samplesPerClass` | Maximum sampled subjects per executor call. Lower values spread work across multiple parallel queries.                 |
-| `maxConcurrency`  | `10`              | Maximum concurrent in-flight executor batches per stage.                                                               |
-| `validator`       | —                 | Optional [`Validator`](../pipeline/src/validator.ts) attached to every generated stage (typically a `ShaclValidator`). |
-| `onInvalid`       | `'write'`         | Behaviour when a sampled batch fails validation: `'write'` \| `'skip'` \| `'halt'`. Only used when `validator` is set. |
-| `namespaceAliases`| `[]`              | Namespaces to treat as equivalent when matching `sh:targetClass` and when handing quads to the validator. See [Namespace aliases](#namespace-aliases). |
+| Option             | Default           | Description                                                                                                                                            |
+| ------------------ | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `shapesFile`       | —                 | URL or local path to the SHACL shapes file. Any format `rdf-dereference` accepts.                                                                      |
+| `samplesPerClass`  | `50`              | Number of top-level resources to sample per `sh:targetClass`.                                                                                          |
+| `timeout`          | `60000`           | SPARQL query timeout in milliseconds.                                                                                                                  |
+| `batchSize`        | `samplesPerClass` | Maximum sampled subjects per executor call. Lower values spread work across multiple parallel queries.                                                 |
+| `maxConcurrency`   | `10`              | Maximum concurrent in-flight executor batches per stage.                                                                                               |
+| `validator`        | —                 | Optional [`Validator`](../pipeline/src/validator.ts) attached to every generated stage (typically a `ShaclValidator`).                                 |
+| `onInvalid`        | `'write'`         | Behaviour when a sampled batch fails validation: `'write'` \| `'skip'` \| `'halt'`. Only used when `validator` is set.                                 |
+| `namespaceAliases` | `[]`              | Namespaces to treat as equivalent when matching `sh:targetClass` and when handing quads to the validator. See [Namespace aliases](#namespace-aliases). |
 
 ## Namespace aliases
 
@@ -60,7 +63,7 @@ report vacuously-conformant runs against datasets that mix the two.
 `namespaceAliases` closes the gap. For every declared pair the sampler:
 
 - broadens its subject-selection SELECT to `?s a ?type . FILTER(?type IN
-  (<canonical/X>, <alias/X>))`, so instances typed under either
+(<canonical/X>, <alias/X>))`, so instances typed under either
   namespace are picked up;
 - decorates the configured `validator` so any alias-namespace IRI in
   the sampled quads is rewritten to the canonical form before the SHACL

@@ -103,7 +103,7 @@ export interface ShaclSampleStagesOptions {
  * Pass a {@link Validator} to attach it to every generated stage:
  *
  * ```ts
- * const validator = new ShaclValidator({ shapesFile, reportDir });
+ * const validator = new ShaclValidator({ shapesFile, reportWriters: [...] });
  * const stages = await shaclSampleStages({ shapesFile, validator });
  * ```
  */
