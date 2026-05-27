@@ -25,6 +25,17 @@ export interface SparqlWriterOptions {
    * @default 10000
    */
   batchSize?: number;
+  /**
+   * Derive the named-graph URI from the dataset being written. Defaults to
+   * `dataset.iri`, which puts each dataset's quads in a graph named after its
+   * own IRI. Override when the quads are an enrichment (e.g. a SHACL validation
+   * report) that should land in a different graph than the dataset's own data.
+   *
+   * The same instance's `clearedGraphs` lifecycle (CLEAR on first write per
+   * graph) follows the derived URI, so two writers with different `graphIri`
+   * functions can target the same endpoint without interfering.
+   */
+  graphIri?: (dataset: Dataset) => URL;
 }
 
 /**
@@ -39,6 +50,7 @@ export class SparqlUpdateWriter implements Writer {
   private readonly auth?: string;
   private readonly fetch: typeof globalThis.fetch;
   private readonly batchSize: number;
+  private readonly graphIri: (dataset: Dataset) => URL;
   private readonly clearedGraphs = new Set<string>();
 
   constructor(options: SparqlWriterOptions) {
@@ -46,10 +58,11 @@ export class SparqlUpdateWriter implements Writer {
     this.auth = options.auth;
     this.fetch = options.fetch ?? globalThis.fetch;
     this.batchSize = options.batchSize ?? 10000;
+    this.graphIri = options.graphIri ?? ((dataset) => dataset.iri);
   }
 
   async write(dataset: Dataset, quads: AsyncIterable<Quad>): Promise<void> {
-    const graphUri = dataset.iri.toString();
+    const graphUri = this.graphIri(dataset).toString();
     assertSafeIri(graphUri);
 
     if (!this.clearedGraphs.has(graphUri)) {
