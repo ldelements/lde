@@ -1,3 +1,9 @@
+## 0.30.1 (2026-05-27)
+
+### 🚀 Features
+
+- **pipeline:** add graphIri option to SparqlUpdateWriter ([#409](https://github.com/ldelements/lde/pull/409))
+
 ## 0.30.0 (2026-05-27)
 
 ### 🚀 Features
