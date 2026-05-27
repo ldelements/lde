@@ -10,6 +10,9 @@
   "include": ["src/**/*.ts"],
   "references": [
     {
+      "path": "../local-sparql-endpoint/tsconfig.lib.json"
+    },
+    {
       "path": "../dataset/tsconfig.lib.json"
     }
   ],

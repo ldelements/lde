@@ -218,6 +218,7 @@ Quads are buffered, validated, and then written or discarded based on the `onInv
 
 ```typescript
 import { ShaclValidator } from '@lde/pipeline-shacl-validator';
+import { FileWriter } from '@lde/pipeline';
 
 new Stage({
   name: 'transform',
@@ -225,7 +226,9 @@ new Stage({
   validation: {
     validator: new ShaclValidator({
       shapesFile: './shapes.ttl',
-      reportDir: './validation',
+      reportWriters: [
+        new FileWriter({ outputDir: './validation', format: 'turtle' }),
+      ],
     }),
     onInvalid: 'write', // 'write' (default) | 'skip' | 'halt'
   },

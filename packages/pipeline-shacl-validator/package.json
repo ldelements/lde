@@ -26,7 +26,6 @@
   ],
   "dependencies": {
     "@rdfjs/types": "^2.0.1",
-    "filenamify-url": "^4.0.0",
     "rdf-dereference": "^5.0.0",
     "rdf-ext": "^2.5.2",
     "shacl-engine": "^1.1.0",
