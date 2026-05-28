@@ -1,4 +1,5 @@
 import {
+  ConstantTimeoutPolicy,
   Stage,
   SparqlConstructExecutor,
   SparqlItemSelector,
@@ -137,7 +138,7 @@ export async function shaclSampleStages(
         ),
         executors: new SparqlConstructExecutor({
           query: buildSampleQuery(shape),
-          timeout,
+          timeoutPolicy: new ConstantTimeoutPolicy(timeout),
         }),
         batchSize,
         maxConcurrency,

@@ -190,9 +190,11 @@ describe('Stage', () => {
     expect(result).not.toBeInstanceOf(NotSupported);
 
     expect(executor.execute).toHaveBeenCalledOnce();
-    expect(executor.execute).toHaveBeenCalledWith(dataset, distribution, {
-      bindings,
-    });
+    expect(executor.execute).toHaveBeenCalledWith(
+      dataset,
+      distribution,
+      expect.objectContaining({ bindings }),
+    );
   });
 
   it('batches bindings across multiple executor calls', async () => {
@@ -215,12 +217,18 @@ describe('Stage', () => {
     expect(result).not.toBeInstanceOf(NotSupported);
 
     expect(executor.execute).toHaveBeenCalledTimes(2);
-    expect(executor.execute).toHaveBeenNthCalledWith(1, dataset, distribution, {
-      bindings: [bindings[0], bindings[1]],
-    });
-    expect(executor.execute).toHaveBeenNthCalledWith(2, dataset, distribution, {
-      bindings: [bindings[2]],
-    });
+    expect(executor.execute).toHaveBeenNthCalledWith(
+      1,
+      dataset,
+      distribution,
+      expect.objectContaining({ bindings: [bindings[0], bindings[1]] }),
+    );
+    expect(executor.execute).toHaveBeenNthCalledWith(
+      2,
+      dataset,
+      distribution,
+      expect.objectContaining({ bindings: [bindings[2]] }),
+    );
   });
 
   it('uses custom batchSize', async () => {
@@ -271,7 +279,11 @@ describe('Stage', () => {
     const result = await stage.run(dataset, distribution, writer);
     expect(result).not.toBeInstanceOf(NotSupported);
     expect(writer.quads).toEqual([q1, q2]);
-    expect(executor.execute).toHaveBeenCalledWith(dataset, distribution);
+    expect(executor.execute).toHaveBeenCalledWith(
+      dataset,
+      distribution,
+      expect.objectContaining({}),
+    );
   });
 
   it('forwards distribution to executors', async () => {
@@ -292,6 +304,7 @@ describe('Stage', () => {
     expect(executor.execute).toHaveBeenCalledWith(
       dataset,
       namedGraphDistribution,
+      expect.objectContaining({}),
     );
   });
 
@@ -312,10 +325,16 @@ describe('Stage', () => {
     const result = await stage.run(dataset, distribution, writer);
     expect(result).not.toBeInstanceOf(NotSupported);
 
-    expect(selectFn).toHaveBeenCalledWith(distribution, 10);
-    expect(executor.execute).toHaveBeenCalledWith(dataset, distribution, {
-      bindings,
-    });
+    expect(selectFn).toHaveBeenCalledWith(
+      distribution,
+      10,
+      expect.objectContaining({}),
+    );
+    expect(executor.execute).toHaveBeenCalledWith(
+      dataset,
+      distribution,
+      expect.objectContaining({ bindings }),
+    );
   });
 
   it('passes batchSize to item selector', async () => {
@@ -334,7 +353,11 @@ describe('Stage', () => {
     const writer = collectingWriter();
     await stage.run(dataset, distribution, writer);
 
-    expect(selectFn).toHaveBeenCalledWith(distribution, 500);
+    expect(selectFn).toHaveBeenCalledWith(
+      distribution,
+      500,
+      expect.objectContaining({}),
+    );
   });
 
   describe('sub-stages', () => {

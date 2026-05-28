@@ -2,6 +2,7 @@ import { Dataset, Distribution } from '@lde/dataset';
 import type { Quad } from '@rdfjs/types';
 import type { Executor, VariableBindings } from './sparql/executor.js';
 import { NotSupported } from './sparql/executor.js';
+import type { TimeoutPolicy } from './sparql/timeoutPolicy.js';
 import { batch } from './batch.js';
 import type { Validator } from './validator.js';
 import type { Writer } from './writer/writer.js';
@@ -48,6 +49,19 @@ export interface StageOptions {
 
 export interface RunOptions {
   onProgress?: (itemsProcessed: number, quadsGenerated: number) => void;
+  /**
+   * Per-dataset {@link TimeoutPolicy} threaded through to executors and
+   * item selectors. The Pipeline owns lifecycle (factory invocation per
+   * dataset), so a single policy instance covers all stages and child
+   * stages within one dataset.
+   */
+  timeoutPolicy?: TimeoutPolicy;
+}
+
+/** Options accepted by {@link ItemSelector.select}. */
+export interface SelectOptions {
+  /** Per-call timeout policy. */
+  timeoutPolicy?: TimeoutPolicy;
 }
 
 export class Stage {
@@ -82,9 +96,12 @@ export class Stage {
     writer: Writer,
     options?: RunOptions,
   ): Promise<NotSupported | void> {
+    const timeoutPolicy = options?.timeoutPolicy;
     if (this.itemSelector) {
       return this.runWithSelector(
-        this.itemSelector.select(distribution, this.batchSize),
+        this.itemSelector.select(distribution, this.batchSize, {
+          timeoutPolicy,
+        }),
         dataset,
         distribution,
         writer,
@@ -92,7 +109,7 @@ export class Stage {
       );
     }
 
-    const streams = await this.executeAll(dataset, distribution);
+    const streams = await this.executeAll(dataset, distribution, timeoutPolicy);
     if (streams instanceof NotSupported) {
       return streams;
     }
@@ -206,11 +223,10 @@ export class Stage {
               // Run all executors for this batch in parallel.
               const executorOutputs = await Promise.all(
                 this.executors.map(async (executor) => {
-                  const result = await executor.execute(
-                    dataset,
-                    distribution,
-                    { bindings },
-                  );
+                  const result = await executor.execute(dataset, distribution, {
+                    bindings,
+                    timeoutPolicy: options?.timeoutPolicy,
+                  });
                   if (result instanceof NotSupported) return [];
                   hasResults = true;
                   const quads: Quad[] = [];
@@ -312,9 +328,12 @@ export class Stage {
   private async executeAll(
     dataset: Dataset,
     distribution: Distribution,
+    timeoutPolicy: TimeoutPolicy | undefined,
   ): Promise<AsyncIterable<Quad>[] | NotSupported> {
     const results = await Promise.all(
-      this.executors.map((executor) => executor.execute(dataset, distribution)),
+      this.executors.map((executor) =>
+        executor.execute(dataset, distribution, { timeoutPolicy }),
+      ),
     );
 
     const streams: AsyncIterable<Quad>[] = [];
@@ -345,5 +364,6 @@ export interface ItemSelector {
   select(
     distribution: Distribution,
     batchSize?: number,
+    options?: SelectOptions,
   ): AsyncIterable<VariableBindings>;
 }

@@ -1,4 +1,5 @@
 import {
+  ConstantTimeoutPolicy,
   Stage,
   SparqlConstructExecutor,
   SparqlItemSelector,
@@ -69,7 +70,7 @@ async function createVoidStage(
     options?.executor?.(query) ??
     new SparqlConstructExecutor({
       query,
-      timeout: options?.timeout ?? 60_000,
+      timeoutPolicy: new ConstantTimeoutPolicy(options?.timeout ?? 60_000),
     });
 
   if (options?.perClass) {
@@ -209,7 +210,7 @@ export function uriSpaces(
       new UriSpaceExecutor(
         new SparqlConstructExecutor({
           query,
-          timeout: options?.timeout ?? 60_000,
+          timeoutPolicy: new ConstantTimeoutPolicy(options?.timeout ?? 60_000),
         }),
         uriSpaceMap,
       ),
@@ -230,7 +231,7 @@ export function detectVocabularies(
       new VocabularyExecutor(
         new SparqlConstructExecutor({
           query,
-          timeout: options?.timeout ?? 60_000,
+          timeoutPolicy: new ConstantTimeoutPolicy(options?.timeout ?? 60_000),
         }),
         options?.vocabularies
           ? [...defaultVocabularies, ...options.vocabularies]

@@ -207,4 +207,40 @@ describe('ConsoleReporter', () => {
       expect(output).toContain('to http://localhost:7001/sparql');
     });
   });
+
+  describe('timeout transitions', () => {
+    it('prints a tightened-timeout line', () => {
+      const reporter = new ConsoleReporter();
+      const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+
+      reporter.timeoutTightened({
+        endpoint: new URL('https://data.razu.nl/sparql'),
+        fromTimeoutMs: 300_000,
+        toTimeoutMs: 10_000,
+        consecutiveTimeouts: 2,
+      });
+
+      const output = spy.mock.calls.map((c) => String(c[0])).join('');
+      expect(output).toContain('Tightened');
+      expect(output).toContain('https://data.razu.nl/sparql');
+      expect(output).toContain('10s');
+      expect(output).toContain('2');
+    });
+
+    it('prints a relaxed-timeout line', () => {
+      const reporter = new ConsoleReporter();
+      const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+
+      reporter.timeoutRelaxed({
+        endpoint: new URL('https://data.razu.nl/sparql'),
+        fromTimeoutMs: 10_000,
+        toTimeoutMs: 300_000,
+        consecutiveTimeouts: 0,
+      });
+
+      const output = spy.mock.calls.map((c) => String(c[0])).join('');
+      expect(output).toContain('Relaxed');
+      expect(output).toContain('https://data.razu.nl/sparql');
+    });
+  });
 });

@@ -96,6 +96,9 @@ function makeReporter(): RequiredReporter {
     datasetSkipped: vi.fn<NonNullable<ProgressReporter['datasetSkipped']>>(),
     pipelineComplete:
       vi.fn<NonNullable<ProgressReporter['pipelineComplete']>>(),
+    timeoutTightened:
+      vi.fn<NonNullable<ProgressReporter['timeoutTightened']>>(),
+    timeoutRelaxed: vi.fn<NonNullable<ProgressReporter['timeoutRelaxed']>>(),
   };
 }
 
@@ -1137,6 +1140,124 @@ describe('Pipeline', () => {
       });
 
       await expect(pipeline.run()).resolves.toBeUndefined();
+    });
+  });
+
+  describe('timeoutPolicy', () => {
+    it('passes a TimeoutPolicy instance to each stage.run', async () => {
+      const stage = makeStage('stage1');
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [stage],
+        writers: writer,
+        distributionResolver: makeResolver(makeResolvedDistribution()),
+      });
+
+      await pipeline.run();
+
+      const call = (stage.run as ReturnType<typeof vi.fn>).mock.calls[0];
+      const options = call[3];
+      expect(options.timeoutPolicy).toBeDefined();
+      expect(typeof options.timeoutPolicy.beforeRequest).toBe('function');
+      expect(typeof options.timeoutPolicy.afterRequest).toBe('function');
+    });
+
+    it('invokes the factory once per dataset', async () => {
+      const factory = vi.fn().mockImplementation(() => ({
+        beforeRequest: () => 300_000,
+        afterRequest: vi.fn(),
+      }));
+
+      const datasetA = makeDataset('http://example.org/dataset-a');
+      const datasetB = makeDataset('http://example.org/dataset-b');
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(datasetA, datasetB),
+        stages: [makeStage('stage1')],
+        writers: writer,
+        distributionResolver: makeResolver(makeResolvedDistribution()),
+        timeoutPolicy: factory,
+      });
+
+      await pipeline.run();
+
+      expect(factory).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not share state between datasets', async () => {
+      const policies: unknown[] = [];
+      const factory = vi.fn().mockImplementation(() => {
+        const policy = {
+          beforeRequest: () => 300_000,
+          afterRequest: vi.fn(),
+        };
+        policies.push(policy);
+        return policy;
+      });
+
+      const stage = makeStage('stage1');
+      const datasetA = makeDataset('http://example.org/dataset-a');
+      const datasetB = makeDataset('http://example.org/dataset-b');
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(datasetA, datasetB),
+        stages: [stage],
+        writers: writer,
+        distributionResolver: makeResolver(makeResolvedDistribution()),
+        timeoutPolicy: factory,
+      });
+
+      await pipeline.run();
+
+      const runCalls = (stage.run as ReturnType<typeof vi.fn>).mock.calls;
+      expect(runCalls[0][3].timeoutPolicy).toBe(policies[0]);
+      expect(runCalls[1][3].timeoutPolicy).toBe(policies[1]);
+      expect(policies[0]).not.toBe(policies[1]);
+    });
+
+    it('forwards onTighten/onRelax transitions to the reporter', async () => {
+      const tightenEvent = {
+        endpoint: new URL('http://example.org/sparql'),
+        fromTimeoutMs: 300_000,
+        toTimeoutMs: 10_000,
+        consecutiveTimeouts: 2,
+      };
+      const relaxEvent = {
+        endpoint: new URL('http://example.org/sparql'),
+        fromTimeoutMs: 10_000,
+        toTimeoutMs: 300_000,
+        consecutiveTimeouts: 0,
+      };
+      const factory = vi.fn().mockImplementation(() => ({
+        beforeRequest: () => 300_000,
+        afterRequest: vi.fn(),
+        subscribe(observer: {
+          onTighten?: (event: unknown) => void;
+          onRelax?: (event: unknown) => void;
+        }) {
+          // Fire one of each transition synchronously after subscription
+          // so the test doesn't depend on stage timing.
+          observer.onTighten?.(tightenEvent);
+          observer.onRelax?.(relaxEvent);
+          return vi.fn();
+        },
+      }));
+
+      const reporter = makeReporter();
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [makeStage('stage1')],
+        writers: writer,
+        distributionResolver: makeResolver(makeResolvedDistribution()),
+        timeoutPolicy: factory,
+        reporter,
+      });
+
+      await pipeline.run();
+
+      expect(reporter.timeoutTightened).toHaveBeenCalledWith(tightenEvent);
+      expect(reporter.timeoutRelaxed).toHaveBeenCalledWith(relaxEvent);
     });
   });
 });

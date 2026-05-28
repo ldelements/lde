@@ -501,4 +501,134 @@ describe('SparqlItemSelector', () => {
       expect(mockFetcher.fetchBindings).not.toHaveBeenCalled();
     });
   });
+
+  describe('timeout policy', () => {
+    function recordingPolicy() {
+      return {
+        beforeRequest: vi.fn().mockReturnValue(5_000),
+        afterRequest: vi.fn(),
+      };
+    }
+
+    it('calls beforeRequest and afterRequest({outcome: "ok"}) per page', async () => {
+      const mockFetcher = {
+        fetchBindings: vi
+          .fn()
+          .mockImplementationOnce(() =>
+            bindingsStream([
+              { uri: namedNode('http://example.com/1') },
+              { uri: namedNode('http://example.com/2') },
+            ]),
+          )
+          .mockImplementationOnce(() =>
+            bindingsStream([{ uri: namedNode('http://example.com/3') }]),
+          ),
+      };
+
+      const policy = recordingPolicy();
+      const selector = new SparqlItemSelector({
+        query,
+        fetcher: mockFetcher as never,
+      });
+
+      const rows: VariableBindings[] = [];
+      for await (const row of selector.select(distribution, 2, {
+        timeoutPolicy: policy,
+      })) {
+        rows.push(row);
+      }
+
+      expect(rows).toHaveLength(3);
+      expect(policy.beforeRequest).toHaveBeenCalledTimes(2);
+      expect(policy.beforeRequest).toHaveBeenCalledWith({
+        endpoint: distribution.accessUrl,
+      });
+      expect(policy.afterRequest).toHaveBeenCalledTimes(2);
+      expect(policy.afterRequest).toHaveBeenCalledWith(
+        expect.objectContaining({ outcome: 'ok' }),
+      );
+    });
+
+    it('reports HTTP 504 as outcome "timeout"', async () => {
+      const mockFetcher = {
+        fetchBindings: vi
+          .fn()
+          .mockRejectedValue(
+            new Error(
+              'Invalid SPARQL endpoint response from http://example.com/sparql (HTTP status 504):\nGateway Timeout',
+            ),
+          ),
+      };
+
+      const policy = recordingPolicy();
+      const selector = new SparqlItemSelector({
+        query,
+        fetcher: mockFetcher as never,
+      });
+
+      const iterate = async () => {
+        for await (const _row of selector.select(distribution, 10, {
+          timeoutPolicy: policy,
+        })) {
+          // consume
+        }
+      };
+
+      await expect(iterate()).rejects.toThrow('504');
+      expect(policy.afterRequest).toHaveBeenCalledWith(
+        expect.objectContaining({ outcome: 'timeout' }),
+      );
+    });
+
+    it('reports non-timeout errors as outcome "error"', async () => {
+      const mockFetcher = {
+        fetchBindings: vi
+          .fn()
+          .mockRejectedValue(
+            new Error(
+              'Invalid SPARQL endpoint response from http://example.com/sparql (HTTP status 400):\nBad Request',
+            ),
+          ),
+      };
+
+      const policy = recordingPolicy();
+      const selector = new SparqlItemSelector({
+        query,
+        fetcher: mockFetcher as never,
+      });
+
+      const iterate = async () => {
+        for await (const _row of selector.select(distribution, 10, {
+          timeoutPolicy: policy,
+        })) {
+          // consume
+        }
+      };
+
+      await expect(iterate()).rejects.toThrow();
+      expect(policy.afterRequest).toHaveBeenCalledWith(
+        expect.objectContaining({ outcome: 'error' }),
+      );
+    });
+
+    it('falls back to the selector-level policy when select() omits one', async () => {
+      const mockFetcher = {
+        fetchBindings: vi.fn().mockImplementation(() => bindingsStream([])),
+      };
+
+      const policy = recordingPolicy();
+      const selector = new SparqlItemSelector({
+        query,
+        fetcher: mockFetcher as never,
+        timeoutPolicy: policy,
+      });
+
+      for await (const _row of selector.select(distribution, 10)) {
+        // consume
+      }
+
+      expect(policy.beforeRequest).toHaveBeenCalledTimes(1);
+      expect(policy.afterRequest).toHaveBeenCalledTimes(1);
+    });
+  });
 });

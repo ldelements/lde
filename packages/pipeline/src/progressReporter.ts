@@ -1,5 +1,6 @@
 import type { Dataset, Distribution } from '@lde/dataset';
 import type { ValidationReport } from './validator.js';
+import type { TimeoutTransitionEvent } from './sparql/timeoutPolicy.js';
 
 export interface DistributionAnalysisResult {
   distribution: Distribution;
@@ -64,4 +65,15 @@ export interface ProgressReporter {
     memoryUsageBytes: number;
     heapUsedBytes: number;
   }): void;
+  /**
+   * Called when a {@link TimeoutPolicy} tightens the budget for an
+   * endpoint after a run of consecutive timeouts. Lets operators
+   * distinguish a fast-failed stage from an unexpected speedup.
+   */
+  timeoutTightened?(event: TimeoutTransitionEvent): void;
+  /**
+   * Called when a {@link TimeoutPolicy} relaxes the budget back to the
+   * default after a successful request on a previously-tightened endpoint.
+   */
+  timeoutRelaxed?(event: TimeoutTransitionEvent): void;
 }

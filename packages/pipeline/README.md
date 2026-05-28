@@ -208,6 +208,27 @@ new Stage({
 
 This keeps SPARQL doing the heavy lifting while TypeScript handles the edge cases. See [@lde/pipeline-void](../pipeline-void)'s `VocabularyExecutor` for a real-world example of this pattern.
 
+#### Adaptive timeouts
+
+By default, every SPARQL request uses the same 5-minute budget. When a pipeline runs against many third-party endpoints, that fixed budget can cost ~80 minutes on a single dataset whose endpoint times out repeatedly on heavy queries. Pass a `TimeoutPolicy` factory to `Pipeline` to fast-fail once an endpoint has shown a run of consecutive timeouts:
+
+```typescript
+import { adaptiveTimeoutPolicy } from '@lde/pipeline';
+
+new Pipeline({
+  // …
+  timeoutPolicy: adaptiveTimeoutPolicy({
+    default: 300_000, // 5 min while the endpoint is healthy
+    short: 10_000, //   10 s once it’s flipped to tightened
+    threshold: 2, //    flip after 2 consecutive timeouts
+  }),
+});
+```
+
+The factory is invoked once per dataset, so policy state resets between datasets. HTTP 504 from the upstream and client-side `AbortSignal` timeouts both count as `timeout` outcomes; a single successful request relaxes the endpoint back to the default budget. Subscribe-capable policies forward transitions to the `ProgressReporter` via `timeoutTightened` / `timeoutRelaxed` — `ConsoleReporter` prints them as `↘ Tightened` / `↗ Relaxed` lines so operators can distinguish a fast-failed stage from an unexpected speedup.
+
+Omit `timeoutPolicy` to keep today’s behaviour (`constantTimeoutPolicy(300_000)`).
+
 ### Validation
 
 Stages can optionally validate their output quads against a `Validator`. Validation operates on the **combined output of all executors per batch**, not on individual quads or per-executor output. A batch produces a complete result set — a self-contained cluster of linked resources — that can be meaningfully matched against SHACL shapes. Even with a single executor, each batch is a complete unit; with multiple executors, shapes that reference triples from different executors are validated correctly.

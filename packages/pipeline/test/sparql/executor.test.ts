@@ -627,6 +627,255 @@ describe('SparqlConstructExecutor', () => {
       expect(executor).toBeInstanceOf(SparqlConstructExecutor);
     });
   });
+
+  describe('timeout policy', () => {
+    function recordingPolicy() {
+      const before = vi.fn().mockReturnValue(1234);
+      const after = vi.fn();
+      return {
+        beforeRequest: before,
+        afterRequest: after,
+      };
+    }
+
+    function makeDistribution(url = 'http://policy.example.org/sparql') {
+      return Distribution.sparql(new URL(url));
+    }
+
+    function makeDataset(distribution: Distribution) {
+      return new Dataset({
+        iri: new URL('http://example.org/dataset'),
+        distributions: [distribution],
+      });
+    }
+
+    it('calls beforeRequest and afterRequest({outcome: "ok"}) on success', async () => {
+      const fetcher = new SparqlEndpointFetcher();
+      vi.spyOn(fetcher, 'fetchTriples').mockResolvedValue([] as never);
+
+      const policy = recordingPolicy();
+      const executor = new SparqlConstructExecutor({
+        query: 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }',
+        fetcher,
+      });
+
+      const distribution = makeDistribution();
+      await executor.execute(makeDataset(distribution), distribution, {
+        timeoutPolicy: policy,
+      });
+
+      expect(policy.beforeRequest).toHaveBeenCalledTimes(1);
+      expect(policy.beforeRequest).toHaveBeenCalledWith({
+        endpoint: distribution.accessUrl,
+      });
+      expect(policy.afterRequest).toHaveBeenCalledTimes(1);
+      expect(policy.afterRequest).toHaveBeenCalledWith(
+        expect.objectContaining({
+          endpoint: distribution.accessUrl,
+          outcome: 'ok',
+        }),
+      );
+    });
+
+    it('classifies HTTP 504 as outcome "timeout"', async () => {
+      const fetcher = new SparqlEndpointFetcher();
+      vi.spyOn(fetcher, 'fetchTriples').mockRejectedValue(
+        new Error(
+          'Invalid SPARQL endpoint response from http://policy.example.org/sparql (HTTP status 504):\nGateway Timeout',
+        ),
+      );
+
+      const policy = recordingPolicy();
+      const executor = new SparqlConstructExecutor({
+        query: 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }',
+        fetcher,
+        retries: 0,
+      });
+      const distribution = makeDistribution();
+
+      await expect(
+        executor.execute(makeDataset(distribution), distribution, {
+          timeoutPolicy: policy,
+        }),
+      ).rejects.toThrow('504');
+
+      expect(policy.afterRequest).toHaveBeenCalledWith(
+        expect.objectContaining({ outcome: 'timeout' }),
+      );
+    });
+
+    it('classifies AbortError as outcome "timeout"', async () => {
+      const fetcher = new SparqlEndpointFetcher();
+      const abortError = new Error('The operation was aborted');
+      abortError.name = 'AbortError';
+      vi.spyOn(fetcher, 'fetchTriples').mockRejectedValue(abortError);
+
+      const policy = recordingPolicy();
+      const executor = new SparqlConstructExecutor({
+        query: 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }',
+        fetcher,
+        retries: 0,
+      });
+      const distribution = makeDistribution();
+
+      await expect(
+        executor.execute(makeDataset(distribution), distribution, {
+          timeoutPolicy: policy,
+        }),
+      ).rejects.toThrow();
+
+      expect(policy.afterRequest).toHaveBeenCalledWith(
+        expect.objectContaining({ outcome: 'timeout' }),
+      );
+    });
+
+    it('classifies TimeoutError (AbortSignal.timeout) as outcome "timeout"', async () => {
+      const fetcher = new SparqlEndpointFetcher();
+      const timeoutError = new Error('The operation timed out');
+      timeoutError.name = 'TimeoutError';
+      vi.spyOn(fetcher, 'fetchTriples').mockRejectedValue(timeoutError);
+
+      const policy = recordingPolicy();
+      const executor = new SparqlConstructExecutor({
+        query: 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }',
+        fetcher,
+        retries: 0,
+      });
+      const distribution = makeDistribution();
+
+      await expect(
+        executor.execute(makeDataset(distribution), distribution, {
+          timeoutPolicy: policy,
+        }),
+      ).rejects.toThrow();
+
+      expect(policy.afterRequest).toHaveBeenCalledWith(
+        expect.objectContaining({ outcome: 'timeout' }),
+      );
+    });
+
+    it('classifies HTTP 400 as outcome "error" (neutral)', async () => {
+      const fetcher = new SparqlEndpointFetcher();
+      vi.spyOn(fetcher, 'fetchTriples').mockRejectedValue(
+        new Error(
+          'Invalid SPARQL endpoint response from http://policy.example.org/sparql (HTTP status 400):\nBad Request',
+        ),
+      );
+
+      const policy = recordingPolicy();
+      const executor = new SparqlConstructExecutor({
+        query: 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }',
+        fetcher,
+        retries: 0,
+      });
+      const distribution = makeDistribution();
+
+      await expect(
+        executor.execute(makeDataset(distribution), distribution, {
+          timeoutPolicy: policy,
+        }),
+      ).rejects.toThrow();
+
+      expect(policy.afterRequest).toHaveBeenCalledWith(
+        expect.objectContaining({ outcome: 'error' }),
+      );
+    });
+
+    it('invokes the policy per attempt inside pRetry', async () => {
+      const fetcher = new SparqlEndpointFetcher();
+      vi.spyOn(fetcher, 'fetchTriples')
+        .mockRejectedValueOnce(
+          new Error(
+            'Invalid SPARQL endpoint response from http://policy.example.org/sparql (HTTP status 504):\nGateway Timeout',
+          ),
+        )
+        .mockResolvedValueOnce([] as never);
+
+      const policy = recordingPolicy();
+      const executor = new SparqlConstructExecutor({
+        query: 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }',
+        fetcher,
+      });
+      const distribution = makeDistribution();
+
+      await executor.execute(makeDataset(distribution), distribution, {
+        timeoutPolicy: policy,
+      });
+
+      expect(policy.beforeRequest).toHaveBeenCalledTimes(2);
+      expect(policy.afterRequest).toHaveBeenCalledTimes(2);
+      expect(policy.afterRequest).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({ outcome: 'timeout' }),
+      );
+      expect(policy.afterRequest).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({ outcome: 'ok' }),
+      );
+    });
+
+    it('falls back to the executor-level policy when ExecuteOptions omits one', async () => {
+      const fetcher = new SparqlEndpointFetcher();
+      vi.spyOn(fetcher, 'fetchTriples').mockResolvedValue([] as never);
+
+      const policy = recordingPolicy();
+      const executor = new SparqlConstructExecutor({
+        query: 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }',
+        fetcher,
+        timeoutPolicy: policy,
+      });
+      const distribution = makeDistribution();
+
+      await executor.execute(makeDataset(distribution), distribution);
+
+      expect(policy.beforeRequest).toHaveBeenCalledTimes(1);
+      expect(policy.afterRequest).toHaveBeenCalledTimes(1);
+    });
+
+    it('aborts the underlying fetch when the policy budget elapses', async () => {
+      const slowFetch = vi
+        .fn<
+          (input: Request | string, init?: RequestInit) => Promise<Response>
+        >()
+        .mockImplementation((_input, init) => {
+          return new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => {
+              const error = new Error('aborted');
+              error.name = 'AbortError';
+              reject(error);
+            });
+          });
+        });
+      const fetcher = new SparqlEndpointFetcher({
+        fetch: slowFetch,
+        timeout: 10,
+      });
+
+      const policy = {
+        beforeRequest: vi.fn().mockReturnValue(10),
+        afterRequest: vi.fn(),
+      };
+      const executor = new SparqlConstructExecutor({
+        query: 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }',
+        fetcher,
+        retries: 0,
+      });
+      const distribution = makeDistribution();
+
+      await expect(
+        executor.execute(makeDataset(distribution), distribution, {
+          timeoutPolicy: policy,
+        }),
+      ).rejects.toThrow();
+
+      expect(policy.afterRequest).toHaveBeenCalledWith(
+        expect.objectContaining({ outcome: 'timeout' }),
+      );
+      expect(slowFetch).toHaveBeenCalled();
+      const init = slowFetch.mock.calls[0][1];
+      expect(init?.signal).toBeInstanceOf(AbortSignal);
+    });
+  });
 });
 
 describe('LineBufferTransform', () => {
@@ -640,7 +889,9 @@ describe('LineBufferTransform', () => {
 
   it('passes complete lines through', async () => {
     const transform = new LineBufferTransform();
-    const input = Readable.from(['<s> <p> "hello"@nl .\n<s> <p> "world"@en .\n']);
+    const input = Readable.from([
+      '<s> <p> "hello"@nl .\n<s> <p> "world"@en .\n',
+    ]);
     const result = await collect(input.pipe(transform));
     expect(result).toBe('<s> <p> "hello"@nl .\n<s> <p> "world"@en .\n');
   });
@@ -648,10 +899,7 @@ describe('LineBufferTransform', () => {
   it('buffers a line split across chunks', async () => {
     const transform = new LineBufferTransform();
     // Simulate a language tag split across chunk boundaries
-    const input = Readable.from([
-      '<s> <p> "hallo"@',
-      'nl-nl .\n',
-    ]);
+    const input = Readable.from(['<s> <p> "hallo"@', 'nl-nl .\n']);
     const result = await collect(input.pipe(transform));
     expect(result).toBe('<s> <p> "hallo"@nl-nl .\n');
   });

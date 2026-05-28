@@ -2,6 +2,7 @@ import type { Dataset, Distribution } from '@lde/dataset';
 import type {
   DistributionAnalysisResult,
   ProgressReporter,
+  TimeoutTransitionEvent,
   ValidationReport,
 } from '@lde/pipeline';
 import chalk from 'chalk';
@@ -281,6 +282,26 @@ export class ConsoleReporter implements ProgressReporter {
       `\nPipeline completed in ${chalk.bold(
         prettyMilliseconds(result.duration),
       )} ${chalk.dim(`(memory: ${formatBytes(result.memoryUsageBytes)} RSS, ${formatBytes(result.heapUsedBytes)} heap)`)}\n`,
+    );
+  }
+
+  timeoutTightened(event: TimeoutTransitionEvent): void {
+    this.printLine(
+      chalk.yellow('↘'),
+      `Tightened timeout for ${event.endpoint.toString()} to ${chalk.bold(
+        prettyMilliseconds(event.toTimeoutMs),
+      )} after ${chalk.bold(event.consecutiveTimeouts)} consecutive timeouts`,
+      2,
+    );
+  }
+
+  timeoutRelaxed(event: TimeoutTransitionEvent): void {
+    this.printLine(
+      chalk.green('↗'),
+      `Relaxed timeout for ${event.endpoint.toString()} back to ${chalk.bold(
+        prettyMilliseconds(event.toTimeoutMs),
+      )} after successful request`,
+      2,
     );
   }
 }
