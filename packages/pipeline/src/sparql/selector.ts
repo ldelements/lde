@@ -18,6 +18,13 @@ import {
 
 const transientStatusPattern = /HTTP status (\d+)/;
 
+/**
+ * Fallback policy when no per-call `TimeoutPolicy` is supplied via
+ * {@link SelectOptions.timeout}. Pipeline always supplies one, so this only
+ * matters when the selector is driven directly (without a Pipeline).
+ */
+const defaultTimeoutPolicy: TimeoutPolicy = new ConstantTimeoutPolicy(300_000);
+
 const parser = new Parser();
 const generator = new Generator();
 const F = new AstFactory();
@@ -43,15 +50,6 @@ export interface SparqlItemSelectorOptions {
   maxResults?: number;
   /** Custom fetcher instance. */
   fetcher?: SparqlEndpointFetcher;
-  /**
-   * Per-attempt timeout policy. Defaults to
-   * `new ConstantTimeoutPolicy(300_000)` so callers that supply nothing
-   * keep today’s 5-minute budget.
-   *
-   * Overridden by {@link SelectOptions.timeout} when the Pipeline
-   * threads a per-dataset policy through.
-   */
-  timeout?: TimeoutPolicy;
 }
 
 /**
@@ -77,7 +75,6 @@ export class SparqlItemSelector implements ItemSelector {
   private readonly queryLimit?: number;
   private readonly maxResults?: number;
   private readonly userFetcher?: SparqlEndpointFetcher;
-  private readonly defaultPolicy: TimeoutPolicy;
 
   constructor(options: SparqlItemSelectorOptions) {
     const parsed = parser.parse(options.query);
@@ -96,7 +93,6 @@ export class SparqlItemSelector implements ItemSelector {
     this.queryLimit = this.parsed.solutionModifiers.limitOffset?.limit;
     this.maxResults = options.maxResults;
     this.userFetcher = options.fetcher;
-    this.defaultPolicy = options.timeout ?? new ConstantTimeoutPolicy(300_000);
   }
 
   async *select(
@@ -107,7 +103,7 @@ export class SparqlItemSelector implements ItemSelector {
     if (this.maxResults === 0) return;
     const basePageSize = this.queryLimit ?? batchSize ?? 10;
     const endpoint = distribution.accessUrl!;
-    const policy = options?.timeout ?? this.defaultPolicy;
+    const policy = options?.timeout ?? defaultTimeoutPolicy;
     let offset = 0;
     let totalYielded = 0;
 

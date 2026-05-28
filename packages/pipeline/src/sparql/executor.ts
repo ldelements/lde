@@ -20,6 +20,13 @@ import {
 } from './timeoutPolicy.js';
 
 /**
+ * Fallback policy when no per-call `TimeoutPolicy` is supplied via
+ * {@link ExecuteOptions.timeout}. Pipeline always supplies one, so this only
+ * matters when the executor is driven directly (without a Pipeline).
+ */
+const defaultTimeoutPolicy: TimeoutPolicy = new ConstantTimeoutPolicy(300_000);
+
+/**
  * An executor could not run because the dataset lacks a supported distribution.
  */
 export class NotSupported {
@@ -64,19 +71,6 @@ export interface SparqlConstructExecutorOptions {
    * SPARQL CONSTRUCT query to execute.
    */
   query: string;
-
-  /**
-   * Per-attempt timeout policy. Defaults to
-   * `new ConstantTimeoutPolicy(300_000)` so callers that supply nothing get
-   * the same 5-minute budget as before — but expressed through the new
-   * {@link TimeoutPolicy} surface so an adaptive policy can be slotted in
-   * via {@link ExecuteOptions.timeout} without changing this default.
-   *
-   * Replaces the old `timeout: number` option. Call sites passing
-   * `timeout: 5000` migrate to
-   * `timeout: constantTimeoutPolicy(5_000)()`.
-   */
-  timeout?: TimeoutPolicy;
 
   /**
    * Number of retries for transient errors (network failures and HTTP 502/503/504).
@@ -159,7 +153,6 @@ export class SparqlConstructExecutor implements Executor {
   private readonly rawQuery: string;
   private readonly preParsed?: QueryConstruct;
   private readonly userFetcher?: SparqlEndpointFetcher;
-  private readonly defaultPolicy: TimeoutPolicy;
   private readonly retries: number;
   private readonly lineBuffer: boolean;
   private readonly deduplicate: boolean;
@@ -180,7 +173,6 @@ export class SparqlConstructExecutor implements Executor {
     }
 
     this.userFetcher = options.fetcher;
-    this.defaultPolicy = options.timeout ?? new ConstantTimeoutPolicy(300_000);
   }
 
   /**
@@ -226,11 +218,10 @@ export class SparqlConstructExecutor implements Executor {
     assertSafeIri(dataset.iri.toString());
     query = query.replaceAll('?dataset', `<${dataset.iri}>`);
 
-    const policy = options?.timeout ?? this.defaultPolicy;
-    const endpointUrl = endpoint;
+    const policy = options?.timeout ?? defaultTimeoutPolicy;
 
     const quads = await pRetry(
-      () => this.fetchQuadsWithPolicy(endpointUrl, query, policy),
+      () => this.fetchQuadsWithPolicy(endpoint, query, policy),
       {
         retries: this.retries,
         shouldRetry: ({ error }) => isTransientError(error),

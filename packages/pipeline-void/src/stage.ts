@@ -1,5 +1,4 @@
 import {
-  ConstantTimeoutPolicy,
   Stage,
   SparqlConstructExecutor,
   SparqlItemSelector,
@@ -25,11 +24,14 @@ const queriesDir = resolve(
 
 /**
  * Options for configuring VoID stage execution.
+ *
+ * Per-request timeouts are configured at the {@link Pipeline} level via
+ * `PipelineOptions.timeout`; VoID stages no longer expose their own timeout
+ * knob. Kept as a named type so per-class / per-stages option types can
+ * extend it as more knobs are added.
  */
-export interface VoidStageOptions {
-  /** SPARQL query timeout in milliseconds. @default 60000 */
-  timeout?: number;
-}
+// eslint-disable-next-line @typescript-eslint/no-empty-interface, @typescript-eslint/no-empty-object-type
+export interface VoidStageOptions {}
 
 /**
  * Options for per-class VoID stages that iterate over classes.
@@ -67,11 +69,7 @@ async function createVoidStage(
 ): Promise<Stage> {
   const query = await readQueryFile(resolve(queriesDir, filename));
   const executor =
-    options?.executor?.(query) ??
-    new SparqlConstructExecutor({
-      query,
-      timeout: new ConstantTimeoutPolicy(options?.timeout ?? 60_000),
-    });
+    options?.executor?.(query) ?? new SparqlConstructExecutor({ query });
 
   if (options?.perClass) {
     return new Stage({
@@ -207,13 +205,7 @@ export function uriSpaces(
   return createVoidStage('object-uri-space.rq', {
     ...options,
     executor: (query) =>
-      new UriSpaceExecutor(
-        new SparqlConstructExecutor({
-          query,
-          timeout: new ConstantTimeoutPolicy(options?.timeout ?? 60_000),
-        }),
-        uriSpaceMap,
-      ),
+      new UriSpaceExecutor(new SparqlConstructExecutor({ query }), uriSpaceMap),
   });
 }
 
@@ -229,10 +221,7 @@ export function detectVocabularies(
     ...options,
     executor: (query) =>
       new VocabularyExecutor(
-        new SparqlConstructExecutor({
-          query,
-          timeout: new ConstantTimeoutPolicy(options?.timeout ?? 60_000),
-        }),
+        new SparqlConstructExecutor({ query }),
         options?.vocabularies
           ? [...defaultVocabularies, ...options.vocabularies]
           : undefined,

@@ -814,22 +814,21 @@ describe('SparqlConstructExecutor', () => {
       );
     });
 
-    it('falls back to the executor-level policy when ExecuteOptions omits one', async () => {
+    it('uses a default policy when ExecuteOptions omits one', async () => {
       const fetcher = new SparqlEndpointFetcher();
       vi.spyOn(fetcher, 'fetchTriples').mockResolvedValue([] as never);
 
-      const policy = recordingPolicy();
       const executor = new SparqlConstructExecutor({
         query: 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }',
         fetcher,
-        timeout: policy,
       });
       const distribution = makeDistribution();
 
-      await executor.execute(makeDataset(distribution), distribution);
-
-      expect(policy.beforeRequest).toHaveBeenCalledTimes(1);
-      expect(policy.afterRequest).toHaveBeenCalledTimes(1);
+      // No policy supplied at construction or per call — the executor falls
+      // back to its module-level default and the request still completes.
+      await expect(
+        executor.execute(makeDataset(distribution), distribution),
+      ).resolves.toBeDefined();
     });
 
     it('aborts the underlying fetch when the policy budget elapses', async () => {

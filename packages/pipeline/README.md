@@ -244,6 +244,8 @@ Transitions are forwarded to the `ProgressReporter` via `timeoutTightened` / `ti
 
 Implement `TimeoutPolicy` directly for custom strategies (closing over shared state in the factory if you want it to span datasets).
 
+Timeouts live at the pipeline level — neither `SparqlConstructExecutor` nor `SparqlItemSelector` accept their own `timeout` option. Per-endpoint state belongs in the adaptive policy, and per-stage budgets aren’t supported. Reusable stage facades (`@lde/pipeline-void`, `@lde/pipeline-shacl-sampler`) follow the same convention.
+
 ### Validation
 
 Stages can optionally validate their output quads against a `Validator`. Validation operates on the **combined output of all executors per batch**, not on individual quads or per-executor output. A batch produces a complete result set — a self-contained cluster of linked resources — that can be meaningfully matched against SHACL shapes. Even with a single executor, each batch is a complete unit; with multiple executors, shapes that reference triples from different executors are validated correctly.

@@ -1,5 +1,4 @@
 import {
-  ConstantTimeoutPolicy,
   Stage,
   SparqlConstructExecutor,
   SparqlItemSelector,
@@ -51,11 +50,6 @@ export interface ShaclSampleStagesOptions {
    * @default 50
    */
   samplesPerClass?: number;
-  /**
-   * SPARQL query timeout in milliseconds.
-   * @default 60000
-   */
-  timeout?: number;
   /**
    * Maximum number of sampled subjects per executor call. Defaults to
    * {@link samplesPerClass} so the whole sample fits in one CONSTRUCT
@@ -112,7 +106,6 @@ export async function shaclSampleStages(
   options: ShaclSampleStagesOptions,
 ): Promise<Stage[]> {
   const samplesPerClass = options.samplesPerClass ?? 50;
-  const timeout = options.timeout ?? 60_000;
   const batchSize = options.batchSize ?? samplesPerClass;
   const maxConcurrency = options.maxConcurrency;
   const namespaceAliases = options.namespaceAliases ?? [];
@@ -138,7 +131,6 @@ export async function shaclSampleStages(
         ),
         executors: new SparqlConstructExecutor({
           query: buildSampleQuery(shape),
-          timeout: new ConstantTimeoutPolicy(timeout),
         }),
         batchSize,
         maxConcurrency,

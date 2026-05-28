@@ -611,24 +611,24 @@ describe('SparqlItemSelector', () => {
       );
     });
 
-    it('falls back to the selector-level policy when select() omits one', async () => {
+    it('uses a default policy when select() omits one', async () => {
       const mockFetcher = {
         fetchBindings: vi.fn().mockImplementation(() => bindingsStream([])),
       };
 
-      const policy = recordingPolicy();
       const selector = new SparqlItemSelector({
         query,
         fetcher: mockFetcher as never,
-        timeout: policy,
       });
 
-      for await (const _row of selector.select(distribution, 10)) {
-        // consume
+      // No policy supplied at construction or per call — pagination still
+      // works against the module-level default policy.
+      const rows: VariableBindings[] = [];
+      for await (const row of selector.select(distribution, 10)) {
+        rows.push(row);
       }
-
-      expect(policy.beforeRequest).toHaveBeenCalledTimes(1);
-      expect(policy.afterRequest).toHaveBeenCalledTimes(1);
+      expect(rows).toHaveLength(0);
+      expect(mockFetcher.fetchBindings).toHaveBeenCalledTimes(1);
     });
   });
 });
