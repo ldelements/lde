@@ -81,14 +81,19 @@ export interface SparqlConstructExecutorOptions {
   /**
    * Optional custom SparqlEndpointFetcher instance.
    *
-   * When supplied, the executor uses this fetcher for every attempt. The
-   * per-attempt timeout from the policy is still applied via an
-   * {@link AbortSignal} on the underlying fetch (provided the supplied
-   * fetcher honours `init.signal`).
+   * When supplied, the executor uses this fetcher as-is for every attempt
+   * — the per-attempt timeout from the {@link TimeoutPolicy} is **not**
+   * enforced (the supplied fetcher’s own `timeout` governs). Policy
+   * `beforeRequest`/`afterRequest` hooks still fire so outcome
+   * classification works, but adaptive tightening cannot apply.
    *
    * When omitted, the executor builds a fresh
    * {@link SparqlEndpointFetcher} per attempt with the per-attempt timeout
    * baked in.
+   *
+   * This option is intended for tests (mocking `fetchTriples`) and
+   * advanced cases that need full control of the fetcher. Most callers
+   * should leave it unset.
    */
   fetcher?: SparqlEndpointFetcher;
 
@@ -269,12 +274,12 @@ export class SparqlConstructExecutor implements Executor {
   }
 
   /**
-   * Pick the fetcher to use for a single attempt. When a user-supplied
-   * fetcher is configured, it is used as-is — the policy timeout is still
-   * applied if the user's underlying fetch honours `init.signal`, since
-   * {@link SparqlEndpointFetcher} merges its own timeout signal with any
-   * caller-supplied one only via construction. We therefore wrap the
-   * user's fetcher only when no custom fetcher was provided.
+   * Pick the fetcher to use for a single attempt. A user-supplied fetcher
+   * is used as-is and its own timeout governs the request; the per-attempt
+   * policy budget is bypassed in that case (see the JSDoc on
+   * {@link SparqlConstructExecutorOptions.fetcher}). Otherwise a fresh
+   * {@link SparqlEndpointFetcher} is constructed per attempt with the
+   * policy-supplied timeout baked in.
    */
   private fetcherForAttempt(timeoutMs: number): SparqlEndpointFetcher {
     if (this.userFetcher) return this.userFetcher;

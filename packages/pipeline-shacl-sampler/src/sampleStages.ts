@@ -146,7 +146,10 @@ function subjectSelector(
 ): ItemSelector {
   assertSafeIri(targetClass.value);
   return {
-    select(distribution, batchSize) {
+    // Forward `options` so the Pipeline’s per-dataset TimeoutPolicy
+    // reaches the inner SparqlItemSelector — without this the adaptive
+    // budget is silently bypassed for subject selection.
+    select(distribution, batchSize, options) {
       const query = buildSubjectSelectorQuery({
         targetClass,
         subjectFilter: distribution.subjectFilter,
@@ -156,7 +159,7 @@ function subjectSelector(
       return new SparqlItemSelector({
         query,
         maxResults: limit,
-      }).select(distribution, batchSize);
+      }).select(distribution, batchSize, options);
     },
   };
 }

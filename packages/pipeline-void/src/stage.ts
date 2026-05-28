@@ -88,7 +88,10 @@ async function createVoidStage(
 
 function classSelector(): ItemSelector {
   return {
-    select: (distribution, batchSize) => {
+    // Forward `options` so the Pipeline’s per-dataset TimeoutPolicy
+    // reaches the inner SparqlItemSelector — without this the adaptive
+    // budget is silently bypassed for class selection.
+    select: (distribution, batchSize, options) => {
       const subjectFilter = distribution.subjectFilter ?? '';
       let fromClause = '';
       if (distribution.namedGraph) {
@@ -104,7 +107,7 @@ function classSelector(): ItemSelector {
 
       return new SparqlItemSelector({
         query: selectorQuery,
-      }).select(distribution, batchSize);
+      }).select(distribution, batchSize, options);
     },
   };
 }
