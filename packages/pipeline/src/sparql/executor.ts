@@ -13,6 +13,18 @@ import pRetry from 'p-retry';
 import { quadToStringQuad } from 'rdf-string';
 import { withDefaultGraph } from './graph.js';
 import { injectValues } from './values.js';
+import {
+  ConstantTimeoutPolicy,
+  type TimeoutOutcome,
+  type TimeoutPolicy,
+} from './timeoutPolicy.js';
+
+/**
+ * Fallback policy when no per-call `TimeoutPolicy` is supplied via
+ * {@link ExecuteOptions.timeout}. Pipeline always supplies one, so this only
+ * matters when the executor is driven directly (without a Pipeline).
+ */
+const defaultTimeoutPolicy: TimeoutPolicy = new ConstantTimeoutPolicy(300_000);
 
 /**
  * An executor could not run because the dataset lacks a supported distribution.
@@ -30,6 +42,17 @@ export interface ExecuteOptions {
    * When non-empty, a VALUES block is prepended to the WHERE clause.
    */
   bindings?: VariableBindings[];
+
+  /**
+   * Per-call {@link TimeoutPolicy}. When supplied, the executor calls
+   * {@link TimeoutPolicy.beforeRequest} once per attempt (including
+   * retries), installs an {@link AbortSignal} with the returned budget,
+   * and reports the outcome via {@link TimeoutPolicy.afterRequest}.
+   *
+   * Overrides the executor-level policy passed at construction time.
+   * Pipeline runners use this to thread the per-dataset policy through.
+   */
+  timeout?: TimeoutPolicy;
 }
 
 export interface Executor {
@@ -50,12 +73,6 @@ export interface SparqlConstructExecutorOptions {
   query: string;
 
   /**
-   * Optional timeout for SPARQL queries in milliseconds.
-   * @default 300000 (5 minutes)
-   */
-  timeout?: number;
-
-  /**
    * Number of retries for transient errors (network failures and HTTP 502/503/504).
    * @default 3
    */
@@ -63,6 +80,20 @@ export interface SparqlConstructExecutorOptions {
 
   /**
    * Optional custom SparqlEndpointFetcher instance.
+   *
+   * When supplied, the executor uses this fetcher as-is for every attempt
+   * — the per-attempt timeout from the {@link TimeoutPolicy} is **not**
+   * enforced (the supplied fetcher’s own `timeout` governs). Policy
+   * `beforeRequest`/`afterRequest` hooks still fire so outcome
+   * classification works, but adaptive tightening cannot apply.
+   *
+   * When omitted, the executor builds a fresh
+   * {@link SparqlEndpointFetcher} per attempt with the per-attempt timeout
+   * baked in.
+   *
+   * This option is intended for tests (mocking `fetchTriples`) and
+   * advanced cases that need full control of the fetcher. Most callers
+   * should leave it unset.
    */
   fetcher?: SparqlEndpointFetcher;
 
@@ -126,7 +157,7 @@ export interface SparqlConstructExecutorOptions {
 export class SparqlConstructExecutor implements Executor {
   private readonly rawQuery: string;
   private readonly preParsed?: QueryConstruct;
-  private readonly fetcher: SparqlEndpointFetcher;
+  private readonly userFetcher?: SparqlEndpointFetcher;
   private readonly retries: number;
   private readonly lineBuffer: boolean;
   private readonly deduplicate: boolean;
@@ -146,11 +177,7 @@ export class SparqlConstructExecutor implements Executor {
       this.preParsed = parsed as QueryConstruct;
     }
 
-    this.fetcher =
-      options.fetcher ??
-      new SparqlEndpointFetcher({
-        timeout: options.timeout ?? 300_000,
-      });
+    this.userFetcher = options.fetcher;
   }
 
   /**
@@ -196,8 +223,10 @@ export class SparqlConstructExecutor implements Executor {
     assertSafeIri(dataset.iri.toString());
     query = query.replaceAll('?dataset', `<${dataset.iri}>`);
 
+    const policy = options?.timeout ?? defaultTimeoutPolicy;
+
     const quads = await pRetry(
-      () => this.fetchQuads(endpoint.toString(), query),
+      () => this.fetchQuadsWithPolicy(endpoint, query, policy),
       {
         retries: this.retries,
         shouldRetry: ({ error }) => isTransientError(error),
@@ -208,24 +237,74 @@ export class SparqlConstructExecutor implements Executor {
   }
 
   /**
+   * Run a single attempt against the endpoint with a per-call abort
+   * signal derived from {@link TimeoutPolicy.beforeRequest}. Reports the
+   * outcome via {@link TimeoutPolicy.afterRequest} regardless of whether
+   * the attempt resolved or threw.
+   */
+  private async fetchQuadsWithPolicy(
+    endpointUrl: URL,
+    query: string,
+    policy: TimeoutPolicy,
+  ): Promise<AsyncIterable<Quad>> {
+    const timeoutMs = policy.beforeRequest({ endpoint: endpointUrl });
+    const fetcher = this.fetcherForAttempt(timeoutMs);
+    const start = Date.now();
+    try {
+      const quads = await this.fetchQuads(
+        fetcher,
+        endpointUrl.toString(),
+        query,
+      );
+      policy.afterRequest({
+        endpoint: endpointUrl,
+        outcome: 'ok',
+        durationMs: Date.now() - start,
+      });
+      return quads;
+    } catch (error) {
+      policy.afterRequest({
+        endpoint: endpointUrl,
+        outcome: classifyOutcome(error),
+        durationMs: Date.now() - start,
+        error,
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Pick the fetcher to use for a single attempt. A user-supplied fetcher
+   * is used as-is and its own timeout governs the request; the per-attempt
+   * policy budget is bypassed in that case (see the JSDoc on
+   * {@link SparqlConstructExecutorOptions.fetcher}). Otherwise a fresh
+   * {@link SparqlEndpointFetcher} is constructed per attempt with the
+   * policy-supplied timeout baked in.
+   */
+  private fetcherForAttempt(timeoutMs: number): SparqlEndpointFetcher {
+    if (this.userFetcher) return this.userFetcher;
+    return new SparqlEndpointFetcher({ timeout: timeoutMs });
+  }
+
+  /**
    * Fetch quads from the endpoint, optionally line-buffering the response
    * stream before it reaches the N3 parser to work around
    * {@link https://github.com/rdfjs/N3.js/issues/578 | N3.js#578}.
    */
   private async fetchQuads(
+    fetcher: SparqlEndpointFetcher,
     endpoint: string,
     query: string,
   ): Promise<AsyncIterable<Quad>> {
     if (!this.lineBuffer) {
-      return this.fetcher.fetchTriples(endpoint, query);
+      return fetcher.fetchTriples(endpoint, query);
     }
 
-    const [contentType, , responseStream] =
-      await this.fetcher.fetchRawStream(
-        endpoint,
-        query,
-        SparqlEndpointFetcher.CONTENTTYPE_TURTLE,
-      );
+    const [contentType, , responseStream] = await fetcher.fetchRawStream(
+      endpoint,
+      query,
+      SparqlEndpointFetcher.CONTENTTYPE_TURTLE,
+    );
     return responseStream
       .pipe(new LineBufferTransform())
       .pipe(new StreamParser({ format: contentType }));
@@ -276,11 +355,7 @@ export async function readQueryFile(filename: string): Promise<string> {
 export class LineBufferTransform extends Transform {
   private remainder = '';
 
-  override _transform(
-    chunk: Buffer,
-    _encoding: string,
-    callback: () => void,
-  ) {
+  override _transform(chunk: Buffer, _encoding: string, callback: () => void) {
     const data = this.remainder + chunk.toString();
     const lines = data.split('\n');
     this.remainder = lines.pop() ?? '';
@@ -337,4 +412,33 @@ function isTransientError(error: unknown): boolean {
   if (!match) return false;
   const status = Number(match[1]);
   return status === 502 || status === 503 || status === 504;
+}
+
+/**
+ * Classify a fetch error for {@link TimeoutPolicy} reporting.
+ *
+ * - HTTP 504 → `'timeout'`: the upstream reported it ran out of time. This
+ *   is the exact failure mode adaptive timeouts exist to react to.
+ * - `AbortError` / `TimeoutError`: our own `AbortSignal.timeout()` fired.
+ * - Anything else → `'error'`: neutral with respect to tightening.
+ */
+function classifyOutcome(error: unknown): TimeoutOutcome {
+  if (error instanceof Error) {
+    if (error.name === 'AbortError' || error.name === 'TimeoutError') {
+      return 'timeout';
+    }
+    if (error.cause instanceof Error) {
+      if (
+        error.cause.name === 'AbortError' ||
+        error.cause.name === 'TimeoutError'
+      ) {
+        return 'timeout';
+      }
+    }
+    const match = error.message.match(transientStatusPattern);
+    if (match && Number(match[1]) === 504) {
+      return 'timeout';
+    }
+  }
+  return 'error';
 }

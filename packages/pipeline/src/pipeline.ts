@@ -24,6 +24,10 @@ import type {
   ProgressReporter,
 } from './progressReporter.js';
 import type { Validator } from './validator.js';
+import {
+  ConstantTimeoutPolicy,
+  type TimeoutPolicy,
+} from './sparql/timeoutPolicy.js';
 
 /** Plugin that hooks into pipeline lifecycle events. */
 export interface PipelinePlugin {
@@ -44,6 +48,17 @@ export interface PipelineOptions {
     outputDir: string;
   };
   reporter?: ProgressReporter;
+  /**
+   * Factory producing a fresh {@link TimeoutPolicy} per dataset. Defaults
+   * to {@link constantTimeoutPolicy}`(300_000)` so existing call sites
+   * keep today’s 5-minute fixed budget.
+   *
+   * Use {@link adaptiveTimeoutPolicy} to fast-fail stages on endpoints
+   * that have shown a run of consecutive timeouts. State is per
+   * {@link TimeoutPolicy} instance, and the Pipeline invokes the factory
+   * once per dataset so state resets between datasets.
+   */
+  timeout?: () => TimeoutPolicy;
 }
 
 /**
@@ -132,6 +147,7 @@ export class Pipeline {
   private readonly distributionResolver: DistributionResolver;
   private readonly chaining?: PipelineOptions['chaining'];
   private readonly reporter?: ProgressReporter;
+  private readonly timeoutFactory: () => TimeoutPolicy;
 
   constructor(options: PipelineOptions) {
     const hasSubStages = options.stages.some(
@@ -163,6 +179,8 @@ export class Pipeline {
       options.distributionResolver ?? new SparqlDistributionResolver();
     this.chaining = options.chaining;
     this.reporter = options.reporter;
+    this.timeoutFactory =
+      options.timeout ?? (() => new ConstantTimeoutPolicy(300_000));
   }
 
   async run(): Promise<void> {
@@ -187,6 +205,12 @@ export class Pipeline {
 
   private async processDataset(dataset: Dataset): Promise<void> {
     this.reporter?.datasetStart?.(dataset);
+
+    const timeout: TimeoutPolicy = this.timeoutFactory();
+    const unsubscribe = timeout.subscribe?.({
+      onTighten: (event) => this.reporter?.timeoutTightened?.(event),
+      onRelax: (event) => this.reporter?.timeoutRelaxed?.(event),
+    });
 
     let resolved;
     try {
@@ -228,9 +252,15 @@ export class Pipeline {
       for (const stage of this.stages) {
         try {
           if (stage.stages.length > 0) {
-            await this.runChain(dataset, resolved.distribution, stage);
+            await this.runChain(dataset, resolved.distribution, stage, timeout);
           } else {
-            await this.runStage(dataset, resolved.distribution, stage);
+            await this.runStage(
+              dataset,
+              resolved.distribution,
+              stage,
+              this.writer,
+              timeout,
+            );
           }
         } catch (error) {
           this.reporter?.stageFailed?.(
@@ -241,6 +271,7 @@ export class Pipeline {
       }
     } finally {
       await this.distributionResolver.cleanup?.();
+      unsubscribe?.();
     }
 
     await this.writer.flush?.(dataset);
@@ -279,6 +310,7 @@ export class Pipeline {
     distribution: Distribution,
     stage: Stage,
     writer: Writer = this.writer,
+    timeout?: TimeoutPolicy,
   ): Promise<boolean> {
     this.reporter?.stageStart?.(stage.name);
     const stageStart = Date.now();
@@ -298,6 +330,7 @@ export class Pipeline {
           heapUsedBytes: stageMemory.heapUsed,
         });
       },
+      timeout,
     });
 
     if (result instanceof NotSupported) {
@@ -320,8 +353,15 @@ export class Pipeline {
     distribution: Distribution,
     stage: Stage,
     writer: Writer,
+    timeout?: TimeoutPolicy,
   ): Promise<void> {
-    const supported = await this.runStage(dataset, distribution, stage, writer);
+    const supported = await this.runStage(
+      dataset,
+      distribution,
+      stage,
+      writer,
+      timeout,
+    );
     if (!supported) {
       throw new Error(
         `Stage '${stage.name}' returned NotSupported in chained mode`,
@@ -333,6 +373,7 @@ export class Pipeline {
     dataset: Dataset,
     distribution: Distribution,
     stage: Stage,
+    timeout?: TimeoutPolicy,
   ): Promise<void> {
     const { stageOutputResolver, outputDir } = this.chaining!;
     const outputFiles: string[] = [];
@@ -344,7 +385,13 @@ export class Pipeline {
         format: 'n-triples',
       });
 
-      await this.runChainedStage(dataset, distribution, stage, parentWriter);
+      await this.runChainedStage(
+        dataset,
+        distribution,
+        stage,
+        parentWriter,
+        timeout,
+      );
       outputFiles.push(parentWriter.getOutputPath(dataset));
 
       // 2. Chain through children.
@@ -363,6 +410,7 @@ export class Pipeline {
           currentDistribution,
           child,
           childWriter,
+          timeout,
         );
         outputFiles.push(childWriter.getOutputPath(dataset));
 

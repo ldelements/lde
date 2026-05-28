@@ -51,11 +51,6 @@ export interface ShaclSampleStagesOptions {
    */
   samplesPerClass?: number;
   /**
-   * SPARQL query timeout in milliseconds.
-   * @default 60000
-   */
-  timeout?: number;
-  /**
    * Maximum number of sampled subjects per executor call. Defaults to
    * {@link samplesPerClass} so the whole sample fits in one CONSTRUCT
    * round-trip; lower to spread work across multiple parallel queries.
@@ -111,7 +106,6 @@ export async function shaclSampleStages(
   options: ShaclSampleStagesOptions,
 ): Promise<Stage[]> {
   const samplesPerClass = options.samplesPerClass ?? 50;
-  const timeout = options.timeout ?? 60_000;
   const batchSize = options.batchSize ?? samplesPerClass;
   const maxConcurrency = options.maxConcurrency;
   const namespaceAliases = options.namespaceAliases ?? [];
@@ -137,7 +131,6 @@ export async function shaclSampleStages(
         ),
         executors: new SparqlConstructExecutor({
           query: buildSampleQuery(shape),
-          timeout,
         }),
         batchSize,
         maxConcurrency,
@@ -153,7 +146,10 @@ function subjectSelector(
 ): ItemSelector {
   assertSafeIri(targetClass.value);
   return {
-    select(distribution, batchSize) {
+    // Forward `options` so the Pipeline’s per-dataset TimeoutPolicy
+    // reaches the inner SparqlItemSelector — without this the adaptive
+    // budget is silently bypassed for subject selection.
+    select(distribution, batchSize, options) {
       const query = buildSubjectSelectorQuery({
         targetClass,
         subjectFilter: distribution.subjectFilter,
@@ -163,7 +159,7 @@ function subjectSelector(
       return new SparqlItemSelector({
         query,
         maxResults: limit,
-      }).select(distribution, batchSize);
+      }).select(distribution, batchSize, options);
     },
   };
 }

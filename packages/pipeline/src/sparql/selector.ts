@@ -8,8 +8,22 @@ import {
   type QuerySelect,
   type TermVariable,
 } from '@traqula/rules-sparql-1-1';
-import type { ItemSelector } from '../stage.js';
+import type { ItemSelector, SelectOptions } from '../stage.js';
 import type { VariableBindings } from './executor.js';
+import {
+  ConstantTimeoutPolicy,
+  type TimeoutOutcome,
+  type TimeoutPolicy,
+} from './timeoutPolicy.js';
+
+const transientStatusPattern = /HTTP status (\d+)/;
+
+/**
+ * Fallback policy when no per-call `TimeoutPolicy` is supplied via
+ * {@link SelectOptions.timeout}. Pipeline always supplies one, so this only
+ * matters when the selector is driven directly (without a Pipeline).
+ */
+const defaultTimeoutPolicy: TimeoutPolicy = new ConstantTimeoutPolicy(300_000);
 
 const parser = new Parser();
 const generator = new Generator();
@@ -60,7 +74,7 @@ export class SparqlItemSelector implements ItemSelector {
   private readonly parsed: QuerySelect;
   private readonly queryLimit?: number;
   private readonly maxResults?: number;
-  private readonly fetcher: SparqlEndpointFetcher;
+  private readonly userFetcher?: SparqlEndpointFetcher;
 
   constructor(options: SparqlItemSelectorOptions) {
     const parsed = parser.parse(options.query);
@@ -78,16 +92,18 @@ export class SparqlItemSelector implements ItemSelector {
     this.parsed = parsed as QuerySelect;
     this.queryLimit = this.parsed.solutionModifiers.limitOffset?.limit;
     this.maxResults = options.maxResults;
-    this.fetcher = options.fetcher ?? new SparqlEndpointFetcher();
+    this.userFetcher = options.fetcher;
   }
 
   async *select(
     distribution: Distribution,
     batchSize?: number,
+    options?: SelectOptions,
   ): AsyncIterableIterator<VariableBindings> {
     if (this.maxResults === 0) return;
     const basePageSize = this.queryLimit ?? batchSize ?? 10;
     const endpoint = distribution.accessUrl!;
+    const policy = options?.timeout ?? defaultTimeoutPolicy;
     let offset = 0;
     let totalYielded = 0;
 
@@ -108,10 +124,11 @@ export class SparqlItemSelector implements ItemSelector {
       );
       const paginatedQuery = generator.generate(this.parsed);
 
-      const stream = (await this.fetcher.fetchBindings(
-        endpoint.toString(),
+      const stream = await this.fetchBindingsWithPolicy(
+        endpoint,
         paginatedQuery,
-      )) as AsyncIterable<Record<string, Term>>;
+        policy,
+      );
 
       let count = 0;
       for await (const record of stream) {
@@ -141,6 +158,63 @@ export class SparqlItemSelector implements ItemSelector {
       offset += count;
     }
   }
+
+  /**
+   * Run a single SPARQL request against the endpoint, threading the
+   * per-call timeout from {@link TimeoutPolicy.beforeRequest} and
+   * reporting the outcome to {@link TimeoutPolicy.afterRequest}.
+   */
+  private async fetchBindingsWithPolicy(
+    endpoint: URL,
+    paginatedQuery: string,
+    policy: TimeoutPolicy,
+  ): Promise<AsyncIterable<Record<string, Term>>> {
+    const timeoutMs = policy.beforeRequest({ endpoint });
+    const fetcher =
+      this.userFetcher ?? new SparqlEndpointFetcher({ timeout: timeoutMs });
+    const start = Date.now();
+    try {
+      const stream = (await fetcher.fetchBindings(
+        endpoint.toString(),
+        paginatedQuery,
+      )) as AsyncIterable<Record<string, Term>>;
+      policy.afterRequest({
+        endpoint,
+        outcome: 'ok',
+        durationMs: Date.now() - start,
+      });
+      return stream;
+    } catch (error) {
+      policy.afterRequest({
+        endpoint,
+        outcome: classifyOutcome(error),
+        durationMs: Date.now() - start,
+        error,
+      });
+      throw error;
+    }
+  }
+}
+
+function classifyOutcome(error: unknown): TimeoutOutcome {
+  if (error instanceof Error) {
+    if (error.name === 'AbortError' || error.name === 'TimeoutError') {
+      return 'timeout';
+    }
+    if (error.cause instanceof Error) {
+      if (
+        error.cause.name === 'AbortError' ||
+        error.cause.name === 'TimeoutError'
+      ) {
+        return 'timeout';
+      }
+    }
+    const match = error.message.match(transientStatusPattern);
+    if (match && Number(match[1]) === 504) {
+      return 'timeout';
+    }
+  }
+  return 'error';
 }
 
 function isVariableTerm(v: object): v is TermVariable {
