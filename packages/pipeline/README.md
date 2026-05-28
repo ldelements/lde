@@ -218,9 +218,9 @@ import { adaptiveTimeoutPolicy } from '@lde/pipeline';
 new Pipeline({
   // …
   timeoutPolicy: adaptiveTimeoutPolicy({
-    default: 300_000, // 5 min while the endpoint is healthy
-    short: 10_000, //   10 s once it’s flipped to tightened
-    threshold: 2, //    flip after 2 consecutive timeouts
+    defaultMs: 300_000, //         5 min while the endpoint is healthy
+    tightenedMs: 10_000, //        10 s once the endpoint is flipped to tightened
+    tightenAfterTimeouts: 2, //    flip after 2 consecutive timeouts
   }),
 });
 ```

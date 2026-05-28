@@ -45,40 +45,40 @@ describe('constantTimeoutPolicy factory', () => {
 
 describe('AdaptiveTimeoutPolicy', () => {
   describe('construction-time validation', () => {
-    it('throws when `short` >= `default`', () => {
+    it('throws when `tightenedMs` >= `defaultMs`', () => {
       expect(
         () =>
           new AdaptiveTimeoutPolicy({
-            default: 1000,
-            short: 1000,
-            threshold: 2,
+            defaultMs: 1000,
+            tightenedMs: 1000,
+            tightenAfterTimeouts: 2,
           }),
       ).toThrow();
       expect(
         () =>
           new AdaptiveTimeoutPolicy({
-            default: 1000,
-            short: 2000,
-            threshold: 2,
+            defaultMs: 1000,
+            tightenedMs: 2000,
+            tightenAfterTimeouts: 2,
           }),
       ).toThrow();
     });
 
-    it('throws when `threshold` < 1', () => {
+    it('throws when `tightenAfterTimeouts` < 1', () => {
       expect(
         () =>
           new AdaptiveTimeoutPolicy({
-            default: 1000,
-            short: 100,
-            threshold: 0,
+            defaultMs: 1000,
+            tightenedMs: 100,
+            tightenAfterTimeouts: 0,
           }),
       ).toThrow();
       expect(
         () =>
           new AdaptiveTimeoutPolicy({
-            default: 1000,
-            short: 100,
-            threshold: -1,
+            defaultMs: 1000,
+            tightenedMs: 100,
+            tightenAfterTimeouts: -1,
           }),
       ).toThrow();
     });
@@ -87,9 +87,9 @@ describe('AdaptiveTimeoutPolicy', () => {
       expect(
         () =>
           new AdaptiveTimeoutPolicy({
-            default: 0,
-            short: -1,
-            threshold: 1,
+            defaultMs: 0,
+            tightenedMs: -1,
+            tightenAfterTimeouts: 1,
           }),
       ).toThrow();
     });
@@ -98,38 +98,18 @@ describe('AdaptiveTimeoutPolicy', () => {
   describe('state machine', () => {
     it('returns default before any events', () => {
       const policy = new AdaptiveTimeoutPolicy({
-        default: 1000,
-        short: 100,
-        threshold: 2,
+        defaultMs: 1000,
+        tightenedMs: 100,
+        tightenAfterTimeouts: 2,
       });
       expect(policy.beforeRequest({ endpoint: endpointA })).toBe(1000);
     });
 
-    it('tightens after exactly threshold=1 consecutive timeouts', () => {
+    it('tightens after exactly tightenAfterTimeouts=1 consecutive timeouts', () => {
       const policy = new AdaptiveTimeoutPolicy({
-        default: 1000,
-        short: 100,
-        threshold: 1,
-      });
-      expect(policy.beforeRequest({ endpoint: endpointA })).toBe(1000);
-      policy.afterRequest({
-        endpoint: endpointA,
-        outcome: 'timeout',
-        durationMs: 1000,
-      });
-      expect(policy.beforeRequest({ endpoint: endpointA })).toBe(100);
-    });
-
-    it('tightens after exactly threshold=2 consecutive timeouts', () => {
-      const policy = new AdaptiveTimeoutPolicy({
-        default: 1000,
-        short: 100,
-        threshold: 2,
-      });
-      policy.afterRequest({
-        endpoint: endpointA,
-        outcome: 'timeout',
-        durationMs: 1000,
+        defaultMs: 1000,
+        tightenedMs: 100,
+        tightenAfterTimeouts: 1,
       });
       expect(policy.beforeRequest({ endpoint: endpointA })).toBe(1000);
       policy.afterRequest({
@@ -140,11 +120,31 @@ describe('AdaptiveTimeoutPolicy', () => {
       expect(policy.beforeRequest({ endpoint: endpointA })).toBe(100);
     });
 
-    it('tightens after exactly threshold=3 consecutive timeouts', () => {
+    it('tightens after exactly tightenAfterTimeouts=2 consecutive timeouts', () => {
       const policy = new AdaptiveTimeoutPolicy({
-        default: 1000,
-        short: 100,
-        threshold: 3,
+        defaultMs: 1000,
+        tightenedMs: 100,
+        tightenAfterTimeouts: 2,
+      });
+      policy.afterRequest({
+        endpoint: endpointA,
+        outcome: 'timeout',
+        durationMs: 1000,
+      });
+      expect(policy.beforeRequest({ endpoint: endpointA })).toBe(1000);
+      policy.afterRequest({
+        endpoint: endpointA,
+        outcome: 'timeout',
+        durationMs: 1000,
+      });
+      expect(policy.beforeRequest({ endpoint: endpointA })).toBe(100);
+    });
+
+    it('tightens after exactly tightenAfterTimeouts=3 consecutive timeouts', () => {
+      const policy = new AdaptiveTimeoutPolicy({
+        defaultMs: 1000,
+        tightenedMs: 100,
+        tightenAfterTimeouts: 3,
       });
       policy.afterRequest({
         endpoint: endpointA,
@@ -167,9 +167,9 @@ describe('AdaptiveTimeoutPolicy', () => {
 
     it('stays tightened on further timeouts', () => {
       const policy = new AdaptiveTimeoutPolicy({
-        default: 1000,
-        short: 100,
-        threshold: 1,
+        defaultMs: 1000,
+        tightenedMs: 100,
+        tightenAfterTimeouts: 1,
       });
       for (let i = 0; i < 5; i++) {
         policy.afterRequest({
@@ -183,9 +183,9 @@ describe('AdaptiveTimeoutPolicy', () => {
 
     it('relaxes to default on a single ok', () => {
       const policy = new AdaptiveTimeoutPolicy({
-        default: 1000,
-        short: 100,
-        threshold: 1,
+        defaultMs: 1000,
+        tightenedMs: 100,
+        tightenAfterTimeouts: 1,
       });
       policy.afterRequest({
         endpoint: endpointA,
@@ -203,9 +203,9 @@ describe('AdaptiveTimeoutPolicy', () => {
 
     it('resets the counter on ok so subsequent timeouts must accumulate again', () => {
       const policy = new AdaptiveTimeoutPolicy({
-        default: 1000,
-        short: 100,
-        threshold: 2,
+        defaultMs: 1000,
+        tightenedMs: 100,
+        tightenAfterTimeouts: 2,
       });
       policy.afterRequest({
         endpoint: endpointA,
@@ -227,9 +227,9 @@ describe('AdaptiveTimeoutPolicy', () => {
 
     it('treats `error` outcomes as neutral (neither tighten nor relax)', () => {
       const policy = new AdaptiveTimeoutPolicy({
-        default: 1000,
-        short: 100,
-        threshold: 1,
+        defaultMs: 1000,
+        tightenedMs: 100,
+        tightenAfterTimeouts: 1,
       });
       policy.afterRequest({
         endpoint: endpointA,
@@ -254,9 +254,9 @@ describe('AdaptiveTimeoutPolicy', () => {
 
     it('isolates state per endpoint', () => {
       const policy = new AdaptiveTimeoutPolicy({
-        default: 1000,
-        short: 100,
-        threshold: 1,
+        defaultMs: 1000,
+        tightenedMs: 100,
+        tightenAfterTimeouts: 1,
       });
       policy.afterRequest({
         endpoint: endpointA,
@@ -271,9 +271,9 @@ describe('AdaptiveTimeoutPolicy', () => {
   describe('transition events', () => {
     it('emits onTighten when state flips to tightened', () => {
       const policy = new AdaptiveTimeoutPolicy({
-        default: 1000,
-        short: 100,
-        threshold: 2,
+        defaultMs: 1000,
+        tightenedMs: 100,
+        tightenAfterTimeouts: 2,
       });
       const onTighten = vi.fn();
       const onRelax = vi.fn();
@@ -303,9 +303,9 @@ describe('AdaptiveTimeoutPolicy', () => {
 
     it('does not re-emit onTighten while already tightened', () => {
       const policy = new AdaptiveTimeoutPolicy({
-        default: 1000,
-        short: 100,
-        threshold: 1,
+        defaultMs: 1000,
+        tightenedMs: 100,
+        tightenAfterTimeouts: 1,
       });
       const onTighten = vi.fn();
       policy.subscribe({ onTighten });
@@ -329,9 +329,9 @@ describe('AdaptiveTimeoutPolicy', () => {
 
     it('emits onRelax when an ok arrives in tightened state', () => {
       const policy = new AdaptiveTimeoutPolicy({
-        default: 1000,
-        short: 100,
-        threshold: 1,
+        defaultMs: 1000,
+        tightenedMs: 100,
+        tightenAfterTimeouts: 1,
       });
       const onRelax = vi.fn();
       policy.subscribe({ onRelax });
@@ -357,9 +357,9 @@ describe('AdaptiveTimeoutPolicy', () => {
 
     it('does not emit onRelax when ok arrives in healthy state', () => {
       const policy = new AdaptiveTimeoutPolicy({
-        default: 1000,
-        short: 100,
-        threshold: 1,
+        defaultMs: 1000,
+        tightenedMs: 100,
+        tightenAfterTimeouts: 1,
       });
       const onRelax = vi.fn();
       policy.subscribe({ onRelax });
@@ -373,9 +373,9 @@ describe('AdaptiveTimeoutPolicy', () => {
 
     it('unsubscribe stops further notifications', () => {
       const policy = new AdaptiveTimeoutPolicy({
-        default: 1000,
-        short: 100,
-        threshold: 1,
+        defaultMs: 1000,
+        tightenedMs: 100,
+        tightenAfterTimeouts: 1,
       });
       const onTighten = vi.fn();
       const unsubscribe = policy.subscribe({ onTighten });
@@ -393,9 +393,9 @@ describe('AdaptiveTimeoutPolicy', () => {
 describe('adaptiveTimeoutPolicy factory', () => {
   it('returns a factory that builds independent AdaptiveTimeoutPolicy instances', () => {
     const factory = adaptiveTimeoutPolicy({
-      default: 1000,
-      short: 100,
-      threshold: 2,
+      defaultMs: 1000,
+      tightenedMs: 100,
+      tightenAfterTimeouts: 2,
     });
     const a = factory();
     const b = factory();
@@ -405,9 +405,9 @@ describe('adaptiveTimeoutPolicy factory', () => {
 
   it('isolates state across factory invocations', () => {
     const factory = adaptiveTimeoutPolicy({
-      default: 1000,
-      short: 100,
-      threshold: 1,
+      defaultMs: 1000,
+      tightenedMs: 100,
+      tightenAfterTimeouts: 1,
     });
     const a = factory();
     a.afterRequest({

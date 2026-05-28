@@ -113,17 +113,17 @@ export class ConstantTimeoutPolicy implements TimeoutPolicy {
 /** Options for {@link AdaptiveTimeoutPolicy}. */
 export interface AdaptiveTimeoutPolicyOptions {
   /** Budget applied while the endpoint is healthy. Must be positive. */
-  default: number;
+  defaultMs: number;
   /**
-   * Budget applied after {@link threshold} consecutive timeouts.
-   * Must satisfy `short < default`.
+   * Budget applied after {@link tightenAfterTimeouts} consecutive timeouts.
+   * Must satisfy `tightenedMs < defaultMs`.
    */
-  short: number;
+  tightenedMs: number;
   /**
-   * Number of consecutive timeouts that triggers the switch to {@link short}.
-   * Must be an integer ≥ 1.
+   * Number of consecutive timeouts that flips an endpoint to the
+   * {@link tightenedMs} budget. Must be an integer ≥ 1.
    */
-  threshold: number;
+  tightenAfterTimeouts: number;
 }
 
 interface EndpointState {
@@ -146,9 +146,9 @@ interface EndpointState {
  * @example
  * ```ts
  * const factory = adaptiveTimeoutPolicy({
- *   default: 300_000,
- *   short: 10_000,
- *   threshold: 2,
+ *   defaultMs: 300_000,
+ *   tightenedMs: 10_000,
+ *   tightenAfterTimeouts: 2,
  * });
  * ```
  */
@@ -157,31 +157,34 @@ export class AdaptiveTimeoutPolicy implements TimeoutPolicy {
   private readonly observers = new Set<TimeoutPolicyObserver>();
 
   constructor(private readonly options: AdaptiveTimeoutPolicyOptions) {
-    if (!Number.isFinite(options.default) || options.default <= 0) {
+    if (!Number.isFinite(options.defaultMs) || options.defaultMs <= 0) {
       throw new Error(
-        `AdaptiveTimeoutPolicy: \`default\` must be a positive finite number, received ${options.default}`,
+        `AdaptiveTimeoutPolicy: \`defaultMs\` must be a positive finite number, received ${options.defaultMs}`,
       );
     }
-    if (!Number.isFinite(options.short) || options.short <= 0) {
+    if (!Number.isFinite(options.tightenedMs) || options.tightenedMs <= 0) {
       throw new Error(
-        `AdaptiveTimeoutPolicy: \`short\` must be a positive finite number, received ${options.short}`,
+        `AdaptiveTimeoutPolicy: \`tightenedMs\` must be a positive finite number, received ${options.tightenedMs}`,
       );
     }
-    if (!(options.short < options.default)) {
+    if (!(options.tightenedMs < options.defaultMs)) {
       throw new Error(
-        `AdaptiveTimeoutPolicy: \`short\` (${options.short}) must be less than \`default\` (${options.default})`,
+        `AdaptiveTimeoutPolicy: \`tightenedMs\` (${options.tightenedMs}) must be less than \`defaultMs\` (${options.defaultMs})`,
       );
     }
-    if (!Number.isInteger(options.threshold) || options.threshold < 1) {
+    if (
+      !Number.isInteger(options.tightenAfterTimeouts) ||
+      options.tightenAfterTimeouts < 1
+    ) {
       throw new Error(
-        `AdaptiveTimeoutPolicy: \`threshold\` must be an integer ≥ 1, received ${options.threshold}`,
+        `AdaptiveTimeoutPolicy: \`tightenAfterTimeouts\` must be an integer ≥ 1, received ${options.tightenAfterTimeouts}`,
       );
     }
   }
 
   beforeRequest(context: BeforeRequestContext): number {
     const state = this.stateFor(context.endpoint);
-    return state.tightened ? this.options.short : this.options.default;
+    return state.tightened ? this.options.tightenedMs : this.options.defaultMs;
   }
 
   afterRequest(context: AfterRequestContext): void {
@@ -194,8 +197,8 @@ export class AdaptiveTimeoutPolicy implements TimeoutPolicy {
       if (wasTightened) {
         this.notify('relax', {
           endpoint: context.endpoint,
-          fromTimeoutMs: this.options.short,
-          toTimeoutMs: this.options.default,
+          fromTimeoutMs: this.options.tightenedMs,
+          toTimeoutMs: this.options.defaultMs,
           consecutiveTimeouts: priorCount,
         });
       }
@@ -205,13 +208,13 @@ export class AdaptiveTimeoutPolicy implements TimeoutPolicy {
       state.consecutiveTimeouts += 1;
       if (
         !state.tightened &&
-        state.consecutiveTimeouts >= this.options.threshold
+        state.consecutiveTimeouts >= this.options.tightenAfterTimeouts
       ) {
         state.tightened = true;
         this.notify('tighten', {
           endpoint: context.endpoint,
-          fromTimeoutMs: this.options.default,
-          toTimeoutMs: this.options.short,
+          fromTimeoutMs: this.options.defaultMs,
+          toTimeoutMs: this.options.tightenedMs,
           consecutiveTimeouts: state.consecutiveTimeouts,
         });
       }
@@ -257,7 +260,7 @@ export function constantTimeoutPolicy(
 ): () => ConstantTimeoutPolicy {
   // Validate eagerly so misconfiguration is caught at factory creation,
   // not deferred until the first dataset boundary.
-   
+
   new ConstantTimeoutPolicy(timeoutMs);
   return () => new ConstantTimeoutPolicy(timeoutMs);
 }
@@ -271,7 +274,7 @@ export function adaptiveTimeoutPolicy(
   options: AdaptiveTimeoutPolicyOptions,
 ): () => AdaptiveTimeoutPolicy {
   // Validate eagerly (see {@link constantTimeoutPolicy}).
-   
+
   new AdaptiveTimeoutPolicy(options);
   return () => new AdaptiveTimeoutPolicy(options);
 }
