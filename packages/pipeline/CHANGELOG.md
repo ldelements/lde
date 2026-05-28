@@ -1,3 +1,9 @@
+## 0.30.3 (2026-05-28)
+
+### 🚀 Features
+
+- **pipeline:** adaptive per-endpoint SPARQL timeouts ([#421](https://github.com/ldelements/lde/pull/421), [#419](https://github.com/ldelements/lde/issues/419))
+
 ## 0.30.2 (2026-05-27)
 
 ### 🧱 Updated Dependencies
