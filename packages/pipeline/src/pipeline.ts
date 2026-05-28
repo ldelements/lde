@@ -58,7 +58,7 @@ export interface PipelineOptions {
    * {@link TimeoutPolicy} instance, and the Pipeline invokes the factory
    * once per dataset so state resets between datasets.
    */
-  timeoutPolicy?: () => TimeoutPolicy;
+  timeout?: () => TimeoutPolicy;
 }
 
 /**
@@ -147,7 +147,7 @@ export class Pipeline {
   private readonly distributionResolver: DistributionResolver;
   private readonly chaining?: PipelineOptions['chaining'];
   private readonly reporter?: ProgressReporter;
-  private readonly timeoutPolicyFactory: () => TimeoutPolicy;
+  private readonly timeoutFactory: () => TimeoutPolicy;
 
   constructor(options: PipelineOptions) {
     const hasSubStages = options.stages.some(
@@ -179,8 +179,8 @@ export class Pipeline {
       options.distributionResolver ?? new SparqlDistributionResolver();
     this.chaining = options.chaining;
     this.reporter = options.reporter;
-    this.timeoutPolicyFactory =
-      options.timeoutPolicy ?? (() => new ConstantTimeoutPolicy(300_000));
+    this.timeoutFactory =
+      options.timeout ?? (() => new ConstantTimeoutPolicy(300_000));
   }
 
   async run(): Promise<void> {
@@ -206,8 +206,8 @@ export class Pipeline {
   private async processDataset(dataset: Dataset): Promise<void> {
     this.reporter?.datasetStart?.(dataset);
 
-    const timeoutPolicy = this.timeoutPolicyFactory();
-    const unsubscribe = timeoutPolicy.subscribe?.({
+    const timeout: TimeoutPolicy = this.timeoutFactory();
+    const unsubscribe = timeout.subscribe?.({
       onTighten: (event) => this.reporter?.timeoutTightened?.(event),
       onRelax: (event) => this.reporter?.timeoutRelaxed?.(event),
     });
@@ -252,19 +252,14 @@ export class Pipeline {
       for (const stage of this.stages) {
         try {
           if (stage.stages.length > 0) {
-            await this.runChain(
-              dataset,
-              resolved.distribution,
-              stage,
-              timeoutPolicy,
-            );
+            await this.runChain(dataset, resolved.distribution, stage, timeout);
           } else {
             await this.runStage(
               dataset,
               resolved.distribution,
               stage,
               this.writer,
-              timeoutPolicy,
+              timeout,
             );
           }
         } catch (error) {
@@ -315,7 +310,7 @@ export class Pipeline {
     distribution: Distribution,
     stage: Stage,
     writer: Writer = this.writer,
-    timeoutPolicy?: TimeoutPolicy,
+    timeout?: TimeoutPolicy,
   ): Promise<boolean> {
     this.reporter?.stageStart?.(stage.name);
     const stageStart = Date.now();
@@ -335,7 +330,7 @@ export class Pipeline {
           heapUsedBytes: stageMemory.heapUsed,
         });
       },
-      timeoutPolicy,
+      timeout,
     });
 
     if (result instanceof NotSupported) {
@@ -358,14 +353,14 @@ export class Pipeline {
     distribution: Distribution,
     stage: Stage,
     writer: Writer,
-    timeoutPolicy?: TimeoutPolicy,
+    timeout?: TimeoutPolicy,
   ): Promise<void> {
     const supported = await this.runStage(
       dataset,
       distribution,
       stage,
       writer,
-      timeoutPolicy,
+      timeout,
     );
     if (!supported) {
       throw new Error(
@@ -378,7 +373,7 @@ export class Pipeline {
     dataset: Dataset,
     distribution: Distribution,
     stage: Stage,
-    timeoutPolicy?: TimeoutPolicy,
+    timeout?: TimeoutPolicy,
   ): Promise<void> {
     const { stageOutputResolver, outputDir } = this.chaining!;
     const outputFiles: string[] = [];
@@ -395,7 +390,7 @@ export class Pipeline {
         distribution,
         stage,
         parentWriter,
-        timeoutPolicy,
+        timeout,
       );
       outputFiles.push(parentWriter.getOutputPath(dataset));
 
@@ -415,7 +410,7 @@ export class Pipeline {
           currentDistribution,
           child,
           childWriter,
-          timeoutPolicy,
+          timeout,
         );
         outputFiles.push(childWriter.getOutputPath(dataset));
 

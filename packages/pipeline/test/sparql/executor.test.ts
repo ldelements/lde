@@ -661,7 +661,7 @@ describe('SparqlConstructExecutor', () => {
 
       const distribution = makeDistribution();
       await executor.execute(makeDataset(distribution), distribution, {
-        timeoutPolicy: policy,
+        timeout: policy,
       });
 
       expect(policy.beforeRequest).toHaveBeenCalledTimes(1);
@@ -695,7 +695,7 @@ describe('SparqlConstructExecutor', () => {
 
       await expect(
         executor.execute(makeDataset(distribution), distribution, {
-          timeoutPolicy: policy,
+          timeout: policy,
         }),
       ).rejects.toThrow('504');
 
@@ -720,7 +720,7 @@ describe('SparqlConstructExecutor', () => {
 
       await expect(
         executor.execute(makeDataset(distribution), distribution, {
-          timeoutPolicy: policy,
+          timeout: policy,
         }),
       ).rejects.toThrow();
 
@@ -745,7 +745,7 @@ describe('SparqlConstructExecutor', () => {
 
       await expect(
         executor.execute(makeDataset(distribution), distribution, {
-          timeoutPolicy: policy,
+          timeout: policy,
         }),
       ).rejects.toThrow();
 
@@ -772,7 +772,7 @@ describe('SparqlConstructExecutor', () => {
 
       await expect(
         executor.execute(makeDataset(distribution), distribution, {
-          timeoutPolicy: policy,
+          timeout: policy,
         }),
       ).rejects.toThrow();
 
@@ -799,7 +799,7 @@ describe('SparqlConstructExecutor', () => {
       const distribution = makeDistribution();
 
       await executor.execute(makeDataset(distribution), distribution, {
-        timeoutPolicy: policy,
+        timeout: policy,
       });
 
       expect(policy.beforeRequest).toHaveBeenCalledTimes(2);
@@ -822,7 +822,7 @@ describe('SparqlConstructExecutor', () => {
       const executor = new SparqlConstructExecutor({
         query: 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }',
         fetcher,
-        timeoutPolicy: policy,
+        timeout: policy,
       });
       const distribution = makeDistribution();
 
@@ -864,7 +864,7 @@ describe('SparqlConstructExecutor', () => {
 
       await expect(
         executor.execute(makeDataset(distribution), distribution, {
-          timeoutPolicy: policy,
+          timeout: policy,
         }),
       ).rejects.toThrow();
 

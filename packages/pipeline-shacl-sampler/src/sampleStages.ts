@@ -138,7 +138,7 @@ export async function shaclSampleStages(
         ),
         executors: new SparqlConstructExecutor({
           query: buildSampleQuery(shape),
-          timeoutPolicy: new ConstantTimeoutPolicy(timeout),
+          timeout: new ConstantTimeoutPolicy(timeout),
         }),
         batchSize,
         maxConcurrency,

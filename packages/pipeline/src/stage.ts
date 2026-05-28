@@ -55,13 +55,13 @@ export interface RunOptions {
    * dataset), so a single policy instance covers all stages and child
    * stages within one dataset.
    */
-  timeoutPolicy?: TimeoutPolicy;
+  timeout?: TimeoutPolicy;
 }
 
 /** Options accepted by {@link ItemSelector.select}. */
 export interface SelectOptions {
   /** Per-call timeout policy. */
-  timeoutPolicy?: TimeoutPolicy;
+  timeout?: TimeoutPolicy;
 }
 
 export class Stage {
@@ -96,11 +96,11 @@ export class Stage {
     writer: Writer,
     options?: RunOptions,
   ): Promise<NotSupported | void> {
-    const timeoutPolicy = options?.timeoutPolicy;
+    const timeout = options?.timeout;
     if (this.itemSelector) {
       return this.runWithSelector(
         this.itemSelector.select(distribution, this.batchSize, {
-          timeoutPolicy,
+          timeout,
         }),
         dataset,
         distribution,
@@ -109,7 +109,7 @@ export class Stage {
       );
     }
 
-    const streams = await this.executeAll(dataset, distribution, timeoutPolicy);
+    const streams = await this.executeAll(dataset, distribution, timeout);
     if (streams instanceof NotSupported) {
       return streams;
     }
@@ -225,7 +225,7 @@ export class Stage {
                 this.executors.map(async (executor) => {
                   const result = await executor.execute(dataset, distribution, {
                     bindings,
-                    timeoutPolicy: options?.timeoutPolicy,
+                    timeout: options?.timeout,
                   });
                   if (result instanceof NotSupported) return [];
                   hasResults = true;
@@ -328,11 +328,11 @@ export class Stage {
   private async executeAll(
     dataset: Dataset,
     distribution: Distribution,
-    timeoutPolicy: TimeoutPolicy | undefined,
+    timeout: TimeoutPolicy | undefined,
   ): Promise<AsyncIterable<Quad>[] | NotSupported> {
     const results = await Promise.all(
       this.executors.map((executor) =>
-        executor.execute(dataset, distribution, { timeoutPolicy }),
+        executor.execute(dataset, distribution, { timeout }),
       ),
     );
 

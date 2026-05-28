@@ -1143,7 +1143,7 @@ describe('Pipeline', () => {
     });
   });
 
-  describe('timeoutPolicy', () => {
+  describe('timeout', () => {
     it('passes a TimeoutPolicy instance to each stage.run', async () => {
       const stage = makeStage('stage1');
 
@@ -1158,9 +1158,9 @@ describe('Pipeline', () => {
 
       const call = (stage.run as ReturnType<typeof vi.fn>).mock.calls[0];
       const options = call[3];
-      expect(options.timeoutPolicy).toBeDefined();
-      expect(typeof options.timeoutPolicy.beforeRequest).toBe('function');
-      expect(typeof options.timeoutPolicy.afterRequest).toBe('function');
+      expect(options.timeout).toBeDefined();
+      expect(typeof options.timeout.beforeRequest).toBe('function');
+      expect(typeof options.timeout.afterRequest).toBe('function');
     });
 
     it('invokes the factory once per dataset', async () => {
@@ -1177,7 +1177,7 @@ describe('Pipeline', () => {
         stages: [makeStage('stage1')],
         writers: writer,
         distributionResolver: makeResolver(makeResolvedDistribution()),
-        timeoutPolicy: factory,
+        timeout: factory,
       });
 
       await pipeline.run();
@@ -1205,14 +1205,14 @@ describe('Pipeline', () => {
         stages: [stage],
         writers: writer,
         distributionResolver: makeResolver(makeResolvedDistribution()),
-        timeoutPolicy: factory,
+        timeout: factory,
       });
 
       await pipeline.run();
 
       const runCalls = (stage.run as ReturnType<typeof vi.fn>).mock.calls;
-      expect(runCalls[0][3].timeoutPolicy).toBe(policies[0]);
-      expect(runCalls[1][3].timeoutPolicy).toBe(policies[1]);
+      expect(runCalls[0][3].timeout).toBe(policies[0]);
+      expect(runCalls[1][3].timeout).toBe(policies[1]);
       expect(policies[0]).not.toBe(policies[1]);
     });
 
@@ -1250,7 +1250,7 @@ describe('Pipeline', () => {
         stages: [makeStage('stage1')],
         writers: writer,
         distributionResolver: makeResolver(makeResolvedDistribution()),
-        timeoutPolicy: factory,
+        timeout: factory,
         reporter,
       });
 

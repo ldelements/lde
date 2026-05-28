@@ -81,9 +81,9 @@ export interface TimeoutTransitionEvent {
  * its budget for an endpoint. Both hooks are optional.
  */
 export interface TimeoutPolicyObserver {
-  /** Called when the policy starts using the short budget for an endpoint. */
+  /** Called when the policy flips an endpoint to the tightened budget. */
   onTighten?(event: TimeoutTransitionEvent): void;
-  /** Called when the policy returns to the default budget for an endpoint. */
+  /** Called when the policy relaxes an endpoint back to the default budget. */
   onRelax?(event: TimeoutTransitionEvent): void;
 }
 
@@ -133,9 +133,9 @@ interface EndpointState {
 }
 
 /**
- * Adaptive per-endpoint policy: after a configurable threshold of
- * consecutive timeouts on the same endpoint, subsequent requests use a
- * shorter budget so the pipeline fast-fails instead of waiting out the
+ * Adaptive per-endpoint policy: after {@link AdaptiveTimeoutPolicyOptions.tightenAfterTimeouts}
+ * consecutive timeouts on the same endpoint, subsequent requests use the
+ * tightened budget so the pipeline fast-fails instead of waiting out the
  * full default budget. A single successful request relaxes the endpoint
  * back to the default budget.
  *
@@ -253,7 +253,7 @@ export class AdaptiveTimeoutPolicy implements TimeoutPolicy {
 
 /**
  * Factory returning a fresh {@link ConstantTimeoutPolicy} on every call.
- * Pass this to {@link PipelineOptions.timeoutPolicy}.
+ * Pass this to {@link PipelineOptions.timeout}.
  */
 export function constantTimeoutPolicy(
   timeoutMs: number,
@@ -267,7 +267,7 @@ export function constantTimeoutPolicy(
 
 /**
  * Factory returning a fresh {@link AdaptiveTimeoutPolicy} on every call.
- * Pass this to {@link PipelineOptions.timeoutPolicy}; the Pipeline invokes
+ * Pass this to {@link PipelineOptions.timeout}; the Pipeline invokes
  * the factory once per dataset so state resets between datasets.
  */
 export function adaptiveTimeoutPolicy(

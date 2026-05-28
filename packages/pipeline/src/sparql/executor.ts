@@ -45,7 +45,7 @@ export interface ExecuteOptions {
    * Overrides the executor-level policy passed at construction time.
    * Pipeline runners use this to thread the per-dataset policy through.
    */
-  timeoutPolicy?: TimeoutPolicy;
+  timeout?: TimeoutPolicy;
 }
 
 export interface Executor {
@@ -70,13 +70,13 @@ export interface SparqlConstructExecutorOptions {
    * `new ConstantTimeoutPolicy(300_000)` so callers that supply nothing get
    * the same 5-minute budget as before — but expressed through the new
    * {@link TimeoutPolicy} surface so an adaptive policy can be slotted in
-   * via {@link ExecuteOptions.timeoutPolicy} without changing this default.
+   * via {@link ExecuteOptions.timeout} without changing this default.
    *
    * Replaces the old `timeout: number` option. Call sites passing
    * `timeout: 5000` migrate to
-   * `timeoutPolicy: constantTimeoutPolicy(5_000)()`.
+   * `timeout: constantTimeoutPolicy(5_000)()`.
    */
-  timeoutPolicy?: TimeoutPolicy;
+  timeout?: TimeoutPolicy;
 
   /**
    * Number of retries for transient errors (network failures and HTTP 502/503/504).
@@ -180,8 +180,7 @@ export class SparqlConstructExecutor implements Executor {
     }
 
     this.userFetcher = options.fetcher;
-    this.defaultPolicy =
-      options.timeoutPolicy ?? new ConstantTimeoutPolicy(300_000);
+    this.defaultPolicy = options.timeout ?? new ConstantTimeoutPolicy(300_000);
   }
 
   /**
@@ -227,7 +226,7 @@ export class SparqlConstructExecutor implements Executor {
     assertSafeIri(dataset.iri.toString());
     query = query.replaceAll('?dataset', `<${dataset.iri}>`);
 
-    const policy = options?.timeoutPolicy ?? this.defaultPolicy;
+    const policy = options?.timeout ?? this.defaultPolicy;
     const endpointUrl = endpoint;
 
     const quads = await pRetry(

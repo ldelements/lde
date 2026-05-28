@@ -48,10 +48,10 @@ export interface SparqlItemSelectorOptions {
    * `new ConstantTimeoutPolicy(300_000)` so callers that supply nothing
    * keep today’s 5-minute budget.
    *
-   * Overridden by {@link SelectOptions.timeoutPolicy} when the Pipeline
+   * Overridden by {@link SelectOptions.timeout} when the Pipeline
    * threads a per-dataset policy through.
    */
-  timeoutPolicy?: TimeoutPolicy;
+  timeout?: TimeoutPolicy;
 }
 
 /**
@@ -96,8 +96,7 @@ export class SparqlItemSelector implements ItemSelector {
     this.queryLimit = this.parsed.solutionModifiers.limitOffset?.limit;
     this.maxResults = options.maxResults;
     this.userFetcher = options.fetcher;
-    this.defaultPolicy =
-      options.timeoutPolicy ?? new ConstantTimeoutPolicy(300_000);
+    this.defaultPolicy = options.timeout ?? new ConstantTimeoutPolicy(300_000);
   }
 
   async *select(
@@ -108,7 +107,7 @@ export class SparqlItemSelector implements ItemSelector {
     if (this.maxResults === 0) return;
     const basePageSize = this.queryLimit ?? batchSize ?? 10;
     const endpoint = distribution.accessUrl!;
-    const policy = options?.timeoutPolicy ?? this.defaultPolicy;
+    const policy = options?.timeout ?? this.defaultPolicy;
     let offset = 0;
     let totalYielded = 0;
 

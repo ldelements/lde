@@ -210,24 +210,39 @@ This keeps SPARQL doing the heavy lifting while TypeScript handles the edge case
 
 #### Adaptive timeouts
 
-By default, every SPARQL request uses the same 5-minute budget. When a pipeline runs against many third-party endpoints, that fixed budget can cost ~80 minutes on a single dataset whose endpoint times out repeatedly on heavy queries. Pass a `TimeoutPolicy` factory to `Pipeline` to fast-fail once an endpoint has shown a run of consecutive timeouts:
+By default, every SPARQL request uses the same 5-minute budget. When a pipeline runs against many third-party endpoints, that fixed budget can cost ~80 minutes on a single dataset whose endpoint times out repeatedly on heavy queries — light stages on the same endpoint then sit behind the heavy ones that will never succeed.
+
+A `TimeoutPolicy` decides the budget for each SPARQL request and observes the outcome. Two are built in:
+
+- **`ConstantTimeoutPolicy(timeoutMs)`** – returns the same budget for every request. The implicit default when `PipelineOptions.timeout` is omitted (`constantTimeoutPolicy(300_000)`).
+- **`AdaptiveTimeoutPolicy({ defaultMs, tightenedMs, tightenAfterTimeouts })`** – per-endpoint state machine. Each endpoint is either _healthy_ (use `defaultMs`) or _tightened_ (use `tightenedMs`). After `tightenAfterTimeouts` consecutive `timeout` outcomes the endpoint flips to _tightened_; a single `ok` flips it back to _healthy_.
+
+`PipelineOptions.timeout` accepts a `() => TimeoutPolicy` factory. The pipeline invokes it once per dataset, so policy state resets between datasets and one bad dataset can’t poison the next:
 
 ```typescript
 import { adaptiveTimeoutPolicy } from '@lde/pipeline';
 
 new Pipeline({
   // …
-  timeoutPolicy: adaptiveTimeoutPolicy({
+  timeout: adaptiveTimeoutPolicy({
     defaultMs: 300_000, //         5 min while the endpoint is healthy
-    tightenedMs: 10_000, //        10 s once the endpoint is flipped to tightened
-    tightenAfterTimeouts: 2, //    flip after 2 consecutive timeouts
+    tightenedMs: 10_000, //        10 s once the endpoint is tightened
+    tightenAfterTimeouts: 2, //    flip to tightened after 2 consecutive timeouts
   }),
 });
 ```
 
-The factory is invoked once per dataset, so policy state resets between datasets. HTTP 504 from the upstream and client-side `AbortSignal` timeouts both count as `timeout` outcomes; a single successful request relaxes the endpoint back to the default budget. Subscribe-capable policies forward transitions to the `ProgressReporter` via `timeoutTightened` / `timeoutRelaxed` — `ConsoleReporter` prints them as `↘ Tightened` / `↗ Relaxed` lines so operators can distinguish a fast-failed stage from an unexpected speedup.
+Outcomes are classified as:
 
-Omit `timeoutPolicy` to keep today’s behaviour (`constantTimeoutPolicy(300_000)`).
+| outcome   | source                                                                   |
+| --------- | ------------------------------------------------------------------------ |
+| `ok`      | the request resolved                                                     |
+| `timeout` | client-side `AbortSignal.timeout()` fired, or upstream returned HTTP 504 |
+| `error`   | anything else (other HTTP errors, parse errors, …) – neutral             |
+
+Transitions are forwarded to the `ProgressReporter` via `timeoutTightened` / `timeoutRelaxed`; `ConsoleReporter` prints them as `↘ Tightened` / `↗ Relaxed` lines so operators can tell a fast-failed stage from an unexpected speedup.
+
+Implement `TimeoutPolicy` directly for custom strategies (closing over shared state in the factory if you want it to span datasets).
 
 ### Validation
 

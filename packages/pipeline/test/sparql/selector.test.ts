@@ -533,7 +533,7 @@ describe('SparqlItemSelector', () => {
 
       const rows: VariableBindings[] = [];
       for await (const row of selector.select(distribution, 2, {
-        timeoutPolicy: policy,
+        timeout: policy,
       })) {
         rows.push(row);
       }
@@ -568,7 +568,7 @@ describe('SparqlItemSelector', () => {
 
       const iterate = async () => {
         for await (const _row of selector.select(distribution, 10, {
-          timeoutPolicy: policy,
+          timeout: policy,
         })) {
           // consume
         }
@@ -599,7 +599,7 @@ describe('SparqlItemSelector', () => {
 
       const iterate = async () => {
         for await (const _row of selector.select(distribution, 10, {
-          timeoutPolicy: policy,
+          timeout: policy,
         })) {
           // consume
         }
@@ -620,7 +620,7 @@ describe('SparqlItemSelector', () => {
       const selector = new SparqlItemSelector({
         query,
         fetcher: mockFetcher as never,
-        timeoutPolicy: policy,
+        timeout: policy,
       });
 
       for await (const _row of selector.select(distribution, 10)) {
