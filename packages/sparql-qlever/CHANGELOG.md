@@ -1,3 +1,9 @@
+## 0.14.5 (2026-05-29)
+
+### 🩹 Fixes
+
+- **sparql-qlever:** shell-escape data filenames in the QLever index command ([#424](https://github.com/ldelements/lde/pull/424))
+
 ## 0.14.4 (2026-05-21)
 
 ### 🚀 Features
