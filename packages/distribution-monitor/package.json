@@ -39,6 +39,6 @@
     "tslib": "^2.3.0"
   },
   "devDependencies": {
-    "@testcontainers/postgresql": "^12.0.0"
+    "@testcontainers/postgresql": "^12.0.1"
   }
 }
