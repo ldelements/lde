@@ -13,6 +13,7 @@ import {
   utimes,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { execFileSync } from 'node:child_process';
 import { TaskRunner } from '@lde/task-runner';
 
 function makeDistributions(): Distribution[] {
@@ -329,6 +330,48 @@ describe('Importer', () => {
       expect((result as ImportSuccessful).warnings).toEqual([
         'Server Content-Type application/n-quads does not match declared media type application/n-triples; using nq format',
       ]);
+    });
+
+    it('shell-escapes data filenames containing single quotes', async () => {
+      // A dataset titled e.g. "'s-Hertogenbosch" maps to a local filename with
+      // an apostrophe. Naive single-quoting (`cat '<name>'`) lets the apostrophe
+      // terminate the quote, so cat/gunzip read a non-existent path and feed
+      // qlever-index empty input — silently indexing 0 triples.
+      const trickyFile = join(
+        tempDir,
+        "Dataset+Beeldbank+Erfgoed+'s-Hertogenbosch.ttl",
+      );
+      await copyFile(dataFile, trickyFile);
+
+      const runner = stubTaskRunner(42);
+      const importer = new Importer({
+        taskRunner: runner,
+        indexName,
+        downloader: {
+          async download() {
+            return { path: trickyFile, headers: new Headers() };
+          },
+        },
+      });
+
+      const result = await importer.import(makeDistributions());
+
+      expect(result).toBeInstanceOf(ImportSuccessful);
+
+      const command = runner.commands[0];
+      // The apostrophe is POSIX-escaped, not left to break the quoting.
+      expect(command).toContain(
+        "Dataset+Beeldbank+Erfgoed+'\\''s-Hertogenbosch.ttl",
+      );
+      expect(command).not.toContain("Erfgoed+'s"); // the broken, unescaped form
+
+      // And the decompress sub-command actually reads the real file when a shell
+      // runs it — this is what produced empty input (0 triples) before the fix.
+      const decompress = command.slice(0, command.indexOf('| qlever-index'));
+      const output = execFileSync('sh', ['-c', decompress], {
+        cwd: tempDir,
+      }).toString();
+      expect(output).toContain('http://example.com/source');
     });
 
     it('falls back to file extension when Content-Type is a compression type', async () => {

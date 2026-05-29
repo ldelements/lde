@@ -252,13 +252,28 @@ export class Importer implements ImporterInterface {
     const metadataFile = `${this.options.indexName}.meta-data.json`;
     const localName = basename(file);
     const decompressCommand = localName.toLowerCase().endsWith('.zip')
-      ? `unzip -p '${localName}'`
-      : `(gunzip -c '${localName}' 2>/dev/null || cat '${localName}')`;
+      ? `unzip -p ${shellQuote(localName)}`
+      : `(gunzip -c ${shellQuote(localName)} 2>/dev/null || cat ${shellQuote(localName)})`;
     const indexTask = await this.options.taskRunner.run(
-      `${decompressCommand} | qlever-index ${flags} && cat ${metadataFile}`,
+      `${decompressCommand} | qlever-index ${flags} && cat ${shellQuote(metadataFile)}`,
     );
     return await this.options.taskRunner.wait(indexTask);
   }
+}
+
+/**
+ * POSIX-quote a value for safe interpolation into a shell command: wrap it in
+ * single quotes and escape any embedded single quote as `'\''`.
+ *
+ * Without this, a data filename containing an apostrophe — e.g. a dataset
+ * titled `'s-Hertogenbosch`, whose distribution URL maps to a local file like
+ * `…Erfgoed+'s-Hertogenbosch.nt` — would terminate the surrounding quotes, so
+ * `cat`/`gunzip` would read a non-existent path and feed `qlever-index` empty
+ * input. The index then "succeeds" with 0 triples, the import is treated as
+ * failed, and every distribution (and the JSON-LD fallback) fails the same way.
+ */
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 type fileFormat = 'nt' | 'nq' | 'ttl';
