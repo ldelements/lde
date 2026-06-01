@@ -137,6 +137,152 @@ describe('probe', () => {
       expect((result as SparqlProbeResult).isSuccess()).toBe(false);
       expect((result as SparqlProbeResult).statusCode).toBe(500);
     });
+
+    it('returns a successful SparqlProbeResult when SELECT results are XML', async () => {
+      vi.mocked(fetch).mockResolvedValue(
+        new Response(
+          '<?xml version="1.0"?><sparql xmlns="http://www.w3.org/2005/sparql-results#"><head/><results><result/></results></sparql>',
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/sparql-results+xml' },
+          },
+        ),
+      );
+
+      const distribution = Distribution.sparql(
+        new URL('http://example.org/sparql'),
+      );
+
+      const result = await probe(distribution);
+
+      expect(result).toBeInstanceOf(SparqlProbeResult);
+      const sparqlResult = result as SparqlProbeResult;
+      expect(sparqlResult.isSuccess()).toBe(true);
+      expect(sparqlResult.failureReason).toBeNull();
+    });
+
+    it('returns an unsuccessful SparqlProbeResult when XML is not a SPARQL document', async () => {
+      vi.mocked(fetch).mockResolvedValue(
+        new Response('<?xml version="1.0"?><html></html>', {
+          status: 200,
+          headers: { 'Content-Type': 'application/sparql-results+xml' },
+        }),
+      );
+
+      const distribution = Distribution.sparql(
+        new URL('http://example.org/sparql'),
+      );
+
+      const result = await probe(distribution);
+
+      const sparqlResult = result as SparqlProbeResult;
+      expect(sparqlResult.isSuccess()).toBe(false);
+      expect(sparqlResult.failureReason).toBe(
+        'SPARQL endpoint returned invalid XML',
+      );
+    });
+
+    it('returns an unsuccessful SparqlProbeResult when XML SELECT results lack a results element', async () => {
+      vi.mocked(fetch).mockResolvedValue(
+        new Response(
+          '<?xml version="1.0"?><sparql xmlns="http://www.w3.org/2005/sparql-results#"><head/></sparql>',
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/sparql-results+xml' },
+          },
+        ),
+      );
+
+      const distribution = Distribution.sparql(
+        new URL('http://example.org/sparql'),
+      );
+
+      const result = await probe(distribution);
+
+      const sparqlResult = result as SparqlProbeResult;
+      expect(sparqlResult.isSuccess()).toBe(false);
+      expect(sparqlResult.failureReason).toBe(
+        'SPARQL endpoint did not return a valid results object',
+      );
+    });
+
+    it('accepts an XML ASK result and rejects one without a boolean', async () => {
+      vi.mocked(fetch).mockResolvedValue(
+        new Response(
+          '<?xml version="1.0"?><sparql xmlns="http://www.w3.org/2005/sparql-results#"><head/><boolean>true</boolean></sparql>',
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/sparql-results+xml' },
+          },
+        ),
+      );
+
+      const distribution = Distribution.sparql(
+        new URL('http://example.org/sparql'),
+      );
+
+      const valid = await probe(distribution, {
+        sparqlQuery: 'ASK { ?s ?p ?o }',
+      });
+      expect((valid as SparqlProbeResult).isSuccess()).toBe(true);
+
+      vi.mocked(fetch).mockResolvedValue(
+        new Response(
+          '<?xml version="1.0"?><sparql xmlns="http://www.w3.org/2005/sparql-results#"><head/></sparql>',
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/sparql-results+xml' },
+          },
+        ),
+      );
+
+      const invalid = await probe(distribution, {
+        sparqlQuery: 'ASK { ?s ?p ?o }',
+      });
+      const invalidResult = invalid as SparqlProbeResult;
+      expect(invalidResult.isSuccess()).toBe(false);
+      expect(invalidResult.failureReason).toBe(
+        'SPARQL endpoint did not return a valid ASK result',
+      );
+    });
+
+    it('sends an Accept header that allows both JSON and XML results', async () => {
+      vi.mocked(fetch).mockResolvedValue(
+        new Response('{"results": {"bindings": []}}', {
+          status: 200,
+          headers: { 'Content-Type': 'application/sparql-results+json' },
+        }),
+      );
+
+      const distribution = Distribution.sparql(
+        new URL('http://example.org/sparql'),
+      );
+
+      await probe(distribution);
+
+      const accept = (
+        vi.mocked(fetch).mock.calls[0][1]?.headers as Headers
+      ).get('Accept');
+      expect(accept).toContain('application/sparql-results+json');
+      expect(accept).toContain('application/sparql-results+xml');
+    });
+
+    it('normalizes a single accepted content type to a one-element list', () => {
+      const result = new SparqlProbeResult(
+        'http://example.org/sparql',
+        new Response('{"results": {"bindings": []}}', {
+          status: 200,
+          headers: { 'Content-Type': 'application/sparql-results+json' },
+        }),
+        0,
+        'application/sparql-results+json',
+      );
+
+      expect(result.acceptedContentTypes).toEqual([
+        'application/sparql-results+json',
+      ]);
+      expect(result.isSuccess()).toBe(true);
+    });
   });
 
   describe('data dump', () => {
@@ -536,7 +682,7 @@ describe('probe', () => {
 
       expect(capturedHeaders?.get('User-Agent')).toBe('TestAgent/1.0');
       expect(capturedHeaders?.get('Accept')).toBe(
-        'application/sparql-results+json',
+        'application/sparql-results+json, application/sparql-results+xml;q=0.9',
       );
     });
 
@@ -651,7 +797,7 @@ describe('probe', () => {
       });
 
       expect(capturedHeaders?.get('Accept')).toBe(
-        'application/sparql-results+json',
+        'application/sparql-results+json, application/sparql-results+xml;q=0.9',
       );
     });
   });
