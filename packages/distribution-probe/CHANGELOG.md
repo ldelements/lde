@@ -1,3 +1,9 @@
+## 0.1.5 (2026-06-01)
+
+### 🩹 Fixes
+
+- **distribution-probe:** accept SPARQL results as JSON or XML ([#425](https://github.com/ldelements/lde/pull/425))
+
 ## 0.1.4 (2026-05-27)
 
 ### 🩹 Fixes
