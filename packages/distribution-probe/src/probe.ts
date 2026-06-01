@@ -74,29 +74,41 @@ abstract class ProbeResult {
 }
 
 const SPARQL_RESULTS_JSON = 'application/sparql-results+json';
+const SPARQL_RESULTS_XML = 'application/sparql-results+xml';
 const SPARQL_RDF_RESULTS = 'application/n-triples';
 
 /**
  * Result of probing a SPARQL endpoint.
  */
 export class SparqlProbeResult extends ProbeResult {
-  public readonly acceptedContentType: string;
+  /**
+   * Content types the probe was prepared to accept as a valid answer. A SELECT or
+   * ASK query may be answered with SPARQL results in JSON or XML; the endpoint
+   * chooses, so success is not tied to a single serialization. A single string is
+   * accepted and normalized to a one-element list for backwards compatibility.
+   */
+  public readonly acceptedContentTypes: readonly string[];
 
   constructor(
     url: string,
     response: Response,
     responseTimeMs: number,
-    acceptedContentType: string,
+    acceptedContentTypes: string | readonly string[],
     failureReason: string | null = null,
   ) {
     super(url, response, responseTimeMs, failureReason);
-    this.acceptedContentType = acceptedContentType;
+    this.acceptedContentTypes =
+      typeof acceptedContentTypes === 'string'
+        ? [acceptedContentTypes]
+        : acceptedContentTypes;
   }
 
   override isSuccess(): boolean {
     return (
       super.isSuccess() &&
-      (this.contentType?.startsWith(this.acceptedContentType) ?? false)
+      this.acceptedContentTypes.some(
+        (type) => this.contentType?.startsWith(type) ?? false,
+      )
     );
   }
 }
@@ -222,11 +234,27 @@ function detectSparqlQueryType(query: string): SparqlQueryType {
   return (match?.[1].toUpperCase() ?? 'SELECT') as SparqlQueryType;
 }
 
-function acceptHeaderForQueryType(queryType: SparqlQueryType): string {
+/**
+ * Content types a SPARQL endpoint may legitimately answer with, in preference
+ * order, for the given query type. SELECT and ASK return a results document
+ * (JSON or XML – the endpoint chooses); CONSTRUCT and DESCRIBE return RDF.
+ */
+function acceptableContentTypes(queryType: SparqlQueryType): string[] {
   if (queryType === 'ASK' || queryType === 'SELECT') {
-    return SPARQL_RESULTS_JSON;
+    return [SPARQL_RESULTS_JSON, SPARQL_RESULTS_XML];
   }
-  return SPARQL_RDF_RESULTS;
+  return [SPARQL_RDF_RESULTS];
+}
+
+/**
+ * Build an `Accept` header that prefers the first content type but still accepts
+ * the rest at a lower q-value, so an endpoint that only serves a later type is
+ * not rejected with a 406.
+ */
+function acceptHeader(contentTypes: readonly string[]): string {
+  return contentTypes
+    .map((type, index) => (index === 0 ? type : `${type};q=0.9`))
+    .join(', ');
 }
 
 async function probeSparqlEndpoint(
@@ -237,10 +265,10 @@ async function probeSparqlEndpoint(
   start: number,
 ): Promise<SparqlProbeResult | NetworkError> {
   const queryType = detectSparqlQueryType(options.sparqlQuery);
-  const accept = acceptHeaderForQueryType(queryType);
+  const acceptedContentTypes = acceptableContentTypes(queryType);
   const headers = new Headers({
     'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
-    Accept: accept,
+    Accept: acceptHeader(acceptedContentTypes),
   });
   for (const [key, value] of authHeaders) {
     headers.set(key, value);
@@ -254,10 +282,16 @@ async function probeSparqlEndpoint(
   });
 
   const actualContentType = response.headers.get('Content-Type');
-  const contentTypeMatches = actualContentType?.startsWith(accept) ?? false;
+  const matchedContentType = acceptedContentTypes.find(
+    (type) => actualContentType?.startsWith(type) ?? false,
+  );
   let failureReason: string | null = null;
-  if (response.ok && contentTypeMatches) {
-    failureReason = await validateSparqlResponse(response, queryType);
+  if (response.ok && matchedContentType !== undefined) {
+    failureReason = await validateSparqlResponse(
+      response,
+      queryType,
+      matchedContentType,
+    );
   } else {
     // Drain unconsumed body to release the underlying connection.
     await response.body?.cancel();
@@ -268,7 +302,7 @@ async function probeSparqlEndpoint(
     url,
     response,
     responseTimeMs,
-    accept,
+    acceptedContentTypes,
     failureReason,
   );
 }
@@ -276,6 +310,7 @@ async function probeSparqlEndpoint(
 async function validateSparqlResponse(
   response: Response,
   queryType: SparqlQueryType,
+  contentType: string,
 ): Promise<string | null> {
   const body = await response.text();
   if (body.length === 0) {
@@ -288,6 +323,15 @@ async function validateSparqlResponse(
     return null;
   }
 
+  return contentType.startsWith(SPARQL_RESULTS_XML)
+    ? validateSparqlXmlResults(body, queryType)
+    : validateSparqlJsonResults(body, queryType);
+}
+
+function validateSparqlJsonResults(
+  body: string,
+  queryType: SparqlQueryType,
+): string | null {
   let json: Record<string, unknown>;
   try {
     json = JSON.parse(body) as Record<string, unknown>;
@@ -304,6 +348,33 @@ async function validateSparqlResponse(
 
   // SELECT
   if (!json.results || typeof json.results !== 'object') {
+    return 'SPARQL endpoint did not return a valid results object';
+  }
+  return null;
+}
+
+/**
+ * Lightweight structural check on a SPARQL Query Results XML document. Mirrors
+ * the JSON path’s intent – confirm the endpoint answered with the expected shape
+ * – without pulling in a full XML parser.
+ */
+function validateSparqlXmlResults(
+  body: string,
+  queryType: SparqlQueryType,
+): string | null {
+  if (!/<sparql[\s>]/i.test(body)) {
+    return 'SPARQL endpoint returned invalid XML';
+  }
+
+  if (queryType === 'ASK') {
+    if (!/<boolean>\s*(true|false)\s*<\/boolean>/i.test(body)) {
+      return 'SPARQL endpoint did not return a valid ASK result';
+    }
+    return null;
+  }
+
+  // SELECT
+  if (!/<results[\s/>]/i.test(body)) {
     return 'SPARQL endpoint did not return a valid results object';
   }
   return null;
