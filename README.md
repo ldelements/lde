@@ -113,6 +113,11 @@ await pipeline.run();
   <td>Probe distributions for availability and metadata</td>
 </tr>
 <tr>
+  <td><a href="packages/iiif-validator">@lde/iiif-validator</a></td>
+  <td><a href="https://www.npmjs.com/package/@lde/iiif-validator"><img src="https://img.shields.io/npm/v/@lde/iiif-validator" alt="npm"></a></td>
+  <td>Validate that a URL resolves to a valid IIIF Presentation Manifest</td>
+</tr>
+<tr>
   <td><a href="packages/sparql-importer">@lde/sparql-importer</a></td>
   <td><a href="https://www.npmjs.com/package/@lde/sparql-importer"><img src="https://img.shields.io/npm/v/@lde/sparql-importer" alt="npm"></a></td>
   <td>Import data dumps to a local SPARQL endpoint for querying</td>
