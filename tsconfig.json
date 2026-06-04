@@ -61,6 +61,9 @@
     },
     {
       "path": "./packages/distribution-probe"
+    },
+    {
+      "path": "./packages/iiif-validator"
     }
   ]
 }
