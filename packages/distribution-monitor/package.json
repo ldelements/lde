@@ -31,7 +31,7 @@
     "@lde/dataset": "0.7.4",
     "@lde/distribution-probe": "0.1.5",
     "c12": "^3.3.4",
-    "commander": "^14.0.3",
+    "commander": "^15.0.0",
     "cron": "^4.1.0",
     "drizzle-kit": "1.0.0-rc.4-273829f",
     "drizzle-orm": "1.0.0-rc.4-273829f",
