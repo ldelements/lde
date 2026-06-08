@@ -8,15 +8,65 @@ import type { Validator } from './validator.js';
 import type { Writer } from './writer/writer.js';
 import { AsyncQueue } from './asyncQueue.js';
 
-/** Transforms a quad stream, optionally using dataset metadata. */
-export type QuadTransform = (
+/**
+ * Transforms a quad stream, given the context of its extension point.
+ *
+ * Every pipeline extension is the same operation – intercept the quad stream,
+ * `AsyncIterable<Quad> → AsyncIterable<Quad>` – differing only in *where* it
+ * runs and the `Ctx` in scope. See
+ * {@link https://github.com/ldelements/lde/blob/main/docs/decisions/0002-unify-pipeline-extension-on-quad-transforms.md | ADR 2}.
+ */
+export type QuadTransform<Ctx> = (
   quads: AsyncIterable<Quad>,
-  dataset: Dataset,
+  context: Ctx,
 ) => AsyncIterable<Quad>;
+
+/**
+ * Context handed to a {@link QuadTransform} attached to an executor (extension
+ * point 1: per-executor output, pre-merge).
+ *
+ * `distribution` gives the transform endpoint reach – it may fire its own
+ * SPARQL queries – and `stage` carries the stage identity.
+ */
+export interface ExecutorContext {
+  dataset: Dataset;
+  distribution: Distribution;
+  stage: string;
+}
+
+/**
+ * An {@link Executor} with zero or more {@link QuadTransform}s attached as data.
+ *
+ * The stage runner applies the transform(s) in order to **this executor's
+ * output** before merging it with sibling executors. The window is one
+ * `execute()` call:
+ *
+ * - for a global stage that is the executor's complete output;
+ * - for a per-class stage that is one batch – one class at `batchSize: 1`.
+ *
+ * Decorating an executor is therefore construction-time data, not a wrapping
+ * class: the runner is the only code that delegates to the inner executor.
+ */
+export interface AttachedExecutor {
+  executor: Executor;
+  transform?: QuadTransform<ExecutorContext> | QuadTransform<ExecutorContext>[];
+}
+
+/** One or more executors, each optionally carrying attached transforms. */
+export type StageExecutors =
+  | Executor
+  | AttachedExecutor
+  | (Executor | AttachedExecutor)[];
+
+/** An executor paired with its attached transforms, normalised to an array. */
+interface NormalizedExecutor {
+  executor: Executor;
+  transforms: QuadTransform<ExecutorContext>[];
+}
 
 export interface StageOptions {
   name: string;
-  executors: Executor | Executor[];
+  executors: StageExecutors;
   itemSelector?: ItemSelector;
   /**
    * Maximum number of bindings per executor call.
@@ -67,7 +117,7 @@ export interface SelectOptions {
 export class Stage {
   readonly name: string;
   readonly stages: readonly Stage[];
-  private readonly executors: Executor[];
+  private readonly executors: NormalizedExecutor[];
   private readonly itemSelector?: ItemSelector;
   private readonly batchSize: number;
   private readonly maxConcurrency: number;
@@ -76,9 +126,7 @@ export class Stage {
   constructor(options: StageOptions) {
     this.name = options.name;
     this.stages = options.stages ?? [];
-    this.executors = Array.isArray(options.executors)
-      ? options.executors
-      : [options.executors];
+    this.executors = normalizeExecutors(options.executors);
     this.itemSelector = options.itemSelector;
     this.batchSize = options.batchSize ?? 10;
     this.maxConcurrency = options.maxConcurrency ?? 10;
@@ -222,15 +270,21 @@ export class Stage {
             (async () => {
               // Run all executors for this batch in parallel.
               const executorOutputs = await Promise.all(
-                this.executors.map(async (executor) => {
+                this.executors.map(async ({ executor, transforms }) => {
                   const result = await executor.execute(dataset, distribution, {
                     bindings,
                     timeout: options?.timeout,
                   });
                   if (result instanceof NotSupported) return [];
                   hasResults = true;
+                  const stream = this.applyTransforms(
+                    transforms,
+                    result,
+                    dataset,
+                    distribution,
+                  );
                   const quads: Quad[] = [];
-                  for await (const quad of result) {
+                  for await (const quad of stream) {
                     quads.push(quad);
                   }
                   return quads;
@@ -331,9 +385,13 @@ export class Stage {
     timeout: TimeoutPolicy | undefined,
   ): Promise<AsyncIterable<Quad>[] | NotSupported> {
     const results = await Promise.all(
-      this.executors.map((executor) =>
-        executor.execute(dataset, distribution, { timeout }),
-      ),
+      this.executors.map(async ({ executor, transforms }) => {
+        const result = await executor.execute(dataset, distribution, {
+          timeout,
+        });
+        if (result instanceof NotSupported) return result;
+        return this.applyTransforms(transforms, result, dataset, distribution);
+      }),
     );
 
     const streams: AsyncIterable<Quad>[] = [];
@@ -349,6 +407,48 @@ export class Stage {
 
     return streams;
   }
+
+  /**
+   * Fold an executor's attached transforms over its output stream, in order,
+   * supplying the {@link ExecutorContext}. A transform sees one `execute()`
+   * call's output (see {@link AttachedExecutor}); `NotSupported` is handled by
+   * the caller and never reaches a transform.
+   */
+  private applyTransforms(
+    transforms: QuadTransform<ExecutorContext>[],
+    stream: AsyncIterable<Quad>,
+    dataset: Dataset,
+    distribution: Distribution,
+  ): AsyncIterable<Quad> {
+    if (transforms.length === 0) return stream;
+    const context: ExecutorContext = {
+      dataset,
+      distribution,
+      stage: this.name,
+    };
+    return transforms.reduce(
+      (quads, transform) => transform(quads, context),
+      stream,
+    );
+  }
+}
+
+/** Normalise the {@link StageExecutors} union to executor + transforms pairs. */
+function normalizeExecutors(executors: StageExecutors): NormalizedExecutor[] {
+  const list = Array.isArray(executors) ? executors : [executors];
+  return list.map((entry) => {
+    if ('execute' in entry) {
+      return { executor: entry, transforms: [] };
+    }
+    const { executor, transform } = entry;
+    const transforms =
+      transform === undefined
+        ? []
+        : Array.isArray(transform)
+          ? [...transform]
+          : [transform];
+    return { executor, transforms };
+  });
 }
 
 async function* mergeStreams(

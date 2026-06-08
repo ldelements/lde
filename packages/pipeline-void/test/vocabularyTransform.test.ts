@@ -1,10 +1,9 @@
-import { VocabularyExecutor } from '../src/index.js';
+import { withVocabularies } from '../src/index.js';
 import { Dataset, Distribution } from '@lde/dataset';
-import { NotSupported } from '@lde/pipeline';
+import type { ExecutorContext } from '@lde/pipeline';
 import { describe, it, expect } from 'vitest';
 import { DataFactory } from 'n3';
 import type { Quad } from '@rdfjs/types';
-import type { Executor } from '@lde/pipeline';
 
 const { namedNode, quad } = DataFactory;
 
@@ -16,14 +15,16 @@ const dataset = new Dataset({
 });
 const distribution = new Distribution(new URL('http://example.com/sparql'));
 
-function mockExecutor(quads: Quad[]): Executor {
-  return {
-    async execute() {
-      return (async function* () {
-        yield* quads;
-      })();
-    },
-  };
+const context: ExecutorContext = {
+  dataset,
+  distribution,
+  stage: 'entity-properties.rq',
+};
+
+function quadStream(quads: Quad[]): AsyncIterable<Quad> {
+  return (async function* () {
+    yield* quads;
+  })();
 }
 
 async function collect(stream: AsyncIterable<Quad>): Promise<Quad[]> {
@@ -34,7 +35,9 @@ async function collect(stream: AsyncIterable<Quad>): Promise<Quad[]> {
   return result;
 }
 
-describe('VocabularyExecutor', () => {
+describe('withVocabularies', () => {
+  const transform = withVocabularies();
+
   it('passes through all input quads', async () => {
     const input = quad(
       namedNode(dataset.iri.toString()),
@@ -42,11 +45,7 @@ describe('VocabularyExecutor', () => {
       namedNode('http://example.com/100'),
     );
 
-    const executor = new VocabularyExecutor(mockExecutor([input]));
-    const result = await executor.execute(dataset, distribution);
-
-    expect(result).not.toBeInstanceOf(NotSupported);
-    const quads = await collect(result as AsyncIterable<Quad>);
+    const quads = await collect(transform(quadStream([input]), context));
     expect(quads[0]).toBe(input);
   });
 
@@ -57,10 +56,7 @@ describe('VocabularyExecutor', () => {
       namedNode('http://schema.org/name'),
     );
 
-    const executor = new VocabularyExecutor(mockExecutor([input]));
-    const result = await executor.execute(dataset, distribution);
-
-    const quads = await collect(result as AsyncIterable<Quad>);
+    const quads = await collect(transform(quadStream([input]), context));
     const vocabQuads = quads.filter(
       (q) => q.predicate.value === `${VOID}vocabulary`,
     );
@@ -83,10 +79,7 @@ describe('VocabularyExecutor', () => {
       ),
     ];
 
-    const executor = new VocabularyExecutor(mockExecutor(input));
-    const result = await executor.execute(dataset, distribution);
-
-    const quads = await collect(result as AsyncIterable<Quad>);
+    const quads = await collect(transform(quadStream(input), context));
     const vocabQuads = quads.filter(
       (q) => q.predicate.value === `${VOID}vocabulary`,
     );
@@ -112,10 +105,7 @@ describe('VocabularyExecutor', () => {
       ),
     ];
 
-    const executor = new VocabularyExecutor(mockExecutor(input));
-    const result = await executor.execute(dataset, distribution);
-
-    const quads = await collect(result as AsyncIterable<Quad>);
+    const quads = await collect(transform(quadStream(input), context));
     const vocabQuads = quads.filter(
       (q) => q.predicate.value === `${VOID}vocabulary`,
     );
@@ -129,10 +119,7 @@ describe('VocabularyExecutor', () => {
       namedNode('http://example.com/custom/property'),
     );
 
-    const executor = new VocabularyExecutor(mockExecutor([input]));
-    const result = await executor.execute(dataset, distribution);
-
-    const quads = await collect(result as AsyncIterable<Quad>);
+    const quads = await collect(transform(quadStream([input]), context));
     const vocabQuads = quads.filter(
       (q) => q.predicate.value === `${VOID}vocabulary`,
     );
@@ -140,7 +127,7 @@ describe('VocabularyExecutor', () => {
   });
 
   it('uses custom vocabularies when provided', async () => {
-    const customVocabularies = ['http://example.com/vocab/'];
+    const customTransform = withVocabularies(['http://example.com/vocab/']);
     const input = [
       quad(
         namedNode(dataset.iri.toString()),
@@ -154,30 +141,11 @@ describe('VocabularyExecutor', () => {
       ),
     ];
 
-    const executor = new VocabularyExecutor(
-      mockExecutor(input),
-      customVocabularies,
-    );
-    const result = await executor.execute(dataset, distribution);
-
-    const quads = await collect(result as AsyncIterable<Quad>);
+    const quads = await collect(customTransform(quadStream(input), context));
     const vocabQuads = quads.filter(
       (q) => q.predicate.value === `${VOID}vocabulary`,
     );
     expect(vocabQuads).toHaveLength(1);
     expect(vocabQuads[0].object.value).toBe('http://example.com/vocab/');
-  });
-
-  it('propagates NotSupported from inner executor', async () => {
-    const inner: Executor = {
-      async execute() {
-        return new NotSupported('no endpoint');
-      },
-    };
-
-    const executor = new VocabularyExecutor(inner);
-    const result = await executor.execute(dataset, distribution);
-
-    expect(result).toBeInstanceOf(NotSupported);
   });
 });

@@ -1,9 +1,10 @@
-import type {QuadTransform} from '../stage.js';
-import type {PipelinePlugin} from '../pipeline.js';
-import type {Quad} from '@rdfjs/types';
-import {DataFactory} from 'n3';
+import type { QuadTransform } from '../stage.js';
+import type { PipelinePlugin } from '../pipeline.js';
+import type { Dataset } from '@lde/dataset';
+import type { Quad } from '@rdfjs/types';
+import { DataFactory } from 'n3';
 
-const {namedNode, quad} = DataFactory;
+const { namedNode, quad } = DataFactory;
 
 const VOID_CLASS = namedNode('http://rdfs.org/ns/void#class');
 const VOID_PROPERTY = namedNode('http://rdfs.org/ns/void#property');
@@ -25,7 +26,7 @@ export interface NamespaceNormalizationOptions {
  */
 export function namespaceNormalizationTransform(
   options: NamespaceNormalizationOptions,
-): QuadTransform {
+): QuadTransform<{ dataset: Dataset }> {
   return (quads) => normalizeNamespace(quads, options);
 }
 
@@ -47,7 +48,7 @@ export function namespaceNormalizationPlugin(
 
 async function* normalizeNamespace(
   quads: AsyncIterable<Quad>,
-  {from, to}: NamespaceNormalizationOptions,
+  { from, to }: NamespaceNormalizationOptions,
 ): AsyncIterable<Quad> {
   for await (const q of quads) {
     if (

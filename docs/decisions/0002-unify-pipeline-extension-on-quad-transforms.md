@@ -94,9 +94,11 @@ type QuadTransform<Ctx> = (
 
 ### Extension point 1 – per-executor output transform (pre-merge)
 
-A transform attaches to an executor and decorates **that executor’s complete
-output** (all its batches merged, but not its siblings’) before the stage merges
-executors.
+A transform attaches to an executor and decorates **that executor’s output**
+(not its siblings’) before the stage merges executors. A global stage invokes
+its executor once, so the transform sees the executor’s complete output; a
+per-class stage invokes its executor once per batch – one class at
+`batchSize: 1` – and the transform runs per invocation.
 
 ```typescript
 interface ExecutorContext {
@@ -116,11 +118,15 @@ type StageExecutors =
   | (Executor | AttachedExecutor)[];
 ```
 
-The stage runner merges each executor’s own batches into its complete output,
-applies the transform(s) in order (propagating `NotSupported` untouched), then merges
-siblings. This is the home of `UriSpaceExecutor`, `VocabularyExecutor`, and consumer
-post-processing like the DKG subject-URI resolver. Seeing one executor’s whole
-output gives per-executor targeting and a batch-independent window at once.
+The stage runner applies the transform(s) in order to each executor invocation’s
+output (propagating `NotSupported` untouched), then merges siblings. This is the
+home of `withUriSpaces`, `withVocabularies`, and consumer post-processing like the
+DKG subject-URI resolver – all global stages, where one invocation is the
+executor’s whole output: per-executor targeting and a batch-independent window at
+once. A per-class stage runs the transform per class (`batchSize: 1`), the domain
+unit of per-class iteration; an aggregating transform on a per-class stage with
+`batchSize > 1` would see a tuning-dependent window, so it should keep
+`batchSize: 1` or stay per-quad.
 
 ### Extension point 2 – pre-write transform (post-merge, pipeline-wide)
 
@@ -143,8 +149,10 @@ namespace normalisation – that apply regardless of which executor produced a q
 
 ### Invariants
 
-- **Contracts sit on semantic boundaries** – an executor’s complete output or the
-  merged stage output, never a batch. Batching stays internal and retunable.
+- **Contracts sit on semantic boundaries** – never a mechanical batch. For a
+  global stage that boundary is the executor’s complete output; for a per-class
+  stage it is one class (`batchSize: 1`), the domain unit of per-class iteration.
+  Sibling merging and the post-merge stream stay batch-independent.
 - **RDF is the interchange contract** – non-RDF ingestion lives inside an executor; the
   transform layer is `Quad`-typed, never generic over source formats.
 

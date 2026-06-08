@@ -1,5 +1,6 @@
 import type { QuadTransform } from '../stage.js';
 import type { PipelinePlugin } from '../pipeline.js';
+import type { Dataset } from '@lde/dataset';
 import type { Quad } from '@rdfjs/types';
 import { DataFactory } from 'n3';
 
@@ -18,8 +19,10 @@ const PROV_ENDED_AT_TIME = namedNode('http://www.w3.org/ns/prov#endedAtTime');
 const XSD_DATE_TIME = namedNode('http://www.w3.org/2001/XMLSchema#dateTime');
 
 /** QuadTransform that appends PROV-O provenance quads. */
-export const provenanceTransform: QuadTransform = (quads, dataset) =>
-  appendProvenanceQuads(quads, dataset.iri.toString(), new Date());
+export const provenanceTransform: QuadTransform<{ dataset: Dataset }> = (
+  quads,
+  { dataset },
+) => appendProvenanceQuads(quads, dataset.iri.toString(), new Date());
 
 /** Pipeline plugin that appends PROV-O provenance to every stage's output. */
 export function provenancePlugin(): PipelinePlugin {
