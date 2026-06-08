@@ -510,6 +510,33 @@ describe('Importer', () => {
       expect(runner.commands[0]).toContain('-F nq');
     });
 
+    it('runs RDF/XML through the preprocessor and indexes the resulting N-Quads', async () => {
+      const runner = stubTaskRunner(42);
+      const rdfFile = join(tempDir, 'data.rdf');
+      await copyFile(resolve('test/fixtures/preprocess/data.rdf'), rdfFile);
+      const importer = new Importer({
+        taskRunner: runner,
+        indexName,
+        downloader: {
+          async download() {
+            return { path: rdfFile, headers: new Headers() };
+          },
+        },
+      });
+
+      const result = await importer.import([
+        new Distribution(
+          new URL('https://example.com/data.rdf'),
+          'application/rdf+xml',
+        ),
+      ]);
+
+      expect(result).toBeInstanceOf(ImportSuccessful);
+      // The preprocessed N-Quads file is what reaches qlever-index.
+      expect(runner.commands[0]).toContain('data.rdf.preprocessed.nq');
+      expect(runner.commands[0]).toContain('-F nq');
+    });
+
     it('uses unzip -p in the shell pipeline for .zip files', async () => {
       const runner = stubTaskRunner(42);
       const zipFile = join(tempDir, 'data.nt.zip');
