@@ -9,6 +9,7 @@ export type ManifestValidationReason =
   | 'network-error'
   | 'http-error'
   | 'invalid-json'
+  | 'binary-content'
   | 'not-a-manifest';
 
 /**
@@ -63,6 +64,17 @@ export async function validateManifest(
     return { valid: false, reason: 'http-error' };
   }
 
+  // A manifest is JSON. When the server announces a binary media type, skip
+  // reading the body: a sampled `schema:contentUrl` can dereference to the
+  // full-resolution image, audio or video asset, and `response.json()` would
+  // buffer the whole thing before failing to parse it — wasting bandwidth and
+  // time in the pipeline that calls this for every sampled manifest. Cancel the
+  // stream so the connection is freed without the download.
+  if (isBinaryMedia(response.headers.get('content-type'))) {
+    await response.body?.cancel();
+    return { valid: false, reason: 'binary-content' };
+  }
+
   let body: unknown;
   try {
     body = await response.json();
@@ -74,6 +86,22 @@ export async function validateManifest(
     return { valid: true, reason: 'valid-manifest' };
   }
   return { valid: false, reason: 'not-a-manifest' };
+}
+
+/**
+ * Whether a `Content-Type` header announces a binary media asset (image, audio
+ * or video) rather than a JSON document. Used to skip downloading non-manifest
+ * media. A missing or ambiguous type (e.g. `text/plain`, `application/octet-stream`)
+ * returns `false` so a manifest served with an odd type is still parsed.
+ */
+function isBinaryMedia(contentType: string | null): boolean {
+  if (contentType === null) return false;
+  const mediaType = contentType.toLowerCase();
+  return (
+    mediaType.startsWith('image/') ||
+    mediaType.startsWith('audio/') ||
+    mediaType.startsWith('video/')
+  );
 }
 
 /**
