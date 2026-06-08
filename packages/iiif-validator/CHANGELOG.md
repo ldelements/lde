@@ -1,3 +1,9 @@
+## 0.1.3 (2026-06-08)
+
+### 🩹 Fixes
+
+- **iiif-validator:** request manifests with Accept: */* ([#443](https://github.com/ldelements/lde/pull/443))
+
 ## 0.1.2 (2026-06-08)
 
 ### 🩹 Fixes

@@ -1,6 +1,6 @@
 {
   "name": "@lde/iiif-validator",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
     "directory": "packages/iiif-validator"
