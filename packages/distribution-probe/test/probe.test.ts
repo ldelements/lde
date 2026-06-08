@@ -6,6 +6,8 @@ import {
 } from '../src/index.js';
 import { Distribution } from '@lde/dataset';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 
 describe('probe', () => {
   beforeEach(() => {
@@ -503,6 +505,134 @@ describe('probe', () => {
       expect(dumpResult.failureReason).toBeNull();
     });
 
+    it('marks empty JSON-LD as failure', async () => {
+      const body = '{}';
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(new Response('', { status: 200 })) // HEAD
+        .mockResolvedValueOnce(
+          new Response(body, {
+            status: 200,
+            headers: { 'Content-Type': 'application/ld+json' },
+          }),
+        ); // GET
+
+      const distribution = new Distribution(
+        new URL('http://example.org/data.jsonld'),
+        'application/ld+json',
+      );
+
+      const result = await probe(distribution);
+
+      expect(result).toBeInstanceOf(DataDumpProbeResult);
+      const dumpResult = result as DataDumpProbeResult;
+      expect(dumpResult.isSuccess()).toBe(false);
+      expect(dumpResult.failureReason).toBe(
+        'Distribution contains no RDF triples',
+      );
+    });
+
+    it('marks empty RDF/XML as failure', async () => {
+      const body =
+        '<?xml version="1.0"?>\n<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"></rdf:RDF>';
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(new Response('', { status: 200 })) // HEAD
+        .mockResolvedValueOnce(
+          new Response(body, {
+            status: 200,
+            headers: { 'Content-Type': 'application/rdf+xml' },
+          }),
+        ); // GET
+
+      const distribution = new Distribution(
+        new URL('http://example.org/data.rdf'),
+        'application/rdf+xml',
+      );
+
+      const result = await probe(distribution);
+
+      expect(result).toBeInstanceOf(DataDumpProbeResult);
+      const dumpResult = result as DataDumpProbeResult;
+      expect(dumpResult.isSuccess()).toBe(false);
+      expect(dumpResult.failureReason).toBe(
+        'Distribution contains no RDF triples',
+      );
+    });
+
+    it('marks prefix-only N3 as failure', async () => {
+      const body = '@prefix ex: <http://example.org/> .\n';
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(new Response('', { status: 200 })) // HEAD
+        .mockResolvedValueOnce(
+          new Response(body, {
+            status: 200,
+            headers: { 'Content-Type': 'text/n3' },
+          }),
+        ); // GET
+
+      const distribution = new Distribution(
+        new URL('http://example.org/data.n3'),
+        'text/n3',
+      );
+
+      const result = await probe(distribution);
+
+      expect(result).toBeInstanceOf(DataDumpProbeResult);
+      const dumpResult = result as DataDumpProbeResult;
+      expect(dumpResult.isSuccess()).toBe(false);
+      expect(dumpResult.failureReason).toBe(
+        'Distribution contains no RDF triples',
+      );
+    });
+
+    it('marks JSON-LD with triples as success', async () => {
+      const body =
+        '{"@id": "http://example.org/s", "http://example.org/p": {"@id": "http://example.org/o"}}';
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(new Response('', { status: 200 })) // HEAD
+        .mockResolvedValueOnce(
+          new Response(body, {
+            status: 200,
+            headers: { 'Content-Type': 'application/ld+json' },
+          }),
+        ); // GET
+
+      const distribution = new Distribution(
+        new URL('http://example.org/data.jsonld'),
+        'application/ld+json',
+      );
+
+      const result = await probe(distribution);
+
+      expect(result).toBeInstanceOf(DataDumpProbeResult);
+      const dumpResult = result as DataDumpProbeResult;
+      expect(dumpResult.isSuccess()).toBe(true);
+      expect(dumpResult.failureReason).toBeNull();
+    });
+
+    it('does not validate a non-RDF body', async () => {
+      const body = 'id,name\n1,Alice\n';
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(new Response('', { status: 200 })) // HEAD
+        .mockResolvedValueOnce(
+          new Response(body, {
+            status: 200,
+            headers: { 'Content-Type': 'text/csv' },
+          }),
+        ); // GET
+
+      const distribution = new Distribution(
+        new URL('http://example.org/data.csv'),
+        'text/csv',
+      );
+
+      const result = await probe(distribution);
+
+      expect(result).toBeInstanceOf(DataDumpProbeResult);
+      const dumpResult = result as DataDumpProbeResult;
+      expect(dumpResult.isSuccess()).toBe(true);
+      expect(dumpResult.failureReason).toBeNull();
+    });
+
     it('skips body validation for large files', async () => {
       vi.mocked(fetch).mockResolvedValueOnce(
         new Response('', {
@@ -524,6 +654,117 @@ describe('probe', () => {
       expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1); // HEAD only
       expect(result).toBeInstanceOf(DataDumpProbeResult);
       expect((result as DataDumpProbeResult).isSuccess()).toBe(true);
+    });
+  });
+
+  describe('JSON-LD remote @context', () => {
+    // These exercise the real RDF parser fetching a JSON-LD @context over the
+    // network, so they need the real global fetch rather than the suite stub and
+    // their own origin servers.
+    beforeEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    async function startServer(
+      handler: http.RequestListener,
+    ): Promise<{ server: http.Server; origin: string }> {
+      const server = http.createServer(handler);
+      await new Promise<void>((resolve) =>
+        server.listen(0, '127.0.0.1', resolve),
+      );
+      const { port } = server.address() as AddressInfo;
+      return { server, origin: `http://127.0.0.1:${port}` };
+    }
+
+    it('treats a body with a resolvable remote context as success', async () => {
+      const { server, origin } = await startServer((request, response) => {
+        response.setHeader('Content-Type', 'application/ld+json');
+        if (request.url === '/ctx') {
+          response.end(JSON.stringify({ '@context': { ex: 'http://ex/' } }));
+          return;
+        }
+        response.end(
+          JSON.stringify({
+            '@context': `${origin}/ctx`,
+            '@id': 'http://ex/s',
+            'ex:p': 'value',
+          }),
+        );
+      });
+      try {
+        const result = await probe(
+          new Distribution(
+            new URL(`${origin}/data.jsonld`),
+            'application/ld+json',
+          ),
+        );
+        const dumpResult = result as DataDumpProbeResult;
+        expect(dumpResult.isSuccess()).toBe(true);
+        expect(dumpResult.failureReason).toBeNull();
+      } finally {
+        server.close();
+      }
+    });
+
+    it('does not flag a body whose remote context is unreachable', async () => {
+      // Body resolves, but its @context points at a closed port.
+      const { server, origin } = await startServer((_request, response) => {
+        response.setHeader('Content-Type', 'application/ld+json');
+        response.end(
+          JSON.stringify({
+            '@context': 'http://127.0.0.1:1/never',
+            '@id': 'http://ex/s',
+            'ex:p': 'value',
+          }),
+        );
+      });
+      try {
+        const result = await probe(
+          new Distribution(
+            new URL(`${origin}/data.jsonld`),
+            'application/ld+json',
+          ),
+        );
+        const dumpResult = result as DataDumpProbeResult;
+        expect(dumpResult.isSuccess()).toBe(true);
+        expect(dumpResult.failureReason).toBeNull();
+      } finally {
+        server.close();
+      }
+    });
+
+    it('does not flag a body whose remote context times out', async () => {
+      const heldResponses: http.ServerResponse[] = [];
+      const { server, origin } = await startServer((request, response) => {
+        if (request.url === '/ctx') {
+          heldResponses.push(response); // never answered
+          return;
+        }
+        response.setHeader('Content-Type', 'application/ld+json');
+        response.end(
+          JSON.stringify({
+            '@context': `${origin}/ctx`,
+            '@id': 'http://ex/s',
+            'ex:p': 'value',
+          }),
+        );
+      });
+      try {
+        const result = await probe(
+          new Distribution(
+            new URL(`${origin}/data.jsonld`),
+            'application/ld+json',
+          ),
+          { timeoutMs: 200 },
+        );
+        const dumpResult = result as DataDumpProbeResult;
+        expect(dumpResult.isSuccess()).toBe(true);
+        expect(dumpResult.failureReason).toBeNull();
+      } finally {
+        heldResponses.forEach((response) => response.destroy());
+        server.closeAllConnections?.();
+        server.close();
+      }
     });
   });
 
