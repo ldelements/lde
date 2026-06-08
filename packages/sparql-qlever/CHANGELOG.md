@@ -1,3 +1,9 @@
+## 0.14.6 (2026-06-08)
+
+### 🚀 Features
+
+- **sparql-qlever:** support RDF/XML distributions on import ([#439](https://github.com/ldelements/lde/pull/439))
+
 ## 0.14.5 (2026-05-29)
 
 ### 🩹 Fixes
