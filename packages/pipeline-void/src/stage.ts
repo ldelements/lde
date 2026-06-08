@@ -120,7 +120,7 @@ export interface VoidStagesOptions extends PerClassVoidStageOptions {
 }
 
 async function createVoidStage(
-  filename: string,
+  filename: VoidStageName,
   options?: VoidStageOptions &
     DecoratableStageOptions & {
       /** Decorator the stage itself applies, e.g. URI space or vocabulary detection. */
@@ -182,49 +182,49 @@ function classSelector(): ItemSelector {
 export function subjectUriSpaces(
   options?: VoidStageOptions & DecoratableStageOptions,
 ): Promise<Stage> {
-  return createVoidStage('subject-uri-space.rq', options);
+  return createVoidStage(VOID_STAGE_NAMES.subjectUriSpace, options);
 }
 
 export function classPartitions(
   options?: VoidStageOptions & DecoratableStageOptions,
 ): Promise<Stage> {
-  return createVoidStage('class-partition.rq', options);
+  return createVoidStage(VOID_STAGE_NAMES.classPartition, options);
 }
 
 export function countObjectLiterals(
   options?: VoidStageOptions & DecoratableStageOptions,
 ): Promise<Stage> {
-  return createVoidStage('object-literals.rq', options);
+  return createVoidStage(VOID_STAGE_NAMES.objectLiterals, options);
 }
 
 export function countObjectUris(
   options?: VoidStageOptions & DecoratableStageOptions,
 ): Promise<Stage> {
-  return createVoidStage('object-uris.rq', options);
+  return createVoidStage(VOID_STAGE_NAMES.objectUris, options);
 }
 
 export function countProperties(
   options?: VoidStageOptions & DecoratableStageOptions,
 ): Promise<Stage> {
-  return createVoidStage('properties.rq', options);
+  return createVoidStage(VOID_STAGE_NAMES.properties, options);
 }
 
 export function countSubjects(
   options?: VoidStageOptions & DecoratableStageOptions,
 ): Promise<Stage> {
-  return createVoidStage('subjects.rq', options);
+  return createVoidStage(VOID_STAGE_NAMES.subjects, options);
 }
 
 export function countTriples(
   options?: VoidStageOptions & DecoratableStageOptions,
 ): Promise<Stage> {
-  return createVoidStage('triples.rq', options);
+  return createVoidStage(VOID_STAGE_NAMES.triples, options);
 }
 
 export function classPropertySubjects(
   options?: PerClassVoidStageOptions & DecoratableStageOptions,
 ): Promise<Stage> {
-  return createVoidStage('class-properties-subjects.rq', {
+  return createVoidStage(VOID_STAGE_NAMES.classPropertiesSubjects, {
     ...options,
     perClass: options?.perClass ?? true,
   });
@@ -233,7 +233,7 @@ export function classPropertySubjects(
 export function classPropertyObjects(
   options?: PerClassVoidStageOptions & DecoratableStageOptions,
 ): Promise<Stage> {
-  return createVoidStage('class-properties-objects.rq', {
+  return createVoidStage(VOID_STAGE_NAMES.classPropertiesObjects, {
     ...options,
     perClass: options?.perClass ?? true,
   });
@@ -242,13 +242,13 @@ export function classPropertyObjects(
 export function countDatatypes(
   options?: VoidStageOptions & DecoratableStageOptions,
 ): Promise<Stage> {
-  return createVoidStage('datatypes.rq', options);
+  return createVoidStage(VOID_STAGE_NAMES.datatypes, options);
 }
 
 export function detectLicenses(
   options?: VoidStageOptions & DecoratableStageOptions,
 ): Promise<Stage> {
-  return createVoidStage('licenses.rq', options);
+  return createVoidStage(VOID_STAGE_NAMES.licenses, options);
 }
 
 // Per-class stages
@@ -256,7 +256,7 @@ export function detectLicenses(
 export function perClassObjectClasses(
   options?: PerClassVoidStageOptions & DecoratableStageOptions,
 ): Promise<Stage> {
-  return createVoidStage('class-property-object-classes.rq', {
+  return createVoidStage(VOID_STAGE_NAMES.classPropertyObjectClasses, {
     ...options,
     perClass: options?.perClass ?? true,
   });
@@ -265,7 +265,7 @@ export function perClassObjectClasses(
 export function perClassDatatypes(
   options?: PerClassVoidStageOptions & DecoratableStageOptions,
 ): Promise<Stage> {
-  return createVoidStage('class-property-datatypes.rq', {
+  return createVoidStage(VOID_STAGE_NAMES.classPropertyDatatypes, {
     ...options,
     perClass: options?.perClass ?? true,
   });
@@ -274,7 +274,7 @@ export function perClassDatatypes(
 export function perClassLanguages(
   options?: PerClassVoidStageOptions & DecoratableStageOptions,
 ): Promise<Stage> {
-  return createVoidStage('class-property-languages.rq', {
+  return createVoidStage(VOID_STAGE_NAMES.classPropertyLanguages, {
     ...options,
     perClass: options?.perClass ?? true,
   });
@@ -286,7 +286,7 @@ export function uriSpaces(
   uriSpaceMap: ReadonlyMap<string, readonly Quad[]>,
   options?: VoidStageOptions & DecoratableStageOptions,
 ): Promise<Stage> {
-  return createVoidStage('object-uri-space.rq', {
+  return createVoidStage(VOID_STAGE_NAMES.objectUriSpace, {
     ...options,
     builtIn: (inner) => new UriSpaceExecutor(inner, uriSpaceMap),
   });
@@ -300,7 +300,7 @@ export interface DetectVocabulariesOptions extends VoidStageOptions {
 export function detectVocabularies(
   options?: DetectVocabulariesOptions & DecoratableStageOptions,
 ): Promise<Stage> {
-  return createVoidStage('entity-properties.rq', {
+  return createVoidStage(VOID_STAGE_NAMES.entityProperties, {
     ...options,
     builtIn: (inner) =>
       new VocabularyExecutor(
@@ -330,46 +330,69 @@ export async function voidStages(
     ...stageOptions
   } = options ?? {};
 
-  // Route the bundle's per-stage decorator into the matching stage's `decorate`.
-  const withDecorator = (name: VoidStageName) => ({
-    ...stageOptions,
-    decorate: decorators?.[name],
-  });
-
-  return Promise.all([
+  // Single ordered source of truth for the bundle: each entry pairs a stage
+  // name with the factory that builds it. The decorator is routed by the same
+  // `name` the factory is bound to, so a consumer decorator can never reach the
+  // wrong stage. Order matters — `classPartition` warms the `?s a ?class` cache
+  // before the per-class stages run.
+  const builders: {
+    name: VoidStageName;
+    build: (
+      perStageOptions: PerClassVoidStageOptions & DecoratableStageOptions,
+    ) => Promise<Stage>;
+  }[] = [
     // Global counting stages.
-    countSubjects(withDecorator(VOID_STAGE_NAMES.subjects)),
-    countProperties(withDecorator(VOID_STAGE_NAMES.properties)),
-    countObjectLiterals(withDecorator(VOID_STAGE_NAMES.objectLiterals)),
-    countObjectUris(withDecorator(VOID_STAGE_NAMES.objectUris)),
-    countDatatypes(withDecorator(VOID_STAGE_NAMES.datatypes)),
-    countTriples(withDecorator(VOID_STAGE_NAMES.triples)),
+    { name: VOID_STAGE_NAMES.subjects, build: countSubjects },
+    { name: VOID_STAGE_NAMES.properties, build: countProperties },
+    { name: VOID_STAGE_NAMES.objectLiterals, build: countObjectLiterals },
+    { name: VOID_STAGE_NAMES.objectUris, build: countObjectUris },
+    { name: VOID_STAGE_NAMES.datatypes, build: countDatatypes },
+    { name: VOID_STAGE_NAMES.triples, build: countTriples },
 
     // Cache warming — must precede per-class stages.
-    classPartitions(withDecorator(VOID_STAGE_NAMES.classPartition)),
+    { name: VOID_STAGE_NAMES.classPartition, build: classPartitions },
 
     // Per-class stages.
-    classPropertySubjects(
-      withDecorator(VOID_STAGE_NAMES.classPropertiesSubjects),
-    ),
-    classPropertyObjects(
-      withDecorator(VOID_STAGE_NAMES.classPropertiesObjects),
-    ),
-    perClassDatatypes(withDecorator(VOID_STAGE_NAMES.classPropertyDatatypes)),
-    perClassObjectClasses(
-      withDecorator(VOID_STAGE_NAMES.classPropertyObjectClasses),
-    ),
-    perClassLanguages(withDecorator(VOID_STAGE_NAMES.classPropertyLanguages)),
+    {
+      name: VOID_STAGE_NAMES.classPropertiesSubjects,
+      build: classPropertySubjects,
+    },
+    {
+      name: VOID_STAGE_NAMES.classPropertiesObjects,
+      build: classPropertyObjects,
+    },
+    { name: VOID_STAGE_NAMES.classPropertyDatatypes, build: perClassDatatypes },
+    {
+      name: VOID_STAGE_NAMES.classPropertyObjectClasses,
+      build: perClassObjectClasses,
+    },
+    {
+      name: VOID_STAGE_NAMES.classPropertyLanguages,
+      build: perClassLanguages,
+    },
 
     // Other stages.
-    detectLicenses(withDecorator(VOID_STAGE_NAMES.licenses)),
-    detectVocabularies({
-      ...withDecorator(VOID_STAGE_NAMES.entityProperties),
-      vocabularies,
-    }),
-    subjectUriSpaces(withDecorator(VOID_STAGE_NAMES.subjectUriSpace)),
+    { name: VOID_STAGE_NAMES.licenses, build: detectLicenses },
+    {
+      name: VOID_STAGE_NAMES.entityProperties,
+      build: (perStageOptions) =>
+        detectVocabularies({ ...perStageOptions, vocabularies }),
+    },
+    { name: VOID_STAGE_NAMES.subjectUriSpace, build: subjectUriSpaces },
     ...(uriSpaceMap
-      ? [uriSpaces(uriSpaceMap, withDecorator(VOID_STAGE_NAMES.objectUriSpace))]
+      ? [
+          {
+            name: VOID_STAGE_NAMES.objectUriSpace,
+            build: (perStageOptions: DecoratableStageOptions) =>
+              uriSpaces(uriSpaceMap, perStageOptions),
+          },
+        ]
       : []),
-  ]);
+  ];
+
+  return Promise.all(
+    builders.map(({ name, build }) =>
+      build({ ...stageOptions, decorate: decorators?.[name] }),
+    ),
+  );
 }
