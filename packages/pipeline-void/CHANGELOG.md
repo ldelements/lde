@@ -1,3 +1,13 @@
+## 0.28.5 (2026-06-08)
+
+### 🚀 Features
+
+- make VoID stage executors wrappable with quad transforms ([#438](https://github.com/ldelements/lde/pull/438))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.30.5
+
 ## 0.28.4 (2026-06-01)
 
 ### 🧱 Updated Dependencies
