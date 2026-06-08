@@ -1,5 +1,6 @@
 import { compressionMediaTypes, Distribution } from '@lde/dataset';
-import { Parser } from 'n3';
+import { rdfParser } from 'rdf-parse';
+import { Readable } from 'node:stream';
 
 /**
  * Options for {@link probe}.
@@ -426,7 +427,12 @@ async function probeDataDump(
     const body = await getResponse.text();
     const isHttpSuccess = getResponse.status >= 200 && getResponse.status < 400;
     const failureReason = isHttpSuccess
-      ? validateBody(body, getResponse.headers.get('Content-Type'))
+      ? await validateBody(
+          body,
+          getResponse.headers.get('Content-Type'),
+          url,
+          options.timeoutMs,
+        )
       : null;
     const responseTimeMs = Math.round(performance.now() - start);
     const result = new DataDumpProbeResult(
@@ -445,30 +451,112 @@ async function probeDataDump(
   return result;
 }
 
+// The RDF serializations whose bodies we parse to confirm they carry triples. A
+// non-empty body in one of these formats that yields zero triples — an empty
+// graph such as a JSON-LD `{}`, an `<rdf:RDF/>`, or prefix-only Turtle — is a
+// faulty distribution, not a usable one, so it must be caught here. Other
+// content types (CSV, HTML, …) are left untouched: the probe is not the place
+// to assert what a non-RDF body should contain.
 const rdfContentTypes = [
   'text/turtle',
   'application/n-triples',
   'application/n-quads',
+  'application/trig',
+  'text/n3',
+  'application/ld+json',
+  'application/rdf+xml',
 ];
 
-function validateBody(body: string, contentType: string | null): string | null {
+async function validateBody(
+  body: string,
+  contentType: string | null,
+  baseIRI: string,
+  timeoutMs: number,
+): Promise<string | null> {
   if (body.length === 0) {
     return 'Distribution is empty';
   }
 
-  if (contentType && rdfContentTypes.some((t) => contentType.startsWith(t))) {
-    try {
-      const parser = new Parser();
-      const quads = parser.parse(body);
-      if (quads.length === 0) {
-        return 'Distribution contains no RDF triples';
-      }
-    } catch (e) {
-      return e instanceof Error ? e.message : String(e);
-    }
+  const serialization = contentType?.split(';')[0].trim();
+  if (!serialization || !rdfContentTypes.includes(serialization)) {
+    return null;
   }
 
-  return null;
+  const outcome = await classifyRdfBody(
+    body,
+    serialization,
+    baseIRI,
+    timeoutMs,
+  );
+  switch (outcome.type) {
+    case 'empty':
+      return 'Distribution contains no RDF triples';
+    case 'parseError':
+      return outcome.message;
+    // 'hasTriples' proves content. 'inconclusive' means the parse timed out or a
+    // remote JSON-LD @context could not be loaded — a third-party hiccup, not
+    // evidence the distribution is faulty — so neither is reported as a failure.
+    default:
+      return null;
+  }
+}
+
+type RdfBodyOutcome =
+  | { type: 'hasTriples' }
+  | { type: 'empty' }
+  | { type: 'parseError'; message: string }
+  | { type: 'inconclusive' };
+
+/**
+ * Parse an RDF body just far enough to tell whether it carries any triples:
+ * resolve on the first triple (presence is all we need, not a full count), on a
+ * clean end with none ('empty'), or on a parse error. The parse is bounded by
+ * `timeoutMs` because a JSON-LD `@context` is fetched from its origin, and a
+ * slow or hanging context host would otherwise stall the probe past its budget;
+ * on expiry — and likewise when a remote `@context` is unreachable — the outcome
+ * is 'inconclusive', so a valid distribution is never flagged faulty for a
+ * context host's failure. `baseIRI` resolves any relative IRIs in the document.
+ */
+function classifyRdfBody(
+  body: string,
+  contentType: string,
+  baseIRI: string,
+  timeoutMs: number,
+): Promise<RdfBodyOutcome> {
+  return new Promise<RdfBodyOutcome>((resolve) => {
+    const quads = rdfParser.parse(Readable.from([body]), {
+      contentType,
+      baseIRI,
+    });
+    const timer = setTimeout(() => settle({ type: 'inconclusive' }), timeoutMs);
+    let settled = false;
+    function settle(outcome: RdfBodyOutcome): void {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      quads.destroy();
+      resolve(outcome);
+    }
+    quads
+      .on('data', () => settle({ type: 'hasTriples' }))
+      .on('error', (error: Error) =>
+        settle(
+          isRemoteContextError(error)
+            ? { type: 'inconclusive' }
+            : { type: 'parseError', message: error.message },
+        ),
+      )
+      .on('end', () => settle({ type: 'empty' }));
+  });
+}
+
+/**
+ * Whether a parse error is the RDF parser failing to load a remote JSON-LD
+ * `@context` (an unreachable or broken third-party context host) rather than a
+ * defect in the distribution body itself.
+ */
+function isRemoteContextError(error: Error): boolean {
+  return /remote context/i.test(error.message);
 }
 
 /**
