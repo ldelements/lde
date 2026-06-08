@@ -2,12 +2,12 @@ import {
   namespaceNormalizationTransform,
   namespaceNormalizationPlugin,
 } from '../../src/index.js';
-import {Dataset} from '@lde/dataset';
-import {describe, it, expect} from 'vitest';
-import {DataFactory} from 'n3';
-import type {Quad} from '@rdfjs/types';
+import { Dataset } from '@lde/dataset';
+import { describe, it, expect } from 'vitest';
+import { DataFactory } from 'n3';
+import type { Quad } from '@rdfjs/types';
 
-const {namedNode, quad} = DataFactory;
+const { namedNode, quad } = DataFactory;
 
 const VOID = 'http://rdfs.org/ns/void#';
 
@@ -16,7 +16,7 @@ const dataset = new Dataset({
   distributions: [],
 });
 
-const options = {from: 'http://example.org/', to: 'https://example.org/'};
+const options = { from: 'http://example.org/', to: 'https://example.org/' };
 
 async function collect(iter: AsyncIterable<Quad>): Promise<Quad[]> {
   const result: Quad[] = [];
@@ -42,7 +42,7 @@ describe('namespaceNormalizationTransform', () => {
       namedNode('http://example.org/Person'),
     );
 
-    const quads = await collect(transform(quadStream([input]), dataset));
+    const quads = await collect(transform(quadStream([input]), { dataset }));
 
     expect(quads).toHaveLength(1);
     expect(quads[0].object.value).toBe('https://example.org/Person');
@@ -55,7 +55,7 @@ describe('namespaceNormalizationTransform', () => {
       namedNode('http://example.org/name'),
     );
 
-    const quads = await collect(transform(quadStream([input]), dataset));
+    const quads = await collect(transform(quadStream([input]), { dataset }));
 
     expect(quads).toHaveLength(1);
     expect(quads[0].object.value).toBe('https://example.org/name');
@@ -68,7 +68,7 @@ describe('namespaceNormalizationTransform', () => {
       namedNode('http://example.org/'),
     );
 
-    const quads = await collect(transform(quadStream([input]), dataset));
+    const quads = await collect(transform(quadStream([input]), { dataset }));
 
     expect(quads).toHaveLength(1);
     expect(quads[0].object.value).toBe('http://example.org/');
@@ -81,7 +81,7 @@ describe('namespaceNormalizationTransform', () => {
       namedNode('http://xmlns.com/foaf/0.1/Person'),
     );
 
-    const quads = await collect(transform(quadStream([input]), dataset));
+    const quads = await collect(transform(quadStream([input]), { dataset }));
 
     expect(quads).toHaveLength(1);
     expect(quads[0].object.value).toBe('http://xmlns.com/foaf/0.1/Person');
@@ -94,7 +94,7 @@ describe('namespaceNormalizationTransform', () => {
       namedNode('https://example.org/Person'),
     );
 
-    const quads = await collect(transform(quadStream([input]), dataset));
+    const quads = await collect(transform(quadStream([input]), { dataset }));
 
     expect(quads).toHaveLength(1);
     expect(quads[0].object.value).toBe('https://example.org/Person');
@@ -109,7 +109,7 @@ describe('namespaceNormalizationTransform', () => {
       graphNode,
     );
 
-    const quads = await collect(transform(quadStream([input]), dataset));
+    const quads = await collect(transform(quadStream([input]), { dataset }));
 
     expect(quads[0].subject.value).toBe(dataset.iri.toString());
     expect(quads[0].object.value).toBe('https://example.org/Event');

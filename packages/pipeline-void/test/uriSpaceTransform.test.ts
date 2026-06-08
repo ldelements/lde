@@ -1,10 +1,9 @@
-import { UriSpaceExecutor } from '../src/index.js';
+import { withUriSpaces } from '../src/index.js';
 import { Dataset, Distribution } from '@lde/dataset';
-import { NotSupported } from '@lde/pipeline';
+import type { ExecutorContext } from '@lde/pipeline';
 import { describe, it, expect } from 'vitest';
 import { DataFactory } from 'n3';
 import type { Quad } from '@rdfjs/types';
-import type { Executor } from '@lde/pipeline';
 
 const { namedNode, quad, literal } = DataFactory;
 
@@ -27,14 +26,16 @@ const dataset = new Dataset({
 });
 const distribution = new Distribution(new URL('http://example.com/sparql'));
 
-function mockExecutor(quads: Quad[]): Executor {
-  return {
-    async execute() {
-      return (async function* () {
-        yield* quads;
-      })();
-    },
-  };
+const context: ExecutorContext = {
+  dataset,
+  distribution,
+  stage: 'object-uri-space.rq',
+};
+
+function quadStream(quads: Quad[]): AsyncIterable<Quad> {
+  return (async function* () {
+    yield* quads;
+  })();
 }
 
 async function collect(stream: AsyncIterable<Quad>): Promise<Quad[]> {
@@ -59,7 +60,7 @@ function linksetQuads(
   ];
 }
 
-describe('UriSpaceExecutor', () => {
+describe('withUriSpaces', () => {
   const uriSpaces = new Map([
     [
       'http://vocab.getty.edu/aat/',
@@ -88,6 +89,8 @@ describe('UriSpaceExecutor', () => {
     ],
   ]);
 
+  const transform = withUriSpaces(uriSpaces);
+
   it('filters to only configured URI spaces', async () => {
     const input = [
       ...linksetQuads(
@@ -102,10 +105,7 @@ describe('UriSpaceExecutor', () => {
       ),
     ];
 
-    const executor = new UriSpaceExecutor(mockExecutor(input), uriSpaces);
-    const result = await executor.execute(dataset, distribution);
-
-    const quads = await collect(result as AsyncIterable<Quad>);
+    const quads = await collect(transform(quadStream(input), context));
     const objectsTargets = quads
       .filter((q) => q.predicate.equals(voidObjectsTarget))
       .map((q) => q.object.value);
@@ -126,10 +126,7 @@ describe('UriSpaceExecutor', () => {
       ),
     ];
 
-    const executor = new UriSpaceExecutor(mockExecutor(input), uriSpaces);
-    const result = await executor.execute(dataset, distribution);
-
-    const quads = await collect(result as AsyncIterable<Quad>);
+    const quads = await collect(transform(quadStream(input), context));
     const triplesQuad = quads.find((q) => q.predicate.equals(voidTriples));
     expect(triplesQuad?.object.value).toBe('50');
   });
@@ -141,29 +138,13 @@ describe('UriSpaceExecutor', () => {
       5,
     );
 
-    const executor = new UriSpaceExecutor(mockExecutor(input), uriSpaces);
-    const result = await executor.execute(dataset, distribution);
-
-    const quads = await collect(result as AsyncIterable<Quad>);
+    const quads = await collect(transform(quadStream(input), context));
     const titleQuads = quads.filter((q) => q.predicate.equals(dctermsTitle));
     expect(titleQuads).toHaveLength(2);
     expect(titleQuads.map((q) => q.object.value).sort()).toEqual([
       'GeoNames',
       'GeoNames',
     ]);
-  });
-
-  it('propagates NotSupported from inner executor', async () => {
-    const inner: Executor = {
-      async execute() {
-        return new NotSupported('no endpoint');
-      },
-    };
-
-    const executor = new UriSpaceExecutor(inner, uriSpaces);
-    const result = await executor.execute(dataset, distribution);
-
-    expect(result).toBeInstanceOf(NotSupported);
   });
 
   it('emits correct VoID Linkset structure', async () => {
@@ -173,10 +154,7 @@ describe('UriSpaceExecutor', () => {
       42,
     );
 
-    const executor = new UriSpaceExecutor(mockExecutor(input), uriSpaces);
-    const result = await executor.execute(dataset, distribution);
-
-    const quads = await collect(result as AsyncIterable<Quad>);
+    const quads = await collect(transform(quadStream(input), context));
     const linksetSubject = quads[0].subject;
 
     // All linkset quads share the same blank node subject.
@@ -220,10 +198,7 @@ describe('UriSpaceExecutor', () => {
       // No void:triples quad.
     ];
 
-    const executor = new UriSpaceExecutor(mockExecutor(input), uriSpaces);
-    const result = await executor.execute(dataset, distribution);
-
-    const quads = await collect(result as AsyncIterable<Quad>);
+    const quads = await collect(transform(quadStream(input), context));
     expect(quads).toHaveLength(0);
   });
 
@@ -234,10 +209,7 @@ describe('UriSpaceExecutor', () => {
       10,
     );
 
-    const executor = new UriSpaceExecutor(mockExecutor(input), uriSpaces);
-    const result = await executor.execute(dataset, distribution);
-
-    const quads = await collect(result as AsyncIterable<Quad>);
+    const quads = await collect(transform(quadStream(input), context));
     expect(quads).toHaveLength(0);
   });
 });

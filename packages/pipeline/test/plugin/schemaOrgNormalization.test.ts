@@ -39,7 +39,7 @@ describe('schemaOrgNormalizationTransform', () => {
     );
 
     const quads = await collect(
-      schemaOrgNormalizationTransform(quadStream([input]), dataset),
+      schemaOrgNormalizationTransform(quadStream([input]), { dataset }),
     );
 
     expect(quads).toHaveLength(1);
@@ -54,7 +54,7 @@ describe('schemaOrgNormalizationTransform', () => {
     );
 
     const quads = await collect(
-      schemaOrgNormalizationTransform(quadStream([input]), dataset),
+      schemaOrgNormalizationTransform(quadStream([input]), { dataset }),
     );
 
     expect(quads).toHaveLength(1);
@@ -69,7 +69,7 @@ describe('schemaOrgNormalizationTransform', () => {
     );
 
     const quads = await collect(
-      schemaOrgNormalizationTransform(quadStream([input]), dataset),
+      schemaOrgNormalizationTransform(quadStream([input]), { dataset }),
     );
 
     expect(quads).toHaveLength(1);
@@ -84,7 +84,7 @@ describe('schemaOrgNormalizationTransform', () => {
     );
 
     const quads = await collect(
-      schemaOrgNormalizationTransform(quadStream([input]), dataset),
+      schemaOrgNormalizationTransform(quadStream([input]), { dataset }),
     );
 
     expect(quads).toHaveLength(1);
@@ -99,7 +99,7 @@ describe('schemaOrgNormalizationTransform', () => {
     );
 
     const quads = await collect(
-      schemaOrgNormalizationTransform(quadStream([input]), dataset),
+      schemaOrgNormalizationTransform(quadStream([input]), { dataset }),
     );
 
     expect(quads).toHaveLength(1);
@@ -116,7 +116,7 @@ describe('schemaOrgNormalizationTransform', () => {
     );
 
     const quads = await collect(
-      schemaOrgNormalizationTransform(quadStream([input]), dataset),
+      schemaOrgNormalizationTransform(quadStream([input]), { dataset }),
     );
 
     expect(quads[0].subject.value).toBe(dataset.iri.toString());
@@ -144,10 +144,9 @@ describe('schemaOrgNormalizationPlugin', () => {
     );
 
     const quads = await collect(
-      schemaOrgNormalizationPlugin().beforeStageWrite!(
-        quadStream([input]),
+      schemaOrgNormalizationPlugin().beforeStageWrite!(quadStream([input]), {
         dataset,
-      ),
+      }),
     );
 
     expect(quads[0].object.value).toBe('https://schema.org/Person');
@@ -161,9 +160,9 @@ describe('schemaOrgNormalizationPlugin', () => {
     );
 
     const quads = await collect(
-      schemaOrgNormalizationPlugin({reverse: true}).beforeStageWrite!(
+      schemaOrgNormalizationPlugin({ reverse: true }).beforeStageWrite!(
         quadStream([input]),
-        dataset,
+        { dataset },
       ),
     );
 
@@ -178,9 +177,9 @@ describe('schemaOrgNormalizationPlugin', () => {
     );
 
     const quads = await collect(
-      schemaOrgNormalizationPlugin({reverse: true}).beforeStageWrite!(
+      schemaOrgNormalizationPlugin({ reverse: true }).beforeStageWrite!(
         quadStream([input]),
-        dataset,
+        { dataset },
       ),
     );
 
