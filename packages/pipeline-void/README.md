@@ -10,14 +10,15 @@ Returns all VoID stages in their recommended execution order. The ordering is op
 
 Accepts an optional `VoidStagesOptions` object:
 
-| Option           | Default | Description                                                           |
-| ---------------- | ------- | --------------------------------------------------------------------- |
-| `timeout`        | 60 000  | SPARQL query timeout in milliseconds                                  |
-| `batchSize`      | 10      | Maximum class bindings per executor call (per-class stages only)      |
-| `maxConcurrency` | 10      | Maximum concurrent in-flight executor batches (per-class stages only) |
-| `perClass`       | —       | Override per-class iteration for all five per-class stages            |
-| `uriSpaces`      | —       | When provided, includes the object URI space stage                    |
-| `vocabularies`   | —       | Additional vocabulary namespace URIs to detect beyond the built-in defaults |
+| Option           | Default | Description                                                                      |
+| ---------------- | ------- | -------------------------------------------------------------------------------- |
+| `timeout`        | 60 000  | SPARQL query timeout in milliseconds                                             |
+| `batchSize`      | 10      | Maximum class bindings per executor call (per-class stages only)                 |
+| `maxConcurrency` | 10      | Maximum concurrent in-flight executor batches (per-class stages only)            |
+| `perClass`       | —       | Override per-class iteration for all five per-class stages                       |
+| `uriSpaces`      | —       | When provided, includes the object URI space stage                               |
+| `vocabularies`   | —       | Additional vocabulary namespace URIs to detect beyond the built-in defaults      |
+| `decorators`     | —       | Per-stage executor decorators, keyed by `VoidStageName` (use `VOID_STAGE_NAMES`) |
 
 ```typescript
 import { voidStages } from '@lde/pipeline-void';
@@ -38,6 +39,8 @@ await new Pipeline({
 ### Individual stage factories
 
 Global and domain-specific factories accept `VoidStageOptions` (`timeout`) and return `Promise<Stage>`. Per-class factories accept `PerClassVoidStageOptions` (`timeout`, `batchSize`, `maxConcurrency`, `perClass`) — they default `perClass` to `true`; set it to `false` to run them as monolithic queries instead.
+
+Every factory additionally accepts `DecoratableStageOptions` with an optional `decorate?: ExecutorDecorator`, letting a single stage be decorated in isolation. The factory always builds its own default executor (including any built-in decorator such as `UriSpaceExecutor` or `VocabularyExecutor`); `decorate` wraps that from the outside, so it composes over the built-in behaviour rather than replacing it. The `voidStages()` bundle exposes the same capability per stage through its `decorators` map.
 
 #### Global stages (one CONSTRUCT query per dataset):
 
@@ -65,12 +68,14 @@ Global and domain-specific factories accept `VoidStageOptions` (`timeout`) and r
 
 #### Domain-specific stages:
 
-| Factory                  | Description                                                                                                                       |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| Factory                  | Description                                                                                                                                                                                                                       |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `detectVocabularies()`   | [`entity-properties.rq`](queries/entity-properties.rq) — Entity properties with automatic `void:vocabulary` detection. Accepts `DetectVocabulariesOptions` with an optional `vocabularies` array to extend the built-in defaults. |
-| `uriSpaces(uriSpaceMap)` | [`object-uri-space.rq`](queries/object-uri-space.rq) — Object URI namespace linksets, aggregated against a provided URI space map |
+| `uriSpaces(uriSpaceMap)` | [`object-uri-space.rq`](queries/object-uri-space.rq) — Object URI namespace linksets, aggregated against a provided URI space map                                                                                                 |
 
 ## Executor decorators
 
 - `VocabularyExecutor` — Wraps an executor; detects known vocabulary namespace prefixes in `void:property` quads and appends `void:vocabulary` triples. The built-in defaults are exported as `defaultVocabularies` (sourced from `@zazuko/prefixes`).
 - `UriSpaceExecutor` — Wraps an executor; consumes `void:Linkset` quads, matches each `void:objectsTarget` against configured URI space prefixes using `startsWith`, and aggregates triple counts per matched space. Emits `void:objectsTarget` pointing to the target dataset IRI (taken from the metadata quad subjects), not the raw prefix. Unmatched linksets are discarded.
+
+Both are plain `ExecutorDecorator`s. To attach your own — for example to harvest a stage's output and append extra measurements — pass a decorator via a factory's `decorate` option or the `voidStages()` `decorators` map. The decorator receives the stage's executor as its `inner` and returns a replacement; the stage's `execute()` call gives it the dataset endpoint, so it can fire its own follow-up queries. See [`composeDecorators`](../pipeline) in `@lde/pipeline` for the composition order.

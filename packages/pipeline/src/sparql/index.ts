@@ -10,6 +10,10 @@ export {
   type VariableBindings,
 } from './executor.js';
 export {
+  composeDecorators,
+  type ExecutorDecorator,
+} from './executorDecorator.js';
+export {
   SparqlItemSelector,
   type SparqlItemSelectorOptions,
 } from './selector.js';

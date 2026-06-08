@@ -2,8 +2,9 @@ import {
   Stage,
   SparqlConstructExecutor,
   SparqlItemSelector,
+  composeDecorators,
   readQueryFile,
-  type Executor,
+  type ExecutorDecorator,
   type ItemSelector,
 } from '@lde/pipeline';
 import { assertSafeIri } from '@lde/dataset';
@@ -23,6 +24,38 @@ const queriesDir = resolve(
 );
 
 /**
+ * Stable names of the individual VoID stages, keyed by a readable identifier
+ * and valued by the query filename used as the stage name.
+ *
+ * Consumers reference these keys when targeting a specific stage — for example
+ * to route an {@link ExecutorDecorator} through {@link VoidStagesOptions.decorators}
+ * — so they never have to hard-code a `.rq` filename and an invalid key becomes
+ * a compile error rather than a silent no-op.
+ */
+export const VOID_STAGE_NAMES = {
+  subjects: 'subjects.rq',
+  properties: 'properties.rq',
+  objectLiterals: 'object-literals.rq',
+  objectUris: 'object-uris.rq',
+  datatypes: 'datatypes.rq',
+  triples: 'triples.rq',
+  classPartition: 'class-partition.rq',
+  classPropertiesSubjects: 'class-properties-subjects.rq',
+  classPropertiesObjects: 'class-properties-objects.rq',
+  classPropertyDatatypes: 'class-property-datatypes.rq',
+  classPropertyObjectClasses: 'class-property-object-classes.rq',
+  classPropertyLanguages: 'class-property-languages.rq',
+  licenses: 'licenses.rq',
+  entityProperties: 'entity-properties.rq',
+  subjectUriSpace: 'subject-uri-space.rq',
+  objectUriSpace: 'object-uri-space.rq',
+} as const;
+
+/** The name (query filename) of one VoID stage. */
+export type VoidStageName =
+  (typeof VOID_STAGE_NAMES)[keyof typeof VOID_STAGE_NAMES];
+
+/**
  * Options for configuring VoID stage execution.
  *
  * Per-request timeouts are configured at the {@link Pipeline} level via
@@ -32,6 +65,24 @@ const queriesDir = resolve(
  */
 // eslint-disable-next-line @typescript-eslint/no-empty-interface, @typescript-eslint/no-empty-object-type
 export interface VoidStageOptions {}
+
+/**
+ * Mix-in for the standalone per-stage functions, letting a single stage be
+ * decorated in isolation.
+ *
+ * Kept off the base {@link VoidStageOptions} on purpose: {@link VoidStagesOptions}
+ * extends that base, and a lone `decorate` there would be ambiguous about which
+ * of the many stages it targets. The bundle uses {@link VoidStagesOptions.decorators}
+ * — keyed per stage — instead.
+ */
+export interface DecoratableStageOptions {
+  /**
+   * Wraps this stage's executor. The stage always builds its own default
+   * executor (including any built-in decorator); this wraps it from the
+   * outside. See {@link ExecutorDecorator} for the scope contract.
+   */
+  decorate?: ExecutorDecorator;
+}
 
 /**
  * Options for per-class VoID stages that iterate over classes.
@@ -56,20 +107,34 @@ export interface VoidStagesOptions extends PerClassVoidStageOptions {
   uriSpaces?: ReadonlyMap<string, readonly Quad[]>;
   /** Additional vocabulary namespace URIs to detect beyond the built-in defaults. */
   vocabularies?: readonly string[];
+  /**
+   * Per-stage executor decorators, keyed by {@link VoidStageName}.
+   *
+   * Each decorator wraps the matching stage's executor from the outside,
+   * composing over any built-in decorator the stage applies (e.g. the URI space
+   * aggregator or vocabulary detector) rather than replacing it. Use
+   * {@link VOID_STAGE_NAMES} for the keys so an invalid stage name is a compile
+   * error.
+   */
+  decorators?: Partial<Record<VoidStageName, ExecutorDecorator>>;
 }
 
 async function createVoidStage(
   filename: string,
-  options?: VoidStageOptions & {
-    executor?: (query: string) => Executor;
-    perClass?: boolean;
-    batchSize?: number;
-    maxConcurrency?: number;
-  },
+  options?: VoidStageOptions &
+    DecoratableStageOptions & {
+      /** Decorator the stage itself applies, e.g. URI space or vocabulary detection. */
+      builtIn?: ExecutorDecorator;
+      perClass?: boolean;
+      batchSize?: number;
+      maxConcurrency?: number;
+    },
 ): Promise<Stage> {
   const query = await readQueryFile(resolve(queriesDir, filename));
-  const executor =
-    options?.executor?.(query) ?? new SparqlConstructExecutor({ query });
+  // Built-in decorator wraps the base executor; the consumer's decorator wraps
+  // that, so it composes over (never clobbers) any built-in behaviour.
+  const decorate = composeDecorators(options?.builtIn, options?.decorate);
+  const executor = decorate(new SparqlConstructExecutor({ query }));
 
   if (options?.perClass) {
     return new Stage({
@@ -114,38 +179,50 @@ function classSelector(): ItemSelector {
 
 // Global stages
 
-export function subjectUriSpaces(options?: VoidStageOptions): Promise<Stage> {
+export function subjectUriSpaces(
+  options?: VoidStageOptions & DecoratableStageOptions,
+): Promise<Stage> {
   return createVoidStage('subject-uri-space.rq', options);
 }
 
-export function classPartitions(options?: VoidStageOptions): Promise<Stage> {
+export function classPartitions(
+  options?: VoidStageOptions & DecoratableStageOptions,
+): Promise<Stage> {
   return createVoidStage('class-partition.rq', options);
 }
 
 export function countObjectLiterals(
-  options?: VoidStageOptions,
+  options?: VoidStageOptions & DecoratableStageOptions,
 ): Promise<Stage> {
   return createVoidStage('object-literals.rq', options);
 }
 
-export function countObjectUris(options?: VoidStageOptions): Promise<Stage> {
+export function countObjectUris(
+  options?: VoidStageOptions & DecoratableStageOptions,
+): Promise<Stage> {
   return createVoidStage('object-uris.rq', options);
 }
 
-export function countProperties(options?: VoidStageOptions): Promise<Stage> {
+export function countProperties(
+  options?: VoidStageOptions & DecoratableStageOptions,
+): Promise<Stage> {
   return createVoidStage('properties.rq', options);
 }
 
-export function countSubjects(options?: VoidStageOptions): Promise<Stage> {
+export function countSubjects(
+  options?: VoidStageOptions & DecoratableStageOptions,
+): Promise<Stage> {
   return createVoidStage('subjects.rq', options);
 }
 
-export function countTriples(options?: VoidStageOptions): Promise<Stage> {
+export function countTriples(
+  options?: VoidStageOptions & DecoratableStageOptions,
+): Promise<Stage> {
   return createVoidStage('triples.rq', options);
 }
 
 export function classPropertySubjects(
-  options?: PerClassVoidStageOptions,
+  options?: PerClassVoidStageOptions & DecoratableStageOptions,
 ): Promise<Stage> {
   return createVoidStage('class-properties-subjects.rq', {
     ...options,
@@ -154,7 +231,7 @@ export function classPropertySubjects(
 }
 
 export function classPropertyObjects(
-  options?: PerClassVoidStageOptions,
+  options?: PerClassVoidStageOptions & DecoratableStageOptions,
 ): Promise<Stage> {
   return createVoidStage('class-properties-objects.rq', {
     ...options,
@@ -162,18 +239,22 @@ export function classPropertyObjects(
   });
 }
 
-export function countDatatypes(options?: VoidStageOptions): Promise<Stage> {
+export function countDatatypes(
+  options?: VoidStageOptions & DecoratableStageOptions,
+): Promise<Stage> {
   return createVoidStage('datatypes.rq', options);
 }
 
-export function detectLicenses(options?: VoidStageOptions): Promise<Stage> {
+export function detectLicenses(
+  options?: VoidStageOptions & DecoratableStageOptions,
+): Promise<Stage> {
   return createVoidStage('licenses.rq', options);
 }
 
 // Per-class stages
 
 export function perClassObjectClasses(
-  options?: PerClassVoidStageOptions,
+  options?: PerClassVoidStageOptions & DecoratableStageOptions,
 ): Promise<Stage> {
   return createVoidStage('class-property-object-classes.rq', {
     ...options,
@@ -182,7 +263,7 @@ export function perClassObjectClasses(
 }
 
 export function perClassDatatypes(
-  options?: PerClassVoidStageOptions,
+  options?: PerClassVoidStageOptions & DecoratableStageOptions,
 ): Promise<Stage> {
   return createVoidStage('class-property-datatypes.rq', {
     ...options,
@@ -191,7 +272,7 @@ export function perClassDatatypes(
 }
 
 export function perClassLanguages(
-  options?: PerClassVoidStageOptions,
+  options?: PerClassVoidStageOptions & DecoratableStageOptions,
 ): Promise<Stage> {
   return createVoidStage('class-property-languages.rq', {
     ...options,
@@ -203,12 +284,11 @@ export function perClassLanguages(
 
 export function uriSpaces(
   uriSpaceMap: ReadonlyMap<string, readonly Quad[]>,
-  options?: VoidStageOptions,
+  options?: VoidStageOptions & DecoratableStageOptions,
 ): Promise<Stage> {
   return createVoidStage('object-uri-space.rq', {
     ...options,
-    executor: (query) =>
-      new UriSpaceExecutor(new SparqlConstructExecutor({ query }), uriSpaceMap),
+    builtIn: (inner) => new UriSpaceExecutor(inner, uriSpaceMap),
   });
 }
 
@@ -218,13 +298,13 @@ export interface DetectVocabulariesOptions extends VoidStageOptions {
 }
 
 export function detectVocabularies(
-  options?: DetectVocabulariesOptions,
+  options?: DetectVocabulariesOptions & DecoratableStageOptions,
 ): Promise<Stage> {
   return createVoidStage('entity-properties.rq', {
     ...options,
-    executor: (query) =>
+    builtIn: (inner) =>
       new VocabularyExecutor(
-        new SparqlConstructExecutor({ query }),
+        inner,
         options?.vocabularies
           ? [...defaultVocabularies, ...options.vocabularies]
           : undefined,
@@ -246,32 +326,50 @@ export async function voidStages(
   const {
     uriSpaces: uriSpaceMap,
     vocabularies,
+    decorators,
     ...stageOptions
   } = options ?? {};
 
+  // Route the bundle's per-stage decorator into the matching stage's `decorate`.
+  const withDecorator = (name: VoidStageName) => ({
+    ...stageOptions,
+    decorate: decorators?.[name],
+  });
+
   return Promise.all([
     // Global counting stages.
-    countSubjects(stageOptions),
-    countProperties(stageOptions),
-    countObjectLiterals(stageOptions),
-    countObjectUris(stageOptions),
-    countDatatypes(stageOptions),
-    countTriples(stageOptions),
+    countSubjects(withDecorator(VOID_STAGE_NAMES.subjects)),
+    countProperties(withDecorator(VOID_STAGE_NAMES.properties)),
+    countObjectLiterals(withDecorator(VOID_STAGE_NAMES.objectLiterals)),
+    countObjectUris(withDecorator(VOID_STAGE_NAMES.objectUris)),
+    countDatatypes(withDecorator(VOID_STAGE_NAMES.datatypes)),
+    countTriples(withDecorator(VOID_STAGE_NAMES.triples)),
 
     // Cache warming — must precede per-class stages.
-    classPartitions(stageOptions),
+    classPartitions(withDecorator(VOID_STAGE_NAMES.classPartition)),
 
     // Per-class stages.
-    classPropertySubjects(stageOptions),
-    classPropertyObjects(stageOptions),
-    perClassDatatypes(stageOptions),
-    perClassObjectClasses(stageOptions),
-    perClassLanguages(stageOptions),
+    classPropertySubjects(
+      withDecorator(VOID_STAGE_NAMES.classPropertiesSubjects),
+    ),
+    classPropertyObjects(
+      withDecorator(VOID_STAGE_NAMES.classPropertiesObjects),
+    ),
+    perClassDatatypes(withDecorator(VOID_STAGE_NAMES.classPropertyDatatypes)),
+    perClassObjectClasses(
+      withDecorator(VOID_STAGE_NAMES.classPropertyObjectClasses),
+    ),
+    perClassLanguages(withDecorator(VOID_STAGE_NAMES.classPropertyLanguages)),
 
     // Other stages.
-    detectLicenses(stageOptions),
-    detectVocabularies({ ...stageOptions, vocabularies }),
-    subjectUriSpaces(stageOptions),
-    ...(uriSpaceMap ? [uriSpaces(uriSpaceMap, stageOptions)] : []),
+    detectLicenses(withDecorator(VOID_STAGE_NAMES.licenses)),
+    detectVocabularies({
+      ...withDecorator(VOID_STAGE_NAMES.entityProperties),
+      vocabularies,
+    }),
+    subjectUriSpaces(withDecorator(VOID_STAGE_NAMES.subjectUriSpace)),
+    ...(uriSpaceMap
+      ? [uriSpaces(uriSpaceMap, withDecorator(VOID_STAGE_NAMES.objectUriSpace))]
+      : []),
   ]);
 }

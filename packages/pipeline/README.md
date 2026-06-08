@@ -208,6 +208,16 @@ new Stage({
 
 This keeps SPARQL doing the heavy lifting while TypeScript handles the edge cases. See [@lde/pipeline-void](../pipeline-void)'s `VocabularyExecutor` for a real-world example of this pattern.
 
+When a stage applies its own decorator and also exposes the seam to consumers, both should wrap the same executor rather than clobber one another. An `ExecutorDecorator` is just `(inner: Executor) => Executor`, and `composeDecorators(...)` folds several into one, applied innermost-first so the last argument ends up outermost. `undefined` entries are skipped, so optional decorators pass straight through:
+
+```typescript
+import { composeDecorators } from '@lde/pipeline';
+
+// base → built-in → consumer (consumer outermost, undefined is a no-op)
+const decorate = composeDecorators(builtIn, consumer);
+const executor = decorate(new SparqlConstructExecutor({ query }));
+```
+
 #### Adaptive timeouts
 
 By default, every SPARQL request uses the same 5-minute budget. When a pipeline runs against many third-party endpoints, that fixed budget can cost ~80 minutes on a single dataset whose endpoint times out repeatedly on heavy queries — light stages on the same endpoint then sit behind the heavy ones that will never succeed.
