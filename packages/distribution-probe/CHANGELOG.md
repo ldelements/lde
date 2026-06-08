@@ -1,3 +1,9 @@
+## 0.1.6 (2026-06-08)
+
+### 🚀 Features
+
+- **distribution-probe:** detect empty RDF distributions across serializations ([#441](https://github.com/ldelements/lde/pull/441))
+
 ## 0.1.5 (2026-06-01)
 
 ### 🩹 Fixes
