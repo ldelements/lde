@@ -531,6 +531,32 @@ describe('probe', () => {
       );
     });
 
+    it('matches the content type case-insensitively', async () => {
+      const body = '{}';
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(new Response('', { status: 200 })) // HEAD
+        .mockResolvedValueOnce(
+          new Response(body, {
+            status: 200,
+            headers: { 'Content-Type': 'Application/LD+JSON' },
+          }),
+        ); // GET
+
+      const distribution = new Distribution(
+        new URL('http://example.org/data.jsonld'),
+        'application/ld+json',
+      );
+
+      const result = await probe(distribution);
+
+      expect(result).toBeInstanceOf(DataDumpProbeResult);
+      const dumpResult = result as DataDumpProbeResult;
+      expect(dumpResult.isSuccess()).toBe(false);
+      expect(dumpResult.failureReason).toBe(
+        'Distribution contains no RDF triples',
+      );
+    });
+
     it('marks empty RDF/XML as failure', async () => {
       const body =
         '<?xml version="1.0"?>\n<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"></rdf:RDF>';

@@ -477,7 +477,10 @@ async function validateBody(
     return 'Distribution is empty';
   }
 
-  const serialization = contentType?.split(';')[0].trim();
+  // Media types are case-insensitive (RFC 9110 §8.3.1), so normalise before
+  // matching the lower-case allow-list — a server sending `Application/LD+JSON`
+  // must still have its body validated.
+  const serialization = contentType?.split(';')[0].trim().toLowerCase();
   if (!serialization || !rdfContentTypes.includes(serialization)) {
     return null;
   }
