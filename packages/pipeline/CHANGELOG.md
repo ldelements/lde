@@ -1,3 +1,9 @@
+## 0.30.5 (2026-06-08)
+
+### 🚀 Features
+
+- make VoID stage executors wrappable with quad transforms ([#438](https://github.com/ldelements/lde/pull/438))
+
 ## 0.30.4 (2026-06-01)
 
 ### 🧱 Updated Dependencies
