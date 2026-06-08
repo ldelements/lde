@@ -53,7 +53,13 @@ export async function validateManifest(
   let response: Response;
   try {
     response = await doFetch(url, {
-      headers: { Accept: 'application/ld+json, application/json' },
+      // Request with `Accept: */*`, matching what real IIIF viewers (Mirador,
+      // Universal Viewer) send via the browser `fetch` default. A more specific
+      // `application/ld+json` is technically correct, but some manifest hosts do
+      // backwards content negotiation: they serve the manifest to `*/*` yet 404
+      // a JSON-specific request. Asking for anything keeps the validator as
+      // permissive as the viewers whose access it stands in for.
+      headers: { Accept: '*/*' },
       signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (error) {

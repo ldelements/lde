@@ -79,6 +79,25 @@ describe('validateManifest', () => {
     expect(verdict).toEqual({ valid: true, reason: 'valid-manifest' });
   });
 
+  it('requests with `Accept: */*` so backwards-content-negotiating hosts still serve the manifest', async () => {
+    let sentAccept: string | null = null;
+    const fetch = (async (_url: string, init?: RequestInit) => {
+      sentAccept = new Headers(init?.headers).get('Accept');
+      return new Response(
+        JSON.stringify({
+          '@context': 'http://iiif.io/api/presentation/3/context.json',
+          id: URL,
+          type: 'Manifest',
+        }),
+        { headers: { 'Content-Type': 'application/ld+json' } },
+      );
+    }) as typeof globalThis.fetch;
+
+    await validateManifest(URL, { fetch });
+
+    expect(sentAccept).toBe('*/*');
+  });
+
   it('reports http-error for a non-2xx response', async () => {
     const fetch = fetchReturning('Not Found', { status: 404 });
 

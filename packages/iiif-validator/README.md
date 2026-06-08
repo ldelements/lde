@@ -28,7 +28,7 @@ interface ManifestValidation {
 
 ## Behaviour
 
-- **Dereference over HTTP** with `Accept: application/ld+json, application/json`, following redirects, using the global `fetch` with an `AbortSignal` timeout (default 10 000 ms). Both are injectable via the options argument (`fetch`, `timeoutMs`).
+- **Dereference over HTTP** with `Accept: */*`, following redirects, using the global `fetch` with an `AbortSignal` timeout (default 10 000 ms). The wildcard mirrors what real IIIF viewers send (the browser `fetch` default); a JSON-specific `Accept` would be more correct but trips up hosts that do backwards content negotiation – serving the manifest to `*/*` while returning 404 for a JSON-specific request. Both `fetch` and `timeoutMs` are injectable via the options argument.
 - **Lightweight, version-aware structural check.** A document is valid when the response is HTTP 2xx, the body parses as JSON, its `@context` references an IIIF Presentation context, and its `type`/`@type` indicates a manifest – accepting both v3 (`Manifest`) and v2 (`sc:Manifest`). The `@context` value may be a string, an array, or an object; all forms are handled. The version segment of the context is accepted version-agnostically.
 - **Strict failure semantics, no retries.** A timeout, network error, non-2xx status, unparseable body, missing IIIF `@context`, or wrong `type` all yield `valid: false` with the corresponding coarse `reason`. There is no deep JSON Schema validation and no dependency on the hosted IIIF Presentation Validator service.
 
