@@ -121,13 +121,10 @@ export interface VoidStagesOptions extends PerClassVoidStageOptions {
 
 async function createVoidStage(
   filename: VoidStageName,
-  options?: VoidStageOptions &
+  options?: PerClassVoidStageOptions &
     DecoratableStageOptions & {
       /** Decorator the stage itself applies, e.g. URI space or vocabulary detection. */
       builtIn?: ExecutorDecorator;
-      perClass?: boolean;
-      batchSize?: number;
-      maxConcurrency?: number;
     },
 ): Promise<Stage> {
   const query = await readQueryFile(resolve(queriesDir, filename));
