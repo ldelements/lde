@@ -1,3 +1,9 @@
+## 0.1.7 (2026-06-08)
+
+### 🩹 Fixes
+
+- **distribution-probe:** match distribution content type case-insensitively ([#442](https://github.com/ldelements/lde/pull/442))
+
 ## 0.1.6 (2026-06-08)
 
 ### 🚀 Features
