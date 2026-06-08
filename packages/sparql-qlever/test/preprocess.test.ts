@@ -58,6 +58,23 @@ describe('needsPreprocessing', () => {
     ).toBe(true);
   });
 
+  it('returns true for RDF/XML (plain or gzipped)', () => {
+    expect(needsPreprocessing(makeDistribution('application/rdf+xml'))).toBe(
+      true,
+    );
+    expect(
+      needsPreprocessing(
+        makeDistribution('application/rdf+xml', 'application/gzip'),
+      ),
+    ).toBe(true);
+  });
+
+  it('returns false when the distribution has no declared media type', () => {
+    expect(
+      needsPreprocessing(new Distribution(new URL('https://example.com/data'))),
+    ).toBe(false);
+  });
+
   it('returns false for native RDF wrapped in a zip — handled by the shell pipeline', () => {
     expect(
       needsPreprocessing(
@@ -90,6 +107,24 @@ describe('preprocess', () => {
     const result = await preprocess(
       file,
       makeDistribution('application/ld+json'),
+    );
+
+    expect(result.format).toBe('nq');
+    expect(result.path).toBe(`${file}.preprocessed.nq`);
+    const nquads = await readFile(result.path, 'utf-8');
+    expect(nquads).toContain('<https://example.org/utrecht/story/1>');
+    expect(nquads).toContain('Een verhaal uit Utrecht');
+    // N-Quads triples end with " ." on each line.
+    expect(nquads.trim().split('\n').length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('converts plain RDF/XML to N-Quads', async () => {
+    const file = join(tempDir, 'data.rdf');
+    await copyFile(resolve('test/fixtures/preprocess/data.rdf'), file);
+
+    const result = await preprocess(
+      file,
+      makeDistribution('application/rdf+xml'),
     );
 
     expect(result.format).toBe('nq');
@@ -187,6 +222,15 @@ describe('preprocess', () => {
 
     await expect(
       preprocess(file, makeDistribution('application/n-triples')),
+    ).rejects.toThrow(/does not need preprocessing/);
+  });
+
+  it('throws when called for a distribution without a media type', async () => {
+    const file = join(tempDir, 'data');
+    await (await import('node:fs/promises')).writeFile(file, '');
+
+    await expect(
+      preprocess(file, new Distribution(new URL('https://example.com/data'))),
     ).rejects.toThrow(/does not need preprocessing/);
   });
 

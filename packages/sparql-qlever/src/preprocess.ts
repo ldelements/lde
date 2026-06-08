@@ -11,11 +11,27 @@ import { promisify } from 'node:util';
 import yauzl from 'yauzl';
 
 const JSONLD_MIME = 'application/ld+json';
+const RDFXML_MIME = 'application/rdf+xml';
 const ZIP_MIME = 'application/zip';
 const GZIP_MIME = 'application/gzip';
 const GZIP_MIME_LEGACY = 'application/x-gzip';
 
-const JSONLD_ZIP_EXTENSIONS = ['.jsonld', '.json'];
+interface PreprocessFormat {
+  /** Human-readable label used in warnings and error messages. */
+  label: string;
+  /** Filename extensions that identify this format inside a zip container. */
+  zipExtensions: string[];
+}
+
+/**
+ * RDF media types that `qlever-index` cannot read natively, so they are streamed
+ * through `rdf-parse` → N-Quads first. The map key is the `rdf-parse`
+ * `contentType`; the value carries the metadata needed to handle zip containers.
+ */
+const preprocessFormats = new Map<string, PreprocessFormat>([
+  [JSONLD_MIME, { label: 'JSON-LD', zipExtensions: ['.jsonld', '.json'] }],
+  [RDFXML_MIME, { label: 'RDF/XML', zipExtensions: ['.rdf', '.xml', '.owl'] }],
+]);
 
 export interface PreprocessResult {
   /** Path to the file ready for `qlever-index`. Always N-Quads. */
@@ -28,8 +44,8 @@ export interface PreprocessResult {
  * Whether a distribution needs Node-side preprocessing before `qlever-index`
  * can read it.
  *
- * Only JSON-LD distributions return `true`: `qlever-index` cannot parse
- * JSON-LD, so we stream it through a JSON-LD parser into N-Quads first.
+ * JSON-LD and RDF/XML distributions return `true`: `qlever-index` cannot parse
+ * either, so we stream them through `rdf-parse` into N-Quads first.
  *
  * Native RDF formats (`nt`, `nq`, `ttl`) — including when wrapped in
  * `application/gzip` or `application/zip` — go straight through the shell
@@ -38,16 +54,20 @@ export interface PreprocessResult {
  * format must be declared.
  */
 export function needsPreprocessing(distribution: Distribution): boolean {
-  return distribution.mimeType === JSONLD_MIME;
+  return (
+    distribution.mimeType !== undefined &&
+    preprocessFormats.has(distribution.mimeType)
+  );
 }
 
 /**
- * Convert a JSON-LD distribution to N-Quads alongside the source file.
+ * Convert a JSON-LD or RDF/XML distribution to N-Quads alongside the source
+ * file.
  *
  * Streams the source through `rdf-parse` → `rdf-serialize` so memory use
  * stays bounded regardless of input size. Handles gzip transparently
  * (declared `compressFormat` or `.gz` filename) and zip containers (folds
- * each JSON-LD entry into the output stream in order).
+ * each matching entry into the output stream in order).
  *
  * Cached: if the output is newer than the input, it is reused as-is.
  */
@@ -55,7 +75,12 @@ export async function preprocess(
   localFile: string,
   distribution: Distribution,
 ): Promise<PreprocessResult> {
-  if (!needsPreprocessing(distribution)) {
+  const contentType = distribution.mimeType;
+  const format =
+    contentType === undefined
+      ? undefined
+      : preprocessFormats.get(contentType);
+  if (contentType === undefined || format === undefined) {
     throw new Error(
       `preprocess called for distribution that does not need preprocessing: mediaType=${distribution.mimeType}`,
     );
@@ -70,9 +95,9 @@ export async function preprocess(
   const warnings: string[] = [];
 
   if (distribution.compressMimeType === ZIP_MIME) {
-    await streamJsonldZip(localFile, outputFile, warnings);
+    await streamRdfZip(localFile, outputFile, contentType, format, warnings);
   } else {
-    await streamJsonldFile(localFile, outputFile, distribution);
+    await streamRdfFile(localFile, outputFile, contentType, distribution);
   }
 
   return { path: outputFile, format: 'nq', warnings };
@@ -94,15 +119,16 @@ async function outputIsUpToDate(
 }
 
 /**
- * Pipe one JSON-LD source through parse → N-Quads serialize into an already
+ * Pipe one RDF source through parse → N-Quads serialize into an already
  * open writable, without closing it. Back-pressure is handled by Node's
  * built-in `.pipe()`; the caller manages `output`'s lifecycle.
  */
-async function pipeJsonldToWritable(
+async function pipeRdfToWritable(
   input: Readable,
   output: WriteStream,
+  contentType: string,
 ): Promise<void> {
-  const quads = rdfParser.parse(input, { contentType: JSONLD_MIME });
+  const quads = rdfParser.parse(input, { contentType });
   const bytes = rdfSerializer.serialize(quads, {
     contentType: 'application/n-quads',
   }) as unknown as Readable;
@@ -118,9 +144,10 @@ async function closeWritable(output: WriteStream): Promise<void> {
   });
 }
 
-async function streamJsonldFile(
+async function streamRdfFile(
   localFile: string,
   outputFile: string,
+  contentType: string,
   distribution: Distribution,
 ): Promise<void> {
   const isGzipped =
@@ -131,7 +158,7 @@ async function streamJsonldFile(
   const input = isGzipped ? source.pipe(createGunzip()) : source;
   const output = createWriteStream(outputFile);
   try {
-    await pipeJsonldToWritable(input, output);
+    await pipeRdfToWritable(input, output, contentType);
   } finally {
     await closeWritable(output);
   }
@@ -142,9 +169,11 @@ const openZip = promisify(yauzl.open) as (
   options: yauzl.Options,
 ) => Promise<yauzl.ZipFile>;
 
-async function streamJsonldZip(
+async function streamRdfZip(
   zipFile: string,
   outputFile: string,
+  contentType: string,
+  format: PreprocessFormat,
   warnings: string[],
 ): Promise<void> {
   const zip = await openZip(zipFile, { lazyEntries: true });
@@ -162,15 +191,15 @@ async function streamJsonldZip(
               return;
             }
             const extension = extname(entry.fileName).toLowerCase();
-            if (!JSONLD_ZIP_EXTENSIONS.includes(extension)) {
+            if (!format.zipExtensions.includes(extension)) {
               warnings.push(
-                `Skipping zip entry ${entry.fileName}: extension ${extension || '(none)'} is not JSON-LD`,
+                `Skipping zip entry ${entry.fileName}: extension ${extension || '(none)'} is not ${format.label}`,
               );
               zip.readEntry();
               return;
             }
             const stream = await openZipEntry(zip, entry);
-            await pipeJsonldToWritable(stream, output);
+            await pipeRdfToWritable(stream, output, contentType);
             entriesProcessed++;
             zip.readEntry();
           } catch (error) {
@@ -186,7 +215,7 @@ async function streamJsonldZip(
   }
 
   if (entriesProcessed === 0) {
-    throw new Error(`Zip ${zipFile} contains no JSON-LD entries`);
+    throw new Error(`Zip ${zipFile} contains no ${format.label} entries`);
   }
 }
 

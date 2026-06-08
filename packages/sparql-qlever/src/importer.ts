@@ -291,8 +291,8 @@ const nativeFormats = new Map<string, fileFormat>([
 
 /**
  * Accepted distribution media types, in preference order: the first match is
- * tried first. Native formats win over JSON-LD because they skip the Node-side
- * preprocessor.
+ * tried first. Native formats win over JSON-LD and RDF/XML because they skip
+ * the Node-side preprocessor.
  *
  * `application/zip` is intentionally absent — the inner RDF format must be
  * declared via `mediaType` with `application/zip` appearing only as the
@@ -303,6 +303,7 @@ const acceptedMediaTypes: readonly string[] = [
   'application/n-triples',
   'text/turtle',
   'application/ld+json',
+  'application/rdf+xml',
 ];
 
 const defaultQleverIndexOptions = {
