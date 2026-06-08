@@ -1058,7 +1058,7 @@ describe('Pipeline', () => {
 
       const plugin: PipelinePlugin = {
         name: 'dataset-aware',
-        beforeStageWrite: async function* (quads, dataset) {
+        beforeStageWrite: async function* (quads, { dataset }) {
           yield* quads;
           yield q(
             namedNode(dataset.iri.toString()),

@@ -1,5 +1,6 @@
-import type {QuadTransform} from '../stage.js';
-import type {PipelinePlugin} from '../pipeline.js';
+import type { QuadTransform } from '../stage.js';
+import type { PipelinePlugin } from '../pipeline.js';
+import type { Dataset } from '@lde/dataset';
 import {
   namespaceNormalizationPlugin,
   namespaceNormalizationTransform,
@@ -14,11 +15,12 @@ export interface SchemaOrgNormalizationOptions {
 }
 
 /** QuadTransform that normalizes `http://schema.org/` to `https://schema.org/` in `void:class` and `void:property` objects. */
-export const schemaOrgNormalizationTransform: QuadTransform =
-  namespaceNormalizationTransform({
-    from: HTTP_SCHEMA_ORG,
-    to: HTTPS_SCHEMA_ORG,
-  });
+export const schemaOrgNormalizationTransform: QuadTransform<{
+  dataset: Dataset;
+}> = namespaceNormalizationTransform({
+  from: HTTP_SCHEMA_ORG,
+  to: HTTPS_SCHEMA_ORG,
+});
 
 /**
  * Pipeline plugin that normalizes Schema.org namespace prefixes in `void:class`
@@ -36,7 +38,7 @@ export function schemaOrgNormalizationPlugin(
   const from = options?.reverse ? HTTPS_SCHEMA_ORG : HTTP_SCHEMA_ORG;
   const to = options?.reverse ? HTTP_SCHEMA_ORG : HTTPS_SCHEMA_ORG;
   return {
-    ...namespaceNormalizationPlugin({from, to}),
+    ...namespaceNormalizationPlugin({ from, to }),
     name: 'schema-org-normalization',
   };
 }

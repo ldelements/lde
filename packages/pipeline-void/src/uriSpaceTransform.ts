@@ -1,9 +1,4 @@
-import { Dataset, Distribution } from '@lde/dataset';
-import {
-  NotSupported,
-  type Executor,
-  type ExecuteOptions,
-} from '@lde/pipeline';
+import type { ExecutorContext, QuadTransform } from '@lde/pipeline';
 import type { Quad } from '@rdfjs/types';
 import { DataFactory } from 'n3';
 
@@ -21,34 +16,26 @@ const voidTriples = namedNode(`${VOID}triples`);
 const xsdInteger = namedNode(`${XSD}integer`);
 
 /**
- * Executor decorator that consumes `void:Linkset` quads from the inner executor,
- * matches each `void:objectsTarget` against configured URI space prefixes using
- * `startsWith`, and aggregates triple counts per matched space.
+ * Creates a {@link QuadTransform} that consumes `void:Linkset` quads from a
+ * stage's executor output, matches each `void:objectsTarget` against the
+ * configured URI space prefixes using `startsWith`, and aggregates triple
+ * counts per matched space.
  *
- * Emitted `void:objectsTarget` values point to the target dataset IRI (taken from
- * the metadata quad subjects), not the raw URI space prefix. Unmatched linksets
- * are discarded.
+ * Emitted `void:objectsTarget` values point to the target dataset IRI (taken
+ * from the metadata quad subjects), not the raw URI space prefix. Unmatched
+ * linksets are discarded.
+ *
+ * Attach it to the `object-uri-space.rq` stage's executor – directly via
+ * {@link uriSpaces} or through the `transforms` map of {@link voidStages}.
  */
-export class UriSpaceExecutor implements Executor {
-  constructor(
-    private readonly inner: Executor,
-    private readonly uriSpaces: ReadonlyMap<string, readonly Quad[]>,
-  ) {}
-
-  async execute(
-    dataset: Dataset,
-    distribution: Distribution,
-    options?: ExecuteOptions,
-  ): Promise<AsyncIterable<Quad> | NotSupported> {
-    const result = await this.inner.execute(dataset, distribution, options);
-    if (result instanceof NotSupported) {
-      return result;
-    }
-    return withUriSpaces(result, dataset.iri.toString(), this.uriSpaces);
-  }
+export function withUriSpaces(
+  uriSpaces: ReadonlyMap<string, readonly Quad[]>,
+): QuadTransform<ExecutorContext> {
+  return (quads, { dataset }) =>
+    aggregateUriSpaces(quads, dataset.iri.toString(), uriSpaces);
 }
 
-async function* withUriSpaces(
+async function* aggregateUriSpaces(
   quads: AsyncIterable<Quad>,
   datasetIri: string,
   uriSpaces: ReadonlyMap<string, readonly Quad[]>,

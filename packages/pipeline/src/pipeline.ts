@@ -32,8 +32,13 @@ import {
 /** Plugin that hooks into pipeline lifecycle events. */
 export interface PipelinePlugin {
   name: string;
-  /** Transform the quad stream before writing. */
-  beforeStageWrite?: QuadTransform;
+  /**
+   * Transform the merged, post-stage quad stream before writing (extension
+   * point 2: pipeline-wide, post-merge). The home of cross-cutting concerns
+   * – provenance, namespace normalisation – that apply regardless of which
+   * executor produced a quad.
+   */
+  beforeStageWrite?: QuadTransform<{ dataset: Dataset }>;
 }
 
 export interface PipelineOptions {
@@ -127,11 +132,11 @@ class FanOutWriter implements Writer {
 class TransformWriter implements Writer {
   constructor(
     private readonly inner: Writer,
-    private readonly transform: QuadTransform,
+    private readonly transform: QuadTransform<{ dataset: Dataset }>,
   ) {}
 
   async write(dataset: Dataset, quads: AsyncIterable<Quad>): Promise<void> {
-    await this.inner.write(dataset, this.transform(quads, dataset));
+    await this.inner.write(dataset, this.transform(quads, { dataset }));
   }
 
   async flush(dataset: Dataset): Promise<void> {
@@ -167,10 +172,10 @@ export class Pipeline {
 
     const transforms = options.plugins
       ?.map((p) => p.beforeStageWrite)
-      .filter((t): t is QuadTransform => t !== undefined);
+      .filter((t): t is QuadTransform<{ dataset: Dataset }> => t !== undefined);
     if (transforms?.length) {
-      const composed: QuadTransform = (quads, dataset) =>
-        transforms.reduce((q, fn) => fn(q, dataset), quads);
+      const composed: QuadTransform<{ dataset: Dataset }> = (quads, context) =>
+        transforms.reduce((q, fn) => fn(q, context), quads);
       writer = new TransformWriter(writer, composed);
     }
 

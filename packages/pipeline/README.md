@@ -149,64 +149,48 @@ const executor = new SparqlConstructExecutor({
 
 The dedup set is scoped to each `execute()` call, so memory stays bounded to the number of unique quads per batch. A standalone `deduplicateQuads()` function is also exported for use outside the executor.
 
-`Executor` is an interface, so you can implement your own for logic that's hard to express in pure SPARQL — for example, cleaning up messy date notations or converting locale-specific dates to ISO 8601. The decorator pattern lets you wrap a SPARQL executor and post-process its quad stream in TypeScript:
+### Extending a stage with a quad transform
+
+Some logic is hard to express in pure SPARQL — cleaning up messy date notations, converting locale-specific dates to ISO 8601, or sampling an executor’s output and firing follow-up queries. Rather than subclass `Executor`, attach a `QuadTransform` to it as data: a plain function `(quads, context) => quads` that post-processes one executor’s output before the stage merges it with its siblings. This is extension point 1 of [ADR 2](../../docs/decisions/0002-unify-pipeline-extension-on-quad-transforms.md).
+
+A transform receives an `ExecutorContext` — the `dataset`, the `distribution` (so it can fire its own SPARQL queries), and the `stage` name. It runs once per executor call, so **write it to accept being called more than once**: a global stage calls it once over the executor’s complete output, but a per-class stage with batching enabled calls it once per batch (one class at `batchSize: 1`). Accumulate within an invocation, not across invocations — or keep the transform per-quad, where the number of calls makes no difference.
 
 ```typescript
 import { DataFactory } from 'n3';
-import type { Quad, Literal } from '@rdfjs/types';
-import type { Dataset, Distribution } from '@lde/dataset';
 import {
-  type Executor,
-  type ExecuteOptions,
-  NotSupported,
+  Stage,
+  SparqlConstructExecutor,
+  type QuadTransform,
+  type ExecutorContext,
 } from '@lde/pipeline';
 
-class TransformExecutor implements Executor {
-  constructor(
-    private readonly inner: Executor,
-    private readonly transform: (
-      quads: AsyncIterable<Quad>,
-      dataset: Dataset,
-    ) => AsyncIterable<Quad>,
-  ) {}
-
-  async execute(
-    dataset: Dataset,
-    distribution: Distribution,
-    options?: ExecuteOptions,
-  ): Promise<AsyncIterable<Quad> | NotSupported> {
-    const result = await this.inner.execute(dataset, distribution, options);
-    if (result instanceof NotSupported) return result;
-    return this.transform(result, dataset);
+const cleanDates: QuadTransform<ExecutorContext> = async function* (quads) {
+  for await (const quad of quads) {
+    if (quad.object.termType === 'Literal' && isMessyDate(quad.object)) {
+      yield DataFactory.quad(
+        quad.subject,
+        quad.predicate,
+        DataFactory.literal(
+          parseDutchDate(quad.object.value),
+          DataFactory.namedNode('http://www.w3.org/2001/XMLSchema#date'),
+        ),
+      );
+    } else {
+      yield quad;
+    }
   }
-}
-```
+};
 
-Then use it to wrap any SPARQL executor:
-
-```typescript
 new Stage({
   name: 'dates',
-  executors: new TransformExecutor(
-    await SparqlConstructExecutor.fromFile('dates.rq'),
-    async function* (quads) {
-      for await (const quad of quads) {
-        if (quad.object.termType === 'Literal' && isMessyDate(quad.object)) {
-          const cleaned = DataFactory.literal(
-            parseDutchDate(quad.object.value),
-            DataFactory.namedNode('http://www.w3.org/2001/XMLSchema#date'),
-          );
-          yield DataFactory.quad(quad.subject, quad.predicate, cleaned);
-        } else {
-          yield quad;
-        }
-      }
-    },
-  ),
+  executors: {
+    executor: await SparqlConstructExecutor.fromFile('dates.rq'),
+    transform: cleanDates,
+  },
 });
 ```
 
-This keeps SPARQL doing the heavy lifting while TypeScript handles the edge cases. See [@lde/pipeline-void](../pipeline-void)'s `VocabularyExecutor` for a real-world example of this pattern.
+`transform` accepts a single transform or an array applied in order, so a stage can compose several. This keeps SPARQL doing the heavy lifting while TypeScript handles the edge cases. See [@lde/pipeline-void](../pipeline-void)'s `withVocabularies` for a real-world example of this pattern.
 
 #### Adaptive timeouts
 

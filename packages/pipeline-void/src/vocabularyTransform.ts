@@ -1,9 +1,4 @@
-import { Dataset, Distribution } from '@lde/dataset';
-import {
-  NotSupported,
-  type Executor,
-  type ExecuteOptions,
-} from '@lde/pipeline';
+import type { ExecutorContext, QuadTransform } from '@lde/pipeline';
 import type { Quad } from '@rdfjs/types';
 import prefixes from '@zazuko/prefixes';
 import { DataFactory } from 'n3';
@@ -19,33 +14,26 @@ export const defaultVocabularies: readonly string[] = [
 ];
 
 /**
- * Executor decorator that passes through all quads from the inner executor
- * and appends `void:vocabulary` triples for detected vocabulary prefixes.
+ * Creates a {@link QuadTransform} that passes through all quads from a stage's
+ * executor output and appends `void:vocabulary` triples for detected
+ * vocabulary prefixes.
  *
  * Inspects quads with predicate `void:property` to detect known vocabulary
  * namespace prefixes, then yields the corresponding `void:vocabulary` quads
- * after all inner quads have been consumed.
+ * after the executor output has been consumed.
+ *
+ * Attach it to the `entity-properties.rq` stage's executor – directly via
+ * {@link detectVocabularies} or through the `transforms` map of
+ * {@link voidStages}.
  */
-export class VocabularyExecutor implements Executor {
-  constructor(
-    private readonly inner: Executor,
-    private readonly vocabularies: readonly string[] = defaultVocabularies,
-  ) {}
-
-  async execute(
-    dataset: Dataset,
-    distribution: Distribution,
-    options?: ExecuteOptions,
-  ): Promise<AsyncIterable<Quad> | NotSupported> {
-    const result = await this.inner.execute(dataset, distribution, options);
-    if (result instanceof NotSupported) {
-      return result;
-    }
-    return withVocabularies(result, dataset.iri.toString(), this.vocabularies);
-  }
+export function withVocabularies(
+  vocabularies: readonly string[] = defaultVocabularies,
+): QuadTransform<ExecutorContext> {
+  return (quads, { dataset }) =>
+    appendVocabularies(quads, dataset.iri.toString(), vocabularies);
 }
 
-async function* withVocabularies(
+async function* appendVocabularies(
   quads: AsyncIterable<Quad>,
   datasetIri: string,
   vocabularies: readonly string[],

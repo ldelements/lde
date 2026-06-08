@@ -2,7 +2,12 @@ import { describe, it, expect, vi } from 'vitest';
 import { DataFactory } from 'n3';
 import type { Quad } from '@rdfjs/types';
 import { Stage } from '../src/stage.js';
-import type { ItemSelector, RunOptions } from '../src/stage.js';
+import type {
+  ExecutorContext,
+  ItemSelector,
+  QuadTransform,
+  RunOptions,
+} from '../src/stage.js';
 import type { Executor, ExecuteOptions } from '../src/sparql/executor.js';
 import { NotSupported } from '../src/sparql/executor.js';
 import { Dataset, Distribution } from '@lde/dataset';
@@ -881,6 +886,123 @@ describe('Stage', () => {
       expect(validator.validate).toHaveBeenCalledOnce();
       expect(validator.validate).toHaveBeenCalledWith([q1, q2], dataset);
       expect(writer.quads).toEqual([q1, q2]);
+    });
+  });
+
+  describe('attached transforms', () => {
+    const extra = quad(
+      namedNode('http://example.org/extra'),
+      namedNode('http://example.org/p'),
+      namedNode('http://example.org/o'),
+    );
+
+    function appendTransform(toAppend: Quad): QuadTransform<ExecutorContext> {
+      return async function* (quads) {
+        yield* quads;
+        yield toAppend;
+      };
+    }
+
+    it('applies an attached transform to the executor output', async () => {
+      const stage = new Stage({
+        name: 'test',
+        executors: {
+          executor: mockExecutor([q1]),
+          transform: appendTransform(extra),
+        },
+      });
+
+      const writer = collectingWriter();
+      await stage.run(dataset, distribution, writer);
+      expect(writer.quads).toEqual([q1, extra]);
+    });
+
+    it('supplies the ExecutorContext to the transform', async () => {
+      let seen: ExecutorContext | undefined;
+      const transform: QuadTransform<ExecutorContext> = async function* (
+        quads,
+        context,
+      ) {
+        seen = context;
+        yield* quads;
+      };
+
+      const stage = new Stage({
+        name: 'my-stage',
+        executors: { executor: mockExecutor([q1]), transform },
+      });
+
+      await stage.run(dataset, distribution, collectingWriter());
+      expect(seen).toEqual({ dataset, distribution, stage: 'my-stage' });
+    });
+
+    it('applies multiple attached transforms in order', async () => {
+      const stage = new Stage({
+        name: 'test',
+        executors: {
+          executor: mockExecutor([q1]),
+          transform: [appendTransform(q2), appendTransform(q3)],
+        },
+      });
+
+      const writer = collectingWriter();
+      await stage.run(dataset, distribution, writer);
+      expect(writer.quads).toEqual([q1, q2, q3]);
+    });
+
+    it('transforms only the attached executor, not its siblings', async () => {
+      const stage = new Stage({
+        name: 'test',
+        executors: [
+          { executor: mockExecutor([q1]), transform: appendTransform(extra) },
+          mockExecutor([q2]),
+        ],
+      });
+
+      const writer = collectingWriter();
+      await stage.run(dataset, distribution, writer);
+      expect(writer.quads).toEqual([q1, extra, q2]);
+    });
+
+    it('does not apply the transform when the executor returns NotSupported', async () => {
+      let called = false;
+      const transform: QuadTransform<ExecutorContext> = async function* (
+        quads,
+      ) {
+        called = true;
+        yield* quads;
+        yield extra;
+      };
+
+      const stage = new Stage({
+        name: 'test',
+        executors: { executor: notSupportedExecutor(), transform },
+      });
+
+      const result = await stage.run(dataset, distribution, collectingWriter());
+      expect(result).toBeInstanceOf(NotSupported);
+      expect(called).toBe(false);
+    });
+
+    it('applies the transform per execute() call on a per-class stage', async () => {
+      // batchSize 1 → one execute() per class → the transform runs per class.
+      const stage = new Stage({
+        name: 'test',
+        executors: {
+          executor: mockExecutor([q1]),
+          transform: appendTransform(extra),
+        },
+        itemSelector: mockItemSelector([
+          { class: namedNode('http://example.org/A') },
+          { class: namedNode('http://example.org/B') },
+        ]),
+        batchSize: 1,
+      });
+
+      const writer = collectingWriter();
+      await stage.run(dataset, distribution, writer);
+      expect(writer.quads.filter((q) => q.equals(extra))).toHaveLength(2);
+      expect(writer.quads.filter((q) => q.equals(q1))).toHaveLength(2);
     });
   });
 });

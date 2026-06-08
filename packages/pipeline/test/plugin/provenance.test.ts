@@ -44,7 +44,9 @@ describe('provenanceTransform', () => {
   });
 
   it('adds prov:Entity type', async () => {
-    const quads = await collect(provenanceTransform(emptyStream(), dataset));
+    const quads = await collect(
+      provenanceTransform(emptyStream(), { dataset }),
+    );
 
     const entityQuads = quads.filter(
       (q) =>
@@ -56,7 +58,9 @@ describe('provenanceTransform', () => {
   });
 
   it('adds prov:wasGeneratedBy linking to an activity', async () => {
-    const quads = await collect(provenanceTransform(emptyStream(), dataset));
+    const quads = await collect(
+      provenanceTransform(emptyStream(), { dataset }),
+    );
 
     const generatedByQuads = quads.filter(
       (q) =>
@@ -68,7 +72,9 @@ describe('provenanceTransform', () => {
   });
 
   it('adds prov:Activity type to the activity', async () => {
-    const quads = await collect(provenanceTransform(emptyStream(), dataset));
+    const quads = await collect(
+      provenanceTransform(emptyStream(), { dataset }),
+    );
 
     const activityQuads = quads.filter(
       (q) =>
@@ -79,7 +85,9 @@ describe('provenanceTransform', () => {
   });
 
   it('adds prov:startedAtTime as xsd:dateTime', async () => {
-    const quads = await collect(provenanceTransform(emptyStream(), dataset));
+    const quads = await collect(
+      provenanceTransform(emptyStream(), { dataset }),
+    );
 
     const startQuads = quads.filter(
       (q) => q.predicate.value === `${PROV}startedAtTime`,
@@ -97,7 +105,9 @@ describe('provenanceTransform', () => {
   it('adds prov:endedAtTime as xsd:dateTime', async () => {
     // Advance time before consuming the stream (triggers endedAt).
     vi.setSystemTime(new Date('2024-01-15T10:05:00.000Z'));
-    const quads = await collect(provenanceTransform(emptyStream(), dataset));
+    const quads = await collect(
+      provenanceTransform(emptyStream(), { dataset }),
+    );
 
     const endQuads = quads.filter(
       (q) => q.predicate.value === `${PROV}endedAtTime`,
@@ -119,7 +129,7 @@ describe('provenanceTransform', () => {
     );
 
     const quads = await collect(
-      provenanceTransform(quadStream([existing]), dataset),
+      provenanceTransform(quadStream([existing]), { dataset }),
     );
 
     const existingQuads = quads.filter(

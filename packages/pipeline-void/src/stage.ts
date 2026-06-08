@@ -3,24 +3,61 @@ import {
   SparqlConstructExecutor,
   SparqlItemSelector,
   readQueryFile,
-  type Executor,
+  type AttachedExecutor,
+  type ExecutorContext,
   type ItemSelector,
+  type QuadTransform,
 } from '@lde/pipeline';
 import { assertSafeIri } from '@lde/dataset';
 import type { Quad } from '@rdfjs/types';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  VocabularyExecutor,
+  withVocabularies,
   defaultVocabularies,
-} from './vocabularyAnalyzer.js';
-import { UriSpaceExecutor } from './uriSpaceExecutor.js';
+} from './vocabularyTransform.js';
+import { withUriSpaces } from './uriSpaceTransform.js';
 
 const queriesDir = resolve(
   dirname(fileURLToPath(import.meta.url)),
   '..',
   'queries',
 );
+
+/**
+ * Stable names for every VoID stage, equal to the underlying query filename.
+ *
+ * Consumers reference these constants – e.g. when routing a transform through
+ * {@link VoidStagesOptions.transforms} – instead of hard-coding `.rq`
+ * filenames, so internal query names never leak into consumer code.
+ */
+export const VOID_STAGE_NAMES = {
+  subjects: 'subjects.rq',
+  properties: 'properties.rq',
+  objectLiterals: 'object-literals.rq',
+  objectUris: 'object-uris.rq',
+  datatypes: 'datatypes.rq',
+  triples: 'triples.rq',
+  classPartitions: 'class-partition.rq',
+  classPropertySubjects: 'class-properties-subjects.rq',
+  classPropertyObjects: 'class-properties-objects.rq',
+  perClassDatatypes: 'class-property-datatypes.rq',
+  perClassObjectClasses: 'class-property-object-classes.rq',
+  perClassLanguages: 'class-property-languages.rq',
+  licenses: 'licenses.rq',
+  vocabularies: 'entity-properties.rq',
+  subjectUriSpace: 'subject-uri-space.rq',
+  objectUriSpace: 'object-uri-space.rq',
+} as const;
+
+/** The name of a VoID stage. @see VOID_STAGE_NAMES */
+export type VoidStageName =
+  (typeof VOID_STAGE_NAMES)[keyof typeof VOID_STAGE_NAMES];
+
+/** A transform, or transforms, decorating a VoID stage's executor output. */
+export type VoidStageTransform =
+  | QuadTransform<ExecutorContext>
+  | QuadTransform<ExecutorContext>[];
 
 /**
  * Options for configuring VoID stage execution.
@@ -30,8 +67,16 @@ const queriesDir = resolve(
  * knob. Kept as a named type so per-class / per-stages option types can
  * extend it as more knobs are added.
  */
-// eslint-disable-next-line @typescript-eslint/no-empty-interface, @typescript-eslint/no-empty-object-type
-export interface VoidStageOptions {}
+export interface VoidStageOptions {
+  /**
+   * Transform(s) decorating this stage's executor output before the stage
+   * merges executors. For a global stage the transform sees the executor's
+   * complete output; for a per-class stage it sees one batch – one class at
+   * `batchSize: 1`. Built-in transforms (e.g. {@link uriSpaces}) compose
+   * with these, built-in first.
+   */
+  transform?: VoidStageTransform;
+}
 
 /**
  * Options for per-class VoID stages that iterate over classes.
@@ -50,40 +95,60 @@ export interface PerClassVoidStageOptions extends VoidStageOptions {
 
 /**
  * Options for the {@link voidStages} convenience function.
+ *
+ * The single-stage `transform` seam is intentionally absent here: a bundle
+ * spans many stages, so transforms are routed per stage via
+ * {@link VoidStagesOptions.transforms}.
  */
-export interface VoidStagesOptions extends PerClassVoidStageOptions {
+export interface VoidStagesOptions extends Omit<
+  PerClassVoidStageOptions,
+  'transform'
+> {
   /** When provided, includes the object URI space stage using this map. */
   uriSpaces?: ReadonlyMap<string, readonly Quad[]>;
   /** Additional vocabulary namespace URIs to detect beyond the built-in defaults. */
   vocabularies?: readonly string[];
+  /**
+   * Transforms to attach to bundled stages, keyed by {@link VOID_STAGE_NAMES}.
+   *
+   * Each transform decorates the executor of the named stage – so a consumer
+   * can wrap a stage it never constructs. Where a stage already carries a
+   * built-in transform ({@link uriSpaces}, {@link detectVocabularies}), the
+   * consumer transform composes after it. An invalid key is a compile error.
+   */
+  transforms?: Partial<Record<VoidStageName, VoidStageTransform>>;
 }
 
 async function createVoidStage(
-  filename: string,
-  options?: VoidStageOptions & {
-    executor?: (query: string) => Executor;
+  filename: VoidStageName,
+  options?: {
+    transform?: VoidStageTransform;
     perClass?: boolean;
     batchSize?: number;
     maxConcurrency?: number;
   },
 ): Promise<Stage> {
   const query = await readQueryFile(resolve(queriesDir, filename));
-  const executor =
-    options?.executor?.(query) ?? new SparqlConstructExecutor({ query });
+  const executor: AttachedExecutor = {
+    executor: new SparqlConstructExecutor({ query }),
+    transform: options?.transform,
+  };
 
-  if (options?.perClass) {
-    return new Stage({
-      name: filename,
-      itemSelector: classSelector(),
-      executors: executor,
-      batchSize: options?.batchSize,
-      maxConcurrency: options?.maxConcurrency,
-    });
-  }
   return new Stage({
     name: filename,
     executors: executor,
+    itemSelector: options?.perClass ? classSelector() : undefined,
+    batchSize: options?.batchSize,
+    maxConcurrency: options?.maxConcurrency,
   });
+}
+
+/** Normalise a {@link VoidStageTransform} to an array. */
+function asTransforms(
+  transform?: VoidStageTransform,
+): QuadTransform<ExecutorContext>[] {
+  if (transform === undefined) return [];
+  return Array.isArray(transform) ? [...transform] : [transform];
 }
 
 function classSelector(): ItemSelector {
@@ -115,39 +180,39 @@ function classSelector(): ItemSelector {
 // Global stages
 
 export function subjectUriSpaces(options?: VoidStageOptions): Promise<Stage> {
-  return createVoidStage('subject-uri-space.rq', options);
+  return createVoidStage(VOID_STAGE_NAMES.subjectUriSpace, options);
 }
 
 export function classPartitions(options?: VoidStageOptions): Promise<Stage> {
-  return createVoidStage('class-partition.rq', options);
+  return createVoidStage(VOID_STAGE_NAMES.classPartitions, options);
 }
 
 export function countObjectLiterals(
   options?: VoidStageOptions,
 ): Promise<Stage> {
-  return createVoidStage('object-literals.rq', options);
+  return createVoidStage(VOID_STAGE_NAMES.objectLiterals, options);
 }
 
 export function countObjectUris(options?: VoidStageOptions): Promise<Stage> {
-  return createVoidStage('object-uris.rq', options);
+  return createVoidStage(VOID_STAGE_NAMES.objectUris, options);
 }
 
 export function countProperties(options?: VoidStageOptions): Promise<Stage> {
-  return createVoidStage('properties.rq', options);
+  return createVoidStage(VOID_STAGE_NAMES.properties, options);
 }
 
 export function countSubjects(options?: VoidStageOptions): Promise<Stage> {
-  return createVoidStage('subjects.rq', options);
+  return createVoidStage(VOID_STAGE_NAMES.subjects, options);
 }
 
 export function countTriples(options?: VoidStageOptions): Promise<Stage> {
-  return createVoidStage('triples.rq', options);
+  return createVoidStage(VOID_STAGE_NAMES.triples, options);
 }
 
 export function classPropertySubjects(
   options?: PerClassVoidStageOptions,
 ): Promise<Stage> {
-  return createVoidStage('class-properties-subjects.rq', {
+  return createVoidStage(VOID_STAGE_NAMES.classPropertySubjects, {
     ...options,
     perClass: options?.perClass ?? true,
   });
@@ -156,18 +221,18 @@ export function classPropertySubjects(
 export function classPropertyObjects(
   options?: PerClassVoidStageOptions,
 ): Promise<Stage> {
-  return createVoidStage('class-properties-objects.rq', {
+  return createVoidStage(VOID_STAGE_NAMES.classPropertyObjects, {
     ...options,
     perClass: options?.perClass ?? true,
   });
 }
 
 export function countDatatypes(options?: VoidStageOptions): Promise<Stage> {
-  return createVoidStage('datatypes.rq', options);
+  return createVoidStage(VOID_STAGE_NAMES.datatypes, options);
 }
 
 export function detectLicenses(options?: VoidStageOptions): Promise<Stage> {
-  return createVoidStage('licenses.rq', options);
+  return createVoidStage(VOID_STAGE_NAMES.licenses, options);
 }
 
 // Per-class stages
@@ -175,7 +240,7 @@ export function detectLicenses(options?: VoidStageOptions): Promise<Stage> {
 export function perClassObjectClasses(
   options?: PerClassVoidStageOptions,
 ): Promise<Stage> {
-  return createVoidStage('class-property-object-classes.rq', {
+  return createVoidStage(VOID_STAGE_NAMES.perClassObjectClasses, {
     ...options,
     perClass: options?.perClass ?? true,
   });
@@ -184,7 +249,7 @@ export function perClassObjectClasses(
 export function perClassDatatypes(
   options?: PerClassVoidStageOptions,
 ): Promise<Stage> {
-  return createVoidStage('class-property-datatypes.rq', {
+  return createVoidStage(VOID_STAGE_NAMES.perClassDatatypes, {
     ...options,
     perClass: options?.perClass ?? true,
   });
@@ -193,22 +258,23 @@ export function perClassDatatypes(
 export function perClassLanguages(
   options?: PerClassVoidStageOptions,
 ): Promise<Stage> {
-  return createVoidStage('class-property-languages.rq', {
+  return createVoidStage(VOID_STAGE_NAMES.perClassLanguages, {
     ...options,
     perClass: options?.perClass ?? true,
   });
 }
 
-// Domain-specific executor stages
+// Stages with a built-in transform
 
 export function uriSpaces(
   uriSpaceMap: ReadonlyMap<string, readonly Quad[]>,
   options?: VoidStageOptions,
 ): Promise<Stage> {
-  return createVoidStage('object-uri-space.rq', {
-    ...options,
-    executor: (query) =>
-      new UriSpaceExecutor(new SparqlConstructExecutor({ query }), uriSpaceMap),
+  return createVoidStage(VOID_STAGE_NAMES.objectUriSpace, {
+    transform: [
+      withUriSpaces(uriSpaceMap),
+      ...asTransforms(options?.transform),
+    ],
   });
 }
 
@@ -220,15 +286,12 @@ export interface DetectVocabulariesOptions extends VoidStageOptions {
 export function detectVocabularies(
   options?: DetectVocabulariesOptions,
 ): Promise<Stage> {
-  return createVoidStage('entity-properties.rq', {
-    ...options,
-    executor: (query) =>
-      new VocabularyExecutor(
-        new SparqlConstructExecutor({ query }),
-        options?.vocabularies
-          ? [...defaultVocabularies, ...options.vocabularies]
-          : undefined,
-      ),
+  const { vocabularies, transform } = options ?? {};
+  const allVocabularies = vocabularies
+    ? [...defaultVocabularies, ...vocabularies]
+    : undefined;
+  return createVoidStage(VOID_STAGE_NAMES.vocabularies, {
+    transform: [withVocabularies(allVocabularies), ...asTransforms(transform)],
   });
 }
 
@@ -246,32 +309,48 @@ export async function voidStages(
   const {
     uriSpaces: uriSpaceMap,
     vocabularies,
+    transforms,
     ...stageOptions
   } = options ?? {};
 
+  // Merge the shared per-stage options with the transform routed to a stage.
+  const withTransform = (name: VoidStageName) => ({
+    ...stageOptions,
+    transform: transforms?.[name],
+  });
+
   return Promise.all([
     // Global counting stages.
-    countSubjects(stageOptions),
-    countProperties(stageOptions),
-    countObjectLiterals(stageOptions),
-    countObjectUris(stageOptions),
-    countDatatypes(stageOptions),
-    countTriples(stageOptions),
+    countSubjects(withTransform(VOID_STAGE_NAMES.subjects)),
+    countProperties(withTransform(VOID_STAGE_NAMES.properties)),
+    countObjectLiterals(withTransform(VOID_STAGE_NAMES.objectLiterals)),
+    countObjectUris(withTransform(VOID_STAGE_NAMES.objectUris)),
+    countDatatypes(withTransform(VOID_STAGE_NAMES.datatypes)),
+    countTriples(withTransform(VOID_STAGE_NAMES.triples)),
 
     // Cache warming — must precede per-class stages.
-    classPartitions(stageOptions),
+    classPartitions(withTransform(VOID_STAGE_NAMES.classPartitions)),
 
     // Per-class stages.
-    classPropertySubjects(stageOptions),
-    classPropertyObjects(stageOptions),
-    perClassDatatypes(stageOptions),
-    perClassObjectClasses(stageOptions),
-    perClassLanguages(stageOptions),
+    classPropertySubjects(
+      withTransform(VOID_STAGE_NAMES.classPropertySubjects),
+    ),
+    classPropertyObjects(withTransform(VOID_STAGE_NAMES.classPropertyObjects)),
+    perClassDatatypes(withTransform(VOID_STAGE_NAMES.perClassDatatypes)),
+    perClassObjectClasses(
+      withTransform(VOID_STAGE_NAMES.perClassObjectClasses),
+    ),
+    perClassLanguages(withTransform(VOID_STAGE_NAMES.perClassLanguages)),
 
     // Other stages.
-    detectLicenses(stageOptions),
-    detectVocabularies({ ...stageOptions, vocabularies }),
-    subjectUriSpaces(stageOptions),
-    ...(uriSpaceMap ? [uriSpaces(uriSpaceMap, stageOptions)] : []),
+    detectLicenses(withTransform(VOID_STAGE_NAMES.licenses)),
+    detectVocabularies({
+      ...withTransform(VOID_STAGE_NAMES.vocabularies),
+      vocabularies,
+    }),
+    subjectUriSpaces(withTransform(VOID_STAGE_NAMES.subjectUriSpace)),
+    ...(uriSpaceMap
+      ? [uriSpaces(uriSpaceMap, withTransform(VOID_STAGE_NAMES.objectUriSpace))]
+      : []),
   ]);
 }

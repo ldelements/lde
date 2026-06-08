@@ -10,14 +10,16 @@ Returns all VoID stages in their recommended execution order. The ordering is op
 
 Accepts an optional `VoidStagesOptions` object:
 
-| Option           | Default | Description                                                           |
-| ---------------- | ------- | --------------------------------------------------------------------- |
-| `timeout`        | 60 000  | SPARQL query timeout in milliseconds                                  |
-| `batchSize`      | 10      | Maximum class bindings per executor call (per-class stages only)      |
-| `maxConcurrency` | 10      | Maximum concurrent in-flight executor batches (per-class stages only) |
-| `perClass`       | —       | Override per-class iteration for all five per-class stages            |
-| `uriSpaces`      | —       | When provided, includes the object URI space stage                    |
-| `vocabularies`   | —       | Additional vocabulary namespace URIs to detect beyond the built-in defaults |
+| Option           | Default | Description                                                                                                     |
+| ---------------- | ------- | --------------------------------------------------------------------------------------------------------------- |
+| `batchSize`      | 10      | Maximum class bindings per executor call (per-class stages only)                                                |
+| `maxConcurrency` | 10      | Maximum concurrent in-flight executor batches (per-class stages only)                                           |
+| `perClass`       | —       | Override per-class iteration for all five per-class stages                                                      |
+| `uriSpaces`      | —       | When provided, includes the object URI space stage                                                              |
+| `vocabularies`   | —       | Additional vocabulary namespace URIs to detect beyond the built-in defaults                                     |
+| `transforms`     | —       | Transforms to attach to bundled stages, keyed by `VOID_STAGE_NAMES` (see [Stage transforms](#stage-transforms)) |
+
+Per-request timeouts are configured at the `Pipeline` level via `PipelineOptions.timeout`, not per VoID stage.
 
 ```typescript
 import { voidStages } from '@lde/pipeline-void';
@@ -37,7 +39,7 @@ await new Pipeline({
 
 ### Individual stage factories
 
-Global and domain-specific factories accept `VoidStageOptions` (`timeout`) and return `Promise<Stage>`. Per-class factories accept `PerClassVoidStageOptions` (`timeout`, `batchSize`, `maxConcurrency`, `perClass`) — they default `perClass` to `true`; set it to `false` to run them as monolithic queries instead.
+Global and domain-specific factories accept `VoidStageOptions` (`transform`) and return `Promise<Stage>`. Per-class factories accept `PerClassVoidStageOptions` (`transform`, `batchSize`, `maxConcurrency`, `perClass`) — they default `perClass` to `true`; set it to `false` to run them as monolithic queries instead.
 
 #### Global stages (one CONSTRUCT query per dataset):
 
@@ -65,12 +67,40 @@ Global and domain-specific factories accept `VoidStageOptions` (`timeout`) and r
 
 #### Domain-specific stages:
 
-| Factory                  | Description                                                                                                                       |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| Factory                  | Description                                                                                                                                                                                                                       |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `detectVocabularies()`   | [`entity-properties.rq`](queries/entity-properties.rq) — Entity properties with automatic `void:vocabulary` detection. Accepts `DetectVocabulariesOptions` with an optional `vocabularies` array to extend the built-in defaults. |
-| `uriSpaces(uriSpaceMap)` | [`object-uri-space.rq`](queries/object-uri-space.rq) — Object URI namespace linksets, aggregated against a provided URI space map |
+| `uriSpaces(uriSpaceMap)` | [`object-uri-space.rq`](queries/object-uri-space.rq) — Object URI namespace linksets, aggregated against a provided URI space map                                                                                                 |
 
-## Executor decorators
+## Stage transforms
 
-- `VocabularyExecutor` — Wraps an executor; detects known vocabulary namespace prefixes in `void:property` quads and appends `void:vocabulary` triples. The built-in defaults are exported as `defaultVocabularies` (sourced from `@zazuko/prefixes`).
-- `UriSpaceExecutor` — Wraps an executor; consumes `void:Linkset` quads, matches each `void:objectsTarget` against configured URI space prefixes using `startsWith`, and aggregates triple counts per matched space. Emits `void:objectsTarget` pointing to the target dataset IRI (taken from the metadata quad subjects), not the raw prefix. Unmatched linksets are discarded.
+A VoID stage decorates its executor’s output with a `QuadTransform<ExecutorContext>` attached as data (see [@lde/pipeline](../pipeline)’s extension model and [ADR 2](../../docs/decisions/0002-unify-pipeline-extension-on-quad-transforms.md)). It runs once per executor call and may fire its own SPARQL queries against the `distribution` in scope — so write it to accept being called more than once: a global stage calls it once over the complete output, a per-class stage with batching enabled once per batch (one class at `batchSize: 1`).
+
+Two transform factories are built in:
+
+- `withVocabularies(vocabularies?)` — passes through all quads and appends `void:vocabulary` triples for detected vocabulary namespace prefixes in `void:property` quads. The built-in defaults are exported as `defaultVocabularies` (sourced from `@zazuko/prefixes`); `detectVocabularies()` attaches it to the `entity-properties.rq` stage.
+- `withUriSpaces(uriSpaceMap)` — consumes `void:Linkset` quads, matches each `void:objectsTarget` against the configured URI space prefixes using `startsWith`, and aggregates triple counts per matched space. Emits `void:objectsTarget` pointing to the target dataset IRI (taken from the metadata quad subjects), not the raw prefix; unmatched linksets are discarded. `uriSpaces(uriSpaceMap)` attaches it to the `object-uri-space.rq` stage.
+
+### Attaching your own transform
+
+Pass a `transform` to an individual factory, or route transforms through `voidStages` with the `transforms` map keyed by `VOID_STAGE_NAMES` — so you can decorate a stage you never construct. Where a stage already carries a built-in transform, your transform composes after it. An invalid stage name is a compile error.
+
+```typescript
+import { voidStages, VOID_STAGE_NAMES } from '@lde/pipeline-void';
+import type { ExecutorContext, QuadTransform } from '@lde/pipeline-void';
+
+const sampleSubjects: QuadTransform<ExecutorContext> = async function* (
+  quads,
+  { dataset, distribution },
+) {
+  yield* quads; // pass the stage’s subsets through unchanged …
+  // … then fire a sample SELECT against `distribution` and append measurements.
+};
+
+const stages = await voidStages({
+  batchSize: 1,
+  transforms: {
+    [VOID_STAGE_NAMES.subjectUriSpace]: sampleSubjects,
+  },
+});
+```
