@@ -423,8 +423,9 @@ describe('ImportResolver', () => {
       ]);
     });
 
-    it('does not overwrite Last-Modified already set on the distribution', async () => {
-      const existingLastModified = new Date('2026-01-01T00:00:00Z');
+    it('prefers a newer probe Last-Modified over a stale register date', async () => {
+      const staleRegisterDate = new Date('2026-01-01T00:00:00Z');
+      const realHttpLastModified = new Date('2026-02-15T10:00:00Z');
       const dataset = new Dataset({
         iri: new URL('http://example.org/dataset'),
         distributions: [
@@ -433,7 +434,7 @@ describe('ImportResolver', () => {
               new URL('http://example.org/data.nt'),
               'application/n-triples',
             );
-            distribution.lastModified = existingLastModified;
+            distribution.lastModified = staleRegisterDate;
             return distribution;
           })(),
         ],
@@ -445,7 +446,7 @@ describe('ImportResolver', () => {
           headers: {
             'Content-Length': '1000',
             'Content-Type': 'application/n-triples',
-            'Last-Modified': new Date('2026-02-15T10:00:00Z').toUTCString(),
+            'Last-Modified': realHttpLastModified.toUTCString(),
           },
         }),
         0,
@@ -472,8 +473,60 @@ describe('ImportResolver', () => {
       await resolver.resolve(dataset);
 
       expect(dataset.distributions[0].lastModified).toEqual(
-        existingLastModified,
+        realHttpLastModified,
       );
+    });
+
+    it('keeps a newer register date over an older probe Last-Modified', async () => {
+      const newerRegisterDate = new Date('2026-03-01T00:00:00Z');
+      const olderHttpLastModified = new Date('2026-02-15T10:00:00Z');
+      const dataset = new Dataset({
+        iri: new URL('http://example.org/dataset'),
+        distributions: [
+          (() => {
+            const distribution = new Distribution(
+              new URL('http://example.org/data.nt'),
+              'application/n-triples',
+            );
+            distribution.lastModified = newerRegisterDate;
+            return distribution;
+          })(),
+        ],
+      });
+      const probeResult = new DataDumpProbeResult(
+        'http://example.org/data.nt',
+        new Response('', {
+          status: 200,
+          headers: {
+            'Content-Length': '1000',
+            'Content-Type': 'application/n-triples',
+            'Last-Modified': olderHttpLastModified.toUTCString(),
+          },
+        }),
+        0,
+      );
+      const inner = makeInnerResolver(
+        new NoDistributionAvailable(dataset, 'No endpoint', [probeResult]),
+      );
+
+      const mockImporter = {
+        import: vi
+          .fn()
+          .mockResolvedValue(
+            new ImportSuccessful(
+              Distribution.sparql(new URL('http://localhost:7878/sparql')),
+              'test-graph',
+            ),
+          ),
+      };
+
+      const resolver = new ImportResolver(inner, {
+        importer: mockImporter,
+        server: makeServer(),
+      });
+      await resolver.resolve(dataset);
+
+      expect(dataset.distributions[0].lastModified).toEqual(newerRegisterDate);
     });
 
     it('preserves subjectFilter from imported distribution', async () => {
