@@ -1,3 +1,9 @@
+## 0.1.4 (2026-06-10)
+
+### 🩹 Fixes
+
+- **iiif-validator:** gate validity on loading in a real viewer ([#446](https://github.com/ldelements/lde/pull/446))
+
 ## 0.1.3 (2026-06-08)
 
 ### 🩹 Fixes
