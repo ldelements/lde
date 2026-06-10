@@ -3,9 +3,18 @@ import { Dataset, Distribution } from '@lde/dataset';
 import { DataFactory } from 'n3';
 import type { Quad } from '@rdfjs/types';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, readFile, access } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 const { namedNode, literal, quad } = DataFactory;
 
@@ -192,6 +201,189 @@ describe('FileWriter', () => {
         'utf-8',
       );
       expect(content).toBeTruthy();
+    });
+  });
+
+  describe('named graphs (n-quads)', () => {
+    it('writes each quad into the graph derived from graphIri', async () => {
+      const writer = new FileWriter({
+        outputDir: tempDir,
+        format: 'n-quads',
+        graphIri: (dataset) => dataset.iri,
+      });
+
+      const dataset = createDataset('http://example.com/dataset/1');
+
+      await writer.write(
+        dataset,
+        quadsOf(
+          quad(
+            namedNode('http://example.com/subject'),
+            namedNode('http://example.com/predicate'),
+            literal('object'),
+          ),
+        ),
+      );
+      await writer.flush(dataset);
+
+      const content = await readFile(
+        join(tempDir, 'example.com-dataset-1.nq'),
+        'utf-8',
+      );
+      // The graph is the 4th term on the line.
+      expect(content.trim()).toBe(
+        '<http://example.com/subject> <http://example.com/predicate> "object" <http://example.com/dataset/1> .',
+      );
+    });
+
+    it('supports a graphIri unrelated to the dataset IRI (e.g. validation report)', async () => {
+      const writer = new FileWriter({
+        outputDir: tempDir,
+        format: 'n-quads',
+        graphIri: (dataset) =>
+          new URL(
+            `https://reports.example/${encodeURIComponent(dataset.iri.toString())}`,
+          ),
+      });
+
+      const dataset = createDataset('http://example.com/dataset/1');
+
+      await writer.write(
+        dataset,
+        quadsOf(
+          quad(
+            namedNode('http://example.com/s'),
+            namedNode('http://example.com/p'),
+            literal('o'),
+          ),
+        ),
+      );
+      await writer.flush(dataset);
+
+      const content = await readFile(
+        join(tempDir, 'example.com-dataset-1.nq'),
+        'utf-8',
+      );
+      expect(content).toContain(
+        '<https://reports.example/http%3A%2F%2Fexample.com%2Fdataset%2F1>',
+      );
+    });
+
+    it('writes the default graph when graphIri is omitted', async () => {
+      const writer = new FileWriter({ outputDir: tempDir, format: 'n-quads' });
+
+      const dataset = createDataset('http://example.com/dataset/1');
+
+      await writer.write(
+        dataset,
+        quadsOf(
+          quad(
+            namedNode('http://example.com/subject'),
+            namedNode('http://example.com/predicate'),
+            literal('object'),
+          ),
+        ),
+      );
+      await writer.flush(dataset);
+
+      const content = await readFile(
+        join(tempDir, 'example.com-dataset-1.nq'),
+        'utf-8',
+      );
+      // No 4th term: the triple sits in the default graph.
+      expect(content.trim()).toBe(
+        '<http://example.com/subject> <http://example.com/predicate> "object" .',
+      );
+    });
+
+    it('ignores graphIri for turtle output', async () => {
+      const writer = new FileWriter({
+        outputDir: tempDir,
+        format: 'turtle',
+        graphIri: (dataset) => dataset.iri,
+      });
+
+      const dataset = createDataset('http://example.com/dataset/1');
+
+      await writer.write(
+        dataset,
+        quadsOf(
+          quad(
+            namedNode('http://example.com/subject'),
+            namedNode('http://example.com/predicate'),
+            literal('object'),
+          ),
+        ),
+      );
+      await writer.flush(dataset);
+
+      const content = await readFile(
+        join(tempDir, 'example.com-dataset-1.ttl'),
+        'utf-8',
+      );
+      expect(content).not.toContain('http://example.com/dataset/1');
+    });
+  });
+
+  describe('atomic flush', () => {
+    it('only materializes the final file on flush, never a truncated one', async () => {
+      const writer = new FileWriter({ outputDir: tempDir, format: 'n-quads' });
+      const dataset = createDataset('http://example.com/dataset/1');
+      const finalPath = join(tempDir, 'example.com-dataset-1.nq');
+
+      await writer.write(
+        dataset,
+        quadsOf(
+          quad(
+            namedNode('http://example.com/s'),
+            namedNode('http://example.com/p'),
+            literal('o'),
+          ),
+        ),
+      );
+
+      // Before flush: the final file does not exist yet — a crash here leaves
+      // only a `.tmp`, never a half-written final file.
+      expect(await exists(finalPath)).toBe(false);
+
+      await writer.flush(dataset);
+
+      // After flush: the final file exists and the temp is gone.
+      expect(await exists(finalPath)).toBe(true);
+      expect(await exists(`${finalPath}.tmp`)).toBe(false);
+    });
+
+    it('cleans up the temp file and rejects when the stream fails', async () => {
+      const writer = new FileWriter({ outputDir: tempDir, format: 'n-quads' });
+      const dataset = createDataset('http://example.com/dataset/1');
+      const finalPath = join(tempDir, 'example.com-dataset-1.nq');
+      const tempPath = `${finalPath}.tmp`;
+
+      // Pre-create a directory exactly where the temp file would be opened, so
+      // the write stream fails to open (EISDIR) — a deterministic stand-in for
+      // a mid-flush I/O failure.
+      await mkdir(tempPath, { recursive: true });
+
+      await writer
+        .write(
+          dataset,
+          quadsOf(
+            quad(
+              namedNode('http://example.com/s'),
+              namedNode('http://example.com/p'),
+              literal('o'),
+            ),
+          ),
+        )
+        .catch(() => undefined);
+      // Let the asynchronous open error settle.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      await expect(writer.flush(dataset)).rejects.toThrow();
+
+      // No final file was produced, and the temp path was cleaned up.
+      expect(await exists(finalPath)).toBe(false);
+      expect(await exists(tempPath)).toBe(false);
     });
   });
 
