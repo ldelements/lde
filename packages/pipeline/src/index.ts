@@ -8,6 +8,7 @@ export * from './stage.js';
 export * from './stageOutputResolver.js';
 export * from './sparql/index.js';
 export * from './distribution/index.js';
+export * from './provenance/index.js';
 export * from './writer/index.js';
 export * from './plugin/namespaceNormalization.js';
 export * from './plugin/provenance.js';
