@@ -1,4 +1,4 @@
-import type { ChangeFields, ProcessingRecord } from './record.js';
+import type { ChangeKey, ProcessingRecord } from './record.js';
 
 /**
  * Decide whether a dataset must be reprocessed, given its current change
@@ -9,23 +9,23 @@ import type { ChangeFields, ProcessingRecord } from './record.js';
  *
  * ```
  * skip iff  stored !== null
- *      AND  current.sourceModified === stored.sourceModified
+ *      AND  current.sourceFingerprint === stored.sourceFingerprint
  *      AND  current.pipelineVersion === stored.pipelineVersion
  * ```
  *
  * Equality, never ordering – any opaque version representation works, a
  * rollback to identical logic correctly skips, and a partial run resumes
- * cleanly. A `null` source signal never compares equal, so a dataset with no
- * establishable source signal is always reprocessed.
+ * cleanly. A `null` source fingerprint never compares equal, so a dataset with
+ * no establishable fingerprint is always reprocessed.
  */
 export function shouldReprocess(
-  current: ChangeFields,
+  current: ChangeKey,
   stored: ProcessingRecord | null,
 ): boolean {
   if (stored === null) return true;
-  // A null source signal never compares equal, even to a stored null.
-  if (current.sourceModified === null) return true;
-  if (current.sourceModified !== stored.sourceModified) return true;
+  // A null source fingerprint never compares equal, even to a stored null.
+  if (current.sourceFingerprint === null) return true;
+  if (current.sourceFingerprint !== stored.sourceFingerprint) return true;
   if (current.pipelineVersion !== stored.pipelineVersion) return true;
   return false;
 }

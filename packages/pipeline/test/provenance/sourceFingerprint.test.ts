@@ -4,7 +4,7 @@ import {
   DataDumpProbeResult,
   SparqlProbeResult,
 } from '@lde/distribution-probe';
-import { sourceSignal } from '../../src/provenance/sourceSignal.js';
+import { sourceFingerprint } from '../../src/provenance/sourceFingerprint.js';
 
 const dumpUrl = 'http://example.org/data.nt';
 
@@ -47,14 +47,14 @@ function dataDump(options: {
   return { distribution, result };
 }
 
-describe('sourceSignal', () => {
+describe('sourceFingerprint', () => {
   it('returns null for a live SPARQL endpoint', () => {
     const distribution = Distribution.sparql(
       new URL('http://example.org/sparql'),
     );
 
     expect(
-      sourceSignal(
+      sourceFingerprint(
         distribution,
         sparqlProbeResult('http://example.org/sparql'),
       ),
@@ -75,8 +75,11 @@ describe('sourceSignal', () => {
       contentLength: 1000,
     });
 
-    const a = sourceSignal(registerNewer.distribution, registerNewer.result);
-    const b = sourceSignal(httpNewer.distribution, httpNewer.result);
+    const a = sourceFingerprint(
+      registerNewer.distribution,
+      registerNewer.result,
+    );
+    const b = sourceFingerprint(httpNewer.distribution, httpNewer.result);
 
     expect(a).not.toBeNull();
     // Both resolve to the same maximum date (2024-06-01) with the same size.
@@ -88,7 +91,7 @@ describe('sourceSignal', () => {
       lastModified: 'Mon, 01 Jan 2024 00:00:00 GMT',
       contentLength: 1000,
     });
-    expect(sourceSignal(later.distribution, later.result)).not.toBe(a);
+    expect(sourceFingerprint(later.distribution, later.result)).not.toBe(a);
   });
 
   it('changes when the byte size changes but the date does not', () => {
@@ -101,8 +104,8 @@ describe('sourceSignal', () => {
       contentLength: 2000,
     });
 
-    expect(sourceSignal(small.distribution, small.result)).not.toBe(
-      sourceSignal(large.distribution, large.result),
+    expect(sourceFingerprint(small.distribution, small.result)).not.toBe(
+      sourceFingerprint(large.distribution, large.result),
     );
   });
 
@@ -122,8 +125,10 @@ describe('sourceSignal', () => {
     });
 
     expect(
-      sourceSignal(observedSmall.distribution, observedSmall.result),
-    ).not.toBe(sourceSignal(observedLarge.distribution, observedLarge.result));
+      sourceFingerprint(observedSmall.distribution, observedSmall.result),
+    ).not.toBe(
+      sourceFingerprint(observedLarge.distribution, observedLarge.result),
+    );
   });
 
   it('falls back to the declared byte size when the probe has no Content-Length', () => {
@@ -137,14 +142,55 @@ describe('sourceSignal', () => {
     });
 
     // Declared 1000 and observed 1000 resolve to the same signal.
-    expect(sourceSignal(declaredOnly.distribution, declaredOnly.result)).toBe(
-      sourceSignal(observed.distribution, observed.result),
-    );
+    expect(
+      sourceFingerprint(declaredOnly.distribution, declaredOnly.result),
+    ).toBe(sourceFingerprint(observed.distribution, observed.result));
   });
 
   it('returns null for a data dump with neither a date nor a byte size', () => {
     const { distribution, result } = dataDump({});
 
-    expect(sourceSignal(distribution, result)).toBeNull();
+    expect(sourceFingerprint(distribution, result)).toBeNull();
+  });
+
+  describe('malformed metadata', () => {
+    it('does not throw on an unparseable HTTP Last-Modified, falling back to byte size', () => {
+      const { distribution, result } = dataDump({
+        lastModified: 'not-a-date',
+        contentLength: 1000,
+      });
+
+      // A malformed Last-Modified (Invalid Date) is ignored, not selected and
+      // toISOString'd into a throw. With no usable date, the fingerprint is
+      // size-only.
+      const sizeOnly = dataDump({ contentLength: 1000 });
+      expect(sourceFingerprint(distribution, result)).toBe(
+        sourceFingerprint(sizeOnly.distribution, sizeOnly.result),
+      );
+    });
+
+    it('returns null when the only date is unparseable and there is no byte size', () => {
+      const { distribution, result } = dataDump({ lastModified: 'garbage' });
+
+      expect(sourceFingerprint(distribution, result)).toBeNull();
+    });
+
+    it('lets a valid Last-Modified win over an unparseable register dct:modified', () => {
+      // Regression: an Invalid Date must not stick ahead of a valid one
+      // (`valid > invalid` is `number > NaN` = false).
+      const invalidRegister = dataDump({
+        modified: new Date('not-a-date'),
+        lastModified: 'Sat, 01 Jun 2024 00:00:00 GMT',
+        contentLength: 1000,
+      });
+      const validOnly = dataDump({
+        lastModified: 'Sat, 01 Jun 2024 00:00:00 GMT',
+        contentLength: 1000,
+      });
+
+      expect(
+        sourceFingerprint(invalidRegister.distribution, invalidRegister.result),
+      ).toBe(sourceFingerprint(validOnly.distribution, validOnly.result));
+    });
   });
 });

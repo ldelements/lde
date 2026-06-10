@@ -4,7 +4,7 @@ import { shouldReprocess } from '../../src/provenance/reprocessDecision.js';
 
 function record(overrides: Partial<ProcessingRecord> = {}): ProcessingRecord {
   return {
-    sourceModified: '2024-06-01T00:00:00.000Z|1000',
+    sourceFingerprint: '2024-06-01T00:00:00.000Z|1000',
     pipelineVersion: 'v1',
     generatedAt: '2024-06-02T00:00:00.000Z',
     status: 'success',
@@ -17,7 +17,7 @@ describe('shouldReprocess', () => {
     expect(
       shouldReprocess(
         {
-          sourceModified: '2024-06-01T00:00:00.000Z|1000',
+          sourceFingerprint: '2024-06-01T00:00:00.000Z|1000',
           pipelineVersion: 'v1',
         },
         null,
@@ -29,11 +29,11 @@ describe('shouldReprocess', () => {
     expect(
       shouldReprocess(
         {
-          sourceModified: '2024-06-01T00:00:00.000Z|1000',
+          sourceFingerprint: '2024-06-01T00:00:00.000Z|1000',
           pipelineVersion: 'v1',
         },
         record({
-          sourceModified: '2024-06-01T00:00:00.000Z|1000',
+          sourceFingerprint: '2024-06-01T00:00:00.000Z|1000',
           pipelineVersion: 'v1',
         }),
       ),
@@ -44,11 +44,11 @@ describe('shouldReprocess', () => {
     expect(
       shouldReprocess(
         {
-          sourceModified: '2024-07-01T00:00:00.000Z|1000',
+          sourceFingerprint: '2024-07-01T00:00:00.000Z|1000',
           pipelineVersion: 'v1',
         },
         record({
-          sourceModified: '2024-06-01T00:00:00.000Z|1000',
+          sourceFingerprint: '2024-06-01T00:00:00.000Z|1000',
           pipelineVersion: 'v1',
         }),
       ),
@@ -59,11 +59,11 @@ describe('shouldReprocess', () => {
     expect(
       shouldReprocess(
         {
-          sourceModified: '2024-06-01T00:00:00.000Z|1000',
+          sourceFingerprint: '2024-06-01T00:00:00.000Z|1000',
           pipelineVersion: 'v2',
         },
         record({
-          sourceModified: '2024-06-01T00:00:00.000Z|1000',
+          sourceFingerprint: '2024-06-01T00:00:00.000Z|1000',
           pipelineVersion: 'v1',
         }),
       ),
@@ -73,8 +73,8 @@ describe('shouldReprocess', () => {
   it('reprocesses when the current source signal is null, even against a stored null', () => {
     expect(
       shouldReprocess(
-        { sourceModified: null, pipelineVersion: 'v1' },
-        record({ sourceModified: null, pipelineVersion: 'v1' }),
+        { sourceFingerprint: null, pipelineVersion: 'v1' },
+        record({ sourceFingerprint: null, pipelineVersion: 'v1' }),
       ),
     ).toBe(true);
   });
@@ -85,11 +85,11 @@ describe('shouldReprocess', () => {
     expect(
       shouldReprocess(
         {
-          sourceModified: '2024-06-01T00:00:00.000Z|1000',
+          sourceFingerprint: '2024-06-01T00:00:00.000Z|1000',
           pipelineVersion: 'v1',
         },
         record({
-          sourceModified: '2024-06-01T00:00:00.000Z|1000',
+          sourceFingerprint: '2024-06-01T00:00:00.000Z|1000',
           pipelineVersion: 'v1',
           status: 'failed',
         }),
