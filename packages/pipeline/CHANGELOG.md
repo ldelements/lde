@@ -1,3 +1,9 @@
+## 0.30.10 (2026-06-10)
+
+### 🚀 Features
+
+- **pipeline:** add FileWriter graphIri option and atomic writes ([#452](https://github.com/ldelements/lde/pull/452))
+
 ## 0.30.9 (2026-06-10)
 
 ### 🧱 Updated Dependencies
