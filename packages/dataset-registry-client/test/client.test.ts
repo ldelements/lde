@@ -32,7 +32,8 @@ describe('Client', () => {
         },
       });
 
-      const expectedTotal = 2;
+      // foo (turtle), bar (turtle) and baz (rdf+xml) all match.
+      const expectedTotal = 3;
       expect(results.total).toEqual(expectedTotal);
       let count = 0;
       let firstResult;
@@ -74,7 +75,8 @@ describe('Client', () => {
       `;
       const results = await client.query(query);
 
-      const expectedTotal = 2;
+      // foo, bar and baz each have a titled distribution with a mediaType.
+      const expectedTotal = 3;
       expect(results.total).toEqual(expectedTotal);
       let count = 0;
       for await (const _ of results) {
