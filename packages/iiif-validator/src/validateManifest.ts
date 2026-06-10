@@ -1,3 +1,6 @@
+import { normalize } from '@iiif/parser/presentation-3';
+import { upgrade } from '@iiif/parser/upgrader';
+
 /**
  * Coarse outcome of a manifest validation. On failure the reason describes
  * *what kind* of failure occurred, not a detailed diagnosis — only enough to
@@ -10,7 +13,8 @@ export type ManifestValidationReason =
   | 'http-error'
   | 'invalid-json'
   | 'binary-content'
-  | 'not-a-manifest';
+  | 'not-a-manifest'
+  | 'does-not-load';
 
 /**
  * Verdict returned by {@link validateManifest}.
@@ -88,10 +92,36 @@ export async function validateManifest(
     return { valid: false, reason: 'invalid-json' };
   }
 
-  if (isPresentationManifest(body)) {
-    return { valid: true, reason: 'valid-manifest' };
+  if (!isPresentationManifest(body)) {
+    return { valid: false, reason: 'not-a-manifest' };
   }
-  return { valid: false, reason: 'not-a-manifest' };
+
+  if (!loadsInViewer(body)) {
+    return { valid: false, reason: 'does-not-load' };
+  }
+
+  return { valid: true, reason: 'valid-manifest' };
+}
+
+/**
+ * Whether a manifest-shaped document survives the load path that real IIIF
+ * viewers run. The dominant Vault/`@iiif/parser`-based viewers (Mirador 4,
+ * Clover, Theseus) eagerly upgrade every manifest to Presentation 3 and
+ * normalise the whole tree on load; a structural deviation that crashes that
+ * pass — e.g. a `null` where an `AnnotationPage` belongs — makes the manifest
+ * fail to load even though it parses as JSON and is manifest-shaped. Running
+ * the same `upgrade()` then `normalize()` here reproduces that load: a throw
+ * from either step means no viewer would render it. `upgrade()` is
+ * version-agnostic (a no-op for documents already in v3), so this single path
+ * covers both v2 (`sc:Manifest`) and v3 documents.
+ */
+function loadsInViewer(body: unknown): boolean {
+  try {
+    normalize(upgrade(body));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**

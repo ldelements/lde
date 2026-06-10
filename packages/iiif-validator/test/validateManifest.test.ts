@@ -1,5 +1,14 @@
 import { validateManifest } from '../src/index.js';
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+/**
+ * Read a JSON fixture from `test/fixtures` as a raw string.
+ */
+function fixture(name: string): string {
+  return readFileSync(join(import.meta.dirname, 'fixtures', name), 'utf8');
+}
 
 /**
  * Build a fake `fetch` that always resolves with the given body and status.
@@ -96,6 +105,76 @@ describe('validateManifest', () => {
     await validateManifest(URL, { fetch });
 
     expect(sentAccept).toBe('*/*');
+  });
+
+  it('accepts a manifest with a full Canvas / AnnotationPage / painting-annotation tree', async () => {
+    const fetch = fetchReturning(
+      JSON.stringify({
+        '@context': 'http://iiif.io/api/presentation/3/context.json',
+        id: URL,
+        type: 'Manifest',
+        items: [
+          {
+            id: 'https://example.org/canvas/1',
+            type: 'Canvas',
+            height: 100,
+            width: 100,
+            items: [
+              {
+                id: 'https://example.org/page/1',
+                type: 'AnnotationPage',
+                items: [
+                  {
+                    id: 'https://example.org/anno/1',
+                    type: 'Annotation',
+                    motivation: 'painting',
+                    target: 'https://example.org/canvas/1',
+                    body: {
+                      id: 'https://example.org/img.jpg',
+                      type: 'Image',
+                      format: 'image/jpeg',
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+    );
+
+    const verdict = await validateManifest(URL, { fetch });
+
+    expect(verdict).toEqual({ valid: true, reason: 'valid-manifest' });
+  });
+
+  it('reports does-not-load for a manifest-shaped document that fails to normalise (annotations: [null])', async () => {
+    const fetch = fetchReturning(fixture('null-annotation-manifest.json'));
+
+    const verdict = await validateManifest(URL, { fetch });
+
+    expect(verdict).toEqual({ valid: false, reason: 'does-not-load' });
+  });
+
+  it('keeps a manifest with cosmetic-only deviations valid (image/jpg, non-canonical rights URI)', async () => {
+    // Deviations that real viewers tolerate must not flip the verdict: there is
+    // no warning tier, so anything that still normalises stays valid.
+    const fetch = fetchReturning(fixture('cosmetic-deviations-manifest.json'));
+
+    const verdict = await validateManifest(URL, { fetch });
+
+    expect(verdict).toEqual({ valid: true, reason: 'valid-manifest' });
+  });
+
+  it('reports does-not-load for a v2 sc:Manifest that fails the upgrade-to-v3 load path (null canvas)', async () => {
+    // v2 documents are upgraded to v3 before normalising, mirroring how Vault
+    // loads them; a null canvas crashes that upgrade, so the manifest does not
+    // load in a real viewer.
+    const fetch = fetchReturning(fixture('v2-null-canvas-manifest.json'));
+
+    const verdict = await validateManifest(URL, { fetch });
+
+    expect(verdict).toEqual({ valid: false, reason: 'does-not-load' });
   });
 
   it('reports http-error for a non-2xx response', async () => {

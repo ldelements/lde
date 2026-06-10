@@ -1,0 +1,36 @@
+{
+  "@context": "http://iiif.io/api/presentation/3/context.json",
+  "id": "https://example.org/manifest.json",
+  "type": "Manifest",
+  "label": { "en": ["Manifest with cosmetic spec deviations"] },
+  "items": [
+    {
+      "id": "https://example.org/canvas/1",
+      "type": "Canvas",
+      "height": 50,
+      "width": 50,
+      "items": [
+        {
+          "id": "https://example.org/canvas/1/page",
+          "type": "AnnotationPage",
+          "items": [
+            {
+              "id": "https://example.org/canvas/1/annotation",
+              "type": "Annotation",
+              "motivation": "painting",
+              "target": "https://example.org/canvas/1",
+              "body": {
+                "id": "https://example.org/image/1.jpg",
+                "type": "Image",
+                "format": "image/jpg",
+                "height": 50,
+                "width": 50
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "rights": "https://creativecommons.org/licenses/zero/1.0/"
+}
