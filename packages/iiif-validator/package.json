@@ -24,6 +24,7 @@
     "!**/*.tsbuildinfo"
   ],
   "dependencies": {
+    "@iiif/parser": "^2.2.10",
     "tslib": "^2.3.0"
   }
 }
