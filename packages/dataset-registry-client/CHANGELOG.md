@@ -1,3 +1,13 @@
+## 0.8.1 (2026-06-10)
+
+### 🚀 Features
+
+- **dataset:** accept application/rdf+xml as an RDF media type ([#449](https://github.com/ldelements/lde/pull/449))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset to 0.7.5
+
 ## 0.8.0 (2026-05-27)
 
 ### 🚀 Features
