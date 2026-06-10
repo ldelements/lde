@@ -80,17 +80,23 @@ export class ImportResolver implements DistributionResolver {
       .getDownloadDistributions()
       .filter((d) => d.accessUrl && successfulUrls.has(d.accessUrl.toString()));
 
-    // Propagate Last-Modified from probe to candidate so the downloader can
-    // skip redundant downloads (and preserve the QLever index cache).
+    // Establish a trustworthy change signal for the downloader so it can skip
+    // redundant downloads (and preserve the QLever index cache). For a data
+    // dump the authoritative date is the most recent of the register’s declared
+    // `dct:modified` and the artifact’s real HTTP `Last-Modified`: a stale
+    // register date must never mask a newer upload (openarchieven publishes
+    // dumps with a months-old `dct:modified`, see #436). Taking the maximum errs
+    // toward reprocessing rather than serving stale output.
     for (const candidate of candidates) {
-      if (candidate.lastModified) continue;
       const probeResult = probeResults.find(
         (r) => r.url === candidate.accessUrl.toString(),
       );
       if (
         probeResult &&
         !(probeResult instanceof NetworkError) &&
-        probeResult.lastModified
+        probeResult.lastModified &&
+        (candidate.lastModified === undefined ||
+          probeResult.lastModified > candidate.lastModified)
       ) {
         candidate.lastModified = probeResult.lastModified;
       }
