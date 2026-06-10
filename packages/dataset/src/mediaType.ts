@@ -12,6 +12,7 @@ export const rdfMediaTypes = [
   iana('application/ld+json'),
   iana('application/n-quads'),
   iana('application/n-triples'),
+  iana('application/rdf+xml'),
   iana('text/turtle'),
 ];
 
