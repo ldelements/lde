@@ -1,3 +1,9 @@
+## 0.30.8 (2026-06-10)
+
+### 🩹 Fixes
+
+- **pipeline:** prefer the most recent of register and HTTP dates for dump change detection ([#447](https://github.com/ldelements/lde/pull/447))
+
 ## 0.30.7 (2026-06-08)
 
 ### 🧱 Updated Dependencies
