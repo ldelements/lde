@@ -16,8 +16,10 @@ export {
 export {
   ResolvedDistribution,
   NoDistributionAvailable,
+  ProbedDistributions,
   SparqlDistributionResolver,
   type DistributionResolver,
+  type ProbedSource,
   type ResolveCallbacks,
   type SparqlDistributionResolverOptions,
 } from './resolver.js';

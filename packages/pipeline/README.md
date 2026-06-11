@@ -308,6 +308,27 @@ const store = new FileLoadedSparqlProvenanceStore({
 
 Each record is stored as flat PROV-O on the dataset entity — `prov:generatedAtTime` plus `sourceFingerprint`, `pipelineVersion` and `status` under the `https://w3id.org/lde/provenance#` namespace. Scoping every record by `pipelineIri` (used as the named graph) lets multiple pipelines share one triplestore without colliding.
 
+#### Enabling skipping
+
+Skipping is opt-in. Pass a `provenanceStore` and a `pipelineVersion` to the `Pipeline`:
+
+```typescript
+new Pipeline({
+  // …
+  provenanceStore: store,
+  pipelineVersion: 'v3', // rotate only on releases that change output
+});
+```
+
+For each dataset the pipeline probes its distributions, derives the source-change fingerprint, reads the stored record, and **skips before importing** when both change fields match:
+
+```
+skip iff  recorded.sourceFingerprint === current.sourceFingerprint
+     AND  recorded.pipelineVersion   === current.pipelineVersion
+```
+
+Otherwise it imports (if needed), runs the stages, and writes an updated record. `pipelineVersion` is consumer-owned and opaque: rotate it only on releases that change output, and every dataset reprocesses on the next run. It is **required** when a `provenanceStore` is configured (a skip-enabled pipeline with no version would silently freeze); when no store is configured, every dataset is reprocessed — today’s behaviour. A dataset that failed but whose source is unchanged is recorded as `'failed'` and skipped on later runs until its source changes or the version rotates, so a deterministically failing import is not retried every run.
+
 ### Source-change fingerprint
 
 `sourceFingerprint(distribution, probeResult)` derives a cheap, opaque change signal for a distribution from metadata the probe already collected — no body download. For a data dump it combines the most recent of the register’s `dct:modified` and the artifact’s HTTP `Last-Modified` with the byte size (the probe’s `Content-Length`, falling back to the declared `dcat:byteSize`). It returns `null` for a live SPARQL endpoint, or when no date and no size can be established — a `null` fingerprint never compares equal, so such a distribution is always reprocessed.

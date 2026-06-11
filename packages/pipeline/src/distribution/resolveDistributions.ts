@@ -17,7 +17,8 @@ export async function resolveDistributions(
   dataset: Dataset,
   resolver: DistributionResolver,
 ): Promise<DistributionStageResult> {
-  const result = await resolver.resolve(dataset);
+  const probed = await resolver.probe(dataset);
+  const result = await resolver.resolve(probed);
 
   if (result instanceof NoDistributionAvailable) {
     return {

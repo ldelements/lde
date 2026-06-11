@@ -8,11 +8,13 @@ import {
 import type { SparqlServer } from '@lde/sparql-server';
 import {
   type DistributionResolver,
+  type ProbedSource,
   type ResolveCallbacks,
   NoDistributionAvailable,
+  ProbedDistributions,
   ResolvedDistribution,
 } from './resolver.js';
-import { NetworkError } from '@lde/distribution-probe';
+import { NetworkError, type ProbeResultType } from '@lde/distribution-probe';
 
 export interface ImportResolverOptions {
   importer: Importer;
@@ -40,6 +42,11 @@ export interface ImportResolverOptions {
  * adds the ability to import a data dump into a local SPARQL server. The
  * {@link ImportResolverOptions.strategy | strategy} option controls whether the
  * inner resolver's SPARQL endpoint is preferred or bypassed.
+ *
+ * The split is preserved across both phases: {@link probe} chooses the
+ * {@link ProbedSource} (the inner SPARQL endpoint, or the preferred importable
+ * data dump) without importing; {@link resolve} performs the import only when
+ * that source is a data dump.
  */
 export class ImportResolver implements DistributionResolver {
   constructor(
@@ -47,38 +54,89 @@ export class ImportResolver implements DistributionResolver {
     private readonly options: ImportResolverOptions,
   ) {}
 
-  async resolve(
-    ...args: Parameters<DistributionResolver['resolve']>
-  ): Promise<ResolvedDistribution | NoDistributionAvailable> {
-    const [dataset, callbacks] = args;
-    const result = await this.inner.resolve(...args);
+  async probe(
+    dataset: Dataset,
+    callbacks?: ResolveCallbacks,
+  ): Promise<ProbedDistributions> {
+    const probed = await this.inner.probe(dataset, callbacks);
 
-    // 'sparql' strategy (default): use SPARQL endpoint if inner found one.
-    if (
-      this.options.strategy !== 'import' &&
-      result instanceof ResolvedDistribution
-    ) {
-      return result;
+    // 'sparql' strategy (default): keep the inner SPARQL endpoint if found.
+    if (this.options.strategy !== 'import' && probed.source) {
+      return probed;
     }
 
-    // Either 'import' strategy or inner found nothing: import a data dump.
-    return this.importDataset(dataset, result.probeResults, callbacks);
+    // Either 'import' strategy or no SPARQL endpoint: select a data dump to
+    // import. Choosing the candidate here (not in resolve) keeps the import
+    // cost out of the probe phase while still letting the pipeline fingerprint
+    // the dump it would import.
+    const source = this.selectImportCandidate(dataset, probed.probeResults);
+    return new ProbedDistributions(dataset, probed.probeResults, source);
   }
 
-  private async importDataset(
-    dataset: Dataset,
-    probeResults: NoDistributionAvailable['probeResults'],
+  async resolve(
+    probed: ProbedDistributions,
     callbacks?: ResolveCallbacks,
   ): Promise<ResolvedDistribution | NoDistributionAvailable> {
+    if (!probed.source) {
+      return new NoDistributionAvailable(
+        probed.dataset,
+        'No importable distributions passed probing',
+        probed.probeResults,
+      );
+    }
+
+    // A SPARQL endpoint source needs no import.
+    if (probed.source.distribution.isSparql()) {
+      return new ResolvedDistribution(
+        probed.source.distribution,
+        probed.probeResults,
+      );
+    }
+
+    return this.importDataset(probed.dataset, probed.probeResults, callbacks);
+  }
+
+  /**
+   * The preferred importable data dump and its probe result, or `null` if no
+   * downloadable distribution passed probing.
+   */
+  private selectImportCandidate(
+    dataset: Dataset,
+    probeResults: ProbeResultType[],
+  ): ProbedSource | null {
+    const candidate = this.importCandidates(dataset, probeResults)[0];
+    if (!candidate) return null;
+    const probeResult = probeResults.find(
+      (result) => result.url === candidate.accessUrl.toString(),
+    );
+    return probeResult ? { distribution: candidate, probeResult } : null;
+  }
+
+  /**
+   * Downloadable distributions whose access URL passed probing, in preference
+   * order (compressed first, see {@link Dataset.getDownloadDistributions}).
+   */
+  private importCandidates(
+    dataset: Dataset,
+    probeResults: ProbeResultType[],
+  ): Distribution[] {
     const successfulUrls = new Set(
       probeResults
         .filter((r) => !(r instanceof NetworkError) && r.isSuccess())
         .map((r) => r.url),
     );
 
-    const candidates = dataset
+    return dataset
       .getDownloadDistributions()
       .filter((d) => d.accessUrl && successfulUrls.has(d.accessUrl.toString()));
+  }
+
+  private async importDataset(
+    dataset: Dataset,
+    probeResults: ProbeResultType[],
+    callbacks?: ResolveCallbacks,
+  ): Promise<ResolvedDistribution | NoDistributionAvailable> {
+    const candidates = this.importCandidates(dataset, probeResults);
 
     // Establish a trustworthy change signal for the downloader so it can skip
     // redundant downloads (and preserve the QLever index cache). For a data

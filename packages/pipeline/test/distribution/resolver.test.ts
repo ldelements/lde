@@ -9,6 +9,11 @@ import {
 import { Dataset, Distribution } from '@lde/dataset';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+/** Run both phases, as the pipeline does. */
+async function resolve(resolver: SparqlDistributionResolver, dataset: Dataset) {
+  return resolver.resolve(await resolver.probe(dataset));
+}
+
 describe('SparqlDistributionResolver', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn());
@@ -35,7 +40,7 @@ describe('SparqlDistributionResolver', () => {
       distributions: [distribution],
     });
 
-    const result = await resolver.resolve(dataset);
+    const result = await resolve(resolver, dataset);
 
     expect(result).toBeInstanceOf(ResolvedDistribution);
     const resolved = result as ResolvedDistribution;
@@ -63,7 +68,7 @@ describe('SparqlDistributionResolver', () => {
       ],
     });
 
-    const result = await resolver.resolve(dataset);
+    const result = await resolve(resolver, dataset);
 
     expect(result).toBeInstanceOf(NoDistributionAvailable);
     const noDistribution = result as NoDistributionAvailable;
@@ -83,7 +88,7 @@ describe('SparqlDistributionResolver', () => {
       ],
     });
 
-    const result = await resolver.resolve(dataset);
+    const result = await resolve(resolver, dataset);
 
     expect(result).toBeInstanceOf(NoDistributionAvailable);
     const noDistribution = result as NoDistributionAvailable;
@@ -109,7 +114,7 @@ describe('SparqlDistributionResolver', () => {
 
     const originalLength = dataset.distributions.length;
 
-    await resolver.resolve(dataset);
+    await resolve(resolver, dataset);
 
     expect(dataset.distributions.length).toBe(originalLength);
   });

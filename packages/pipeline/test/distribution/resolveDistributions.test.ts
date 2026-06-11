@@ -2,6 +2,7 @@ import { resolveDistributions } from '../../src/distribution/index.js';
 import {
   ResolvedDistribution,
   NoDistributionAvailable,
+  ProbedDistributions,
   type DistributionResolver,
 } from '../../src/distribution/index.js';
 import { Dataset, Distribution } from '@lde/dataset';
@@ -24,7 +25,11 @@ async function collect<T>(iterable: AsyncIterable<T>): Promise<T[]> {
 function mockResolver(
   result: ResolvedDistribution | NoDistributionAvailable,
 ): DistributionResolver {
-  return { resolve: async () => result };
+  return {
+    probe: async (dataset) =>
+      new ProbedDistributions(dataset, result.probeResults, null),
+    resolve: async () => result,
+  };
 }
 
 describe('resolveDistributions', () => {
@@ -150,6 +155,12 @@ describe('resolveDistributions', () => {
     });
 
     const customResolver: DistributionResolver = {
+      async probe(dataset) {
+        return new ProbedDistributions(dataset, [probeResult], {
+          distribution,
+          probeResult,
+        });
+      },
       async resolve() {
         return new ResolvedDistribution(distribution, [probeResult]);
       },
