@@ -50,6 +50,7 @@ await new Pipeline({ /* … */, stages }).run();
 | `validator`        | —                 | Optional [`Validator`](../pipeline/src/validator.ts) attached to every generated stage (typically a `ShaclValidator`).                                 |
 | `onInvalid`        | `'write'`         | Behaviour when a sampled batch fails validation: `'write'` \| `'skip'` \| `'halt'`. Only used when `validator` is set.                                 |
 | `namespaceAliases` | `[]`              | Namespaces to treat as equivalent when matching `sh:targetClass` and when handing quads to the validator. See [Namespace aliases](#namespace-aliases). |
+| `excludeResources` | —                 | Hook returning a SPARQL fragment that subtracts resources from a target class’s sample. See [Excluding resources](#excluding-resources).               |
 
 ## Namespace aliases
 
@@ -82,6 +83,45 @@ const stages = await shaclSampleStages({
   ],
 });
 ```
+
+## Excluding resources
+
+A profile may target a class that also describes a dataset’s own
+administrative metadata rather than its collection content. For example,
+SCHEMA-AP-NDE targets `schema:Organization`, so a dump containing nothing
+but a `schema:Dataset` and the publisher `Organization` that supports it
+would get that publisher sampled, found trivially conformant (only `name`
+is required), and reported as “tested and passed” — even though the
+dataset holds no real content.
+
+`excludeResources` lets the caller subtract such resources from a target
+class’s sample **without weakening the SHACL shapes**. It is a hook called
+once per `sh:targetClass`; the SPARQL fragment it returns is inlined
+verbatim into the subject-selector `WHERE` clause **after** the type
+pattern, so it can reference the bound `?s` (e.g. a `MINUS { … }` clause
+that removes `?s` when it is the dataset’s publisher). Return `''` to
+sample that class unchanged; omitting the option entirely leaves every
+generated query byte-for-byte the same.
+
+The fragment is interpolated verbatim and therefore caller-trusted — the
+same trust model as a distribution’s `subjectFilter`.
+
+```ts
+const SCHEMA = 'https://schema.org/';
+const stages = await shaclSampleStages({
+  shapesFile,
+  validator,
+  excludeResources: (targetClass) =>
+    targetClass.value === `${SCHEMA}Organization`
+      ? `MINUS { ?dataset a <${SCHEMA}Dataset> ; <${SCHEMA}publisher> ?s . }`
+      : '',
+});
+```
+
+Anchoring the exclusion to the dataset node (rather than to the predicate
+alone) keeps genuine content resources in the sample: an `Organization`
+reached as the `creator` of a `CreativeWork`, say, is never the dataset’s
+publisher, so it is still sampled and validated.
 
 ## Limitations
 
