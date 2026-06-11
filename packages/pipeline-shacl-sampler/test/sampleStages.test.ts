@@ -112,6 +112,22 @@ describe('buildSubjectSelectorQuery', () => {
     });
     expect(query).toContain('FROM <https://example.org/graph>');
   });
+
+  it('inlines an excludeFilter after the type pattern so it can reference ?s', () => {
+    const query = buildSubjectSelectorQuery({
+      targetClass,
+      excludeFilter: 'MINUS { ?d <https://schema.org/publisher> ?s . }',
+    });
+    const typeIndex = query.indexOf('?s a <https://schema.org/CreativeWork> .');
+    const minusIndex = query.indexOf('MINUS {');
+    expect(typeIndex).toBeGreaterThanOrEqual(0);
+    expect(minusIndex).toBeGreaterThan(typeIndex);
+  });
+
+  it('leaves the WHERE clause free of MINUS when no excludeFilter is given', () => {
+    const query = buildSubjectSelectorQuery({ targetClass });
+    expect(query).not.toMatch(/\bMINUS\b/);
+  });
 });
 
 describe('wrapValidatorWithAliasNormalization', () => {
@@ -255,6 +271,23 @@ describe('shaclSampleStages', () => {
       {} as Dataset,
     );
     expect(seen[0]?.[0]?.predicate.value).toBe('https://schema.org/creator');
+  });
+
+  it('invokes excludeResources once per sh:targetClass when provided', async () => {
+    const seenTargetClasses: string[] = [];
+    await shaclSampleStages({
+      shapesFile,
+      excludeResources: (targetClass) => {
+        seenTargetClasses.push(targetClass.value);
+        return '';
+      },
+    });
+    expect(seenTargetClasses.sort()).toEqual([
+      'https://schema.org/CreativeWork',
+      'https://schema.org/Organization',
+      'https://schema.org/Person',
+      'https://schema.org/Place',
+    ]);
   });
 
   it('passes the validator through unchanged when no namespaceAliases are configured (the default)', async () => {

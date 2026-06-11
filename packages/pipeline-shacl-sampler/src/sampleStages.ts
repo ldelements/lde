@@ -85,6 +85,21 @@ export interface ShaclSampleStagesOptions {
    * `[{ canonical: 'https://schema.org/', alias: 'http://schema.org/' }]`.
    */
   namespaceAliases?: NamespaceAlias[];
+  /**
+   * Optional hook returning a SPARQL graph-pattern fragment that subtracts
+   * resources from the per-target-class sample. Called once per
+   * `sh:targetClass`; the returned fragment is inlined verbatim into the
+   * subject-selector `WHERE` clause after the type pattern (so it can
+   * reference the bound `?s`), alongside the per-distribution
+   * {@link SubjectSelectorQueryOptions.subjectFilter}. Return `''` (the
+   * default behaviour when the option is omitted) to sample that class
+   * unchanged.
+   *
+   * Typical use: a caller that knows some resources are administrative
+   * metadata rather than collection content (e.g. a dataset’s own publisher)
+   * returns a `MINUS { … }` fragment to keep them out of validation.
+   */
+  excludeResources?: (targetClass: NamedNode) => string;
 }
 
 /**
@@ -128,6 +143,7 @@ export async function shaclSampleStages(
           shape.targetClass,
           samplesPerClass,
           namespaceAliases,
+          options.excludeResources?.(shape.targetClass),
         ),
         executors: new SparqlConstructExecutor({
           query: buildSampleQuery(shape),
@@ -143,6 +159,7 @@ function subjectSelector(
   targetClass: NamedNode,
   limit: number,
   namespaceAliases: NamespaceAlias[],
+  excludeFilter?: string,
 ): ItemSelector {
   assertSafeIri(targetClass.value);
   return {
@@ -155,6 +172,7 @@ function subjectSelector(
         subjectFilter: distribution.subjectFilter,
         namedGraph: distribution.namedGraph,
         namespaceAliases,
+        excludeFilter,
       });
       return new SparqlItemSelector({
         query,
@@ -174,6 +192,12 @@ export interface SubjectSelectorQueryOptions {
   namedGraph?: string;
   /** Equivalent namespaces to broaden the type match across. @default [] */
   namespaceAliases?: NamespaceAlias[];
+  /**
+   * Optional fragment subtracting resources from the sample, inlined verbatim
+   * after the type pattern so it can reference the bound `?s` (e.g. a
+   * `MINUS { … }` clause). @default ''
+   */
+  excludeFilter?: string;
 }
 
 export function buildSubjectSelectorQuery({
@@ -181,6 +205,7 @@ export function buildSubjectSelectorQuery({
   subjectFilter,
   namedGraph,
   namespaceAliases = [],
+  excludeFilter,
 }: SubjectSelectorQueryOptions): string {
   let fromClause = '';
   if (namedGraph) {
@@ -191,7 +216,7 @@ export function buildSubjectSelectorQuery({
   return [
     'SELECT DISTINCT ?s',
     fromClause,
-    `WHERE { ${subjectFilter ?? ''} ${typePattern} }`,
+    `WHERE { ${subjectFilter ?? ''} ${typePattern} ${excludeFilter ?? ''} }`,
   ].join('\n');
 }
 
