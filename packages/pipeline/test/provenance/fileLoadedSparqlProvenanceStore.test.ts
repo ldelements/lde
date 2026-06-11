@@ -171,5 +171,17 @@ describe('FileLoadedSparqlProvenanceStore', () => {
       expect(other?.pipelineVersion).toBe('other-v9');
       expect(other?.sourceFingerprint).toBe('other-fingerprint|999');
     });
+
+    it('rejects an IRI with characters that could break out of the SPARQL query', async () => {
+      // A real URL normalises unsafe characters, so simulate a non-normalised
+      // IRI reaching the store to confirm it is rejected before querying.
+      const unsafe = {
+        toString: () => 'http://example.org/d> } GRAPH <evil> { ?s ?p ?o',
+      } as unknown as URL;
+
+      await expect(getStore(PIPELINE_IRI).get(unsafe)).rejects.toThrow(
+        'unsafe characters',
+      );
+    });
   });
 });

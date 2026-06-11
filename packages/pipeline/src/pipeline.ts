@@ -268,7 +268,15 @@ export class Pipeline {
 
     // Gate: skip an unchanged dataset before paying any import cost.
     if (this.provenanceStore) {
-      const stored = await this.provenanceStore.get(dataset.iri);
+      let stored: ProcessingRecord | null = null;
+      try {
+        stored = await this.provenanceStore.get(dataset.iri);
+      } catch {
+        // An unreadable record must not abort the whole run, nor wrongly skip:
+        // treat it as ‘never processed’ so this dataset reprocesses. The
+        // periodic full reprocess is the backstop.
+        stored = null;
+      }
       if (
         !shouldReprocess(
           {
@@ -325,6 +333,7 @@ export class Pipeline {
       onRelax: (event) => this.reporter?.timeoutRelaxed?.(event),
     });
 
+    let stageFailed = false;
     try {
       for (const stage of this.stages) {
         try {
@@ -340,6 +349,7 @@ export class Pipeline {
             );
           }
         } catch (error) {
+          stageFailed = true;
           this.reporter?.stageFailed?.(
             stage.name,
             error instanceof Error ? error : new Error(String(error)),
@@ -353,7 +363,13 @@ export class Pipeline {
 
     await this.writer.flush?.(dataset);
     await this.reportValidators(dataset);
-    await this.recordOutcome(dataset, fingerprint, 'success');
+    // A dataset whose stages threw produced incomplete output; record it as
+    // ‘failed’ rather than freezing a broken result under a ‘success’ record.
+    await this.recordOutcome(
+      dataset,
+      fingerprint,
+      stageFailed ? 'failed' : 'success',
+    );
     const datasetMemory = process.memoryUsage();
     this.reporter?.datasetComplete?.(dataset, {
       memoryUsageBytes: datasetMemory.rss,
@@ -368,12 +384,17 @@ export class Pipeline {
     status: ProcessingRecord['status'],
   ): Promise<void> {
     if (!this.provenanceStore) return;
-    await this.provenanceStore.set(dataset.iri, {
-      sourceFingerprint: fingerprint,
-      pipelineVersion: this.pipelineVersion!,
-      generatedAt: new Date().toISOString(),
-      status,
-    });
+    try {
+      await this.provenanceStore.set(dataset.iri, {
+        sourceFingerprint: fingerprint,
+        pipelineVersion: this.pipelineVersion!,
+        generatedAt: new Date().toISOString(),
+        status,
+      });
+    } catch {
+      // A failed write must not abort the run; the dataset simply reprocesses
+      // next run, its record not yet updated.
+    }
   }
 
   private async reportValidators(dataset: Dataset): Promise<void> {

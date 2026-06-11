@@ -1,4 +1,4 @@
-import { Dataset } from '@lde/dataset';
+import { Dataset, assertSafeIri } from '@lde/dataset';
 import type { Quad, Term } from '@rdfjs/types';
 import { DataFactory } from 'n3';
 import { SparqlEndpointFetcher } from 'fetch-sparql-endpoint';
@@ -81,9 +81,16 @@ export class FileLoadedSparqlProvenanceStore implements ProvenanceStore {
   }
 
   private selectQuery(datasetUri: URL): string {
-    const dataset = `<${datasetUri.toString()}>`;
+    // Guard before interpolating into a SPARQL `<…>` reference, mirroring
+    // SparqlUpdateWriter. URL normalisation already encodes unsafe characters,
+    // so this is defence-in-depth against a non-normalised IRI reaching here.
+    const datasetIri = datasetUri.toString();
+    const pipelineIri = this.pipelineIri.toString();
+    assertSafeIri(datasetIri);
+    assertSafeIri(pipelineIri);
+    const dataset = `<${datasetIri}>`;
     return `SELECT ?fingerprint ?version ?status ?generatedAt WHERE {
-      GRAPH <${this.pipelineIri.toString()}> {
+      GRAPH <${pipelineIri}> {
         ${dataset} <${LDE}pipelineVersion> ?version ;
                    <${LDE}status> ?status ;
                    <${PROV}generatedAtTime> ?generatedAt .

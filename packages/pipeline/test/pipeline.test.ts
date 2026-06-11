@@ -1331,9 +1331,7 @@ describe('Pipeline', () => {
       };
     }
 
-    function makeStore(
-      stored: ProcessingRecord | null,
-    ): ProvenanceStore & {
+    function makeStore(stored: ProcessingRecord | null): ProvenanceStore & {
       get: ReturnType<typeof vi.fn>;
       set: ReturnType<typeof vi.fn>;
     } {
@@ -1473,6 +1471,79 @@ describe('Pipeline', () => {
           status: 'failed',
         }),
       );
+    });
+
+    it("records 'failed' when a stage throws", async () => {
+      const resolver = makeDumpResolver();
+      const store = makeStore(null);
+      const failingStage = makeStage('failing');
+      vi.spyOn(failingStage, 'run').mockRejectedValue(new Error('stage boom'));
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [failingStage],
+        writers: writer,
+        distributionResolver: resolver,
+        provenanceStore: store,
+        pipelineVersion: 'v1',
+      });
+
+      await pipeline.run();
+
+      // The dataset produced no output, so it must not be recorded as success.
+      expect(store.set).toHaveBeenCalledWith(
+        dataset.iri,
+        expect.objectContaining({ status: 'failed' }),
+      );
+    });
+
+    it('reprocesses without crashing when the store read fails', async () => {
+      const resolver = makeDumpResolver();
+      const store: ProvenanceStore & { get: ReturnType<typeof vi.fn> } = {
+        get: vi.fn().mockRejectedValue(new Error('store unreachable')),
+        set: vi.fn().mockResolvedValue(undefined),
+      };
+      const stage = makeStage('stage1');
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [stage],
+        writers: writer,
+        distributionResolver: resolver,
+        provenanceStore: store,
+        pipelineVersion: 'v1',
+      });
+
+      // A store read failure must not abort the run; it falls through to
+      // reprocessing rather than wrongly skipping or crashing.
+      await expect(pipeline.run()).resolves.toBeUndefined();
+      expect(resolver.resolve).toHaveBeenCalledTimes(1);
+      expect(stage.run).toHaveBeenCalledTimes(1);
+    });
+
+    it('continues the run when the store write fails', async () => {
+      const dataset1 = makeDataset('http://example.org/dataset/1');
+      const dataset2 = makeDataset('http://example.org/dataset/2');
+      const resolver = makeDumpResolver();
+      const store: ProvenanceStore & { set: ReturnType<typeof vi.fn> } = {
+        get: vi.fn().mockResolvedValue(null),
+        set: vi.fn().mockRejectedValue(new Error('disk full')),
+      };
+      const stage = makeStage('stage1');
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset1, dataset2),
+        stages: [stage],
+        writers: writer,
+        distributionResolver: resolver,
+        provenanceStore: store,
+        pipelineVersion: 'v1',
+      });
+
+      await expect(pipeline.run()).resolves.toBeUndefined();
+      // Both datasets are processed despite each write throwing.
+      expect(stage.run).toHaveBeenCalledTimes(2);
+      expect(store.set).toHaveBeenCalledTimes(2);
     });
 
     it('does not gate or record when no store is configured', async () => {
