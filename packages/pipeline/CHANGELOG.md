@@ -1,3 +1,9 @@
+## 0.30.12 (2026-06-11)
+
+### 🚀 Features
+
+- **pipeline:** skip unchanged datasets — provenance store, two-phase resolver, gate ([#454](https://github.com/ldelements/lde/pull/454))
+
 ## 0.30.11 (2026-06-11)
 
 ### 🚀 Features
