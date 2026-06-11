@@ -17,6 +17,10 @@ import {
   defaultVocabularies,
 } from './vocabularyTransform.js';
 import { withUriSpaces } from './uriSpaceTransform.js';
+import {
+  applyNamespaceAliases,
+  type NamespaceAlias,
+} from './namespaceAlias.js';
 
 const queriesDir = resolve(
   dirname(fileURLToPath(import.meta.url)),
@@ -76,6 +80,15 @@ export interface VoidStageOptions {
    * with these, built-in first.
    */
   transform?: VoidStageTransform;
+  /**
+   * Namespace pairs whose alias form is treated as its canonical equivalent
+   * when partitioning by class. Each class-keyed query rewrites alias-namespace
+   * types to canonical before grouping, so a dataset that mixes e.g.
+   * `http://schema.org/` and `https://schema.org/` yields a single
+   * `void:classPartition` per class with summed `void:entities`, rather than
+   * one partition per namespace variant. Defaults to no aliases (no rewriting).
+   */
+  namespaceAliases?: readonly NamespaceAlias[];
 }
 
 /**
@@ -126,9 +139,14 @@ async function createVoidStage(
     perClass?: boolean;
     batchSize?: number;
     maxConcurrency?: number;
+    namespaceAliases?: readonly NamespaceAlias[];
   },
 ): Promise<Stage> {
-  const query = await readQueryFile(resolve(queriesDir, filename));
+  const namespaceAliases = options?.namespaceAliases ?? [];
+  const query = applyNamespaceAliases(
+    await readQueryFile(resolve(queriesDir, filename)),
+    namespaceAliases,
+  );
   const executor: AttachedExecutor = {
     executor: new SparqlConstructExecutor({ query }),
     transform: options?.transform,
@@ -137,7 +155,9 @@ async function createVoidStage(
   return new Stage({
     name: filename,
     executors: executor,
-    itemSelector: options?.perClass ? classSelector() : undefined,
+    itemSelector: options?.perClass
+      ? classSelector(namespaceAliases)
+      : undefined,
     batchSize: options?.batchSize,
     maxConcurrency: options?.maxConcurrency,
   });
@@ -151,7 +171,17 @@ function asTransforms(
   return Array.isArray(transform) ? [...transform] : [transform];
 }
 
-function classSelector(): ItemSelector {
+function classSelector(
+  namespaceAliases: readonly NamespaceAlias[] = [],
+): ItemSelector {
+  // Canonicalise the selected classes so alias-namespace variants collapse to
+  // a single class. The per-class queries match all variants (see their
+  // `#typePatternFiltered#`), so iterating the canonical class once still
+  // counts every resource.
+  const typePattern = applyNamespaceAliases(
+    '#typePattern(?s, ?class)#',
+    namespaceAliases,
+  );
   return {
     // Forward `options` so the Pipeline’s per-dataset TimeoutPolicy
     // reaches the inner SparqlItemSelector — without this the adaptive
@@ -166,7 +196,7 @@ function classSelector(): ItemSelector {
       const selectorQuery = [
         'SELECT DISTINCT ?class',
         fromClause,
-        `WHERE { ${subjectFilter} ?s a ?class . }`,
+        `WHERE { ${subjectFilter} ${typePattern} }`,
         'LIMIT 1000',
       ].join('\n');
 

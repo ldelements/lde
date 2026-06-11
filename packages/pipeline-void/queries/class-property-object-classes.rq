@@ -13,12 +13,12 @@ WHERE {
       {
         SELECT ?class ?p ?o {
           #subjectFilter#
-          ?s a ?class ;
-            ?p ?o .
+          #typePatternFiltered(?s, ?class)#
+          ?s ?p ?o .
           FILTER (ISIRI(?o))
         }
       }
-      ?o a ?objectClass .
+      #typePattern(?o, ?objectClass)#
     }
     GROUP BY ?class ?p ?objectClass
   }

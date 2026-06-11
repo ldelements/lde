@@ -10,7 +10,7 @@ WHERE {
     {
         SELECT (COUNT(?type) AS ?entities) ?type {
             #subjectFilter#
-            ?s a ?type .
+            #typePattern(?s, ?type)#
         }
         GROUP BY ?type
     }

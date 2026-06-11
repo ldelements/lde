@@ -31,6 +31,9 @@
     "n3": "^2.0.1",
     "tslib": "^2.3.0"
   },
+  "devDependencies": {
+    "@comunica/query-sparql-rdfjs-lite": "^4.5.0"
+  },
   "peerDependencies": {
     "@lde/dataset": "0.7.5",
     "@lde/pipeline": "0.30.12"

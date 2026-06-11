@@ -14,8 +14,8 @@ WHERE {
         # Pre-filter to distinct literals to minimize LANG calls
         SELECT DISTINCT ?class ?p ?o {
           #subjectFilter#
-          ?s a ?class ;
-            ?p ?o .
+          #typePatternFiltered(?s, ?class)#
+          ?s ?p ?o .
           FILTER(ISLITERAL(?o))
         }
       }

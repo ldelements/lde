@@ -13,8 +13,8 @@ WHERE {
       {
         SELECT ?class ?p ?o {
           #subjectFilter#
-          ?s a ?class ;
-            ?p ?o .
+          #typePatternFiltered(?s, ?class)#
+          ?s ?p ?o .
           FILTER (ISLITERAL(?o))
         }
       }

@@ -10,14 +10,15 @@ Returns all VoID stages in their recommended execution order. The ordering is op
 
 Accepts an optional `VoidStagesOptions` object:
 
-| Option           | Default | Description                                                                                                     |
-| ---------------- | ------- | --------------------------------------------------------------------------------------------------------------- |
-| `batchSize`      | 10      | Maximum class bindings per executor call (per-class stages only)                                                |
-| `maxConcurrency` | 10      | Maximum concurrent in-flight executor batches (per-class stages only)                                           |
-| `perClass`       | —       | Override per-class iteration for all five per-class stages                                                      |
-| `uriSpaces`      | —       | When provided, includes the object URI space stage                                                              |
-| `vocabularies`   | —       | Additional vocabulary namespace URIs to detect beyond the built-in defaults                                     |
-| `transforms`     | —       | Transforms to attach to bundled stages, keyed by `VOID_STAGE_NAMES` (see [Stage transforms](#stage-transforms)) |
+| Option             | Default | Description                                                                                                                       |
+| ------------------ | ------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `batchSize`        | 10      | Maximum class bindings per executor call (per-class stages only)                                                                  |
+| `maxConcurrency`   | 10      | Maximum concurrent in-flight executor batches (per-class stages only)                                                             |
+| `perClass`         | —       | Override per-class iteration for all five per-class stages                                                                        |
+| `uriSpaces`        | —       | When provided, includes the object URI space stage                                                                                |
+| `vocabularies`     | —       | Additional vocabulary namespace URIs to detect beyond the built-in defaults                                                       |
+| `namespaceAliases` | —       | Namespace pairs whose alias form is treated as canonical when partitioning by class (see [Namespace aliases](#namespace-aliases)) |
+| `transforms`       | —       | Transforms to attach to bundled stages, keyed by `VOID_STAGE_NAMES` (see [Stage transforms](#stage-transforms))                   |
 
 Per-request timeouts are configured at the `Pipeline` level via `PipelineOptions.timeout`, not per VoID stage.
 
@@ -71,6 +72,22 @@ Global and domain-specific factories accept `VoidStageOptions` (`transform`) and
 | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `detectVocabularies()`   | [`entity-properties.rq`](queries/entity-properties.rq) — Entity properties with automatic `void:vocabulary` detection. Accepts `DetectVocabulariesOptions` with an optional `vocabularies` array to extend the built-in defaults. |
 | `uriSpaces(uriSpaceMap)` | [`object-uri-space.rq`](queries/object-uri-space.rq) — Object URI namespace linksets, aggregated against a provided URI space map                                                                                                 |
+
+## Namespace aliases
+
+Some vocabularies are published under more than one namespace IRI — most commonly schema.org, served under both `http://schema.org/` (historical) and `https://schema.org/` (current). To RDF these are distinct IRIs, so a dataset that mixes the two forms produces a separate `void:classPartition` for each variant of the same class, each counted over a disjoint subset.
+
+Pass `namespaceAliases` to treat an alias namespace as its canonical equivalent. Every class-keyed query then rewrites alias-namespace types to canonical before grouping — and the class selector collapses the variants — so each class appears once, with `void:entities` summed and its property partitions merged. The per-class queries still match resources typed with either variant, so no resource is dropped.
+
+```typescript
+const stages = await voidStages({
+  namespaceAliases: [
+    { canonical: 'https://schema.org/', alias: 'http://schema.org/' },
+  ],
+});
+```
+
+Canonicalisation applies to class IRIs (`void:class`, including object-class partitions), not to predicates. With no aliases configured the queries are unchanged.
 
 ## Stage transforms
 

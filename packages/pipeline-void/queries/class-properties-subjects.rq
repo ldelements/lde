@@ -15,7 +15,8 @@ WHERE {
             {
                 SELECT ?class ?p ?s {
                     #subjectFilter#
-                    ?s a ?class ; ?p [] .
+                    #typePatternFiltered(?s, ?class)#
+                    ?s ?p [] .
                 }
             }
         }
