@@ -9,9 +9,14 @@ import type { Writer } from './writer/writer.js';
 import { FileWriter } from './writer/fileWriter.js';
 import {
   type DistributionResolver,
+  type ProbedDistributions,
   NoDistributionAvailable,
 } from './distribution/resolver.js';
 import { SparqlDistributionResolver } from './distribution/index.js';
+import { sourceFingerprint } from './provenance/sourceFingerprint.js';
+import { shouldReprocess } from './provenance/reprocessDecision.js';
+import type { ProcessingRecord } from './provenance/record.js';
+import type { ProvenanceStore } from './provenance/store.js';
 import {
   NetworkError,
   SparqlProbeResult,
@@ -53,6 +58,22 @@ export interface PipelineOptions {
     outputDir: string;
   };
   reporter?: ProgressReporter;
+  /**
+   * Optional per-dataset processing memory. When set, the pipeline skips a
+   * dataset whose source-change fingerprint and {@link pipelineVersion} both
+   * match the stored record – before paying the import cost – and writes an
+   * updated record after processing. When omitted, every dataset is
+   * reprocessed (today’s behaviour).
+   */
+  provenanceStore?: ProvenanceStore;
+  /**
+   * Opaque, consumer-declared version of the pipeline’s output-affecting
+   * logic, rotated only on releases that change output. Compared for equality,
+   * never parsed or ordered. Required when {@link provenanceStore} is set (a
+   * skip-enabled pipeline with no version would silently freeze); ignored
+   * otherwise.
+   */
+  pipelineVersion?: string;
   /**
    * Factory producing a fresh {@link TimeoutPolicy} per dataset. Defaults
    * to {@link constantTimeoutPolicy}`(300_000)` so existing call sites
@@ -153,6 +174,8 @@ export class Pipeline {
   private readonly chaining?: PipelineOptions['chaining'];
   private readonly reporter?: ProgressReporter;
   private readonly timeoutFactory: () => TimeoutPolicy;
+  private readonly provenanceStore?: ProvenanceStore;
+  private readonly pipelineVersion?: string;
 
   constructor(options: PipelineOptions) {
     const hasSubStages = options.stages.some(
@@ -160,6 +183,12 @@ export class Pipeline {
     );
     if (hasSubStages && !options.chaining) {
       throw new Error('chaining is required when any stage has sub-stages');
+    }
+
+    if (options.provenanceStore && options.pipelineVersion === undefined) {
+      throw new Error(
+        'pipelineVersion is required when a provenanceStore is configured',
+      );
     }
 
     this.name = options.name ?? '';
@@ -186,6 +215,8 @@ export class Pipeline {
     this.reporter = options.reporter;
     this.timeoutFactory =
       options.timeout ?? (() => new ConstantTimeoutPolicy(300_000));
+    this.provenanceStore = options.provenanceStore;
+    this.pipelineVersion = options.pipelineVersion;
   }
 
   async run(): Promise<void> {
@@ -211,20 +242,59 @@ export class Pipeline {
   private async processDataset(dataset: Dataset): Promise<void> {
     this.reporter?.datasetStart?.(dataset);
 
-    const timeout: TimeoutPolicy = this.timeoutFactory();
-    const unsubscribe = timeout.subscribe?.({
-      onTighten: (event) => this.reporter?.timeoutTightened?.(event),
-      onRelax: (event) => this.reporter?.timeoutRelaxed?.(event),
-    });
-
-    let resolved;
+    // Probe phase: gather probe results and the source-to-be, without importing.
+    let probed: ProbedDistributions;
     try {
-      resolved = await this.distributionResolver.resolve(dataset, {
+      probed = await this.distributionResolver.probe(dataset, {
         onProbe: (distribution, result) => {
           this.reporter?.distributionProbed?.(
             mapProbeResult(distribution, result),
           );
         },
+      });
+    } catch (error) {
+      this.reporter?.datasetSkipped?.(
+        dataset,
+        `Distribution probing failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return;
+    }
+
+    // Derive the source-change fingerprint from the probed source: null for a
+    // live SPARQL endpoint (always reprocess) or when no source is available.
+    const fingerprint = probed.source
+      ? sourceFingerprint(probed.source.distribution, probed.source.probeResult)
+      : null;
+
+    // Gate: skip an unchanged dataset before paying any import cost.
+    if (this.provenanceStore) {
+      let stored: ProcessingRecord | null = null;
+      try {
+        stored = await this.provenanceStore.get(dataset.iri);
+      } catch {
+        // An unreadable record must not abort the whole run, nor wrongly skip:
+        // treat it as ‘never processed’ so this dataset reprocesses. The
+        // periodic full reprocess is the backstop.
+        stored = null;
+      }
+      if (
+        !shouldReprocess(
+          {
+            sourceFingerprint: fingerprint,
+            pipelineVersion: this.pipelineVersion!,
+          },
+          stored,
+        )
+      ) {
+        this.reporter?.datasetSkipped?.(dataset, 'Unchanged since last run');
+        return;
+      }
+    }
+
+    // Resolve phase: import a data dump only when the source is one.
+    let resolved;
+    try {
+      resolved = await this.distributionResolver.resolve(probed, {
         onImportStart: () => {
           this.reporter?.importStarted?.();
         },
@@ -241,6 +311,10 @@ export class Pipeline {
     }
 
     if (resolved instanceof NoDistributionAvailable) {
+      // Record the failure so a dataset whose source is unchanged is not
+      // re-imported every run; it is retried at the next fingerprint change or
+      // version rotation.
+      await this.recordOutcome(dataset, fingerprint, 'failed');
       this.reporter?.datasetSkipped?.(dataset, resolved.message);
       return;
     }
@@ -253,6 +327,13 @@ export class Pipeline {
       resolved.tripleCount,
     );
 
+    const timeout: TimeoutPolicy = this.timeoutFactory();
+    const unsubscribe = timeout.subscribe?.({
+      onTighten: (event) => this.reporter?.timeoutTightened?.(event),
+      onRelax: (event) => this.reporter?.timeoutRelaxed?.(event),
+    });
+
+    let stageFailed = false;
     try {
       for (const stage of this.stages) {
         try {
@@ -268,6 +349,7 @@ export class Pipeline {
             );
           }
         } catch (error) {
+          stageFailed = true;
           this.reporter?.stageFailed?.(
             stage.name,
             error instanceof Error ? error : new Error(String(error)),
@@ -281,11 +363,38 @@ export class Pipeline {
 
     await this.writer.flush?.(dataset);
     await this.reportValidators(dataset);
+    // A dataset whose stages threw produced incomplete output; record it as
+    // ‘failed’ rather than freezing a broken result under a ‘success’ record.
+    await this.recordOutcome(
+      dataset,
+      fingerprint,
+      stageFailed ? 'failed' : 'success',
+    );
     const datasetMemory = process.memoryUsage();
     this.reporter?.datasetComplete?.(dataset, {
       memoryUsageBytes: datasetMemory.rss,
       heapUsedBytes: datasetMemory.heapUsed,
     });
+  }
+
+  /** Persist the processing record for a dataset, when a store is configured. */
+  private async recordOutcome(
+    dataset: Dataset,
+    fingerprint: string | null,
+    status: ProcessingRecord['status'],
+  ): Promise<void> {
+    if (!this.provenanceStore) return;
+    try {
+      await this.provenanceStore.set(dataset.iri, {
+        sourceFingerprint: fingerprint,
+        pipelineVersion: this.pipelineVersion!,
+        generatedAt: new Date().toISOString(),
+        status,
+      });
+    } catch {
+      // A failed write must not abort the run; the dataset simply reprocesses
+      // next run, its record not yet updated.
+    }
   }
 
   private async reportValidators(dataset: Dataset): Promise<void> {

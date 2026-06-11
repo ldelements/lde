@@ -1,0 +1,32 @@
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix lde: <https://w3id.org/lde/provenance#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+# The pipeline under test.
+<http://example.org/pipeline/dkg> {
+  <http://example.org/dataset/1>
+    a prov:Entity ;
+    prov:generatedAtTime "2026-06-11T00:00:00.000Z"^^xsd:dateTime ;
+    lde:sourceFingerprint "2024-06-01T00:00:00.000Z|1000" ;
+    lde:pipelineVersion "v1" ;
+    lde:status "success" .
+
+  # A failed run with no establishable fingerprint: the fingerprint triple is
+  # absent, so get() must reconstruct sourceFingerprint as null.
+  <http://example.org/dataset/3>
+    a prov:Entity ;
+    prov:generatedAtTime "2026-06-11T00:00:00.000Z"^^xsd:dateTime ;
+    lde:pipelineVersion "v1" ;
+    lde:status "failed" .
+}
+
+# A different pipeline sharing the same triplestore. Its record for dataset/1
+# must never leak into the pipeline-under-test's get().
+<http://example.org/pipeline/other> {
+  <http://example.org/dataset/1>
+    a prov:Entity ;
+    prov:generatedAtTime "2026-01-01T00:00:00.000Z"^^xsd:dateTime ;
+    lde:sourceFingerprint "other-fingerprint|999" ;
+    lde:pipelineVersion "other-v9" ;
+    lde:status "success" .
+}
