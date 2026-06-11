@@ -1,3 +1,9 @@
+## 0.4.12 (2026-06-11)
+
+### 🚀 Features
+
+- **pipeline-shacl-sampler:** add excludeResources hook to subtract resources from samples ([#453](https://github.com/ldelements/lde/pull/453))
+
 ## 0.4.11 (2026-06-11)
 
 ### 🧱 Updated Dependencies
