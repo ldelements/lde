@@ -276,6 +276,42 @@ Writes generated quads to a destination:
 - `SparqlUpdateWriter` — writes to a SPARQL endpoint via UPDATE queries
 - `FileWriter` — writes to local files
 
+### Provenance store
+
+A `ProvenanceStore` gives the pipeline a small per-dataset memory, so a future run can skip datasets that are genuinely unchanged. It is purely a storage seam: the framework owns the skip decision (see [`sourceFingerprint`](#source-change-fingerprint) and `shouldReprocess`), the store owns only how each record is persisted.
+
+```typescript
+interface ProvenanceStore {
+  get(datasetUri: URL): Promise<ProcessingRecord | null>;
+  set(datasetUri: URL, record: ProcessingRecord): Promise<void>;
+}
+```
+
+A `ProcessingRecord` holds the two opaque change fields — `sourceFingerprint` (derived automatically from source metadata) and `pipelineVersion` (consumer-declared) — plus `generatedAt` and a `status` of `'success'` or `'failed'`. The two change fields are compared only for equality, never parsed or ordered.
+
+#### `FileLoadedSparqlProvenanceStore`
+
+The reference implementation targets a triplestore that is served read-only and rebuilt by bulk-loading files (e.g. [QLever](https://github.com/ad-freiburg/qlever)). It reads through SPARQL queries against the live endpoint, and writes records as files for the next bulk-load — because the endpoint accepts no SPARQL UPDATE.
+
+```typescript
+import { FileLoadedSparqlProvenanceStore } from '@lde/pipeline';
+
+const store = new FileLoadedSparqlProvenanceStore({
+  queryEndpoint: new URL('http://localhost:7001/sparql'),
+  pipelineIri: new URL('https://example.org/pipelines/dkg'),
+  outputDir: './provenance',
+});
+```
+
+- `get` runs a named-graph-scoped SPARQL `SELECT` against `queryEndpoint`, reading the records a previous run loaded.
+- `set` writes one flat [PROV-O](https://www.w3.org/TR/prov-o/) N-Quads file per dataset into `outputDir`, in the pipeline-scoped named graph, to be bulk-loaded after the run.
+
+Each record is stored as flat PROV-O on the dataset entity — `prov:generatedAtTime` plus `sourceFingerprint`, `pipelineVersion` and `status` under the `https://w3id.org/lde/provenance#` namespace. Scoping every record by `pipelineIri` (used as the named graph) lets multiple pipelines share one triplestore without colliding.
+
+### Source-change fingerprint
+
+`sourceFingerprint(distribution, probeResult)` derives a cheap, opaque change signal for a distribution from metadata the probe already collected — no body download. For a data dump it combines the most recent of the register’s `dct:modified` and the artifact’s HTTP `Last-Modified` with the byte size (the probe’s `Content-Length`, falling back to the declared `dcat:byteSize`). It returns `null` for a live SPARQL endpoint, or when no date and no size can be established — a `null` fingerprint never compares equal, so such a distribution is always reprocessed.
+
 ### Plugins
 
 Plugins hook into the pipeline lifecycle via the `PipelinePlugin` interface. Register them in the `plugins` array when constructing a `Pipeline`.
