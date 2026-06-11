@@ -1,3 +1,9 @@
+## 0.30.11 (2026-06-11)
+
+### 🚀 Features
+
+- **pipeline:** add source-change fingerprint and reprocess decision ([#451](https://github.com/ldelements/lde/pull/451), [#450](https://github.com/ldelements/lde/issues/450))
+
 ## 0.30.10 (2026-06-10)
 
 ### 🚀 Features
