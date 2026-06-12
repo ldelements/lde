@@ -26,7 +26,7 @@
   "dependencies": {
     "@lde/dataset": "0.7.5",
     "@traqula/generator-sparql-1-1": "^1.1.1",
-    "@traqula/parser-sparql-1-1": "^1.1.1",
+    "@traqula/parser-sparql-1-1": "^1.1.4",
     "@traqula/rules-sparql-1-1": "^1.1.0",
     "ldkit": "^2.7.1",
     "tslib": "^2.3.0"
