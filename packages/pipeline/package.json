@@ -30,7 +30,7 @@
     "@lde/sparql-importer": "0.6.3",
     "@lde/sparql-server": "0.4.11",
     "@rdfjs/types": "^2.0.1",
-    "@traqula/generator-sparql-1-1": "^1.1.1",
+    "@traqula/generator-sparql-1-1": "^1.1.4",
     "@traqula/parser-sparql-1-1": "^1.1.4",
     "@traqula/rules-sparql-1-1": "^1.1.0",
     "fetch-sparql-endpoint": "^7.1.0",
