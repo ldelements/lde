@@ -96,6 +96,33 @@ describe('projectDocument', () => {
     expect(document.class_count).toBe(1);
   });
 
+  it('coerces exotic JSON-LD value shapes', () => {
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/d/3',
+        // numeric @value, boolean @value, a bare-string literal, a bare-string IRI
+        [`${DR}size`]: { '@value': 42 },
+        [`${DCT}language`]: { '@value': true },
+        [`${DCAT}keyword`]: 'bareString',
+        [`${DR}class`]: 'http://example.org/BareClass',
+      },
+      [
+        { name: 'size', path: `${DR}size`, kind: { type: 'number' } },
+        { name: 'language', path: `${DCT}language`, kind: { type: 'facet' } },
+        {
+          name: 'keyword',
+          path: `${DCAT}keyword`,
+          kind: { type: 'facet', search: true },
+        },
+        { name: 'class', path: `${DR}class`, kind: { type: 'facet', iri: true } },
+      ],
+    );
+    expect(document.size).toBe(42);
+    expect(document.language).toEqual(['true']);
+    expect(document.keyword).toEqual(['bareString']);
+    expect(document.class).toEqual(['http://example.org/BareClass']);
+  });
+
   it('omits absent optional fields', () => {
     const document = projectDocument(
       { '@id': 'https://ex/d/2', [`${DCT}title`]: { '@value': 'Solo' } },

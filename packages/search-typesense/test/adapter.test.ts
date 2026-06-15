@@ -59,7 +59,7 @@ describe('TypesenseAdapter', () => {
       .collections(COLLECTION)
       .documents('a')
       .retrieve();
-    expect(stored.title).toBe('Verhaal van Utrecht');
+    expect((stored as Record<string, unknown>).title).toBe('Verhaal van Utrecht');
   });
 
   it('throws when a document fails to import', async () => {
@@ -83,8 +83,8 @@ describe('TypesenseAdapter', () => {
       .collections(COLLECTION)
       .documents('a')
       .retrieve();
-    expect(stored.title).toBe('Original');
-    expect(stored.publisher).toBe('KB');
+    expect((stored as Record<string, unknown>).title).toBe('Original');
+    expect((stored as Record<string, unknown>).publisher).toBe('KB');
   });
 
   it('swaps a blue/green alias to a versioned collection', async () => {
@@ -102,7 +102,7 @@ describe('TypesenseAdapter', () => {
       .collections('datasets')
       .documents('a')
       .retrieve();
-    expect(stored.title).toBe('Via alias');
+    expect((stored as Record<string, unknown>).title).toBe('Via alias');
   });
 
   it('enumerates document ids, optionally scoped by a filter', async () => {
