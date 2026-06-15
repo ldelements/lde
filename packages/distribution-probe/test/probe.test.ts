@@ -4,7 +4,7 @@ import {
   DataDumpProbeResult,
   NetworkError,
 } from '../src/index.js';
-import { Distribution } from '@lde/dataset';
+import { Distribution, IANA_MEDIA_TYPE_PREFIX } from '@lde/dataset';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -1121,6 +1121,90 @@ describe('probe', () => {
 
       expect(result.responseTimeMs).toBeGreaterThanOrEqual(0);
       expect(Number.isInteger(result.responseTimeMs)).toBe(true);
+    });
+  });
+
+  describe('Content-Type mismatch', () => {
+    const gzippedNQuads = () => {
+      const distribution = new Distribution(
+        new URL('http://example.org/data.nq.gz'),
+        IANA_MEDIA_TYPE_PREFIX + 'application/n-quads',
+      );
+      distribution.compressFormat = IANA_MEDIA_TYPE_PREFIX + 'application/gzip';
+      return distribution;
+    };
+
+    const headResponse = (contentType: string) =>
+      vi.mocked(fetch).mockResolvedValue(
+        new Response('', {
+          status: 200,
+          headers: { 'Content-Type': contentType, 'Content-Length': '12345' },
+        }),
+      );
+
+    it('accepts the declared compressed type for a gzipped distribution', async () => {
+      headResponse('application/n-quads+gzip');
+
+      const result = (await probe(gzippedNQuads())) as DataDumpProbeResult;
+
+      expect(result.isSuccess()).toBe(true);
+      expect(result.warnings).toEqual([]);
+    });
+
+    it('accepts the bare media type when the server decompressed the body', async () => {
+      headResponse('application/n-quads');
+
+      const result = (await probe(gzippedNQuads())) as DataDumpProbeResult;
+
+      expect(result.isSuccess()).toBe(true);
+      expect(result.warnings).toEqual([]);
+    });
+
+    it('flags the wrong compression format on a gzipped distribution', async () => {
+      headResponse('application/n-quads+zip');
+
+      const result = (await probe(gzippedNQuads())) as DataDumpProbeResult;
+
+      expect(result.warnings).toContain(
+        'Server Content-Type application/n-quads+zip does not match declared media type application/n-quads+gzip',
+      );
+    });
+
+    it('flags the wrong base serialization on a gzipped distribution', async () => {
+      headResponse('text/turtle+gzip');
+
+      const result = (await probe(gzippedNQuads())) as DataDumpProbeResult;
+
+      expect(result.warnings).toContain(
+        'Server Content-Type text/turtle+gzip does not match declared media type application/n-quads+gzip',
+      );
+    });
+
+    it('does not warn for an uncompressed distribution served as declared', async () => {
+      headResponse('application/n-quads');
+
+      const distribution = new Distribution(
+        new URL('http://example.org/data.nq'),
+        IANA_MEDIA_TYPE_PREFIX + 'application/n-quads',
+      );
+      const result = (await probe(distribution)) as DataDumpProbeResult;
+
+      expect(result.isSuccess()).toBe(true);
+      expect(result.warnings).toEqual([]);
+    });
+
+    it('warns when an uncompressed distribution is served as a different type', async () => {
+      headResponse('text/turtle');
+
+      const distribution = new Distribution(
+        new URL('http://example.org/data.nq'),
+        IANA_MEDIA_TYPE_PREFIX + 'application/n-quads',
+      );
+      const result = (await probe(distribution)) as DataDumpProbeResult;
+
+      expect(result.warnings).toContain(
+        'Server Content-Type text/turtle does not match declared media type application/n-quads',
+      );
     });
   });
 });

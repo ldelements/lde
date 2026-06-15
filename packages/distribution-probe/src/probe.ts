@@ -441,13 +441,13 @@ async function probeDataDump(
       responseTimeMs,
       failureReason,
     );
-    checkContentTypeMismatch(result, distribution.mimeType);
+    checkContentTypeMismatch(result, distribution);
     return result;
   }
 
   const responseTimeMs = Math.round(performance.now() - start);
   const result = new DataDumpProbeResult(url, headResponse, responseTimeMs);
-  checkContentTypeMismatch(result, distribution.mimeType);
+  checkContentTypeMismatch(result, distribution);
   return result;
 }
 
@@ -563,21 +563,35 @@ function isRemoteContextError(error: Error): boolean {
 }
 
 /**
- * Compare the declared MIME type from the dataset registry against the
+ * Compare the declared media type from the dataset registry against the
  * server's Content-Type header. Adds a warning when they disagree.
+ *
+ * A compressed distribution is served either as its bare media type (the server
+ * decompressed the body) or with the declared compression suffix appended, e.g.
+ * `application/n-quads+gzip`. Both are accepted; a different suffix — including
+ * the wrong compression format — is a genuine mismatch. The registry strips that
+ * suffix into a separate compress format on ingest, so comparing against
+ * {@link Distribution.mimeType} alone would false-positive every compressed
+ * distribution.
  */
 function checkContentTypeMismatch(
   result: DataDumpProbeResult,
-  declaredMimeType: string | undefined,
+  distribution: Distribution,
 ): void {
-  if (!result.isSuccess() || !declaredMimeType || !result.contentType) return;
+  const { mimeType } = distribution;
+  if (!result.isSuccess() || !mimeType || !result.contentType) return;
 
   const actual = result.contentType.split(';')[0].trim();
   if (compressionMediaTypes.has(actual)) return;
 
-  if (actual !== declaredMimeType) {
+  const acceptable =
+    distribution.compressedMimeType === undefined
+      ? [mimeType]
+      : [mimeType, distribution.compressedMimeType];
+  if (!acceptable.includes(actual)) {
+    const expected = distribution.compressedMimeType ?? mimeType;
     result.warnings.push(
-      `Server Content-Type ${actual} does not match declared media type ${declaredMimeType}`,
+      `Server Content-Type ${actual} does not match declared media type ${expected}`,
     );
   }
 }
