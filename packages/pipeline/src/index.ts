@@ -6,6 +6,7 @@ export * from './progressReporter.js';
 export * from './selector.js';
 export * from './stage.js';
 export * from './stageOutputResolver.js';
+export * from './guard/blankNodes.js';
 export * from './sparql/index.js';
 export * from './distribution/index.js';
 export * from './provenance/index.js';
