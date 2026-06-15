@@ -566,13 +566,15 @@ function isRemoteContextError(error: Error): boolean {
  * Compare the declared media type from the dataset registry against the
  * server's Content-Type header. Adds a warning when they disagree.
  *
- * A compressed distribution is served either as its bare media type (the server
- * decompressed the body) or with the declared compression suffix appended, e.g.
- * `application/n-quads+gzip`. Both are accepted; a different suffix — including
- * the wrong compression format — is a genuine mismatch. The registry strips that
- * suffix into a separate compress format on ingest, so comparing against
- * {@link Distribution.mimeType} alone would false-positive every compressed
- * distribution.
+ * The declared compressed form (e.g. `application/n-quads+gzip`) is the expected
+ * answer for a `+gzip`/`+zip` distribution, since the body is a gzip/zip archive
+ * served as-is. The bare media type (`application/n-quads`) is also accepted as a
+ * lenient fallback — the RDF serialization is the same and only the compression
+ * wrapper is absent — so a server that serves the uncompressed representation is
+ * not flagged. A different compression suffix or a different base serialization is
+ * still a genuine mismatch. The registry strips the suffix into a separate compress
+ * format on ingest, so comparing against {@link Distribution.mimeType} alone would
+ * false-positive every compressed distribution.
  */
 function checkContentTypeMismatch(
   result: DataDumpProbeResult,
