@@ -6,17 +6,18 @@ export default mergeConfig(
   baseConfig,
   defineConfig({
     root: __dirname,
-    cacheDir: '../../node_modules/.vite/packages/typesense',
+    cacheDir: '../../node_modules/.vite/packages/search-typesense',
     test: {
       // Pulling and starting the Typesense container is slow on a cold cache.
       testTimeout: 60_000,
       hookTimeout: 120_000,
       coverage: {
+        // Lower than before frame-by-type moved to @lde/search.
         thresholds: {
-          functions: 95.65,
-          lines: 91.52,
-          branches: 76.47,
-          statements: 91.66,
+          functions: 95,
+          lines: 91,
+          branches: 74,
+          statements: 91,
         },
       },
     },
