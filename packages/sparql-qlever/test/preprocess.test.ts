@@ -218,7 +218,7 @@ describe('preprocess', () => {
     expect((await secondStat).mtimeMs).toBe(firstMtime);
   });
 
-  it('skips directory entries and non-JSON-LD entries inside a zip', async () => {
+  it('skips directory entries and unparseable entries inside a zip', async () => {
     const file = join(tempDir, 'mixed.zip');
     await copyFile(resolve('test/fixtures/preprocess/mixed.zip'), file);
 
@@ -227,8 +227,8 @@ describe('preprocess', () => {
       makeDistribution('application/ld+json', 'application/zip'),
     );
 
-    // Two matching JSON-LD entries (data.jsonld + subdir/data.jsonld) should
-    // both be folded into the N-Quads output.
+    // The two JSON-LD entries (data.jsonld + subdir/data.jsonld) should both be
+    // folded into the N-Quads output; the subdir/ directory entry is ignored.
     const nquads = await readFile(result.path, 'utf-8');
     const tripleLines = nquads
       .trim()
@@ -236,7 +236,8 @@ describe('preprocess', () => {
       .filter((line) => line.length > 0);
     expect(tripleLines.length).toBeGreaterThanOrEqual(4);
 
-    // The .txt entry must be reported via warnings rather than silently dropped.
+    // The non-RDF entry must be reported via warnings rather than aborting the
+    // whole import or being silently dropped.
     expect(result.warnings.some((w) => w.includes('extra.txt'))).toBe(true);
   });
 
@@ -258,7 +259,7 @@ describe('preprocess', () => {
     ).rejects.toThrow(/does not need preprocessing/);
   });
 
-  it('throws when zip contains no JSON-LD entries', async () => {
+  it('throws when no zip entry parses as the declared serialization', async () => {
     const file = join(tempDir, 'empty.zip');
     await copyFile(resolve('test/fixtures/preprocess/empty.zip'), file);
 
@@ -267,6 +268,25 @@ describe('preprocess', () => {
         file,
         makeDistribution('application/ld+json', 'application/zip'),
       ),
-    ).rejects.toThrow(/contains no JSON-LD entries/);
+    ).rejects.toThrow(/contains no valid JSON-LD entries/);
+  });
+
+  it('parses a zip entry regardless of its file extension', async () => {
+    // The entry is named `graph.bin` but contains JSON-LD; with the declared
+    // mediaType driving the parser, it is still folded into the output.
+    const file = join(tempDir, 'wrong-extension.zip');
+    await copyFile(
+      resolve('test/fixtures/preprocess/wrong-extension.zip'),
+      file,
+    );
+
+    const result = await preprocess(
+      file,
+      makeDistribution('application/ld+json', 'application/zip'),
+    );
+
+    const nquads = await readFile(result.path, 'utf-8');
+    expect(nquads).toContain('<https://example.org/utrecht/story/1>');
+    expect(result.warnings).toEqual([]);
   });
 });
