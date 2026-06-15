@@ -69,6 +69,15 @@ describe('needsPreprocessing', () => {
     ).toBe(true);
   });
 
+  it('returns true for TriG (plain or gzipped)', () => {
+    expect(needsPreprocessing(makeDistribution('application/trig'))).toBe(true);
+    expect(
+      needsPreprocessing(
+        makeDistribution('application/trig', 'application/gzip'),
+      ),
+    ).toBe(true);
+  });
+
   it('returns false when the distribution has no declared media type', () => {
     expect(
       needsPreprocessing(new Distribution(new URL('https://example.com/data'))),
@@ -134,6 +143,21 @@ describe('preprocess', () => {
     expect(nquads).toContain('Een verhaal uit Utrecht');
     // N-Quads triples end with " ." on each line.
     expect(nquads.trim().split('\n').length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('converts plain TriG to N-Quads, preserving the named graph', async () => {
+    const file = join(tempDir, 'data.trig');
+    await copyFile(resolve('test/fixtures/preprocess/data.trig'), file);
+
+    const result = await preprocess(file, makeDistribution('application/trig'));
+
+    expect(result.format).toBe('nq');
+    expect(result.path).toBe(`${file}.preprocessed.nq`);
+    const nquads = await readFile(result.path, 'utf-8');
+    expect(nquads).toContain('<https://example.org/utrecht/story/1>');
+    expect(nquads).toContain('Een verhaal uit Utrecht');
+    // The TriG named graph becomes the fourth term of every N-Quad.
+    expect(nquads).toContain('<https://example.org/utrecht/graph> .');
   });
 
   it('gunzips a JSON-LD distribution when compressFormat=application/gzip', async () => {

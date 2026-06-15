@@ -291,8 +291,9 @@ const nativeFormats = new Map<string, fileFormat>([
 
 /**
  * Accepted distribution media types, in preference order: the first match is
- * tried first. Native formats win over JSON-LD and RDF/XML because they skip
- * the Node-side preprocessor.
+ * tried first. Native formats win over JSON-LD, RDF/XML and TriG because they
+ * skip the Node-side preprocessor; TriG comes last so a streaming native dump
+ * is always preferred when a dataset offers both.
  *
  * `application/zip` is intentionally absent — the inner RDF format must be
  * declared via `mediaType` with `application/zip` appearing only as the
@@ -304,6 +305,7 @@ const acceptedMediaTypes: readonly string[] = [
   'text/turtle',
   'application/ld+json',
   'application/rdf+xml',
+  'application/trig',
 ];
 
 const defaultQleverIndexOptions = {

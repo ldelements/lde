@@ -12,6 +12,7 @@ import yauzl from 'yauzl';
 
 const JSONLD_MIME = 'application/ld+json';
 const RDFXML_MIME = 'application/rdf+xml';
+const TRIG_MIME = 'application/trig';
 const ZIP_MIME = 'application/zip';
 const GZIP_MIME = 'application/gzip';
 const GZIP_MIME_LEGACY = 'application/x-gzip';
@@ -31,6 +32,10 @@ interface PreprocessFormat {
 const preprocessFormats = new Map<string, PreprocessFormat>([
   [JSONLD_MIME, { label: 'JSON-LD', zipExtensions: ['.jsonld', '.json'] }],
   [RDFXML_MIME, { label: 'RDF/XML', zipExtensions: ['.rdf', '.xml', '.owl'] }],
+  // QLever ingests N-Quads/N-Triples/Turtle natively, but not TriG: its
+  // `<graph> { … }` block syntax is neither N-Quads nor Turtle, so TriG must be
+  // converted to N-Quads first, like JSON-LD and RDF/XML.
+  [TRIG_MIME, { label: 'TriG', zipExtensions: ['.trig'] }],
 ]);
 
 export interface PreprocessResult {
@@ -44,8 +49,8 @@ export interface PreprocessResult {
  * Whether a distribution needs Node-side preprocessing before `qlever-index`
  * can read it.
  *
- * JSON-LD and RDF/XML distributions return `true`: `qlever-index` cannot parse
- * either, so we stream them through `rdf-parse` into N-Quads first.
+ * JSON-LD, RDF/XML and TriG distributions return `true`: `qlever-index` cannot
+ * parse any of them, so we stream them through `rdf-parse` into N-Quads first.
  *
  * Native RDF formats (`nt`, `nq`, `ttl`) — including when wrapped in
  * `application/gzip` or `application/zip` — go straight through the shell
@@ -61,8 +66,8 @@ export function needsPreprocessing(distribution: Distribution): boolean {
 }
 
 /**
- * Convert a JSON-LD or RDF/XML distribution to N-Quads alongside the source
- * file.
+ * Convert a JSON-LD, RDF/XML or TriG distribution to N-Quads alongside the
+ * source file.
  *
  * Streams the source through `rdf-parse` → `rdf-serialize` so memory use
  * stays bounded regardless of input size. Handles gzip transparently
@@ -77,9 +82,7 @@ export async function preprocess(
 ): Promise<PreprocessResult> {
   const contentType = distribution.mimeType;
   const format =
-    contentType === undefined
-      ? undefined
-      : preprocessFormats.get(contentType);
+    contentType === undefined ? undefined : preprocessFormats.get(contentType);
   if (contentType === undefined || format === undefined) {
     throw new Error(
       `preprocess called for distribution that does not need preprocessing: mediaType=${distribution.mimeType}`,
