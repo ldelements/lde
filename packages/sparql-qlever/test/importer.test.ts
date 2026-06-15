@@ -448,6 +448,35 @@ describe('Importer', () => {
       expect(downloadedDistributions[0]?.mimeType).toBe('application/n-quads');
     });
 
+    it('prefers a native streaming dump over TriG when both are offered', async () => {
+      const runner = stubTaskRunner(42);
+      const downloadedDistributions: Distribution[] = [];
+      const importer = new Importer({
+        taskRunner: runner,
+        indexName,
+        downloader: {
+          async download(distribution: Distribution) {
+            downloadedDistributions.push(distribution);
+            return { path: dataFile, headers: new Headers() };
+          },
+        },
+      });
+
+      // TriG first in the array; importer must sort it last.
+      await importer.import([
+        new Distribution(
+          new URL('https://example.com/data.trig'),
+          'application/trig',
+        ),
+        new Distribution(
+          new URL('https://example.com/data.nq'),
+          'application/n-quads',
+        ),
+      ]);
+
+      expect(downloadedDistributions[0]?.mimeType).toBe('application/n-quads');
+    });
+
     it('orders distributions: native → JSON-LD', async () => {
       const runner = stubTaskRunner(0); // 0 triples → ImportFailed → tries next
       const downloadedDistributions: Distribution[] = [];

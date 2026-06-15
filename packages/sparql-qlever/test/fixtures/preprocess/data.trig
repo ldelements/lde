@@ -1,0 +1,7 @@
+@prefix schema: <https://schema.org/> .
+
+<https://example.org/utrecht/graph> {
+    <https://example.org/utrecht/story/1> a schema:CreativeWork ;
+        schema:name "Een verhaal uit Utrecht"@nl ;
+        schema:inLanguage "nl" .
+}
