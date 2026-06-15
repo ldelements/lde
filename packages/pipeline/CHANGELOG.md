@@ -1,3 +1,9 @@
+## 0.30.15 (2026-06-15)
+
+### 🚀 Features
+
+- **pipeline:** blank-node guard + regression assertions for cat-built indexes ([#477](https://github.com/ldelements/lde/pull/477), [#474](https://github.com/ldelements/lde/issues/474), [#352](https://github.com/ldelements/lde/issues/352))
+
 ## 0.30.14 (2026-06-15)
 
 ### 🩹 Fixes
