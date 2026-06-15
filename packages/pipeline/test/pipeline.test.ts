@@ -470,6 +470,34 @@ describe('Pipeline', () => {
       expect(stageOutputResolver.cleanup).toHaveBeenCalledTimes(1);
     });
 
+    it('reports a chained stage that returns NotSupported and skips the concat', async () => {
+      const stageOutputResolver = makeStageOutputResolver();
+      const child = makeStage('child');
+      const parent = makeStage(
+        'parent',
+        new NotSupported('No items selected'),
+        [child],
+      );
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [parent],
+        writers: writer,
+        distributionResolver: makeResolver(makeResolvedDistribution()),
+        chaining: {
+          stageOutputResolver,
+          outputDir: '/tmp/test',
+        },
+      });
+
+      // The chain throws internally; the pipeline catches it, so run resolves.
+      await pipeline.run();
+
+      // The concat to the user writer never runs, and resources are cleaned up.
+      expect(writer.write).not.toHaveBeenCalled();
+      expect(stageOutputResolver.cleanup).toHaveBeenCalledTimes(1);
+    });
+
     it('validates chaining is required for sub-stages', () => {
       const child = makeStage('child');
       const parent = makeStage('parent', undefined, [child]);
@@ -1091,6 +1119,33 @@ describe('Pipeline', () => {
 
       expect(cw.quads).toHaveLength(1);
       expect(cw.quads[0].subject.value).toBe('http://example.org/my-dataset');
+    });
+
+    it('passes the stage name to beforeStageWrite transform', async () => {
+      const seenStages: string[] = [];
+
+      const plugin: PipelinePlugin = {
+        name: 'stage-aware',
+        beforeStageWrite: async function* (quads, { stage }) {
+          seenStages.push(stage);
+          yield* quads;
+        },
+      };
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(makeDataset()),
+        stages: [
+          new Stage({ name: 'first', executors: realExecutor([]) }),
+          new Stage({ name: 'second', executors: realExecutor([]) }),
+        ],
+        writers: collectingWriter(),
+        plugins: [plugin],
+        distributionResolver: makeResolver(makeResolvedDistribution()),
+      });
+
+      await pipeline.run();
+
+      expect(seenStages).toEqual(['first', 'second']);
     });
   });
 

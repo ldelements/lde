@@ -34,6 +34,19 @@ import {
   type TimeoutPolicy,
 } from './sparql/timeoutPolicy.js';
 
+/**
+ * Context handed to a {@link PipelinePlugin.beforeStageWrite} transform: the
+ * `dataset` whose merged output is being written and the `stage` that produced
+ * it. The stage identity lets a transform mint stable IRIs keyed on
+ * `(dataset, stage)` instead of blank nodes, which would fuse across stages and
+ * datasets once the per-dataset outputs are merged into one graph (see issue
+ * #474).
+ */
+export interface BeforeStageWriteContext {
+  dataset: Dataset;
+  stage: string;
+}
+
 /** Plugin that hooks into pipeline lifecycle events. */
 export interface PipelinePlugin {
   name: string;
@@ -43,7 +56,7 @@ export interface PipelinePlugin {
    * – provenance, namespace normalisation – that apply regardless of which
    * executor produced a quad.
    */
-  beforeStageWrite?: QuadTransform<{ dataset: Dataset }>;
+  beforeStageWrite?: QuadTransform<BeforeStageWriteContext>;
 }
 
 export interface PipelineOptions {
@@ -153,16 +166,18 @@ class FanOutWriter implements Writer {
 class TransformWriter implements Writer {
   constructor(
     private readonly inner: Writer,
-    private readonly transform: QuadTransform<{ dataset: Dataset }>,
+    private readonly transform: QuadTransform<BeforeStageWriteContext>,
+    private readonly stage: string,
   ) {}
 
   async write(dataset: Dataset, quads: AsyncIterable<Quad>): Promise<void> {
-    await this.inner.write(dataset, this.transform(quads, { dataset }));
+    await this.inner.write(
+      dataset,
+      this.transform(quads, { dataset, stage: this.stage }),
+    );
   }
-
-  async flush(dataset: Dataset): Promise<void> {
-    await this.inner.flush?.(dataset);
-  }
+  // No flush(): the Pipeline flushes the underlying user writer directly, once
+  // per dataset after all stages — a TransformWriter only wraps a single write.
 }
 
 export class Pipeline {
@@ -170,6 +185,7 @@ export class Pipeline {
   private readonly datasetSelector: DatasetSelector;
   private readonly stages: Stage[];
   private readonly writer: Writer;
+  private readonly beforeStageWrite?: QuadTransform<BeforeStageWriteContext>;
   private readonly distributionResolver: DistributionResolver;
   private readonly chaining?: PipelineOptions['chaining'];
   private readonly reporter?: ProgressReporter;
@@ -195,20 +211,21 @@ export class Pipeline {
     this.datasetSelector = options.datasetSelector;
     this.stages = options.stages;
 
-    let writer: Writer = Array.isArray(options.writers)
+    // The user writer is the post-merge target; the plugins' beforeStageWrite
+    // transforms wrap it per stage (see stageWriter) so each carries the stage
+    // identity it needs to mint stable, non-fusing IRIs.
+    this.writer = Array.isArray(options.writers)
       ? new FanOutWriter(options.writers)
       : options.writers;
 
     const transforms = options.plugins
       ?.map((p) => p.beforeStageWrite)
-      .filter((t): t is QuadTransform<{ dataset: Dataset }> => t !== undefined);
-    if (transforms?.length) {
-      const composed: QuadTransform<{ dataset: Dataset }> = (quads, context) =>
-        transforms.reduce((q, fn) => fn(q, context), quads);
-      writer = new TransformWriter(writer, composed);
-    }
-
-    this.writer = writer;
+      .filter(
+        (t): t is QuadTransform<BeforeStageWriteContext> => t !== undefined,
+      );
+    this.beforeStageWrite = transforms?.length
+      ? (quads, context) => transforms.reduce((q, fn) => fn(q, context), quads)
+      : undefined;
     this.distributionResolver =
       options.distributionResolver ?? new SparqlDistributionResolver();
     this.chaining = options.chaining;
@@ -344,7 +361,7 @@ export class Pipeline {
               dataset,
               resolved.distribution,
               stage,
-              this.writer,
+              this.stageWriter(stage.name),
               timeout,
             );
           }
@@ -413,6 +430,18 @@ export class Pipeline {
       yield stage;
       if (stage.stages.length > 0) yield* this.collectStages(stage.stages);
     }
+  }
+
+  /**
+   * The writer a stage's merged output is written through: the user writer
+   * wrapped with the plugins' {@link PipelinePlugin.beforeStageWrite}
+   * transforms, carrying this `stage`'s identity so a transform can mint stable
+   * per-`(dataset, stage)` IRIs rather than blank nodes.
+   */
+  private stageWriter(stage: string): Writer {
+    return this.beforeStageWrite
+      ? new TransformWriter(this.writer, this.beforeStageWrite, stage)
+      : this.writer;
   }
 
   /**
@@ -535,8 +564,12 @@ export class Pipeline {
         }
       }
 
-      // 3. Concatenate all output files → user writer.
-      await this.writer.write(dataset, this.readFiles(outputFiles));
+      // 3. Concatenate all output files → user writer, applying the plugins'
+      // beforeStageWrite transforms once for the chain under the parent stage.
+      await this.stageWriter(stage.name).write(
+        dataset,
+        this.readFiles(outputFiles),
+      );
     } finally {
       await stageOutputResolver.cleanup();
     }

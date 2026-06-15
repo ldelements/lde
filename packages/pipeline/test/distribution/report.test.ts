@@ -177,7 +177,7 @@ describe('probeResultsToQuads', () => {
     expect(actions).toHaveLength(2);
   });
 
-  it('attaches import error to the correct action blank node', async () => {
+  it('attaches import error to the correct action node', async () => {
     const distribution = new Distribution(
       new URL('http://example.org/data.nt'),
       'application/n-triples',
@@ -200,7 +200,7 @@ describe('probeResultsToQuads', () => {
       ),
     );
 
-    // The import error should be on the same blank node as the action target
+    // The import error should be on the same action node as the action target
     const targets = store.getQuads(
       null,
       `${SCHEMA}target`,
@@ -236,6 +236,39 @@ describe('probeResultsToQuads', () => {
     // Should not emit void:dataDump since it's a failure.
     const dumps = store.getQuads(null, `${VOID}dataDump`, null, null);
     expect(dumps).toHaveLength(0);
+  });
+
+  it('mints stable, distinct action IRIs per URL, not blank nodes (issue #474)', async () => {
+    const results = [
+      new SparqlProbeResult(
+        'http://example.org/sparql',
+        sparqlResponse(),
+        0,
+        'application/sparql-results+json',
+      ),
+      new NetworkError('http://example.org/other', 'timeout', 0),
+    ];
+
+    const actionSubjects = async () => {
+      const store = await collect(
+        probeResultsToQuads(results, 'http://example.org/dataset'),
+      );
+      return store
+        .getQuads(null, `${RDF}type`, `${SCHEMA}Action`, null)
+        .map((q) => q.subject);
+    };
+
+    const subjects = await actionSubjects();
+    // Two URLs -> two distinct action nodes, each an IRI.
+    expect(subjects).toHaveLength(2);
+    expect(subjects.every((s) => s.termType === 'NamedNode')).toBe(true);
+    expect(new Set(subjects.map((s) => s.value)).size).toBe(2);
+
+    // Re-running yields the same IRIs (idempotent across runs).
+    const rerun = await actionSubjects();
+    expect(rerun.map((s) => s.value).sort()).toEqual(
+      subjects.map((s) => s.value).sort(),
+    );
   });
 
   it('yields nothing for empty probe results', async () => {
