@@ -64,6 +64,9 @@
     },
     {
       "path": "./packages/iiif-validator"
+    },
+    {
+      "path": "./packages/distribution-health"
     }
   ]
 }
