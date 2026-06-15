@@ -1,3 +1,10 @@
+## 0.6.5 (2026-06-15)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-downloader to 0.6.5
+- Updated @lde/dataset to 0.7.7
+
 ## 0.6.4 (2026-06-15)
 
 ### 🧱 Updated Dependencies

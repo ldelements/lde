@@ -1,3 +1,11 @@
+## 0.1.1 (2026-06-15)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-probe to 0.1.10
+- Updated @lde/sparql-importer to 0.6.5
+- Updated @lde/dataset to 0.7.7
+
 ## 0.1.0 (2026-06-15)
 
 ### 🚀 Features
