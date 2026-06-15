@@ -23,7 +23,8 @@ import { Pipeline, FileWriter } from '@lde/pipeline';
 import { shaclSampleStages } from '@lde/pipeline-shacl-sampler';
 import { ShaclValidator } from '@lde/pipeline-shacl-validator';
 
-const shapesFile = 'https://docs.nde.nl/schema-profile/shacl.ttl';
+const shapesFile =
+  'https://raw.githubusercontent.com/netwerk-digitaal-erfgoed/schema-profile/main/shacl.ttl';
 const validator = new ShaclValidator({
   shapesFile,
   reportWriters: [new FileWriter({ outputDir: './validation', format: 'turtle' })],
