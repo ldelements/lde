@@ -1,3 +1,9 @@
+## 0.7.6 (2026-06-15)
+
+### 🩹 Fixes
+
+- **distribution-probe:** accept declared compressed media type for gzipped downloads ([#466](https://github.com/ldelements/lde/pull/466))
+
 ## 0.7.5 (2026-06-10)
 
 ### 🚀 Features

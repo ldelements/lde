@@ -1,6 +1,6 @@
 {
   "name": "@lde/pipeline-void",
-  "version": "0.28.12",
+  "version": "0.28.13",
   "description": "VOiD (Vocabulary of Interlinked Datasets) statistical analysis for RDF datasets",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
@@ -32,7 +32,7 @@
     "tslib": "^2.3.0"
   },
   "peerDependencies": {
-    "@lde/dataset": "0.7.5",
-    "@lde/pipeline": "0.30.12"
+    "@lde/dataset": "0.7.6",
+    "@lde/pipeline": "0.30.13"
   }
 }
