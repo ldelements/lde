@@ -1,6 +1,6 @@
 import { withUriSpaces } from '../src/index.js';
 import { Dataset, Distribution } from '@lde/dataset';
-import type { ExecutorContext } from '@lde/pipeline';
+import { assertNoBlankNodes, type ExecutorContext } from '@lde/pipeline';
 import { describe, it, expect } from 'vitest';
 import { DataFactory } from 'n3';
 import type { Quad } from '@rdfjs/types';
@@ -191,6 +191,15 @@ describe('withUriSpaces', () => {
         (q) => q.predicate.equals(voidTriples) && q.object.value === '42',
       ),
     ).toBeDefined();
+  });
+
+  it('emits no blank nodes (they fuse across datasets in a cat-built index, #352)', async () => {
+    const input = linksetQuads(
+      'http://example.com/.well-known/void#linkset-1',
+      'http://vocab.getty.edu/aat/',
+      42,
+    );
+    assertNoBlankNodes(await collect(transform(quadStream(input), context)));
   });
 
   it('mints distinct, deterministic linkset IRIs per URI space (issue #352)', async () => {

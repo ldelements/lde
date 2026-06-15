@@ -18,6 +18,7 @@ import {
   teardownSparqlEndpoint,
 } from '@lde/local-sparql-endpoint';
 import { FileLoadedSparqlProvenanceStore } from '../../src/provenance/fileLoadedSparqlProvenanceStore.js';
+import { assertNoBlankNodes } from '../../src/index.js';
 
 const PORT = 3004;
 const QUERY_ENDPOINT = `http://localhost:${PORT}/sparql`;
@@ -73,6 +74,9 @@ describe('FileLoadedSparqlProvenanceStore', () => {
       });
 
       const quads = await readQuads(outputDir);
+
+      // No blank nodes: they fuse across datasets in a cat-built index (#474).
+      assertNoBlankNodes(quads);
 
       // Every quad lands in the pipeline provenance graph, keyed by dataset URI.
       expect(quads.length).toBeGreaterThan(0);

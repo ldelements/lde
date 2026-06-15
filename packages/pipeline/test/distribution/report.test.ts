@@ -8,6 +8,7 @@ import {
   SparqlProbeResult,
   DataDumpProbeResult,
 } from '../../src/distribution/index.js';
+import { assertNoBlankNodes } from '../../src/index.js';
 
 const SCHEMA = 'https://schema.org/';
 const VOID = 'http://rdfs.org/ns/void#';
@@ -44,6 +45,16 @@ describe('probeResultsToQuads', () => {
     const errors = store.getQuads(null, `${SCHEMA}error`, null, null);
     expect(errors).toHaveLength(1);
     expect(errors[0].object.value).toBe('ECONNREFUSED');
+  });
+
+  it('emits no blank nodes (they fuse across datasets in a cat-built index, #474)', async () => {
+    const results = [
+      new NetworkError('http://example.org/sparql', 'ECONNREFUSED', 0),
+    ];
+    const store = await collect(
+      probeResultsToQuads(results, 'http://example.org/dataset'),
+    );
+    assertNoBlankNodes(store.getQuads(null, null, null, null));
   });
 
   it('yields schema:error with status URI for HTTP error', async () => {

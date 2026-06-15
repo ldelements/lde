@@ -1,4 +1,8 @@
-import { provenanceTransform, provenancePlugin } from '../../src/index.js';
+import {
+  assertNoBlankNodes,
+  provenanceTransform,
+  provenancePlugin,
+} from '../../src/index.js';
 import { Dataset } from '@lde/dataset';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { DataFactory } from 'n3';
@@ -153,6 +157,22 @@ describe('provenanceTransform', () => {
         q.predicate.value === RDF_TYPE && q.object.value === `${PROV}Activity`,
     )!.subject;
     expect(activitySubject.termType).toBe('NamedNode');
+  });
+
+  it('emits no blank nodes (they fuse across datasets in a cat-built index, #474)', async () => {
+    const existing = quad(
+      namedNode(dataset.iri.toString()),
+      namedNode('http://rdfs.org/ns/void#triples'),
+      literal('100'),
+    );
+    assertNoBlankNodes(
+      await collect(
+        provenanceTransform(quadStream([existing]), {
+          dataset,
+          stage: 'describe',
+        }),
+      ),
+    );
   });
 
   it('mints a stable activity IRI across runs (idempotent)', async () => {
