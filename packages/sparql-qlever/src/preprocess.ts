@@ -4,7 +4,6 @@ import { rdfSerializer } from 'rdf-serialize';
 import { createGunzip } from 'node:zlib';
 import { createReadStream, createWriteStream, WriteStream } from 'node:fs';
 import { rm, stat } from 'node:fs/promises';
-import { extname } from 'node:path';
 import { Readable } from 'node:stream';
 import { finished } from 'node:stream/promises';
 import { promisify } from 'node:util';
@@ -17,25 +16,15 @@ const ZIP_MIME = 'application/zip';
 const GZIP_MIME = 'application/gzip';
 const GZIP_MIME_LEGACY = 'application/x-gzip';
 
-interface PreprocessFormat {
-  /** Human-readable label used in warnings and error messages. */
-  label: string;
-  /** Filename extensions that identify this format inside a zip container. */
-  zipExtensions: string[];
-}
-
 /**
- * RDF media types that `qlever-index` cannot read natively, so they are streamed
- * through `rdf-parse` → N-Quads first. The map key is the `rdf-parse`
- * `contentType`; the value carries the metadata needed to handle zip containers.
+ * RDF media types `qlever-index` cannot read natively, keyed by `rdf-parse`
+ * `contentType` with a label for warnings. TriG belongs here too: its
+ * `<graph> { … }` blocks parse as neither N-Quads nor Turtle.
  */
-const preprocessFormats = new Map<string, PreprocessFormat>([
-  [JSONLD_MIME, { label: 'JSON-LD', zipExtensions: ['.jsonld', '.json'] }],
-  [RDFXML_MIME, { label: 'RDF/XML', zipExtensions: ['.rdf', '.xml', '.owl'] }],
-  // QLever ingests N-Quads/N-Triples/Turtle natively, but not TriG: its
-  // `<graph> { … }` block syntax is neither N-Quads nor Turtle, so TriG must be
-  // converted to N-Quads first, like JSON-LD and RDF/XML.
-  [TRIG_MIME, { label: 'TriG', zipExtensions: ['.trig'] }],
+const preprocessFormats = new Map<string, string>([
+  [JSONLD_MIME, 'JSON-LD'],
+  [RDFXML_MIME, 'RDF/XML'],
+  [TRIG_MIME, 'TriG'],
 ]);
 
 export interface PreprocessResult {
@@ -72,7 +61,7 @@ export function needsPreprocessing(distribution: Distribution): boolean {
  * Streams the source through `rdf-parse` → `rdf-serialize` so memory use
  * stays bounded regardless of input size. Handles gzip transparently
  * (declared `compressFormat` or `.gz` filename) and zip containers (folds
- * each matching entry into the output stream in order).
+ * every parseable entry into the output stream in order).
  *
  * Cached: if the output is newer than the input, it is reused as-is.
  */
@@ -81,9 +70,9 @@ export async function preprocess(
   distribution: Distribution,
 ): Promise<PreprocessResult> {
   const contentType = distribution.mimeType;
-  const format =
+  const label =
     contentType === undefined ? undefined : preprocessFormats.get(contentType);
-  if (contentType === undefined || format === undefined) {
+  if (contentType === undefined || label === undefined) {
     throw new Error(
       `preprocess called for distribution that does not need preprocessing: mediaType=${distribution.mimeType}`,
     );
@@ -98,7 +87,7 @@ export async function preprocess(
   const warnings: string[] = [];
 
   if (distribution.compressMimeType === ZIP_MIME) {
-    await streamRdfZip(localFile, outputFile, contentType, format, warnings);
+    await streamRdfZip(localFile, outputFile, contentType, label, warnings);
   } else {
     await streamRdfFile(localFile, outputFile, contentType, distribution);
   }
@@ -172,11 +161,16 @@ const openZip = promisify(yauzl.open) as (
   options: yauzl.Options,
 ) => Promise<yauzl.ZipFile>;
 
+/**
+ * Fold every parseable entry of a zip into the N-Quads output, in order. The
+ * declared `contentType` drives the parser; an entry that fails to parse (a
+ * sidecar, OS metadata) is skipped with a warning. Throws if nothing parses.
+ */
 async function streamRdfZip(
   zipFile: string,
   outputFile: string,
   contentType: string,
-  format: PreprocessFormat,
+  label: string,
   warnings: string[],
 ): Promise<void> {
   const zip = await openZip(zipFile, { lazyEntries: true });
@@ -188,26 +182,25 @@ async function streamRdfZip(
       zip.on('end', resolve);
       zip.on('entry', (entry: yauzl.Entry) => {
         void (async () => {
-          try {
-            if (entry.fileName.endsWith('/')) {
-              zip.readEntry();
-              return;
-            }
-            const extension = extname(entry.fileName).toLowerCase();
-            if (!format.zipExtensions.includes(extension)) {
-              warnings.push(
-                `Skipping zip entry ${entry.fileName}: extension ${extension || '(none)'} is not ${format.label}`,
-              );
-              zip.readEntry();
-              return;
-            }
-            const stream = await openZipEntry(zip, entry);
-            await pipeRdfToWritable(stream, output, contentType);
-            entriesProcessed++;
+          if (entry.fileName.endsWith('/')) {
             zip.readEntry();
-          } catch (error) {
-            reject(error);
+            return;
           }
+          try {
+            const stream = await openZipEntry(zip, entry);
+            try {
+              await pipeRdfToWritable(stream, output, contentType);
+              entriesProcessed++;
+            } finally {
+              // yauzl lazyEntries won't advance until this stream is released.
+              stream.destroy();
+            }
+          } catch (error) {
+            warnings.push(
+              `Skipping zip entry ${entry.fileName}: not valid ${label} (${(error as Error).message})`,
+            );
+          }
+          zip.readEntry();
         })();
       });
       zip.readEntry();
@@ -218,7 +211,7 @@ async function streamRdfZip(
   }
 
   if (entriesProcessed === 0) {
-    throw new Error(`Zip ${zipFile} contains no ${format.label} entries`);
+    throw new Error(`Zip ${zipFile} contains no valid ${label} entries`);
   }
 }
 
