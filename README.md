@@ -108,6 +108,11 @@ await pipeline.run();
   <td>Download distributions for local processing</td>
 </tr>
 <tr>
+  <td><a href="packages/distribution-health">@lde/distribution-health</a></td>
+  <td><a href="https://www.npmjs.com/package/@lde/distribution-health"><img src="https://img.shields.io/npm/v/@lde/distribution-health" alt="npm"></a></td>
+  <td>Derive distribution usability from reachability and RDF validity</td>
+</tr>
+<tr>
   <td><a href="packages/distribution-probe">@lde/distribution-probe</a></td>
   <td><a href="https://www.npmjs.com/package/@lde/distribution-probe"><img src="https://img.shields.io/npm/v/@lde/distribution-probe" alt="npm"></a></td>
   <td>Probe distributions for availability and metadata</td>
@@ -202,6 +207,8 @@ graph TD
     distribution-probe --> dataset
     pipeline --> distribution-probe
     sparql-importer --> dataset
+    distribution-health --> distribution-probe
+    distribution-health --> sparql-importer
   end
 
   subgraph Publication

@@ -1,0 +1,23 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "tsBuildInfoFile": "dist/tsconfig.lib.tsbuildinfo",
+    "emitDeclarationOnly": false,
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts"],
+  "references": [
+    {
+      "path": "../dataset/tsconfig.lib.json"
+    },
+    {
+      "path": "../distribution-probe/tsconfig.lib.json"
+    },
+    {
+      "path": "../sparql-importer/tsconfig.lib.json"
+    }
+  ],
+  "exclude": ["src/**/*.spec.ts", "src/**/*.test.ts"]
+}
