@@ -1,6 +1,6 @@
 {
   "name": "@lde/distribution-probe",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
     "directory": "packages/distribution-probe"
@@ -24,7 +24,7 @@
     "!**/*.tsbuildinfo"
   ],
   "dependencies": {
-    "@lde/dataset": "0.7.6",
+    "@lde/dataset": "0.7.7",
     "rdf-parse": "^5.0.0",
     "tslib": "^2.3.0"
   }

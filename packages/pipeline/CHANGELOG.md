@@ -1,3 +1,16 @@
+## 0.30.14 (2026-06-15)
+
+### 🩹 Fixes
+
+- skolemize structural nodes to prevent blank-node collisions in merged graphs ([#471](https://github.com/ldelements/lde/pull/471), [#352](https://github.com/ldelements/lde/issues/352), [#474](https://github.com/ldelements/lde/issues/474))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset-registry-client to 0.8.3
+- Updated @lde/distribution-probe to 0.1.10
+- Updated @lde/sparql-importer to 0.6.5
+- Updated @lde/dataset to 0.7.7
+
 ## 0.30.13 (2026-06-15)
 
 ### 🧱 Updated Dependencies

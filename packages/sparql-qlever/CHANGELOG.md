@@ -1,3 +1,15 @@
+## 0.14.9 (2026-06-15)
+
+### 🚀 Features
+
+- **sparql-qlever:** import TriG distributions via N-Quads preprocessing ([#467](https://github.com/ldelements/lde/pull/467), [#470](https://github.com/ldelements/lde/issues/470))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-downloader to 0.6.5
+- Updated @lde/sparql-importer to 0.6.5
+- Updated @lde/dataset to 0.7.7
+
 ## 0.14.8 (2026-06-15)
 
 ### 🧱 Updated Dependencies

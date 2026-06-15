@@ -1,3 +1,9 @@
+## 0.7.7 (2026-06-15)
+
+### 🩹 Fixes
+
+- skolemize structural nodes to prevent blank-node collisions in merged graphs ([#471](https://github.com/ldelements/lde/pull/471), [#352](https://github.com/ldelements/lde/issues/352), [#474](https://github.com/ldelements/lde/issues/474))
+
 ## 0.7.6 (2026-06-15)
 
 ### 🩹 Fixes

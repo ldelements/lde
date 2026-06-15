@@ -1,3 +1,10 @@
+## 0.1.9 (2026-06-15)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-probe to 0.1.10
+- Updated @lde/dataset to 0.7.7
+
 ## 0.1.8 (2026-06-15)
 
 ### 🧱 Updated Dependencies
