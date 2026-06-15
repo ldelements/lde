@@ -12,4 +12,3 @@ export {
   type UsabilityState,
   type UsabilityCause,
 } from './usability.js';
-export { validityToQuads, type ValidityProvenance } from './quads.js';

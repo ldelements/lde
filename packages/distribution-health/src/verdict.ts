@@ -5,11 +5,10 @@ import {
 } from '@lde/distribution-probe';
 
 /**
- * Why a distribution’s RDF was judged invalid. Mirrors the LDE
- * `distribution-validity-failure#` SKOS scheme 1:1; the local names match the
- * concept local names, so a reason maps to
- * `https://w3id.org/lde/distribution-validity-failure#${reason}` with no lookup
- * table.
+ * Why a distribution’s RDF was judged invalid. The local names are chosen to
+ * map 1:1 onto a consumer’s SKOS failure scheme (`<scheme>#${reason}`, no lookup
+ * table), mirroring how `@lde/iiif-validator`’s reason enum maps to NDE’s
+ * `manifest-validation-failure#`.
  */
 export type ValidityFailureReason = 'parse-error' | 'empty';
 

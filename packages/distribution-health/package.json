@@ -26,7 +26,6 @@
   "dependencies": {
     "@lde/distribution-probe": "0.1.9",
     "@lde/sparql-importer": "0.6.4",
-    "n3": "^2.0.1",
     "tslib": "^2.3.0"
   },
   "devDependencies": {
