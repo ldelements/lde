@@ -3,6 +3,16 @@ const SPARQL_URI = 'https://www.w3.org/TR/sparql11-protocol/';
 export const IANA_MEDIA_TYPE_PREFIX =
   'https://www.iana.org/assignments/media-types/';
 
+// Maps a compression content type to the structured-syntax suffix a server
+// appends to the RDF media type, e.g. `application/gzip` yields the `gzip` in
+// `application/n-quads+gzip`. The inverse of how a registry strips that suffix
+// into a separate compress format on ingest.
+const compressionSuffixesByMimeType: Record<string, string> = {
+  'application/gzip': 'gzip',
+  'application/x-gzip': 'gzip',
+  'application/zip': 'zip',
+};
+
 export class Distribution {
   public byteSize?: number;
   public compressFormat?: string;
@@ -25,6 +35,20 @@ export class Distribution {
     return this.compressFormat.startsWith(IANA_MEDIA_TYPE_PREFIX)
       ? this.compressFormat.slice(IANA_MEDIA_TYPE_PREFIX.length)
       : this.compressFormat;
+  }
+
+  /**
+   * The full content type a server is expected to send for the compressed
+   * download — {@link mimeType} with the compression suffix derived from
+   * {@link compressFormat} appended, e.g. `application/n-quads+gzip`. Returns
+   * `undefined` when no media type or no recognised compression format is
+   * declared. Lets a format check accept either the bare media type (the server
+   * decompressed the body) or the declared compressed form.
+   */
+  public get compressedMimeType(): string | undefined {
+    if (this.mimeType === undefined) return undefined;
+    const suffix = compressionSuffixesByMimeType[this.compressMimeType ?? ''];
+    return suffix === undefined ? undefined : `${this.mimeType}+${suffix}`;
   }
 
   /**
