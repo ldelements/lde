@@ -1,10 +1,10 @@
 {
-  "name": "@lde/search-typesense",
+  "name": "@lde/search",
   "version": "0.1.0",
-  "description": "Generic Typesense engine adapter for RDF-backed search pipelines: frame quads to documents, bulk upsert, partial update, blue/green alias swap, and source/last_seen sweep",
+  "description": "Engine-agnostic search projection for RDF-backed pipelines: frame CONSTRUCT quads into a JSON-LD IR, then project that IR into flat search documents from a declarative field spec (the artifact a SHACL generator would emit)",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
-    "directory": "packages/search-typesense"
+    "directory": "packages/search"
   },
   "license": "MIT",
   "type": "module",
@@ -25,12 +25,13 @@
     "!**/*.tsbuildinfo"
   ],
   "dependencies": {
+    "@lde/text-normalization": "^0.1.0",
     "@rdfjs/types": "^2.0.1",
-    "tslib": "^2.3.0",
-    "typesense": "^3.0.6"
+    "jsonld": "^9.0.0",
+    "tslib": "^2.3.0"
   },
   "devDependencies": {
-    "n3": "^2.0.1",
-    "testcontainers": "^12.0.1"
+    "@types/jsonld": "^1.5.15",
+    "n3": "^2.0.1"
   }
 }

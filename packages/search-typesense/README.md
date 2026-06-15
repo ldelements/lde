@@ -1,38 +1,15 @@
 # @lde/search-typesense
 
-Generic [Typesense](https://typesense.org/) engine adapter for RDF-backed search
-pipelines: frame quads into documents, build collections, bulk upsert, and swap
-a blue/green alias.
+[Typesense](https://typesense.org/) engine adapter for RDF-backed search
+pipelines: build collections, bulk upsert documents, and swap a blue/green
+alias. Engine-specific (Typesense) but domain-agnostic — callers supply the
+collection schema and documents.
 
-The package is engine-specific (Typesense) but domain-agnostic: it knows nothing
-about any particular vocabulary. Callers supply the RDF root type and map the
-framed intermediate representation to their own document fields.
-
-## Framing quads → IR
-
-`frameByType()` turns the result of a SPARQL `CONSTRUCT` into one JSON-LD node
-per subject of `rootType` — the engine-agnostic intermediate representation a
-projector then maps to a flat search document.
-
-```ts
-import { frameByType } from '@lde/search-typesense';
-
-for await (const node of frameByType(
-  quads,
-  'http://www.w3.org/ns/dcat#Dataset',
-)) {
-  // node is a framed JSON-LD object with full-IRI keys, e.g.
-  // node['http://purl.org/dc/terms/title'] === [{ '@value': 'Titel', '@language': 'nl' }]
-  documents.push(toDocument(node));
-}
-```
-
-Each root subject's one-hop subgraph (e.g. a nested publisher or distribution
-resource) is framed **independently** and yielded one at a time, so memory stays
-flat at scale — framing the whole graph at once is roughly O(N²). Duplicate
-triples are collapsed first, because some SPARQL engines (e.g. QLever) do not
-deduplicate `CONSTRUCT` output. The frame carries no `@context`, so framed keys
-are full predicate IRIs and language tags are preserved.
+The engine-agnostic half of the pipeline — framing `CONSTRUCT` quads into a
+JSON-LD IR (`frameByType`) and projecting that IR into flat documents from a
+declarative field spec (`projectDocument`) — lives in
+[`@lde/search`](../search). This package consumes those documents and writes
+them to Typesense.
 
 A lower-level flat `frame(quads, subject, fields)` is also exported: a direct
 predicate-to-field mapping with datatype coercion, for documents that need no
