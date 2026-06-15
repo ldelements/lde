@@ -1,5 +1,6 @@
+import type { Quad } from '@rdfjs/types';
 import { fold } from '@lde/text-normalization';
-import type { FramedSubject } from './frame-by-type.js';
+import { frameByType, type FramedSubject } from './frame-by-type.js';
 
 /** A flat search document. `id` is the engine document key. */
 export type SearchDocument = { id: string } & Record<string, unknown>;
@@ -57,6 +58,18 @@ export type Derivation = (
   node: FramedSubject,
 ) => void;
 
+/**
+ * One root type’s complete projection — the runtime form of a single SHACL
+ * NodeShape: `type` is its `sh:targetClass` (and the framed node’s `@type`),
+ * `fields` are its property shapes, and `derivations` are its `sh:rule`-shaped
+ * computed fields. A generator emits one of these per NodeShape.
+ */
+export interface Projection {
+  readonly type: string;
+  readonly fields: readonly FieldSpec[];
+  readonly derivations?: readonly Derivation[];
+}
+
 const DISPLAY_FALLBACK = ['nl', 'en', ''] as const;
 
 /**
@@ -65,19 +78,38 @@ const DISPLAY_FALLBACK = ['nl', 'en', ''] as const;
  */
 export function projectDocument(
   node: FramedSubject,
-  fields: readonly FieldSpec[],
-  derivations: readonly Derivation[] = [],
+  projection: Projection,
 ): SearchDocument {
   const document: SearchDocument = {
     id: typeof node['@id'] === 'string' ? node['@id'] : '',
   };
-  for (const field of fields) {
+  for (const field of projection.fields) {
     applyField(document, node, field);
   }
-  for (const derive of derivations) {
+  for (const derive of projection.derivations ?? []) {
     derive(document, node);
   }
   return document;
+}
+
+/**
+ * Frame `quads` for every projection’s root type and project each node with its
+ * type’s projection — the multi-shape pipeline. Streams one document at a time
+ * so memory stays flat. The IR maps to a projection by type, so adding a shape
+ * is adding a `Projection` (no engine change).
+ */
+export async function* projectGraph(
+  quads: readonly Quad[],
+  projections: readonly Projection[],
+): AsyncIterable<SearchDocument> {
+  const byType = new Map(
+    projections.map((projection) => [projection.type, projection]),
+  );
+  for (const projection of byType.values()) {
+    for await (const node of frameByType(quads, projection.type)) {
+      yield projectDocument(node, projection);
+    }
+  }
 }
 
 function applyField(
