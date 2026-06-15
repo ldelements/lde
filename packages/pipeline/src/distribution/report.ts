@@ -1,4 +1,5 @@
 import type { ImportFailed } from '@lde/sparql-importer';
+import { hashSuffix, skolemIri } from '@lde/dataset';
 import { DataFactory, type Quad } from 'n3';
 import {
   NetworkError,
@@ -7,7 +8,7 @@ import {
   type ProbeResultType,
 } from '@lde/distribution-probe';
 
-const { quad, namedNode, blankNode, literal } = DataFactory;
+const { quad, namedNode, literal } = DataFactory;
 
 const RDF = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#';
 const SCHEMA = 'https://schema.org/';
@@ -30,11 +31,17 @@ export async function* probeResultsToQuads(
   datasetIri: string,
   importResult?: ImportFailed,
 ): AsyncIterable<Quad> {
-  // Track blank nodes per URL so import errors can reference the right action.
-  const actionsByUrl = new Map<string, ReturnType<typeof blankNode>>();
+  // Track each action node per URL so import errors can reference the right
+  // action. Each action is a deterministic IRI keyed on (dataset, URL), not a
+  // blank node: this output is merged with other datasets' into one cat-built
+  // graph where blank-node labels are not unique across documents and would
+  // fuse unrelated actions into one node (see issue #474). The
+  // `.well-known/schema#action-<hash>` shape mirrors the linkset skolem.
+  const actionBase = `${datasetIri}/.well-known/schema#action`;
+  const actionsByUrl = new Map<string, ReturnType<typeof namedNode>>();
 
   for (const result of probeResults) {
-    const action = blankNode();
+    const action = namedNode(skolemIri(actionBase, hashSuffix(result.url)));
     actionsByUrl.set(result.url, action);
 
     yield quad(action, namedNode(`${RDF}type`), namedNode(`${SCHEMA}Action`));
@@ -75,7 +82,7 @@ export async function* probeResultsToQuads(
 }
 
 function* successQuads(
-  action: ReturnType<typeof blankNode>,
+  action: ReturnType<typeof namedNode>,
   result: SparqlProbeResult | DataDumpProbeResult,
   datasetIri: string,
 ): Iterable<Quad> {

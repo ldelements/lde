@@ -146,6 +146,7 @@ describe('schemaOrgNormalizationPlugin', () => {
     const quads = await collect(
       schemaOrgNormalizationPlugin().beforeStageWrite!(quadStream([input]), {
         dataset,
+        stage: 'describe',
       }),
     );
 
@@ -162,7 +163,7 @@ describe('schemaOrgNormalizationPlugin', () => {
     const quads = await collect(
       schemaOrgNormalizationPlugin({ reverse: true }).beforeStageWrite!(
         quadStream([input]),
-        { dataset },
+        { dataset, stage: 'describe' },
       ),
     );
 
@@ -179,7 +180,7 @@ describe('schemaOrgNormalizationPlugin', () => {
     const quads = await collect(
       schemaOrgNormalizationPlugin({ reverse: true }).beforeStageWrite!(
         quadStream([input]),
-        { dataset },
+        { dataset, stage: 'describe' },
       ),
     );
 

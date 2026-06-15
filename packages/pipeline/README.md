@@ -357,7 +357,7 @@ new Pipeline({
 
 #### `provenancePlugin()`
 
-Appends [PROV-O](https://www.w3.org/TR/prov-o/) provenance quads (`prov:Entity`, `prov:Activity`, `prov:startedAtTime`, `prov:endedAtTime`) to every stage’s output.
+Appends [PROV-O](https://www.w3.org/TR/prov-o/) provenance quads (`prov:Entity`, `prov:Activity`, `prov:startedAtTime`, `prov:endedAtTime`) to every stage’s output. The `prov:Activity` is a stable IRI keyed on `(dataset, stage)`, not a blank node, so activities stay distinct – and a re-run stays idempotent – when per-dataset outputs are merged into one graph (blank-node labels are not unique across separately serialised documents and would fuse unrelated activities).
 
 #### `schemaOrgNormalizationPlugin(options?)`
 

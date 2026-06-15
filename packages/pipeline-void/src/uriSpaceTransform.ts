@@ -1,8 +1,9 @@
 import type { ExecutorContext, QuadTransform } from '@lde/pipeline';
+import { hashSuffix, skolemIri } from '@lde/dataset';
 import type { Quad } from '@rdfjs/types';
 import { DataFactory } from 'n3';
 
-const { namedNode, quad, literal, blankNode } = DataFactory;
+const { namedNode, quad, literal } = DataFactory;
 
 const RDF = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#';
 const VOID = 'http://rdfs.org/ns/void#';
@@ -79,10 +80,16 @@ async function* aggregateUriSpaces(
     }
   }
 
-  // Emit aggregated Linkset quads.
+  // Emit aggregated Linkset quads. The linkset is a deterministic IRI keyed on
+  // (dataset, URI space), not a blank node: this transform's output is merged
+  // into the dataset's graph alongside other stages', where blank-node labels
+  // are not unique across stage outputs and would collapse distinct linksets
+  // into one node (see issue #352). The `.well-known/void#linkset-<hash>` shape
+  // mirrors the IRI the object-uri-space.rq CONSTRUCT already mints upstream.
   const datasetNode = namedNode(datasetIri);
-  for (const [, { count, metadata }] of aggregated) {
-    const linksetNode = blankNode();
+  const linksetBase = `${datasetIri}/.well-known/void#linkset`;
+  for (const [uriSpace, { count, metadata }] of aggregated) {
+    const linksetNode = namedNode(skolemIri(linksetBase, hashSuffix(uriSpace)));
     const targetDatasetNode = metadata[0].subject;
 
     yield quad(linksetNode, rdfType, voidLinkset);

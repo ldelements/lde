@@ -157,7 +157,11 @@ describe('withUriSpaces', () => {
     const quads = await collect(transform(quadStream(input), context));
     const linksetSubject = quads[0].subject;
 
-    // All linkset quads share the same blank node subject.
+    // The linkset is a deterministic IRI (not a blank node), so it cannot
+    // collide with another stage's nodes when merged into the dataset graph.
+    expect(linksetSubject.termType).toBe('NamedNode');
+
+    // All linkset quads share the same linkset subject.
     const linksetQuadsList = quads.filter(
       (q) => q.subject.value === linksetSubject.value,
     );
@@ -187,6 +191,40 @@ describe('withUriSpaces', () => {
         (q) => q.predicate.equals(voidTriples) && q.object.value === '42',
       ),
     ).toBeDefined();
+  });
+
+  it('mints distinct, deterministic linkset IRIs per URI space (issue #352)', async () => {
+    const input = [
+      ...linksetQuads(
+        'http://example.com/.well-known/void#linkset-1',
+        'http://vocab.getty.edu/aat/',
+        42,
+      ),
+      ...linksetQuads(
+        'http://example.com/.well-known/void#linkset-2',
+        'https://sws.geonames.org/123/',
+        5,
+      ),
+    ];
+
+    const run = async () =>
+      (await collect(transform(quadStream(input), context)))
+        .filter(
+          (q) => q.predicate.equals(rdfType) && q.object.equals(voidLinkset),
+        )
+        .map((q) => q.subject);
+
+    const subjects = await run();
+    // Two URI spaces -> two distinct linkset nodes, each an IRI.
+    expect(subjects).toHaveLength(2);
+    expect(subjects.every((s) => s.termType === 'NamedNode')).toBe(true);
+    expect(new Set(subjects.map((s) => s.value)).size).toBe(2);
+
+    // Re-running yields the same IRIs (idempotent across runs).
+    const rerun = await run();
+    expect(rerun.map((s) => s.value).sort()).toEqual(
+      subjects.map((s) => s.value).sort(),
+    );
   });
 
   it('skips incomplete Linksets missing void:triples', async () => {
