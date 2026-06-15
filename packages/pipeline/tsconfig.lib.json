@@ -19,6 +19,9 @@
       "path": "../sparql-importer/tsconfig.lib.json"
     },
     {
+      "path": "../distribution-health/tsconfig.lib.json"
+    },
+    {
       "path": "../distribution-probe/tsconfig.lib.json"
     },
     {

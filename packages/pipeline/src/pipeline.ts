@@ -22,6 +22,11 @@ import {
   SparqlProbeResult,
   type ProbeResultType,
 } from '@lde/distribution-probe';
+import { ImportSuccessful } from '@lde/sparql-importer';
+import {
+  importOutcomeToVerdict,
+  probeResultToVerdict,
+} from '@lde/distribution-health';
 import { NotSupported } from './sparql/executor.js';
 import type { StageOutputResolver } from './stageOutputResolver.js';
 import type {
@@ -267,6 +272,16 @@ export class Pipeline {
           this.reporter?.distributionProbed?.(
             mapProbeResult(distribution, result),
           );
+          // Shallow validity: the probe parse-validates small RDF bodies as a
+          // by-product. Surface that verdict per distribution, judged against
+          // the distribution's own observed fingerprint.
+          const verdict = probeResultToVerdict(
+            result,
+            sourceFingerprint(distribution, result),
+          );
+          if (verdict) {
+            this.reporter?.distributionValidated?.(distribution, verdict);
+          }
         },
       });
     } catch (error) {
@@ -328,6 +343,16 @@ export class Pipeline {
     }
 
     if (resolved instanceof NoDistributionAvailable) {
+      // A failed import is a deep RDF-validity verdict on the distribution
+      // attempted. Surface it per distribution even though the dataset produces
+      // no summary, so an invalid distribution is recorded rather than silently
+      // dropped.
+      if (resolved.importFailed) {
+        this.reporter?.distributionValidated?.(
+          resolved.importFailed.distribution,
+          importOutcomeToVerdict(resolved.importFailed, fingerprint),
+        );
+      }
       // Record the failure so a dataset whose source is unchanged is not
       // re-imported every run; it is retried at the next fingerprint change or
       // version rotation.
@@ -343,6 +368,23 @@ export class Pipeline {
       resolved.importDuration,
       resolved.tripleCount,
     );
+
+    // A completed data-dump import is a deep validity verdict on the imported
+    // distribution (valid, or empty when it yielded no triples). Native SPARQL
+    // endpoints are not imported, so they carry no deep verdict.
+    if (resolved.importedFrom) {
+      this.reporter?.distributionValidated?.(
+        resolved.importedFrom,
+        importOutcomeToVerdict(
+          new ImportSuccessful(
+            resolved.importedFrom,
+            undefined,
+            resolved.tripleCount,
+          ),
+          fingerprint,
+        ),
+      );
+    }
 
     const timeout: TimeoutPolicy = this.timeoutFactory();
     const unsubscribe = timeout.subscribe?.({
@@ -595,6 +637,7 @@ function mapProbeResult(
   distribution: Distribution,
   result: ProbeResultType,
 ): DistributionAnalysisResult {
+  const fingerprint = sourceFingerprint(distribution, result);
   if (result instanceof NetworkError) {
     return {
       distribution,
@@ -602,6 +645,7 @@ function mapProbeResult(
       available: false,
       error: result.message,
       warnings: [],
+      fingerprint,
     };
   }
   return {
@@ -614,5 +658,6 @@ function mapProbeResult(
     statusCode: result.statusCode,
     error: result.failureReason ?? undefined,
     warnings: result.warnings,
+    fingerprint,
   };
 }

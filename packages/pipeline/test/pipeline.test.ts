@@ -3,6 +3,7 @@ import { Pipeline, type PipelinePlugin } from '../src/pipeline.js';
 import { Dataset, Distribution } from '@lde/dataset';
 import { Stage } from '../src/stage.js';
 import { NotSupported } from '../src/sparql/executor.js';
+import { ImportFailed } from '@lde/sparql-importer';
 import {
   ResolvedDistribution,
   NoDistributionAvailable,
@@ -92,6 +93,8 @@ function makeReporter(): RequiredReporter {
       vi.fn<NonNullable<ProgressReporter['distributionProbed']>>(),
     importStarted: vi.fn<NonNullable<ProgressReporter['importStarted']>>(),
     importFailed: vi.fn<NonNullable<ProgressReporter['importFailed']>>(),
+    distributionValidated:
+      vi.fn<NonNullable<ProgressReporter['distributionValidated']>>(),
     distributionSelected:
       vi.fn<NonNullable<ProgressReporter['distributionSelected']>>(),
     stageStart: vi.fn<NonNullable<ProgressReporter['stageStart']>>(),
@@ -702,6 +705,7 @@ describe('Pipeline', () => {
         available: true,
         statusCode: 200,
         warnings: [],
+        fingerprint: sourceFingerprint(sparqlDist, sparqlResult),
       });
       expect(reporter.distributionProbed).toHaveBeenCalledWith({
         distribution: dataDumpDist,
@@ -709,6 +713,7 @@ describe('Pipeline', () => {
         available: false,
         statusCode: 404,
         warnings: [],
+        fingerprint: sourceFingerprint(dataDumpDist, dataDumpResult),
       });
       expect(reporter.distributionProbed).toHaveBeenCalledWith({
         distribution: downDist,
@@ -716,6 +721,7 @@ describe('Pipeline', () => {
         available: false,
         error: 'Connection refused',
         warnings: [],
+        fingerprint: sourceFingerprint(downDist, networkError),
       });
     });
 
@@ -831,6 +837,7 @@ describe('Pipeline', () => {
         available: false,
         error: 'Connection refused',
         warnings: [],
+        fingerprint: sourceFingerprint(downDist, networkError),
       });
       expect(reporter.distributionSelected).not.toHaveBeenCalled();
     });
@@ -1524,6 +1531,166 @@ describe('Pipeline', () => {
         expect.objectContaining({
           sourceFingerprint: currentFingerprint,
           status: 'failed',
+        }),
+      );
+    });
+
+    it('surfaces an invalid deep validity verdict when a distribution fails to import', async () => {
+      const resolver = makeDumpResolver(
+        new NoDistributionAvailable(
+          dataset,
+          'Import failed',
+          [dumpProbe],
+          new ImportFailed(
+            dumpDistribution,
+            'QName not allowed for property: rdf:Description',
+          ),
+        ),
+      );
+      const reporter = makeReporter();
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [makeStage('stage1')],
+        writers: writer,
+        distributionResolver: resolver,
+        reporter,
+        pipelineVersion: 'v1',
+      });
+
+      await pipeline.run();
+
+      expect(reporter.distributionValidated).toHaveBeenCalledWith(
+        dumpDistribution,
+        {
+          valid: false,
+          reason: 'parse-error',
+          message: 'QName not allowed for property: rdf:Description',
+          validatedFingerprint: currentFingerprint,
+          depth: 'deep',
+        },
+      );
+    });
+
+    it('surfaces a valid deep verdict when a distribution imports successfully', async () => {
+      const resolver = makeDumpResolver(); // default: imports dumpDistribution, 100 triples
+      const reporter = makeReporter();
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [makeStage('stage1')],
+        writers: writer,
+        distributionResolver: resolver,
+        reporter,
+        pipelineVersion: 'v1',
+      });
+
+      await pipeline.run();
+
+      expect(reporter.distributionValidated).toHaveBeenCalledWith(
+        dumpDistribution,
+        {
+          valid: true,
+          validatedFingerprint: currentFingerprint,
+          depth: 'deep',
+        },
+      );
+    });
+
+    it('surfaces an empty deep verdict when an import yields no triples', async () => {
+      const resolver = makeDumpResolver(
+        new ResolvedDistribution(
+          sparqlDistribution,
+          [dumpProbe],
+          dumpDistribution,
+          1,
+          0,
+        ),
+      );
+      const reporter = makeReporter();
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [makeStage('stage1')],
+        writers: writer,
+        distributionResolver: resolver,
+        reporter,
+        pipelineVersion: 'v1',
+      });
+
+      await pipeline.run();
+
+      expect(reporter.distributionValidated).toHaveBeenCalledWith(
+        dumpDistribution,
+        {
+          valid: false,
+          reason: 'empty',
+          validatedFingerprint: currentFingerprint,
+          depth: 'deep',
+        },
+      );
+    });
+
+    it('surfaces a shallow verdict from a probe that detected invalid RDF', async () => {
+      const ttl = new Distribution(
+        new URL('http://example.org/probe.ttl'),
+        'text/turtle',
+      );
+      const probeResult = new DataDumpProbeResult(
+        'http://example.org/probe.ttl',
+        new Response('', {
+          status: 200,
+          headers: { 'Content-Type': 'text/turtle', 'Content-Length': '500' },
+        }),
+        0,
+        'Unexpected "." on line 3.',
+      );
+      const reporter = makeReporter();
+      const resolver = makeResolver(makeResolvedDistribution(), [
+        { distribution: ttl, result: probeResult },
+      ]);
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [makeStage('stage1')],
+        writers: writer,
+        distributionResolver: resolver,
+        reporter,
+        pipelineVersion: 'v1',
+      });
+
+      await pipeline.run();
+
+      expect(reporter.distributionValidated).toHaveBeenCalledWith(ttl, {
+        valid: false,
+        reason: 'parse-error',
+        message: 'Unexpected "." on line 3.',
+        validatedFingerprint: sourceFingerprint(ttl, probeResult),
+        depth: 'shallow',
+      });
+    });
+
+    it('records the observed fingerprint on the reachability result', async () => {
+      const reporter = makeReporter();
+      const resolver = makeResolver(makeResolvedDistribution(), [
+        { distribution: dumpDistribution, result: dumpProbe },
+      ]);
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [makeStage('stage1')],
+        writers: writer,
+        distributionResolver: resolver,
+        reporter,
+        pipelineVersion: 'v1',
+      });
+
+      await pipeline.run();
+
+      expect(reporter.distributionProbed).toHaveBeenCalledWith(
+        expect.objectContaining({
+          distribution: dumpDistribution,
+          fingerprint: currentFingerprint,
         }),
       );
     });

@@ -26,6 +26,7 @@
   "dependencies": {
     "@lde/dataset": "0.7.7",
     "@lde/dataset-registry-client": "0.8.3",
+    "@lde/distribution-health": "0.1.1",
     "@lde/distribution-probe": "0.1.10",
     "@lde/sparql-importer": "0.6.5",
     "@lde/sparql-server": "0.4.11",
