@@ -1,3 +1,9 @@
+## 0.30.16 (2026-06-16)
+
+### 🚀 Features
+
+- **pipeline:** surface per-distribution RDF-validity verdicts ([#476](https://github.com/ldelements/lde/pull/476), [#2103](https://github.com/ldelements/lde/issues/2103), [#469](https://github.com/ldelements/lde/issues/469))
+
 ## 0.30.15 (2026-06-15)
 
 ### 🚀 Features
