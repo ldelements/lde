@@ -1,4 +1,5 @@
 import type { Dataset, Distribution } from '@lde/dataset';
+import type { ValidityVerdict } from '@lde/distribution-health';
 import type { ValidationReport } from './validator.js';
 import type { TimeoutTransitionEvent } from './sparql/timeoutPolicy.js';
 
@@ -9,6 +10,14 @@ export interface DistributionAnalysisResult {
   statusCode?: number;
   error?: string;
   warnings: string[];
+  /**
+   * The source-change fingerprint observed for this distribution, or `null`
+   * when none could be established (e.g. a live SPARQL endpoint). The shared
+   * key against which a validity verdict's `validatedFingerprint` is matched,
+   * so a consumer can record it on the reachability rail. Always populated by
+   * the pipeline; optional so consumers constructing the result need not set it.
+   */
+  fingerprint?: string | null;
 }
 
 export interface ProgressReporter {
@@ -21,6 +30,16 @@ export interface ProgressReporter {
   importStarted?(): void;
   /** Called when importing a distribution fails. */
   importFailed?(distribution: Distribution, error: string): void;
+  /**
+   * Called with the RDF-validity verdict for a distribution the pipeline
+   * attempted, whether valid or invalid, and even when the dataset is
+   * otherwise skipped (no summary produced). The verdict is a plain
+   * TypeScript value; consumers decide how (and whether) to record it as RDF.
+   */
+  distributionValidated?(
+    distribution: Distribution,
+    verdict: ValidityVerdict,
+  ): void;
   distributionSelected?(
     dataset: Dataset,
     distribution: Distribution,
