@@ -134,13 +134,19 @@ For releasing the new package’s first version, see [Releasing a new package](#
 One-time bootstrap for a new package (do this once it has been merged to main):
 
 1. **Publish the first version manually.** From a maintainer’s machine:
+
    ```sh
    npm login --auth-type=web   # opens a browser tab; handles 2FA
    npm whoami                  # verify the publisher account
+   npx nx build <name>         # populate dist/ — see warning below
    cd packages/<name>
    npm publish --access public --provenance
    ```
+
    The package is created on npm at the version in its `package.json`.
+
+   > **Build first, or you ship an empty package.** Package manifests use `"files": ["dist"]`, so `npm publish` packs only `package.json` and `README.md` unless `dist/` exists on disk. CI releases get `dist/` for free via `release.version.preVersionCommand` (`nx run-many -t build`) in `nx.json`, but this manual bootstrap is the one publish path that bypasses it — always run `npx nx build <name>` immediately before `npm publish`.
+
 2. **Add a Trusted Publisher to the now-existing package.** On npmjs.com, open the new package → ‘Settings’ → ‘Trusted Publishers’ → ‘Add trusted publisher’. Fill in:
    - Publisher: GitHub Actions
    - Organization or user: `ldelements`
