@@ -118,6 +118,32 @@ strings are all Dutch:
 projectGraph(quads, projections, { untaggedLanguage: 'nl' });
 ```
 
+## Querying
+
+The search fields are stored already case- and diacritic-folded, so **the query
+must be folded the same way** before it reaches the engine — with the same
+`fold()` from [`@lde/text-normalization`](../text-normalization). Skipping this
+silently misses matches for non-decomposing letters: a search for `Møhlmann`
+would not find the stored `mohlmann`, because the engine’s own tokenizer
+lowercases and strips decomposing accents but does not transliterate ø/æ/ß.
+
+```ts
+import { fold } from '@lde/text-normalization';
+
+await client
+  .collections(collection)
+  .documents()
+  .search({
+    q: fold(userQuery),
+    query_by: 'title_search_nl,title_search_en',
+    query_by_weights: '2,1', // rank the user’s locale higher
+  });
+```
+
+This contract holds for **any** consumer, including a search API built on top of
+this package: index-time and query-time folding must use the same `fold()` (and
+the same `FOLD_VERSION`), or non-decomposing terms silently miss.
+
 ## Why a spec
 
 The field spec's vocabulary mirrors SHACL on purpose: `path` is `sh:path`, and
