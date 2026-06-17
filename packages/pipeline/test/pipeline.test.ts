@@ -637,6 +637,28 @@ describe('Pipeline', () => {
       await expect(pipeline.run()).resolves.toBeUndefined();
     });
 
+    it('notifies every reporter when passed an array', async () => {
+      const first = makeReporter();
+      const second = makeReporter();
+
+      const pipeline = new Pipeline({
+        name: 'my-pipeline',
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [makeStage('stage1')],
+        writers: writer,
+        distributionResolver: makeResolver(makeResolvedDistribution()),
+        reporter: [first, second],
+      });
+
+      await pipeline.run();
+
+      for (const reporter of [first, second]) {
+        expect(reporter.pipelineStart).toHaveBeenCalledWith('my-pipeline');
+        expect(reporter.stageStart).toHaveBeenCalledWith('stage1');
+        expect(reporter.pipelineComplete).toHaveBeenCalledTimes(1);
+      }
+    });
+
     it('distributionProbed called once per distribution with correct result', async () => {
       const reporter = makeReporter();
 

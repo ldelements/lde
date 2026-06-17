@@ -276,6 +276,21 @@ Writes generated quads to a destination:
 - `SparqlUpdateWriter` — writes to a SPARQL endpoint via UPDATE queries
 - `FileWriter` — writes to local files
 
+### Reporter
+
+A `ProgressReporter` observes the run, receiving lifecycle events such as `pipelineStart`, `stageComplete`, `datasetValidated` and `pipelineComplete`. Every method is optional, so a reporter implements only the events it cares about.
+
+Pass a single reporter, or an array to have several observe the same run — for example a console reporter alongside one that collects validation verdicts:
+
+```typescript
+new Pipeline({
+  // …
+  reporter: [new ConsoleReporter(), verdictCollector],
+});
+```
+
+Each reporter receives every event, in array order; a reporter that does not implement a given event is skipped for it.
+
 ### Provenance store
 
 A `ProvenanceStore` gives the pipeline a small per-dataset memory, so a future run can skip datasets that are genuinely unchanged. It is purely a storage seam: the framework owns the skip decision (see [`sourceFingerprint`](#source-change-fingerprint) and `shouldReprocess`), the store owns only how each record is persisted.
