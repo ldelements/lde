@@ -1,6 +1,6 @@
 {
   "name": "@lde/search-typesense",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "description": "Generic Typesense engine adapter for RDF-backed search pipelines: frame quads to documents, bulk upsert, partial update, blue/green alias swap, and source/last_seen sweep",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
