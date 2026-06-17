@@ -6,8 +6,25 @@ import { tmpdir } from 'node:os';
 import { Parser } from 'n3';
 import type { Quad } from '@rdfjs/types';
 import { Dataset } from '@lde/dataset';
-import { FileWriter, type Writer } from '@lde/pipeline';
+import { FileWriter, assertNoBlankNodes, type Writer } from '@lde/pipeline';
 import { ShaclValidator } from '../src/shacl-validator.js';
+
+const SH_RESULT = 'http://www.w3.org/ns/shacl#result';
+
+async function reportQuadsFor(
+  filename: string,
+  forDataset: Dataset = dataset,
+): Promise<Quad[]> {
+  let received: Quad[] = [];
+  const writer: Writer = {
+    write: async (_dataset, quads) => {
+      received = await collectQuads(quads);
+    },
+  };
+  const validator = new ShaclValidator({ shapesFile, reportWriters: [writer] });
+  await validator.validate(parseFixture(filename), forDataset);
+  return received;
+}
 
 const shapesFile = join(__dirname, 'fixtures', 'shapes.ttl');
 
@@ -128,6 +145,55 @@ describe('ShaclValidator', () => {
         q.predicate.value.startsWith('http://www.w3.org/ns/shacl#'),
       ),
     ).toBe(true);
+  });
+
+  it('skolemises report blank nodes to dataset-scoped IRIs', async () => {
+    // shacl-engine emits the report and every result as blank nodes, which fuse
+    // across datasets in a file-based store's cat-built index (ldelements/lde#478).
+    const received = await reportQuadsFor('invalid.ttl');
+
+    expect(received.length).toBeGreaterThan(0);
+    assertNoBlankNodes(received);
+    const base = 'http://example.org/dataset/.well-known/shacl#';
+    expect(
+      received.every(
+        (quad) =>
+          (quad.subject.termType === 'NamedNode'
+            ? quad.subject.value.startsWith(base)
+            : true) &&
+          (quad.object.termType === 'NamedNode' &&
+          quad.object.value.includes('/.well-known/shacl#')
+            ? quad.object.value.startsWith(base)
+            : true),
+      ),
+    ).toBe(true);
+  });
+
+  it('keys result IRIs on the dataset, so they do not fuse across datasets', async () => {
+    const other = new Dataset({
+      iri: new URL('http://example.org/other'),
+      distributions: [],
+    });
+    const resultsOf = (quads: Quad[]) =>
+      quads
+        .filter((quad) => quad.predicate.value === SH_RESULT)
+        .map((quad) => quad.object.value);
+
+    const here = resultsOf(await reportQuadsFor('invalid.ttl'));
+    const there = resultsOf(await reportQuadsFor('invalid.ttl', other));
+
+    expect(here.length).toBeGreaterThan(0);
+    expect(there.length).toBeGreaterThan(0);
+    expect(here.some((result) => there.includes(result))).toBe(false);
+  });
+
+  it('gives each violation a distinct result IRI within one report', async () => {
+    const results = (await reportQuadsFor('invalid-two.ttl'))
+      .filter((quad) => quad.predicate.value === SH_RESULT)
+      .map((quad) => quad.object.value);
+
+    expect(results).toHaveLength(2);
+    expect(new Set(results).size).toBe(2);
   });
 
   it('flushes each writer when report() is called', async () => {

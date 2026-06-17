@@ -12,6 +12,7 @@ import ShaclEngine from 'shacl-engine/Validator.js';
 // @ts-expect-error -- rdf-ext has no type declarations.
 import rdf from 'rdf-ext';
 import { rdfDereferencer } from 'rdf-dereference';
+import { skolemizeReport } from './skolemize-report.js';
 
 /** Options for {@link ShaclValidator}. */
 export interface ShaclValidatorOptions {
@@ -81,7 +82,15 @@ export class ShaclValidator implements Validator {
     this.accumulators.set(key, acc);
 
     if (violations > 0 && this.reportWriters.length > 0) {
-      const reportQuads: Quad[] = [...report.dataset];
+      // Skolemise the report's blank nodes to dataset-scoped IRIs before writing.
+      // shacl-engine emits the report and every result as blank nodes, whose
+      // labels are not unique across the per-dataset n-quads files a file-based
+      // store cats into one index — fusing one dataset's violations into
+      // another's (see ldelements/lde#478).
+      const reportQuads = skolemizeReport(
+        report.dataset,
+        dataset.iri.toString(),
+      );
       for (const writer of this.reportWriters) {
         await writer.write(dataset, asyncIterableOf(reportQuads));
       }
