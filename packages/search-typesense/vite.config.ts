@@ -12,12 +12,13 @@ export default mergeConfig(
       testTimeout: 60_000,
       hookTimeout: 120_000,
       coverage: {
-        // Lower than before frame-by-type moved to @lde/search.
+        // Only the adapter remains; its error-handling branches are exercised
+        // by integration, not unit, tests.
         thresholds: {
-          functions: 95.83,
-          lines: 91.54,
-          branches: 76.92,
-          statements: 91.89,
+          functions: 95.23,
+          lines: 89.36,
+          branches: 63.15,
+          statements: 90,
         },
       },
     },

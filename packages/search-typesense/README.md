@@ -11,10 +11,6 @@ declarative field spec (`projectDocument`) — lives in
 [`@lde/search`](../search). This package consumes those documents and writes
 them to Typesense.
 
-A lower-level flat `frame(quads, subject, fields)` is also exported: a direct
-predicate-to-field mapping with datatype coercion, for documents that need no
-nesting and no language tags.
-
 ## Indexing
 
 `TypesenseAdapter` wraps the Typesense client with the operations a full-rebuild

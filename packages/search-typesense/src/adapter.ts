@@ -1,9 +1,11 @@
 import { Client, Errors } from 'typesense';
-import type {
-  CollectionCreateSchema,
-  ImportResponse,
-} from 'typesense';
-import type { TypesenseDocument } from './frame.js';
+import type { CollectionCreateSchema, ImportResponse } from 'typesense';
+
+/**
+ * A flat Typesense document. `id` is required (Typesense uses it as the document
+ * key); every other field is engine-typed scalar data or an array thereof.
+ */
+export type TypesenseDocument = { id: string } & Record<string, unknown>;
 
 export interface TypesenseConnection {
   readonly host: string;
@@ -15,9 +17,7 @@ export interface TypesenseConnection {
 }
 
 /** Build a Typesense {@link Client} from a flat connection config. */
-export function createTypesenseClient(
-  connection: TypesenseConnection,
-): Client {
+export function createTypesenseClient(connection: TypesenseConnection): Client {
   return new Client({
     nodes: [
       {
