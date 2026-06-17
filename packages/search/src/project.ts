@@ -80,9 +80,13 @@ export function projectDocument(
   node: FramedSubject,
   projection: Projection,
 ): SearchDocument {
-  const document: SearchDocument = {
-    id: typeof node['@id'] === 'string' ? node['@id'] : '',
-  };
+  const id = node['@id'];
+  if (typeof id !== 'string') {
+    throw new Error(
+      `Cannot project a ${projection.type} node without an @id: every search document needs a stable key, and an empty one would collide with other keyless nodes.`,
+    );
+  }
+  const document: SearchDocument = { id };
   for (const field of projection.fields) {
     applyField(document, node, field);
   }
@@ -145,7 +149,7 @@ function applyLangText(
     setString(document, `${name}_name`, localized(values));
   }
   if (text.sort) {
-    document[`${name}_sort`] = fold(localized(values) ?? '');
+    setString(document, `${name}_sort`, fold(localized(values) ?? ''));
   }
 }
 

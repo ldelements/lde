@@ -164,6 +164,24 @@ describe('projectDocument', () => {
     expect(document.publisher).toBeUndefined();
     expect(document.size).toBeUndefined();
   });
+
+  it('omits the sort field when there is no value to sort on', () => {
+    const document = projectDocument(
+      { '@id': 'https://ex/d/5' },
+      { type: DATASET, fields },
+    );
+    expect(document.id).toBe('https://ex/d/5');
+    expect(document.title_sort).toBeUndefined();
+  });
+
+  it('throws when the framed node has no @id', () => {
+    expect(() =>
+      projectDocument(
+        { [`${DCT}title`]: { '@value': 'No id' } },
+        { type: DATASET, fields },
+      ),
+    ).toThrow(/without an @id/);
+  });
 });
 
 describe('projectGraph', () => {
