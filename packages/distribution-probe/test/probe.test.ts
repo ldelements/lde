@@ -1282,6 +1282,76 @@ describe('probe', () => {
       expect((result as SparqlProbeResult).isSuccess()).toBe(true);
     });
 
+    it('accepts an empty graph as a successful CONSTRUCT answer', async () => {
+      // A CONSTRUCT availability probe whose query matches nothing returns a
+      // 200 with an empty body; the endpoint is up, so this must not fail.
+      vi.mocked(fetch).mockResolvedValue(
+        new Response('', {
+          status: 200,
+          headers: { 'Content-Type': 'application/n-triples' },
+        }),
+      );
+
+      const distribution = Distribution.sparql(
+        new URL('http://example.org/sparql'),
+      );
+
+      const result = await probe(distribution, {
+        sparqlQuery: 'CONSTRUCT WHERE { ?s ?p ?o } LIMIT 1',
+      });
+
+      const sparqlResult = result as SparqlProbeResult;
+      expect(sparqlResult.isSuccess()).toBe(true);
+      expect(sparqlResult.failureReason).toBeNull();
+    });
+
+    it('accepts a CONSTRUCT answer serialized as Turtle', async () => {
+      // The endpoint chooses the RDF serialization; Turtle is a common default
+      // and must be accepted, not only n-triples.
+      vi.mocked(fetch).mockResolvedValue(
+        new Response('<http://s> <http://p> <http://o> .', {
+          status: 200,
+          headers: { 'Content-Type': 'text/turtle' },
+        }),
+      );
+
+      const distribution = Distribution.sparql(
+        new URL('http://example.org/sparql'),
+      );
+
+      const result = await probe(distribution, {
+        sparqlQuery: 'CONSTRUCT WHERE { ?s ?p ?o } LIMIT 1',
+      });
+
+      const sparqlResult = result as SparqlProbeResult;
+      expect(sparqlResult.isSuccess()).toBe(true);
+      expect(sparqlResult.failureReason).toBeNull();
+    });
+
+    it('offers several RDF serializations in the CONSTRUCT Accept header', async () => {
+      let capturedHeaders: Headers | undefined;
+      vi.mocked(fetch).mockImplementation(async (_input, init) => {
+        capturedHeaders = new Headers(init?.headers);
+        return new Response('<http://s> <http://p> <http://o> .', {
+          status: 200,
+          headers: { 'Content-Type': 'text/turtle' },
+        });
+      });
+
+      const distribution = Distribution.sparql(
+        new URL('http://example.org/sparql'),
+      );
+
+      await probe(distribution, {
+        sparqlQuery: 'CONSTRUCT WHERE { ?s ?p ?o } LIMIT 1',
+      });
+
+      const accept = capturedHeaders?.get('Accept');
+      expect(accept).toContain('text/turtle');
+      expect(accept).toContain('application/n-triples');
+      expect(accept).toContain('application/rdf+xml');
+    });
+
     it('ignores # comments when detecting query type', async () => {
       let capturedHeaders: Headers | undefined;
       vi.mocked(fetch).mockImplementation(async (_input, init) => {

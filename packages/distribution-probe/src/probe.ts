@@ -91,7 +91,22 @@ abstract class ProbeResult {
 
 const SPARQL_RESULTS_JSON = 'application/sparql-results+json';
 const SPARQL_RESULTS_XML = 'application/sparql-results+xml';
-const SPARQL_RDF_RESULTS = 'application/n-triples';
+
+/**
+ * RDF serializations a CONSTRUCT or DESCRIBE query may be answered with, in
+ * preference order. The endpoint chooses the serialization, so availability must
+ * not hinge on a single one: accepting only n-triples flagged healthy endpoints
+ * that answer in Turtle (a common default) as unavailable, and made endpoints
+ * that cannot emit n-triples reject the probe with HTTP 406.
+ */
+const SPARQL_RDF_RESULTS = [
+  'text/turtle',
+  'application/n-triples',
+  'application/rdf+xml',
+  'application/ld+json',
+  'application/n-quads',
+  'application/trig',
+];
 
 /**
  * Result of probing a SPARQL endpoint.
@@ -316,7 +331,7 @@ function acceptableContentTypes(queryType: SparqlQueryType): string[] {
   if (queryType === 'ASK' || queryType === 'SELECT') {
     return [SPARQL_RESULTS_JSON, SPARQL_RESULTS_XML];
   }
-  return [SPARQL_RDF_RESULTS];
+  return [...SPARQL_RDF_RESULTS];
 }
 
 /**
@@ -385,15 +400,19 @@ async function validateSparqlResponse(
   queryType: SparqlQueryType,
   contentType: string,
 ): Promise<string | null> {
+  if (queryType === 'CONSTRUCT' || queryType === 'DESCRIBE') {
+    // A CONSTRUCT/DESCRIBE answer is RDF, and an empty graph is a valid answer –
+    // e.g. an availability probe whose query happens to match nothing – so the
+    // 200 response alone confirms the endpoint is up. Deep parse validation is
+    // the data-dump path’s job. Only data dumps must be non-empty (see
+    // validateBody); a SPARQL result may be empty.
+    await response.body?.cancel();
+    return null;
+  }
+
   const body = await response.text();
   if (body.length === 0) {
     return 'SPARQL endpoint returned an empty response';
-  }
-
-  if (queryType === 'CONSTRUCT' || queryType === 'DESCRIBE') {
-    // Body should be RDF; a non-empty response is sufficient to confirm the
-    // endpoint answered. Deep parse validation is the data-dump path’s job.
-    return null;
   }
 
   return contentType.startsWith(SPARQL_RESULTS_XML)
