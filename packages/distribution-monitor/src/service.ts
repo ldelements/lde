@@ -22,6 +22,12 @@ export interface MonitorServiceOptions {
   intervalSeconds?: number;
   /** Request timeout in milliseconds passed to the probe (default: 30 000). */
   timeoutMs?: number;
+  /**
+   * How many times the probe retries a connection-level failure before
+   * recording the distribution as unavailable. Forwarded to
+   * {@link probe}; when omitted, the probe’s own default applies.
+   */
+  retries?: number;
   /** HTTP headers forwarded to every probe request (e.g. User-Agent). */
   headers?: Headers;
   /**
@@ -42,6 +48,7 @@ export class MonitorService {
   private readonly configs: MonitorConfig[];
   private readonly intervalSeconds: number;
   private readonly timeoutMs: number;
+  private readonly retries?: number;
   private readonly headers?: Headers;
   private job: CronJob | null = null;
 
@@ -51,6 +58,7 @@ export class MonitorService {
     this.configs = options.monitors;
     this.intervalSeconds = options.intervalSeconds ?? 300;
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.retries = options.retries;
     this.headers = options.headers;
   }
 
@@ -120,6 +128,7 @@ export class MonitorService {
   private async performCheck(config: MonitorConfig): Promise<void> {
     const observedAt = new Date();
     const options: ProbeOptions = { timeoutMs: this.timeoutMs };
+    if (this.retries !== undefined) options.retries = this.retries;
     if (this.headers) options.headers = this.headers;
     if (config.sparqlQuery) options.sparqlQuery = config.sparqlQuery;
 

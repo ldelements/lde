@@ -15,6 +15,7 @@ interface MonitorContext {
     databaseUrl: string;
     intervalSeconds?: number;
     timeoutMs?: number;
+    retries?: number;
     monitors: MonitorConfig[];
   };
   store: PostgresObservationStore;
@@ -53,12 +54,23 @@ async function loadMonitorContext(
     process.exit(1);
   }
 
+  if (
+    config.retries !== undefined &&
+    (!Number.isInteger(config.retries) || config.retries < 0)
+  ) {
+    console.error(
+      `Error: retries must be a non-negative integer (got ${config.retries}).`,
+    );
+    process.exit(1);
+  }
+
   const store = await PostgresObservationStore.create(databaseUrl);
   const service = new MonitorService({
     store,
     monitors: config.monitors,
     intervalSeconds: config.intervalSeconds,
     timeoutMs: config.timeoutMs,
+    retries: config.retries,
   });
 
   return {
