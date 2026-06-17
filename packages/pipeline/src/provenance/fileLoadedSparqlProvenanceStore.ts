@@ -2,16 +2,25 @@ import { Dataset, assertSafeIri } from '@lde/dataset';
 import type { Quad, Term } from '@rdfjs/types';
 import { DataFactory } from 'n3';
 import { SparqlEndpointFetcher } from 'fetch-sparql-endpoint';
+import { prov, rdf, xsd } from '@tpluscode/rdf-ns-builders';
+import namespace from '@rdfjs/namespace';
 import { FileWriter } from '../writer/fileWriter.js';
 import type { ProcessingRecord } from './record.js';
 import type { ProvenanceStore } from './store.js';
 
 const { namedNode, literal, quad } = DataFactory;
 
-const RDF_TYPE = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
-const PROV = 'http://www.w3.org/ns/prov#';
-const LDE = 'https://w3id.org/lde/provenance#';
-const XSD_DATE_TIME = 'http://www.w3.org/2001/XMLSchema#dateTime';
+/**
+ * Local names minted in the LDE provenance vocabulary
+ * (`https://w3id.org/lde/provenance#`).
+ */
+type LdeProvenanceTerm = 'pipelineVersion' | 'status' | 'sourceFingerprint';
+
+// Custom namespace for this pipeline’s flat PROV-O records; not a standard
+// vocabulary, so it has no bundled builder. Constraining the term names makes it
+// typo-safe and autocompleting like the bundled builders — `lde.valeu` is a
+// compile error — while the base IRI stays the single source of truth.
+const lde = namespace<LdeProvenanceTerm>('https://w3id.org/lde/provenance#');
 
 export interface FileLoadedSparqlProvenanceStoreOptions {
   /** Read-only SPARQL endpoint to query for previously-loaded records. */
@@ -91,10 +100,10 @@ export class FileLoadedSparqlProvenanceStore implements ProvenanceStore {
     const dataset = `<${datasetIri}>`;
     return `SELECT ?fingerprint ?version ?status ?generatedAt WHERE {
       GRAPH <${pipelineIri}> {
-        ${dataset} <${LDE}pipelineVersion> ?version ;
-                   <${LDE}status> ?status ;
-                   <${PROV}generatedAtTime> ?generatedAt .
-        OPTIONAL { ${dataset} <${LDE}sourceFingerprint> ?fingerprint }
+        ${dataset} <${lde.pipelineVersion.value}> ?version ;
+                   <${lde.status.value}> ?status ;
+                   <${prov.generatedAtTime.value}> ?generatedAt .
+        OPTIONAL { ${dataset} <${lde.sourceFingerprint.value}> ?fingerprint }
       }
     } LIMIT 1`;
   }
@@ -111,24 +120,20 @@ export class FileLoadedSparqlProvenanceStore implements ProvenanceStore {
   ): AsyncIterable<Quad> {
     const subject = namedNode(datasetUri.toString());
 
-    yield quad(subject, namedNode(RDF_TYPE), namedNode(`${PROV}Entity`));
+    yield quad(subject, rdf.type, prov.Entity);
     yield quad(
       subject,
-      namedNode(`${PROV}generatedAtTime`),
-      literal(record.generatedAt, namedNode(XSD_DATE_TIME)),
+      prov.generatedAtTime,
+      literal(record.generatedAt, xsd.dateTime),
     );
     if (record.sourceFingerprint !== null) {
       yield quad(
         subject,
-        namedNode(`${LDE}sourceFingerprint`),
+        lde.sourceFingerprint,
         literal(record.sourceFingerprint),
       );
     }
-    yield quad(
-      subject,
-      namedNode(`${LDE}pipelineVersion`),
-      literal(record.pipelineVersion),
-    );
-    yield quad(subject, namedNode(`${LDE}status`), literal(record.status));
+    yield quad(subject, lde.pipelineVersion, literal(record.pipelineVersion));
+    yield quad(subject, lde.status, literal(record.status));
   }
 }

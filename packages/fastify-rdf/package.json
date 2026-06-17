@@ -26,6 +26,7 @@
   ],
   "dependencies": {
     "@fastify/accepts": "^5.0.0",
+    "@tpluscode/rdf-ns-builders": "^5.0.0",
     "fastify-plugin": "^6.0.0",
     "n3": "^2.0.1",
     "rdf-parse": "^5.0.0",

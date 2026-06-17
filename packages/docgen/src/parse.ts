@@ -3,8 +3,7 @@ import { JsonLdArray } from 'jsonld/jsonld-spec.js';
 import jsonld from 'jsonld';
 import { rdfSerializer } from 'rdf-serialize';
 import streamToString from 'stream-to-string';
-
-const XSD_STRING = 'http://www.w3.org/2001/XMLSchema#string';
+import { xsd } from '@tpluscode/rdf-ns-builders';
 
 export async function parseRdfToJsonLd(filePath: string): Promise<JsonLdArray> {
   const { data } = await rdfDereferencer.dereference(filePath, {
@@ -35,7 +34,10 @@ function stripDefaultStringType<T>(value: T): T {
   }
   if (value && typeof value === 'object') {
     const record = value as Record<string, unknown>;
-    if (record['@value'] !== undefined && record['@type'] === XSD_STRING) {
+    if (
+      record['@value'] !== undefined &&
+      record['@type'] === xsd.string.value
+    ) {
       const { ['@type']: _, ...rest } = record;
       return rest as T;
     }
