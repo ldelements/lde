@@ -70,6 +70,20 @@ detail. Configure at least one writer in production pipelines.
 The bundled `FileWriter` and `SparqlUpdateWriter` already implement the
 `Writer` contract; bring your own for custom destinations.
 
+##### Blank-node-free reports
+
+shacl-engine emits the `sh:ValidationReport`, every `sh:ValidationResult` and
+any anonymous `sh:sourceShape` as blank nodes. Before writing, `ShaclValidator`
+rewrites each one to a dataset-scoped IRI of the form
+`<dataset>/.well-known/shacl#<batch>-<label>`. This keeps a file-based served
+store (e.g. the Dataset Knowledge Graph) from fusing one dataset's results into
+another's when it `cat`s every per-dataset n-quads file into a single index –
+blank-node labels are only document-scoped and recur across files (see
+[ldelements/lde#478](https://github.com/ldelements/lde/issues/478)). The
+dataset IRI rules out fusion across datasets; `<batch>`, a hash of the report's
+quads, rules out fusion across the separate `validate()` batches that land in
+one dataset's validation graph.
+
 #### Filesystem collisions with `FileWriter`
 
 `FileWriter` derives its filename from `dataset.iri` only. If the pipeline's
