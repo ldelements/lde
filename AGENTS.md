@@ -99,7 +99,7 @@ The `@nx/js:library` generator’s output diverges from the conventions in this 
    - `name` → `@lde/<new-name>`
    - `description` — write something useful
    - `repository.directory` → `packages/<new-name>`
-   - `version` — leave at the sibling’s current version; nx release will bump it from there on the first release. (If you want the first published version to be `0.1.0`, set it to `0.0.1` — a `feat:` commit on a 0.x package bumps minor.)
+   - `version` → `0.0.0` from the get-go (do NOT keep the sibling’s version). nx release bumps from there via conventional commits, so the introducing `feat:` commit lands the first release at `0.1.0`; any higher starting version overshoots it. This must be in place before the PR merges — see [Releasing a new package](#releasing-a-new-package).
    - `dependencies` and `peerDependencies` — replace with what the new package actually needs
 4. **Replace the source.** Empty out `src/` and `test/`, write the new code.
 5. **Update `tsconfig.lib.json` `references`** to match the new package’s actual `@lde/*` peers.
@@ -129,7 +129,7 @@ For releasing the new package’s first version, see [Releasing a new package](#
 
 `.github/workflows/release.yml` publishes existing packages on every push to main, but the CI workflow alone cannot bring up a brand-new `@lde/<name>` package: npm’s Trusted Publisher configuration can only be added to a package that already exists on the registry. The first version has to be published manually by a maintainer; CI takes over from the second version onwards.
 
-**Before merging the PR that introduces the package**, set `"version": "0.0.0"` in its `package.json`. nx release uses conventional commits to bump from there, so the `feat:` commit that introduces the package lands the first release at `0.1.0`. Starting at `0.1.0` in the source would bump the first release to `0.2.0`.
+The package’s `version` must already be `0.0.0` before the PR merges (set in [Creating New Packages](#creating-new-packages) step 3) so the introducing `feat:` commit publishes `0.1.0`.
 
 One-time bootstrap for a new package (do this once it has been merged to main):
 
