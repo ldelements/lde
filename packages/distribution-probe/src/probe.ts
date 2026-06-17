@@ -27,7 +27,8 @@ export interface ProbeOptions {
    * check, so a transient blip does not flip an otherwise healthy distribution
    * to ‘unavailable’; HTTP error responses and content-validation failures are
    * genuine ‘down’ states and are never retried. Set to `0` to disable.
-   * Defaults to `2`.
+   * Defaults to `2`. A non-integer or otherwise invalid value falls back to
+   * the default; negative values are clamped to `0`.
    */
   retries?: number;
 }
@@ -178,9 +179,12 @@ export async function probe(
   // Retry only connection-level failures (a thrown `fetch`): HTTP error
   // responses and content-validation failures are returned as result objects,
   // never thrown, so they exit the loop on the first attempt and are not
-  // retried. A genuine outage still fails fast — every attempt throws.
+  // retried. A genuine outage still resolves to a NetworkError – every attempt
+  // fails – but note each attempt gets its own `timeoutMs`, so an endpoint that
+  // fails only by timing out takes up to (retries + 1) × timeoutMs (plus
+  // backoff) to be reported down.
+  const overallStart = performance.now();
   let lastError: unknown;
-  let responseTimeMs = 0;
   for (let attempt = 0; attempt <= resolved.retries; attempt++) {
     if (attempt > 0) {
       await delay(RETRY_BACKOFF_MS * attempt);
@@ -203,13 +207,20 @@ export async function probe(
         authHeaders,
         start,
       );
-    } catch (e) {
-      lastError = e;
-      responseTimeMs = Math.round(performance.now() - start);
+    } catch (error) {
+      lastError = error;
     }
   }
 
-  return new NetworkError(url, describeNetworkError(lastError), responseTimeMs);
+  // A successful probe reports its own attempt's latency (computed inside the
+  // probe functions); a NetworkError reports the total time spent failing,
+  // across every attempt and backoff, so observations do not understate the
+  // real cost of a down endpoint.
+  return new NetworkError(
+    url,
+    describeNetworkError(lastError),
+    Math.round(performance.now() - overallStart),
+  );
 }
 
 function delay(milliseconds: number): Promise<void> {
@@ -218,7 +229,7 @@ function delay(milliseconds: number): Promise<void> {
 
 /**
  * Describe a thrown fetch error for a {@link NetworkError} message. undici wraps
- * the real reason (`ECONNRESET`, `UND_ERR_SOCKET “other side closed”`, TLS
+ * * the real reason (`ECONNRESET`, `UND_ERR_SOCKET “other side closed”`, TLS
  * errors, …) in `error.cause`, while `error.message` is usually a bare
  * ‘fetch failed’. Including the cause’s code and message preserves the
  * diagnostic detail that would otherwise be discarded.
@@ -227,28 +238,36 @@ function describeNetworkError(error: unknown): string {
   if (!(error instanceof Error)) {
     return String(error);
   }
-  const cause = error.cause;
-  if (cause instanceof Error) {
-    const code = (cause as { code?: string }).code;
-    const detail = code ? `${code}: ${cause.message}` : cause.message;
-    return detail && detail !== error.message
-      ? `${error.message} (${detail})`
-      : error.message;
+  const { cause } = error;
+  if (cause === undefined || cause === null) {
+    return error.message;
   }
-  if (cause !== undefined && cause !== null) {
-    return `${error.message} (${String(cause)})`;
-  }
-  return error.message;
+  const detail =
+    cause instanceof Error
+      ? [(cause as NodeJS.ErrnoException).code, cause.message]
+          .filter(Boolean)
+          .join(': ')
+      : String(cause);
+  return detail && detail !== error.message
+    ? `${error.message} (${detail})`
+    : error.message;
 }
 
 function resolveOptions(
   options: ProbeOptions | undefined,
 ): Required<ProbeOptions> {
+  const retries = options?.retries;
   return {
     timeoutMs: options?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     headers: options?.headers ?? new Headers(),
     sparqlQuery: options?.sparqlQuery ?? DEFAULT_SPARQL_QUERY,
-    retries: Math.max(0, options?.retries ?? DEFAULT_RETRIES),
+    // Guard the loop bound: a non-integer (NaN, Infinity, fractional) would
+    // otherwise either skip the loop entirely or never terminate. Negatives
+    // clamp to 0 (retries disabled).
+    retries:
+      retries === undefined || !Number.isInteger(retries)
+        ? DEFAULT_RETRIES
+        : Math.max(0, retries),
   };
 }
 

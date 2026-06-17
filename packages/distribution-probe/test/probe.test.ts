@@ -412,6 +412,27 @@ describe('probe', () => {
       expect((result as DataDumpProbeResult).contentSize).toBe(5000);
     });
 
+    it('records an HTTP error on the GET path without validating the body', async () => {
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(new Response('', { status: 200 })) // HEAD, no Content-Length
+        .mockResolvedValueOnce(
+          new Response('Not Found', { status: 404, statusText: 'Not Found' }),
+        ); // GET
+
+      const distribution = new Distribution(
+        new URL('http://example.org/data.nt'),
+        'application/n-triples',
+      );
+
+      const result = await probe(distribution);
+
+      expect(result).toBeInstanceOf(DataDumpProbeResult);
+      const dumpResult = result as DataDumpProbeResult;
+      expect(dumpResult.isSuccess()).toBe(false);
+      expect(dumpResult.statusCode).toBe(404);
+      expect(dumpResult.failureReason).toBeNull();
+    });
+
     it('marks zero-byte response as failure', async () => {
       vi.mocked(fetch)
         .mockResolvedValueOnce(new Response('', { status: 200 })) // HEAD
@@ -976,6 +997,53 @@ describe('probe', () => {
         'SPARQL endpoint returned invalid JSON',
       );
       expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
+    });
+
+    it('falls back to the default when retries is not an integer', async () => {
+      // A NaN/Infinity loop bound would otherwise skip the loop (never probing)
+      // or never terminate; an invalid value must fall back to the default.
+      vi.mocked(fetch).mockRejectedValue(new Error('fetch failed'));
+
+      const distribution = Distribution.sparql(
+        new URL('http://example.org/sparql'),
+      );
+
+      const result = await probe(distribution, {
+        retries: Number.NaN,
+      });
+
+      expect(result).toBeInstanceOf(NetworkError);
+      // Default is 2 retries → 3 attempts; crucially, fetch IS called.
+      expect(vi.mocked(fetch)).toHaveBeenCalledTimes(3);
+    });
+
+    it('clamps a negative retry count to zero', async () => {
+      vi.mocked(fetch).mockRejectedValue(new Error('fetch failed'));
+
+      const distribution = Distribution.sparql(
+        new URL('http://example.org/sparql'),
+      );
+
+      const result = await probe(distribution, { retries: -5 });
+
+      expect(result).toBeInstanceOf(NetworkError);
+      expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports the total time spent across attempts on a NetworkError', async () => {
+      vi.mocked(fetch).mockRejectedValue(new Error('fetch failed'));
+
+      const distribution = Distribution.sparql(
+        new URL('http://example.org/sparql'),
+      );
+
+      const result = (await probe(distribution, {
+        retries: 2,
+      })) as NetworkError;
+
+      // Three attempts with 250ms + 500ms backoff between them: the reported
+      // time spans the whole check, not just the final attempt.
+      expect(result.responseTimeMs).toBeGreaterThanOrEqual(700);
     });
   });
 

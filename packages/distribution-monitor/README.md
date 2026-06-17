@@ -69,7 +69,7 @@ export default defineConfig({
 });
 ```
 
-`retries` controls how many times the probe retries a connection-level failure (socket reset, TLS hiccup, …) within a single check before recording a distribution as unavailable. It defaults to the probe’s own default; set it to `0` to disable. Because availability is read from the latest observation, this keeps a transient transport blip from flipping an otherwise healthy source to ‘unavailable’ – without looking backward across checks, so a genuine outage still reports immediately. HTTP errors and content-validation failures are never retried.
+`retries` controls how many times the probe retries a connection-level failure (socket reset, TLS hiccup, …) within a single check before recording a distribution as unavailable. It defaults to the probe’s own default; set it to `0` to disable. Because availability is read from the latest observation, this keeps a transient transport blip from flipping an otherwise healthy source to ‘unavailable’ – without looking backward across checks, so a genuine outage is still reported on the current check. Each retry gets its own `timeoutMs`, so a hung endpoint takes up to `(retries + 1) × timeoutMs` to be marked down – size `intervalSeconds` accordingly. HTTP errors and content-validation failures are never retried.
 
 ### YAML Config (`distribution-monitor.config.yaml`)
 
