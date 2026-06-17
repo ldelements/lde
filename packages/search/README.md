@@ -87,10 +87,18 @@ const doc = projectDocument(node, projection);
 
 `locales` is the **single** list of languages a `langText` field projects, and
 every family fans out over it: `title_nl`/`title_en` for display (accents
-preserved), `title_search_nl`/`title_search_en` when `search` (folded, so the
-engine can tokenize each language and the query can rank the user’s locale
-higher), and `title_sort_nl`/`title_sort_en` when `sort` (folded, so a
-locale-switching UI sorts on the active language).
+preserved), `title_search_nl`/`title_search_en` when `search` (folded; one field
+per locale lets a query `query_by` them and rank the user’s language higher via
+`query_by_weights`, and lets a language that needs a dedicated tokenizer set its
+own `locale` in the schema), and `title_sort_nl`/`title_sort_en` when `sort`
+(folded, so a locale-switching UI sorts on the active language).
+
+The folded search fields already strip diacritics and case, so for European
+languages they need no `locale` in the engine schema — leave it at the default,
+which keeps tokenization diacritic-insensitive. Set a non-English `locale` only
+for a language that needs ICU word segmentation (e.g. Japanese, Thai); note that
+a non-English `locale` makes Typesense _preserve_ diacritics, which is why the
+folding is done here rather than left to the engine.
 
 **Only listed locales are indexed.** A literal whose language tag is not in
 `locales` is not projected at all — no display, no search, no sort field — so it
