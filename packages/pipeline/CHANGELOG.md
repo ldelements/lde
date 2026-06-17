@@ -1,3 +1,9 @@
+## 0.30.17 (2026-06-17)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-health to 0.1.2
+
 ## 0.30.16 (2026-06-16)
 
 ### 🚀 Features
