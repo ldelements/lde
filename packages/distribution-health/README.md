@@ -32,3 +32,6 @@ into a SKOS failure scheme (`<scheme>#${reason}`) with no lookup table.
 
 The normative usability rule and the rejected alternatives are recorded in the
 PRD: netwerk-digitaal-erfgoed/dataset-register#2103.
+
+<!-- 0.1.1 was published to npm without its dist/; this republishes the package with the build output. -->
+
