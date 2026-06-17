@@ -10,9 +10,17 @@ import type { ProvenanceStore } from './store.js';
 
 const { namedNode, literal, quad } = DataFactory;
 
+/**
+ * Local names minted in the LDE provenance vocabulary
+ * (`https://w3id.org/lde/provenance#`).
+ */
+type LdeProvenanceTerm = 'pipelineVersion' | 'status' | 'sourceFingerprint';
+
 // Custom namespace for this pipeline’s flat PROV-O records; not a standard
-// vocabulary, so it has no bundled builder.
-const lde = namespace('https://w3id.org/lde/provenance#');
+// vocabulary, so it has no bundled builder. Constraining the term names makes it
+// typo-safe and autocompleting like the bundled builders — `lde.valeu` is a
+// compile error — while the base IRI stays the single source of truth.
+const lde = namespace<LdeProvenanceTerm>('https://w3id.org/lde/provenance#');
 
 export interface FileLoadedSparqlProvenanceStoreOptions {
   /** Read-only SPARQL endpoint to query for previously-loaded records. */
