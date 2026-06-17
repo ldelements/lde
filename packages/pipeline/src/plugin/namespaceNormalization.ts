@@ -3,11 +3,9 @@ import type { PipelinePlugin } from '../pipeline.js';
 import type { Dataset } from '@lde/dataset';
 import type { Quad } from '@rdfjs/types';
 import { DataFactory } from 'n3';
+import { _void } from '@tpluscode/rdf-ns-builders';
 
 const { namedNode, quad } = DataFactory;
-
-const VOID_CLASS = namedNode('http://rdfs.org/ns/void#class');
-const VOID_PROPERTY = namedNode('http://rdfs.org/ns/void#property');
 
 export interface NamespaceNormalizationOptions {
   /** Namespace URI prefix to match (e.g. `http://schema.org/`). */
@@ -52,7 +50,7 @@ async function* normalizeNamespace(
 ): AsyncIterable<Quad> {
   for await (const q of quads) {
     if (
-      (q.predicate.equals(VOID_CLASS) || q.predicate.equals(VOID_PROPERTY)) &&
+      (q.predicate.equals(_void.class) || q.predicate.equals(_void.property)) &&
       q.object.termType === 'NamedNode' &&
       q.object.value.startsWith(from)
     ) {

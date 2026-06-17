@@ -2,12 +2,9 @@ import type { ExecutorContext, QuadTransform } from '@lde/pipeline';
 import type { Quad } from '@rdfjs/types';
 import prefixes from '@zazuko/prefixes';
 import { DataFactory } from 'n3';
+import { _void } from '@tpluscode/rdf-ns-builders';
 
 const { namedNode, quad } = DataFactory;
-
-const VOID = 'http://rdfs.org/ns/void#';
-const voidProperty = namedNode(`${VOID}property`);
-const voidVocabulary = namedNode(`${VOID}vocabulary`);
 
 export const defaultVocabularies: readonly string[] = [
   ...new Set(Object.values(prefixes)),
@@ -43,7 +40,7 @@ async function* appendVocabularies(
   for await (const q of quads) {
     yield q;
 
-    if (q.predicate.equals(voidProperty)) {
+    if (q.predicate.equals(_void.property)) {
       const propertyUri = q.object.value;
       for (const ns of vocabularies) {
         if (propertyUri.startsWith(ns)) {
@@ -56,6 +53,6 @@ async function* appendVocabularies(
 
   const datasetNode = namedNode(datasetIri);
   for (const vocabUri of detectedVocabularies) {
-    yield quad(datasetNode, voidVocabulary, namedNode(vocabUri));
+    yield quad(datasetNode, _void.vocabulary, namedNode(vocabUri));
   }
 }

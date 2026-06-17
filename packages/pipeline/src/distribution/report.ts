@@ -7,14 +7,16 @@ import {
   DataDumpProbeResult,
   type ProbeResultType,
 } from '@lde/distribution-probe';
+import { rdf, _void, xsd } from '@tpluscode/rdf-ns-builders';
+import namespace from '@rdfjs/namespace';
 
 const { quad, namedNode, literal } = DataFactory;
 
-const RDF = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#';
-const SCHEMA = 'https://schema.org/';
-const VOID = 'http://rdfs.org/ns/void#';
-const XSD = 'http://www.w3.org/2001/XMLSchema#';
-const HTTP_STATUS = 'https://www.w3.org/2011/http-statusCodes#';
+// Custom namespaces not covered by the bundled builders: the bundled `schema`
+// builder is `http://schema.org/`, but this output normalises to the `https://`
+// scheme, and the HTTP status-codes vocabulary is not bundled at all.
+const schema = namespace('https://schema.org/');
+const httpStatus = namespace('https://www.w3.org/2011/http-statusCodes#');
 
 /**
  * Convert probe results into RDF quads describing each probe as a `schema:Action`.
@@ -44,26 +46,25 @@ export async function* probeResultsToQuads(
     const action = namedNode(skolemIri(actionBase, hashSuffix(result.url)));
     actionsByUrl.set(result.url, action);
 
-    yield quad(action, namedNode(`${RDF}type`), namedNode(`${SCHEMA}Action`));
-    yield quad(action, namedNode(`${SCHEMA}target`), namedNode(result.url));
+    yield quad(action, rdf.type, schema.Action);
+    yield quad(action, schema.target, namedNode(result.url));
 
     if (result instanceof NetworkError) {
-      yield quad(action, namedNode(`${SCHEMA}error`), literal(result.message));
+      yield quad(action, schema.error, literal(result.message));
     } else if (result.isSuccess()) {
       yield* successQuads(action, result, datasetIri);
       for (const warning of result.warnings) {
-        yield quad(action, namedNode(`${SCHEMA}error`), literal(warning));
+        yield quad(action, schema.error, literal(warning));
       }
     } else if (result.failureReason) {
-      yield quad(
-        action,
-        namedNode(`${SCHEMA}error`),
-        literal(result.failureReason),
-      );
+      yield quad(action, schema.error, literal(result.failureReason));
     } else {
       // HTTP error
-      const statusUri = `${HTTP_STATUS}${result.statusText.replace(/ /g, '')}`;
-      yield quad(action, namedNode(`${SCHEMA}error`), namedNode(statusUri));
+      yield quad(
+        action,
+        schema.error,
+        httpStatus[result.statusText.replace(/ /g, '')],
+      );
     }
   }
 
@@ -72,11 +73,7 @@ export async function* probeResultsToQuads(
       importResult.distribution.accessUrl.toString(),
     );
     if (action) {
-      yield quad(
-        action,
-        namedNode(`${SCHEMA}error`),
-        literal(importResult.error),
-      );
+      yield quad(action, schema.error, literal(importResult.error));
     }
   }
 }
@@ -88,33 +85,25 @@ function* successQuads(
 ): Iterable<Quad> {
   const distributionUrl = namedNode(result.url);
 
-  yield quad(action, namedNode(`${SCHEMA}result`), distributionUrl);
+  yield quad(action, schema.result, distributionUrl);
 
   if (result.lastModified) {
     yield quad(
       distributionUrl,
-      namedNode(`${SCHEMA}dateModified`),
-      literal(result.lastModified.toISOString(), namedNode(`${XSD}dateTime`)),
+      schema.dateModified,
+      literal(result.lastModified.toISOString(), xsd.dateTime),
     );
   }
 
   if (result instanceof SparqlProbeResult) {
-    yield quad(
-      namedNode(datasetIri),
-      namedNode(`${VOID}sparqlEndpoint`),
-      distributionUrl,
-    );
+    yield quad(namedNode(datasetIri), _void.sparqlEndpoint, distributionUrl);
   } else {
-    yield quad(
-      namedNode(datasetIri),
-      namedNode(`${VOID}dataDump`),
-      distributionUrl,
-    );
+    yield quad(namedNode(datasetIri), _void.dataDump, distributionUrl);
 
     if (result.contentSize) {
       yield quad(
         distributionUrl,
-        namedNode(`${SCHEMA}contentSize`),
+        schema.contentSize,
         literal(result.contentSize.toString()),
       );
     }
@@ -122,7 +111,7 @@ function* successQuads(
     if (result.contentType) {
       yield quad(
         distributionUrl,
-        namedNode(`${SCHEMA}encodingFormat`),
+        schema.encodingFormat,
         literal(result.contentType),
       );
     }

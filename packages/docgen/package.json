@@ -35,6 +35,7 @@
     "!**/*.tsbuildinfo"
   ],
   "dependencies": {
+    "@tpluscode/rdf-ns-builders": "^5.0.0",
     "commander": "^15.0.0",
     "jsonld": "^9.0.0",
     "liquidjs": "^10.27.0",

@@ -2,19 +2,9 @@ import type { ExecutorContext, QuadTransform } from '@lde/pipeline';
 import { hashSuffix, skolemIri } from '@lde/dataset';
 import type { Quad } from '@rdfjs/types';
 import { DataFactory } from 'n3';
+import { rdf, _void, xsd } from '@tpluscode/rdf-ns-builders';
 
 const { namedNode, quad, literal } = DataFactory;
-
-const RDF = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#';
-const VOID = 'http://rdfs.org/ns/void#';
-const XSD = 'http://www.w3.org/2001/XMLSchema#';
-
-const rdfType = namedNode(`${RDF}type`);
-const voidLinkset = namedNode(`${VOID}Linkset`);
-const voidSubjectsTarget = namedNode(`${VOID}subjectsTarget`);
-const voidObjectsTarget = namedNode(`${VOID}objectsTarget`);
-const voidTriples = namedNode(`${VOID}triples`);
-const xsdInteger = namedNode(`${XSD}integer`);
 
 /**
  * Creates a {@link QuadTransform} that consumes `void:Linkset` quads from a
@@ -60,9 +50,9 @@ async function* aggregateUriSpaces(
   >();
   for (const group of linksets.values()) {
     const objectsTarget = group.find((q) =>
-      q.predicate.equals(voidObjectsTarget),
+      q.predicate.equals(_void.objectsTarget),
     )?.object.value;
-    const triplesValue = group.find((q) => q.predicate.equals(voidTriples))
+    const triplesValue = group.find((q) => q.predicate.equals(_void.triples))
       ?.object.value;
 
     if (objectsTarget === undefined || triplesValue === undefined) continue;
@@ -92,10 +82,14 @@ async function* aggregateUriSpaces(
     const linksetNode = namedNode(skolemIri(linksetBase, hashSuffix(uriSpace)));
     const targetDatasetNode = metadata[0].subject;
 
-    yield quad(linksetNode, rdfType, voidLinkset);
-    yield quad(linksetNode, voidSubjectsTarget, datasetNode);
-    yield quad(linksetNode, voidObjectsTarget, targetDatasetNode);
-    yield quad(linksetNode, voidTriples, literal(count.toString(), xsdInteger));
+    yield quad(linksetNode, rdf.type, _void.Linkset);
+    yield quad(linksetNode, _void.subjectsTarget, datasetNode);
+    yield quad(linksetNode, _void.objectsTarget, targetDatasetNode);
+    yield quad(
+      linksetNode,
+      _void.triples,
+      literal(count.toString(), xsd.integer),
+    );
 
     for (const metadataQuad of metadata) {
       yield metadataQuad;

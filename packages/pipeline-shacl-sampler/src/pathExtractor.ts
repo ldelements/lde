@@ -1,25 +1,9 @@
 import { DataFactory, Store } from 'n3';
 import type { NamedNode, Term } from '@rdfjs/types';
 import { rdfDereferencer } from 'rdf-dereference';
+import { rdf, sh } from '@tpluscode/rdf-ns-builders';
 
 const { namedNode } = DataFactory;
-
-const SHACL = 'http://www.w3.org/ns/shacl#';
-const RDF = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#';
-
-const sh = {
-  targetClass: namedNode(`${SHACL}targetClass`),
-  property: namedNode(`${SHACL}property`),
-  path: namedNode(`${SHACL}path`),
-  node: namedNode(`${SHACL}node`),
-  class: namedNode(`${SHACL}class`),
-  or: namedNode(`${SHACL}or`),
-  qualifiedValueShape: namedNode(`${SHACL}qualifiedValueShape`),
-};
-
-const rdfFirst = namedNode(`${RDF}first`);
-const rdfRest = namedNode(`${RDF}rest`);
-const rdfNil = namedNode(`${RDF}nil`);
 
 /**
  * A SHACL `sh:targetClass` shape distilled into the path chains the sampler
@@ -193,15 +177,15 @@ function orListBranches(store: Store, listHead: Term): Term[] {
   const branches: Term[] = [];
   let current: Term = listHead;
   while (
-    !(current.termType === 'NamedNode' && current.value === rdfNil.value)
+    !(current.termType === 'NamedNode' && current.value === rdf.nil.value)
   ) {
     if (current.termType !== 'NamedNode' && current.termType !== 'BlankNode') {
       break;
     }
-    const firsts = store.getQuads(current, rdfFirst, null, null);
+    const firsts = store.getQuads(current, rdf.first, null, null);
     if (firsts.length === 0) break;
     branches.push(firsts[0].object);
-    const rests = store.getQuads(current, rdfRest, null, null);
+    const rests = store.getQuads(current, rdf.rest, null, null);
     if (rests.length === 0) break;
     current = rests[0].object;
   }
