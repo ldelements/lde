@@ -1,3 +1,9 @@
+## 0.1.11 (2026-06-17)
+
+### 🚀 Features
+
+- **distribution-probe:** retry transport errors before reporting unavailable ([#487](https://github.com/ldelements/lde/pull/487))
+
 ## 0.1.10 (2026-06-15)
 
 ### 🧱 Updated Dependencies
