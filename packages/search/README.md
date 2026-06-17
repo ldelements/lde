@@ -93,12 +93,16 @@ per locale lets a query `query_by` them and rank the user’s language higher vi
 own `locale` in the schema), and `title_sort_nl`/`title_sort_en` when `sort`
 (folded, so a locale-switching UI sorts on the active language).
 
-The folded search fields already strip diacritics and case, so for European
-languages they need no `locale` in the engine schema — leave it at the default,
-which keeps tokenization diacritic-insensitive. Set a non-English `locale` only
-for a language that needs ICU word segmentation (e.g. Japanese, Thai); note that
-a non-English `locale` makes Typesense _preserve_ diacritics, which is why the
-folding is done here rather than left to the engine.
+Folding the search fields is what lets diacritic-insensitive matching and
+stemming coexist. A search engine on its **default** locale typically folds case
+and diacritics for you (Typesense v30, verified, even folds ø/æ/ß) — so there the
+folding here is belt-and-suspenders. But enabling a language’s **stemming**
+requires setting that language’s `locale` (e.g. `locale: 'nl'` + `stem: true` so
+`huizen` matches `huis`), and a non-default locale switches the engine to ICU
+tokenization, which **preserves** diacritics. At that point the engine no longer
+folds them, and `fold()` is what keeps matching diacritic-insensitive. Stemming
+is a per-field engine-schema choice (the consumer’s), and being rules-based it
+can mangle proper nouns and place names — worth weighing for name-heavy data.
 
 **Only listed locales are indexed.** A literal whose language tag is not in
 `locales` is not projected at all — no display, no search, no sort field — so it
@@ -121,11 +125,13 @@ projectGraph(quads, projections, { untaggedLanguage: 'nl' });
 ## Querying
 
 The search fields are stored already case- and diacritic-folded, so **the query
-must be folded the same way** before it reaches the engine — with the same
-`fold()` from [`@lde/text-normalization`](../text-normalization). Skipping this
-silently misses matches for non-decomposing letters: a search for `Møhlmann`
-would not find the stored `mohlmann`, because the engine’s own tokenizer
-lowercases and strips decomposing accents but does not transliterate ø/æ/ß.
+must be folded the same way** with the same `fold()` from
+[`@lde/text-normalization`](../text-normalization) before it reaches the engine.
+Otherwise index and query are normalized differently and matches silently miss
+(the user sees no results, with no error). An engine on its default locale would
+fold a raw query for you, but one set to a stemming locale (which preserves
+diacritics) or a non-folding backend will not — so always fold, and matching
+stays correct on any engine.
 
 ```ts
 import { fold } from '@lde/text-normalization';
