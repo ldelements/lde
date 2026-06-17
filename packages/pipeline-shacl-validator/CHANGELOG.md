@@ -1,3 +1,9 @@
+## 0.12.18 (2026-06-17)
+
+### 🩹 Fixes
+
+- **pipeline-shacl-validator:** skolemise validation report blank nodes ([#480](https://github.com/ldelements/lde/pull/480))
+
 ## 0.12.17 (2026-06-17)
 
 ### 🧱 Updated Dependencies
