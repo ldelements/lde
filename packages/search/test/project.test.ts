@@ -44,7 +44,11 @@ const fields: FieldSpec[] = [
     path: `${DR}publisherName`,
     kind: { type: 'langText', search: true, display: true },
   },
-  { name: 'publisher', path: `${DCT}publisher`, kind: { type: 'facet', iri: true } },
+  {
+    name: 'publisher',
+    path: `${DCT}publisher`,
+    kind: { type: 'facet', iri: true },
+  },
   {
     name: 'keyword',
     path: `${DCAT}keyword`,
@@ -126,6 +130,28 @@ describe('projectDocument', () => {
     expect(document.language).toEqual(['true']);
     expect(document.keyword).toEqual(['bareString']);
     expect(document.class).toEqual(['http://example.org/BareClass']);
+  });
+
+  it('folds the transformed values (not the raw ones) for a facet search field', () => {
+    const document = projectDocument(
+      { '@id': 'https://ex/d/4', [`${DR}format`]: [`${IANA}text/turtle`] },
+      {
+        type: DATASET,
+        fields: [
+          {
+            name: 'format',
+            path: `${DR}format`,
+            kind: {
+              type: 'facet',
+              search: true,
+              transform: (value) => value.replace(IANA, ''),
+            },
+          },
+        ],
+      },
+    );
+    expect(document.format).toEqual(['text/turtle']);
+    expect(document.format_search).toEqual(['text/turtle']);
   });
 
   it('omits absent optional fields', () => {

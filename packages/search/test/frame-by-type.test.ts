@@ -51,6 +51,24 @@ describe('frameByType', () => {
     });
   });
 
+  it('embeds one-hop blank-node references', async () => {
+    const nodes = await collect(
+      frameByType(
+        quads(`
+          <https://ex/d/1> <${RDF}type> <${DATASET}> .
+          <https://ex/d/1> <${DCAT}distribution> _:dist .
+          _:dist <${DCT}title> "Distributie"@nl .
+        `),
+        DATASET,
+      ),
+    );
+
+    expect(nodes).toHaveLength(1);
+    expect(nodes[0]![`${DCAT}distribution`]).toMatchObject({
+      [`${DCT}title`]: { '@language': 'nl', '@value': 'Distributie' },
+    });
+  });
+
   it('dedupes triples a CONSTRUCT may emit more than once', async () => {
     const nodes = await collect(
       frameByType(

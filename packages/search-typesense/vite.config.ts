@@ -14,10 +14,10 @@ export default mergeConfig(
       coverage: {
         // Lower than before frame-by-type moved to @lde/search.
         thresholds: {
-          functions: 95,
-          lines: 91,
-          branches: 74,
-          statements: 91,
+          functions: 95.83,
+          lines: 91.54,
+          branches: 76.92,
+          statements: 91.89,
         },
       },
     },

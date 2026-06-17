@@ -14,7 +14,11 @@ function triples(...pairs: ReadonlyArray<[string, string]>): Quad[] {
 }
 
 const fields: readonly FrameField[] = [
-  { field: 'title', predicate: 'http://purl.org/dc/terms/title', type: 'string' },
+  {
+    field: 'title',
+    predicate: 'http://purl.org/dc/terms/title',
+    type: 'string',
+  },
   {
     field: 'keyword',
     predicate: 'http://www.w3.org/ns/dcat#keyword',
@@ -74,6 +78,18 @@ describe('frame', () => {
     expect(document.date_posted).toBe(
       Math.trunc(Date.parse('2024-01-02T00:00:00.000Z') / 1000),
     );
+  });
+
+  it('omits numeric and date fields whose value does not parse', () => {
+    const document = frame(
+      triples(
+        ['http://rdfs.org/ns/void#triples', 'not-a-number'],
+        ['https://schema.org/datePosted', 'not-a-date'],
+      ),
+      SUBJECT,
+      fields,
+    );
+    expect(document).toEqual({ id: SUBJECT });
   });
 
   it('omits fields whose predicate has no quad', () => {

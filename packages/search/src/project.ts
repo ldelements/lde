@@ -162,7 +162,7 @@ function applyFacet(
     setArray(
       document,
       `${name}_search`,
-      dedupe(raw.map((value) => fold(value))),
+      dedupe(values.map((value) => fold(value))),
     );
   }
 }

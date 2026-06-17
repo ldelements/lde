@@ -34,7 +34,7 @@ export async function* frameByType(
 }
 
 /** One self-contained quad subgraph per root subject: its own (deduped) triples
- *  plus the triples of the one-hop IRI nodes it references. */
+ *  plus the triples of the one-hop IRI or blank nodes it references. */
 function groupByRoot(quads: readonly Quad[], rootType: string): Quad[][] {
   const bySubject = new Map<string, Quad[]>();
   const rootIris = new Set<string>();
@@ -60,7 +60,11 @@ function groupByRoot(quads: readonly Quad[], rootType: string): Quad[][] {
   return [...rootIris].map((iri) => {
     const owned = bySubject.get(iri) ?? [];
     const referenced = owned
-      .filter((quad) => quad.object.termType === 'NamedNode')
+      .filter(
+        (quad) =>
+          quad.object.termType === 'NamedNode' ||
+          quad.object.termType === 'BlankNode',
+      )
       .flatMap((quad) => bySubject.get(quad.object.value) ?? []);
     return [...owned, ...referenced];
   });

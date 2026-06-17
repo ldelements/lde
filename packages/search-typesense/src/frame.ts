@@ -53,7 +53,13 @@ export function frame(
     if (values === undefined || values.length === 0) {
       continue;
     }
-    document[field] = coerce(values, type);
+    const coerced = coerce(values, type);
+    // Drop fields whose value did not parse (e.g. a non-numeric `int`), so a
+    // bad triple omits the field rather than writing NaN, which Typesense
+    // rejects for a typed numeric field.
+    if (coerced !== undefined) {
+      document[field] = coerced;
+    }
   }
   return document;
 }
@@ -65,12 +71,18 @@ function coerce(values: string[], type: FrameFieldType): unknown {
     case 'string[]':
       return values;
     case 'int':
-      return Math.trunc(Number(values[0]));
+      return finiteOrUndefined(Math.trunc(Number(values[0])));
     case 'float':
-      return Number(values[0]);
+      return finiteOrUndefined(Number(values[0]));
     case 'bool':
       return values[0] === 'true' || values[0] === '1';
     case 'unixtime':
-      return Math.trunc(new Date(values[0]).getTime() / 1000);
+      return finiteOrUndefined(
+        Math.trunc(new Date(values[0]).getTime() / 1000),
+      );
   }
+}
+
+function finiteOrUndefined(value: number): number | undefined {
+  return Number.isNaN(value) ? undefined : value;
 }
