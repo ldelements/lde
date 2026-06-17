@@ -13,17 +13,27 @@ export type SearchDocument = { id: string } & Record<string, unknown>;
  */
 export type FieldKind = LangTextKind | FacetKind | NumberKind;
 
-/** Language-tagged text → per-locale display + a folded search field. */
+/**
+ * Language-tagged text, projected per locale. `locales` is the single source of
+ * truth for which languages this field emits — every family fans out over it:
+ * - `${name}_${locale}` display label, accents preserved (always);
+ * - `${name}_search_${locale}` folded match field, when `search` (one per
+ *   locale so the engine can tokenize each language and the query can rank the
+ *   user’s locale higher);
+ * - `${name}_sort_${locale}` folded sort key, when `sort` (one per locale so a
+ *   locale-switching UI sorts on the active language).
+ *
+ * Only listed locales are projected: a value whose language tag is not in
+ * `locales` (and is not mapped in by `untaggedLanguage`) is not indexed at all.
+ */
 export interface LangTextKind {
   readonly type: 'langText';
-  /** Per-locale display fields `${name}_${locale}` (accents preserved). */
-  readonly locales?: readonly string[];
-  /** Folded `${name}_search` over all language values (diacritic-insensitive). */
+  /** The languages to project; drives the display, search and sort families. */
+  readonly locales: readonly string[];
+  /** Also emit a folded `${name}_search_${locale}` per locale (matchable). */
   readonly search?: boolean;
-  /** Folded `${name}_sort` over the best-effort primary value. */
+  /** Also emit a folded `${name}_sort_${locale}` per locale (sortable). */
   readonly sort?: boolean;
-  /** Single best-effort display `${name}_name` (nl → en → untagged → first). */
-  readonly display?: boolean;
 }
 
 /** A faceted multi-value field, optionally also folded for search. */
@@ -70,7 +80,15 @@ export interface Projection {
   readonly derivations?: readonly Derivation[];
 }
 
-const DISPLAY_FALLBACK = ['nl', 'en', ''] as const;
+/** Cross-cutting projection options that are deployment-level, not per-shape. */
+export interface ProjectionOptions {
+  /**
+   * Interpret untagged literals (no `@language`) as this language, e.g. a
+   * source whose strings are all Dutch. The re-tagged value then projects into
+   * that locale’s fields like any tagged value. Left untagged (`''`) when unset.
+   */
+  readonly untaggedLanguage?: string;
+}
 
 /**
  * Project one framed JSON-LD node into a flat search document: apply each field
@@ -79,6 +97,7 @@ const DISPLAY_FALLBACK = ['nl', 'en', ''] as const;
 export function projectDocument(
   node: FramedSubject,
   projection: Projection,
+  options: ProjectionOptions = {},
 ): SearchDocument {
   const id = node['@id'];
   if (typeof id !== 'string') {
@@ -88,7 +107,7 @@ export function projectDocument(
   }
   const document: SearchDocument = { id };
   for (const field of projection.fields) {
-    applyField(document, node, field);
+    applyField(document, node, field, options);
   }
   for (const derive of projection.derivations ?? []) {
     derive(document, node);
@@ -105,13 +124,14 @@ export function projectDocument(
 export async function* projectGraph(
   quads: readonly Quad[],
   projections: readonly Projection[],
+  options: ProjectionOptions = {},
 ): AsyncIterable<SearchDocument> {
   const byType = new Map(
     projections.map((projection) => [projection.type, projection]),
   );
   for (const projection of byType.values()) {
     for await (const node of frameByType(quads, projection.type)) {
-      yield projectDocument(node, projection);
+      yield projectDocument(node, projection, options);
     }
   }
 }
@@ -120,10 +140,16 @@ function applyField(
   document: SearchDocument,
   node: FramedSubject,
   field: FieldSpec,
+  options: ProjectionOptions,
 ): void {
   switch (field.kind.type) {
     case 'langText':
-      return applyLangText(document, langValuesOf(node, field.path), field);
+      return applyLangText(
+        document,
+        langValuesOf(node, field.path),
+        field,
+        options,
+      );
     case 'facet':
       return applyFacet(document, node, field);
     case 'number':
@@ -135,21 +161,42 @@ function applyLangText(
   document: SearchDocument,
   values: readonly LangValue[],
   { name, kind }: FieldSpec,
+  { untaggedLanguage }: ProjectionOptions,
 ): void {
   const text = kind as LangTextKind;
-  for (const locale of text.locales ?? []) {
-    const match = values.find((value) => value.lang === locale)?.value;
-    setString(document, `${name}_${locale}`, match);
+  if (text.locales.length === 0) {
+    throw new Error(
+      `langText field “${name}” must declare at least one locale; nothing would be projected otherwise.`,
+    );
   }
-  if (text.search) {
-    const folded = fold(values.map((value) => value.value).join(' ')).trim();
-    setString(document, `${name}_search`, folded);
-  }
-  if (text.display) {
-    setString(document, `${name}_name`, localized(values));
-  }
-  if (text.sort) {
-    setString(document, `${name}_sort`, fold(localized(values) ?? ''));
+  const tagged =
+    untaggedLanguage === undefined
+      ? values
+      : values.map((value) =>
+          value.lang === '' ? { ...value, lang: untaggedLanguage } : value,
+        );
+  for (const locale of text.locales) {
+    const localeValues = tagged
+      .filter((value) => value.lang === locale)
+      .map((value) => value.value);
+    if (localeValues.length === 0) {
+      continue;
+    }
+    // Display shows one label (accents preserved); sort keys off that same
+    // primary value (folded); search folds every value of the locale so all
+    // are matchable. Absent locales emit nothing (the field stays optional).
+    const [primary] = localeValues;
+    setString(document, `${name}_${locale}`, primary);
+    if (text.search) {
+      setString(
+        document,
+        `${name}_search_${locale}`,
+        fold(localeValues.join(' ')).trim(),
+      );
+    }
+    if (text.sort) {
+      setString(document, `${name}_sort_${locale}`, fold(primary));
+    }
   }
 }
 
@@ -265,16 +312,6 @@ function iriString(value: unknown): string | undefined {
     return value['@id'];
   }
   return undefined;
-}
-
-function localized(values: readonly LangValue[]): string | undefined {
-  for (const lang of DISPLAY_FALLBACK) {
-    const match = values.find((value) => value.lang === lang)?.value;
-    if (match !== undefined) {
-      return match;
-    }
-  }
-  return values[0]?.value;
 }
 
 function isoToUnix(iso: string): number | undefined {

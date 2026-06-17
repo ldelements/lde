@@ -11,6 +11,7 @@ export {
 export type {
   SearchDocument,
   Projection,
+  ProjectionOptions,
   FieldSpec,
   FieldKind,
   LangTextKind,

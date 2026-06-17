@@ -5,7 +5,7 @@ engine and no vocabulary baked in:
 
 1. **`frameByType(quads, rootType)`** — frame the result of a SPARQL `CONSTRUCT`
    into one JSON-LD IR node per subject of `rootType`.
-2. **`projectDocument(node, fields, derivations)`** — turn that IR node into a
+2. **`projectDocument(node, projection, options?)`** — turn that IR node into a
    flat search document from a **declarative field spec**.
 
 An engine adapter (e.g. [`@lde/search-typesense`](../search-typesense)) then
@@ -40,39 +40,75 @@ coercion) are applied for you. Computed fields are `derivations` — hooks that
 read the node and set fields the kinds can't.
 
 ```ts
-import { projectDocument, irisOf, type FieldSpec } from '@lde/search';
+import { projectDocument, irisOf, type Projection } from '@lde/search';
 
-const fields: FieldSpec[] = [
-  // → title_nl, title_en, title_search (folded), title_sort
-  {
-    name: 'title',
-    path: 'http://purl.org/dc/terms/title',
-    kind: { type: 'langText', locales: ['nl', 'en'], search: true, sort: true },
-  },
-  // → publisher (IRI facet)
-  {
-    name: 'publisher',
-    path: 'http://purl.org/dc/terms/publisher',
-    kind: { type: 'facet', iri: true },
-  },
-  // → size (int)
-  { name: 'size', path: 'urn:dr:size', kind: { type: 'number' } },
-];
+const projection: Projection = {
+  type: 'http://www.w3.org/ns/dcat#Dataset',
+  fields: [
+    // → title_nl, title_en, title_search_nl, title_search_en, title_sort_nl, title_sort_en
+    {
+      name: 'title',
+      path: 'http://purl.org/dc/terms/title',
+      kind: {
+        type: 'langText',
+        locales: ['nl', 'en'],
+        search: true,
+        sort: true,
+      },
+    },
+    // → publisher (IRI facet)
+    {
+      name: 'publisher',
+      path: 'http://purl.org/dc/terms/publisher',
+      kind: { type: 'facet', iri: true },
+    },
+    // → size (int)
+    { name: 'size', path: 'urn:dr:size', kind: { type: 'number' } },
+  ],
+  derivations: [
+    (document, framed) => {
+      document.class_count = irisOf(framed, 'urn:dr:class').length;
+    },
+  ],
+};
 
-const doc = projectDocument(node, fields, [
-  (document, framed) => {
-    document.class_count = irisOf(framed, 'urn:dr:class').length;
-  },
-]);
+const doc = projectDocument(node, projection);
 ```
 
 **Kinds**
 
-| kind       | emits                                                                                                          |
-| ---------- | -------------------------------------------------------------------------------------------------------------- |
-| `langText` | `_nl`/`_en` (locales), `_search` (folded), `_sort`, `_name` (single display)                                   |
-| `facet`    | the field as a deduped array; `iri` reads `@id`; `search` adds a folded `_search`; `transform` rewrites values |
-| `number`   | a numeric scalar; `date` parses an ISO date-time to unix seconds                                               |
+| kind       | emits                                                                                                                                             |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `langText` | per locale (see below): `_${locale}` display (accents kept), `_search_${locale}` (folded, with `search`), `_sort_${locale}` (folded, with `sort`) |
+| `facet`    | the field as a deduped array; `iri` reads `@id`; `search` adds a folded `_search`; `transform` rewrites values                                    |
+| `number`   | a numeric scalar; `date` parses an ISO date-time to unix seconds                                                                                  |
+
+## Locales
+
+`locales` is the **single** list of languages a `langText` field projects, and
+every family fans out over it: `title_nl`/`title_en` for display (accents
+preserved), `title_search_nl`/`title_search_en` when `search` (folded, so the
+engine can tokenize each language and the query can rank the user’s locale
+higher), and `title_sort_nl`/`title_sort_en` when `sort` (folded, so a
+locale-switching UI sorts on the active language).
+
+**Only listed locales are indexed.** A literal whose language tag is not in
+`locales` is not projected at all — no display, no search, no sort field — so it
+is invisible to the index. To index a language, add it to `locales`.
+
+Per-locale fields are **omitted, never empty**, when a document lacks that
+language, so declare them `optional: true` in the engine schema. At query time,
+sort with `missing_values: last` to push documents lacking the active locale to
+the end, and `query_by` all the per-locale search fields (weighting the user’s
+locale higher) to keep cross-language recall.
+
+Untagged literals (no `@language`) are dropped unless you set `untaggedLanguage`,
+which interprets every untagged string as one language — e.g. a source whose
+strings are all Dutch:
+
+```ts
+projectGraph(quads, projections, { untaggedLanguage: 'nl' });
+```
 
 ## Why a spec
 

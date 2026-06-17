@@ -42,7 +42,7 @@ const fields: FieldSpec[] = [
   {
     name: 'publisher',
     path: `${DR}publisherName`,
-    kind: { type: 'langText', search: true, display: true },
+    kind: { type: 'langText', locales: ['nl', 'en'], search: true },
   },
   {
     name: 'publisher',
@@ -83,10 +83,13 @@ describe('projectDocument', () => {
     expect(document.id).toBe('https://ex/d/1');
     expect(document.title_nl).toBe('Titel');
     expect(document.title_en).toBe('Title');
-    expect(document.title_search).toBe('titel title');
-    expect(document.title_sort).toBe('titel');
-    expect(document.publisher_search).toBe('erfgoed');
-    expect(document.publisher_name).toBe('Erfgoed');
+    expect(document.title_search_nl).toBe('titel');
+    expect(document.title_search_en).toBe('title');
+    expect(document.title_sort_nl).toBe('titel');
+    expect(document.title_sort_en).toBe('title');
+    expect(document.publisher_nl).toBe('Erfgoed');
+    expect(document.publisher_search_nl).toBe('erfgoed');
+    expect(document.publisher_en).toBeUndefined();
     expect(document.publisher).toEqual(['https://ex/o/1']);
     expect(document.keyword).toEqual(['Erfgoed']);
     expect(document.keyword_search).toEqual(['erfgoed']);
@@ -156,11 +159,14 @@ describe('projectDocument', () => {
 
   it('omits absent optional fields', () => {
     const document = projectDocument(
-      { '@id': 'https://ex/d/2', [`${DCT}title`]: { '@value': 'Solo' } },
+      {
+        '@id': 'https://ex/d/2',
+        [`${DCT}title`]: { '@language': 'nl', '@value': 'Solo' },
+      },
       { type: DATASET, fields },
     );
     expect(document.id).toBe('https://ex/d/2');
-    expect(document.title_search).toBe('solo');
+    expect(document.title_search_nl).toBe('solo');
     expect(document.publisher).toBeUndefined();
     expect(document.size).toBeUndefined();
   });
@@ -171,7 +177,51 @@ describe('projectDocument', () => {
       { type: DATASET, fields },
     );
     expect(document.id).toBe('https://ex/d/5');
-    expect(document.title_sort).toBeUndefined();
+    expect(document.title_sort_nl).toBeUndefined();
+  });
+
+  it('does not index a value whose language is not in locales', () => {
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/d/6',
+        [`${DCT}title`]: { '@language': 'fr', '@value': 'Bonjour' },
+      },
+      { type: DATASET, fields },
+    );
+    // locales is ['nl', 'en'], so the French title is invisible — no display,
+    // search or sort field is emitted for it.
+    expect(document.title_nl).toBeUndefined();
+    expect(document.title_en).toBeUndefined();
+    expect(document.title_search_nl).toBeUndefined();
+    expect(document.title_sort_nl).toBeUndefined();
+  });
+
+  it('maps untagged literals into the configured untaggedLanguage', () => {
+    const document = projectDocument(
+      { '@id': 'https://ex/d/7', [`${DCT}title`]: { '@value': 'Naamloos' } },
+      { type: DATASET, fields },
+      { untaggedLanguage: 'nl' },
+    );
+    expect(document.title_nl).toBe('Naamloos');
+    expect(document.title_search_nl).toBe('naamloos');
+    expect(document.title_sort_nl).toBe('naamloos');
+    expect(document.title_en).toBeUndefined();
+  });
+
+  it('folds every value of a locale into its search field', () => {
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/d/8',
+        [`${DCT}title`]: [
+          { '@language': 'nl', '@value': 'Titel' },
+          { '@language': 'nl', '@value': 'Ondertitel' },
+        ],
+      },
+      { type: DATASET, fields },
+    );
+    // Display takes the first value; search folds them all so both are matchable.
+    expect(document.title_nl).toBe('Titel');
+    expect(document.title_search_nl).toBe('titel ondertitel');
   });
 
   it('throws when the framed node has no @id', () => {
@@ -181,6 +231,27 @@ describe('projectDocument', () => {
         { type: DATASET, fields },
       ),
     ).toThrow(/without an @id/);
+  });
+
+  it('throws when a langText field declares no locales', () => {
+    expect(() =>
+      projectDocument(
+        {
+          '@id': 'https://ex/d/9',
+          [`${DCT}title`]: { '@language': 'nl', '@value': 'Titel' },
+        },
+        {
+          type: DATASET,
+          fields: [
+            {
+              name: 'title',
+              path: `${DCT}title`,
+              kind: { type: 'langText', locales: [] },
+            },
+          ],
+        },
+      ),
+    ).toThrow(/at least one locale/);
   });
 });
 
@@ -205,7 +276,7 @@ describe('projectGraph', () => {
     const ids = documents.map((document) => document.id).sort();
     expect(ids).toEqual(['https://ex/d/1', 'https://ex/d/2']);
     const byId = Object.fromEntries(documents.map((d) => [d.id, d]));
-    expect(byId['https://ex/d/1'].title_search).toBe('titel');
+    expect(byId['https://ex/d/1'].title_search_nl).toBe('titel');
     expect(byId['https://ex/d/2'].title_nl).toBe('Andere');
   });
 });
