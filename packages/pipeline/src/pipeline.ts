@@ -33,6 +33,7 @@ import type {
   DistributionAnalysisResult,
   ProgressReporter,
 } from './progressReporter.js';
+import { combineReporters } from './combineReporters.js';
 import type { Validator } from './validator.js';
 import {
   ConstantTimeoutPolicy,
@@ -75,7 +76,13 @@ export interface PipelineOptions {
     stageOutputResolver: StageOutputResolver;
     outputDir: string;
   };
-  reporter?: ProgressReporter;
+  /**
+   * Observer(s) notified of pipeline lifecycle events. Pass an array to have
+   * several reporters observe the same run – e.g. a console reporter alongside
+   * a verdict-collecting one; every reporter receives each event in array
+   * order. A single reporter may be passed directly.
+   */
+  reporter?: ProgressReporter | readonly ProgressReporter[];
   /**
    * Optional per-dataset processing memory. When set, the pipeline skips a
    * dataset whose source-change fingerprint and {@link pipelineVersion} both
@@ -234,7 +241,11 @@ export class Pipeline {
     this.distributionResolver =
       options.distributionResolver ?? new SparqlDistributionResolver();
     this.chaining = options.chaining;
-    this.reporter = options.reporter;
+    // `Array.isArray` narrows the array branch but not the readonly-array out of
+    // the else branch, so cast the single-reporter case explicitly.
+    this.reporter = Array.isArray(options.reporter)
+      ? combineReporters(options.reporter)
+      : (options.reporter as ProgressReporter | undefined);
     this.timeoutFactory =
       options.timeout ?? (() => new ConstantTimeoutPolicy(300_000));
     this.provenanceStore = options.provenanceStore;
