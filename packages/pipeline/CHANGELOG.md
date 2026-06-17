@@ -1,3 +1,9 @@
+## 0.30.18 (2026-06-17)
+
+### 🚀 Features
+
+- **pipeline:** accept multiple progress reporters ([#483](https://github.com/ldelements/lde/pull/483))
+
 ## 0.30.17 (2026-06-17)
 
 ### 🧱 Updated Dependencies

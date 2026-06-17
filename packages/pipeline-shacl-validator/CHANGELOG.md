@@ -1,3 +1,9 @@
+## 0.12.19 (2026-06-17)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.30.18
+
 ## 0.12.18 (2026-06-17)
 
 ### 🩹 Fixes

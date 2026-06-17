@@ -1,3 +1,7 @@
+## 0.6.17 (2026-06-17)
+
+This was a version bump only for @lde/docgen to align it with other projects, there were no code changes.
+
 ## 0.6.16 (2026-04-29)
 
 ### 🩹 Fixes
