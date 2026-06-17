@@ -795,6 +795,12 @@ describe('probe', () => {
   });
 
   describe('network error', () => {
+    const sparqlOk = () =>
+      new Response('{"results": {"bindings": []}}', {
+        status: 200,
+        headers: { 'Content-Type': 'application/sparql-results+json' },
+      });
+
     it('returns NetworkError on fetch failure', async () => {
       vi.mocked(fetch).mockRejectedValue(new Error('Connection refused'));
 
@@ -802,11 +808,174 @@ describe('probe', () => {
         new URL('http://example.org/sparql'),
       );
 
-      const result = await probe(distribution);
+      const result = await probe(distribution, { retries: 0 });
 
       expect(result).toBeInstanceOf(NetworkError);
       expect((result as NetworkError).message).toBe('Connection refused');
       expect((result as NetworkError).responseTimeMs).toBeGreaterThanOrEqual(0);
+    });
+
+    it('does not retry when retries is 0', async () => {
+      vi.mocked(fetch).mockRejectedValue(new Error('Connection refused'));
+
+      const distribution = Distribution.sparql(
+        new URL('http://example.org/sparql'),
+      );
+
+      const result = await probe(distribution, { retries: 0 });
+
+      expect(result).toBeInstanceOf(NetworkError);
+      expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
+    });
+
+    it('retries a transport error and succeeds on a later attempt', async () => {
+      vi.mocked(fetch)
+        .mockRejectedValueOnce(new Error('fetch failed'))
+        .mockResolvedValueOnce(sparqlOk());
+
+      const distribution = Distribution.sparql(
+        new URL('http://example.org/sparql'),
+      );
+
+      const result = await probe(distribution, { retries: 1 });
+
+      expect(result).toBeInstanceOf(SparqlProbeResult);
+      expect((result as SparqlProbeResult).isSuccess()).toBe(true);
+      expect(vi.mocked(fetch)).toHaveBeenCalledTimes(2);
+    });
+
+    it('returns a NetworkError once retries are exhausted', async () => {
+      const cause = Object.assign(new Error('other side closed'), {
+        code: 'UND_ERR_SOCKET',
+      });
+      vi.mocked(fetch).mockRejectedValue(
+        Object.assign(new Error('fetch failed'), { cause }),
+      );
+
+      const distribution = Distribution.sparql(
+        new URL('http://example.org/sparql'),
+      );
+
+      const result = await probe(distribution, { retries: 2 });
+
+      expect(result).toBeInstanceOf(NetworkError);
+      expect(vi.mocked(fetch)).toHaveBeenCalledTimes(3);
+    });
+
+    it('includes the underlying error cause in the message', async () => {
+      const cause = Object.assign(new Error('other side closed'), {
+        code: 'UND_ERR_SOCKET',
+      });
+      vi.mocked(fetch).mockRejectedValue(
+        Object.assign(new Error('fetch failed'), { cause }),
+      );
+
+      const distribution = Distribution.sparql(
+        new URL('http://example.org/sparql'),
+      );
+
+      const result = await probe(distribution, { retries: 0 });
+
+      expect((result as NetworkError).message).toBe(
+        'fetch failed (UND_ERR_SOCKET: other side closed)',
+      );
+    });
+
+    it('reports a cause that carries no error code', async () => {
+      vi.mocked(fetch).mockRejectedValue(
+        Object.assign(new Error('fetch failed'), {
+          cause: new Error('socket hang up'),
+        }),
+      );
+
+      const distribution = Distribution.sparql(
+        new URL('http://example.org/sparql'),
+      );
+
+      const result = await probe(distribution, { retries: 0 });
+
+      expect((result as NetworkError).message).toBe(
+        'fetch failed (socket hang up)',
+      );
+    });
+
+    it('does not duplicate a cause whose message equals the error message', async () => {
+      vi.mocked(fetch).mockRejectedValue(
+        Object.assign(new Error('boom'), { cause: new Error('boom') }),
+      );
+
+      const distribution = Distribution.sparql(
+        new URL('http://example.org/sparql'),
+      );
+
+      const result = await probe(distribution, { retries: 0 });
+
+      expect((result as NetworkError).message).toBe('boom');
+    });
+
+    it('reports a non-Error cause', async () => {
+      vi.mocked(fetch).mockRejectedValue(
+        Object.assign(new Error('fetch failed'), { cause: 'ECONNRESET' }),
+      );
+
+      const distribution = Distribution.sparql(
+        new URL('http://example.org/sparql'),
+      );
+
+      const result = await probe(distribution, { retries: 0 });
+
+      expect((result as NetworkError).message).toBe(
+        'fetch failed (ECONNRESET)',
+      );
+    });
+
+    it('stringifies a non-Error rejection', async () => {
+      vi.mocked(fetch).mockRejectedValue('catastrophe');
+
+      const distribution = Distribution.sparql(
+        new URL('http://example.org/sparql'),
+      );
+
+      const result = await probe(distribution, { retries: 0 });
+
+      expect((result as NetworkError).message).toBe('catastrophe');
+    });
+
+    it('does not retry an HTTP error response', async () => {
+      vi.mocked(fetch).mockResolvedValue(
+        new Response('', { status: 500, statusText: 'Internal Server Error' }),
+      );
+
+      const distribution = Distribution.sparql(
+        new URL('http://example.org/sparql'),
+      );
+
+      const result = await probe(distribution, { retries: 2 });
+
+      expect(result).toBeInstanceOf(SparqlProbeResult);
+      expect((result as SparqlProbeResult).isSuccess()).toBe(false);
+      expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not retry a content-validation failure', async () => {
+      vi.mocked(fetch).mockResolvedValue(
+        new Response('not json', {
+          status: 200,
+          headers: { 'Content-Type': 'application/sparql-results+json' },
+        }),
+      );
+
+      const distribution = Distribution.sparql(
+        new URL('http://example.org/sparql'),
+      );
+
+      const result = await probe(distribution, { retries: 2 });
+
+      expect(result).toBeInstanceOf(SparqlProbeResult);
+      expect((result as SparqlProbeResult).failureReason).toBe(
+        'SPARQL endpoint returned invalid JSON',
+      );
+      expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
     });
   });
 

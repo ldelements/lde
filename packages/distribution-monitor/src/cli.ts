@@ -15,6 +15,7 @@ interface MonitorContext {
     databaseUrl: string;
     intervalSeconds?: number;
     timeoutMs?: number;
+    retries?: number;
     monitors: MonitorConfig[];
   };
   store: PostgresObservationStore;
@@ -59,6 +60,7 @@ async function loadMonitorContext(
     monitors: config.monitors,
     intervalSeconds: config.intervalSeconds,
     timeoutMs: config.timeoutMs,
+    retries: config.retries,
   });
 
   return {

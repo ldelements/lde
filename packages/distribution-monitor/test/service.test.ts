@@ -182,6 +182,61 @@ describe('MonitorService', () => {
         expect.objectContaining({ timeoutMs: 10_000, headers }),
       );
     });
+
+    it('forwards the configured retry count to the probe', async () => {
+      const store = createMockStore();
+      const probe = vi.fn().mockResolvedValue(
+        new SparqlProbeResult(
+          'http://example.org/sparql',
+          new Response('{"boolean": true}', {
+            status: 200,
+            headers: { 'Content-Type': 'application/sparql-results+json' },
+          }),
+          1,
+          'application/sparql-results+json',
+        ),
+      );
+      const service = new MonitorService({
+        store,
+        monitors: testMonitors,
+        probe,
+        retries: 3,
+      });
+
+      await service.checkNow('sparql-monitor');
+
+      expect(probe).toHaveBeenCalledWith(
+        sparqlDistribution,
+        expect.objectContaining({ retries: 3 }),
+      );
+    });
+
+    it('omits retries when not configured, leaving the probe default', async () => {
+      const store = createMockStore();
+      const probe = vi.fn().mockResolvedValue(
+        new SparqlProbeResult(
+          'http://example.org/sparql',
+          new Response('{"boolean": true}', {
+            status: 200,
+            headers: { 'Content-Type': 'application/sparql-results+json' },
+          }),
+          1,
+          'application/sparql-results+json',
+        ),
+      );
+      const service = new MonitorService({
+        store,
+        monitors: testMonitors,
+        probe,
+      });
+
+      await service.checkNow('sparql-monitor');
+
+      expect(probe).toHaveBeenCalledWith(
+        sparqlDistribution,
+        expect.not.objectContaining({ retries: expect.anything() }),
+      );
+    });
   });
 
   describe('checkAll', () => {

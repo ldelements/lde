@@ -32,4 +32,6 @@ Sends `HEAD` with `Accept: <distribution.mimeType>` and `Accept-Encoding: identi
 
 ### Network errors
 
-Any thrown exception from `fetch` (DNS, connection refused, TLS, timeout after the configured `timeout` – default 5 000 ms) is caught and returned as a `NetworkError` with the original message.
+A thrown exception from `fetch` (DNS failure, connection refused, socket reset, TLS error, timeout after the configured `timeoutMs` – default 5 000 ms) is a connection-level failure. The probe retries these up to `retries` times (default 2) with a short backoff before giving up and returning a `NetworkError`. This turns a transient transport blip into a reliable single measurement without looking backward across checks; a genuine outage still reports immediately, since every attempt fails. HTTP error responses (4xx/5xx) and content-validation failures are real ‘down’ states and are **never** retried.
+
+`NetworkError.message` includes the underlying `error.cause` (e.g. `ECONNRESET`, `UND_ERR_SOCKET “other side closed”`) when Node wraps one, so observations record what actually failed rather than a bare ‘fetch failed’.

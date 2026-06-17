@@ -41,6 +41,12 @@ export interface DistributionMonitorConfig {
   intervalSeconds?: number;
   /** Request timeout in milliseconds (default: 30 000). */
   timeoutMs?: number;
+  /**
+   * How many times the probe retries a connection-level failure before
+   * recording a distribution as unavailable (default: the probe’s own
+   * default). Set to `0` to disable retries.
+   */
+  retries?: number;
   /** Monitor definitions. */
   monitors: RawMonitorConfig[];
 }
@@ -90,12 +96,14 @@ export function normalizeConfig(raw: DistributionMonitorConfig): {
   databaseUrl?: string;
   intervalSeconds?: number;
   timeoutMs?: number;
+  retries?: number;
   monitors: MonitorConfig[];
 } {
   return {
     databaseUrl: raw.databaseUrl,
     intervalSeconds: raw.intervalSeconds,
     timeoutMs: raw.timeoutMs,
+    retries: raw.retries,
     monitors: raw.monitors.map((m) => ({
       identifier: m.identifier,
       distribution: toDistribution(m.distribution),
