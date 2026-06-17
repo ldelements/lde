@@ -54,3 +54,4 @@ vite.base.config.d.ts.map
 .claude/settings.local.json
 .nx/polygraph
 .nx/self-healing
+.nx/migrate-runs
