@@ -1,3 +1,9 @@
+## 0.1.2 (2026-06-17)
+
+### 🩹 Fixes
+
+- **distribution-health:** republish to include missing dist build output ([#479](https://github.com/ldelements/lde/pull/479))
+
 ## 0.1.1 (2026-06-15)
 
 ### 🧱 Updated Dependencies
