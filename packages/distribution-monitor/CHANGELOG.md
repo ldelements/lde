@@ -1,3 +1,9 @@
+## 0.1.15 (2026-06-18)
+
+### 🩹 Fixes
+
+- **distribution-monitor:** maintain latest observations by upsert, not a materialized view ([#493](https://github.com/ldelements/lde/pull/493))
+
 ## 0.1.14 (2026-06-18)
 
 ### 🩹 Fixes
