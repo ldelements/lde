@@ -1,12 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { Parser } from 'n3';
+import { dcat, dcterms, foaf, rdf } from '@tpluscode/rdf-ns-builders';
 import { frameByType, type FramedSubject } from '../src/frame-by-type.js';
 
-const RDF = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#';
-const DCAT = 'http://www.w3.org/ns/dcat#';
-const DCT = 'http://purl.org/dc/terms/';
-const FOAF = 'http://xmlns.com/foaf/0.1/';
-const DATASET = `${DCAT}Dataset`;
+const DATASET = dcat.Dataset.value;
 
 function quads(ntriples: string) {
   return new Parser({ format: 'N-Triples' }).parse(ntriples);
@@ -27,12 +24,12 @@ describe('frameByType', () => {
     const nodes = await collect(
       frameByType(
         quads(`
-          <https://ex/d/1> <${RDF}type> <${DATASET}> .
-          <https://ex/d/1> <${DCT}title> "Titel"@nl .
-          <https://ex/d/1> <${DCT}publisher> <https://ex/o/1> .
-          <https://ex/o/1> <${FOAF}name> "Org"@nl .
-          <https://ex/d/2> <${RDF}type> <${DATASET}> .
-          <https://ex/d/2> <${DCT}title> "Andere"@nl .
+          <https://ex/d/1> <${rdf.type.value}> <${DATASET}> .
+          <https://ex/d/1> <${dcterms.title.value}> "Titel"@nl .
+          <https://ex/d/1> <${dcterms.publisher.value}> <https://ex/o/1> .
+          <https://ex/o/1> <${foaf.name.value}> "Org"@nl .
+          <https://ex/d/2> <${rdf.type.value}> <${DATASET}> .
+          <https://ex/d/2> <${dcterms.title.value}> "Andere"@nl .
         `),
         DATASET,
       ),
@@ -41,11 +38,11 @@ describe('frameByType', () => {
     expect(nodes).toHaveLength(2);
     const byId = Object.fromEntries(nodes.map((node) => [node['@id'], node]));
     // The one-hop publisher node is embedded with its name.
-    expect(byId['https://ex/d/1'][`${DCT}publisher`]).toMatchObject({
+    expect(byId['https://ex/d/1'][dcterms.publisher.value]).toMatchObject({
       '@id': 'https://ex/o/1',
-      [`${FOAF}name`]: { '@language': 'nl', '@value': 'Org' },
+      [foaf.name.value]: { '@language': 'nl', '@value': 'Org' },
     });
-    expect(byId['https://ex/d/2'][`${DCT}title`]).toEqual({
+    expect(byId['https://ex/d/2'][dcterms.title.value]).toEqual({
       '@language': 'nl',
       '@value': 'Andere',
     });
@@ -55,17 +52,17 @@ describe('frameByType', () => {
     const nodes = await collect(
       frameByType(
         quads(`
-          <https://ex/d/1> <${RDF}type> <${DATASET}> .
-          <https://ex/d/1> <${DCAT}distribution> _:dist .
-          _:dist <${DCT}title> "Distributie"@nl .
+          <https://ex/d/1> <${rdf.type.value}> <${DATASET}> .
+          <https://ex/d/1> <${dcat.distribution.value}> _:dist .
+          _:dist <${dcterms.title.value}> "Distributie"@nl .
         `),
         DATASET,
       ),
     );
 
     expect(nodes).toHaveLength(1);
-    expect(nodes[0]![`${DCAT}distribution`]).toMatchObject({
-      [`${DCT}title`]: { '@language': 'nl', '@value': 'Distributie' },
+    expect(nodes[0]![dcat.distribution.value]).toMatchObject({
+      [dcterms.title.value]: { '@language': 'nl', '@value': 'Distributie' },
     });
   });
 
@@ -73,17 +70,17 @@ describe('frameByType', () => {
     const nodes = await collect(
       frameByType(
         quads(`
-          <https://ex/d/1> <${RDF}type> <${DATASET}> .
-          <https://ex/d/1> <${RDF}type> <${DATASET}> .
-          <https://ex/d/1> <${DCT}title> "Titel"@nl .
-          <https://ex/d/1> <${DCT}title> "Titel"@nl .
+          <https://ex/d/1> <${rdf.type.value}> <${DATASET}> .
+          <https://ex/d/1> <${rdf.type.value}> <${DATASET}> .
+          <https://ex/d/1> <${dcterms.title.value}> "Titel"@nl .
+          <https://ex/d/1> <${dcterms.title.value}> "Titel"@nl .
         `),
         DATASET,
       ),
     );
 
     expect(nodes).toHaveLength(1);
-    expect(nodes[0]![`${DCT}title`]).toEqual({
+    expect(nodes[0]![dcterms.title.value]).toEqual({
       '@language': 'nl',
       '@value': 'Titel',
     });
@@ -91,7 +88,10 @@ describe('frameByType', () => {
 
   it('yields nothing when there are no subjects of the root type', async () => {
     const nodes = await collect(
-      frameByType(quads(`<https://ex/o/1> <${FOAF}name> "Org"@nl .`), DATASET),
+      frameByType(
+        quads(`<https://ex/o/1> <${foaf.name.value}> "Org"@nl .`),
+        DATASET,
+      ),
     );
     expect(nodes).toEqual([]);
   });

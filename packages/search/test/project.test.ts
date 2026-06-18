@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Parser } from 'n3';
+import { dcat, dcterms, rdf, xsd } from '@tpluscode/rdf-ns-builders';
 import {
   projectDocument,
   projectGraph,
@@ -10,33 +11,29 @@ import {
   type SearchDocument,
 } from '../src/project.js';
 
-const RDF = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#';
-const DCT = 'http://purl.org/dc/terms/';
-const DCAT = 'http://www.w3.org/ns/dcat#';
 const DR = 'urn:dr:';
 const IANA = 'https://www.iana.org/assignments/media-types/';
-const XSD = 'http://www.w3.org/2001/XMLSchema#';
-const DATASET = `${DCAT}Dataset`;
+const DATASET = dcat.Dataset.value;
 
 const node = {
   '@id': 'https://ex/d/1',
-  [`${DCT}title`]: [
+  [dcterms.title.value]: [
     { '@language': 'nl', '@value': 'Titel' },
     { '@language': 'en', '@value': 'Title' },
   ],
-  [`${DCT}publisher`]: { '@id': 'https://ex/o/1' },
+  [dcterms.publisher.value]: { '@id': 'https://ex/o/1' },
   [`${DR}publisherName`]: { '@language': 'nl', '@value': 'Erfgoed' },
-  [`${DCAT}keyword`]: [{ '@language': 'nl', '@value': 'Erfgoed' }],
+  [dcat.keyword.value]: [{ '@language': 'nl', '@value': 'Erfgoed' }],
   [`${DR}format`]: [`${IANA}text/turtle`],
   [`${DR}class`]: [{ '@id': 'http://schema.org/Person' }],
   [`${DR}datePosted`]: { '@value': '2024-01-01T00:00:00.000Z' },
-  [`${DR}size`]: { '@type': `${XSD}integer`, '@value': '1234' },
+  [`${DR}size`]: { '@type': xsd.integer.value, '@value': '1234' },
 };
 
 const fields: FieldSpec[] = [
   {
     name: 'title',
-    path: `${DCT}title`,
+    path: dcterms.title.value,
     kind: {
       type: 'langText',
       locales: ['nl', 'en'],
@@ -57,12 +54,12 @@ const fields: FieldSpec[] = [
   },
   {
     name: 'publisher',
-    path: `${DCT}publisher`,
+    path: dcterms.publisher.value,
     kind: { type: 'facet', iri: true },
   },
   {
     name: 'keyword',
-    path: `${DCAT}keyword`,
+    path: dcat.keyword.value,
     kind: { type: 'facet', search: true },
   },
   {
@@ -118,18 +115,22 @@ describe('projectDocument', () => {
       {
         '@id': 'https://ex/d/3',
         [`${DR}size`]: { '@value': 42 },
-        [`${DCT}language`]: { '@value': true },
-        [`${DCAT}keyword`]: 'bareString',
+        [dcterms.language.value]: { '@value': true },
+        [dcat.keyword.value]: 'bareString',
         [`${DR}class`]: 'http://example.org/BareClass',
       },
       {
         type: DATASET,
         fields: [
           { name: 'size', path: `${DR}size`, kind: { type: 'number' } },
-          { name: 'language', path: `${DCT}language`, kind: { type: 'facet' } },
+          {
+            name: 'language',
+            path: dcterms.language.value,
+            kind: { type: 'facet' },
+          },
           {
             name: 'keyword',
-            path: `${DCAT}keyword`,
+            path: dcat.keyword.value,
             kind: { type: 'facet', search: true },
           },
           {
@@ -172,7 +173,7 @@ describe('projectDocument', () => {
     const document = projectDocument(
       {
         '@id': 'https://ex/d/2',
-        [`${DCT}title`]: { '@language': 'nl', '@value': 'Solo' },
+        [dcterms.title.value]: { '@language': 'nl', '@value': 'Solo' },
       },
       { type: DATASET, fields },
     );
@@ -195,7 +196,7 @@ describe('projectDocument', () => {
     const document = projectDocument(
       {
         '@id': 'https://ex/d/6',
-        [`${DCT}title`]: { '@language': 'fr', '@value': 'Bonjour' },
+        [dcterms.title.value]: { '@language': 'fr', '@value': 'Bonjour' },
       },
       { type: DATASET, fields },
     );
@@ -209,7 +210,10 @@ describe('projectDocument', () => {
 
   it('does not project an untagged literal (no matching locale)', () => {
     const document = projectDocument(
-      { '@id': 'https://ex/d/7', [`${DCT}title`]: { '@value': 'Naamloos' } },
+      {
+        '@id': 'https://ex/d/7',
+        [dcterms.title.value]: { '@value': 'Naamloos' },
+      },
       { type: DATASET, fields },
     );
     expect(document.title_nl).toBeUndefined();
@@ -221,14 +225,14 @@ describe('projectDocument', () => {
     const document = projectDocument(
       {
         '@id': 'https://ex/d/10',
-        [`${DCT}title`]: { '@language': 'nl', '@value': 'Verhalen' },
+        [dcterms.title.value]: { '@language': 'nl', '@value': 'Verhalen' },
       },
       {
         type: DATASET,
         fields: [
           {
             name: 'title',
-            path: `${DCT}title`,
+            path: dcterms.title.value,
             // search only — display and sort not opted into.
             kind: { type: 'langText', locales: ['nl', 'en'], search: true },
           },
@@ -245,7 +249,7 @@ describe('projectDocument', () => {
     const document = projectDocument(
       {
         '@id': 'https://ex/d/8',
-        [`${DCT}title`]: [
+        [dcterms.title.value]: [
           { '@language': 'nl', '@value': 'Titel' },
           { '@language': 'nl', '@value': 'Ondertitel' },
         ],
@@ -260,7 +264,7 @@ describe('projectDocument', () => {
   it('throws when the framed node has no @id', () => {
     expect(() =>
       projectDocument(
-        { [`${DCT}title`]: { '@value': 'No id' } },
+        { [dcterms.title.value]: { '@value': 'No id' } },
         { type: DATASET, fields },
       ),
     ).toThrow(/without an @id/);
@@ -271,14 +275,14 @@ describe('projectDocument', () => {
       projectDocument(
         {
           '@id': 'https://ex/d/9',
-          [`${DCT}title`]: { '@language': 'nl', '@value': 'Titel' },
+          [dcterms.title.value]: { '@language': 'nl', '@value': 'Titel' },
         },
         {
           type: DATASET,
           fields: [
             {
               name: 'title',
-              path: `${DCT}title`,
+              path: dcterms.title.value,
               kind: { type: 'langText', locales: [] },
             },
           ],
@@ -291,12 +295,12 @@ describe('projectDocument', () => {
 describe('projectGraph', () => {
   it('frames each projection’s type and projects matching nodes', async () => {
     const quads = new Parser({ format: 'N-Triples' }).parse(`
-      <https://ex/d/1> <${RDF}type> <${DATASET}> .
-      <https://ex/d/1> <${DCT}title> "Titel"@nl .
-      <https://ex/d/2> <${RDF}type> <${DATASET}> .
-      <https://ex/d/2> <${DCT}title> "Andere"@nl .
-      <https://ex/x/1> <${RDF}type> <http://example.org/Other> .
-      <https://ex/x/1> <${DCT}title> "Ignored"@nl .
+      <https://ex/d/1> <${rdf.type.value}> <${DATASET}> .
+      <https://ex/d/1> <${dcterms.title.value}> "Titel"@nl .
+      <https://ex/d/2> <${rdf.type.value}> <${DATASET}> .
+      <https://ex/d/2> <${dcterms.title.value}> "Andere"@nl .
+      <https://ex/x/1> <${rdf.type.value}> <http://example.org/Other> .
+      <https://ex/x/1> <${dcterms.title.value}> "Ignored"@nl .
     `);
 
     const documents: SearchDocument[] = [];
@@ -308,7 +312,9 @@ describe('projectGraph', () => {
 
     const ids = documents.map((document) => document.id).sort();
     expect(ids).toEqual(['https://ex/d/1', 'https://ex/d/2']);
-    const byId = Object.fromEntries(documents.map((d) => [d.id, d]));
+    const byId = Object.fromEntries(
+      documents.map((document) => [document.id, document]),
+    );
     expect(byId['https://ex/d/1'].title_search_nl).toBe('titel');
     expect(byId['https://ex/d/2'].title_nl).toBe('Andere');
   });

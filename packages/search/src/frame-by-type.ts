@@ -1,7 +1,8 @@
 import type { Quad } from '@rdfjs/types';
 import jsonld from 'jsonld';
+import { rdf } from '@tpluscode/rdf-ns-builders';
 
-const RDF_TYPE = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
+const RDF_TYPE = rdf.type.value;
 
 /** A framed JSON-LD node (full-IRI keys); the engine-agnostic search IR. */
 export type FramedSubject = Record<string, unknown>;
