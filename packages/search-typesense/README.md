@@ -11,34 +11,41 @@ documents and writes them to Typesense.
 
 ## Indexing
 
-`rebuild` blue/green-publishes a freshly built collection behind an alias in one
-call: it creates the versioned collection, streams the documents into it in
-batches, atomically repoints the alias, then drops the collection it superseded.
+`rebuild` blue/green-rebuilds a search index in one call: it creates a fresh
+versioned collection (`${schema.name}_<timestamp>`), streams the documents into
+it in batches, atomically repoints the `schema.name` alias to it, then drops the
+collection it superseded. The caller passes only the logical index name (as
+`schema.name`) and a stream of documents; the versioned collection and the alias
+are managed for them.
 
 ```ts
-import { createTypesenseClient, rebuild } from '@lde/search-typesense';
+import { Client } from 'typesense';
+import { rebuild } from '@lde/search-typesense';
 
-const client = createTypesenseClient(connection);
+const client = new Client({
+  nodes: [{ host, port, protocol: 'https' }],
+  apiKey,
+});
 
-// `documents` is an array or an async iterable (e.g. a streaming projection);
-// only one batch is held in memory at a time.
-const imported = await rebuild(client, 'datasets', schema, documents);
+// `documents` is an async iterable (e.g. a streaming projection); only one
+// batch is held in memory at a time. `rebuild` returns the live collection name
+// and the imported count (or `null` if another rebuild was already running).
+const result = await rebuild(client, schema, documents);
 ```
 
-The versioned collection name comes from `schema.name`, so the caller controls
-naming (e.g. `datasets_<timestamp>`). On any failure before the swap nothing is
-repointed – the live alias never points at a partial build – and the orphaned
-half-built collection is dropped.
+`rebuild` takes a `Client` the caller owns (and reuses for queries), so this
+package adds no connection or document type of its own – any object with an `id`
+is a valid document, including the `SearchDocument`s `@lde/search` produces.
 
 ## Concurrency
 
-`rebuild` is **single-flight per alias**: it first takes a lock (a marker
+`rebuild` is **single-flight per index**: it first takes a lock (a marker
 document in a `rebuild_locks` collection, created on demand) via Typesense’s
-atomic create, so concurrent callers across pods never rebuild the same alias at
-once. A call made while another rebuild for that alias is in flight returns
-`null` instead of a count. This makes blue/green safe under replication: without
-it, two same-millisecond rebuilds would create the same `schema.name` and one
-would delete the other’s in-flight collection.
+atomic create, so concurrent callers across pods never rebuild the same index at
+once. A call made while another rebuild for that index is in flight returns
+`null` instead of a count. This keeps blue/green safe under replication: without
+it, two same-millisecond rebuilds would collide on the versioned collection name
+and one would delete the other’s in-flight build.
 
 Limitations to design around:
 

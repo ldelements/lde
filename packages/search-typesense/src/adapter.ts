@@ -1,71 +1,30 @@
-import { Client } from 'typesense';
-import type { CollectionCreateSchema, ImportResponse } from 'typesense';
-
-/**
- * A flat Typesense document. `id` is required (Typesense uses it as the document
- * key); every other field is engine-typed scalar data or an array thereof.
- */
-export type TypesenseDocument = { id: string } & Record<string, unknown>;
-
-/** Flat connection config for a single Typesense node. */
-export interface TypesenseConnection {
-  readonly host: string;
-  readonly port: number;
-  /** `http` or `https`. */
-  readonly protocol: string;
-  readonly apiKey: string;
-  readonly connectionTimeoutSeconds?: number;
-}
-
-/** Tuning knobs for {@link rebuild}. */
-export interface RebuildOptions {
-  /** Documents imported per Typesense request (default 1000). */
-  readonly batchSize?: number;
-  /**
-   * A held rebuild lock older than this is treated as abandoned (crashed
-   * holder) and reclaimed (default 10 minutes). Set it above your longest
-   * expected rebuild, or a slow rebuild can be reclaimed and run concurrently.
-   */
-  readonly lockTtlMs?: number;
-}
+import type { Client, CollectionCreateSchema, ImportResponse } from 'typesense';
 
 const LOCK_COLLECTION = 'rebuild_locks';
 const DEFAULT_LOCK_TTL_MS = 10 * 60 * 1000;
 
-/** Build a Typesense {@link Client} from a flat connection config. */
-export function createTypesenseClient(connection: TypesenseConnection): Client {
-  return new Client({
-    nodes: [
-      {
-        host: connection.host,
-        port: connection.port,
-        protocol: connection.protocol,
-      },
-    ],
-    apiKey: connection.apiKey,
-    connectionTimeoutSeconds: connection.connectionTimeoutSeconds ?? 5,
-  });
-}
-
 /**
- * Blue/green-publish a freshly built collection behind `alias`: create the
- * collection from `schema`, stream `documents` into it in batches, atomically
- * repoint `alias` to it, then drop the collection it superseded. Returns the
- * number of documents imported, or `null` if it was skipped because another
- * rebuild for the same `alias` is already running.
+ * Blue/green-rebuild the search index `name`.
  *
- * The rebuild is **single-flight per alias**: it first takes a lock (a marker
+ * 1. create a fresh versioned collection (`${name}_<timestamp>`) from `schema`
+ * 2. stream `documents` into it in batches
+ * 3. atomically repoint the `name` alias to the new collection, then
+ *    drop the collection it superseded. The caller passes only the logical
+ *    index `name`; the versioned collection name and the alias are managed here.
+ *
+ * The rebuild is **single-flight per index**: it first takes a lock (a marker
  * document in a `rebuild_locks` collection, created on demand) via Typesense’s
- * atomic create, so concurrent callers across pods never rebuild the same alias
- * at once. This makes blue/green safe under replication – without it, two
- * same-millisecond rebuilds would create the same `schema.name` and one would
- * delete the other’s in-flight collection.
+ * atomic create, so concurrent callers across pods never rebuild the same index
+ * at once. This keeps blue/green safe under replication.
  *
- * `documents` may be an async iterable (e.g. a streaming projection) or a plain
- * array; only one `batchSize`-sized chunk is held in memory at a time. The
- * caller owns naming via `schema.name` (e.g. `datasets_<timestamp>`). On any
- * failure before the swap nothing is repointed, so the live alias never points
- * at a partial build, and the orphaned half-built collection is dropped.
+ * `documents` is an async iterable (e.g. a streaming projection); only one
+ * `batchSize`-sized chunk is held in memory at a time. On any failure before the
+ * swap nothing is repointed, so the live alias never points at a partial build,
+ * and the orphaned half-built collection is dropped.
+ *
+ * @returns the live collection name and the number of documents imported, or
+ * `null` when the rebuild was skipped because another rebuild for the same index
+ * was already running.
  *
  * Limitations:
  * - **Advisory, not a strict mutex.** The lock is built on Typesense, not a
@@ -75,53 +34,54 @@ export function createTypesenseClient(connection: TypesenseConnection): Client {
  * - **Single-flight, not coalescing.** A call made while a rebuild is in flight
  *   is skipped (returns `null`), not queued. If you must capture state that
  *   changed mid-build, re-trigger after the running rebuild finishes.
- * - **Lock TTL.** A rebuild that runs longer than {@link RebuildOptions.lockTtlMs}
- *   can be reclaimed by another caller and run concurrently; size the TTL above
- *   your longest rebuild.
+ * - **Lock TTL.** A rebuild that runs longer than `lockTtlMs` (default 10
+ *   minutes) can be reclaimed by another caller and run concurrently; size the
+ *   TTL above your longest rebuild.
  */
-export async function rebuild(
+export async function rebuild<Document extends { id: string }>(
   client: Client,
-  alias: string,
   schema: CollectionCreateSchema,
-  documents: AsyncIterable<TypesenseDocument> | Iterable<TypesenseDocument>,
-  options: RebuildOptions = {},
-): Promise<number | null> {
+  documents: AsyncIterable<Document>,
+  options: {
+    /** Documents imported per Typesense request (default 1000). */
+    batchSize?: number;
+    /** A held lock older than this (ms) is reclaimed (default 10 minutes). */
+    lockTtlMs?: number;
+  } = {},
+): Promise<{ collection: string; imported: number } | null> {
   const { batchSize = 1000, lockTtlMs = DEFAULT_LOCK_TTL_MS } = options;
-  if (!(await acquireLock(client, alias, lockTtlMs))) {
+  const name = schema.name;
+  if (!(await acquireLock(client, name, lockTtlMs))) {
     return null;
   }
+  const collection = `${name}_${Date.now()}`;
   try {
-    const previous = await aliasTarget(client, alias);
-    await client.collections().create(schema);
+    const previous = await aliasTarget(client, name);
+    await client.collections().create({ ...schema, name: collection });
 
     let imported: number;
     try {
-      imported = await importStreamed(
-        client,
-        schema.name,
-        documents,
-        batchSize,
-      );
-      await client.aliases().upsert(alias, { collection_name: schema.name });
+      imported = await importStreamed(client, collection, documents, batchSize);
+      await client.aliases().upsert(name, { collection_name: collection });
     } catch (error) {
       // The build failed before the swap: the live alias is untouched, so just
       // drop the orphaned half-built collection rather than let it accumulate.
       await client
-        .collections(schema.name)
+        .collections(collection)
         .delete()
         .catch(() => undefined);
       throw error;
     }
 
-    if (previous !== undefined && previous !== schema.name) {
+    if (previous !== undefined && previous !== collection) {
       await client
         .collections(previous)
         .delete()
         .catch(() => undefined);
     }
-    return imported;
+    return { collection, imported };
   } finally {
-    await releaseLock(client, alias);
+    await releaseLock(client, name);
   }
 }
 
@@ -142,14 +102,14 @@ async function aliasTarget(
 }
 
 /** Upsert a stream of documents in `batchSize` chunks; returns the count. */
-async function importStreamed(
+async function importStreamed<Document extends { id: string }>(
   client: Client,
   collection: string,
-  documents: AsyncIterable<TypesenseDocument> | Iterable<TypesenseDocument>,
+  documents: AsyncIterable<Document>,
   batchSize: number,
 ): Promise<number> {
   let imported = 0;
-  let batch: TypesenseDocument[] = [];
+  let batch: Document[] = [];
   for await (const document of documents) {
     batch.push(document);
     if (batch.length >= batchSize) {
@@ -173,12 +133,12 @@ async function importStreamed(
 async function importBatch(
   client: Client,
   collection: string,
-  batch: readonly TypesenseDocument[],
+  batch: readonly { id: string }[],
 ): Promise<void> {
   const results = (await client
     .collections(collection)
     .documents()
-    .import(batch as TypesenseDocument[], {
+    .import(batch as { id: string }[], {
       action: 'upsert',
       // Collect per-document outcomes instead of throwing the client’s opaque
       // ImportError, so we can report which documents failed and why.
@@ -270,12 +230,10 @@ async function ensureLockCollection(client: Client): Promise<void> {
     }
   }
   try {
-    await client
-      .collections()
-      .create({
-        name: LOCK_COLLECTION,
-        fields: [{ name: 'acquired_at', type: 'int64' }],
-      });
+    await client.collections().create({
+      name: LOCK_COLLECTION,
+      fields: [{ name: 'acquired_at', type: 'int64' }],
+    });
   } catch (error) {
     if (httpStatus(error) !== 409) {
       throw error;
