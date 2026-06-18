@@ -1,27 +1,48 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import type { Client } from 'typesense';
-import type { CollectionCreateSchema } from 'typesense';
-import { createTypesenseClient, TypesenseAdapter } from '../src/adapter.js';
+import type { Client, CollectionCreateSchema } from 'typesense';
+import {
+  createTypesenseClient,
+  rebuild,
+  type TypesenseDocument,
+} from '../src/adapter.js';
 import { TypesenseContainer } from './typesense-container.js';
 
-const COLLECTION = 'datasets_test';
+const ALIAS = 'datasets';
 
-const schema: CollectionCreateSchema = {
-  name: COLLECTION,
-  fields: [
-    { name: 'title', type: 'string' },
-    { name: 'year', type: 'int32' },
-  ],
-};
+function schema(name: string): CollectionCreateSchema {
+  return {
+    name,
+    fields: [
+      { name: 'title', type: 'string' },
+      { name: 'year', type: 'int32' },
+    ],
+  };
+}
 
-describe('TypesenseAdapter', () => {
+async function* stream(
+  documents: readonly TypesenseDocument[],
+): AsyncIterable<TypesenseDocument> {
+  for (const document of documents) {
+    yield document;
+  }
+}
+
+async function reset(client: Client): Promise<void> {
+  const { aliases } = await client.aliases().retrieve();
+  for (const alias of aliases) {
+    await client.aliases(alias.name).delete();
+  }
+  for (const collection of await client.collections().retrieve()) {
+    await client.collections(collection.name).delete();
+  }
+}
+
+describe('search-typesense', () => {
   const container = new TypesenseContainer();
   let client: Client;
-  let adapter: TypesenseAdapter;
 
   beforeAll(async () => {
     client = await container.start();
-    adapter = new TypesenseAdapter(client);
   }, 120_000);
 
   afterAll(async () => {
@@ -29,9 +50,7 @@ describe('TypesenseAdapter', () => {
   });
 
   beforeEach(async () => {
-    if (await client.collections(COLLECTION).exists()) {
-      await adapter.deleteCollection(COLLECTION);
-    }
+    await reset(client);
   });
 
   it('builds a client from a flat connection config', () => {
@@ -44,50 +63,78 @@ describe('TypesenseAdapter', () => {
     expect(typeof built.collections).toBe('function');
   });
 
-  it('bulkUpsert with no documents is a no-op', async () => {
-    await expect(adapter.bulkUpsert(COLLECTION, [])).resolves.toBeUndefined();
-  });
+  it('publishes a collection and points the alias at it', async () => {
+    const imported = await rebuild(client, ALIAS, schema(`${ALIAS}_1`), [
+      { id: 'a', title: 'Verhaal van Utrecht', year: 2024 },
+    ]);
 
-  it('bulk upserts documents and re-upsert is idempotent', async () => {
-    await adapter.createCollection(schema);
-    const document = { id: 'a', title: 'Verhaal van Utrecht', year: 2024 };
-    await adapter.bulkUpsert(COLLECTION, [document]);
-    await adapter.bulkUpsert(COLLECTION, [document]);
-
-    const collection = await client.collections(COLLECTION).retrieve();
-    expect(collection.num_documents).toBe(1);
-    const stored = await client
-      .collections(COLLECTION)
-      .documents('a')
-      .retrieve();
+    expect(imported).toBe(1);
+    expect((await client.aliases(ALIAS).retrieve()).collection_name).toBe(
+      `${ALIAS}_1`,
+    );
+    // The alias resolves for queries just like a collection name.
+    const stored = await client.collections(ALIAS).documents('a').retrieve();
     expect((stored as Record<string, unknown>).title).toBe(
       'Verhaal van Utrecht',
     );
   });
 
-  it('throws when a document fails to import', async () => {
-    await adapter.createCollection(schema);
-    // `year` must be an int; a string is a hard validation failure.
-    await expect(
-      adapter.bulkUpsert(COLLECTION, [{ id: 'bad', title: 't', year: 'nope' }]),
-    ).rejects.toThrow(/failed/i);
+  it('swaps the alias to the new collection and drops the previous one', async () => {
+    await rebuild(client, ALIAS, schema(`${ALIAS}_1`), [
+      { id: 'a', title: 'Old', year: 2023 },
+    ]);
+    await rebuild(client, ALIAS, schema(`${ALIAS}_2`), [
+      { id: 'a', title: 'New', year: 2024 },
+    ]);
+
+    expect((await client.aliases(ALIAS).retrieve()).collection_name).toBe(
+      `${ALIAS}_2`,
+    );
+    expect(await client.collections(`${ALIAS}_1`).exists()).toBe(false);
   });
 
-  it('swaps a blue/green alias to a versioned collection', async () => {
-    await adapter.createCollection(schema);
-    expect(await adapter.aliasTarget('datasets')).toBeUndefined();
+  it('streams an async iterable in batches', async () => {
+    const documents = Array.from({ length: 5 }, (_, index) => ({
+      id: `d${index}`,
+      title: `Title ${index}`,
+      year: 2024,
+    }));
 
-    await adapter.swapAlias('datasets', COLLECTION);
-    expect(await adapter.aliasTarget('datasets')).toBe(COLLECTION);
+    const imported = await rebuild(
+      client,
+      ALIAS,
+      schema(`${ALIAS}_1`),
+      stream(documents),
+      2,
+    );
 
-    await adapter.bulkUpsert(COLLECTION, [
-      { id: 'a', title: 'Via alias', year: 2024 },
+    expect(imported).toBe(5);
+    expect((await client.collections(ALIAS).retrieve()).num_documents).toBe(5);
+  });
+
+  it('leaves the live alias intact and drops the orphan when a build fails', async () => {
+    await rebuild(client, ALIAS, schema(`${ALIAS}_1`), [
+      { id: 'a', title: 'Live', year: 2024 },
     ]);
-    // The alias resolves for queries just like a collection name.
-    const stored = await client
-      .collections('datasets')
-      .documents('a')
-      .retrieve();
-    expect((stored as Record<string, unknown>).title).toBe('Via alias');
+
+    // `year` must be an int; a string is a hard validation failure mid-build.
+    await expect(
+      rebuild(client, ALIAS, schema(`${ALIAS}_2`), [
+        { id: 'bad', title: 't', year: 'nope' },
+      ]),
+    ).rejects.toThrow(/failed/i);
+
+    // Nothing was swapped, and the half-built collection was cleaned up.
+    expect((await client.aliases(ALIAS).retrieve()).collection_name).toBe(
+      `${ALIAS}_1`,
+    );
+    expect(await client.collections(`${ALIAS}_2`).exists()).toBe(false);
+  });
+
+  it('publishes an empty collection for an empty source', async () => {
+    const imported = await rebuild(client, ALIAS, schema(`${ALIAS}_1`), []);
+
+    expect(imported).toBe(0);
+    expect((await client.collections(ALIAS).retrieve()).num_documents).toBe(0);
   });
 });

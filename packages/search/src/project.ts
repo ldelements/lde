@@ -245,12 +245,12 @@ function applyNumber(
 // --- Framed-IR readers (exported so derivations can read arbitrary paths) ---
 
 /** A literal value with its (possibly empty) language tag. */
-export interface LangValue {
+interface LangValue {
   readonly value: string;
   readonly lang: string;
 }
 
-export function langValuesOf(node: FramedSubject, path: string): LangValue[] {
+function langValuesOf(node: FramedSubject, path: string): LangValue[] {
   return valuesOf(node, path)
     .map(toLangValue)
     .filter((value): value is LangValue => value !== undefined);

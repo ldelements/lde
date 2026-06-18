@@ -7,7 +7,7 @@
  * Decomposing letters (é, ö, å, ç, …) are intentionally NOT listed here —
  * NFKD + the combining-mark strip already fold them.
  */
-export const TRANSLITERATION_MAP: Readonly<Record<string, string>> = {
+const TRANSLITERATION_MAP: Readonly<Record<string, string>> = {
   ø: 'o',
   æ: 'ae',
   œ: 'oe',

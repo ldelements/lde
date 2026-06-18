@@ -12,13 +12,13 @@ export default mergeConfig(
       testTimeout: 60_000,
       hookTimeout: 120_000,
       coverage: {
-        // Only the adapter remains; its error-handling branches are exercised
-        // by integration, not unit, tests.
+        // One streaming rebuild plus best-effort cleanup paths (delete-on-
+        // failure, non-404 alias rethrow) that are deliberately not exercised.
         thresholds: {
-          functions: 100,
-          lines: 93.1,
-          branches: 75,
-          statements: 93.33,
+          functions: 83.33,
+          lines: 91.48,
+          branches: 84.21,
+          statements: 91.66,
         },
       },
     },

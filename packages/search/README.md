@@ -1,35 +1,32 @@
 # @lde/search
 
-Engine-agnostic search projection for RDF-backed pipelines. Two steps, no
-engine and no vocabulary baked in:
-
-1. **`frameByType(quads, rootType)`** — frame the result of a SPARQL `CONSTRUCT`
-   into one JSON-LD IR node per subject of `rootType`.
-2. **`projectDocument(node, projection, options?)`** — turn that IR node into a
-   flat search document from a **declarative field spec**.
+Engine-agnostic search projection for RDF-backed pipelines. **`projectGraph`**
+streams the result of a SPARQL `CONSTRUCT` into flat search documents, with no
+engine and no vocabulary baked in. Internally it does two things per subject of
+a root type: frame its one-hop subgraph into a JSON-LD IR node, then project
+that node into a flat document from a **declarative field spec**.
 
 An engine adapter (e.g. [`@lde/search-typesense`](../search-typesense)) then
 writes those documents to a search backend.
 
-## Framing
-
 ```ts
-import { frameByType } from '@lde/search';
+import { projectGraph, type Projection } from '@lde/search';
 
-for await (const node of frameByType(
-  quads,
-  'http://www.w3.org/ns/dcat#Dataset',
-)) {
-  // node has full-IRI keys, language tags preserved, e.g.
-  // node['http://purl.org/dc/terms/title'] === [{ '@value': 'Titel', '@language': 'nl' }]
+const projection: Projection = {
+  /* type + field spec — see below */
+};
+
+for await (const document of projectGraph(quads, [projection])) {
+  // one flat search document per matching subject, streamed
 }
 ```
 
-Each root subject's one-hop subgraph is framed **independently** and yielded one
-at a time, so memory stays flat at scale (framing the whole graph at once is
-roughly O(N²)). Duplicate triples are collapsed first, because some SPARQL
-engines (e.g. QLever) do not deduplicate `CONSTRUCT` output. No `@context`, so
-keys are full predicate IRIs.
+`projectGraph` is fully streaming: subjects are grouped and framed one at a time
+and documents are yielded as they are produced, so beyond a subject index memory
+stays flat at scale (framing the whole graph at once is roughly O(N²)). Duplicate
+triples are collapsed first, because some SPARQL engines (e.g. QLever) do not
+deduplicate `CONSTRUCT` output. The IR carries no `@context`, so a `derivation`
+reading it sees full predicate IRIs with language tags preserved.
 
 ## Projection
 
@@ -40,7 +37,7 @@ coercion) are applied for you. Computed fields are `derivations` — hooks that
 read the node and set fields the kinds can't.
 
 ```ts
-import { projectDocument, irisOf, type Projection } from '@lde/search';
+import { projectGraph, irisOf, type Projection } from '@lde/search';
 
 const projection: Projection = {
   type: 'http://www.w3.org/ns/dcat#Dataset',
@@ -67,13 +64,15 @@ const projection: Projection = {
     { name: 'size', path: 'urn:dr:size', kind: { type: 'number' } },
   ],
   derivations: [
-    (document, framed) => {
-      document.class_count = irisOf(framed, 'urn:dr:class').length;
+    (document, node) => {
+      document.class_count = irisOf(node, 'urn:dr:class').length;
     },
   ],
 };
 
-const doc = projectDocument(node, projection);
+for await (const document of projectGraph(quads, [projection])) {
+  // …
+}
 ```
 
 **Kinds**

@@ -1,1 +1,1 @@
-export { fold, FOLD_VERSION, TRANSLITERATION_MAP } from './fold.js';
+export { fold, FOLD_VERSION } from './fold.js';
