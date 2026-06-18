@@ -1,3 +1,9 @@
+## 0.1.12 (2026-06-18)
+
+### 🩹 Fixes
+
+- **distribution-probe:** accept empty and non-n-triples SPARQL CONSTRUCT answers ([#488](https://github.com/ldelements/lde/pull/488))
+
 ## 0.1.11 (2026-06-17)
 
 ### 🚀 Features

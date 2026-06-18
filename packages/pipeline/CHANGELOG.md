@@ -1,3 +1,10 @@
+## 0.30.20 (2026-06-18)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-health to 0.1.4
+- Updated @lde/distribution-probe to 0.1.12
+
 ## 0.30.19 (2026-06-17)
 
 ### 🧱 Updated Dependencies
