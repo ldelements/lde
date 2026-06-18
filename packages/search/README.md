@@ -102,7 +102,15 @@ requires setting that language’s `locale` (e.g. `locale: 'nl'` + `stem: true` 
 tokenization, which **preserves** diacritics. At that point the engine no longer
 folds them, and `fold()` is what keeps matching diacritic-insensitive. Stemming
 is a per-field engine-schema choice (the consumer’s), and being rules-based it
-can mangle proper nouns and place names — worth weighing for name-heavy data.
+can mangle proper nouns and place names — e.g. the Dutch stemmer reduces the city
+`Bergen` to `berg`, colliding it with “mountain”.
+
+Recommended split: enable stemming on the **free-text** search fields
+(`*_search_${locale}`, descriptions, keywords) where morphological recall helps
+(`verhaal` ↔ `verhalen`), and keep **place names and other proper-noun facets on
+a separate, unstemmed field** (facets are exact-match anyway). That captures the
+recall without the `Bergen`/`berg` collision in the facet. A `stem_dictionary`
+can pin specific names if you need stemmed free-text without given collisions.
 
 **Only listed locales are indexed.** A literal whose language tag is not in
 `locales` is not projected at all — no display, no search, no sort field — so it
