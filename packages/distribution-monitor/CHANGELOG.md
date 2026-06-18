@@ -1,3 +1,9 @@
+## 0.1.14 (2026-06-18)
+
+### 🩹 Fixes
+
+- **distribution-monitor:** tolerate lock timeout on boot-time index check ([#492](https://github.com/ldelements/lde/pull/492))
+
 ## 0.1.13 (2026-06-18)
 
 ### 🚀 Features
