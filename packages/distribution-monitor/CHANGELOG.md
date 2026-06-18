@@ -1,3 +1,9 @@
+## 0.1.13 (2026-06-18)
+
+### 🚀 Features
+
+- **distribution-monitor:** set lock and statement timeouts on the DB connection ([#490](https://github.com/ldelements/lde/pull/490))
+
 ## 0.1.12 (2026-06-18)
 
 ### 🩹 Fixes
