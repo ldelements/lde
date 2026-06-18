@@ -97,4 +97,21 @@ describe('combineReporters', () => {
   it('is a no-op for an empty array of reporters', () => {
     expect(() => combineReporters([]).pipelineStart?.('run')).not.toThrow();
   });
+
+  it('preserves a class-based reporter’s `this` receiver', () => {
+    // A plain-object reporter never exercises `this`; a class method that reads
+    // instance state does, and regressed when forwarding dropped the receiver.
+    class CountingReporter implements ProgressReporter {
+      calls = 0;
+      pipelineStart(): void {
+        this.calls += 1;
+      }
+    }
+    const reporter = new CountingReporter();
+
+    expect(() =>
+      combineReporters([reporter]).pipelineStart?.('run'),
+    ).not.toThrow();
+    expect(reporter.calls).toBe(1);
+  });
 });

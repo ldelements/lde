@@ -36,7 +36,10 @@ export function combineReporters(
         | ((...handlerArgs: ReporterArguments<Method>) => void)
         | undefined;
       // Every method is optional; notify only the children that implement it.
-      handler?.(...args);
+      // Invoke through `call` so a class-based reporter keeps its `this`: a bare
+      // `handler?.(...)` would drop the receiver and break methods that touch
+      // instance state (e.g. ConsoleReporter’s spinner).
+      handler?.call(reporter, ...args);
     }
   };
 
