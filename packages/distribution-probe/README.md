@@ -17,10 +17,10 @@ const result = await probe(distribution);
 
 ### SPARQL endpoints
 
-Sends `POST` with `SELECT * { ?s ?p ?o } LIMIT 1` and `Accept: application/sparql-results+json`, then:
+Sends `POST` with the configured query (default `SELECT * { ?s ?p ?o } LIMIT 1`). The query type is detected (`ASK` / `SELECT` / `CONSTRUCT` / `DESCRIBE`) and drives both the `Accept` header and how the response is validated:
 
-- **Content-Type is enforced.** The response Content-Type must start with `application/sparql-results+json`; anything else fails the probe (`isSuccess() === false`). This rules out HTML error pages served with `200 OK`.
-- The JSON body must parse and contain a `results` object. Empty bodies, invalid JSON, and missing `results` all fail the probe with a `failureReason`.
+- **`ASK` / `SELECT`** request `application/sparql-results+json`, with `application/sparql-results+xml` as a lower-priority fallback. The response Content-Type must be one of those — anything else fails the probe (`isSuccess() === false`), which rules out HTML error pages served with `200 OK`. The body must parse and contain a results document (a `results` object for `SELECT`, a `boolean` for `ASK`); empty bodies, invalid JSON/XML, and missing results all fail with a `failureReason`.
+- **`CONSTRUCT` / `DESCRIBE`** request the common RDF serializations (`text/turtle`, `application/n-triples`, `application/rdf+xml`, `application/ld+json`, `application/n-quads`, `application/trig`) and accept any of them. A `2xx` RDF response confirms availability, and **an empty graph is a valid answer** — so an empty body does not fail the probe (unlike a data dump, which must be non-empty). The body is not parse-validated.
 
 ### Data dumps
 
