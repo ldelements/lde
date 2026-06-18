@@ -21,8 +21,8 @@ decompose under NFKD (ø, æ, œ, ß, ð, þ, ł, đ, …).
 ## When it’s needed
 
 A search engine on its default locale often folds case and diacritics for you –
-Typesense v30 (verified) even folds the non-decomposing `ø`/`æ`/`ß` – so there
-`fold()` is belt-and-suspenders for _search_. It becomes necessary when:
+Typesense v30 (verified) even folds the non-decomposing `ø`/`æ`/`ß` – so on the
+default locale `fold()` is redundant for _search_. It becomes necessary when:
 
 - **Sorting** – engines sort strings by raw code-point order with no collation,
   so a `fold()`-ed companion field is the only way to sort case- and
