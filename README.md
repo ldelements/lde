@@ -138,6 +138,21 @@ await pipeline.run();
   <td><a href="https://www.npmjs.com/package/@lde/docgen"><img src="https://img.shields.io/npm/v/@lde/docgen" alt="npm"></a></td>
   <td>Generate documentation from RDF such as SHACL shapes</td>
 </tr>
+<tr>
+  <td><a href="packages/search">@lde/search</a></td>
+  <td><a href="https://www.npmjs.com/package/@lde/search"><img src="https://img.shields.io/npm/v/@lde/search" alt="npm"></a></td>
+  <td>Project RDF into engine-agnostic search documents (framing + a declarative field spec)</td>
+</tr>
+<tr>
+  <td><a href="packages/search-typesense">@lde/search-typesense</a></td>
+  <td><a href="https://www.npmjs.com/package/@lde/search-typesense"><img src="https://img.shields.io/npm/v/@lde/search-typesense" alt="npm"></a></td>
+  <td>Typesense engine adapter: a single-flight, streaming blue/green index rebuild</td>
+</tr>
+<tr>
+  <td><a href="packages/text-normalization">@lde/text-normalization</a></td>
+  <td><a href="https://www.npmjs.com/package/@lde/text-normalization"><img src="https://img.shields.io/npm/v/@lde/text-normalization" alt="npm"></a></td>
+  <td>Text folding (diacritic stripping and transliteration) for search index and query normalization</td>
+</tr>
 <tr><th colspan="3" align="left">Monitoring – Observe pipeline runs and endpoint health</th></tr>
 <tr>
   <td><a href="packages/distribution-monitor">@lde/distribution-monitor</a></td>
