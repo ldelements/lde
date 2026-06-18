@@ -18,51 +18,60 @@ export class PostgresObservationStore implements ObservationStore {
   }
 
   /**
-   * Create a new store and initialize the database schema.
+   * Create a new store and reconcile the database schema with {@link schema}.
    *
-   * Uses drizzle-kit's generateMigration to create schema from code.
-   * This approach works around a bug in pushSchema where the execute()
-   * return format doesn't match what drizzle-kit expects.
-   * See: https://github.com/drizzle-team/drizzle-orm/issues/5293
+   * Uses drizzle-kit's `pushSchema` to diff the declared schema against the live
+   * database and apply only the difference, so an already-provisioned database
+   * issues no DDL — no needless, lock-taking index re-creation on every start.
+   *
+   * drizzle-kit's push adapter expects `execute()` to return `{ rows }`, but
+   * drizzle-orm's postgres-js driver resolves to a bare array, so the database
+   * is wrapped to re-shape the result. See
+   * https://github.com/drizzle-team/drizzle-orm/issues/5293.
    */
   static async create(
     connectionString: string,
   ): Promise<PostgresObservationStore> {
     const store = new PostgresObservationStore(connectionString);
-    const { generateDrizzleJson, generateMigration } =
-      await import('drizzle-kit/api-postgres');
+    const { pushSchema } = await import('drizzle-kit/api-postgres');
 
-    // Generate migration from empty state to our schema
-    const empty = await generateDrizzleJson({});
-    const target = await generateDrizzleJson(schema, empty.id);
-    const migration = await generateMigration(empty, target);
+    // #5293 shim: drizzle-kit reads `.rows` off the execute() result, which the
+    // postgres-js driver returns as a bare array. Wrap it back into `{ rows }`.
+    const pushAdapter = {
+      execute: async (query: Parameters<PostgresJsDatabase['execute']>[0]) => ({
+        rows: await store.db.execute(query),
+      }),
+    } as unknown as PostgresJsDatabase;
 
-    // Execute each statement, ignoring "already exists" errors for idempotency
-    for (const statement of migration) {
-      try {
-        await store.db.execute(sql.raw(statement));
-      } catch (error) {
-        // Check both direct error and cause for "already exists"
-        const isAlreadyExists = (e: unknown): boolean => {
-          if (!(e instanceof Error)) return false;
-          if (e.message.includes('already exists')) return true;
-          if ('cause' in e) return isAlreadyExists(e.cause);
-          return false;
-        };
-        if (!isAlreadyExists(error)) {
-          throw error;
-        }
-      }
-    }
+    const { sqlStatements } = await pushSchema(schema, pushAdapter);
 
-    // Create unique index on materialized view for CONCURRENTLY refresh
-    try {
-      await store.db.execute(
-        sql`CREATE UNIQUE INDEX latest_observations_monitor_idx ON latest_observations (monitor)`,
+    // `pushSchema` is state-based, so a removed or retyped column diffs to a
+    // destructive statement. Refuse to drop data-bearing objects automatically —
+    // that needs a deliberate migration, not an app-start side effect. Dropping
+    // an index is a safe rebuild and stays allowed.
+    const destructive = sqlStatements.find((statement) =>
+      /\bDROP\s+(TABLE|MATERIALIZED\s+VIEW)\b|\bDROP\s+COLUMN\b/i.test(
+        statement,
+      ),
+    );
+    if (destructive) {
+      throw new Error(
+        `Refusing to apply a data-loss schema change automatically: ${destructive}`,
       );
-    } catch {
-      // Index may already exist
     }
+
+    for (const statement of sqlStatements) {
+      await store.db.execute(sql.raw(statement));
+    }
+
+    // The unique index on the materialized view is required for
+    // REFRESH ... CONCURRENTLY but is not modelled by drizzle's
+    // `pgMaterializedView`, so `pushSchema` never emits it. Create it
+    // idempotently — `IF NOT EXISTS` matches by name and skips (no rebuild) when
+    // it already exists.
+    await store.db.execute(
+      sql`CREATE UNIQUE INDEX IF NOT EXISTS latest_observations_monitor_idx ON latest_observations (monitor)`,
+    );
 
     return store;
   }
