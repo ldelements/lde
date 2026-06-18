@@ -27,6 +27,5 @@ await adapter.swapAlias(alias, collection); // atomic blue/green swap
 await adapter.deleteCollection(previous);
 ```
 
-It also provides `ensureCollection`, `partialUpdate`, `aliasTarget`,
-`documentIds(collection, filterBy?)` and `deleteByIds()` for incremental and
-scoped maintenance.
+`aliasTarget(alias)` reads the alias’s current target (the previous collection)
+so a rebuild can drop it after the swap.

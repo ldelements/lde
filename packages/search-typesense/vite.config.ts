@@ -15,10 +15,10 @@ export default mergeConfig(
         // Only the adapter remains; its error-handling branches are exercised
         // by integration, not unit, tests.
         thresholds: {
-          functions: 95.23,
-          lines: 89.36,
-          branches: 63.15,
-          statements: 90,
+          functions: 100,
+          lines: 93.1,
+          branches: 75,
+          statements: 93.33,
         },
       },
     },
