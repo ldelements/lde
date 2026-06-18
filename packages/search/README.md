@@ -52,6 +52,7 @@ const projection: Projection = {
       kind: {
         type: 'langText',
         locales: ['nl', 'en'],
+        display: true,
         search: true,
         sort: true,
       },
@@ -77,26 +78,29 @@ const doc = projectDocument(node, projection);
 
 **Kinds**
 
-| kind       | emits                                                                                                                                             |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `langText` | per locale (see below): `_${locale}` display (accents kept), `_search_${locale}` (folded, with `search`), `_sort_${locale}` (folded, with `sort`) |
-| `facet`    | the field as a deduped array; `iri` reads `@id`; `search` adds a folded `_search`; `transform` rewrites values                                    |
-| `number`   | a numeric scalar; `date` parses an ISO date-time to unix seconds                                                                                  |
+| kind       | emits                                                                                                                                                    |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `langText` | per locale (see below), each opt-in: `_${locale}` display with `display`, `_search_${locale}` folded with `search`, `_sort_${locale}` folded with `sort` |
+| `facet`    | the field as a deduped array; `iri` reads `@id`; `search` adds a folded `_search`; `transform` rewrites values                                           |
+| `number`   | a numeric scalar; `date` parses an ISO date-time to unix seconds                                                                                         |
 
 ## Locales
 
-`locales` is the **single** list of languages a `langText` field projects, and
-every family fans out over it: `title_nl`/`title_en` for display (accents
-preserved), `title_search_nl`/`title_search_en` when `search` (folded; one field
-per locale lets a query `query_by` them and rank the user’s language higher via
-`query_by_weights`, and lets a language that needs a dedicated tokenizer set its
-own `locale` in the schema), and `title_sort_nl`/`title_sort_en` when `sort`
-(folded, so a locale-switching UI sorts on the active language).
+`locales` is the **single** list of languages a `langText` field projects;
+`display`, `search` and `sort` are independent opt-in families that each fan out
+over it (so a field emits exactly what it opts into):
 
-Set `display: false` for a **search-only** field — one folded and stemmed for
-retrieval but never rendered (e.g. a `publisher` you search but show via a
-separate single label). It then emits `${name}_search_${locale}` without the
-`${name}_${locale}` display columns.
+- `display` → `title_nl`/`title_en` (accents preserved);
+- `search` → `title_search_nl`/`title_search_en` (folded; one field per locale
+  lets a query `query_by` them and rank the user’s language higher via
+  `query_by_weights`, and lets a language that needs a dedicated tokenizer set
+  its own `locale` in the schema);
+- `sort` → `title_sort_nl`/`title_sort_en` (folded, so a locale-switching UI
+  sorts on the active language).
+
+A field with `search` but no `display` is **search-only** — folded and stemmed
+for retrieval but never rendered (e.g. a `publisher` searched here but shown via
+a separate label).
 
 Folding the search fields is what lets diacritic-insensitive matching and
 stemming coexist. A search engine on its **default** locale typically folds case

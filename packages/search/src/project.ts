@@ -15,31 +15,30 @@ export type FieldKind = LangTextKind | FacetKind | NumberKind;
 
 /**
  * Language-tagged text, projected per locale. `locales` is the single source of
- * truth for which languages this field emits — every family fans out over it:
- * - `${name}_${locale}` display label, accents preserved (unless `display: false`);
- * - `${name}_search_${locale}` folded match field, when `search` (one per
- *   locale so the engine can tokenize each language and the query can rank the
- *   user’s locale higher);
- * - `${name}_sort_${locale}` folded sort key, when `sort` (one per locale so a
+ * truth for which languages this field emits; `display`, `search` and `sort` are
+ * three independent opt-in families that each fan out over it:
+ * - `display` → `${name}_${locale}` display label, accents preserved;
+ * - `search` → `${name}_search_${locale}` folded match field (one per locale so
+ *   the engine can tokenize/stem each language and the query can rank the user’s
+ *   locale higher);
+ * - `sort` → `${name}_sort_${locale}` folded sort key (one per locale so a
  *   locale-switching UI sorts on the active language).
  *
- * Only listed locales are projected: a value whose language tag is not in
- * `locales` (and is not mapped in by `untaggedLanguage`) is not indexed at all.
+ * All three default off — a field emits exactly the families it opts into (e.g.
+ * `search` alone is a search-only field, shown via a separate label). Only listed
+ * locales are projected: a value whose language tag is not in `locales` (and is
+ * not mapped in by `untaggedLanguage`) is not indexed at all.
  */
 export interface LangTextKind {
   readonly type: 'langText';
-  /** The languages to project; drives the display, search and sort families. */
+  /** The languages to project; drives whichever of the families are enabled. */
   readonly locales: readonly string[];
-  /** Also emit a folded `${name}_search_${locale}` per locale (matchable). */
-  readonly search?: boolean;
-  /** Also emit a folded `${name}_sort_${locale}` per locale (sortable). */
-  readonly sort?: boolean;
-  /**
-   * Emit the per-locale display labels `${name}_${locale}` (default `true`). Set
-   * `false` for a search-only field — one folded/stemmed for retrieval but never
-   * shown — so it contributes `${name}_search_${locale}` without display columns.
-   */
+  /** Emit the per-locale display labels `${name}_${locale}` (accents preserved). */
   readonly display?: boolean;
+  /** Emit a folded `${name}_search_${locale}` per locale (matchable). */
+  readonly search?: boolean;
+  /** Emit a folded `${name}_sort_${locale}` per locale (sortable). */
+  readonly sort?: boolean;
 }
 
 /** A faceted multi-value field, optionally also folded for search. */
@@ -192,7 +191,7 @@ function applyLangText(
     // primary value (folded); search folds every value of the locale so all
     // are matchable. Absent locales emit nothing (the field stays optional).
     const [primary] = localeValues;
-    if (text.display !== false) {
+    if (text.display) {
       setString(document, `${name}_${locale}`, primary);
     }
     if (text.search) {
