@@ -8,13 +8,32 @@ const { observations, latestObservations, refreshLatestObservationsViewSql } =
   schema;
 
 /**
+ * Per-session Postgres timeouts applied to every pooled connection. A statement
+ * that cannot acquire its lock within `lock_timeout` — most importantly the
+ * periodic `REFRESH MATERIALIZED VIEW CONCURRENTLY`, and the boot-time index
+ * check — fails fast and is retried on the next cycle, rather than hanging
+ * indefinitely on a contended lock (which once stalled startup for hours).
+ * `statement_timeout` is a generous backstop against a single runaway query.
+ */
+const LOCK_TIMEOUT_MS = 30_000;
+const STATEMENT_TIMEOUT_MS = 60_000;
+
+/**
  * PostgreSQL implementation of the ObservationStore interface.
  */
 export class PostgresObservationStore implements ObservationStore {
   private db: PostgresJsDatabase;
 
   private constructor(connectionString: string) {
-    this.db = drizzle(connectionString);
+    this.db = drizzle({
+      connection: {
+        url: connectionString,
+        connection: {
+          lock_timeout: LOCK_TIMEOUT_MS,
+          statement_timeout: STATEMENT_TIMEOUT_MS,
+        },
+      },
+    });
   }
 
   /**

@@ -3,6 +3,8 @@ import {
   PostgreSqlContainer,
   StartedPostgreSqlContainer,
 } from '@testcontainers/postgresql';
+import { sql } from 'drizzle-orm';
+import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { PostgresObservationStore } from '../src/store.js';
 
 describe('PostgresObservationStore', () => {
@@ -28,6 +30,15 @@ describe('PostgresObservationStore', () => {
 
     it('initializes schema on first run', () => {
       expect(store).toBeDefined();
+    });
+
+    it('applies lock and statement timeouts to its connection', async () => {
+      // Read the GUCs back off the store's own pooled connection.
+      const db = (store as unknown as { db: PostgresJsDatabase }).db;
+      const [lock] = await db.execute(sql`SHOW lock_timeout`);
+      const [statement] = await db.execute(sql`SHOW statement_timeout`);
+      expect(lock.lock_timeout).toBe('30s');
+      expect(statement.statement_timeout).toBe('1min');
     });
 
     it('stores and retrieves observations', async () => {
