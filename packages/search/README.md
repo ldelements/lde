@@ -93,6 +93,11 @@ per locale lets a query `query_by` them and rank the user’s language higher vi
 own `locale` in the schema), and `title_sort_nl`/`title_sort_en` when `sort`
 (folded, so a locale-switching UI sorts on the active language).
 
+Set `display: false` for a **search-only** field — one folded and stemmed for
+retrieval but never rendered (e.g. a `publisher` you search but show via a
+separate single label). It then emits `${name}_search_${locale}` without the
+`${name}_${locale}` display columns.
+
 Folding the search fields is what lets diacritic-insensitive matching and
 stemming coexist. A search engine on its **default** locale typically folds case
 and diacritics for you (Typesense v30, verified, even folds ø/æ/ß) — so there the

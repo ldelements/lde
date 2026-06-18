@@ -16,7 +16,7 @@ export type FieldKind = LangTextKind | FacetKind | NumberKind;
 /**
  * Language-tagged text, projected per locale. `locales` is the single source of
  * truth for which languages this field emits — every family fans out over it:
- * - `${name}_${locale}` display label, accents preserved (always);
+ * - `${name}_${locale}` display label, accents preserved (unless `display: false`);
  * - `${name}_search_${locale}` folded match field, when `search` (one per
  *   locale so the engine can tokenize each language and the query can rank the
  *   user’s locale higher);
@@ -34,6 +34,12 @@ export interface LangTextKind {
   readonly search?: boolean;
   /** Also emit a folded `${name}_sort_${locale}` per locale (sortable). */
   readonly sort?: boolean;
+  /**
+   * Emit the per-locale display labels `${name}_${locale}` (default `true`). Set
+   * `false` for a search-only field — one folded/stemmed for retrieval but never
+   * shown — so it contributes `${name}_search_${locale}` without display columns.
+   */
+  readonly display?: boolean;
 }
 
 /** A faceted multi-value field, optionally also folded for search. */
@@ -186,7 +192,9 @@ function applyLangText(
     // primary value (folded); search folds every value of the locale so all
     // are matchable. Absent locales emit nothing (the field stays optional).
     const [primary] = localeValues;
-    setString(document, `${name}_${locale}`, primary);
+    if (text.display !== false) {
+      setString(document, `${name}_${locale}`, primary);
+    }
     if (text.search) {
       setString(
         document,

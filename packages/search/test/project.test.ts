@@ -208,6 +208,33 @@ describe('projectDocument', () => {
     expect(document.title_en).toBeUndefined();
   });
 
+  it('omits display labels for a search-only field (display: false)', () => {
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/d/10',
+        [`${DCT}title`]: { '@language': 'nl', '@value': 'Verhalen' },
+      },
+      {
+        type: DATASET,
+        fields: [
+          {
+            name: 'title',
+            path: `${DCT}title`,
+            kind: {
+              type: 'langText',
+              locales: ['nl', 'en'],
+              search: true,
+              display: false,
+            },
+          },
+        ],
+      },
+    );
+    // Search field is emitted; the per-locale display label is not.
+    expect(document.title_search_nl).toBe('verhalen');
+    expect(document.title_nl).toBeUndefined();
+  });
+
   it('folds every value of a locale into its search field', () => {
     const document = projectDocument(
       {
