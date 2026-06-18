@@ -8,6 +8,7 @@ import {
 import { TypesenseContainer } from './typesense-container.js';
 
 const ALIAS = 'datasets';
+const LOCK_COLLECTION = 'rebuild_locks';
 
 function schema(name: string): CollectionCreateSchema {
   return {
@@ -25,6 +26,19 @@ async function* stream(
   for (const document of documents) {
     yield document;
   }
+}
+
+async function seedLock(client: Client, acquiredAt: number): Promise<void> {
+  await client
+    .collections()
+    .create({
+      name: LOCK_COLLECTION,
+      fields: [{ name: 'acquired_at', type: 'int64' }],
+    });
+  await client
+    .collections(LOCK_COLLECTION)
+    .documents()
+    .create({ id: ALIAS, acquired_at: acquiredAt });
 }
 
 async function reset(client: Client): Promise<void> {
@@ -105,11 +119,40 @@ describe('search-typesense', () => {
       ALIAS,
       schema(`${ALIAS}_1`),
       stream(documents),
-      2,
+      { batchSize: 2 },
     );
 
     expect(imported).toBe(5);
     expect((await client.collections(ALIAS).retrieve()).num_documents).toBe(5);
+  });
+
+  it('skips (returns null) when another rebuild holds the alias lock', async () => {
+    await seedLock(client, Date.now());
+
+    const result = await rebuild(client, ALIAS, schema(`${ALIAS}_1`), [
+      { id: 'a', title: 'A', year: 2024 },
+    ]);
+
+    expect(result).toBeNull();
+    // Nothing was built while the lock was held.
+    expect(await client.collections(`${ALIAS}_1`).exists()).toBe(false);
+  });
+
+  it('reclaims a stale lock and rebuilds', async () => {
+    await seedLock(client, Date.now() - 10_000);
+
+    const result = await rebuild(
+      client,
+      ALIAS,
+      schema(`${ALIAS}_1`),
+      [{ id: 'a', title: 'A', year: 2024 }],
+      { lockTtlMs: 1_000 },
+    );
+
+    expect(result).toBe(1);
+    expect((await client.aliases(ALIAS).retrieve()).collection_name).toBe(
+      `${ALIAS}_1`,
+    );
   });
 
   it('leaves the live alias intact and drops the orphan when a build fails', async () => {
