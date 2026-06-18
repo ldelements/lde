@@ -2,7 +2,6 @@ export { projectGraph, irisOf, literalsOf, firstLiteralOf } from './project.js';
 export type {
   SearchDocument,
   Projection,
-  ProjectionOptions,
   FieldSpec,
   FieldKind,
   LangTextKind,

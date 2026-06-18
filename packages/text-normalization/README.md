@@ -23,5 +23,5 @@ case where “Mohlmann” must find “Møhlmann”.
 `fold()` is idempotent (`fold(fold(x)) === fold(x)`). Punctuation and word
 boundaries are preserved; tokenization is left to the search engine.
 
-`FOLD_VERSION` is exported for index fingerprinting: because folded values are
-stored in the index, bumping the algorithm or map must trigger a rebuild.
+Because folded values are stored in the search index, the same `fold()` must be
+used at index time and query time, and any change to it requires a full rebuild.

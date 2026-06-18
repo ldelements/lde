@@ -85,16 +85,6 @@ export interface Projection {
   readonly derivations?: readonly Derivation[];
 }
 
-/** Cross-cutting projection options that are deployment-level, not per-shape. */
-export interface ProjectionOptions {
-  /**
-   * Interpret untagged literals (no `@language`) as this language, e.g. a
-   * source whose strings are all Dutch. The re-tagged value then projects into
-   * that locale’s fields like any tagged value. Left untagged (`''`) when unset.
-   */
-  readonly untaggedLanguage?: string;
-}
-
 /**
  * Project one framed JSON-LD node into a flat search document: apply each field
  * spec, then run the derivations (which may read fields the specs already set).
@@ -102,7 +92,6 @@ export interface ProjectionOptions {
 export function projectDocument(
   node: FramedSubject,
   projection: Projection,
-  options: ProjectionOptions = {},
 ): SearchDocument {
   const id = node['@id'];
   if (typeof id !== 'string') {
@@ -112,7 +101,7 @@ export function projectDocument(
   }
   const document: SearchDocument = { id };
   for (const field of projection.fields) {
-    applyField(document, node, field, options);
+    applyField(document, node, field);
   }
   for (const derive of projection.derivations ?? []) {
     derive(document, node);
@@ -129,14 +118,13 @@ export function projectDocument(
 export async function* projectGraph(
   quads: readonly Quad[],
   projections: readonly Projection[],
-  options: ProjectionOptions = {},
 ): AsyncIterable<SearchDocument> {
   const byType = new Map(
     projections.map((projection) => [projection.type, projection]),
   );
   for (const projection of byType.values()) {
     for await (const node of frameByType(quads, projection.type)) {
-      yield projectDocument(node, projection, options);
+      yield projectDocument(node, projection);
     }
   }
 }
@@ -145,16 +133,10 @@ function applyField(
   document: SearchDocument,
   node: FramedSubject,
   field: FieldSpec,
-  options: ProjectionOptions,
 ): void {
   switch (field.kind.type) {
     case 'langText':
-      return applyLangText(
-        document,
-        langValuesOf(node, field.path),
-        field,
-        options,
-      );
+      return applyLangText(document, langValuesOf(node, field.path), field);
     case 'facet':
       return applyFacet(document, node, field);
     case 'number':
@@ -166,7 +148,6 @@ function applyLangText(
   document: SearchDocument,
   values: readonly LangValue[],
   { name, kind }: FieldSpec,
-  { untaggedLanguage }: ProjectionOptions,
 ): void {
   const text = kind as LangTextKind;
   if (text.locales.length === 0) {
@@ -174,14 +155,8 @@ function applyLangText(
       `langText field “${name}” must declare at least one locale; nothing would be projected otherwise.`,
     );
   }
-  const tagged =
-    untaggedLanguage === undefined
-      ? values
-      : values.map((value) =>
-          value.lang === '' ? { ...value, lang: untaggedLanguage } : value,
-        );
   for (const locale of text.locales) {
-    const localeValues = tagged
+    const localeValues = values
       .filter((value) => value.lang === locale)
       .map((value) => value.value);
     if (localeValues.length === 0) {

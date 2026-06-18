@@ -130,13 +130,8 @@ sort with `missing_values: last` to push documents lacking the active locale to
 the end, and `query_by` all the per-locale search fields (weighting the user’s
 locale higher) to keep cross-language recall.
 
-Untagged literals (no `@language`) are dropped unless you set `untaggedLanguage`,
-which interprets every untagged string as one language — e.g. a source whose
-strings are all Dutch:
-
-```ts
-projectGraph(quads, projections, { untaggedLanguage: 'nl' });
-```
+A literal with no `@language` tag matches no locale, so it is not projected. Tag
+your source literals (or pre-process them) for the languages you index.
 
 ## Querying
 

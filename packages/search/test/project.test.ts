@@ -207,15 +207,13 @@ describe('projectDocument', () => {
     expect(document.title_sort_nl).toBeUndefined();
   });
 
-  it('maps untagged literals into the configured untaggedLanguage', () => {
+  it('does not project an untagged literal (no matching locale)', () => {
     const document = projectDocument(
       { '@id': 'https://ex/d/7', [`${DCT}title`]: { '@value': 'Naamloos' } },
       { type: DATASET, fields },
-      { untaggedLanguage: 'nl' },
     );
-    expect(document.title_nl).toBe('Naamloos');
-    expect(document.title_search_nl).toBe('naamloos');
-    expect(document.title_sort_nl).toBe('naamloos');
+    expect(document.title_nl).toBeUndefined();
+    expect(document.title_search_nl).toBeUndefined();
     expect(document.title_en).toBeUndefined();
   });
 

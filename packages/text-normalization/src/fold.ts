@@ -22,14 +22,6 @@ const TRANSLITERATION_MAP: Readonly<Record<string, string>> = {
   ĸ: 'k',
 };
 
-/**
- * Version of the fold algorithm + transliteration map. Folded values are STORED
- * in the search index, so a change here changes index contents and must trigger
- * a full rebuild (it feeds the indexer’s schema fingerprint). Bump on any change
- * to {@link TRANSLITERATION_MAP} or {@link fold}’s normalization steps.
- */
-export const FOLD_VERSION = 1;
-
 const TRANSLITERATION_PATTERN = new RegExp(
   `[${Object.keys(TRANSLITERATION_MAP).join('')}]`,
   'g',

@@ -1,1 +1,1 @@
-export { fold, FOLD_VERSION } from './fold.js';
+export { fold } from './fold.js';
