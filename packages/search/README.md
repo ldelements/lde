@@ -158,8 +158,8 @@ await client
 ```
 
 This contract holds for **any** consumer, including a search API built on top of
-this package: index-time and query-time folding must use the same `fold()` (and
-the same `FOLD_VERSION`), or non-decomposing terms silently miss.
+this package: index-time and query-time folding must use the same `fold()`, or
+non-decomposing terms silently miss.
 
 ## Why a spec
 
