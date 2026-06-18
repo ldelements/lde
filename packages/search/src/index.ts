@@ -7,6 +7,7 @@ export type {
   LangTextKind,
   FacetKind,
   NumberKind,
+  DateKind,
   Derivation,
 } from './project.js';
-export type { FramedSubject } from './frame-by-type.js';
+export type { FramedNode } from './frame-by-type.js';

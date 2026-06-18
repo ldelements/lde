@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Parser } from 'n3';
 import { dcat, dcterms, foaf, rdf } from '@tpluscode/rdf-ns-builders';
-import { frameByType, type FramedSubject } from '../src/frame-by-type.js';
+import { frameByType, type FramedNode } from '../src/frame-by-type.js';
 
 const DATASET = dcat.Dataset.value;
 
@@ -10,9 +10,9 @@ function quads(ntriples: string) {
 }
 
 async function collect(
-  iterable: AsyncIterable<FramedSubject>,
-): Promise<FramedSubject[]> {
-  const out: FramedSubject[] = [];
+  iterable: AsyncIterable<FramedNode>,
+): Promise<FramedNode[]> {
+  const out: FramedNode[] = [];
   for await (const item of iterable) {
     out.push(item);
   }

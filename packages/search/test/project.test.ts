@@ -34,46 +34,45 @@ const fields: FieldSpec[] = [
   {
     name: 'title',
     path: dcterms.title.value,
-    kind: {
-      type: 'langText',
-      locales: ['nl', 'en'],
-      display: true,
-      search: true,
-      sort: true,
-    },
+    type: 'langText',
+    locales: ['nl', 'en'],
+    display: true,
+    search: true,
+    sort: true,
   },
   {
     name: 'publisher',
     path: `${DR}publisherName`,
-    kind: {
-      type: 'langText',
-      locales: ['nl', 'en'],
-      display: true,
-      search: true,
-    },
+    type: 'langText',
+    locales: ['nl', 'en'],
+    display: true,
+    search: true,
   },
   {
     name: 'publisher',
     path: dcterms.publisher.value,
-    kind: { type: 'facet', iri: true },
+    type: 'facet',
+    iri: true,
   },
   {
     name: 'keyword',
     path: dcat.keyword.value,
-    kind: { type: 'facet', search: true },
+    type: 'facet',
+    search: true,
   },
   {
     name: 'format',
     path: `${DR}format`,
-    kind: { type: 'facet', transform: (value) => value.replace(IANA, '') },
+    type: 'facet',
+    transform: (value) => value.replace(IANA, ''),
   },
-  { name: 'class', path: `${DR}class`, kind: { type: 'facet', iri: true } },
+  { name: 'class', path: `${DR}class`, type: 'facet', iri: true },
   {
     name: 'date_posted',
     path: `${DR}datePosted`,
-    kind: { type: 'number', date: true },
+    type: 'date',
   },
-  { name: 'size', path: `${DR}size`, kind: { type: 'number' } },
+  { name: 'size', path: `${DR}size`, type: 'number' },
 ];
 
 const derivations: Derivation[] = [
@@ -122,21 +121,23 @@ describe('projectDocument', () => {
       {
         type: DATASET,
         fields: [
-          { name: 'size', path: `${DR}size`, kind: { type: 'number' } },
+          { name: 'size', path: `${DR}size`, type: 'number' },
           {
             name: 'language',
             path: dcterms.language.value,
-            kind: { type: 'facet' },
+            type: 'facet',
           },
           {
             name: 'keyword',
             path: dcat.keyword.value,
-            kind: { type: 'facet', search: true },
+            type: 'facet',
+            search: true,
           },
           {
             name: 'class',
             path: `${DR}class`,
-            kind: { type: 'facet', iri: true },
+            type: 'facet',
+            iri: true,
           },
         ],
       },
@@ -156,11 +157,9 @@ describe('projectDocument', () => {
           {
             name: 'format',
             path: `${DR}format`,
-            kind: {
-              type: 'facet',
-              search: true,
-              transform: (value) => value.replace(IANA, ''),
-            },
+            type: 'facet',
+            search: true,
+            transform: (value) => value.replace(IANA, ''),
           },
         ],
       },
@@ -234,7 +233,9 @@ describe('projectDocument', () => {
             name: 'title',
             path: dcterms.title.value,
             // search only — display and sort not opted into.
-            kind: { type: 'langText', locales: ['nl', 'en'], search: true },
+            type: 'langText',
+            locales: ['nl', 'en'],
+            search: true,
           },
         ],
       },
@@ -283,7 +284,8 @@ describe('projectDocument', () => {
             {
               name: 'title',
               path: dcterms.title.value,
-              kind: { type: 'langText', locales: [] },
+              type: 'langText',
+              locales: [],
             },
           ],
         },

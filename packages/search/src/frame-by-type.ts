@@ -5,7 +5,7 @@ import { rdf } from '@tpluscode/rdf-ns-builders';
 const RDF_TYPE = rdf.type.value;
 
 /** A framed JSON-LD node (full-IRI keys); the engine-agnostic search IR. */
-export type FramedSubject = Record<string, unknown>;
+export type FramedNode = Record<string, unknown>;
 
 const FRAME_OPTIONS = { omitGraph: false, embed: '@always' as const };
 
@@ -23,12 +23,12 @@ const FRAME_OPTIONS = { omitGraph: false, embed: '@always' as const };
 export async function* frameByType(
   quads: readonly Quad[],
   rootType: string,
-): AsyncIterable<FramedSubject> {
+): AsyncIterable<FramedNode> {
   const frame = { '@type': rootType };
   for (const subgraph of groupByRoot(quads, rootType)) {
     const expanded = await jsonld.fromRDF(subgraph);
     const framed = await jsonld.frame(expanded, frame, FRAME_OPTIONS);
-    const node = (framed['@graph'] as FramedSubject[] | undefined)?.[0];
+    const node = (framed['@graph'] as FramedNode[] | undefined)?.[0];
     if (node !== undefined) {
       yield node;
     }
