@@ -71,7 +71,6 @@ export class MonitorService {
       throw new Error(`Monitor not found: ${identifier}`);
     }
     await this.performCheck(config);
-    await this.refreshView();
   }
 
   /**
@@ -79,7 +78,6 @@ export class MonitorService {
    */
   async checkAll(): Promise<void> {
     await Promise.all(this.configs.map((config) => this.performCheck(config)));
-    await this.refreshView();
   }
 
   /**
@@ -135,14 +133,6 @@ export class MonitorService {
     const result = await this.probe(config.distribution, options);
     const checkResult = mapProbeResult(result, observedAt);
     await this.store.store({ monitor: config.identifier, ...checkResult });
-  }
-
-  private async refreshView(): Promise<void> {
-    try {
-      await this.store.refreshLatestObservationsView();
-    } catch {
-      // View refresh failure is not critical
-    }
   }
 }
 

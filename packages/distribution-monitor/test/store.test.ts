@@ -5,73 +5,11 @@ import {
 } from '@testcontainers/postgresql';
 import { sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
-import {
-  PostgresObservationStore,
-  ensureLatestObservationsIndex,
-  isLockNotAvailable,
-} from '../src/store.js';
+import { PostgresObservationStore } from '../src/store.js';
 
 describe('PostgresObservationStore', () => {
   it('exports create factory method', () => {
     expect(PostgresObservationStore.create).toBeInstanceOf(Function);
-  });
-
-  describe('ensureLatestObservationsIndex', () => {
-    const rejectingDb = (error: unknown) =>
-      ({ execute: () => Promise.reject(error) }) as never;
-
-    it('swallows a 55P03 lock-timeout so startup is not aborted', async () => {
-      const lockTimeout = {
-        name: 'DrizzleQueryError',
-        cause: { code: '55P03' },
-      };
-      await expect(
-        ensureLatestObservationsIndex(rejectingDb(lockTimeout)),
-      ).resolves.toBeUndefined();
-    });
-
-    it('re-throws any other error', async () => {
-      const otherError = { cause: { code: '42P07' } };
-      await expect(
-        ensureLatestObservationsIndex(rejectingDb(otherError)),
-      ).rejects.toBe(otherError);
-    });
-
-    it('resolves when the index is created', async () => {
-      const db = { execute: () => Promise.resolve([]) } as never;
-      await expect(ensureLatestObservationsIndex(db)).resolves.toBeUndefined();
-    });
-  });
-
-  describe('isLockNotAvailable', () => {
-    it('detects the 55P03 SQLSTATE on the top-level error', () => {
-      expect(isLockNotAvailable({ code: '55P03' })).toBe(true);
-    });
-
-    it('detects 55P03 wrapped in a nested cause, as drizzle reports it', () => {
-      const error = { name: 'DrizzleQueryError', cause: { code: '55P03' } };
-      expect(isLockNotAvailable(error)).toBe(true);
-    });
-
-    it('walks multiple cause levels', () => {
-      const error = { cause: { cause: { code: '55P03' } } };
-      expect(isLockNotAvailable(error)).toBe(true);
-    });
-
-    it('returns false for a different SQLSTATE', () => {
-      // 42P07 = duplicate_table, already handled by IF NOT EXISTS.
-      expect(isLockNotAvailable({ cause: { code: '42P07' } })).toBe(false);
-    });
-
-    it('returns false for an error without a code or cause', () => {
-      expect(isLockNotAvailable(new Error('boom'))).toBe(false);
-    });
-
-    it('returns false for non-object values', () => {
-      expect(isLockNotAvailable(null)).toBe(false);
-      expect(isLockNotAvailable(undefined)).toBe(false);
-      expect(isLockNotAvailable('55P03')).toBe(false);
-    });
   });
 
   describe('integration', () => {
@@ -145,12 +83,35 @@ describe('PostgresObservationStore', () => {
         errorMessage: null,
       });
 
-      await store.refreshLatestObservationsView();
       const latest = await store.getLatest();
 
       expect(latest.size).toBeGreaterThanOrEqual(2);
       expect(latest.get('monitor-a')?.success).toBe(false);
       expect(latest.get('monitor-b')?.success).toBe(true);
+    });
+
+    it('does not let an out-of-order write move latest backwards', async () => {
+      await store.store({
+        monitor: 'monitor-ooo',
+        observedAt: new Date('2024-03-02'),
+        success: true,
+        responseTimeMs: 10,
+        errorMessage: null,
+      });
+      // An older observation arriving late must not overwrite the newer latest.
+      await store.store({
+        monitor: 'monitor-ooo',
+        observedAt: new Date('2024-03-01'),
+        success: false,
+        responseTimeMs: 20,
+        errorMessage: 'stale',
+      });
+
+      const latest = await store.getLatest();
+      expect(latest.get('monitor-ooo')?.observedAt).toEqual(
+        new Date('2024-03-02'),
+      );
+      expect(latest.get('monitor-ooo')?.success).toBe(true);
     });
 
     it('reconciles an existing database idempotently, without data loss', async () => {
@@ -163,7 +124,6 @@ describe('PostgresObservationStore', () => {
       );
       expect(store).toBeDefined();
 
-      await store.refreshLatestObservationsView();
       const latest = await store.getLatest();
       expect(latest.get('monitor-a')?.success).toBe(false);
       expect(latest.get('monitor-b')?.success).toBe(true);

@@ -62,14 +62,9 @@ export interface ObservationStore {
   get(id: string): Promise<Observation | null>;
 
   /**
-   * Save a new observation.
+   * Save a new observation. Also updates the latest-per-monitor record.
    */
   store(observation: Omit<Observation, 'id'>): Promise<Observation>;
-
-  /**
-   * Refresh the latest_observations materialized view.
-   */
-  refreshLatestObservationsView(): Promise<void>;
 
   /**
    * Close the database connection.
