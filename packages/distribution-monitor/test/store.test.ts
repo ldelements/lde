@@ -5,11 +5,73 @@ import {
 } from '@testcontainers/postgresql';
 import { sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
-import { PostgresObservationStore } from '../src/store.js';
+import {
+  PostgresObservationStore,
+  ensureLatestObservationsIndex,
+  isLockNotAvailable,
+} from '../src/store.js';
 
 describe('PostgresObservationStore', () => {
   it('exports create factory method', () => {
     expect(PostgresObservationStore.create).toBeInstanceOf(Function);
+  });
+
+  describe('ensureLatestObservationsIndex', () => {
+    const rejectingDb = (error: unknown) =>
+      ({ execute: () => Promise.reject(error) }) as never;
+
+    it('swallows a 55P03 lock-timeout so startup is not aborted', async () => {
+      const lockTimeout = {
+        name: 'DrizzleQueryError',
+        cause: { code: '55P03' },
+      };
+      await expect(
+        ensureLatestObservationsIndex(rejectingDb(lockTimeout)),
+      ).resolves.toBeUndefined();
+    });
+
+    it('re-throws any other error', async () => {
+      const otherError = { cause: { code: '42P07' } };
+      await expect(
+        ensureLatestObservationsIndex(rejectingDb(otherError)),
+      ).rejects.toBe(otherError);
+    });
+
+    it('resolves when the index is created', async () => {
+      const db = { execute: () => Promise.resolve([]) } as never;
+      await expect(ensureLatestObservationsIndex(db)).resolves.toBeUndefined();
+    });
+  });
+
+  describe('isLockNotAvailable', () => {
+    it('detects the 55P03 SQLSTATE on the top-level error', () => {
+      expect(isLockNotAvailable({ code: '55P03' })).toBe(true);
+    });
+
+    it('detects 55P03 wrapped in a nested cause, as drizzle reports it', () => {
+      const error = { name: 'DrizzleQueryError', cause: { code: '55P03' } };
+      expect(isLockNotAvailable(error)).toBe(true);
+    });
+
+    it('walks multiple cause levels', () => {
+      const error = { cause: { cause: { code: '55P03' } } };
+      expect(isLockNotAvailable(error)).toBe(true);
+    });
+
+    it('returns false for a different SQLSTATE', () => {
+      // 42P07 = duplicate_table, already handled by IF NOT EXISTS.
+      expect(isLockNotAvailable({ cause: { code: '42P07' } })).toBe(false);
+    });
+
+    it('returns false for an error without a code or cause', () => {
+      expect(isLockNotAvailable(new Error('boom'))).toBe(false);
+    });
+
+    it('returns false for non-object values', () => {
+      expect(isLockNotAvailable(null)).toBe(false);
+      expect(isLockNotAvailable(undefined)).toBe(false);
+      expect(isLockNotAvailable('55P03')).toBe(false);
+    });
   });
 
   describe('integration', () => {
