@@ -1,3 +1,9 @@
+## 0.1.12 (2026-06-18)
+
+### 🩹 Fixes
+
+- **distribution-monitor:** reconcile schema via pushSchema diff, not full DDL each boot ([#489](https://github.com/ldelements/lde/pull/489))
+
 ## 0.1.11 (2026-06-18)
 
 ### 🧱 Updated Dependencies
