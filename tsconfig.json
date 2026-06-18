@@ -67,6 +67,15 @@
     },
     {
       "path": "./packages/distribution-health"
+    },
+    {
+      "path": "./packages/text-normalization"
+    },
+    {
+      "path": "./packages/search-typesense"
+    },
+    {
+      "path": "./packages/search"
     }
   ]
 }
