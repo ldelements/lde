@@ -4,16 +4,14 @@ import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import * as schema from './schema.js';
 import type { ObservationStore, Observation } from './types.js';
 
-const { observations, latestObservations, refreshLatestObservationsViewSql } =
-  schema;
+const { observations, latestObservations } = schema;
 
 /**
- * Per-session Postgres timeouts applied to every pooled connection. A statement
- * that cannot acquire its lock within `lock_timeout` — most importantly the
- * periodic `REFRESH MATERIALIZED VIEW CONCURRENTLY`, and the boot-time index
- * check — fails fast and is retried on the next cycle, rather than hanging
- * indefinitely on a contended lock (which once stalled startup for hours).
- * `statement_timeout` is a generous backstop against a single runaway query.
+ * Per-session Postgres timeouts applied to every pooled connection, so a
+ * statement that blocks on a lock or runs away fails fast rather than hanging
+ * indefinitely (which once stalled startup for hours). `lock_timeout` bounds
+ * lock waits; `statement_timeout` is a generous backstop against a single
+ * runaway query.
  */
 const LOCK_TIMEOUT_MS = 30_000;
 const STATEMENT_TIMEOUT_MS = 60_000;
@@ -52,6 +50,23 @@ export class PostgresObservationStore implements ObservationStore {
     connectionString: string,
   ): Promise<PostgresObservationStore> {
     const store = new PostgresObservationStore(connectionString);
+
+    // Migrate away from the former `latest_observations` MATERIALIZED VIEW: it
+    // was a derived cache (every value also lives in `observations`), so dropping
+    // it loses nothing. Done before pushSchema so the declarative push can create
+    // the replacement table without tripping the destructive-change guard below.
+    // Guarded on pg_matviews, so it is a no-op once the table has taken over.
+    await store.db.execute(sql`
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM pg_matviews WHERE matviewname = 'latest_observations'
+        ) THEN
+          DROP MATERIALIZED VIEW latest_observations;
+        END IF;
+      END $$;
+    `);
+
     const { pushSchema } = await import('drizzle-kit/api-postgres');
 
     // #5293 shim: drizzle-kit reads `.rows` off the execute() result, which the
@@ -83,8 +98,6 @@ export class PostgresObservationStore implements ObservationStore {
       await store.db.execute(sql.raw(statement));
     }
 
-    await ensureLatestObservationsIndex(store.db);
-
     return store;
   }
 
@@ -108,60 +121,31 @@ export class PostgresObservationStore implements ObservationStore {
   }
 
   async store(observation: Omit<Observation, 'id'>): Promise<Observation> {
-    const rows = await this.db
-      .insert(observations)
-      .values(observation)
-      .returning();
-    return rows[0];
-  }
+    return this.db.transaction(async (tx) => {
+      const [inserted] = await tx
+        .insert(observations)
+        .values(observation)
+        .returning();
 
-  async refreshLatestObservationsView(): Promise<void> {
-    await this.db.execute(refreshLatestObservationsViewSql);
-  }
-}
+      // Keep the latest-per-monitor row current in the same transaction. The
+      // `setWhere` guard skips the update when a newer observation is already
+      // recorded, so an out-of-order write can never move `latest` backwards.
+      await tx
+        .insert(latestObservations)
+        .values(inserted)
+        .onConflictDoUpdate({
+          target: latestObservations.monitor,
+          set: {
+            id: inserted.id,
+            observedAt: inserted.observedAt,
+            success: inserted.success,
+            responseTimeMs: inserted.responseTimeMs,
+            errorMessage: inserted.errorMessage,
+          },
+          setWhere: sql`${latestObservations.observedAt} <= excluded.observed_at`,
+        });
 
-/**
- * Create the unique index that `REFRESH ... CONCURRENTLY` requires on the
- * `latest_observations` materialized view. drizzle's `pgMaterializedView` does
- * not model it, so `pushSchema` never emits it; create it idempotently here —
- * `IF NOT EXISTS` matches by name and skips (no rebuild) when it already exists.
- *
- * The statement takes a SHARE lock on the view, which conflicts with the
- * EXCLUSIVE lock held by a `REFRESH ... CONCURRENTLY` running in another
- * instance. During a rolling deploy the old and new pods overlap, so that wait
- * can exceed `lock_timeout` and raise `55P03` (lock_not_available). Tolerate it:
- * whenever the view is being refreshed the index already exists, so a failed
- * re-check is harmless — far better than aborting startup and crash-looping the
- * monitor. Re-throw anything else.
- */
-export async function ensureLatestObservationsIndex(
-  db: Pick<PostgresJsDatabase, 'execute'>,
-): Promise<void> {
-  try {
-    await db.execute(
-      sql`CREATE UNIQUE INDEX IF NOT EXISTS latest_observations_monitor_idx ON latest_observations (monitor)`,
-    );
-  } catch (error) {
-    if (!isLockNotAvailable(error)) {
-      throw error;
-    }
+      return inserted;
+    });
   }
-}
-
-/**
- * Whether an error is (or wraps) the PostgreSQL `lock_not_available` (`55P03`)
- * SQLSTATE, raised when a statement exceeds `lock_timeout` waiting for a
- * contended lock. drizzle wraps the driver error, so the SQLSTATE lives on a
- * nested `cause` rather than the top-level error.
- */
-export function isLockNotAvailable(error: unknown): boolean {
-  if (typeof error !== 'object' || error === null) {
-    return false;
-  }
-  if ('code' in error && (error as { code?: unknown }).code === '55P03') {
-    return true;
-  }
-  return (
-    'cause' in error && isLockNotAvailable((error as { cause?: unknown }).cause)
-  );
 }

@@ -16,7 +16,6 @@ function createMockStore(): ObservationStore {
       id: 'obs-1',
       ...observation,
     })),
-    refreshLatestObservationsView: vi.fn().mockResolvedValue(undefined),
     close: vi.fn().mockResolvedValue(undefined),
   };
 }
