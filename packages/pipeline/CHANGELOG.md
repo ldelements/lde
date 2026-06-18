@@ -1,3 +1,9 @@
+## 0.30.21 (2026-06-18)
+
+### 🩹 Fixes
+
+- **pipeline:** preserve reporter `this` when forwarding to combined reporters ([#491](https://github.com/ldelements/lde/pull/491))
+
 ## 0.30.20 (2026-06-18)
 
 ### 🧱 Updated Dependencies
