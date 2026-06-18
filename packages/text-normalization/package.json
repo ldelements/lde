@@ -1,6 +1,6 @@
 {
   "name": "@lde/text-normalization",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Zero-dependency text folding (diacritic stripping and transliteration) for search index and query normalization",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
