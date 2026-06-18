@@ -83,14 +83,7 @@ export class PostgresObservationStore implements ObservationStore {
       await store.db.execute(sql.raw(statement));
     }
 
-    // The unique index on the materialized view is required for
-    // REFRESH ... CONCURRENTLY but is not modelled by drizzle's
-    // `pgMaterializedView`, so `pushSchema` never emits it. Create it
-    // idempotently — `IF NOT EXISTS` matches by name and skips (no rebuild) when
-    // it already exists.
-    await store.db.execute(
-      sql`CREATE UNIQUE INDEX IF NOT EXISTS latest_observations_monitor_idx ON latest_observations (monitor)`,
-    );
+    await ensureLatestObservationsIndex(store.db);
 
     return store;
   }
@@ -125,4 +118,50 @@ export class PostgresObservationStore implements ObservationStore {
   async refreshLatestObservationsView(): Promise<void> {
     await this.db.execute(refreshLatestObservationsViewSql);
   }
+}
+
+/**
+ * Create the unique index that `REFRESH ... CONCURRENTLY` requires on the
+ * `latest_observations` materialized view. drizzle's `pgMaterializedView` does
+ * not model it, so `pushSchema` never emits it; create it idempotently here —
+ * `IF NOT EXISTS` matches by name and skips (no rebuild) when it already exists.
+ *
+ * The statement takes a SHARE lock on the view, which conflicts with the
+ * EXCLUSIVE lock held by a `REFRESH ... CONCURRENTLY` running in another
+ * instance. During a rolling deploy the old and new pods overlap, so that wait
+ * can exceed `lock_timeout` and raise `55P03` (lock_not_available). Tolerate it:
+ * whenever the view is being refreshed the index already exists, so a failed
+ * re-check is harmless — far better than aborting startup and crash-looping the
+ * monitor. Re-throw anything else.
+ */
+export async function ensureLatestObservationsIndex(
+  db: Pick<PostgresJsDatabase, 'execute'>,
+): Promise<void> {
+  try {
+    await db.execute(
+      sql`CREATE UNIQUE INDEX IF NOT EXISTS latest_observations_monitor_idx ON latest_observations (monitor)`,
+    );
+  } catch (error) {
+    if (!isLockNotAvailable(error)) {
+      throw error;
+    }
+  }
+}
+
+/**
+ * Whether an error is (or wraps) the PostgreSQL `lock_not_available` (`55P03`)
+ * SQLSTATE, raised when a statement exceeds `lock_timeout` waiting for a
+ * contended lock. drizzle wraps the driver error, so the SQLSTATE lives on a
+ * nested `cause` rather than the top-level error.
+ */
+export function isLockNotAvailable(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) {
+    return false;
+  }
+  if ('code' in error && (error as { code?: unknown }).code === '55P03') {
+    return true;
+  }
+  return (
+    'cause' in error && isLockNotAvailable((error as { cause?: unknown }).cause)
+  );
 }
