@@ -80,13 +80,20 @@ describe('PostgresObservationStore', () => {
       expect(latest.get('monitor-b')?.success).toBe(true);
     });
 
-    it('handles schema re-initialization on existing database', async () => {
-      // Close and recreate store to test idempotent schema push
+    it('reconciles an existing database idempotently, without data loss', async () => {
+      // Re-create the store against the already-provisioned database. The
+      // declarative push must diff to an empty change set, so previously stored
+      // observations survive (a destructive re-create would drop them).
       await store.close();
       store = await PostgresObservationStore.create(
         container.getConnectionUri(),
       );
       expect(store).toBeDefined();
+
+      await store.refreshLatestObservationsView();
+      const latest = await store.getLatest();
+      expect(latest.get('monitor-a')?.success).toBe(false);
+      expect(latest.get('monitor-b')?.success).toBe(true);
     });
   });
 });
