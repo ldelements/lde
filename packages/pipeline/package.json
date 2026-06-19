@@ -33,7 +33,7 @@
     "@rdfjs/namespace": "^2.0.1",
     "@rdfjs/types": "^2.0.1",
     "@tpluscode/rdf-ns-builders": "^5.0.0",
-    "@traqula/generator-sparql-1-1": "^1.1.4",
+    "@traqula/generator-sparql-1-1": "^1.1.5",
     "@traqula/parser-sparql-1-1": "^1.1.4",
     "@traqula/rules-sparql-1-1": "^1.1.0",
     "fetch-sparql-endpoint": "^7.1.0",
