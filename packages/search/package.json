@@ -1,6 +1,6 @@
 {
   "name": "@lde/search",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Engine-agnostic search projection for RDF-backed pipelines: frame CONSTRUCT quads into a JSON-LD IR, then project that IR into flat search documents from a declarative field spec (the artifact a SHACL generator would emit)",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",

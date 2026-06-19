@@ -1,3 +1,11 @@
+## 0.30.22 (2026-06-19)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset-registry-client to 0.8.4
+- Updated @lde/distribution-health to 0.1.5
+- Updated @lde/distribution-probe to 0.1.13
+
 ## 0.30.21 (2026-06-18)
 
 ### 🩹 Fixes

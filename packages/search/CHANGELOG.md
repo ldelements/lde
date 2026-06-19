@@ -1,3 +1,9 @@
+## 0.1.1 (2026-06-19)
+
+### 🩹 Fixes
+
+- **search:** frame the root subject, not the first graph node ([#503](https://github.com/ldelements/lde/pull/503))
+
 ## 0.1.0 (2026-06-18)
 
 ### 🚀 Features
