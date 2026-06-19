@@ -8,6 +8,10 @@ import { Distribution, IANA_MEDIA_TYPE_PREFIX } from '@lde/dataset';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { gzipSync } from 'node:zlib';
+
+// Body/triple validation is opt-in; pass this to exercise the validation path.
+const VALIDATE_RDF = { validateRdfContent: true } as const;
 
 describe('probe', () => {
   beforeEach(() => {
@@ -380,7 +384,7 @@ describe('probe', () => {
       expect(distribution.byteSize).toBeUndefined();
     });
 
-    it('retries with GET if HEAD returns no Content-Length', async () => {
+    it('reads the body via GET when content validation is enabled', async () => {
       const body =
         '<http://example.org/s> <http://example.org/p> <http://example.org/o> .\n';
       vi.mocked(fetch)
@@ -389,7 +393,7 @@ describe('probe', () => {
             status: 200,
             headers: { 'Content-Length': '0' },
           }),
-        )
+        ) // HEAD
         .mockResolvedValueOnce(
           new Response(body, {
             status: 200,
@@ -398,14 +402,14 @@ describe('probe', () => {
               'Content-Type': 'application/n-triples',
             },
           }),
-        );
+        ); // GET
 
       const distribution = new Distribution(
         new URL('http://example.org/data.nt'),
         'application/n-triples',
       );
 
-      const result = await probe(distribution);
+      const result = await probe(distribution, VALIDATE_RDF);
 
       expect(vi.mocked(fetch)).toHaveBeenCalledTimes(2);
       expect(result).toBeInstanceOf(DataDumpProbeResult);
@@ -414,7 +418,7 @@ describe('probe', () => {
 
     it('records an HTTP error on the GET path without validating the body', async () => {
       vi.mocked(fetch)
-        .mockResolvedValueOnce(new Response('', { status: 200 })) // HEAD, no Content-Length
+        .mockResolvedValueOnce(new Response('', { status: 200 })) // HEAD
         .mockResolvedValueOnce(
           new Response('Not Found', { status: 404, statusText: 'Not Found' }),
         ); // GET
@@ -424,7 +428,7 @@ describe('probe', () => {
         'application/n-triples',
       );
 
-      const result = await probe(distribution);
+      const result = await probe(distribution, VALIDATE_RDF);
 
       expect(result).toBeInstanceOf(DataDumpProbeResult);
       const dumpResult = result as DataDumpProbeResult;
@@ -443,7 +447,7 @@ describe('probe', () => {
         'application/n-triples',
       );
 
-      const result = await probe(distribution);
+      const result = await probe(distribution, VALIDATE_RDF);
 
       expect(result).toBeInstanceOf(DataDumpProbeResult);
       const dumpResult = result as DataDumpProbeResult;
@@ -467,7 +471,7 @@ describe('probe', () => {
         'text/turtle',
       );
 
-      const result = await probe(distribution);
+      const result = await probe(distribution, VALIDATE_RDF);
 
       expect(result).toBeInstanceOf(DataDumpProbeResult);
       const dumpResult = result as DataDumpProbeResult;
@@ -493,7 +497,7 @@ describe('probe', () => {
         'text/turtle',
       );
 
-      const result = await probe(distribution);
+      const result = await probe(distribution, VALIDATE_RDF);
 
       expect(result).toBeInstanceOf(DataDumpProbeResult);
       const dumpResult = result as DataDumpProbeResult;
@@ -518,7 +522,7 @@ describe('probe', () => {
         'application/n-triples',
       );
 
-      const result = await probe(distribution);
+      const result = await probe(distribution, VALIDATE_RDF);
 
       expect(result).toBeInstanceOf(DataDumpProbeResult);
       const dumpResult = result as DataDumpProbeResult;
@@ -542,7 +546,7 @@ describe('probe', () => {
         'application/ld+json',
       );
 
-      const result = await probe(distribution);
+      const result = await probe(distribution, VALIDATE_RDF);
 
       expect(result).toBeInstanceOf(DataDumpProbeResult);
       const dumpResult = result as DataDumpProbeResult;
@@ -568,7 +572,7 @@ describe('probe', () => {
         'application/ld+json',
       );
 
-      const result = await probe(distribution);
+      const result = await probe(distribution, VALIDATE_RDF);
 
       expect(result).toBeInstanceOf(DataDumpProbeResult);
       const dumpResult = result as DataDumpProbeResult;
@@ -595,7 +599,7 @@ describe('probe', () => {
         'application/rdf+xml',
       );
 
-      const result = await probe(distribution);
+      const result = await probe(distribution, VALIDATE_RDF);
 
       expect(result).toBeInstanceOf(DataDumpProbeResult);
       const dumpResult = result as DataDumpProbeResult;
@@ -621,7 +625,7 @@ describe('probe', () => {
         'text/n3',
       );
 
-      const result = await probe(distribution);
+      const result = await probe(distribution, VALIDATE_RDF);
 
       expect(result).toBeInstanceOf(DataDumpProbeResult);
       const dumpResult = result as DataDumpProbeResult;
@@ -648,7 +652,7 @@ describe('probe', () => {
         'application/ld+json',
       );
 
-      const result = await probe(distribution);
+      const result = await probe(distribution, VALIDATE_RDF);
 
       expect(result).toBeInstanceOf(DataDumpProbeResult);
       const dumpResult = result as DataDumpProbeResult;
@@ -656,31 +660,32 @@ describe('probe', () => {
       expect(dumpResult.failureReason).toBeNull();
     });
 
-    it('does not validate a non-RDF body', async () => {
-      const body = 'id,name\n1,Alice\n';
-      vi.mocked(fetch)
-        .mockResolvedValueOnce(new Response('', { status: 200 })) // HEAD
-        .mockResolvedValueOnce(
-          new Response(body, {
-            status: 200,
-            headers: { 'Content-Type': 'text/csv' },
-          }),
-        ); // GET
+    it('does not read the body when the declared type is not RDF', async () => {
+      // text/csv is not an RDF serialization, so even with validation enabled the
+      // probe stays reachability-only and never issues the GET.
+      vi.mocked(fetch).mockResolvedValueOnce(
+        new Response('', {
+          status: 200,
+          headers: { 'Content-Type': 'text/csv' },
+        }),
+      ); // HEAD only
 
       const distribution = new Distribution(
         new URL('http://example.org/data.csv'),
         'text/csv',
       );
 
-      const result = await probe(distribution);
+      const result = await probe(distribution, VALIDATE_RDF);
 
+      expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
       expect(result).toBeInstanceOf(DataDumpProbeResult);
       const dumpResult = result as DataDumpProbeResult;
       expect(dumpResult.isSuccess()).toBe(true);
       expect(dumpResult.failureReason).toBeNull();
     });
 
-    it('skips body validation for large files', async () => {
+    it('does not read the body when content validation is off', async () => {
+      // The default: a successful HEAD settles reachability without a GET.
       vi.mocked(fetch).mockResolvedValueOnce(
         new Response('', {
           status: 200,
@@ -701,6 +706,341 @@ describe('probe', () => {
       expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1); // HEAD only
       expect(result).toBeInstanceOf(DataDumpProbeResult);
       expect((result as DataDumpProbeResult).isSuccess()).toBe(true);
+    });
+
+    it('falls back to GET for reachability when HEAD is unsupported', async () => {
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(new Response('', { status: 405 })) // HEAD not allowed
+        .mockResolvedValueOnce(new Response('body', { status: 200 })); // GET
+
+      const distribution = new Distribution(
+        new URL('http://example.org/data.nt'),
+        'application/n-triples',
+      );
+
+      const result = await probe(distribution, VALIDATE_RDF);
+
+      expect(vi.mocked(fetch)).toHaveBeenCalledTimes(2);
+      expect(result).toBeInstanceOf(DataDumpProbeResult);
+      expect((result as DataDumpProbeResult).isSuccess()).toBe(true);
+    });
+  });
+
+  describe('bounded streaming body', () => {
+    // A repeatable, syntactically valid N-Triples line.
+    const triple =
+      '<http://example.org/s> <http://example.org/p> <http://example.org/o> .\n';
+
+    function headThenGet(getResponse: Response): void {
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(
+          new Response('', { status: 200, headers: { 'Content-Length': '0' } }),
+        ) // HEAD: no size, forces the GET fallback
+        .mockResolvedValueOnce(getResponse); // GET
+    }
+
+    it('reads a gzip-compressed data dump without downloading it in full', async () => {
+      // TriplyDB serves .nq.gz dumps as a gzip body labelled application/n-quads
+      // with Content-Length: 0 on HEAD. fetch does not inflate it (the payload is
+      // a .gz file, not transport-encoded), so the probe must gunzip it itself.
+      headThenGet(
+        new Response(gzipSync(Buffer.from(triple)), {
+          status: 200,
+          headers: { 'Content-Type': 'application/n-quads' },
+        }),
+      );
+
+      const distribution = new Distribution(
+        new URL('http://example.org/download.nq.gz'),
+        'application/n-quads',
+      );
+
+      const result = await probe(distribution, VALIDATE_RDF);
+
+      expect(result).toBeInstanceOf(DataDumpProbeResult);
+      const dumpResult = result as DataDumpProbeResult;
+      expect(dumpResult.isSuccess()).toBe(true);
+      expect(dumpResult.failureReason).toBeNull();
+    });
+
+    it('confirms a large streamed dump from a bounded prefix', async () => {
+      // A body far larger than the read cap, valid from the first line. The probe
+      // must stop after the prefix and still see the leading triple.
+      headThenGet(
+        new Response(triple.repeat(15_000), {
+          status: 200,
+          headers: { 'Content-Type': 'application/n-triples' },
+        }),
+      );
+
+      const distribution = new Distribution(
+        new URL('http://example.org/data.nt'),
+        'application/n-triples',
+      );
+
+      const result = await probe(distribution, VALIDATE_RDF);
+
+      expect((result as DataDumpProbeResult).isSuccess()).toBe(true);
+      expect((result as DataDumpProbeResult).failureReason).toBeNull();
+    });
+
+    it('inflates only a bounded prefix of a large gzip dump', async () => {
+      // Decompresses to well beyond the cap; gunzip must stop at the cap and the
+      // probe must still confirm the leading triple.
+      headThenGet(
+        new Response(gzipSync(Buffer.from(triple.repeat(15_000))), {
+          status: 200,
+          headers: { 'Content-Type': 'application/n-quads' },
+        }),
+      );
+
+      const distribution = new Distribution(
+        new URL('http://example.org/download.nq.gz'),
+        'application/n-quads',
+      );
+
+      const result = await probe(distribution, VALIDATE_RDF);
+
+      expect((result as DataDumpProbeResult).isSuccess()).toBe(true);
+      expect((result as DataDumpProbeResult).failureReason).toBeNull();
+    });
+
+    it('does not flag a truncated prefix that yields no triple', async () => {
+      // A body larger than the cap made only of comment lines: the parser reaches
+      // the end of the prefix with no triple, and the read is truncated, so the
+      // outcome is inconclusive — never an ‘empty distribution’ failure.
+      headThenGet(
+        new Response('# a comment line that carries no triple\n'.repeat(8_000), {
+          status: 200,
+          headers: { 'Content-Type': 'application/n-triples' },
+        }),
+      );
+
+      const distribution = new Distribution(
+        new URL('http://example.org/data.nt'),
+        'application/n-triples',
+      );
+
+      const result = await probe(distribution, VALIDATE_RDF);
+
+      expect((result as DataDumpProbeResult).isSuccess()).toBe(true);
+      expect((result as DataDumpProbeResult).failureReason).toBeNull();
+    });
+
+    it('does not flag a parse error inside a truncated prefix', async () => {
+      // A body larger than the cap whose prefix is broken N-Triples: a parse error
+      // on a deliberately cut-off prefix must be inconclusive, not a faulty
+      // distribution.
+      headThenGet(
+        new Response('<http://example.org/s> <http://example.org/p'.repeat(8_000), {
+          status: 200,
+          headers: { 'Content-Type': 'application/n-triples' },
+        }),
+      );
+
+      const distribution = new Distribution(
+        new URL('http://example.org/data.nt'),
+        'application/n-triples',
+      );
+
+      const result = await probe(distribution, VALIDATE_RDF);
+
+      expect((result as DataDumpProbeResult).isSuccess()).toBe(true);
+      expect((result as DataDumpProbeResult).failureReason).toBeNull();
+    });
+
+    it('does not validate a truncated JSON-LD body', async () => {
+      // JSON-LD is not streamable: a truncated prefix yields no triple, only an
+      // ‘unclosed document’ error. A body larger than the cap is therefore
+      // inconclusive — reachable, never a parse-error failure — and the doomed
+      // parse is skipped entirely.
+      const body =
+        '{"@context":{"ex":"http://example.org/"},"@graph":[' +
+        '{"@id":"ex:s","ex:p":"v"},'.repeat(12_000); // > cap, unterminated JSON
+      headThenGet(
+        new Response(body, {
+          status: 200,
+          headers: { 'Content-Type': 'application/ld+json' },
+        }),
+      );
+
+      const distribution = new Distribution(
+        new URL('http://example.org/data.jsonld'),
+        'application/ld+json',
+      );
+
+      const result = await probe(distribution, VALIDATE_RDF);
+
+      expect((result as DataDumpProbeResult).isSuccess()).toBe(true);
+      expect((result as DataDumpProbeResult).failureReason).toBeNull();
+    });
+
+    it('does not flag a truncated gzip prefix that inflated nothing', async () => {
+      // A gzip whose header carries an (unterminated) FNAME field larger than the
+      // read cap: the compressed stream is cut mid-header, so nothing inflates.
+      // Because we cut it ourselves — rather than holding a complete, broken body
+      // — it is a truncated prefix (inconclusive), not a corrupt distribution.
+      const header = Buffer.from([0x1f, 0x8b, 0x08, 0x08, 0, 0, 0, 0, 0, 3]); // FLG=FNAME
+      const unterminatedFilename = Buffer.alloc(300 * 1024, 0x41); // 'A', no NUL
+      const body = Buffer.concat([header, unterminatedFilename]);
+      expect(body.length).toBeGreaterThan(256 * 1024);
+      headThenGet(
+        new Response(body, {
+          status: 200,
+          headers: { 'Content-Type': 'application/n-quads' },
+        }),
+      );
+
+      const distribution = new Distribution(
+        new URL('http://example.org/download.nq.gz'),
+        'application/n-quads',
+      );
+
+      const result = await probe(distribution, VALIDATE_RDF);
+
+      expect((result as DataDumpProbeResult).isSuccess()).toBe(true);
+      expect((result as DataDumpProbeResult).failureReason).toBeNull();
+    });
+
+    it('marks a complete corrupt gzip body as a failure', async () => {
+      // Valid gzip magic and header, then an invalid deflate stream, delivered in
+      // full (well under the read cap). We hold the whole compressed body and it
+      // still will not inflate, so the distribution is faulty — not merely
+      // inconclusive the way a prefix we cut ourselves would be.
+      const corrupt = Buffer.from([
+        0x1f, 0x8b, 0x08, 0x00, 0, 0, 0, 0, 0, 3, 9, 9, 9, 9,
+      ]);
+      headThenGet(
+        new Response(corrupt, {
+          status: 200,
+          headers: { 'Content-Type': 'application/n-quads' },
+        }),
+      );
+
+      const distribution = new Distribution(
+        new URL('http://example.org/download.nq.gz'),
+        'application/n-quads',
+      );
+
+      const result = await probe(distribution, VALIDATE_RDF);
+
+      expect(result).toBeInstanceOf(DataDumpProbeResult);
+      const dumpResult = result as DataDumpProbeResult;
+      expect(dumpResult.isSuccess()).toBe(false);
+      expect(dumpResult.failureReason).toBe('Distribution is not valid gzip');
+    });
+
+    it('marks a null-body response as empty', async () => {
+      // A 200 with no body at all (a null stream) is a genuinely empty
+      // distribution, not a truncated prefix.
+      headThenGet(new Response(null, { status: 200 }));
+
+      const distribution = new Distribution(
+        new URL('http://example.org/data.nt'),
+        'application/n-triples',
+      );
+
+      const result = await probe(distribution, VALIDATE_RDF);
+
+      expect(result).toBeInstanceOf(DataDumpProbeResult);
+      const dumpResult = result as DataDumpProbeResult;
+      expect(dumpResult.isSuccess()).toBe(false);
+      expect(dumpResult.failureReason).toBe('Distribution is empty');
+    });
+
+    it('reports inconclusive when the validation budget elapses', async () => {
+      // A body that never delivers a byte: reachability is settled by the HEAD,
+      // so once the budget runs out the read is abandoned and the distribution is
+      // reachable but unvalidated — never failed.
+      const hangingBody = new ReadableStream<Uint8Array>(); // never enqueues
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(new Response('', { status: 200 })) // HEAD
+        .mockResolvedValueOnce(
+          new Response(hangingBody, {
+            status: 200,
+            headers: { 'Content-Type': 'application/n-triples' },
+          }),
+        ); // GET
+
+      const distribution = new Distribution(
+        new URL('http://example.org/data.nt'),
+        'application/n-triples',
+      );
+
+      const result = await probe(distribution, {
+        validateRdfContent: true,
+        rdfValidationBudgetMs: 20,
+      });
+
+      expect((result as DataDumpProbeResult).isSuccess()).toBe(true);
+      expect((result as DataDumpProbeResult).failureReason).toBeNull();
+    });
+
+    it('reports reachable when the validation GET cannot start', async () => {
+      // HEAD proves reachability; a GET that then fails to return headers leaves
+      // the distribution reachable but unvalidated, not down.
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(new Response('', { status: 200 })) // HEAD ok
+        .mockRejectedValueOnce(new Error('connection reset')); // GET fails
+
+      const distribution = new Distribution(
+        new URL('http://example.org/data.nt'),
+        'application/n-triples',
+      );
+
+      const result = await probe(distribution, VALIDATE_RDF);
+
+      expect((result as DataDumpProbeResult).isSuccess()).toBe(true);
+      expect((result as DataDumpProbeResult).failureReason).toBeNull();
+    });
+
+    it('reports inconclusive when the body stream errors', async () => {
+      const erroringBody = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.error(new Error('stream broke'));
+        },
+      });
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(new Response('', { status: 200 })) // HEAD
+        .mockResolvedValueOnce(
+          new Response(erroringBody, {
+            status: 200,
+            headers: { 'Content-Type': 'application/n-triples' },
+          }),
+        ); // GET
+
+      const distribution = new Distribution(
+        new URL('http://example.org/data.nt'),
+        'application/n-triples',
+      );
+
+      const result = await probe(distribution, VALIDATE_RDF);
+
+      expect((result as DataDumpProbeResult).isSuccess()).toBe(true);
+      expect((result as DataDumpProbeResult).failureReason).toBeNull();
+    });
+
+    it('does not parse a body served with a non-RDF content type', async () => {
+      // Declared RDF, but the server answers text/plain — there is nothing the
+      // RDF parser can validate, so the probe stays a (warning-only) success.
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(new Response('', { status: 200 })) // HEAD
+        .mockResolvedValueOnce(
+          new Response('not rdf', {
+            status: 200,
+            headers: { 'Content-Type': 'text/plain' },
+          }),
+        ); // GET
+
+      const distribution = new Distribution(
+        new URL('http://example.org/data.nt'),
+        'application/n-triples',
+      );
+
+      const result = await probe(distribution, VALIDATE_RDF);
+
+      expect((result as DataDumpProbeResult).isSuccess()).toBe(true);
+      expect((result as DataDumpProbeResult).failureReason).toBeNull();
     });
   });
 
@@ -744,6 +1084,7 @@ describe('probe', () => {
             new URL(`${origin}/data.jsonld`),
             'application/ld+json',
           ),
+          VALIDATE_RDF,
         );
         const dumpResult = result as DataDumpProbeResult;
         expect(dumpResult.isSuccess()).toBe(true);
@@ -771,6 +1112,7 @@ describe('probe', () => {
             new URL(`${origin}/data.jsonld`),
             'application/ld+json',
           ),
+          VALIDATE_RDF,
         );
         const dumpResult = result as DataDumpProbeResult;
         expect(dumpResult.isSuccess()).toBe(true);
@@ -802,7 +1144,7 @@ describe('probe', () => {
             new URL(`${origin}/data.jsonld`),
             'application/ld+json',
           ),
-          { timeoutMs: 200 },
+          { timeoutMs: 200, ...VALIDATE_RDF },
         );
         const dumpResult = result as DataDumpProbeResult;
         expect(dumpResult.isSuccess()).toBe(true);

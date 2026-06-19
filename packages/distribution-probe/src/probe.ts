@@ -1,6 +1,7 @@
 import { compressionMediaTypes, Distribution } from '@lde/dataset';
 import { rdfParser } from 'rdf-parse';
 import { Readable } from 'node:stream';
+import { createGunzip } from 'node:zlib';
 
 /**
  * Options for {@link probe}.
@@ -31,11 +32,57 @@ export interface ProbeOptions {
    * the default; negative values are clamped to `0`.
    */
   retries?: number;
+  /**
+   * Validate the body content of data-dump distributions whose declared media
+   * type is an RDF serialization, by reading a bounded prefix and confirming it
+   * carries at least one triple. When `false` (the default) a data dump is only
+   * checked for reachability (a `HEAD`, with a body-less `GET` fallback if `HEAD`
+   * is unsupported) and its body is never read. When `true`, every declared-RDF
+   * dump — regardless of size — is fetched and validated; non-RDF and
+   * undeclared-type distributions are still reachability-only. Validation is
+   * opt-in because reading a body forces a slow, generate-on-the-fly endpoint to
+   * start producing its export, which a `HEAD` does not.
+   */
+  validateRdfContent?: boolean;
+  /**
+   * Soft deadline, in milliseconds, for finding the first triple when
+   * {@link validateRdfContent} is on. Reachability is settled by the response
+   * itself; if no triple has surfaced within this budget the read is aborted and
+   * the distribution is reported reachable but unvalidated (no `failureReason`),
+   * never failed. This bounds the extra latency content validation adds on slow,
+   * generate-on-the-fly endpoints. Clamped to {@link timeoutMs} (a longer budget
+   * is meaningless — the request times out first). Defaults to
+   * `min(timeoutMs, 2000)`.
+   */
+  rdfValidationBudgetMs?: number;
 }
 
 const DEFAULT_SPARQL_QUERY = 'SELECT * { ?s ?p ?o } LIMIT 1';
 const DEFAULT_TIMEOUT_MS = 5000;
 const DEFAULT_RETRIES = 2;
+
+/**
+ * Default soft deadline for finding the first triple when content validation is
+ * on (capped at `timeoutMs`). Two seconds comfortably covers a static file
+ * server's first chunk while keeping the extra wait bounded on a slow,
+ * generate-on-the-fly endpoint.
+ */
+const DEFAULT_RDF_VALIDATION_BUDGET_MS = 2000;
+
+/** Sentinel: the validation budget elapsed before a triple surfaced. */
+const VALIDATION_TIMED_OUT = Symbol('rdf-validation-timed-out');
+
+/**
+ * Maximum number of body bytes the data-dump probe reads before it stops and
+ * releases the connection. Reachability needs only that the endpoint answered
+ * with a success status and produced bytes; a large dump must never be
+ * downloaded in full within the probe's timeout budget. 256 KiB comfortably
+ * surfaces the first RDF triple — the signal {@link validateBody} needs — while
+ * bounding the read regardless of the dump's true size, chunked transfer, or
+ * compression. Applied to both the raw read and, for a gzip body, the inflated
+ * output.
+ */
+const MAX_PROBE_BODY_BYTES = 256 * 1024;
 
 /** Base backoff between retries; the nth retry waits `n × base`. */
 const RETRY_BACKOFF_MS = 250;
@@ -176,7 +223,8 @@ type SparqlQueryType = 'ASK' | 'SELECT' | 'CONSTRUCT' | 'DESCRIBE';
  *
  * For SPARQL endpoints, issues the configured SPARQL query (default: a
  * minimal `SELECT`). For data dumps, issues `HEAD` (with a `GET` fallback
- * for small or unknown-size bodies).
+ * for small or unknown-size bodies, reading only a bounded prefix so a large
+ * streamed dump is never downloaded in full).
  *
  * Returns a pure result object; never throws.
  */
@@ -283,6 +331,13 @@ function resolveOptions(
       retries === undefined || !Number.isInteger(retries)
         ? DEFAULT_RETRIES
         : Math.max(0, retries),
+    validateRdfContent: options?.validateRdfContent ?? false,
+    rdfValidationBudgetMs:
+      options?.rdfValidationBudgetMs ??
+      Math.min(
+        options?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        DEFAULT_RDF_VALIDATION_BUDGET_MS,
+      ),
   };
 }
 
@@ -505,41 +560,255 @@ async function probeDataDump(
     ...requestOptions,
   });
 
-  const contentLength = headResponse.headers.get('Content-Length');
-  const contentLengthBytes = contentLength ? parseInt(contentLength) : 0;
-
-  // For small or unknown-size files, do a GET to validate body content.
-  // This also handles servers that incorrectly return 0 Content-Length for HEAD.
-  if (contentLengthBytes <= 10_240) {
-    const getResponse = await fetch(url, {
-      method: 'GET',
-      ...requestOptions,
-    });
-    const body = await getResponse.text();
-    const isHttpSuccess = getResponse.status >= 200 && getResponse.status < 400;
-    const failureReason = isHttpSuccess
-      ? await validateBody(
-          body,
-          getResponse.headers.get('Content-Type'),
-          url,
-          options.timeoutMs,
-        )
-      : null;
-    const responseTimeMs = Math.round(performance.now() - start);
-    const result = new DataDumpProbeResult(
+  // Validate body content only when asked to and the distribution declares an
+  // RDF media type; otherwise the probe is reachability-only and never reads a
+  // body — which keeps it from forcing a slow, generate-on-the-fly endpoint to
+  // start producing its export.
+  if (
+    options.validateRdfContent &&
+    isDeclaredRdf(distribution) &&
+    isHttpSuccess(headResponse)
+  ) {
+    const { response, failureReason } = await validateDumpBody(
       url,
-      getResponse,
-      responseTimeMs,
-      failureReason,
+      headers,
+      options,
+      headResponse,
     );
-    checkContentTypeMismatch(result, distribution);
-    return result;
+    return finalizeDataDump(url, distribution, response, start, failureReason);
   }
 
+  // Reachability only. A successful HEAD is enough; otherwise confirm with a
+  // body-less GET, which rescues servers that reject or do not implement HEAD.
+  if (isHttpSuccess(headResponse)) {
+    return finalizeDataDump(url, distribution, headResponse, start, null);
+  }
+  const getResponse = await fetch(url, { method: 'GET', ...requestOptions });
+  await getResponse.body?.cancel();
+  return finalizeDataDump(url, distribution, getResponse, start, null);
+}
+
+/** Whether an HTTP response carries a success (2xx/3xx) status. */
+function isHttpSuccess(response: Response): boolean {
+  return response.status >= 200 && response.status < 400;
+}
+
+/** Whether the distribution declares an RDF serialization as its media type. */
+function isDeclaredRdf(distribution: Distribution): boolean {
+  const declared = distribution.mimeType?.toLowerCase();
+  return declared !== undefined && rdfContentTypes.includes(declared);
+}
+
+/** Build a DataDumpProbeResult and attach any Content-Type-mismatch warning. */
+function finalizeDataDump(
+  url: string,
+  distribution: Distribution,
+  response: Response,
+  start: number,
+  failureReason: string | null,
+): DataDumpProbeResult {
   const responseTimeMs = Math.round(performance.now() - start);
-  const result = new DataDumpProbeResult(url, headResponse, responseTimeMs);
+  const result = new DataDumpProbeResult(
+    url,
+    response,
+    responseTimeMs,
+    failureReason,
+  );
   checkContentTypeMismatch(result, distribution);
   return result;
+}
+
+/**
+ * GET the dump and validate that its body carries a triple, but only for as long
+ * as the validation budget allows. Reachability is already settled by the prior
+ * HEAD, so any shortfall — a budget that elapses before a triple, a read error,
+ * a GET that cannot start — yields a `null` failureReason (reachable,
+ * unvalidated), never a failure. Returns the response to draw metadata from
+ * (the GET, or the HEAD when the GET could not start) alongside that reason.
+ */
+async function validateDumpBody(
+  url: string,
+  headers: Headers,
+  options: Required<ProbeOptions>,
+  headResponse: Response,
+): Promise<{ response: Response; failureReason: string | null }> {
+  const budgetMs = Math.min(options.rdfValidationBudgetMs, options.timeoutMs);
+  // Aborting on budget expiry stops a slow endpoint from streaming on in the
+  // background once we have given up waiting for a triple.
+  const budgetController = new AbortController();
+  let getResponse: Response;
+  try {
+    getResponse = await fetch(url, {
+      method: 'GET',
+      headers,
+      signal: AbortSignal.any([
+        AbortSignal.timeout(options.timeoutMs),
+        budgetController.signal,
+      ]),
+    });
+  } catch {
+    // The GET could not even return headers; the HEAD already proved the
+    // distribution reachable, so report it unvalidated rather than down.
+    return { response: headResponse, failureReason: null };
+  }
+  if (!isHttpSuccess(getResponse)) {
+    await getResponse.body?.cancel();
+    return { response: getResponse, failureReason: null };
+  }
+
+  const validation: Promise<string | null> = (async () => {
+    const bounded = await readBoundedBody(getResponse, MAX_PROBE_BODY_BYTES);
+    const { text, truncated, corrupt } = await decodeProbeBody(bounded);
+    return corrupt
+      ? 'Distribution is not valid gzip'
+      : await validateBody(
+          text,
+          getResponse.headers.get('Content-Type'),
+          url,
+          budgetMs,
+          truncated,
+        );
+  })().catch(() => null);
+
+  let budgetTimer: ReturnType<typeof setTimeout> | undefined;
+  const budgetExpiry = new Promise<typeof VALIDATION_TIMED_OUT>((resolve) => {
+    budgetTimer = setTimeout(() => {
+      budgetController.abort();
+      resolve(VALIDATION_TIMED_OUT);
+    }, budgetMs);
+  });
+  try {
+    const outcome = await Promise.race([validation, budgetExpiry]);
+    return {
+      response: getResponse,
+      failureReason: outcome === VALIDATION_TIMED_OUT ? null : outcome,
+    };
+  } finally {
+    clearTimeout(budgetTimer);
+  }
+}
+
+/**
+ * Read at most `maxBytes` from a response body, then cancel the stream to free
+ * the underlying connection. Returns the bytes read and whether the body was
+ * longer than the cap (`truncated`), so the caller can tell a complete, small
+ * body — whose emptiness or parse errors are meaningful — from a deliberately
+ * cut-off prefix of a large one, where only the presence of content is
+ * conclusive. This is what keeps the probe from downloading a multi-hundred-MB
+ * streamed dump in full just to confirm it is reachable.
+ */
+async function readBoundedBody(
+  response: Response,
+  maxBytes: number,
+): Promise<{ bytes: Uint8Array; truncated: boolean }> {
+  const stream = response.body;
+  if (stream === null) {
+    return { bytes: new Uint8Array(0), truncated: false };
+  }
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let truncated = false;
+  // Breaking out of `for await` cancels the stream, which stops any further
+  // download and releases the underlying connection — so a large dump is never
+  // pulled in full once we have the prefix we need.
+  for await (const chunk of stream as AsyncIterable<Uint8Array>) {
+    chunks.push(chunk);
+    total += chunk.length;
+    if (total >= maxBytes) {
+      truncated = true;
+      break;
+    }
+  }
+  return { bytes: Buffer.concat(chunks), truncated };
+}
+
+/**
+ * Decode a bounded body to text for RDF validation, inflating it first when it
+ * is a gzip stream that `fetch` did not transparently decompress — e.g. a `.gz`
+ * data dump served as-is, or one labelled with a non-standard Content-Encoding
+ * (`application/gzip`) that undici does not recognise as a content coding.
+ * Detection is by the gzip magic on the delivered bytes, so a body that `fetch`
+ * already inflated (a standard `Content-Encoding: gzip`) is passed through
+ * untouched. A truncated gzip tail is expected — we only read a prefix — and
+ * inflates cleanly up to the cut, so it is never mistaken for corruption.
+ */
+async function decodeProbeBody(bounded: {
+  bytes: Uint8Array;
+  truncated: boolean;
+}): Promise<{ text: string; truncated: boolean; corrupt: boolean }> {
+  if (!isGzip(bounded.bytes)) {
+    return {
+      text: decodeUtf8(bounded.bytes),
+      truncated: bounded.truncated,
+      corrupt: false,
+    };
+  }
+  // The compressed body is complete only when the raw read was not itself cut
+  // off: a gzip error on a complete body is genuine corruption, on a prefix we
+  // cut it is just the dropped tail.
+  const inflated = await gunzipPrefix(
+    bounded.bytes,
+    MAX_PROBE_BODY_BYTES,
+    !bounded.truncated,
+  );
+  return {
+    text: decodeUtf8(inflated.bytes),
+    truncated: bounded.truncated || inflated.truncated,
+    corrupt: inflated.corrupt,
+  };
+}
+
+/** Whether the bytes begin with the gzip magic number (RFC 1952 §2.3.1). */
+function isGzip(bytes: Uint8Array): boolean {
+  return bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
+}
+
+/**
+ * Decode bytes as UTF-8 without throwing: an incomplete multi-byte sequence at
+ * the truncation boundary is replaced rather than fatal, since the RDF parser
+ * only needs the leading, intact portion to find the first triple.
+ */
+function decodeUtf8(bytes: Uint8Array): string {
+  return new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+}
+
+/**
+ * Inflate up to `maxBytes` of output from a gzip prefix, stopping once the cap
+ * is reached or the input runs out. `inputComplete` says whether the caller
+ * handed us the whole compressed body (true) or a prefix it had already cut
+ * (false). An inflate error therefore means different things: on a complete body
+ * the gzip is genuinely corrupt; on a cut prefix it is just the dropped tail, so
+ * whatever inflated cleanly is reported as a (truncated) partial inflate.
+ */
+function gunzipPrefix(
+  bytes: Uint8Array,
+  maxBytes: number,
+  inputComplete: boolean,
+): Promise<{ bytes: Uint8Array; truncated: boolean; corrupt: boolean }> {
+  return new Promise((resolve) => {
+    const gunzip = createGunzip();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    // `resolve` and `destroy` are both idempotent, so the first outcome wins and
+    // any later event (e.g. a premature-close error emitted by `destroy`) is a
+    // harmless no-op — no `settled` guard needed.
+    function finish(outcome: { truncated: boolean; corrupt: boolean }): void {
+      gunzip.destroy();
+      resolve({ bytes: Buffer.concat(chunks), ...outcome });
+    }
+    gunzip.on('data', (chunk: Buffer) => {
+      chunks.push(chunk);
+      total += chunk.length;
+      if (total >= maxBytes) {
+        finish({ truncated: true, corrupt: false });
+      }
+    });
+    gunzip.on('error', () =>
+      finish({ truncated: !inputComplete, corrupt: inputComplete }),
+    );
+    gunzip.on('end', () => finish({ truncated: false, corrupt: false }));
+    gunzip.end(bytes);
+  });
 }
 
 // The RDF serializations whose bodies we parse to confirm they carry triples. A
@@ -558,14 +827,28 @@ const rdfContentTypes = [
   'application/rdf+xml',
 ];
 
+// Serializations a streaming parser cannot validate from a truncated prefix.
+// The line/statement-oriented formats (N-Triples, N-Quads, Turtle, TriG, N3) and
+// SAX-based RDF/XML all yield their first triple from the opening chunk, but
+// JSON-LD is a single JSON value whose parser emits nothing until the whole
+// document closes — a truncated JSON-LD body parses to an ‘unclosed document’
+// error, never a triple. So a truncated body in one of these can only be
+// validated if it happened to fit the read cap in full; beyond that it is
+// inconclusive, and we must not download it in full to find out.
+const nonStreamableRdfContentTypes = ['application/ld+json'];
+
 async function validateBody(
   body: string,
   contentType: string | null,
   baseIRI: string,
   timeoutMs: number,
+  truncated: boolean,
 ): Promise<string | null> {
   if (body.length === 0) {
-    return 'Distribution is empty';
+    // A complete, empty body is a faulty distribution; an empty *prefix* (a
+    // truncated read that yielded no bytes, e.g. a corrupt gzip header) is
+    // inconclusive — the endpoint answered, we just could not validate content.
+    return truncated ? null : 'Distribution is empty';
   }
 
   // Media types are case-insensitive (RFC 9110 §8.3.1), so normalise before
@@ -576,11 +859,19 @@ async function validateBody(
     return null;
   }
 
+  if (truncated && nonStreamableRdfContentTypes.includes(serialization)) {
+    // A bounded prefix of a non-streamable serialization (JSON-LD) can never
+    // yield a triple, so skip the doomed parse and report it inconclusive — only
+    // a complete document, small enough to fit the read cap, can be validated.
+    return null;
+  }
+
   const outcome = await classifyRdfBody(
     body,
     serialization,
     baseIRI,
     timeoutMs,
+    truncated,
   );
   switch (outcome.type) {
     case 'empty':
@@ -610,12 +901,18 @@ type RdfBodyOutcome =
  * on expiry — and likewise when a remote `@context` is unreachable — the outcome
  * is 'inconclusive', so a valid distribution is never flagged faulty for a
  * context host's failure. `baseIRI` resolves any relative IRIs in the document.
+ *
+ * When `truncated` is true the body is only a bounded prefix of a larger one, so
+ * only finding a triple ('hasTriples') is conclusive: a parse error at the cut
+ * or a clean end with no triple yet means we did not read far enough, not that
+ * the distribution is empty or malformed, and is reported as 'inconclusive'.
  */
 function classifyRdfBody(
   body: string,
   contentType: string,
   baseIRI: string,
   timeoutMs: number,
+  truncated: boolean,
 ): Promise<RdfBodyOutcome> {
   return new Promise<RdfBodyOutcome>((resolve) => {
     const quads = rdfParser.parse(Readable.from([body]), {
@@ -635,12 +932,14 @@ function classifyRdfBody(
       .on('data', () => settle({ type: 'hasTriples' }))
       .on('error', (error: Error) =>
         settle(
-          isRemoteContextError(error)
+          truncated || isRemoteContextError(error)
             ? { type: 'inconclusive' }
             : { type: 'parseError', message: error.message },
         ),
       )
-      .on('end', () => settle({ type: 'empty' }));
+      .on('end', () =>
+        settle(truncated ? { type: 'inconclusive' } : { type: 'empty' }),
+      );
   });
 }
 
