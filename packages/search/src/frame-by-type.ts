@@ -24,10 +24,18 @@ export async function* frameByType(
   quads: readonly Quad[],
   rootType: string,
 ): AsyncIterable<FramedNode> {
-  const frame = { '@type': rootType };
-  for (const subgraph of groupByRoot(quads, rootType)) {
+  for (const { rootIri, subgraph } of groupByRoot(quads, rootType)) {
     const expanded = await jsonld.fromRDF(subgraph);
-    const framed = await jsonld.frame(expanded, frame, FRAME_OPTIONS);
+    // Frame for THIS specific root subject by `@id`, not just by root type. A
+    // one-hop reference can itself be of `rootType` (e.g. a terminology source
+    // that is also a separately registered dataset), so framing by type alone
+    // returns several root nodes and `[0]` could be the referenced one — which
+    // would emit it twice and drop this subject entirely.
+    const framed = await jsonld.frame(
+      expanded,
+      { '@id': rootIri },
+      FRAME_OPTIONS,
+    );
     const node = (framed['@graph'] as FramedNode[] | undefined)?.[0];
     if (node !== undefined) {
       yield node;
@@ -44,7 +52,7 @@ export async function* frameByType(
 function* groupByRoot(
   quads: readonly Quad[],
   rootType: string,
-): Generator<Quad[]> {
+): Generator<{ rootIri: string; subgraph: Quad[] }> {
   const bySubject = new Map<string, Quad[]>();
   const rootIris: string[] = [];
   const seen = new Set<string>();
@@ -75,6 +83,6 @@ function* groupByRoot(
           quad.object.termType === 'BlankNode',
       )
       .flatMap((quad) => bySubject.get(quad.object.value) ?? []);
-    yield [...owned, ...referenced];
+    yield { rootIri: iri, subgraph: [...owned, ...referenced] };
   }
 }
