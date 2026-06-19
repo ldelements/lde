@@ -66,6 +66,34 @@ describe('frameByType', () => {
     });
   });
 
+  it('keeps a root subject that references another root-typed subject', async () => {
+    // A one-hop reference can itself be of the root type (e.g. a terminology
+    // source that is also a separately registered dataset). The referencing
+    // subject must still be projected — and the referenced one must not be
+    // emitted twice — even though both match the frame’s `@type`.
+    const nodes = await collect(
+      frameByType(
+        quads(`
+          <https://ex/d/1> <${rdf.type.value}> <${DATASET}> .
+          <https://ex/d/1> <${dcterms.title.value}> "Verwijzer"@nl .
+          <https://ex/d/1> <${dcterms.source.value}> <https://ex/d/2> .
+          <https://ex/d/2> <${rdf.type.value}> <${DATASET}> .
+          <https://ex/d/2> <${dcterms.title.value}> "Bron"@nl .
+        `),
+        DATASET,
+      ),
+    );
+
+    expect(nodes.map((node) => node['@id']).sort()).toEqual([
+      'https://ex/d/1',
+      'https://ex/d/2',
+    ]);
+    const byId = Object.fromEntries(nodes.map((node) => [node['@id'], node]));
+    expect(byId['https://ex/d/1'][dcterms.source.value]).toMatchObject({
+      '@id': 'https://ex/d/2',
+    });
+  });
+
   it('dedupes triples a CONSTRUCT may emit more than once', async () => {
     const nodes = await collect(
       frameByType(
