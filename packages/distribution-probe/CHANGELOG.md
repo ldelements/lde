@@ -1,3 +1,16 @@
+## 0.2.0 (2026-06-22)
+
+### 🚀 Features
+
+- ⚠️  **distribution-probe:** bounded-stream reads with opt-in RDF content validation ([#507](https://github.com/ldelements/lde/pull/507), [#505](https://github.com/ldelements/lde/issues/505))
+
+### ⚠️  Breaking Changes
+
+- **distribution-probe:** bounded-stream reads with opt-in RDF content validation  ([#507](https://github.com/ldelements/lde/pull/507), [#505](https://github.com/ldelements/lde/issues/505))
+  data-dump bodies are no longer content-validated by
+  default. Callers that relied on the probe rejecting empty or triple-less
+  dumps must now pass validateRdfContent: true.
+
 ## 0.1.13 (2026-06-19)
 
 This was a version bump only for @lde/distribution-probe to align it with other projects, there were no code changes.
