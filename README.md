@@ -127,6 +127,11 @@ await pipeline.run();
   <td><a href="https://www.npmjs.com/package/@lde/sparql-importer"><img src="https://img.shields.io/npm/v/@lde/sparql-importer" alt="npm"></a></td>
   <td>Import data dumps to a local SPARQL endpoint for querying</td>
 </tr>
+<tr>
+  <td><a href="packages/sparql-anything">@lde/sparql-anything</a></td>
+  <td><a href="https://www.npmjs.com/package/@lde/sparql-anything"><img src="https://img.shields.io/npm/v/@lde/sparql-anything" alt="npm"></a></td>
+  <td>Convert tabular and other non-RDF sources to RDF with the SPARQL Anything CLI</td>
+</tr>
 <tr><th colspan="3" align="left">Publication – Serve and document your data</th></tr>
 <tr>
   <td><a href="packages/fastify-rdf">@lde/fastify-rdf</a></td>
@@ -222,6 +227,7 @@ graph TD
     distribution-probe --> dataset
     pipeline --> distribution-probe
     sparql-importer --> dataset
+    sparql-anything --> task-runner
     distribution-health --> distribution-probe
     distribution-health --> sparql-importer
   end

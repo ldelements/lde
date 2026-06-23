@@ -1,0 +1,31 @@
+{
+  "name": "@lde/sparql-anything",
+  "version": "0.1.0",
+  "description": "Convert tabular and other non-RDF sources to RDF with the SPARQL Anything CLI, running one process per input chunk via an @lde/task-runner.",
+  "repository": {
+    "url": "git+https://github.com/ldelements/lde.git",
+    "directory": "packages/sparql-anything"
+  },
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "!**/*.tsbuildinfo"
+  ],
+  "dependencies": {
+    "@lde/task-runner": "0.2.11",
+    "tslib": "^2.3.0"
+  }
+}
