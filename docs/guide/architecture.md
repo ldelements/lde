@@ -35,6 +35,7 @@ graph TD
     distribution-probe --> dataset
     pipeline --> distribution-probe
     sparql-importer --> dataset
+    sparql-anything --> task-runner
     distribution-health --> distribution-probe
     distribution-health --> sparql-importer
   end

@@ -122,6 +122,10 @@ await pipeline.run();
   <td><a href="packages/sparql-importer">@lde/sparql-importer</a><br><a href="https://www.npmjs.com/package/@lde/sparql-importer"><img src="https://img.shields.io/npm/v/@lde/sparql-importer" alt="npm"></a></td>
   <td>Import data dumps to a local SPARQL endpoint for querying</td>
 </tr>
+<tr>
+  <td><a href="packages/sparql-anything">@lde/sparql-anything</a><br><a href="https://www.npmjs.com/package/@lde/sparql-anything"><img src="https://img.shields.io/npm/v/@lde/sparql-anything" alt="npm"></a></td>
+  <td>Convert tabular and other non-RDF sources to RDF with the SPARQL Anything CLI</td>
+</tr>
 <tr><th colspan="2" align="left">Publication – Serve and document your data</th></tr>
 <tr>
   <td><a href="packages/fastify-rdf">@lde/fastify-rdf</a><br><a href="https://www.npmjs.com/package/@lde/fastify-rdf"><img src="https://img.shields.io/npm/v/@lde/fastify-rdf" alt="npm"></a></td>

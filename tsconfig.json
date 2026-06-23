@@ -94,6 +94,9 @@
     },
     {
       "path": "./packages/resolver"
+    },
+    {
+      "path": "./packages/sparql-anything"
     }
   ],
   "compilerOptions": {
