@@ -89,6 +89,23 @@ export interface StageOptions {
   maxConcurrency?: number;
   /** Child stages that chain off this stage's output. */
   stages?: Stage[];
+  /**
+   * Treat a supported stage that produces no quads as a hard failure (throws),
+   * rather than a legitimately empty result.
+   *
+   * Set this for stages whose query must yield output — typically a scalar
+   * aggregate such as `SELECT (COUNT(*) AS ?n)`, which always returns exactly
+   * one row, so zero quads can only mean the endpoint truncated or aborted the
+   * response (e.g. a timeout surfaced as an empty `HTTP 200`). The resulting
+   * failure flows through the pipeline like any other hard stage failure,
+   * triggering the reactive dump fallback when one is configured.
+   *
+   * Leave it `false` (default) for stages that may legitimately be empty, such
+   * as class/property partitions of a dataset that lacks that structure.
+   *
+   * @default false
+   */
+  expectsOutput?: boolean;
   /** Optional validation of the combined quads produced by all executors per batch. */
   validation?: {
     validator: Validator;
@@ -117,6 +134,8 @@ export interface SelectOptions {
 export class Stage {
   readonly name: string;
   readonly stages: readonly Stage[];
+  /** Whether an empty result is treated as a hard failure. @see {@link StageOptions.expectsOutput} */
+  readonly expectsOutput: boolean;
   private readonly executors: NormalizedExecutor[];
   private readonly itemSelector?: ItemSelector;
   private readonly batchSize: number;
@@ -131,6 +150,7 @@ export class Stage {
     this.batchSize = options.batchSize ?? 10;
     this.maxConcurrency = options.maxConcurrency ?? 10;
     this.validation = options.validation;
+    this.expectsOutput = options.expectsOutput ?? false;
   }
 
   /** The validator for this stage, if configured. */
@@ -162,6 +182,10 @@ export class Stage {
       return streams;
     }
 
+    // Quads the executors produced (before any validation filtering); used to
+    // enforce `expectsOutput` below.
+    let produced = 0;
+
     if (this.validation) {
       const buffer: Quad[] = [];
       for (const stream of streams) {
@@ -169,6 +193,7 @@ export class Stage {
           buffer.push(quad);
         }
       }
+      produced = buffer.length;
       const onInvalid = this.validation.onInvalid ?? 'write';
       if (onInvalid === 'write') {
         await Promise.all([
@@ -191,8 +216,30 @@ export class Stage {
           );
         }
       }
+    } else if (this.expectsOutput) {
+      // Only thread the per-quad counter through when the count is actually
+      // needed; the default path stays a plain streaming write with no overhead.
+      await writer.write(
+        dataset,
+        countQuads(mergeStreams(streams), (count) => {
+          produced = count;
+        }),
+      );
     } else {
       await writer.write(dataset, mergeStreams(streams));
+    }
+
+    this.assertProduced(produced);
+  }
+
+  /**
+   * Throw when {@link StageOptions.expectsOutput} is set but the stage produced
+   * no quads — a supported-but-empty result that signals a truncated or aborted
+   * endpoint response rather than a legitimately empty one.
+   */
+  private assertProduced(produced: number): void {
+    if (this.expectsOutput && produced === 0) {
+      throw new Error(`Stage '${this.name}' expected output but produced none`);
     }
   }
 
@@ -352,6 +399,8 @@ export class Stage {
     if (!hasResults) {
       return new NotSupported('All executors returned NotSupported');
     }
+
+    this.assertProduced(quadsGenerated);
   }
 
   /**
@@ -457,6 +506,27 @@ async function* mergeStreams(
   for (const stream of streams) {
     yield* stream;
   }
+}
+
+/**
+ * Pass a quad stream through unchanged while counting it, reporting the total
+ * via `onCount` once the stream is exhausted. Lets a streaming write enforce
+ * {@link StageOptions.expectsOutput} without buffering.
+ *
+ * `onCount` fires only when the consumer drains the stream — which the pipeline
+ * writers do. A writer that stops early would leave the count short; callers
+ * relying on it for `expectsOutput` must consume the stream fully.
+ */
+async function* countQuads(
+  stream: AsyncIterable<Quad>,
+  onCount: (count: number) => void,
+): AsyncIterable<Quad> {
+  let count = 0;
+  for await (const quad of stream) {
+    count++;
+    yield quad;
+  }
+  onCount(count);
 }
 
 /** Selects items (as variable bindings) for executors to process. Pagination is an implementation detail. */

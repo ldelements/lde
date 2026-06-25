@@ -1005,4 +1005,74 @@ describe('Stage', () => {
       expect(writer.quads.filter((q) => q.equals(q1))).toHaveLength(2);
     });
   });
+
+  describe('expectsOutput', () => {
+    it('throws when a supported stage produces no quads', async () => {
+      // A scalar aggregate (e.g. COUNT) always returns a row; zero output means
+      // the endpoint truncated the response — a hard failure, not an empty result.
+      const stage = new Stage({
+        name: 'triples-count',
+        executors: mockExecutor([]),
+        expectsOutput: true,
+      });
+
+      const writer = collectingWriter();
+      await expect(stage.run(dataset, distribution, writer)).rejects.toThrow(
+        /triples-count/,
+      );
+    });
+
+    it('does not throw when the stage produces quads', async () => {
+      const stage = new Stage({
+        name: 'triples-count',
+        executors: mockExecutor([q1]),
+        expectsOutput: true,
+      });
+
+      const writer = collectingWriter();
+      const result = await stage.run(dataset, distribution, writer);
+      expect(result).not.toBeInstanceOf(NotSupported);
+      expect(writer.quads).toEqual([q1]);
+    });
+
+    it('tolerates an empty result by default', async () => {
+      const stage = new Stage({
+        name: 'class-partition',
+        executors: mockExecutor([]),
+      });
+
+      const writer = collectingWriter();
+      const result = await stage.run(dataset, distribution, writer);
+      expect(result).not.toBeInstanceOf(NotSupported);
+      expect(writer.quads).toEqual([]);
+    });
+
+    it('returns NotSupported (not a failure) when the executor is unsupported', async () => {
+      // expectsOutput concerns a supported-but-empty response; an unsupported
+      // executor is a skip, never a hard failure.
+      const stage = new Stage({
+        name: 'triples-count',
+        executors: notSupportedExecutor(),
+        expectsOutput: true,
+      });
+
+      const writer = collectingWriter();
+      const result = await stage.run(dataset, distribution, writer);
+      expect(result).toBeInstanceOf(NotSupported);
+    });
+
+    it('throws for an item-selected stage that produces no quads', async () => {
+      const stage = new Stage({
+        name: 'per-class-count',
+        itemSelector: mockItemSelector([{ class: namedNode('http://x') }]),
+        executors: mockExecutor([]),
+        expectsOutput: true,
+      });
+
+      const writer = collectingWriter();
+      await expect(stage.run(dataset, distribution, writer)).rejects.toThrow(
+        /per-class-count/,
+      );
+    });
+  });
 });

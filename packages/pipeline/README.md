@@ -86,6 +86,12 @@ new Stage({
 
 `maxConcurrency` (default: 10) limits the total number of concurrent SPARQL queries. Within each batch, all executors run in parallel; the number of concurrent batches is automatically reduced to `⌊maxConcurrency / executorCount⌋` so the total query pressure stays within the limit. For example, with `maxConcurrency: 10` and two executors per stage, up to 5 batches run concurrently (10 SPARQL queries total).
 
+#### Expecting output
+
+`expectsOutput` (default: `false`) marks a stage whose query must yield at least one quad. A supported stage that produces none is then treated as a hard failure rather than a legitimately empty result.
+
+Set it for scalar aggregates such as `SELECT (COUNT(*) AS ?n)`, which always return exactly one row — so zero output can only mean the endpoint truncated or aborted the response (e.g. a timeout surfaced as an empty `HTTP 200`). The failure flows through like any other hard stage failure, triggering the [reactive dump fallback](#distribution-resolver) when `strategy: 'sparqlWithImportFallback'` is configured. Leave it `false` for stages that may legitimately be empty, such as class or property partitions of a dataset that lacks that structure.
+
 ### Item Selector
 
 Selects resources from the distribution and fans out executor calls per batch of results. Implements the `ItemSelector` interface:
