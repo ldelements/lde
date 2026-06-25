@@ -1,5 +1,6 @@
 import {
   probe,
+  probeMany,
   SparqlProbeResult,
   DataDumpProbeResult,
   NetworkError,
@@ -810,10 +811,13 @@ describe('probe', () => {
       // the end of the prefix with no triple, and the read is truncated, so the
       // outcome is inconclusive — never an ‘empty distribution’ failure.
       headThenGet(
-        new Response('# a comment line that carries no triple\n'.repeat(8_000), {
-          status: 200,
-          headers: { 'Content-Type': 'application/n-triples' },
-        }),
+        new Response(
+          '# a comment line that carries no triple\n'.repeat(8_000),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/n-triples' },
+          },
+        ),
       );
 
       const distribution = new Distribution(
@@ -832,10 +836,13 @@ describe('probe', () => {
       // on a deliberately cut-off prefix must be inconclusive, not a faulty
       // distribution.
       headThenGet(
-        new Response('<http://example.org/s> <http://example.org/p'.repeat(8_000), {
-          status: 200,
-          headers: { 'Content-Type': 'application/n-triples' },
-        }),
+        new Response(
+          '<http://example.org/s> <http://example.org/p'.repeat(8_000),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/n-triples' },
+          },
+        ),
       );
 
       const distribution = new Distribution(
@@ -1855,5 +1862,153 @@ describe('probe', () => {
         'Server Content-Type text/turtle does not match declared media type application/n-quads',
       );
     });
+  });
+});
+
+describe('probeMany', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  // A plain (non-RDF) media type keeps each probe reachability-only: a single
+  // HEAD, so the in-flight count tracked in the fetch mock reflects the
+  // scheduler’s task concurrency rather than HEAD/GET timing.
+  const dataDump = (host: string, index: number): Distribution =>
+    new Distribution(new URL(`https://${host}/d-${index}`), 'application/pdf');
+
+  const okResponse = (): Response =>
+    new Response('', {
+      status: 200,
+      headers: { 'Content-Type': 'application/pdf' },
+    });
+
+  it('returns one result per distribution, in input order', async () => {
+    vi.mocked(fetch).mockImplementation(async () => okResponse());
+
+    const distributions = [
+      dataDump('host-a.example', 0),
+      dataDump('host-b.example', 0),
+      dataDump('host-c.example', 0),
+    ];
+
+    const results = await probeMany(distributions);
+
+    expect(results).toHaveLength(3);
+    expect(
+      results.map((result) => (result as DataDumpProbeResult).url),
+    ).toEqual([
+      'https://host-a.example/d-0',
+      'https://host-b.example/d-0',
+      'https://host-c.example/d-0',
+    ]);
+  });
+
+  it('returns an empty array for no distributions', async () => {
+    expect(await probeMany([])).toEqual([]);
+  });
+
+  it('falls back to the default budget for a non-positive or non-integer limit', async () => {
+    vi.mocked(fetch).mockImplementation(async () => okResponse());
+
+    // 0, negative, fractional, and NaN are invalid budgets. Without clamping these
+    // stall the scheduler so the promise never resolves; each must now fall back to
+    // the default and complete.
+    for (const invalid of [0, -1, 2.5, Number.NaN]) {
+      const results = await probeMany([dataDump('host-a.example', 0)], {
+        concurrency: invalid,
+        perHostConcurrency: invalid,
+      });
+      expect(results).toHaveLength(1);
+    }
+  });
+
+  it('keys an authority-less URL by its full href', async () => {
+    vi.mocked(fetch).mockImplementation(async () => okResponse());
+
+    // A urn: has no host, so the scheduler falls back to the full href as its
+    // per-host key rather than bucketing every authority-less URL together.
+    const distributions = [
+      new Distribution(new URL('urn:example:a'), 'application/pdf'),
+      new Distribution(new URL('urn:example:b'), 'application/pdf'),
+    ];
+
+    const results = await probeMany(distributions, { perHostConcurrency: 1 });
+
+    expect(results).toHaveLength(2);
+    expect(
+      results.every((result) => result instanceof DataDumpProbeResult),
+    ).toBe(true);
+  });
+
+  it('caps in-flight probes per host while probing other hosts in parallel', async () => {
+    const perHostConcurrency = 2;
+    const perHostCount = 8;
+    const inFlight = new Map<string, number>();
+    const peakPerHost = new Map<string, number>();
+    let totalInFlight = 0;
+    let peakTotal = 0;
+
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const host = new URL(String(input)).host;
+      const next = (inFlight.get(host) ?? 0) + 1;
+      inFlight.set(host, next);
+      peakPerHost.set(host, Math.max(peakPerHost.get(host) ?? 0, next));
+      totalInFlight++;
+      peakTotal = Math.max(peakTotal, totalInFlight);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      inFlight.set(host, (inFlight.get(host) ?? 0) - 1);
+      totalInFlight--;
+      return okResponse();
+    });
+
+    const distributions: Distribution[] = [];
+    for (let index = 0; index < perHostCount; index++) {
+      distributions.push(dataDump('host-a.example', index));
+      distributions.push(dataDump('host-b.example', index));
+    }
+
+    const results = await probeMany(distributions, {
+      concurrency: 20,
+      perHostConcurrency,
+    });
+
+    expect(results).toHaveLength(perHostCount * 2);
+    // Neither host is probed beyond its per-host budget …
+    expect(peakPerHost.get('host-a.example')).toBeLessThanOrEqual(
+      perHostConcurrency,
+    );
+    expect(peakPerHost.get('host-b.example')).toBeLessThanOrEqual(
+      perHostConcurrency,
+    );
+    // … yet both hosts run at once, so a saturated host never idles the global pool.
+    expect(peakTotal).toBeGreaterThan(perHostConcurrency);
+  });
+
+  it('caps total in-flight probes at the global concurrency', async () => {
+    const concurrency = 3;
+    let totalInFlight = 0;
+    let peakTotal = 0;
+
+    vi.mocked(fetch).mockImplementation(async () => {
+      totalInFlight++;
+      peakTotal = Math.max(peakTotal, totalInFlight);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      totalInFlight--;
+      return okResponse();
+    });
+
+    // Each distribution on a distinct host, so only the global cap can bind.
+    const distributions = Array.from({ length: 9 }, (_unused, index) =>
+      dataDump(`host-${index}.example`, index),
+    );
+
+    await probeMany(distributions, { concurrency, perHostConcurrency: 10 });
+
+    expect(peakTotal).toBeLessThanOrEqual(concurrency);
+    expect(peakTotal).toBeGreaterThan(0);
   });
 });

@@ -48,3 +48,24 @@ When on, the probe `GET`s the dump — **regardless of size** — and reads only
 A thrown exception from `fetch` (DNS failure, connection refused, socket reset, TLS error, timeout after the configured `timeoutMs` – default 5 000 ms) is a connection-level failure. The probe retries these up to `retries` times (default 2) with a short backoff before giving up and returning a `NetworkError`. This turns a transient transport blip into a reliable single measurement without looking backward across checks. A genuine outage still resolves to a `NetworkError` on the current check – every attempt fails – but note each attempt gets its own `timeoutMs`, so an endpoint that fails only by timing out takes up to `(retries + 1) × timeoutMs` (plus backoff) to be reported down. HTTP error responses (4xx/5xx) and content-validation failures are real ‘down’ states and are **never** retried.
 
 `NetworkError.message` includes the underlying `error.cause` (e.g. `ECONNRESET`, `UND_ERR_SOCKET “other side closed”`) when Node wraps one, so observations record what actually failed rather than a bare ‘fetch failed’.
+
+## Probing many distributions
+
+`probeMany` probes an array of distributions concurrently and returns one result per input, in input order. Each distribution is probed once with `probe`, so every behaviour above applies per distribution; like `probe`, `probeMany` never throws – a probe that fails is reported as a `NetworkError` in its slot.
+
+```ts
+import { probeMany } from '@lde/distribution-probe';
+
+const results = await probeMany(distributions, {
+  concurrency: 20, // max probes in flight across all hosts (default 20)
+  perHostConcurrency: 4, // max probes in flight against one host (default 4)
+  validateRdfContent: true, // any ProbeOptions are forwarded to each probe
+});
+```
+
+Two caps bound the batch:
+
+- **`concurrency`** bounds the total fan-out, so a large catalogue does not exhaust sockets or buffer too many response bodies at once.
+- **`perHostConcurrency`** bounds the burst any one server sees, keeping the batch a polite client: a catalogue that declares many distributions on a single host (e.g. a download endpoint per named graph) will not trip that server’s rate limiter (HTTP 429). Distributions sharing a host (by `accessUrl`) contend for the same budget; a probe whose host is saturated waits while probes for other hosts proceed, so one busy host never idles the global pool.
+
+All other `ProbeOptions` (`timeoutMs`, `retries`, `validateRdfContent`, and the rest) are forwarded unchanged to every probe.
