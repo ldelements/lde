@@ -1,0 +1,253 @@
+# 3. Search API core query model
+
+Date: 2026-06-25
+
+## Status
+
+Proposed
+
+Reconciles against the NDE stack platform docs
+(`netwerk-digitaal-erfgoed/docs` → `docs/stack/layers/platform.md`), which are themselves
+a **draft under discussion**, so several decisions below are deliberate deviations from
+the current draft, to be reconciled back into it.
+
+## Context
+
+The Dataset Register is moving its browser search off direct Typesense queries onto a
+search API, API-first and GraphQL-first (REST deferred). We want the API configured from a
+declarative source so the GraphQL surface, a later REST surface, and the index cannot drift
+from each other, and so a deployment can swap search engines without consumers noticing.
+
+That requires an engine- and protocol-neutral **core** that both API surfaces and any
+engine adapter sit on. The platform draft frames this as Ports & Adapters with a framed
+JSON-LD intermediate representation, generated from SHACL + a `search:` annotation
+vocabulary. We adopt that direction but scope it to what a v1 keyword search needs, and
+diverge on a few concrete points where the draft does not fit DR’s catalog-search case.
+
+## Decision
+
+### Package family
+
+Two tiers: `search-*` is backend you compose; `search-api-*` is the surface you publish.
+
+| Tier        | Package                   | Responsibility                                                                                                          |
+| ----------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| backend     | `@lde/search`             | field model · `SearchQuery` · filter semantics · adapter port                                                           |
+| backend     | `@lde/search-typesense`   | engine adapter: collection schema · query/filter compiler · `search()`                                                  |
+| API surface | `@lde/search-api-graphql` | field model + `SearchQuery` → GraphQL schema (runtime configuration; see [ADR 4](./0004-search-api-graphql-surface.md)) |
+| API surface | `@lde/search-api-rest`    | OpenAPI + route handlers (later, thin over the core)                                                                    |
+
+This deviates from the draft’s function-mapping table (`@lde/graphql-server`,
+`@lde/rest-server`, no core row); the draft should adopt the `@lde/search*` family.
+
+### Contract frozen, storage swappable
+
+The **API contract** (the SDL shape consumers couple to) is breaking to change and must be
+right in v1. The **IR / stored document** (framed JSON-LD vs a flat engine doc) lives
+behind the adapter and is swappable with no consumer impact. Nothing engine-specific
+(companion fields, `int32`, the engine query language) and nothing RDF-specific
+(`@context`, `@id`, IRI-keyed predicates) leaks past the adapter port.
+
+### Field model
+
+The engine-neutral description of a queryable field – the runtime form of one SHACL
+NodeShape + its `search:` annotations:
+
+```ts
+type FieldKind =
+  | 'text'
+  | 'keyword'
+  | 'integer'
+  | 'number'
+  | 'boolean'
+  | 'date'
+  | 'reference';
+
+interface SearchField {
+  readonly name: string; // logical API name
+  readonly kind: FieldKind;
+  readonly array?: boolean;
+  readonly localized?: boolean;
+  readonly output?: boolean; // appears in the schema output type
+  readonly searchable?: { weight: number }; // free-text inclusion + weight
+  readonly filterable?: boolean; // usable in `where`
+  readonly facetable?: boolean;
+  readonly sortable?: boolean;
+  readonly nestedStrategy?: 'labelOnly' | 'idOnly' | 'inline'; // for `reference`
+  readonly group?: { readonly name: string; readonly prefix: string }; // deployment delta
+}
+
+interface SearchSchema {
+  readonly fields: readonly SearchField[];
+}
+```
+
+Maps onto SHACL + `search:` (`kind`←`sh:datatype`, `array`←`sh:maxCount`,
+`localized`←`sh:languageIn`, `facetable`←`search:facetable`, `sortable`←`search:sortable`,
+`nestedStrategy`←`sh:node`/`sh:class` + `search:nestedStrategy`) so an eventual generator
+emits it unchanged. The `group` companion (coarse grouped facets, e.g. `format_group`) and
+the `status_rank` tie-break sort are **deployment-specific deltas**, never in `@lde/search`.
+`relevance` is _not_ a delta: every full-text engine ranks by match score, so it is a
+generic reserved sort the adapter understands.
+
+### `SearchQuery` – the neutral query IR
+
+Both surfaces parse input into this; the adapter consumes this. It is the shared compiler
+target that keeps GraphQL and REST from drifting.
+
+```ts
+interface SearchQuery {
+  readonly text?: string; // undefined/'' = browse
+  readonly where: readonly Filter[]; // AND across fields
+  readonly orderBy: readonly Sort[];
+  readonly limit: number; // numbered pagination
+  readonly offset: number;
+  readonly facets: readonly string[];
+  readonly locale: string; // from Accept-Language; selects per-locale fields
+}
+
+type Filter =
+  | { readonly field: string; readonly in: readonly string[] } // keyword membership, OR within field
+  | {
+      readonly field: string;
+      readonly range: { min?: number | string; max?: number | string };
+    }
+  | { readonly field: string; readonly is: boolean };
+
+interface Sort {
+  readonly field: string;
+  readonly direction: 'asc' | 'desc';
+}
+```
+
+`locale` drives query-side field selection only; output language ordering is a surface
+concern. Deployment defaults (e.g. status=valid, default sort) are consumer policy applied
+when building the query, not baked into the core.
+
+Sorting has two tiers. A field’s `sortable` flag marks it **publicly selectable** in the
+surface’s `orderBy`, alongside the generic `relevance` – so a user can sort by `relevance`
+(the sane default when there is a query) or by any sortable field (title, date, size). The
+adapter can _additionally_ sort by any indexed field a deployment’s `queryDefaults`
+references – e.g. DR’s `status_rank` tie-break – which is never exposed as a public sort
+option.
+
+The public `orderBy` is a **single** primary sort; the surface composes it with the server
+tie-break(s) into this internal `Sort[]`. A client-supplied array can be added
+later, but it is backward-compatible only for inline-literal clients (list input coercion);
+variable-based clients (`$o: DatasetOrderBy`) break, so a future array is a deliberate change.
+
+### Filter semantics
+
+| `kind`                        | `where`                          | facet         | sort            |
+| ----------------------------- | -------------------------------- | ------------- | --------------- |
+| `text`                        | – (feeds `text`)                 | –             | yes (localized) |
+| `keyword` / `reference`       | `in` (exact membership)          | yes           | –               |
+| `integer` / `number` / `date` | `range { min?, max? }` inclusive | range buckets | yes             |
+| `boolean`                     | `is`                             | yes           | –               |
+
+**Inclusive bounds only** – `min`/`max`, no `gt`/`gte`/`lt`/`lte`: self-documenting,
+matches Typesense’s native inclusive range, covers every DR case, additively reversible.
+Grouped facets need no special shape – `group:`-prefixed tokens travel as ordinary `in`
+strings and the adapter splits/unions them.
+
+### Adapter port and result
+
+```ts
+interface SearchAdapter {
+  search(query: SearchQuery, schema: SearchSchema): Promise<SearchResult>;
+}
+
+interface SearchResult {
+  readonly hits: readonly { id: string; document: SearchDocument }[];
+  readonly total: number;
+  readonly facets: Readonly<
+    Record<string, readonly { value: string; count: number }[]>
+  >;
+}
+
+type SearchDocument = Record<string, SearchValue>;
+type SearchValue =
+  | string
+  | number
+  | boolean
+  | readonly string[]
+  | LocalizedValue
+  | Reference
+  | readonly Reference[];
+type LocalizedValue = Readonly<Record<string, readonly string[]>>; // language map; `und` = @none
+interface Reference {
+  readonly id: string;
+  readonly label?: LocalizedValue;
+}
+```
+
+The adapter owns all engine specifics (companion-field expansion, `query_by`/weights, the
+filter compiler, `sort_by`, folding, `facet_by`) and returns only logical documents.
+
+`Reference` here is the generic _internal_ carrier; the GraphQL surface maps it to named
+per-shape types (e.g. `Organization`, `Term`) with `label` exposed as `name`
+(see [ADR 4](./0004-search-api-graphql-surface.md)).
+
+### Localized representation: map in the IR, best-first list at the surface
+
+- **IR / adapter-return:** JSON-LD language map (`@container: @language`), `@set` arrays,
+  `und` for untagged. Matches schema-profile #171 (language maps are more usable as a data
+  model) and the platform draft’s envelope.
+- **GraphQL surface:** a single **best-first** `Accept-Language`-ordered list
+  (`[LanguageString!]!`, see [ADR 4](./0004-search-api-graphql-surface.md)). `[0]` is the
+  value to display; **`[0].language` is the language actually served** – the per-field
+  equivalent of HTTP `Content-Language`, so a client detects a fallback
+  (`[0].language !== requested`) and sets the right `lang`. `language` is nullable for
+  untagged (`@none`) values; the rest of the list is the available-languages set (switcher /
+  discovery).
+
+Preference is driven **solely by the `Accept-Language` header** – any HTTP client sends it
+(not just browsers), one mechanism across GraphQL and REST. No per-field or root `language`
+argument (deferred): a parallel arg would duplicate the header and need precedence rules.
+
+Chosen over a `{nl,en}` map (silently yields `undefined` for a missing language, no defined
+fallback order) and over a separate resolved scalar (the value must be a `LanguageString` to
+carry its language anyway, so the scalar saved only the `[0]` index – not worth a second
+field plus a deviation from the draft / Network-of-Terms list shape). Grounded in measured
+data and all three substrates:
+
+- **A (descriptions, measured):** bilingual `nl`/`en`, ~86% Dutch-only → an English user gets
+  a tagged Dutch fallback ~86% of the time; the `Content-Language` tag is load-bearing. Zero
+  untagged in the valid set.
+- **B (objects):** untagged proper names (Person/Place) → the nullable `language` earns its keep.
+- **C (terminology):** labels in many languages → long ordered lists.
+
+**Deferred (note only):** filtering by _metadata-language availability_ (e.g. records that
+have an English title) is distinct from content `dct:language` (already filterable) and from
+preference; expressible as a facetable dimension (languages-present-in-a-localized-field),
+not enabled for DR v1, more relevant for B/C.
+
+### Other reconciled decisions
+
+- **Numbered pagination** (`offset`/`limit`, presented as page/per-page), not Relay
+  cursors. DR is a page-numbered faceted browser with totals; Typesense is natively
+  page/per-page; the ~2,500-doc corpus never paginates deep enough for offset cost to bite;
+  and the blue/green alias swap removes the mutation-drift that motivates cursors.
+- **Sidecar canonical labels**, not inline `labelOnly` as default. Facets need one
+  canonical label per entity; the draft’s own two-source model puts canonical labels in a
+  separate collection, which is what DR’s `labels` collection is. `nestedStrategy` is
+  carried as metadata but inline `labelOnly` is not the default.
+- **Logical typed result document** at the query seam; framed JSON-LD kept index-side. The
+  draft treats framed JSON-LD as the universal IR; we scope it to the index/projection
+  artifact (its payoff – vector/LDES/UI sinks – is object-search’s, not catalog-search’s),
+  gated on the generic framing packages existing rather than on DR.
+
+## Consequences
+
+- One declarative source drives GraphQL, later REST, and the index; they cannot drift.
+- The engine is a swappable adapter; the contract outlives engine choices.
+- Adopted from the draft unchanged: the Stable API Contract discipline, `nestedStrategy` as
+  a concept, the surface `LanguageString` list, folding at the adapter boundary + query
+  side via `@lde/text-normalization`, SDL-in-projection vs filter-compiler-in-adapter.
+- Deviations to reconcile into the platform draft: numbered pagination; sidecar labels;
+  logical result doc (framed JSON-LD scoped to index-side); `min`/`max` filter ranges; the
+  `@lde/search*` naming and a core package row.
+- Deferred: REST surface; framed-JSON-LD materialised view (nested storage, index-time
+  label inlining, detail-page-on-index, terms-collection split); semantic/hybrid (vector)
+  search; unifying the projection `FieldSpec` (RDF→doc) with this `SearchField`
+  (query/output) into one field declaration.
