@@ -507,4 +507,65 @@ describe('FileWriter', () => {
       expect(content).not.toContain('@prefix');
     });
   });
+
+  describe('reset', () => {
+    it('discards quads written before the reset', async () => {
+      const writer = new FileWriter({ outputDir: tempDir });
+      const dataset = createDataset('http://example.com/dataset/1');
+
+      // First pass (e.g. endpoint-sourced) writes a quad, then is discarded.
+      await writer.write(
+        dataset,
+        quadsOf(
+          quad(
+            namedNode('http://example.com/discarded'),
+            namedNode('http://example.com/p'),
+            literal('endpoint'),
+          ),
+        ),
+      );
+      await writer.reset(dataset);
+
+      // Second pass (dump-sourced) writes a different quad.
+      await writer.write(
+        dataset,
+        quadsOf(
+          quad(
+            namedNode('http://example.com/kept'),
+            namedNode('http://example.com/p'),
+            literal('dump'),
+          ),
+        ),
+      );
+      await writer.flush(dataset);
+
+      const content = await readFile(
+        join(tempDir, 'example.com-dataset-1.nt'),
+        'utf-8',
+      );
+      expect(content).toContain('<http://example.com/kept>');
+      expect(content).not.toContain('<http://example.com/discarded>');
+    });
+
+    it('removes the dataset’s temp file so a discarded pass leaves nothing behind', async () => {
+      const writer = new FileWriter({ outputDir: tempDir });
+      const dataset = createDataset('http://example.com/dataset/1');
+
+      await writer.write(
+        dataset,
+        quadsOf(
+          quad(
+            namedNode('http://example.com/s'),
+            namedNode('http://example.com/p'),
+            literal('o'),
+          ),
+        ),
+      );
+      await writer.reset(dataset);
+
+      expect(await exists(join(tempDir, 'example.com-dataset-1.nt.tmp'))).toBe(
+        false,
+      );
+    });
+  });
 });

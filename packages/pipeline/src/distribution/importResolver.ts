@@ -33,6 +33,21 @@ export interface ImportResolverOptions {
    * collected for reporting and the dataset knowledge graph.
    */
   strategy?: 'sparql' | 'import';
+  /**
+   * Opt in to reactive dump fallback. When `true`, the resolver’s
+   * {@link ImportResolver.resolveFallback} imports the dataset’s data dump so
+   * the pipeline can re-run all stages locally after a SPARQL endpoint passes
+   * probing but fails to serve the analysis stages.
+   *
+   * When `false` (default), `resolveFallback` reports no fallback, so an
+   * endpoint that passes probing is committed to for the whole run – today’s
+   * behaviour. Orthogonal to {@link strategy}; only meaningful with the default
+   * `'sparql'` strategy, since `'import'` never uses the endpoint in the first
+   * place.
+   *
+   * @default false
+   */
+  reactiveDumpFallback?: boolean;
 }
 
 /**
@@ -93,6 +108,23 @@ export class ImportResolver implements DistributionResolver {
       );
     }
 
+    return this.importDataset(probed.dataset, probed.probeResults, callbacks);
+  }
+
+  async resolveFallback(
+    probed: ProbedDistributions,
+    callbacks?: ResolveCallbacks,
+  ): Promise<ResolvedDistribution | NoDistributionAvailable> {
+    if (!this.options.reactiveDumpFallback) {
+      return new NoDistributionAvailable(
+        probed.dataset,
+        'Reactive dump fallback is not enabled',
+        probed.probeResults,
+      );
+    }
+
+    // Import the data dump regardless of the endpoint chosen at probe time:
+    // the endpoint is empirically incapable, so the dump is the fallback.
     return this.importDataset(probed.dataset, probed.probeResults, callbacks);
   }
 

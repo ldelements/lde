@@ -11,6 +11,7 @@ import {
   type DistributionResolver,
   type ProbedDistributions,
   NoDistributionAvailable,
+  ResolvedDistribution,
 } from './distribution/resolver.js';
 import { SparqlDistributionResolver } from './distribution/index.js';
 import { sourceFingerprint } from './provenance/sourceFingerprint.js';
@@ -172,6 +173,10 @@ class FanOutWriter implements Writer {
 
   async flush(dataset: Dataset): Promise<void> {
     for (const w of this.writers) await w.flush?.(dataset);
+  }
+
+  async reset(dataset: Dataset): Promise<void> {
+    for (const w of this.writers) await w.reset?.(dataset);
   }
 }
 
@@ -405,24 +410,39 @@ export class Pipeline {
 
     let stageFailed = false;
     try {
-      for (const stage of this.stages) {
-        try {
-          if (stage.stages.length > 0) {
-            await this.runChain(dataset, resolved.distribution, stage, timeout);
-          } else {
-            await this.runStage(
-              dataset,
-              resolved.distribution,
-              stage,
-              this.stageWriter(stage.name),
-              timeout,
-            );
-          }
-        } catch (error) {
-          stageFailed = true;
-          this.reporter?.stageFailed?.(
-            stage.name,
-            error instanceof Error ? error : new Error(String(error)),
+      stageFailed = await this.runStages(
+        dataset,
+        resolved.distribution,
+        timeout,
+      );
+
+      // Reactive fallback: an endpoint that passed probing but could not serve
+      // the analysis stages is empirically incapable. Switch to the dataset’s
+      // data dump and re-run all stages locally, discarding the
+      // endpoint-sourced partial results. Only a live endpoint
+      // (`importedFrom === undefined`) can fall back – a run already on an
+      // imported dump has nowhere further to go.
+      if (
+        stageFailed &&
+        resolved.importedFrom === undefined &&
+        this.distributionResolver.resolveFallback
+      ) {
+        const fallback = await this.distributionResolver.resolveFallback(
+          probed,
+          {
+            onImportStart: () => this.reporter?.importStarted?.(),
+            onImportFailed: (distribution, error) =>
+              this.reporter?.importFailed?.(distribution, error),
+          },
+        );
+        if (fallback instanceof ResolvedDistribution) {
+          // Discard the endpoint-sourced partial output before the re-run so
+          // the dump-sourced stats replace it rather than appending to it.
+          await this.writer.reset?.(dataset);
+          stageFailed = await this.runStages(
+            dataset,
+            fallback.distribution,
+            timeout,
           );
         }
       }
@@ -495,6 +515,42 @@ export class Pipeline {
     return this.beforeStageWrite
       ? new TransformWriter(this.writer, this.beforeStageWrite, stage)
       : this.writer;
+  }
+
+  /**
+   * Run every top-level stage against one distribution, catching and reporting
+   * per-stage failures so one failing stage does not abort the rest. Returns
+   * whether any stage hard-failed – the signal the reactive dump fallback
+   * reacts to.
+   */
+  private async runStages(
+    dataset: Dataset,
+    distribution: Distribution,
+    timeout: TimeoutPolicy,
+  ): Promise<boolean> {
+    let stageFailed = false;
+    for (const stage of this.stages) {
+      try {
+        if (stage.stages.length > 0) {
+          await this.runChain(dataset, distribution, stage, timeout);
+        } else {
+          await this.runStage(
+            dataset,
+            distribution,
+            stage,
+            this.stageWriter(stage.name),
+            timeout,
+          );
+        }
+      } catch (error) {
+        stageFailed = true;
+        this.reporter?.stageFailed?.(
+          stage.name,
+          error instanceof Error ? error : new Error(String(error)),
+        );
+      }
+    }
+    return stageFailed;
   }
 
   /**

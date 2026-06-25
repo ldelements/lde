@@ -75,6 +75,12 @@ export class SparqlUpdateWriter implements Writer {
     }
   }
 
+  async reset(dataset: Dataset): Promise<void> {
+    // Forget the graph’s cleared state so the next write re-issues CLEAR GRAPH,
+    // replacing the prior output instead of appending to it.
+    this.clearedGraphs.delete(this.graphIri(dataset).toString());
+  }
+
   private async clearGraph(graphUri: string): Promise<void> {
     await this.executeUpdate(`CLEAR GRAPH <${graphUri}>`);
   }

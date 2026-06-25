@@ -355,6 +355,108 @@ describe('ImportResolver', () => {
     });
   });
 
+  describe('reactive dump fallback', () => {
+    /** A probed dataset whose chosen source is a SPARQL endpoint, but which
+     * also has an importable dump that passed probing. */
+    function probedEndpointWithDump(): {
+      dataset: Dataset;
+      probed: ProbedDistributions;
+    } {
+      const sparqlDistribution = Distribution.sparql(new URL(SPARQL_URL));
+      const downloadDistribution = new Distribution(
+        new URL('http://example.org/data.nt'),
+        'application/n-triples',
+      );
+      const dataset = new Dataset({
+        iri: new URL('http://example.org/dataset'),
+        distributions: [sparqlDistribution, downloadDistribution],
+      });
+      const sparqlProbe = sparqlProbeResult();
+      const probed = new ProbedDistributions(
+        dataset,
+        [sparqlProbe, dataDumpProbeResult],
+        { distribution: sparqlDistribution, probeResult: sparqlProbe },
+      );
+      return { dataset, probed };
+    }
+
+    function dummyInner(): DistributionResolver {
+      return { probe: vi.fn(), resolve: vi.fn() };
+    }
+
+    it('imports the dump, ignoring the endpoint, when enabled', async () => {
+      const { dataset, probed } = probedEndpointWithDump();
+      const importedDistribution = Distribution.sparql(
+        new URL('http://localhost:7878/sparql'),
+      );
+      const mockImporter = {
+        import: vi
+          .fn()
+          .mockResolvedValue(
+            new ImportSuccessful(importedDistribution, 'test-graph', 99),
+          ),
+      };
+      const server = makeServer();
+      const resolver = new ImportResolver(dummyInner(), {
+        importer: mockImporter,
+        server,
+        reactiveDumpFallback: true,
+      });
+
+      const result = await resolver.resolveFallback(probed);
+
+      expect(mockImporter.import).toHaveBeenCalledWith([
+        dataset.distributions[1],
+      ]);
+      expect(server.start).toHaveBeenCalled();
+      expect(result).toBeInstanceOf(ResolvedDistribution);
+      const resolved = result as ResolvedDistribution;
+      expect(resolved.distribution.accessUrl.toString()).toBe(
+        'http://localhost:7001/sparql',
+      );
+      expect(resolved.importedFrom).toBe(importedDistribution);
+      expect(resolved.tripleCount).toBe(99);
+    });
+
+    it('returns NoDistributionAvailable without importing when disabled', async () => {
+      const { probed } = probedEndpointWithDump();
+      const mockImporter = { import: vi.fn() };
+      const resolver = new ImportResolver(dummyInner(), {
+        importer: mockImporter,
+        server: makeServer(),
+      });
+
+      const result = await resolver.resolveFallback(probed);
+
+      expect(result).toBeInstanceOf(NoDistributionAvailable);
+      expect(mockImporter.import).not.toHaveBeenCalled();
+    });
+
+    it('returns NoDistributionAvailable when no dump passed probing', async () => {
+      const sparqlDistribution = Distribution.sparql(new URL(SPARQL_URL));
+      const dataset = new Dataset({
+        iri: new URL('http://example.org/dataset'),
+        distributions: [sparqlDistribution],
+      });
+      const sparqlProbe = sparqlProbeResult();
+      const probed = new ProbedDistributions(dataset, [sparqlProbe], {
+        distribution: sparqlDistribution,
+        probeResult: sparqlProbe,
+      });
+      const mockImporter = { import: vi.fn() };
+      const resolver = new ImportResolver(dummyInner(), {
+        importer: mockImporter,
+        server: makeServer(),
+        reactiveDumpFallback: true,
+      });
+
+      const result = await resolver.resolveFallback(probed);
+
+      expect(result).toBeInstanceOf(NoDistributionAvailable);
+      expect(mockImporter.import).not.toHaveBeenCalled();
+    });
+  });
+
   describe('server integration', () => {
     it('starts server after import and uses its endpoint', async () => {
       const dataset = makeDataset();

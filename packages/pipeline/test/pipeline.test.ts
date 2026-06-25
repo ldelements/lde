@@ -72,10 +72,12 @@ function makeResolvedDistribution(): ResolvedDistribution {
 function makeWriter(): Writer & {
   write: ReturnType<typeof vi.fn>;
   flush: ReturnType<typeof vi.fn>;
+  reset: ReturnType<typeof vi.fn>;
 } {
   return {
     write: vi.fn().mockResolvedValue(undefined),
     flush: vi.fn().mockResolvedValue(undefined),
+    reset: vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -996,6 +998,263 @@ describe('Pipeline', () => {
         'chained',
         expect.any(Error),
       );
+    });
+  });
+
+  describe('reactive dump fallback', () => {
+    const endpointDistribution = Distribution.sparql(
+      new URL('http://endpoint.example.org/sparql'),
+    );
+    const importedDistribution = Distribution.sparql(
+      new URL('http://localhost/imported/sparql'),
+    );
+    const dumpDistribution = new Distribution(
+      new URL('http://example.org/dump.ttl'),
+      'application/n-triples',
+    );
+
+    /**
+     * A resolver whose endpoint resolves first, but whose `resolveFallback`
+     * yields a freshly imported dump distribution.
+     */
+    function makeFallbackResolver(): DistributionResolver & {
+      resolveFallback: ReturnType<typeof vi.fn>;
+    } {
+      return {
+        probe: vi.fn(
+          async (ds: Dataset) => new ProbedDistributions(ds, [], null),
+        ),
+        resolve: vi.fn(
+          async () => new ResolvedDistribution(endpointDistribution, []),
+        ),
+        resolveFallback: vi.fn(
+          async () =>
+            new ResolvedDistribution(
+              importedDistribution,
+              [],
+              dumpDistribution,
+            ),
+        ),
+      };
+    }
+
+    it('re-runs all stages against the imported dump when an endpoint stage hard-fails', async () => {
+      // Fails on the endpoint (first call), succeeds on the dump (re-run).
+      const stage = makeStage('aggregate');
+      vi.spyOn(stage, 'run').mockImplementation(
+        async (_dataset, distribution) => {
+          if (distribution === endpointDistribution) {
+            throw new Error('endpoint killed the heavy query');
+          }
+        },
+      );
+      const resolver = makeFallbackResolver();
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [stage],
+        writers: writer,
+        distributionResolver: resolver,
+      });
+
+      await pipeline.run();
+
+      expect(resolver.resolveFallback).toHaveBeenCalledTimes(1);
+      // Ran once against the endpoint (threw), then again against the dump.
+      expect(stage.run).toHaveBeenCalledTimes(2);
+      expect(stage.run).toHaveBeenLastCalledWith(
+        dataset,
+        importedDistribution,
+        writer,
+        expect.objectContaining({ onProgress: expect.any(Function) }),
+      );
+    });
+
+    it('resets the writer before re-running so endpoint output is discarded', async () => {
+      const stage = makeStage('aggregate');
+      vi.spyOn(stage, 'run').mockImplementation(
+        async (_dataset, distribution) => {
+          if (distribution === endpointDistribution) {
+            throw new Error('endpoint killed the heavy query');
+          }
+        },
+      );
+      const resolver = makeFallbackResolver();
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [stage],
+        writers: writer,
+        distributionResolver: resolver,
+      });
+
+      await pipeline.run();
+
+      expect(writer.reset).toHaveBeenCalledTimes(1);
+      expect(writer.reset).toHaveBeenCalledWith(dataset);
+      // The reset must precede the dump re-run, or its output would append to
+      // the discarded endpoint-sourced quads.
+      const resetOrder = writer.reset.mock.invocationCallOrder[0];
+      const reRunOrder = (stage.run as ReturnType<typeof vi.fn>).mock
+        .invocationCallOrder[1];
+      expect(resetOrder).toBeLessThan(reRunOrder);
+    });
+
+    it('keeps endpoint output when no dump is available to fall back to', async () => {
+      const stage = makeStage('aggregate');
+      vi.spyOn(stage, 'run').mockRejectedValue(
+        new Error('endpoint killed the heavy query'),
+      );
+      const resolver = makeFallbackResolver();
+      // No importable dump passed probing.
+      resolver.resolveFallback.mockResolvedValue(
+        new NoDistributionAvailable(dataset, 'No importable distributions', []),
+      );
+      const reporter = makeReporter();
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [stage],
+        writers: writer,
+        distributionResolver: resolver,
+        reporter,
+      });
+
+      await pipeline.run();
+
+      expect(resolver.resolveFallback).toHaveBeenCalledTimes(1);
+      // No re-run: the stage ran once and nothing was reset.
+      expect(stage.run).toHaveBeenCalledTimes(1);
+      expect(writer.reset).not.toHaveBeenCalled();
+      expect(reporter.stageFailed).toHaveBeenCalledWith(
+        'aggregate',
+        expect.any(Error),
+      );
+    });
+
+    it('does not fall back again when already running on an imported dump', async () => {
+      // A stage that always fails, even on the imported dump.
+      const stage = makeStage('aggregate');
+      vi.spyOn(stage, 'run').mockRejectedValue(
+        new Error('import is broken too'),
+      );
+      const resolver = makeFallbackResolver();
+      // The dataset resolves directly to an already-imported dump.
+      resolver.resolve = vi.fn(
+        async () =>
+          new ResolvedDistribution(importedDistribution, [], dumpDistribution),
+      );
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [stage],
+        writers: writer,
+        distributionResolver: resolver,
+      });
+
+      await pipeline.run();
+
+      // An imported dump has no further fallback; resolveFallback is never tried.
+      expect(resolver.resolveFallback).not.toHaveBeenCalled();
+      expect(stage.run).toHaveBeenCalledTimes(1);
+      expect(writer.reset).not.toHaveBeenCalled();
+    });
+
+    it('reports the import lifecycle of a successful fallback to the reporter', async () => {
+      const stage = makeStage('aggregate');
+      vi.spyOn(stage, 'run').mockImplementation(
+        async (_dataset, distribution) => {
+          if (distribution === endpointDistribution) {
+            throw new Error('endpoint killed the heavy query');
+          }
+        },
+      );
+      const resolver = makeFallbackResolver();
+      // The fallback import announces its start through the callbacks.
+      resolver.resolveFallback.mockImplementation(
+        async (_probed, callbacks?: ResolveCallbacks) => {
+          callbacks?.onImportStart?.();
+          return new ResolvedDistribution(
+            importedDistribution,
+            [],
+            dumpDistribution,
+          );
+        },
+      );
+      const reporter = makeReporter();
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [stage],
+        writers: writer,
+        distributionResolver: resolver,
+        reporter,
+      });
+
+      await pipeline.run();
+
+      expect(reporter.importStarted).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports a failed fallback import to the reporter and keeps endpoint output', async () => {
+      const stage = makeStage('aggregate');
+      vi.spyOn(stage, 'run').mockRejectedValue(
+        new Error('endpoint killed the heavy query'),
+      );
+      const resolver = makeFallbackResolver();
+      // The dump import fails: announce it, then report no distribution.
+      resolver.resolveFallback.mockImplementation(
+        async (_probed, callbacks?: ResolveCallbacks) => {
+          callbacks?.onImportStart?.();
+          callbacks?.onImportFailed?.(dumpDistribution, 'Parse error');
+          return new NoDistributionAvailable(dataset, 'Import failed', []);
+        },
+      );
+      const reporter = makeReporter();
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [stage],
+        writers: writer,
+        distributionResolver: resolver,
+        reporter,
+      });
+
+      await pipeline.run();
+
+      expect(reporter.importFailed).toHaveBeenCalledWith(
+        dumpDistribution,
+        'Parse error',
+      );
+      // Import failed → no re-run, endpoint output is kept.
+      expect(stage.run).toHaveBeenCalledTimes(1);
+      expect(writer.reset).not.toHaveBeenCalled();
+    });
+
+    it('resets every writer when fanning out to multiple writers', async () => {
+      const stage = makeStage('aggregate');
+      vi.spyOn(stage, 'run').mockImplementation(
+        async (_dataset, distribution) => {
+          if (distribution === endpointDistribution) {
+            throw new Error('endpoint killed the heavy query');
+          }
+        },
+      );
+      const writerA = makeWriter();
+      const writerB = makeWriter();
+      const resolver = makeFallbackResolver();
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [stage],
+        writers: [writerA, writerB],
+        distributionResolver: resolver,
+      });
+
+      await pipeline.run();
+
+      expect(writerA.reset).toHaveBeenCalledWith(dataset);
+      expect(writerB.reset).toHaveBeenCalledWith(dataset);
     });
   });
 
