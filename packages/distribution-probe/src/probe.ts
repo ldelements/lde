@@ -57,9 +57,32 @@ export interface ProbeOptions {
   rdfValidationBudgetMs?: number;
 }
 
+/**
+ * Options for {@link probeMany}: the per-probe {@link ProbeOptions} plus the
+ * concurrency budgets that bound the batch.
+ */
+export interface ProbeManyOptions extends ProbeOptions {
+  /**
+   * Maximum number of probes to run at once across all hosts. Bounds the batch’s
+   * total fan-out so a large catalogue does not exhaust sockets or buffer too many
+   * response bodies at once. Default 20.
+   */
+  concurrency?: number;
+  /**
+   * Maximum number of probes to run at once against a single host. Bounds the
+   * burst any one server sees, so a catalogue that declares many distributions on
+   * one host (e.g. a download endpoint per named graph) does not trip its rate
+   * limiter (HTTP 429). A probe whose host is at this cap waits while probes for
+   * other hosts proceed, so this never idles the global pool. Default 4.
+   */
+  perHostConcurrency?: number;
+}
+
 const DEFAULT_SPARQL_QUERY = 'SELECT * { ?s ?p ?o } LIMIT 1';
 const DEFAULT_TIMEOUT_MS = 5000;
 const DEFAULT_RETRIES = 2;
+const DEFAULT_PROBE_CONCURRENCY = 20;
+const DEFAULT_PROBE_PER_HOST_CONCURRENCY = 4;
 
 /**
  * Default soft deadline for finding the first triple when content validation is
@@ -284,6 +307,126 @@ export async function probe(
     describeNetworkError(lastError),
     Math.round(performance.now() - overallStart),
   );
+}
+
+/**
+ * Probe many distributions concurrently, bounded by a global cap and a per-host
+ * cap, returning one result per input in input order. Like {@link probe}, this
+ * never throws: a probe that somehow fails is reported as a {@link NetworkError}
+ * in its slot.
+ *
+ * The per-host cap keeps the batch a polite client. Distributions sharing a host
+ * (by {@link Distribution.accessUrl}) contend for the same budget, so no single
+ * server is hit by the full global pool at once — the burst that trips a rate
+ * limiter (HTTP 429). When the next queued probe’s host is saturated it is
+ * skipped in favour of a later probe on a different host, so one busy host never
+ * idles the global pool (no head-of-line blocking).
+ */
+export async function probeMany(
+  distributions: readonly Distribution[],
+  options?: ProbeManyOptions,
+): Promise<ProbeResultType[]> {
+  // Clamp the budgets to a positive integer, mirroring how probe() treats an
+  // invalid retries value: a zero, negative, fractional, or NaN limit would
+  // otherwise stall the scheduler (no task ever starts, so the promise never
+  // resolves) or overrun the cap, so fall back to the default rather than trust
+  // the caller.
+  const globalLimit = positiveIntOrDefault(
+    options?.concurrency,
+    DEFAULT_PROBE_CONCURRENCY,
+  );
+  const perHostLimit = positiveIntOrDefault(
+    options?.perHostConcurrency,
+    DEFAULT_PROBE_PER_HOST_CONCURRENCY,
+  );
+  // Probes contend per host. An authority-less URL (e.g. urn:, file:) has an
+  // empty host, so it falls back to its full href and never shares a budget with
+  // an unrelated one.
+  const hostKeys = distributions.map(
+    (distribution) =>
+      distribution.accessUrl.host || distribution.accessUrl.href,
+  );
+  return mapHostLimited(
+    distributions,
+    hostKeys,
+    globalLimit,
+    perHostLimit,
+    (distribution) => probe(distribution, options),
+  );
+}
+
+/**
+ * Coerce an optional concurrency budget to a usable value: a positive integer is
+ * taken as-is; undefined, zero, negative, fractional, or NaN falls back to the
+ * default. Matches probe()’s treatment of an invalid retries value.
+ */
+function positiveIntOrDefault(
+  value: number | undefined,
+  fallback: number,
+): number {
+  return value !== undefined && Number.isInteger(value) && value >= 1
+    ? value
+    : fallback;
+}
+
+/**
+ * Run `task` over `items` with two concurrency caps — a global cap and a per-host
+ * cap keyed by `hostKeys[index]` — resolving to results in input order. When the
+ * next queued item’s host is at the per-host cap it is skipped for a later item on
+ * a different host, so a saturated host never idles the global pool (no head-of-line
+ * blocking); the skipped host always has a task in flight, whose completion re-runs
+ * the scheduler, so the queue always drains. `task` must not reject — callers wrap
+ * failures into a result value — as a rejection would leave the promise pending.
+ */
+function mapHostLimited<TItem, TResult>(
+  items: readonly TItem[],
+  hostKeys: readonly string[],
+  globalLimit: number,
+  perHostLimit: number,
+  task: (item: TItem) => Promise<TResult>,
+): Promise<TResult[]> {
+  const results: TResult[] = new Array(items.length);
+  const perHostInFlight = new Map<string, number>();
+  const pending = items.map((_unused, index) => index);
+  let globalInFlight = 0;
+  let settledCount = 0;
+
+  const adjustHost = (host: string, delta: number): void => {
+    perHostInFlight.set(host, (perHostInFlight.get(host) ?? 0) + delta);
+  };
+
+  return new Promise((resolve) => {
+    const schedule = (): void => {
+      let cursor = 0;
+      while (cursor < pending.length && globalInFlight < globalLimit) {
+        const index = pending[cursor];
+        const host = hostKeys[index];
+        if ((perHostInFlight.get(host) ?? 0) >= perHostLimit) {
+          cursor++; // Host saturated; leave it queued and try a later, different host.
+          continue;
+        }
+        pending.splice(cursor, 1);
+        globalInFlight++;
+        adjustHost(host, 1);
+        void task(items[index]).then((result) => {
+          results[index] = result;
+          globalInFlight--;
+          adjustHost(host, -1);
+          settledCount++;
+          if (settledCount === items.length) {
+            resolve(results);
+          } else {
+            schedule();
+          }
+        });
+        // pending[cursor] now holds the next queued item; do not advance cursor.
+      }
+    };
+    schedule();
+    // Resolve immediately when there is nothing to settle (empty input); a
+    // non-empty run resolves via the task completion above.
+    if (settledCount === items.length) resolve(results);
+  });
 }
 
 function delay(milliseconds: number): Promise<void> {
