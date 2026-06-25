@@ -11,6 +11,7 @@ import {
   type DistributionResolver,
   type ProbedDistributions,
   NoDistributionAvailable,
+  ResolvedDistribution,
 } from './distribution/resolver.js';
 import { SparqlDistributionResolver } from './distribution/index.js';
 import { sourceFingerprint } from './provenance/sourceFingerprint.js';
@@ -173,6 +174,10 @@ class FanOutWriter implements Writer {
   async flush(dataset: Dataset): Promise<void> {
     for (const w of this.writers) await w.flush?.(dataset);
   }
+
+  async reset(dataset: Dataset): Promise<void> {
+    for (const w of this.writers) await w.reset?.(dataset);
+  }
 }
 
 class TransformWriter implements Writer {
@@ -305,7 +310,9 @@ export class Pipeline {
 
     // Derive the source-change fingerprint from the probed source: null for a
     // live SPARQL endpoint (always reprocess) or when no source is available.
-    const fingerprint = probed.source
+    // Reassigned to the dump's fingerprint if a reactive fallback later imports
+    // one, so change-detection can skip an unchanged dump on the next run.
+    let fingerprint = probed.source
       ? sourceFingerprint(probed.source.distribution, probed.source.probeResult)
       : null;
 
@@ -372,30 +379,7 @@ export class Pipeline {
       return;
     }
 
-    this.reporter?.distributionSelected?.(
-      dataset,
-      resolved.distribution,
-      resolved.importedFrom,
-      resolved.importDuration,
-      resolved.tripleCount,
-    );
-
-    // A completed data-dump import is a deep validity verdict on the imported
-    // distribution (valid, or empty when it yielded no triples). Native SPARQL
-    // endpoints are not imported, so they carry no deep verdict.
-    if (resolved.importedFrom) {
-      this.reporter?.distributionValidated?.(
-        resolved.importedFrom,
-        importOutcomeToVerdict(
-          new ImportSuccessful(
-            resolved.importedFrom,
-            undefined,
-            resolved.tripleCount,
-          ),
-          fingerprint,
-        ),
-      );
-    }
+    this.reportSelectedDistribution(dataset, resolved, fingerprint);
 
     const timeout: TimeoutPolicy = this.timeoutFactory();
     const unsubscribe = timeout.subscribe?.({
@@ -405,23 +389,74 @@ export class Pipeline {
 
     let stageFailed = false;
     try {
-      for (const stage of this.stages) {
+      stageFailed = await this.runStages(
+        dataset,
+        resolved.distribution,
+        timeout,
+      );
+
+      // Reactive fallback: an endpoint that passed probing but could not serve
+      // the analysis stages is empirically incapable. Switch to the dataset’s
+      // data dump and re-run all stages locally, discarding the
+      // endpoint-sourced partial results. Only a live endpoint
+      // (`importedFrom === undefined`) can fall back – a run already on an
+      // imported dump has nowhere further to go.
+      if (
+        stageFailed &&
+        resolved.importedFrom === undefined &&
+        this.distributionResolver.resolveFallback
+      ) {
+        // A failing fallback import must abort only this dataset, never the
+        // whole run – matching the per-dataset isolation of the primary resolve
+        // path. The dataset stays recorded as failed (stageFailed is already
+        // true) and processing continues with the next dataset.
         try {
-          if (stage.stages.length > 0) {
-            await this.runChain(dataset, resolved.distribution, stage, timeout);
-          } else {
-            await this.runStage(
+          const fallback = await this.distributionResolver.resolveFallback(
+            probed,
+            {
+              onImportStart: () => this.reporter?.importStarted?.(),
+              onImportFailed: (distribution, error) =>
+                this.reporter?.importFailed?.(distribution, error),
+            },
+          );
+          if (fallback instanceof ResolvedDistribution) {
+            // The dump is now the dataset's effective source: report it as
+            // selected/validated and adopt its change fingerprint so the next
+            // run can skip an unchanged dump (the endpoint's fingerprint is
+            // null, which would force a re-import every run).
+            if (fallback.importedFrom) {
+              const dumpProbeResult = probed.probeResults.find(
+                (result) =>
+                  result.url === fallback.importedFrom!.accessUrl.toString(),
+              );
+              if (dumpProbeResult) {
+                fingerprint = sourceFingerprint(
+                  fallback.importedFrom,
+                  dumpProbeResult,
+                );
+              }
+            }
+            this.reportSelectedDistribution(dataset, fallback, fingerprint);
+            // Discard the endpoint-sourced partial output before the re-run so
+            // the dump-sourced stats replace it rather than appending to it.
+            await this.writer.reset?.(dataset);
+            stageFailed = await this.runStages(
               dataset,
-              resolved.distribution,
-              stage,
-              this.stageWriter(stage.name),
+              fallback.distribution,
               timeout,
+            );
+          } else if (fallback.importFailed) {
+            // A failed dump import is a deep validity verdict on that dump –
+            // surface it rather than silently keeping the endpoint's partial
+            // output, matching the primary NoDistributionAvailable path.
+            this.reporter?.distributionValidated?.(
+              fallback.importFailed.distribution,
+              importOutcomeToVerdict(fallback.importFailed, fingerprint),
             );
           }
         } catch (error) {
-          stageFailed = true;
           this.reporter?.stageFailed?.(
-            stage.name,
+            'reactive-dump-fallback',
             error instanceof Error ? error : new Error(String(error)),
           );
         }
@@ -495,6 +530,79 @@ export class Pipeline {
     return this.beforeStageWrite
       ? new TransformWriter(this.writer, this.beforeStageWrite, stage)
       : this.writer;
+  }
+
+  /**
+   * Report a resolved distribution as the dataset's selected source, plus its
+   * deep validity verdict when it was imported. Shared by the primary resolve
+   * path and the reactive dump fallback so both surface the same reporter
+   * events for the source they actually use. A completed data-dump import is a
+   * deep validity verdict on the imported distribution (valid, or empty when it
+   * yielded no triples); native SPARQL endpoints are not imported and carry no
+   * deep verdict.
+   */
+  private reportSelectedDistribution(
+    dataset: Dataset,
+    resolved: ResolvedDistribution,
+    fingerprint: string | null,
+  ): void {
+    this.reporter?.distributionSelected?.(
+      dataset,
+      resolved.distribution,
+      resolved.importedFrom,
+      resolved.importDuration,
+      resolved.tripleCount,
+    );
+
+    if (resolved.importedFrom) {
+      this.reporter?.distributionValidated?.(
+        resolved.importedFrom,
+        importOutcomeToVerdict(
+          new ImportSuccessful(
+            resolved.importedFrom,
+            undefined,
+            resolved.tripleCount,
+          ),
+          fingerprint,
+        ),
+      );
+    }
+  }
+
+  /**
+   * Run every top-level stage against one distribution, catching and reporting
+   * per-stage failures so one failing stage does not abort the rest. Returns
+   * whether any stage hard-failed – the signal the reactive dump fallback
+   * reacts to.
+   */
+  private async runStages(
+    dataset: Dataset,
+    distribution: Distribution,
+    timeout: TimeoutPolicy,
+  ): Promise<boolean> {
+    let stageFailed = false;
+    for (const stage of this.stages) {
+      try {
+        if (stage.stages.length > 0) {
+          await this.runChain(dataset, distribution, stage, timeout);
+        } else {
+          await this.runStage(
+            dataset,
+            distribution,
+            stage,
+            this.stageWriter(stage.name),
+            timeout,
+          );
+        }
+      } catch (error) {
+        stageFailed = true;
+        this.reporter?.stageFailed?.(
+          stage.name,
+          error instanceof Error ? error : new Error(String(error)),
+        );
+      }
+    }
+    return stageFailed;
   }
 
   /**

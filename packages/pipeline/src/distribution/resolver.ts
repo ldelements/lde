@@ -77,6 +77,21 @@ export interface DistributionResolver {
     probed: ProbedDistributions,
     callbacks?: ResolveCallbacks,
   ): Promise<ResolvedDistribution | NoDistributionAvailable>;
+  /**
+   * Re-resolve a dataset to an alternative source after the primary source
+   * (a live SPARQL endpoint) failed to serve the analysis stages. Returns an
+   * imported data dump as a {@link ResolvedDistribution}, or
+   * {@link NoDistributionAvailable} when no fallback exists or reactive
+   * fallback is not enabled.
+   *
+   * Resolvers without a dump to fall back to (e.g.
+   * {@link SparqlDistributionResolver}) omit this method; the pipeline then
+   * keeps the endpoint-sourced partial results.
+   */
+  resolveFallback?(
+    probed: ProbedDistributions,
+    callbacks?: ResolveCallbacks,
+  ): Promise<ResolvedDistribution | NoDistributionAvailable>;
   cleanup?(): Promise<void>;
 }
 

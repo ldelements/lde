@@ -288,4 +288,62 @@ describe('SparqlUpdateWriter', () => {
       ).rejects.toThrow('SPARQL UPDATE failed with status 500');
     });
   });
+
+  describe('reset', () => {
+    it('re-clears the graph on the next write after a reset', async () => {
+      const writer = new SparqlUpdateWriter({
+        endpoint,
+        fetch: mockFetch as typeof globalThis.fetch,
+      });
+
+      const dataset = createDataset('http://example.com/dataset/1');
+      const aQuad = quad(
+        namedNode('http://example.com/s'),
+        namedNode('http://example.com/p'),
+        literal('o'),
+      );
+
+      await writer.write(dataset, quadsOf(aQuad));
+      await writer.reset(dataset);
+      mockFetch.mockClear();
+
+      // After a reset the graph state is forgotten, so the next write must
+      // CLEAR again before inserting — discarding the prior output.
+      await writer.write(dataset, quadsOf(aQuad));
+
+      const bodies = mockFetch.mock.calls.map((c) => c[1]!.body as string);
+      expect(bodies[0]).toBe('CLEAR GRAPH <http://example.com/dataset/1>');
+      expect(bodies.some((b) => b.startsWith('INSERT'))).toBe(true);
+    });
+
+    it('resets only the given dataset’s graph', async () => {
+      const writer = new SparqlUpdateWriter({
+        endpoint,
+        fetch: mockFetch as typeof globalThis.fetch,
+      });
+
+      const datasetOne = createDataset('http://example.com/dataset/1');
+      const datasetTwo = createDataset('http://example.com/dataset/2');
+      const aQuad = quad(
+        namedNode('http://example.com/s'),
+        namedNode('http://example.com/p'),
+        literal('o'),
+      );
+
+      await writer.write(datasetOne, quadsOf(aQuad));
+      await writer.write(datasetTwo, quadsOf(aQuad));
+      await writer.reset(datasetOne);
+      mockFetch.mockClear();
+
+      // Only datasetOne re-clears; datasetTwo’s graph state is untouched.
+      await writer.write(datasetTwo, quadsOf(aQuad));
+      await writer.write(datasetOne, quadsOf(aQuad));
+
+      const bodies = mockFetch.mock.calls.map((c) => c[1]!.body as string);
+      expect(bodies).toContain('CLEAR GRAPH <http://example.com/dataset/1>');
+      expect(bodies).not.toContain(
+        'CLEAR GRAPH <http://example.com/dataset/2>',
+      );
+    });
+  });
 });

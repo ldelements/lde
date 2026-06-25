@@ -20,19 +20,24 @@ export interface ImportResolverOptions {
   importer: Importer;
   server: SparqlServer;
   /**
-   * Controls how a dataset's distribution is selected.
+   * Controls how a dataset's distribution is selected, ordered by how eagerly a
+   * data dump is imported:
    *
    * - `'sparql'` (default) — use a dataset's own SPARQL endpoint when one is
-   *   available; fall back to importing a data dump only when no endpoint
-   *   responds.
+   *   available; import a data dump only when no endpoint responds.
+   * - `'sparqlWithImportFallback'` — like `'sparql'`, but additionally fall
+   *   back to importing the data dump when the endpoint passes probing yet fails
+   *   to serve an analysis stage at runtime. The pipeline then re-runs all
+   *   stages locally against the import (see
+   *   {@link ImportResolver.resolveFallback}).
    * - `'import'` — always import a data dump into a local SPARQL server,
    *   even when the dataset advertises a working SPARQL endpoint. Useful when
    *   the remote endpoint is too slow or unreliable.
    *
-   * In both modes the inner resolver still runs so that probe results are
+   * In every mode the inner resolver still runs so that probe results are
    * collected for reporting and the dataset knowledge graph.
    */
-  strategy?: 'sparql' | 'import';
+  strategy?: 'sparql' | 'sparqlWithImportFallback' | 'import';
 }
 
 /**
@@ -93,6 +98,23 @@ export class ImportResolver implements DistributionResolver {
       );
     }
 
+    return this.importDataset(probed.dataset, probed.probeResults, callbacks);
+  }
+
+  async resolveFallback(
+    probed: ProbedDistributions,
+    callbacks?: ResolveCallbacks,
+  ): Promise<ResolvedDistribution | NoDistributionAvailable> {
+    if (this.options.strategy !== 'sparqlWithImportFallback') {
+      return new NoDistributionAvailable(
+        probed.dataset,
+        'Import fallback is not enabled',
+        probed.probeResults,
+      );
+    }
+
+    // Import the data dump regardless of the endpoint chosen at probe time:
+    // the endpoint is empirically incapable, so the dump is the fallback.
     return this.importDataset(probed.dataset, probed.probeResults, callbacks);
   }
 
