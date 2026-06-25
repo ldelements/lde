@@ -1,3 +1,9 @@
+## 0.31.2 (2026-06-25)
+
+### 🚀 Features
+
+- **pipeline:** add expectsOutput to fail a stage that yields no quads ([#515](https://github.com/ldelements/lde/pull/515))
+
 ## 0.31.1 (2026-06-25)
 
 ### 🚀 Features
