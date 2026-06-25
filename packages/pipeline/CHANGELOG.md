@@ -1,3 +1,9 @@
+## 0.31.1 (2026-06-25)
+
+### 🚀 Features
+
+- **pipeline:** reactively fall back to data dump when an endpoint stage fails ([#514](https://github.com/ldelements/lde/pull/514))
+
 ## 0.31.0 (2026-06-22)
 
 ### 🧱 Updated Dependencies
