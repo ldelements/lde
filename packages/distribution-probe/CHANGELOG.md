@@ -1,3 +1,9 @@
+## 0.2.1 (2026-06-25)
+
+### 🚀 Features
+
+- **distribution-probe:** add probeMany with global and per-host concurrency caps ([362788a8](https://github.com/ldelements/lde/commit/362788a8))
+
 ## 0.2.0 (2026-06-22)
 
 ### 🚀 Features
