@@ -215,13 +215,17 @@ export class Stage {
           );
         }
       }
-    } else {
+    } else if (this.expectsOutput) {
+      // Only thread the per-quad counter through when the count is actually
+      // needed; the default path stays a plain streaming write with no overhead.
       await writer.write(
         dataset,
         countQuads(mergeStreams(streams), (count) => {
           produced = count;
         }),
       );
+    } else {
+      await writer.write(dataset, mergeStreams(streams));
     }
 
     this.assertProduced(produced);
@@ -507,6 +511,10 @@ async function* mergeStreams(
  * Pass a quad stream through unchanged while counting it, reporting the total
  * via `onCount` once the stream is exhausted. Lets a streaming write enforce
  * {@link StageOptions.expectsOutput} without buffering.
+ *
+ * `onCount` fires only when the consumer drains the stream — which the pipeline
+ * writers do. A writer that stops early would leave the count short; callers
+ * relying on it for `expectsOutput` must consume the stream fully.
  */
 async function* countQuads(
   stream: AsyncIterable<Quad>,
