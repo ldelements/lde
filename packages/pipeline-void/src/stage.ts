@@ -126,6 +126,7 @@ async function createVoidStage(
     perClass?: boolean;
     batchSize?: number;
     maxConcurrency?: number;
+    expectsOutput?: boolean;
   },
 ): Promise<Stage> {
   const query = await readQueryFile(resolve(queriesDir, filename));
@@ -140,6 +141,7 @@ async function createVoidStage(
     itemSelector: options?.perClass ? classSelector() : undefined,
     batchSize: options?.batchSize,
     maxConcurrency: options?.maxConcurrency,
+    expectsOutput: options?.expectsOutput,
   });
 }
 
@@ -187,26 +189,46 @@ export function classPartitions(options?: VoidStageOptions): Promise<Stage> {
   return createVoidStage(VOID_STAGE_NAMES.classPartitions, options);
 }
 
+// Scalar-aggregate counts: each query is a single COUNT with no GROUP BY/HAVING,
+// so it always returns exactly one row. Zero output therefore means the endpoint
+// truncated the response, so they set `expectsOutput` to fail (and trigger the
+// reactive dump fallback) rather than store a missing count.
+
 export function countObjectLiterals(
   options?: VoidStageOptions,
 ): Promise<Stage> {
-  return createVoidStage(VOID_STAGE_NAMES.objectLiterals, options);
+  return createVoidStage(VOID_STAGE_NAMES.objectLiterals, {
+    ...options,
+    expectsOutput: true,
+  });
 }
 
 export function countObjectUris(options?: VoidStageOptions): Promise<Stage> {
-  return createVoidStage(VOID_STAGE_NAMES.objectUris, options);
+  return createVoidStage(VOID_STAGE_NAMES.objectUris, {
+    ...options,
+    expectsOutput: true,
+  });
 }
 
 export function countProperties(options?: VoidStageOptions): Promise<Stage> {
-  return createVoidStage(VOID_STAGE_NAMES.properties, options);
+  return createVoidStage(VOID_STAGE_NAMES.properties, {
+    ...options,
+    expectsOutput: true,
+  });
 }
 
 export function countSubjects(options?: VoidStageOptions): Promise<Stage> {
-  return createVoidStage(VOID_STAGE_NAMES.subjects, options);
+  return createVoidStage(VOID_STAGE_NAMES.subjects, {
+    ...options,
+    expectsOutput: true,
+  });
 }
 
 export function countTriples(options?: VoidStageOptions): Promise<Stage> {
-  return createVoidStage(VOID_STAGE_NAMES.triples, options);
+  return createVoidStage(VOID_STAGE_NAMES.triples, {
+    ...options,
+    expectsOutput: true,
+  });
 }
 
 export function classPropertySubjects(
@@ -228,6 +250,9 @@ export function classPropertyObjects(
 }
 
 export function countDatatypes(options?: VoidStageOptions): Promise<Stage> {
+  // No expectsOutput: unlike the other counts, this query joins the scalar
+  // count with a `SELECT DISTINCT ?datatype` group, so a dataset with no
+  // literals yields zero rows — a legitimately empty result, not a truncation.
   return createVoidStage(VOID_STAGE_NAMES.datatypes, options);
 }
 

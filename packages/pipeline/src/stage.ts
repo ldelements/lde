@@ -134,12 +134,13 @@ export interface SelectOptions {
 export class Stage {
   readonly name: string;
   readonly stages: readonly Stage[];
+  /** Whether an empty result is treated as a hard failure. @see {@link StageOptions.expectsOutput} */
+  readonly expectsOutput: boolean;
   private readonly executors: NormalizedExecutor[];
   private readonly itemSelector?: ItemSelector;
   private readonly batchSize: number;
   private readonly maxConcurrency: number;
   private readonly validation?: StageOptions['validation'];
-  private readonly expectsOutput: boolean;
 
   constructor(options: StageOptions) {
     this.name = options.name;
