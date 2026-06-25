@@ -1462,6 +1462,60 @@ describe('Pipeline', () => {
         expect.objectContaining({ sourceFingerprint: dumpFingerprint }),
       );
     });
+
+    it('recovers via the dump when an expectsOutput stage is empty on the endpoint', async () => {
+      // End-to-end: a real stage whose query yields nothing on the endpoint
+      // (a truncated COUNT) but has data in the dump. expectsOutput turns the
+      // empty endpoint result into a hard failure that triggers the fallback.
+      const tripleQuad = DataFactory.quad(
+        DataFactory.namedNode('http://example.org/s'),
+        DataFactory.namedNode('http://example.org/p'),
+        DataFactory.namedNode('http://example.org/o'),
+      );
+      const executor = {
+        execute: async (_dataset: Dataset, distribution: Distribution) =>
+          distribution === endpointDistribution
+            ? // endpoint truncated: no rows
+              (async function* (): AsyncIterable<Quad> {
+                yield* [];
+              })()
+            : (async function* () {
+                yield tripleQuad;
+              })(),
+      };
+      const stage = new Stage({
+        name: 'triples-count',
+        executors: executor,
+        expectsOutput: true,
+      });
+
+      // A real writer that consumes the stream (the mock writer would not, so
+      // the produced-quad count would never advance).
+      const collected: Quad[] = [];
+      const consumingWriter: Writer = {
+        write: async (_dataset, quads) => {
+          for await (const quad of quads) collected.push(quad);
+        },
+        flush: vi.fn().mockResolvedValue(undefined),
+        reset: vi.fn(async () => {
+          collected.length = 0;
+        }),
+      };
+      const resolver = makeFallbackResolver();
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [stage],
+        writers: consumingWriter,
+        distributionResolver: resolver,
+      });
+
+      await pipeline.run();
+
+      expect(resolver.resolveFallback).toHaveBeenCalledTimes(1);
+      // Final stored output is the dump's, not the empty endpoint result.
+      expect(collected).toEqual([tripleQuad]);
+    });
   });
 
   describe('plugins', () => {
