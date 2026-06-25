@@ -400,7 +400,7 @@ describe('ImportResolver', () => {
       const resolver = new ImportResolver(dummyInner(), {
         importer: mockImporter,
         server,
-        reactiveDumpFallback: true,
+        strategy: 'sparqlWithImportFallback',
       });
 
       const result = await resolver.resolveFallback(probed);
@@ -447,7 +447,7 @@ describe('ImportResolver', () => {
       const resolver = new ImportResolver(dummyInner(), {
         importer: mockImporter,
         server: makeServer(),
-        reactiveDumpFallback: true,
+        strategy: 'sparqlWithImportFallback',
       });
 
       const result = await resolver.resolveFallback(probed);

@@ -142,9 +142,14 @@ export class FileWriter implements Writer {
     if (!entry) return;
 
     // Drop the open writer and remove its temp file so the next write starts a
-    // fresh file, discarding everything streamed during the previous pass.
+    // fresh file, discarding everything streamed during the previous pass. Await
+    // the stream closing before removing: the write stream opens its fd lazily,
+    // so a pending open could otherwise recreate the file after rm() ran.
     this.activeWriters.delete(key);
-    entry.stream.destroy();
+    await new Promise<void>((resolve) => {
+      entry.stream.once('close', resolve);
+      entry.stream.destroy();
+    });
     await rm(entry.tempPath, { force: true, recursive: true });
   }
 

@@ -1256,6 +1256,212 @@ describe('Pipeline', () => {
       expect(writerA.reset).toHaveBeenCalledWith(dataset);
       expect(writerB.reset).toHaveBeenCalledWith(dataset);
     });
+
+    it('reports the imported dump as the selected and validated distribution', async () => {
+      const stage = makeStage('aggregate');
+      vi.spyOn(stage, 'run').mockImplementation(
+        async (_dataset, distribution) => {
+          if (distribution === endpointDistribution) {
+            throw new Error('endpoint killed the heavy query');
+          }
+        },
+      );
+      const resolver = makeFallbackResolver();
+      const reporter = makeReporter();
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [stage],
+        writers: writer,
+        distributionResolver: resolver,
+        reporter,
+      });
+
+      await pipeline.run();
+
+      // The dump, not the failed endpoint, is reported as the source actually used.
+      expect(reporter.distributionSelected).toHaveBeenLastCalledWith(
+        dataset,
+        importedDistribution,
+        dumpDistribution,
+        undefined,
+        undefined,
+      );
+      expect(reporter.distributionValidated).toHaveBeenCalledWith(
+        dumpDistribution,
+        expect.anything(),
+      );
+    });
+
+    it('isolates a throwing fallback import to the dataset without aborting the run', async () => {
+      const dataset1 = makeDataset('http://example.org/dataset/1');
+      const dataset2 = makeDataset('http://example.org/dataset/2');
+      const stage = makeStage('aggregate');
+      vi.spyOn(stage, 'run').mockImplementation(
+        async (_dataset, distribution) => {
+          if (distribution === endpointDistribution) {
+            throw new Error('endpoint killed the heavy query');
+          }
+        },
+      );
+      const resolver = makeFallbackResolver();
+      resolver.resolveFallback.mockRejectedValue(
+        new Error('importer exploded'),
+      );
+      const reporter = makeReporter();
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset1, dataset2),
+        stages: [stage],
+        writers: writer,
+        distributionResolver: resolver,
+        reporter,
+      });
+
+      // A throwing fallback must not propagate out of run().
+      await expect(pipeline.run()).resolves.toBeUndefined();
+      // Both datasets are still attempted and completed.
+      expect(reporter.datasetComplete).toHaveBeenCalledTimes(2);
+      expect(reporter.stageFailed).toHaveBeenCalledWith(
+        'reactive-dump-fallback',
+        expect.any(Error),
+      );
+    });
+
+    it('re-runs against a non-imported fallback source without a deep verdict', async () => {
+      // A custom resolver may fall back to another live source (e.g. a secondary
+      // endpoint) rather than an imported dump: no importedFrom, so no deep
+      // validity verdict and the endpoint's fingerprint is kept.
+      const secondaryEndpoint = Distribution.sparql(
+        new URL('http://secondary.example.org/sparql'),
+      );
+      const stage = makeStage('aggregate');
+      vi.spyOn(stage, 'run').mockImplementation(
+        async (_dataset, distribution) => {
+          if (distribution === endpointDistribution) {
+            throw new Error('endpoint killed the heavy query');
+          }
+        },
+      );
+      const resolver = makeFallbackResolver();
+      resolver.resolveFallback.mockResolvedValue(
+        new ResolvedDistribution(secondaryEndpoint, []),
+      );
+      const reporter = makeReporter();
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [stage],
+        writers: writer,
+        distributionResolver: resolver,
+        reporter,
+      });
+
+      await pipeline.run();
+
+      // Re-ran against the secondary source, reported as selected with no import.
+      expect(stage.run).toHaveBeenLastCalledWith(
+        dataset,
+        secondaryEndpoint,
+        writer,
+        expect.objectContaining({ onProgress: expect.any(Function) }),
+      );
+      expect(reporter.distributionSelected).toHaveBeenLastCalledWith(
+        dataset,
+        secondaryEndpoint,
+        undefined,
+        undefined,
+        undefined,
+      );
+      // No imported distribution → no deep validity verdict for the fallback.
+      expect(reporter.distributionValidated).not.toHaveBeenCalled();
+    });
+
+    it('surfaces the validity verdict of a failed fallback import', async () => {
+      const stage = makeStage('aggregate');
+      vi.spyOn(stage, 'run').mockRejectedValue(
+        new Error('endpoint killed the heavy query'),
+      );
+      const resolver = makeFallbackResolver();
+      // The dump import fails with a deep RDF-validity verdict.
+      resolver.resolveFallback.mockResolvedValue(
+        new NoDistributionAvailable(
+          dataset,
+          'Import failed',
+          [],
+          new ImportFailed(dumpDistribution, 'Parse error'),
+        ),
+      );
+      const reporter = makeReporter();
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [stage],
+        writers: writer,
+        distributionResolver: resolver,
+        reporter,
+      });
+
+      await pipeline.run();
+
+      expect(reporter.distributionValidated).toHaveBeenCalledWith(
+        dumpDistribution,
+        expect.anything(),
+      );
+      // The failed import means no re-run; endpoint output is kept.
+      expect(stage.run).toHaveBeenCalledTimes(1);
+      expect(writer.reset).not.toHaveBeenCalled();
+    });
+
+    it("adopts the imported dump's change fingerprint so the next run can skip it", async () => {
+      const dumpProbe = new DataDumpProbeResult(
+        dumpDistribution.accessUrl.toString(),
+        new Response('', {
+          status: 200,
+          headers: {
+            'Content-Length': '1000',
+            'Last-Modified': 'Sat, 01 Jun 2024 00:00:00 GMT',
+          },
+        }),
+        0,
+      );
+      const dumpFingerprint = sourceFingerprint(dumpDistribution, dumpProbe);
+
+      const stage = makeStage('aggregate');
+      vi.spyOn(stage, 'run').mockImplementation(
+        async (_dataset, distribution) => {
+          if (distribution === endpointDistribution) {
+            throw new Error('endpoint killed the heavy query');
+          }
+        },
+      );
+      const resolver = makeFallbackResolver();
+      // Probe surfaces the dump's result; the endpoint is the chosen source.
+      resolver.probe = vi.fn(
+        async (ds: Dataset) => new ProbedDistributions(ds, [dumpProbe], null),
+      );
+      const store = {
+        get: vi.fn().mockResolvedValue(null),
+        set: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [stage],
+        writers: writer,
+        distributionResolver: resolver,
+        provenanceStore: store,
+        pipelineVersion: 'v1',
+      });
+
+      await pipeline.run();
+
+      // The recorded fingerprint is the dump's, not the endpoint's null.
+      expect(store.set).toHaveBeenCalledWith(
+        dataset.iri,
+        expect.objectContaining({ sourceFingerprint: dumpFingerprint }),
+      );
+    });
   });
 
   describe('plugins', () => {

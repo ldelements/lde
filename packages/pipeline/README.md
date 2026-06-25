@@ -30,6 +30,24 @@ const selector = new RegistrySelector({
 const selector = new ManualDatasetSelection([dataset]);
 ```
 
+### Distribution Resolver
+
+Resolves each dataset to a usable SPARQL endpoint. `SparqlDistributionResolver` probes a dataset’s own endpoint; wrap it in `ImportResolver` to add the ability to import a data dump into a local SPARQL server.
+
+`ImportResolver`’s `strategy` controls how the source is chosen, ordered by how eagerly a dump is imported:
+
+```typescript
+const resolver = new ImportResolver(new SparqlDistributionResolver(), {
+  importer,
+  server,
+  strategy: 'sparqlWithImportFallback',
+});
+```
+
+- `'sparql'` (default) — use the dataset’s own SPARQL endpoint when one is available; import a data dump only when no endpoint responds.
+- `'sparqlWithImportFallback'` — like `'sparql'`, but also fall back to the data dump when the endpoint passes probing yet a stage fails against it at runtime. The pipeline discards the endpoint-sourced partial output and re-runs all stages against the import. Use this when endpoints are present but unreliable for heavy aggregate queries.
+- `'import'` — always import the data dump, even when a working endpoint is advertised.
+
 ### Stage
 
 A stage groups an item selector, one or more executors, and configuration:

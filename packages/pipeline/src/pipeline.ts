@@ -310,7 +310,9 @@ export class Pipeline {
 
     // Derive the source-change fingerprint from the probed source: null for a
     // live SPARQL endpoint (always reprocess) or when no source is available.
-    const fingerprint = probed.source
+    // Reassigned to the dump's fingerprint if a reactive fallback later imports
+    // one, so change-detection can skip an unchanged dump on the next run.
+    let fingerprint = probed.source
       ? sourceFingerprint(probed.source.distribution, probed.source.probeResult)
       : null;
 
@@ -377,30 +379,7 @@ export class Pipeline {
       return;
     }
 
-    this.reporter?.distributionSelected?.(
-      dataset,
-      resolved.distribution,
-      resolved.importedFrom,
-      resolved.importDuration,
-      resolved.tripleCount,
-    );
-
-    // A completed data-dump import is a deep validity verdict on the imported
-    // distribution (valid, or empty when it yielded no triples). Native SPARQL
-    // endpoints are not imported, so they carry no deep verdict.
-    if (resolved.importedFrom) {
-      this.reporter?.distributionValidated?.(
-        resolved.importedFrom,
-        importOutcomeToVerdict(
-          new ImportSuccessful(
-            resolved.importedFrom,
-            undefined,
-            resolved.tripleCount,
-          ),
-          fingerprint,
-        ),
-      );
-    }
+    this.reportSelectedDistribution(dataset, resolved, fingerprint);
 
     const timeout: TimeoutPolicy = this.timeoutFactory();
     const unsubscribe = timeout.subscribe?.({
@@ -427,22 +406,58 @@ export class Pipeline {
         resolved.importedFrom === undefined &&
         this.distributionResolver.resolveFallback
       ) {
-        const fallback = await this.distributionResolver.resolveFallback(
-          probed,
-          {
-            onImportStart: () => this.reporter?.importStarted?.(),
-            onImportFailed: (distribution, error) =>
-              this.reporter?.importFailed?.(distribution, error),
-          },
-        );
-        if (fallback instanceof ResolvedDistribution) {
-          // Discard the endpoint-sourced partial output before the re-run so
-          // the dump-sourced stats replace it rather than appending to it.
-          await this.writer.reset?.(dataset);
-          stageFailed = await this.runStages(
-            dataset,
-            fallback.distribution,
-            timeout,
+        // A failing fallback import must abort only this dataset, never the
+        // whole run – matching the per-dataset isolation of the primary resolve
+        // path. The dataset stays recorded as failed (stageFailed is already
+        // true) and processing continues with the next dataset.
+        try {
+          const fallback = await this.distributionResolver.resolveFallback(
+            probed,
+            {
+              onImportStart: () => this.reporter?.importStarted?.(),
+              onImportFailed: (distribution, error) =>
+                this.reporter?.importFailed?.(distribution, error),
+            },
+          );
+          if (fallback instanceof ResolvedDistribution) {
+            // The dump is now the dataset's effective source: report it as
+            // selected/validated and adopt its change fingerprint so the next
+            // run can skip an unchanged dump (the endpoint's fingerprint is
+            // null, which would force a re-import every run).
+            if (fallback.importedFrom) {
+              const dumpProbeResult = probed.probeResults.find(
+                (result) =>
+                  result.url === fallback.importedFrom!.accessUrl.toString(),
+              );
+              if (dumpProbeResult) {
+                fingerprint = sourceFingerprint(
+                  fallback.importedFrom,
+                  dumpProbeResult,
+                );
+              }
+            }
+            this.reportSelectedDistribution(dataset, fallback, fingerprint);
+            // Discard the endpoint-sourced partial output before the re-run so
+            // the dump-sourced stats replace it rather than appending to it.
+            await this.writer.reset?.(dataset);
+            stageFailed = await this.runStages(
+              dataset,
+              fallback.distribution,
+              timeout,
+            );
+          } else if (fallback.importFailed) {
+            // A failed dump import is a deep validity verdict on that dump –
+            // surface it rather than silently keeping the endpoint's partial
+            // output, matching the primary NoDistributionAvailable path.
+            this.reporter?.distributionValidated?.(
+              fallback.importFailed.distribution,
+              importOutcomeToVerdict(fallback.importFailed, fingerprint),
+            );
+          }
+        } catch (error) {
+          this.reporter?.stageFailed?.(
+            'reactive-dump-fallback',
+            error instanceof Error ? error : new Error(String(error)),
           );
         }
       }
@@ -515,6 +530,43 @@ export class Pipeline {
     return this.beforeStageWrite
       ? new TransformWriter(this.writer, this.beforeStageWrite, stage)
       : this.writer;
+  }
+
+  /**
+   * Report a resolved distribution as the dataset's selected source, plus its
+   * deep validity verdict when it was imported. Shared by the primary resolve
+   * path and the reactive dump fallback so both surface the same reporter
+   * events for the source they actually use. A completed data-dump import is a
+   * deep validity verdict on the imported distribution (valid, or empty when it
+   * yielded no triples); native SPARQL endpoints are not imported and carry no
+   * deep verdict.
+   */
+  private reportSelectedDistribution(
+    dataset: Dataset,
+    resolved: ResolvedDistribution,
+    fingerprint: string | null,
+  ): void {
+    this.reporter?.distributionSelected?.(
+      dataset,
+      resolved.distribution,
+      resolved.importedFrom,
+      resolved.importDuration,
+      resolved.tripleCount,
+    );
+
+    if (resolved.importedFrom) {
+      this.reporter?.distributionValidated?.(
+        resolved.importedFrom,
+        importOutcomeToVerdict(
+          new ImportSuccessful(
+            resolved.importedFrom,
+            undefined,
+            resolved.tripleCount,
+          ),
+          fingerprint,
+        ),
+      );
+    }
   }
 
   /**

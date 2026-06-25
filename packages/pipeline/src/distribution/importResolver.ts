@@ -20,34 +20,24 @@ export interface ImportResolverOptions {
   importer: Importer;
   server: SparqlServer;
   /**
-   * Controls how a dataset's distribution is selected.
+   * Controls how a dataset's distribution is selected, ordered by how eagerly a
+   * data dump is imported:
    *
    * - `'sparql'` (default) — use a dataset's own SPARQL endpoint when one is
-   *   available; fall back to importing a data dump only when no endpoint
-   *   responds.
+   *   available; import a data dump only when no endpoint responds.
+   * - `'sparqlWithImportFallback'` — like `'sparql'`, but additionally fall
+   *   back to importing the data dump when the endpoint passes probing yet fails
+   *   to serve an analysis stage at runtime. The pipeline then re-runs all
+   *   stages locally against the import (see
+   *   {@link ImportResolver.resolveFallback}).
    * - `'import'` — always import a data dump into a local SPARQL server,
    *   even when the dataset advertises a working SPARQL endpoint. Useful when
    *   the remote endpoint is too slow or unreliable.
    *
-   * In both modes the inner resolver still runs so that probe results are
+   * In every mode the inner resolver still runs so that probe results are
    * collected for reporting and the dataset knowledge graph.
    */
-  strategy?: 'sparql' | 'import';
-  /**
-   * Opt in to reactive dump fallback. When `true`, the resolver’s
-   * {@link ImportResolver.resolveFallback} imports the dataset’s data dump so
-   * the pipeline can re-run all stages locally after a SPARQL endpoint passes
-   * probing but fails to serve the analysis stages.
-   *
-   * When `false` (default), `resolveFallback` reports no fallback, so an
-   * endpoint that passes probing is committed to for the whole run – today’s
-   * behaviour. Orthogonal to {@link strategy}; only meaningful with the default
-   * `'sparql'` strategy, since `'import'` never uses the endpoint in the first
-   * place.
-   *
-   * @default false
-   */
-  reactiveDumpFallback?: boolean;
+  strategy?: 'sparql' | 'sparqlWithImportFallback' | 'import';
 }
 
 /**
@@ -115,10 +105,10 @@ export class ImportResolver implements DistributionResolver {
     probed: ProbedDistributions,
     callbacks?: ResolveCallbacks,
   ): Promise<ResolvedDistribution | NoDistributionAvailable> {
-    if (!this.options.reactiveDumpFallback) {
+    if (this.options.strategy !== 'sparqlWithImportFallback') {
       return new NoDistributionAvailable(
         probed.dataset,
-        'Reactive dump fallback is not enabled',
+        'Import fallback is not enabled',
         probed.probeResults,
       );
     }
