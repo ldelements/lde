@@ -1,6 +1,6 @@
 {
   "name": "@lde/pipeline",
-  "version": "0.31.4",
+  "version": "0.31.5",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
     "directory": "packages/pipeline"

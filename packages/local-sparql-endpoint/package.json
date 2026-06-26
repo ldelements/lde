@@ -1,6 +1,6 @@
 {
   "name": "@lde/local-sparql-endpoint",
-  "version": "0.2.13",
+  "version": "0.2.14",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
     "directory": "packages/local-sparql-endpoint"

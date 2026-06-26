@@ -1,6 +1,6 @@
 {
   "name": "@lde/distribution-health",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
     "directory": "packages/distribution-health"

@@ -1,3 +1,7 @@
+## 0.4.12 (2026-06-26)
+
+This was a version bump only for @lde/sparql-server to align it with other projects, there were no code changes.
+
 ## 0.4.11 (2026-04-23)
 
 This was a version bump only for @lde/sparql-server to align it with other projects, there were no code changes.

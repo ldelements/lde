@@ -1,3 +1,15 @@
+## 0.2.3 (2026-06-26)
+
+### 🩹 Fixes
+
+- relax workspace dependency pins to caret (versionPrefix) to fix downstream dual-package hazard ([#528](https://github.com/ldelements/lde/pull/528))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-probe to 0.2.3
+- Updated @lde/sparql-importer to 0.6.6
+- Updated @lde/dataset to 0.7.8
+
 ## 0.2.2 (2026-06-26)
 
 ### 🧱 Updated Dependencies
