@@ -76,6 +76,15 @@ export interface ProbeManyOptions extends ProbeOptions {
    * other hosts proceed, so this never idles the global pool. Default 4.
    */
   perHostConcurrency?: number;
+  /**
+   * Called once after each probe settles, with the number of probes completed so
+   * far and the total to run (`distributions.length`). Lets a caller drive a
+   * determinate progress indicator while a large batch runs. Fires `total` times,
+   * ending at `(total, total)`; the order reflects completion, not input order.
+   * Never called for an empty batch. A throwing callback rejects the batch, so
+   * keep it cheap and side-effect-only.
+   */
+  onProgress?: (completed: number, total: number) => void;
 }
 
 const DEFAULT_SPARQL_QUERY = 'SELECT * { ?s ?p ?o } LIMIT 1';
@@ -346,12 +355,23 @@ export async function probeMany(
     (distribution) =>
       distribution.accessUrl.host || distribution.accessUrl.href,
   );
+  // Report progress as each probe settles. mapHostLimited resolves results in
+  // input order, but tasks complete out of order, so count completions here
+  // rather than rely on result position. The total is the batch size.
+  const onProgress = options?.onProgress;
+  const total = distributions.length;
+  let completed = 0;
   return mapHostLimited(
     distributions,
     hostKeys,
     globalLimit,
     perHostLimit,
-    (distribution) => probe(distribution, options),
+    async (distribution) => {
+      const result = await probe(distribution, options);
+      completed += 1;
+      onProgress?.(completed, total);
+      return result;
+    },
   );
 }
 
