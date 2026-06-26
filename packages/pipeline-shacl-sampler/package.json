@@ -27,7 +27,7 @@
   "dependencies": {
     "@rdfjs/types": "^2.0.1",
     "@tpluscode/rdf-ns-builders": "^5.0.0",
-    "n3": "^2.0.3",
+    "n3": "^2.1.0",
     "rdf-dereference": "^5.0.0",
     "tslib": "^2.3.0"
   },
