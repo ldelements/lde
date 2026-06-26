@@ -24,7 +24,7 @@
     "!**/*.tsbuildinfo"
   ],
   "dependencies": {
-    "fetch-sparql-endpoint": "^7.1.0",
+    "fetch-sparql-endpoint": "^7.1.1",
     "p-retry": "^8.0.0",
     "tslib": "^2.3.0"
   }
