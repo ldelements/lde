@@ -33,6 +33,6 @@
   },
   "devDependencies": {
     "@types/jsonld": "^1.5.15",
-    "n3": "^2.0.1"
+    "n3": "^2.1.0"
   }
 }
