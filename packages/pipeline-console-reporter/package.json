@@ -1,6 +1,6 @@
 {
   "name": "@lde/pipeline-console-reporter",
-  "version": "0.22.3",
+  "version": "0.22.4",
   "description": "Console progress reporter for @lde/pipeline",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
@@ -33,6 +33,6 @@
   },
   "peerDependencies": {
     "@lde/dataset": "0.7.7",
-    "@lde/pipeline": "0.31.3"
+    "@lde/pipeline": "0.31.4"
   }
 }

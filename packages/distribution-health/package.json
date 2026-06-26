@@ -1,6 +1,6 @@
 {
   "name": "@lde/distribution-health",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
     "directory": "packages/distribution-health"
@@ -24,7 +24,7 @@
     "!**/*.tsbuildinfo"
   ],
   "dependencies": {
-    "@lde/distribution-probe": "0.2.1",
+    "@lde/distribution-probe": "0.2.2",
     "@lde/sparql-importer": "0.6.5",
     "tslib": "^2.3.0"
   },

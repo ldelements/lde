@@ -1,3 +1,9 @@
+## 0.2.2 (2026-06-26)
+
+### 🚀 Features
+
+- **distribution-probe:** add onProgress callback to probeMany ([#527](https://github.com/ldelements/lde/pull/527))
+
 ## 0.2.1 (2026-06-25)
 
 ### 🚀 Features
