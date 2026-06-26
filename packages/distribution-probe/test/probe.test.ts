@@ -1911,6 +1911,36 @@ describe('probeMany', () => {
     expect(await probeMany([])).toEqual([]);
   });
 
+  it('reports progress once per probe, ending at (total, total)', async () => {
+    vi.mocked(fetch).mockImplementation(async () => okResponse());
+
+    const distributions = [
+      dataDump('host-a.example', 0),
+      dataDump('host-b.example', 0),
+      dataDump('host-c.example', 0),
+    ];
+
+    const calls: Array<[number, number]> = [];
+    const results = await probeMany(distributions, {
+      onProgress: (completed, total) => calls.push([completed, total]),
+    });
+
+    expect(results).toHaveLength(3);
+    // One call per probe; completed increments monotonically as tasks settle and
+    // the total stays the batch size, so the sequence ends at (total, total).
+    expect(calls).toEqual([
+      [1, 3],
+      [2, 3],
+      [3, 3],
+    ]);
+  });
+
+  it('does not call onProgress for an empty batch', async () => {
+    const onProgress = vi.fn();
+    await probeMany([], { onProgress });
+    expect(onProgress).not.toHaveBeenCalled();
+  });
+
   it('falls back to the default budget for a non-positive or non-integer limit', async () => {
     vi.mocked(fetch).mockImplementation(async () => okResponse());
 
