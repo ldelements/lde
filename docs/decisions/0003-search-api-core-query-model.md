@@ -32,7 +32,7 @@ Two tiers: `search-*` is backend you compose; `search-api-*` is the surface you 
 
 | Tier        | Package                   | Responsibility                                                                                                          |
 | ----------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| backend     | `@lde/search`             | field model · `SearchQuery` · filter semantics · adapter port                                                           |
+| backend     | `@lde/search`             | field model · `SearchQuery` · filter semantics · engine port                                                            |
 | backend     | `@lde/search-typesense`   | engine adapter: collection schema · query/filter compiler · `search()`                                                  |
 | API surface | `@lde/search-api-graphql` | field model + `SearchQuery` → GraphQL schema (runtime configuration; see [ADR 4](./0004-search-api-graphql-surface.md)) |
 | API surface | `@lde/search-api-rest`    | OpenAPI + route handlers (later, thin over the core)                                                                    |
@@ -46,12 +46,22 @@ The **API contract** (the SDL shape consumers couple to) is breaking to change a
 right in v1. The **IR / stored document** (framed JSON-LD vs a flat engine doc) lives
 behind the adapter and is swappable with no consumer impact. Nothing engine-specific
 (companion fields, `int32`, the engine query language) and nothing RDF-specific
-(`@context`, `@id`, IRI-keyed predicates) leaks past the adapter port.
+(`@context`, `@id`, IRI-keyed predicates) leaks past the engine port.
 
 ### Field model
 
 The engine-neutral description of a queryable field – the runtime form of one SHACL
-NodeShape + its `search:` annotations:
+NodeShape + its `search:` annotations. **One `SearchField` declaration drives four
+consumers** – projection (RDF→flat document), the engine collection schema, the query
+semantics, and the GraphQL surface – so they cannot drift.
+
+> Updated 2026-06-26 (during implementation): this is the **unified** field model. It
+> folds the three previously separate declarations into one – the projection-side
+> `FieldSpec`/`FieldKind` (RDF→doc), the deployment’s Typesense `SEARCH_FIELDS` (collection
+> schema + weights), and the query model below. The original ADR deferred this unification;
+> it is now adopted (option “c”). The `kind` + capability flags replace the old discriminated
+> projection kinds, derived fields become first-class, and the Typesense-vocabulary types are
+> _derived_ from `kind` rather than re-declared.
 
 ```ts
 type FieldKind =
@@ -64,31 +74,44 @@ type FieldKind =
   | 'reference';
 
 interface SearchField {
-  readonly name: string; // logical API name
+  readonly name: string; // logical API name; the physical fanout derives from it
   readonly kind: FieldKind;
-  readonly array?: boolean;
-  readonly localized?: boolean;
+  readonly path?: string; // sh:path to project from; omit for a derivation-populated field
+  readonly array?: boolean; // sh:maxCount
+  readonly localized?: boolean; // rdf:langString / sh:languageIn (text only)
+  readonly locales?: readonly string[]; // when localized: which languages to emit
   readonly output?: boolean; // appears in the schema output type
-  readonly searchable?: { weight: number }; // free-text inclusion + weight
+  readonly searchable?: { weight: number }; // free-text inclusion + weight (per-locale when localized)
   readonly filterable?: boolean; // usable in `where`
   readonly facetable?: boolean;
   readonly sortable?: boolean;
-  readonly nestedStrategy?: 'labelOnly' | 'idOnly' | 'inline'; // for `reference`
+  readonly ref?: { type: string; strategy: 'labelOnly' | 'idOnly' | 'inline' }; // kind: 'reference'
+  readonly transform?: (value: string) => string; // projection-time value transform
   readonly group?: { readonly name: string; readonly prefix: string }; // deployment delta
 }
 
+type Derivation = (document: SearchDocument, node: FramedNode) => void;
+
 interface SearchSchema {
+  readonly type: string; // sh:targetClass
   readonly fields: readonly SearchField[];
+  readonly derivations?: readonly Derivation[]; // computed fields: status, *_group, booleans
 }
 ```
 
-Maps onto SHACL + `search:` (`kind`←`sh:datatype`, `array`←`sh:maxCount`,
-`localized`←`sh:languageIn`, `facetable`←`search:facetable`, `sortable`←`search:sortable`,
-`nestedStrategy`←`sh:node`/`sh:class` + `search:nestedStrategy`) so an eventual generator
-emits it unchanged. The `group` companion (coarse grouped facets, e.g. `format_group`) and
-the `status_rank` tie-break sort are **deployment-specific deltas**, never in `@lde/search`.
-`relevance` is _not_ a delta: every full-text engine ranks by match score, so it is a
-generic reserved sort the adapter understands.
+Maps onto SHACL + `search:` (`kind`←`sh:datatype`/`sh:nodeKind`, `path`←`sh:path`,
+`array`←`sh:maxCount`, `localized`←`sh:languageIn`, `facetable`←`search:facetable`,
+`sortable`←`search:sortable`, `ref`←`sh:node`/`sh:class` + `search:nestedStrategy`) so an
+eventual generator emits it unchanged. A field with **no `path`** is a derived field –
+populated by a `Derivation` rather than projected from the IR – yet it still carries full
+query/schema/output behavior, which is how the former separate projection `FieldSpec` is
+subsumed. The physical field names a declaration fans out to (`${name}_search_${locale}`,
+`${name}_sort_${locale}`, `${name}_search`, `${name}_group`) follow one convention owned by
+`@lde/search`, so projection, collection schema and query compiler agree. The `group`
+companion (coarse grouped facets, e.g. `format_group`) and the `status_rank` tie-break sort
+are **deployment-specific deltas**, never in `@lde/search`. `relevance` is _not_ a delta:
+every full-text engine ranks by match score, so it is a generic reserved sort the adapter
+understands.
 
 ### `SearchQuery` – the neutral query IR
 
@@ -150,22 +173,61 @@ matches Typesense’s native inclusive range, covers every DR case, additively r
 Grouped facets need no special shape – `group:`-prefixed tokens travel as ordinary `in`
 strings and the adapter splits/unions them.
 
-### Adapter port and result
+### Engine port and result
+
+The **port** is the interface the core defines; a concrete engine **adapter**
+(`@lde/search-typesense`’s `TypesenseSearchEngine`) implements it. Naming the port for the
+capability (`SearchEngine`), not the pattern piece, keeps `TypesenseSearchEngine implements
+SearchEngine` readable.
 
 ```ts
-interface SearchAdapter {
-  search(query: SearchQuery, schema: SearchSchema): Promise<SearchResult>;
+// FacetField / OutputField default to `string` (ergonomic) and a deployment narrows them
+// to its schema’s facetable / output field names for typo-safe facet and document access
+// (helpers FacetFieldsOf<Schema> / OutputFieldsOf<Schema>, or the EngineFor<Schema> alias).
+interface SearchEngine<
+  FacetField extends string = string,
+  OutputField extends string = string,
+> {
+  search(
+    query: SearchQuery,
+    schema: SearchSchema,
+  ): Promise<SearchResult<FacetField, OutputField>>;
 }
 
-interface SearchResult {
-  readonly hits: readonly { id: string; document: SearchDocument }[];
+interface SearchResult<
+  FacetField extends string = string,
+  OutputField extends string = string,
+> {
+  readonly hits: readonly SearchHit<OutputField>[];
   readonly total: number;
+  // Keyed by facet field name; `Partial` because only the queried facets are present.
+  // A bucket’s `label` (a LocalizedValue) is the engine-resolved canonical data label,
+  // present only for reference (IRI-keyed) facets; absent for token/free-string facets,
+  // whose display the consumer owns (its own i18n, or the value itself).
   readonly facets: Readonly<
-    Record<string, readonly { value: string; count: number }[]>
+    Partial<
+      Record<
+        FacetField,
+        readonly { value: string; count: number; label?: LocalizedValue }[]
+      >
+    >
   >;
 }
 
-type SearchDocument = Record<string, SearchValue>;
+// `id` (the stable document key, an IRI) stays out of the document: it is the hit’s
+// identity, always present, a different contract from the optional logical field values,
+// and maps straight onto the GraphQL output’s `id: String!`.
+interface SearchHit<OutputField extends string = string> {
+  readonly id: string;
+  readonly document: ResultDocument<OutputField>;
+}
+
+// The logical result document. Named distinctly from the flat, fanned-out projection
+// `SearchDocument` that lives index-side: this carries logical fields (language maps,
+// references) ready for a surface to shape.
+type ResultDocument<OutputField extends string = string> = Readonly<
+  Partial<Record<OutputField, SearchValue>>
+>;
 type SearchValue =
   | string
   | number
@@ -247,7 +309,9 @@ not enabled for DR v1, more relevant for B/C.
 - Deviations to reconcile into the platform draft: numbered pagination; sidecar labels;
   logical result doc (framed JSON-LD scoped to index-side); `min`/`max` filter ranges; the
   `@lde/search*` naming and a core package row.
+- Adopted during implementation (2026-06-26): the **unified** field model – the projection
+  `FieldSpec` (RDF→doc) and the deployment’s Typesense `SEARCH_FIELDS` are folded into this
+  one `SearchField` (see the Field model note above).
 - Deferred: REST surface; framed-JSON-LD materialised view (nested storage, index-time
   label inlining, detail-page-on-index, terms-collection split); semantic/hybrid (vector)
-  search; unifying the projection `FieldSpec` (RDF→doc) with this `SearchField`
-  (query/output) into one field declaration.
+  search.

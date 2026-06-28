@@ -5,11 +5,9 @@ import {
   projectDocument,
   projectGraph,
   irisOf,
-  type FieldSpec,
-  type Derivation,
-  type Projection,
   type SearchDocument,
 } from '../src/project.js';
+import type { SearchField, SearchSchema, Derivation } from '../src/schema.js';
 
 const DR = 'urn:dr:';
 const IANA = 'https://www.iana.org/assignments/media-types/';
@@ -30,49 +28,50 @@ const node = {
   [`${DR}size`]: { '@type': xsd.integer.value, '@value': '1234' },
 };
 
-const fields: FieldSpec[] = [
+const fields: SearchField[] = [
   {
     name: 'title',
     path: dcterms.title.value,
-    type: 'langText',
+    kind: 'text',
+    localized: true,
     locales: ['nl', 'en'],
-    display: true,
-    search: true,
-    sort: true,
+    output: true,
+    searchable: { weight: 1 },
+    sortable: true,
   },
   {
     name: 'publisher',
     path: `${DR}publisherName`,
-    type: 'langText',
+    kind: 'text',
+    localized: true,
     locales: ['nl', 'en'],
-    display: true,
-    search: true,
+    output: true,
+    searchable: { weight: 1 },
   },
   {
     name: 'publisher',
     path: dcterms.publisher.value,
-    type: 'facet',
-    iri: true,
+    kind: 'reference',
   },
   {
     name: 'keyword',
     path: dcat.keyword.value,
-    type: 'facet',
-    search: true,
+    kind: 'keyword',
+    searchable: { weight: 1 },
   },
   {
     name: 'format',
     path: `${DR}format`,
-    type: 'facet',
+    kind: 'keyword',
     transform: (value) => value.replace(IANA, ''),
   },
-  { name: 'class', path: `${DR}class`, type: 'facet', iri: true },
+  { name: 'class', path: `${DR}class`, kind: 'reference' },
   {
     name: 'date_posted',
     path: `${DR}datePosted`,
-    type: 'date',
+    kind: 'date',
   },
-  { name: 'size', path: `${DR}size`, type: 'number' },
+  { name: 'size', path: `${DR}size`, kind: 'integer' },
 ];
 
 const derivations: Derivation[] = [
@@ -81,11 +80,11 @@ const derivations: Derivation[] = [
   },
 ];
 
-const projection: Projection = { type: DATASET, fields, derivations };
+const schema: SearchSchema = { type: DATASET, fields, derivations };
 
 describe('projectDocument', () => {
   it('projects every field kind and runs derivations', () => {
-    const document = projectDocument(node, projection);
+    const document = projectDocument(node, schema);
 
     expect(document.id).toBe('https://ex/d/1');
     expect(document.title_nl).toBe('Titel');
@@ -121,23 +120,22 @@ describe('projectDocument', () => {
       {
         type: DATASET,
         fields: [
-          { name: 'size', path: `${DR}size`, type: 'number' },
+          { name: 'size', path: `${DR}size`, kind: 'integer' },
           {
             name: 'language',
             path: dcterms.language.value,
-            type: 'facet',
+            kind: 'keyword',
           },
           {
             name: 'keyword',
             path: dcat.keyword.value,
-            type: 'facet',
-            search: true,
+            kind: 'keyword',
+            searchable: { weight: 1 },
           },
           {
             name: 'class',
             path: `${DR}class`,
-            type: 'facet',
-            iri: true,
+            kind: 'reference',
           },
         ],
       },
@@ -157,8 +155,8 @@ describe('projectDocument', () => {
           {
             name: 'format',
             path: `${DR}format`,
-            type: 'facet',
-            search: true,
+            kind: 'keyword',
+            searchable: { weight: 1 },
             transform: (value) => value.replace(IANA, ''),
           },
         ],
@@ -232,10 +230,11 @@ describe('projectDocument', () => {
           {
             name: 'title',
             path: dcterms.title.value,
-            // search only — display and sort not opted into.
-            type: 'langText',
+            // search only — display (output) and sort not opted into.
+            kind: 'text',
+            localized: true,
             locales: ['nl', 'en'],
-            search: true,
+            searchable: { weight: 1 },
           },
         ],
       },
@@ -262,6 +261,38 @@ describe('projectDocument', () => {
     expect(document.title_search_nl).toBe('titel ondertitel');
   });
 
+  it('skips a field with no path, leaving it to a derivation (derived field)', () => {
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/d/11',
+        [dcterms.title.value]: { '@language': 'nl', '@value': 'Titel' },
+      },
+      {
+        type: DATASET,
+        fields: [
+          {
+            name: 'title',
+            path: dcterms.title.value,
+            kind: 'text',
+            localized: true,
+            locales: ['nl'],
+            output: true,
+          },
+          // No `path`: a derived field — its value comes from a derivation,
+          // never from projection.
+          { name: 'status', kind: 'keyword', facetable: true },
+        ],
+        derivations: [
+          (derived) => {
+            derived.status = 'valid';
+          },
+        ],
+      },
+    );
+    expect(document.title_nl).toBe('Titel');
+    expect(document.status).toBe('valid');
+  });
+
   it('throws when the framed node has no @id', () => {
     expect(() =>
       projectDocument(
@@ -284,7 +315,8 @@ describe('projectDocument', () => {
             {
               name: 'title',
               path: dcterms.title.value,
-              type: 'langText',
+              kind: 'text',
+              localized: true,
               locales: [],
             },
           ],
@@ -295,7 +327,7 @@ describe('projectDocument', () => {
 });
 
 describe('projectGraph', () => {
-  it('frames each projection’s type and projects matching nodes', async () => {
+  it('frames each schema’s type and projects matching nodes', async () => {
     const quads = new Parser({ format: 'N-Triples' }).parse(`
       <https://ex/d/1> <${rdf.type.value}> <${DATASET}> .
       <https://ex/d/1> <${dcterms.title.value}> "Titel"@nl .
