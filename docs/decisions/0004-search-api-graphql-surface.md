@@ -29,7 +29,7 @@ that schema. A better name for the draft’s “generation” step, at least for
 **runtime configuration**.
 
 This matters because the resolvers are inherently generic – there is essentially one root
-resolver that maps args to a `SearchQuery`, calls the adapter, and maps the result back;
+resolver that maps args to a `SearchQuery`, calls the engine, and maps the result back;
 the field model only parameterises data. Codegen would emit N near-identical resolver stubs
 that all delegate to the same logic, plus a build step and staleness risk, for no benefit.
 
@@ -45,8 +45,10 @@ accidental breaking changes to the frozen contract – not a shipped artifact.
 ### The schema-building function
 
 ```ts
-function buildSearchSchema(
-  schema: SearchSchema,
+// Generic over the config *value’s* type (capture it `as const satisfies SearchSchema`), so
+// one declaration drives both the runtime schema and the static TS types below.
+function buildSearchSchema<const S extends SearchSchema>(
+  schema: S,
   options: {
     typeName: string; // 'Dataset' – drives all derived type names
     queryField?: string; // root field; default lowercased plural of typeName
@@ -59,6 +61,13 @@ function buildSearchSchema(
     extendResolvers?: Record<string, unknown>;
   },
 ): GraphQLSchema; // executable schema: types + generic resolvers attached
+
+// Static types derived from the SAME config value’s type (compile-time only, erased at
+// runtime); one source, no codegen, no drift. Exported for typed in-process callers/tests.
+type OutputOf<S extends SearchSchema>; // { id: string; title: LanguageString[]; size: number | null; … }
+type WhereOf<S extends SearchSchema>; //  { format?: StringFilter; size?: FloatRange; … }
+type OrderByOf<S extends SearchSchema>; // { field: 'RELEVANCE' | 'TITLE' | …; direction: 'ASC' | 'DESC' }
+type FacetOf<S extends SearchSchema>; //   the facetable-field-name union
 
 // also exported for manual composition / non-default servers:
 function buildSearchTypeDefsAndResolvers(
@@ -74,6 +83,38 @@ function printSearchSchema(schema, options): string; // SDL, for a snapshot/brea
 `extendResolvers` (merged before `makeExecutableSchema`, since Mercurius registers once) or
 composes the exported typeDefs/resolvers by hand.
 
+### A typed surface the contract does not depend on
+
+Because `buildSearchSchema` is generic over the config _value_ (`<const S>`), one
+`as const satisfies SearchSchema` declaration drives two **independent** projections:
+
+- **the runtime contract** – the `GraphQLSchema`, built at startup by reading the value
+  (`field.kind`, `output`, `facetable`, …); and
+- **a static TS mirror** – `OutputOf<S>` / `WhereOf<S>` / `OrderByOf<S>` / `FacetOf<S>`,
+  computed from `typeof schema` via mapped types.
+
+The contract **does not depend on the TS types.** `as const`/`satisfies` are compile-time
+only and TS types are erased, so the served schema is byte-identical whether or not the
+mirror types exist – they are a developer-experience overlay, never the source. The two are
+parallel derivations of one value: the runtime kind→GraphQL-type mapping lives in
+`buildSearchSchema`; the type-level mapping in `OutputOf<S>` duplicates it. They can drift,
+so the **contract** is guarded by the optional `printSearchSchema()` SDL snapshot test (the
+real artifact), while the TS mirror only catches our own coding mistakes against it.
+
+Values are typed at both ends, with the resolver as the typed transform between them:
+
+| layer                   | localized text                       | reference                   | int64            | keyword (array)         | boolean              |
+| ----------------------- | ------------------------------------ | --------------------------- | ---------------- | ----------------------- | -------------------- |
+| IR (`ResultDocument`)   | `LocalizedValue` (lang map)          | `Reference`                 | `number`         | `readonly string[]`     | `boolean`            |
+| GraphQL (`OutputOf<S>`) | `LanguageString[]` (best-first list) | named type (`Organization`) | `Float`/`number` | `[String!]!`/`string[]` | `Boolean!`/`boolean` |
+
+What stays unchecked is only the **generic resolver’s dynamic middle**: it loops over the
+field model with runtime-string names, so TS cannot prove the object it builds matches
+`OutputOf<S>` – it casts at that boundary, and graphql-js’s executor (not TS) enforces the
+output types at runtime (a wrong-typed return raises a field error). This is the same
+“typed boundaries, dynamic middle” shape as the engine port and the projection: type the
+edges where it is honest, accept a cast where iteration is inherently dynamic.
+
 ### Construction rules (field model → schema)
 
 Type names derive from `typeName`; shared types (`LanguageString`, `Facet`, `FacetBucket`,
@@ -81,9 +122,12 @@ Type names derive from `typeName`; shared types (`LanguageString`, `Facet`, `Fac
 GraphQL field names are the field model `name` verbatim (declare camelCase).
 
 - **Output type** – one field per `output` field: `text`+`localized` → `[LanguageString!]!` (best-first; `[0].language` = served language, the per-field `Content-Language`);
-  `keyword` array → `[String!]!`, scalar → `String`; `integer` → `Int`; `number` → `Float`;
-  `date` → `String` (ISO 8601); `boolean` → `Boolean!` (absent = false); `reference` →
-  see below. Nullability from `array` / required / optional; `id` is `String!`.
+  `keyword` array → `[String!]!`, scalar → `String`; `integer` → `Int` (signed 32-bit);
+  `number` → `Float` (exact integers to 2^53); `date` → `String` (ISO 8601); `boolean` →
+  `Boolean!` (absent = false); `reference` → see below. Nullability from `array` / required /
+  optional; `id` is `String!`. A field whose magnitude can exceed 32 bits (a 64-bit count or
+  byte size – e.g. DR’s `size`) is modelled as `number` → `Float`, since GraphQL’s `Int`
+  would overflow; a `Long`/`BigInt` custom scalar is the deferred alternative.
 - **Reference types** – a `reference` field is typed by the **referenced shape**
   (`sh:class`/`sh:node`), emitted once and reused by every field referencing the same shape.
   Its fields follow `nestedStrategy`:
@@ -113,6 +157,14 @@ GraphQL field names are the field model `name` verbatim (declare camelCase).
   is rejected where `[DatasetOrderBy!]` is expected), so a future array is a deliberate,
   potentially breaking change – not a free one.
 - **Facets** – an enum of every `facetable` field; requested per query, returned with counts.
+  A bucket’s `value` is its selection key; `label` is the **nullable** display label.
+  The engine resolves `label` only for **reference** facets — IRI-keyed buckets whose
+  canonical multilingual label is _data_, fetched from the sidecar `labels` collection in the
+  same lookup as hit references. It is `null` for token facets (e.g. `status`) and
+  free-string facets (e.g. `keyword`): those carry no data label, and the consumer owns their
+  display — its own i18n catalog for controlled tokens (`valid` → “Geldig”/“Valid”, which the
+  engine cannot and must not fabricate), or the `value` itself for free strings. The null is
+  load-bearing: it tells a client whether a server-resolved label exists or display is theirs.
 
 ### Resulting schema (DR example, abridged)
 
@@ -138,7 +190,7 @@ type Dataset {
   terminologySource: [Term!]!
   format: [String!]!
   class: [String!]!
-  size: Int
+  size: Float # int64 magnitude → Float, not Int (32-bit); see note below
   datePosted: String
   status: String
   iiif: Boolean!
@@ -152,6 +204,10 @@ input IntRange {
   min: Int
   max: Int
 }
+input FloatRange {
+  min: Float
+  max: Float
+}
 input DateRange {
   min: String
   max: String
@@ -162,7 +218,7 @@ input DatasetWhere {
   format: StringFilter
   class: StringFilter
   status: StringFilter
-  size: IntRange
+  size: FloatRange
   datePosted: DateRange
   iiif: Boolean
   # … keyword, language, terminologySource, catalog, ndeSchemaAp, linkedData, terms, persistentUris
@@ -198,8 +254,9 @@ enum DatasetFacetField {
   PERSISTENT_URIS
 }
 type FacetBucket {
-  value: String!
+  value: String! # the selection key (an IRI for reference facets, else a token/string)
   count: Int!
+  label: [LanguageString!] # nullable — see below
 }
 type Facet {
   field: DatasetFacetField!
@@ -244,7 +301,7 @@ The single, generic root resolver (shipped in the package, not emitted):
 2. **Apply `options.queryDefaults`** – the generic resolver bakes no deployment defaults;
    DR injects its policy here: default `status:=valid`; default sort `relevance` when a
    `query` is present else `title`; and the `status_rank` tie-break appended to either.
-3. **`context.adapter.search(query, schema)` → `SearchResult`.**
+3. **`context.engine.search(query, schema)` → `SearchResult`.**
 4. **`SearchResult` → output** – scalars pass through; a `LocalizedValue` map →
    `[LanguageString]` ordered by `options.languageOrder(available, acceptLanguage)`;
    reference values likewise; facets keyed logical→enum. GraphQL field selection prunes.
@@ -271,7 +328,7 @@ then untagged (`und`) last – so `[0]` is always the best available value.
 
 ```ts
 interface SearchContext {
-  adapter: SearchAdapter; // any engine
+  engine: SearchEngine; // the port; any engine adapter
   acceptLanguage: readonly string[]; // parsed, ordered; drives locale + output ordering
 }
 ```
@@ -296,6 +353,7 @@ Each transport populates it per request; no framework type appears in the packag
     additive `inline` growth.
 - Deferred: a `dataset(id)` single-resource query (detail-page-on-index direction; DR detail
   stays on SPARQL); cross-collection `@reference` joins beyond inline labels; cursor
-  pagination; a `Date` scalar (kept ISO `String`); transport-layer persisted queries / cost
+  pagination; a `Date` scalar (kept ISO `String`) and a `Long`/`BigInt` scalar for 64-bit
+  integers (kept `Float`); transport-layer persisted queries / cost
   limits; a root or per-field language argument (Accept-Language is the sole preference
   mechanism); metadata-language-availability filtering (a facetable dimension, not v1).

@@ -1,0 +1,32 @@
+{
+  "name": "@lde/search-api-graphql",
+  "version": "0.1.0",
+  "description": "Engine- and domain-agnostic GraphQL surface for @lde/search: builds an executable GraphQLSchema from any SearchSchema at runtime (no codegen), served by one generic resolver over any SearchEngine. You supply the schema and typeName; it names neither your domain nor your engine.",
+  "repository": {
+    "url": "git+https://github.com/ldelements/lde.git",
+    "directory": "packages/search-api-graphql"
+  },
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "!**/*.tsbuildinfo"
+  ],
+  "dependencies": {
+    "@lde/search": "^0.1.2",
+    "graphql": "^15.8.0",
+    "tslib": "^2.3.0"
+  }
+}
