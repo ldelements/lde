@@ -1,7 +1,7 @@
 {
   "name": "@lde/search-typesense",
   "version": "0.1.1",
-  "description": "Generic Typesense engine adapter for RDF-backed search pipelines: collection lifecycle, bulk upsert and blue/green alias swap",
+  "description": "Typesense implementation of the @lde/search SearchEngine port: collection-schema builder, query compiler, label-resolving result reconstruction, and blue/green index lifecycle. Engine-specific (Typesense) but domain-agnostic.",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
     "directory": "packages/search-typesense"
@@ -25,6 +25,8 @@
     "!**/*.tsbuildinfo"
   ],
   "dependencies": {
+    "@lde/search": "^0.1.2",
+    "@lde/text-normalization": "^0.1.1",
     "tslib": "^2.3.0",
     "typesense": "^3.0.6"
   },
