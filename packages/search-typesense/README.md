@@ -1,13 +1,27 @@
 # @lde/search-typesense
 
-[Typesense](https://typesense.org/) engine adapter for RDF-backed search
-pipelines. Engine-specific (Typesense) but domain-agnostic – the caller supplies
-the collection schema and documents.
+[Typesense](https://typesense.org/) engine adapter for the engine- and
+domain-agnostic [`@lde/search`](../search) core. **Engine-specific (Typesense) but
+domain-agnostic** – you supply a `SearchSchema`; this package never names your
+domain. It is the Typesense implementation of the `SearchEngine` port: it derives
+a collection schema from the field model, compiles the neutral `SearchQuery` into
+Typesense search params, runs it, reconstructs the engine-neutral `SearchResult`,
+and manages the index lifecycle (blue/green rebuild).
 
-The engine-agnostic half of the pipeline – framing `CONSTRUCT` quads into a
-JSON-LD IR and projecting that IR into flat documents from a declarative field
-spec – lives in [`@lde/search`](../search). This package consumes those
-documents and writes them to Typesense.
+## Collection schema and engine
+
+`buildCollectionSchema(schema, { name, defaultSortingField, … })` derives a
+Typesense collection from the unified `SearchField` model — the Typesense field
+type comes from each field’s `kind`, and the physical fanout (per-locale
+search/sort keys, the `_group` companion) matches what the projection writes, via
+`@lde/search`’s `physicalFields`, so the index and the documents cannot drift.
+
+`createTypesenseSearchEngine(client, { collection, labelsCollection })` is the
+`SearchEngine` implementation: it compiles the query, runs the search, resolves
+reference (and reference-facet) labels from the sidecar `labels` collection in a
+single lookup, and reconstructs the logical `SearchResult` — language maps,
+labelled references, labelled facet buckets. The pure halves `buildSearchParams`
+and `parseSearchResponse` are exported for direct use and testing.
 
 ## Indexing
 
