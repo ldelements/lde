@@ -6,10 +6,9 @@ Date: 2026-06-25
 
 Proposed
 
-Reconciles against the NDE stack platform docs
-(`netwerk-digitaal-erfgoed/docs` → `docs/stack/layers/platform.md`), which are themselves
-a **draft under discussion**, so several decisions below are deliberate deviations from
-the current draft, to be reconciled back into it.
+Aligned with the NDE stack platform docs
+(`netwerk-digitaal-erfgoed/docs` → `docs/stack/layers/platform.md`); the decisions below are
+reflected there.
 
 ## Context
 
@@ -19,10 +18,9 @@ declarative source so the GraphQL surface, a later REST surface, and the index c
 from each other, and so a deployment can swap search engines without consumers noticing.
 
 That requires an engine- and protocol-neutral **core** that both API surfaces and any
-engine adapter sit on. The platform draft frames this as Ports & Adapters with a framed
-JSON-LD intermediate representation, generated from SHACL + a `search:` annotation
-vocabulary. We adopt that direction but scope it to what a v1 keyword search needs, and
-diverge on a few concrete points where the draft does not fit DR’s catalog-search case.
+engine adapter sit on. The architecture is Ports & Adapters with a framed JSON-LD
+intermediate representation, generated from SHACL + a `search:` annotation vocabulary,
+scoped here to what a v1 keyword search needs.
 
 ## Decision
 
@@ -36,9 +34,6 @@ Two tiers: `search-*` is backend you compose; `search-api-*` is the surface you 
 | backend     | `@lde/search-typesense`   | engine adapter: collection schema · query/filter compiler · `search()`                                                  |
 | API surface | `@lde/search-api-graphql` | field model + `SearchQuery` → GraphQL schema (runtime configuration; see [ADR 4](./0004-search-api-graphql-surface.md)) |
 | API surface | `@lde/search-api-rest`    | OpenAPI + route handlers (later, thin over the core)                                                                    |
-
-This deviates from the draft’s function-mapping table (`@lde/graphql-server`,
-`@lde/rest-server`, no core row); the draft should adopt the `@lde/search*` family.
 
 ### Contract frozen, storage swappable
 
@@ -254,7 +249,7 @@ per-shape types (e.g. `Organization`, `Term`) with `label` exposed as `name`
 
 - **IR / adapter-return:** JSON-LD language map (`@container: @language`), `@set` arrays,
   `und` for untagged. Matches schema-profile #171 (language maps are more usable as a data
-  model) and the platform draft’s envelope.
+  model) and the stack platform envelope.
 - **GraphQL surface:** a single **best-first** `Accept-Language`-ordered list
   (`[LanguageString!]!`, see [ADR 4](./0004-search-api-graphql-surface.md)). `[0]` is the
   value to display; **`[0].language` is the language actually served** – the per-field
@@ -270,7 +265,7 @@ argument (deferred): a parallel arg would duplicate the header and need preceden
 Chosen over a `{nl,en}` map (silently yields `undefined` for a missing language, no defined
 fallback order) and over a separate resolved scalar (the value must be a `LanguageString` to
 carry its language anyway, so the scalar saved only the `[0]` index – not worth a second
-field plus a deviation from the draft / Network-of-Terms list shape). Grounded in measured
+field plus diverging from the Network-of-Terms list shape). Grounded in measured
 data and all three substrates:
 
 - **A (descriptions, measured):** bilingual `nl`/`en`, ~86% Dutch-only → an English user gets
@@ -284,31 +279,26 @@ have an English title) is distinct from content `dct:language` (already filterab
 preference; expressible as a facetable dimension (languages-present-in-a-localized-field),
 not enabled for DR v1, more relevant for B/C.
 
-### Other reconciled decisions
+### Other decisions
 
 - **Numbered pagination** (`offset`/`limit`, presented as page/per-page), not Relay
   cursors. DR is a page-numbered faceted browser with totals; Typesense is natively
   page/per-page; the ~2,500-doc corpus never paginates deep enough for offset cost to bite;
   and the blue/green alias swap removes the mutation-drift that motivates cursors.
 - **Sidecar canonical labels**, not inline `labelOnly` as default. Facets need one
-  canonical label per entity; the draft’s own two-source model puts canonical labels in a
-  separate collection, which is what DR’s `labels` collection is. `nestedStrategy` is
-  carried as metadata but inline `labelOnly` is not the default.
-- **Logical typed result document** at the query seam; framed JSON-LD kept index-side. The
-  draft treats framed JSON-LD as the universal IR; we scope it to the index/projection
-  artifact (its payoff – vector/LDES/UI sinks – is object-search’s, not catalog-search’s),
-  gated on the generic framing packages existing rather than on DR.
+  canonical label per entity, kept in a separate collection — DR’s `labels` collection. A
+  reference’s `strategy` is carried as metadata; `labelOnly` is the v1 default, not inline.
+- **Logical typed result document** at the query seam; framed JSON-LD kept index-side as the
+  index/projection artifact (its payoff – vector/LDES/UI sinks – is object-search’s, not
+  catalog-search’s), gated on the generic framing packages existing rather than on DR.
 
 ## Consequences
 
 - One declarative source drives GraphQL, later REST, and the index; they cannot drift.
 - The engine is a swappable adapter; the contract outlives engine choices.
-- Adopted from the draft unchanged: the Stable API Contract discipline, `nestedStrategy` as
-  a concept, the surface `LanguageString` list, folding at the adapter boundary + query
-  side via `@lde/text-normalization`, SDL-in-projection vs filter-compiler-in-adapter.
-- Deviations to reconcile into the platform draft: numbered pagination; sidecar labels;
-  logical result doc (framed JSON-LD scoped to index-side); `min`/`max` filter ranges; the
-  `@lde/search*` naming and a core package row.
+- Carried through: the Stable API Contract discipline, the reference `strategy` concept, the
+  surface `LanguageString` list, folding at the adapter boundary + query side via
+  `@lde/text-normalization`, SDL-in-projection vs filter-compiler-in-adapter.
 - Adopted during implementation (2026-06-26): the **unified** field model – the projection
   `FieldSpec` (RDF→doc) and the deployment’s Typesense `SEARCH_FIELDS` are folded into this
   one `SearchField` (see the Field model note above).
