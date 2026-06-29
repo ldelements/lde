@@ -6,9 +6,8 @@ Date: 2026-06-25
 
 Proposed
 
-Aligned with the NDE stack platform docs
-(`netwerk-digitaal-erfgoed/docs` → `docs/stack/layers/platform.md`); the decisions below are
-reflected there.
+Aligned with the NDE [stack platform docs](https://docs.nde.nl/stack/layers/platform); the
+decisions below are reflected there.
 
 ## Context
 
