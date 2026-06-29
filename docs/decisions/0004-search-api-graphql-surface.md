@@ -11,8 +11,8 @@ Builds on [ADR 3 (Search API core query model)](./0003-search-api-core-query-mod
 ## Context
 
 Given the engine-neutral core of [ADR 3](./0003-search-api-core-query-model.md), the first
-API surface is GraphQL. The platform draft requires the surface to be derived from the same
-source as the index, never hand-written, so it cannot drift. It must also be framework-free:
+API surface is GraphQL. The surface is derived from the same source as the index, never
+hand-written, so it cannot drift. It must also be framework-free:
 resolvers are standard `graphql-js`, not tied to Fastify/Mercurius, so any GraphQL server
 can host the schema (DR mounts it inline; a Fastify wrapper is deferred and, if ever built,
 is a separate package).
@@ -21,12 +21,11 @@ is a separate package).
 
 ### Runtime configuration, not code generation
 
-The platform draft frames this as _generating_ the surface – emitting GraphQL SDL **and**
-resolvers as artifacts. We deviate: nothing is emitted or committed. The schema is
-**constructed at runtime from the field-model configuration** (`buildSearchSchema(config)`),
-once at startup, and the resolvers are **generic functions inside the package** attached to
-that schema. A better name for the draft’s “generation” step, at least for this surface, is
-**runtime configuration**.
+The surface is **constructed at runtime from the field-model configuration**
+(`buildSearchSchema(config)`), once at startup, with the resolvers as **generic functions
+inside the package** attached to that schema. Nothing is emitted or committed — there is no
+generated GraphQL SDL or resolver artifact. The accurate name for this step is **runtime
+configuration**, not generation.
 
 This matters because the resolvers are inherently generic – there is essentially one root
 resolver that maps args to a `SearchQuery`, calls the engine, and maps the result back;
@@ -37,10 +36,6 @@ that all delegate to the same logic, plus a build step and staleness risk, for n
 need no committed `.graphql` file. The field-model diff is the reviewable change. A
 `printSchema()` helper exists only as an **optional** CI snapshot test for catching
 accidental breaking changes to the frozen contract – not a shipped artifact.
-
-> Deviation from the stack draft: the draft’s “generate SDL + resolvers” becomes
-> _construct the schema at runtime from configuration; resolvers are generic and in-package;
-> SDL is served live via introspection, not emitted._ For the reconciliation list.
 
 ### The schema-building function
 
@@ -345,12 +340,9 @@ Each transport populates it per request; no framework type appears in the packag
   facet types. Breaking to change – right in v1.
 - **Internal:** args→`SearchQuery` mapping, language ordering, how the adapter computes
   facets, the `SearchDocument` shape.
-- **Deviations to reconcile into the platform draft:**
-  - “generate SDL + resolvers” → _runtime configuration_ (construct at startup from config;
-    generic in-package resolvers; SDL served via introspection, not emitted as an artifact).
-  - Named reference types per shape (`Organization`, `Term`) rather than the draft’s uniform
-    `labelOnly` `{ @id, @type, name }` reference shape – chosen for ergonomics and
-    additive `inline` growth.
+- **Named reference types** per shape (`Organization`, `Term`) rather than a single uniform
+  reference type – chosen for ergonomics and additive `inline` growth (`labelOnly` → `inline`
+  only adds fields, non-breaking).
 - Deferred: a `dataset(id)` single-resource query (detail-page-on-index direction; DR detail
   stays on SPARQL); cross-collection `@reference` joins beyond inline labels; cursor
   pagination; a `Date` scalar (kept ISO `String`) and a `Long`/`BigInt` scalar for 64-bit
