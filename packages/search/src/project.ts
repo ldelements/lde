@@ -78,6 +78,12 @@ function applyField(
         field.name,
         toInteger(firstLiteralOf(node, path)),
       );
+    case 'number':
+      return setNumber(
+        document,
+        field.name,
+        toNumber(firstLiteralOf(node, path)),
+      );
     case 'date':
       return setNumber(
         document,
@@ -85,8 +91,8 @@ function applyField(
         isoToUnix(firstLiteralOf(node, path)),
       );
   }
-  // `number` and `boolean` are not projected from a path in current schemas
-  // (booleans are derivation-populated, e.g. the compatibility vinkjes).
+  // `boolean` is not projected from a path in current schemas — booleans are
+  // derivation-populated (e.g. the compatibility vinkjes).
 }
 
 /**
@@ -234,6 +240,10 @@ function iriString(value: unknown): string | undefined {
 
 function toInteger(literal: string | undefined): number | undefined {
   return literal === undefined ? undefined : Math.trunc(Number(literal));
+}
+
+function toNumber(literal: string | undefined): number | undefined {
+  return literal === undefined ? undefined : Number(literal);
 }
 
 function isoToUnix(iso: string | undefined): number | undefined {

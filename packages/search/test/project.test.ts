@@ -146,6 +146,17 @@ describe('projectDocument', () => {
     expect(document.class).toEqual(['http://example.org/BareClass']);
   });
 
+  it('projects a number field as a float (not truncated like integer)', () => {
+    const document = projectDocument(
+      { '@id': 'https://ex/d/12', [`${DR}size`]: { '@value': '1234.5' } },
+      {
+        type: DATASET,
+        fields: [{ name: 'size', path: `${DR}size`, kind: 'number' }],
+      },
+    );
+    expect(document.size).toBe(1234.5);
+  });
+
   it('folds the transformed values (not the raw ones) for a facet search field', () => {
     const document = projectDocument(
       { '@id': 'https://ex/d/4', [`${DR}format`]: [`${IANA}text/turtle`] },
