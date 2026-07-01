@@ -49,13 +49,11 @@ NodeShape + its `search:` annotations. **One `SearchField` declaration drives fo
 consumers** – projection (RDF→flat document), the engine collection schema, the query
 semantics, and the GraphQL surface – so they cannot drift.
 
-> Updated 2026-06-26 (during implementation): this is the **unified** field model. It
-> folds the three previously separate declarations into one – the projection-side
-> `FieldSpec`/`FieldKind` (RDF→doc), the deployment’s Typesense `SEARCH_FIELDS` (collection
-> schema + weights), and the query model below. The original ADR deferred this unification;
-> it is now adopted (option “c”). The `kind` + capability flags replace the old discriminated
-> projection kinds, derived fields become first-class, and the Typesense-vocabulary types are
-> _derived_ from `kind` rather than re-declared.
+It is a **unified** model: one declaration in place of three otherwise-separate ones – the
+projection-side `FieldSpec`/`FieldKind`, the Typesense `SEARCH_FIELDS` (collection schema +
+weights), and the query model below. `kind` plus capability flags replace the discriminated
+projection kinds, derived fields are first-class, and the Typesense-vocabulary types are
+_derived_ from `kind` rather than re-declared.
 
 ```ts
 type FieldKind =
@@ -318,9 +316,6 @@ not enabled for DR v1, more relevant for B/C.
 - Carried through: the Stable API Contract discipline, the reference `strategy` concept, the
   surface `LanguageString` list, folding at the adapter boundary + query side via
   `@lde/text-normalization`, SDL-in-projection vs filter-compiler-in-adapter.
-- Adopted during implementation (2026-06-26): the **unified** field model – the projection
-  `FieldSpec` (RDF→doc) and the deployment’s Typesense `SEARCH_FIELDS` are folded into this
-  one `SearchField` (see the Field model note above).
 - Deferred: REST surface; framed-JSON-LD materialised view (nested storage, index-time
   label inlining, detail-page-on-index, terms-collection split); semantic/hybrid (vector)
   search.
