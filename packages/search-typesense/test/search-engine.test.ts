@@ -198,7 +198,7 @@ describe('createTypesenseSearchEngine (integration)', () => {
     );
 
     // Plain facet: value + count, no label.
-    const keyword = [...result.facets.keyword].sort(
+    const keyword = [...(result.facets.keyword ?? [])].sort(
       (a, b) => b.count - a.count,
     );
     expect(keyword).toEqual([
@@ -207,7 +207,7 @@ describe('createTypesenseSearchEngine (integration)', () => {
     ]);
 
     // Reference facet: IRI-keyed buckets carry the resolved data label.
-    const publisher = [...result.facets.publisher].sort(
+    const publisher = [...(result.facets.publisher ?? [])].sort(
       (a, b) => b.count - a.count,
     );
     expect(publisher).toEqual([
