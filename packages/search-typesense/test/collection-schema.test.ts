@@ -30,7 +30,6 @@ const schema: SearchSchema = {
       kind: 'keyword',
       array: true,
       facetable: true,
-      group: { name: 'format_group', prefix: 'group:' },
     },
     // Derived fields (no path) still get collection fields — populated at index
     // time by derivations, not projected.
@@ -188,15 +187,6 @@ describe('buildCollectionSchema', () => {
       optional: true,
       stem: true,
       locale: 'nl',
-    });
-  });
-
-  it('emits the grouped-facet companion for a field that declares a group', () => {
-    expect(collection.fields).toContainEqual({
-      name: 'format_group',
-      type: 'string[]',
-      facet: true,
-      optional: true,
     });
   });
 });

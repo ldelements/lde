@@ -30,11 +30,10 @@ export type FieldKind =
  * are independent opt-ins: a field exposes exactly the roles it declares. A
  * field with no `path` is a **derived field** — populated by a
  * {@link Derivation} rather than projected from the IR — yet it still carries
- * full query/schema/output behavior (e.g. `status`, the `*_group` companions,
- * the compatibility booleans).
+ * full query/schema/output behavior (e.g. `status`, the compatibility booleans).
  *
  * The physical field names a declaration fans out to (per-locale search/sort
- * keys, the grouped-facet companion, …) follow one convention, owned by
+ * keys) follow one convention, owned by
  * {@link physicalFields} so projection, collection-schema and query compiler
  * cannot disagree.
  */
@@ -74,13 +73,32 @@ export interface SearchField {
   };
   /** Projection-time value transform (e.g. strip a media-type prefix). */
   readonly transform?: (value: string) => string;
-  /** Grouped-facet companion (a coarse `${name}_group`; deployment delta). */
-  readonly group?: { readonly name: string; readonly prefix: string };
+  /**
+   * Range-facet bins for a numeric (`integer`/`number`/`date`) facetable field.
+   * When set, the field facets into these fixed half-open `[min, max)` ranges (a
+   * histogram) rather than one bucket per distinct value — the per-bucket counts
+   * a UI slider needs. Bins are query-time only (no index impact) and
+   * engine-neutral: the Typesense adapter emits a `facet_by` range, an
+   * Elasticsearch adapter a `range` aggregation. See {@link FacetRange}.
+   */
+  readonly facetRanges?: readonly FacetRange[];
+}
+
+/**
+ * One half-open `[min, max)` range-facet bin: `min` inclusive, `max` exclusive,
+ * so contiguous bins partition cleanly with no boundary double-counting. Omit
+ * `min` (or `max`) for an open-ended bin (`< max`, resp. `≥ min`). `key` is the
+ * bucket’s stable label, echoed back as the {@link FacetBucket} `value`.
+ */
+export interface FacetRange {
+  readonly key: string;
+  readonly min?: number;
+  readonly max?: number;
 }
 
 /**
  * A computed field that is not a direct projection of a single path — a status
- * rank, a `*_group` derived from a code table, a compatibility boolean. Reads
+ * rank, a compatibility boolean. Reads
  * the framed node and writes onto the flat document the field specs already
  * populated.
  */
@@ -116,8 +134,6 @@ export interface PhysicalFields {
   /** Per-locale folded sort keys `${name}_sort_${locale}` (localized text,
    *  `sortable`); a non-localized field sorts on its `value`. */
   readonly sort: readonly string[];
-  /** The grouped-facet companion `${name}_group`, when `group` is declared. */
-  readonly group?: string;
 }
 
 /**
@@ -179,6 +195,5 @@ export function physicalFields(field: SearchField): PhysicalFields {
       localized && field.sortable
         ? locales.map((locale) => `${field.name}_sort_${locale}`)
         : [],
-    group: field.group ? `${field.name}_group` : undefined,
   };
 }

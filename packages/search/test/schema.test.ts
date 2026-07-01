@@ -101,27 +101,6 @@ describe('physicalFields', () => {
     });
   });
 
-  it('adds the `${name}_group` companion when a field declares a group', () => {
-    const format: SearchField = {
-      name: 'format',
-      kind: 'keyword',
-      array: true,
-      facetable: true,
-      group: {
-        name: 'format_group',
-        prefix: 'https://www.iana.org/assignments/media-types/',
-      },
-    };
-
-    expect(physicalFields(format)).toEqual({
-      value: 'format',
-      display: [],
-      search: [],
-      sort: [],
-      group: 'format_group',
-    });
-  });
-
   it('emits only the search keys for a search-only localized field (no display, no sort)', () => {
     const creator: SearchField = {
       name: 'creator',

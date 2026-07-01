@@ -114,14 +114,6 @@ function typesenseFields(
       });
     }
   }
-  if (names.group !== undefined) {
-    fields.push({
-      name: names.group,
-      type: valueType,
-      facet: true,
-      optional: true,
-    });
-  }
   return fields;
 }
 

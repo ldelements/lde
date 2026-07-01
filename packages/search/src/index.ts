@@ -21,6 +21,7 @@ export type {
   SearchSchema,
   Derivation,
   PhysicalFields,
+  FacetRange,
 } from './schema.js';
 
 // Engine- and protocol-neutral query IR + filter semantics.

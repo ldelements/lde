@@ -30,12 +30,23 @@ const schema: SearchSchema = {
       array: true,
       facetable: true,
       filterable: true,
-      group: { name: 'format_group', prefix: 'group:' },
     },
     // Filter-only, non-facet (tokenized) → exact `:=` membership.
     { name: 'catalog', kind: 'keyword', array: true, filterable: true },
     { name: 'status', kind: 'keyword', facetable: true, filterable: true },
-    { name: 'size', kind: 'integer', filterable: true, sortable: true },
+    {
+      name: 'size',
+      kind: 'integer',
+      filterable: true,
+      sortable: true,
+      facetable: true,
+      // Half-open `[min, max)` bins; the last is open-ended (no upper bound).
+      facetRanges: [
+        { key: '0', min: 1, max: 10 },
+        { key: '1', min: 10, max: 100 },
+        { key: '2', min: 100 },
+      ],
+    },
     { name: 'iiif', kind: 'boolean', filterable: true, facetable: true },
   ],
 };
@@ -78,7 +89,7 @@ describe('buildSearchParams', () => {
     ).toBe(3);
   });
 
-  it('compiles where clauses, with exact membership for non-facet fields and grouped OR', () => {
+  it('compiles where clauses, with exact membership for non-facet fields', () => {
     const params = buildSearchParams(
       {
         ...base,
@@ -97,7 +108,7 @@ describe('buildSearchParams', () => {
       'status:[`valid`] && ' +
         'keyword:[`kaarten`,`atlas`] && ' +
         'catalog:=[`urn:cat`] && ' +
-        '(format:[`text/turtle`] || format_group:[`group:rdf`]) && ' +
+        'format:[`text/turtle`,`group:rdf`] && ' +
         'size:[1..10] && ' +
         'iiif:=true',
     );
@@ -147,10 +158,44 @@ describe('buildSearchParams', () => {
     ).toBe('title_sort_nl:asc,status_rank:asc');
   });
 
+  it('pins page to 1 for a facet-only (limit:0) query instead of dividing by zero', () => {
+    const params = buildSearchParams({ ...base, limit: 0 }, schema);
+    expect(params.per_page).toBe(0);
+    expect(params.page).toBe(1);
+  });
+
   it('requests facets by their logical field name', () => {
     expect(
       buildSearchParams({ ...base, facets: ['keyword', 'format'] }, schema)
         .facet_by,
     ).toBe('keyword,format');
+  });
+
+  it('facets a range field into its declared half-open bins, open ends blank', () => {
+    // Typesense range syntax is start-inclusive/end-exclusive, so the declared
+    // `[min, max)` bounds pass straight through; the open-ended bin leaves the
+    // upper bound blank.
+    expect(
+      buildSearchParams({ ...base, facets: ['size'] }, schema).facet_by,
+    ).toBe('size(0:[1, 10], 1:[10, 100], 2:[100, ])');
+  });
+
+  it('mixes range and plain facets in one facet_by clause', () => {
+    expect(
+      buildSearchParams({ ...base, facets: ['keyword', 'size'] }, schema)
+        .facet_by,
+    ).toBe('keyword,size(0:[1, 10], 1:[10, 100], 2:[100, ])');
+  });
+
+  it('omits max_facet_values by default but sets it when configured', () => {
+    expect(
+      buildSearchParams({ ...base, facets: ['keyword'] }, schema)
+        .max_facet_values,
+    ).toBeUndefined();
+    expect(
+      buildSearchParams({ ...base, facets: ['keyword'] }, schema, {
+        maxFacetValues: 250,
+      }).max_facet_values,
+    ).toBe(250);
   });
 });

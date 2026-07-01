@@ -41,7 +41,12 @@ const schema: SearchSchema = {
       kind: 'integer',
       filterable: true,
       sortable: true,
+      facetable: true,
       output: true,
+      facetRanges: [
+        { key: '0', min: 1, max: 10 },
+        { key: '1', min: 10 },
+      ],
     },
     { name: 'datePosted', kind: 'date', sortable: true, output: true },
     { name: 'score', kind: 'number', output: true },
@@ -148,7 +153,7 @@ describe('buildSearchSchema', () => {
             status
             iiif
           }
-          facets { field buckets { value count } }
+          facets { keyword { value count } }
         }
       }`,
       { engine, acceptLanguage: ['nl'] },
@@ -176,9 +181,9 @@ describe('buildSearchSchema', () => {
       { id: 'https://term/1', name: [{ language: 'nl', value: 'Kaarten' }] },
     ]);
     expect(item.iiif).toBe(true);
-    expect(data.facets).toEqual([
-      { field: 'KEYWORD', buckets: [{ value: 'kaarten', count: 3 }] },
-    ]);
+    expect(data.facets).toEqual({
+      keyword: [{ value: 'kaarten', count: 3 }],
+    });
     // The free-text arg became the query text.
     expect(received().text).toBe('kaart');
   });
@@ -213,7 +218,7 @@ describe('buildSearchSchema', () => {
       ],
     });
     const result = await run(
-      `{ datasets { items { title { language value } } } }`,
+      `{ datasets { items { title { language value } datePosted } } }`,
       { engine, acceptLanguage: ['en'] },
     );
     const item = (
@@ -226,6 +231,8 @@ describe('buildSearchSchema', () => {
       { language: 'nl', value: 'Titel' },
       { language: null, value: 'Naamloos' },
     ]);
+    // An absent date resolves to null (the non-numeric branch).
+    expect(item.datePosted).toBeNull();
   });
 
   it('labels reference-facet buckets, leaving plain-facet buckets null', async () => {
@@ -244,26 +251,165 @@ describe('buildSearchSchema', () => {
       },
     });
     const result = await run(
-      `{ datasets { facets { field buckets { value count label { language value } } } } }`,
+      `{ datasets { facets {
+        publisher { value count label { language value } }
+        keyword { value count label { language value } }
+      } } }`,
       { engine, acceptLanguage: ['nl'] },
     );
     const facets = (result.data?.datasets as Record<string, unknown>)
-      .facets as { field: string; buckets: unknown[] }[];
-    const publisher = facets.find((facet) => facet.field === 'PUBLISHER');
-    const keyword = facets.find((facet) => facet.field === 'KEYWORD');
-    expect(publisher?.buckets).toEqual([
+      .facets as {
+      publisher: unknown[];
+      keyword: unknown[];
+    };
+    expect(facets.publisher).toEqual([
       {
         value: 'https://org/1',
         count: 2,
         label: [{ language: 'nl', value: 'Het Utrechts Archief' }],
       },
     ]);
-    expect(keyword?.buckets).toEqual([
+    expect(facets.keyword).toEqual([
       { value: 'kaarten', count: 3, label: null },
     ]);
   });
 
-  it('maps where, orderBy, facets and pagination into the SearchQuery', async () => {
+  it('exposes range-facet bucket bounds, null for value facets and open ends', async () => {
+    const { engine } = fakeEngine({
+      total: 0,
+      hits: [],
+      facets: {
+        size: [
+          { value: '0', count: 2, min: 1, max: 10 },
+          // Open-ended top bin: lower bound only.
+          { value: '1', count: 5, min: 10 },
+        ],
+        keyword: [{ value: 'kaarten', count: 3 }],
+      },
+    });
+    const result = await run(
+      `{ datasets { facets {
+        size { min max count }
+        keyword { value count }
+      } } }`,
+      { engine, acceptLanguage: ['nl'] },
+    );
+    const facets = (result.data?.datasets as Record<string, unknown>)
+      .facets as {
+      size: unknown[];
+      keyword: unknown[];
+    };
+    // RangeBuckets carry their half-open bounds (max null = open-ended top bin).
+    expect(facets.size).toEqual([
+      { min: 1, max: 10, count: 2 },
+      { min: 10, max: null, count: 5 },
+    ]);
+    // A value facet's ValueBuckets carry no bounds.
+    expect(facets.keyword).toEqual([{ value: 'kaarten', count: 3 }]);
+  });
+
+  it('resolves every selected facet key, returning [] where the engine has none', async () => {
+    const { engine } = fakeEngine({
+      total: 0,
+      hits: [],
+      facets: { keyword: [{ value: 'kaarten', count: 1 }] },
+    });
+    const result = await run(
+      `{ datasets { facets {
+        keyword { value count }
+        publisher { value count }
+        terminologySource { value count }
+        status { value count }
+        iiif { value count }
+        size { min max count }
+      } } }`,
+      { engine, acceptLanguage: ['nl'] },
+    );
+    const facets = (result.data?.datasets as Record<string, unknown>)
+      .facets as Record<string, unknown[]>;
+    expect(facets.keyword).toEqual([{ value: 'kaarten', count: 1 }]);
+    // Keys the engine returned nothing for resolve to an empty list.
+    for (const key of [
+      'publisher',
+      'terminologySource',
+      'status',
+      'iiif',
+      'size',
+    ]) {
+      expect(facets[key]).toEqual([]);
+    }
+  });
+
+  it('computes a facet with its own where-filter removed (skip-own-filter)', async () => {
+    const { engine, received } = fakeEngine({
+      total: 0,
+      hits: [],
+      facets: { keyword: [{ value: 'kaarten', count: 1 }] },
+    });
+    await run(
+      `{ datasets(where: { keyword: { in: ["x"] }, status: { in: ["valid"] } }) {
+        facets { keyword { value count } }
+      } }`,
+      { engine, acceptLanguage: ['nl'] },
+    );
+    // The keyword facet query is run with the keyword filter dropped (so its
+    // other options still count), but other filters (status) retained.
+    const facetQuery = received();
+    expect(facetQuery.facets).toEqual(['keyword']);
+    expect(
+      facetQuery.where.find((filter) => filter.field === 'keyword'),
+    ).toBeUndefined();
+    expect(facetQuery.where).toContainEqual({ field: 'status', in: ['valid'] });
+  });
+
+  it('degrades a failed facet to an empty list without failing the whole query', async () => {
+    // A facet is supplementary: its computation runs a separate search (with
+    // `facets` set). Fail only that, leaving the listing search untouched.
+    const failedFacets: string[] = [];
+    const engine: SearchEngine = {
+      async search(query) {
+        if (query.facets.length > 0) {
+          throw new Error('facet backend unavailable');
+        }
+        return canned;
+      },
+    };
+    const result = await run(
+      `{ datasets {
+        total
+        items { id }
+        facets { keyword { value count } }
+      } }`,
+      {
+        engine,
+        acceptLanguage: ['nl'],
+        onFacetError: (field) => failedFacets.push(field),
+      },
+    );
+
+    // No top-level error: the failed facet degraded rather than nulling the
+    // non-null result and discarding the items.
+    expect(result.errors).toBeUndefined();
+    const data = result.data?.datasets as Record<string, unknown>;
+    expect(data.total).toBe(1);
+    expect((data.items as Record<string, unknown>[])[0].id).toBe('https://d/1');
+    // The failed facet degraded to an empty list, and the cause was reported.
+    expect((data.facets as Record<string, unknown[]>).keyword).toEqual([]);
+    expect(failedFacets).toEqual(['keyword']);
+  });
+
+  it('guards perPage: 0, resolving page to 1 rather than failing on NaN', async () => {
+    const { engine } = fakeEngine(canned);
+    const result = await run(`{ datasets(perPage: 0) { page total } }`, {
+      engine,
+      acceptLanguage: ['nl'],
+    });
+    expect(result.errors).toBeUndefined();
+    const data = result.data?.datasets as Record<string, unknown>;
+    expect(data.page).toBe(1);
+  });
+
+  it('maps where, orderBy and pagination into the SearchQuery', async () => {
     const { engine, received } = fakeEngine(canned);
     await run(
       `{
@@ -272,7 +418,6 @@ describe('buildSearchSchema', () => {
           orderBy: { field: SIZE, direction: ASC }
           page: 3
           perPage: 10
-          facets: [KEYWORD, PUBLISHER]
         ) { total }
       }`,
       { engine, acceptLanguage: ['nl'] },
@@ -288,7 +433,9 @@ describe('buildSearchSchema', () => {
     });
     expect(query.where).toContainEqual({ field: 'iiif', is: true });
     expect(query.orderBy).toEqual([{ field: 'size', direction: 'asc' }]);
-    expect(query.facets).toEqual(['keyword', 'publisher']);
+    // Facets are requested per key via selection, not an arg; the listing query
+    // carries none.
+    expect(query.facets).toEqual([]);
     expect(query.limit).toBe(10);
     expect(query.offset).toBe(20);
   });
@@ -336,12 +483,15 @@ describe('buildSearchSchema', () => {
     expect(sdl).toMatch(/publisher: Organization\b(?!!)/); // optional reference
   });
 
-  it('builds the where, orderBy and facet enums from the field model', () => {
+  it('builds the where, orderBy enum and keyed facets object from the field model', () => {
     const sdl = printSchema(buildSearchSchema(schema, { typeName: 'Dataset' }));
     expect(sdl).toMatch(/enum DatasetSortField/);
     expect(sdl).toMatch(/RELEVANCE/);
     expect(sdl).toMatch(/SIZE/);
-    expect(sdl).toMatch(/enum DatasetFacetField/);
+    // Facets are a keyed object, one field per facetable field, typed by kind.
+    expect(sdl).toMatch(/type DatasetFacets/);
+    expect(sdl).toMatch(/keyword: \[ValueBucket!\]!/);
+    expect(sdl).toMatch(/size: \[RangeBucket!\]!/);
     expect(sdl).toMatch(/input DatasetWhere/);
     expect(sdl).toMatch(/status: StringFilter/);
     expect(sdl).toMatch(/size: IntRange/);
