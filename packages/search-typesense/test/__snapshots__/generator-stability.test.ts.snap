@@ -65,12 +65,6 @@ exports[`collection-schema generator stability > derives a stable Typesense coll
     },
     {
       "facet": true,
-      "name": "format_group",
-      "optional": true,
-      "type": "string[]",
-    },
-    {
-      "facet": true,
       "name": "creator",
       "optional": true,
       "sort": false,

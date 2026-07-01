@@ -2,7 +2,7 @@
 
 exports[`GraphQL generator stability > emits a stable SDL for a representative schema 1`] = `
 "type Query {
-  things(query: String, where: ThingWhere, orderBy: ThingOrderBy, page: Int = 1, perPage: Int = 20, facets: [ThingFacetField!]): ThingSearchResult!
+  things(query: String, where: ThingWhere, orderBy: ThingOrderBy, page: Int = 1, perPage: Int = 20): ThingSearchResult!
 }
 
 type ThingSearchResult {
@@ -10,7 +10,7 @@ type ThingSearchResult {
   total: Int!
   page: Int!
   perPage: Int!
-  facets: [Facet!]!
+  facets: ThingFacets!
 }
 
 type Thing {
@@ -37,20 +37,15 @@ type Agent {
   name: [LanguageString!]!
 }
 
-type Facet {
-  field: ThingFacetField!
-  buckets: [FacetBucket!]!
+type ThingFacets {
+  keyword: [ValueBucket!]!
+  creator: [ValueBucket!]!
+  publisher: [ValueBucket!]!
+  status: [ValueBucket!]!
+  open: [ValueBucket!]!
 }
 
-enum ThingFacetField {
-  KEYWORD
-  CREATOR
-  PUBLISHER
-  STATUS
-  OPEN
-}
-
-type FacetBucket {
+type ValueBucket {
   value: String!
   count: Int!
   label: [LanguageString!]

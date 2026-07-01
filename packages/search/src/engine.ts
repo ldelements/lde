@@ -4,8 +4,9 @@ import type { SearchSchema } from './schema.js';
 /**
  * The engine port — the boundary a concrete engine adapter (e.g.
  * `@lde/search-typesense`’s `TypesenseSearchEngine`) implements. The adapter
- * owns every engine specific (companion-field expansion, `query_by`/weights, the
- * filter compiler, `sort_by`, folding, `facet_by`) and returns only logical
+ * owns every engine specific (companion-field expansion, full-text field
+ * selection and weights, filter compilation, sorting, result folding, faceting)
+ * and returns only logical
  * documents, so a deployment can swap engines without any consumer noticing.
  * Nothing engine-specific and nothing RDF-specific leaks past this port.
  *
@@ -137,4 +138,12 @@ export interface FacetBucket {
   readonly value: string;
   readonly count: number;
   readonly label?: LocalizedValue;
+  /**
+   * For a range-facet bucket: its half-open bounds (`min` inclusive, `max`
+   * exclusive), echoing the declared {@link FacetRange} so the bucket is
+   * self-describing and a consumer never hardcodes the bin formula. Both absent
+   * for a value facet; either absent for an open-ended bin.
+   */
+  readonly min?: number;
+  readonly max?: number;
 }

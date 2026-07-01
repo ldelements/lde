@@ -6,8 +6,8 @@ import { buildCollectionSchema } from '../src/collection-schema.js';
  * A neutral fixture exercising every kind + capability — NOT a real domain. The
  * derived Typesense collection is snapshotted purely to pin the **generator**:
  * any change to how `buildCollectionSchema` maps the field model (Typesense field
- * types, the physical fanout, stem/locale, optional/default-sorting-field, group
- * companions) surfaces as a snapshot diff before this library is published.
+ * types, the physical fanout, stem/locale, optional/default-sorting-field)
+ * surfaces as a snapshot diff before this library is published.
  */
 const THING: SearchSchema = {
   type: 'https://example.org/Thing',
@@ -35,7 +35,6 @@ const THING: SearchSchema = {
       array: true,
       facetable: true,
       filterable: true,
-      group: { name: 'format_group', prefix: 'group:' },
     },
     {
       name: 'creator',

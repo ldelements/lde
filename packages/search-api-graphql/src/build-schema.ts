@@ -42,6 +42,12 @@ export interface SearchContext {
   readonly engine: SearchEngine;
   /** Parsed, ordered `Accept-Language`; drives locale selection and output order. */
   readonly acceptLanguage: readonly string[];
+  /**
+   * Called when a single facet's computation fails. The facet degrades to an
+   * empty list (a supplementary facet must not fail the whole query); supply
+   * this to log the cause. Optional — omit to swallow silently.
+   */
+  readonly onFacetError?: (field: string, error: unknown) => void;
 }
 
 export interface BuildSearchSchemaOptions {
@@ -98,14 +104,14 @@ export function buildSearchSchema(
       value: { type: new GraphQLNonNull(GraphQLString) },
     },
   });
-  const facetBucket = new GraphQLObjectType({
-    name: 'FacetBucket',
+  // A plain value facet bucket: a selection key, its count, and (for reference
+  // facets) the engine-resolved data label; null for token/free-string facets
+  // whose display the consumer owns.
+  const valueBucket = new GraphQLObjectType({
+    name: 'ValueBucket',
     fields: {
       value: { type: new GraphQLNonNull(GraphQLString) },
       count: { type: new GraphQLNonNull(GraphQLInt) },
-      // Nullable: the resolved data label for a reference facet, else null —
-      // the consumer owns display for token/free-string facets (its i18n or the
-      // value itself).
       label: {
         type: new GraphQLList(new GraphQLNonNull(languageString)),
         resolve: (bucket: Source, _args: unknown, context: SearchContext) => {
@@ -115,6 +121,22 @@ export function buildSearchSchema(
             : null;
         },
       },
+    },
+  });
+  // A numeric range-facet bin: half-open `[min, max)` bounds (max null on an
+  // open-ended top bin) and the count of documents in it.
+  const rangeBucket = new GraphQLObjectType({
+    name: 'RangeBucket',
+    fields: {
+      min: {
+        type: GraphQLFloat,
+        resolve: (bucket: Source) => bucket.min ?? null,
+      },
+      max: {
+        type: GraphQLFloat,
+        resolve: (bucket: Source) => bucket.max ?? null,
+      },
+      count: { type: new GraphQLNonNull(GraphQLInt) },
     },
   });
   const sortDirection = new GraphQLEnumType({
@@ -289,19 +311,55 @@ export function buildSearchSchema(
     },
   });
 
-  const facetValues: GraphQLEnumValueConfigMap = {};
-  for (const field of facetableFields(schema)) {
-    facetValues[screamingSnake(field.name)] = { value: field.name };
-  }
-  const facetField = new GraphQLEnumType({
-    name: `${typeName}FacetField`,
-    values: facetValues,
-  });
-  const facet = new GraphQLObjectType({
-    name: 'Facet',
-    fields: {
-      field: { type: new GraphQLNonNull(facetField) },
-      buckets: { type: nonNullListOf(facetBucket) },
+  // Keyed facets object: one field per facetable field, typed by its kind
+  // (range fields → [RangeBucket!], else [ValueBucket!]). Each field's resolver
+  // computes that facet with its OWN where-filter removed (skip-own-filter), so a
+  // multi-select facet still lists its other options; only the selected fields
+  // are resolved (GraphQL prunes the rest), so the selection IS the request.
+  const facetsType = new GraphQLObjectType({
+    name: `${typeName}Facets`,
+    fields: () => {
+      const fields: Record<
+        string,
+        GraphQLFieldConfig<Source, SearchContext>
+      > = {};
+      for (const field of facetableFields(schema)) {
+        const isRange =
+          field.facetRanges !== undefined && field.facetRanges.length > 0;
+        fields[field.name] = {
+          type: nonNullListOf(isRange ? rangeBucket : valueBucket),
+          resolve: async (
+            source: Source,
+            _args: unknown,
+            context: SearchContext,
+          ) => {
+            const query = source.query as SearchQuery;
+            // Drop this facet's own filter so its other options still count
+            // (a removed `status` filter also drops the valid-only default, so
+            // the status facet counts across every status).
+            const facetQuery: SearchQuery = {
+              ...query,
+              where: query.where.filter(
+                (filter) => filter.field !== field.name,
+              ),
+              facets: [field.name],
+              limit: 0,
+              offset: 0,
+            };
+            // A facet is supplementary: degrade a failed facet to an empty list
+            // rather than failing the whole query (which would null the non-null
+            // result and discard the items + every other facet).
+            try {
+              const result = await context.engine.search(facetQuery, schema);
+              return result.facets[field.name] ?? [];
+            } catch (error) {
+              context.onFacetError?.(field.name, error);
+              return [];
+            }
+          },
+        };
+      }
+      return fields;
     },
   });
 
@@ -312,7 +370,12 @@ export function buildSearchSchema(
       total: { type: new GraphQLNonNull(GraphQLInt) },
       page: { type: new GraphQLNonNull(GraphQLInt) },
       perPage: { type: new GraphQLNonNull(GraphQLInt) },
-      facets: { type: nonNullListOf(facet) },
+      // Resolved lazily, per selected key (skip-own-filter); the result object
+      // (which carries the resolved `query`) is the facets source.
+      facets: {
+        type: new GraphQLNonNull(facetsType),
+        resolve: (source: Source) => source,
+      },
     },
   });
 
@@ -327,23 +390,29 @@ export function buildSearchSchema(
           orderBy: { type: orderByInput },
           page: { type: GraphQLInt, defaultValue: 1 },
           perPage: { type: GraphQLInt, defaultValue: 20 },
-          facets: { type: new GraphQLList(new GraphQLNonNull(facetField)) },
         },
         resolve: async (_source, args, context: SearchContext) => {
           const built = argsToQuery(args as QueryArgs, context, schema);
           const finalQuery = options.queryDefaults
             ? options.queryDefaults(built, context)
             : built;
-          const result = await context.engine.search(finalQuery, schema);
+          // Items + total only; facets are resolved lazily per selected key.
+          const result = await context.engine.search(
+            { ...finalQuery, facets: [] },
+            schema,
+          );
           return {
             items: result.hits.map((hit) => ({ id: hit.id, ...hit.document })),
             total: result.total,
-            page: Math.floor(finalQuery.offset / finalQuery.limit) + 1,
+            // Guard against a `perPage: 0` arg: `Math.floor(0/0)` is NaN, which a
+            // non-null `Int!` cannot serialize and would fail the whole query.
+            page:
+              finalQuery.limit > 0
+                ? Math.floor(finalQuery.offset / finalQuery.limit) + 1
+                : 1,
             perPage: finalQuery.limit,
-            facets: Object.entries(result.facets).map(([field, buckets]) => ({
-              field,
-              buckets,
-            })),
+            // Carried for the facets resolver (skip-own-filter per key).
+            query: finalQuery,
           };
         },
       },
@@ -372,7 +441,6 @@ interface QueryArgs {
   readonly orderBy?: { field: string; direction: 'asc' | 'desc' };
   readonly page?: number;
   readonly perPage?: number;
-  readonly facets?: readonly string[];
 }
 
 /** Pure args → {@link SearchQuery} mapping. */
@@ -391,7 +459,8 @@ function argsToQuery(
       : [],
     limit: perPage,
     offset: (page - 1) * perPage,
-    facets: args.facets ?? [],
+    // Facets are requested per-key by the facets resolver, not via an arg.
+    facets: [],
     locale: context.acceptLanguage[0] ?? 'und',
   };
 }

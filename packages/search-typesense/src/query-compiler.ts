@@ -3,6 +3,7 @@ import { fold } from '@lde/text-normalization';
 import {
   physicalFields,
   searchableFields,
+  type FacetRange,
   type Filter,
   type SearchField,
   type SearchQuery,
@@ -17,9 +18,21 @@ import {
  * {@link physicalFields}, the same convention the projection and the collection
  * schema use, so a query can never reference a field the index does not carry.
  */
+export interface CompileOptions {
+  /**
+   * Cap on the number of buckets returned per facet (`max_facet_values`). Left
+   * unset, Typesense defaults to 10 — too few for high-cardinality facets
+   * (publisher, keyword), so a deployment with such facets must raise it. Range
+   * facets return one bucket per declared range regardless, but a value > the
+   * range count is still safe.
+   */
+  readonly maxFacetValues?: number;
+}
+
 export function buildSearchParams(
   query: SearchQuery,
   schema: SearchSchema,
+  options: CompileOptions = {},
 ): SearchParams<object> {
   const folded =
     query.text !== undefined && query.text.length > 0
@@ -35,7 +48,9 @@ export function buildSearchParams(
     query_by: names.join(','),
     query_by_weights: weights.join(','),
     per_page: query.limit,
-    page: Math.floor(query.offset / query.limit) + 1,
+    // A facet-only query (`limit: 0`) fetches no hits; page is then meaningless,
+    // so pin it to 1 rather than dividing by zero.
+    page: query.limit > 0 ? Math.floor(query.offset / query.limit) + 1 : 1,
   };
   if (filterBy.length > 0) {
     params.filter_by = filterBy;
@@ -44,9 +59,44 @@ export function buildSearchParams(
     params.sort_by = sortBy;
   }
   if (query.facets.length > 0) {
-    params.facet_by = query.facets.join(',');
+    params.facet_by = compileFacetBy(query.facets, schema);
+    if (options.maxFacetValues !== undefined) {
+      params.max_facet_values = options.maxFacetValues;
+    }
   }
   return params;
+}
+
+/**
+ * The `facet_by` clause. A facet on a numeric field that declares
+ * {@link SearchField.facetRanges} faceted into those fixed half-open `[min, max)`
+ * bins (a histogram); every other facet is a plain per-value facet on its field
+ * name. Typesense range syntax is already start-inclusive/end-exclusive, so the
+ * declared bounds pass straight through with no boundary fix-up.
+ */
+function compileFacetBy(
+  facets: readonly string[],
+  schema: SearchSchema,
+): string {
+  return facets
+    .map((name) => {
+      const field = schema.fields.find((candidate) => candidate.name === name);
+      return field?.facetRanges !== undefined && field.facetRanges.length > 0
+        ? compileRangeFacet(field.name, field.facetRanges)
+        : name;
+    })
+    .join(',');
+}
+
+/** `name(key:[min, max], …)`; a blank bound is open-ended (Typesense `[75, ]`). */
+function compileRangeFacet(
+  name: string,
+  ranges: readonly FacetRange[],
+): string {
+  const bins = ranges
+    .map((range) => `${range.key}:[${range.min ?? ''}, ${range.max ?? ''}]`)
+    .join(', ');
+  return `${name}(${bins})`;
 }
 
 /**
@@ -116,30 +166,14 @@ function compileFilter(
 }
 
 /**
- * A membership clause. A grouped field splits its values into `prefix`-tagged
- * group tokens (matched against the `_group` companion) and granular values, and
- * ORs the two so selecting a value and a group within one facet unions instead of
- * intersecting. A non-facet (tokenized) field uses the exact `:=` operator so an
- * IRI cannot partial-match on a shared path segment.
+ * A membership clause. A non-facet (tokenized) field uses the exact `:=`
+ * operator so an IRI cannot partial-match on a shared path segment.
  */
 function compileMembership(
   field: SearchField,
   values: readonly string[],
 ): string {
   const exact = field.facetable !== true;
-  if (field.group !== undefined) {
-    const prefix = field.group.prefix;
-    const groups = values.filter((value) => value.startsWith(prefix));
-    const granular = values.filter((value) => !value.startsWith(prefix));
-    const parts: string[] = [];
-    if (granular.length > 0) {
-      parts.push(membership(field.name, granular, exact));
-    }
-    if (groups.length > 0) {
-      parts.push(membership(field.group.name, groups, false));
-    }
-    return parts.length > 1 ? `(${parts.join(' || ')})` : parts[0];
-  }
   return membership(field.name, values, exact);
 }
 
@@ -197,6 +231,6 @@ function compileSort(sort: Sort, schema: SearchSchema, locale: string): string {
  * (`:`, `/`, `&`, `,`, …) are taken literally instead of parsed as filter syntax.
  * An embedded backtick is escaped.
  */
-function escapeFilterValue(value: string): string {
+export function escapeFilterValue(value: string): string {
   return `\`${value.replace(/`/g, '\\`')}\``;
 }

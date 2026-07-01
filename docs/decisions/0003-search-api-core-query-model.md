@@ -72,6 +72,7 @@ interface SearchField {
   readonly kind: FieldKind;
   readonly path?: string; // sh:path to project from; omit for a derivation-populated field
   readonly array?: boolean; // sh:maxCount
+  readonly required?: boolean; // sh:minCount ≥ 1 — non-null in output, non-optional in the index
   readonly localized?: boolean; // rdf:langString / sh:languageIn (text only)
   readonly locales?: readonly string[]; // when localized: which languages to emit
   readonly output?: boolean; // appears in the schema output type
@@ -81,7 +82,7 @@ interface SearchField {
   readonly sortable?: boolean;
   readonly ref?: { type: string; strategy: 'labelOnly' | 'idOnly' | 'inline' }; // kind: 'reference'
   readonly transform?: (value: string) => string; // projection-time value transform
-  readonly group?: { readonly name: string; readonly prefix: string }; // deployment delta
+  readonly facetRanges?: readonly FacetRange[]; // numeric facet: fixed [min, max) range bins (histogram) vs per-value buckets
 }
 
 type Derivation = (document: SearchDocument, node: FramedNode) => void;
@@ -89,7 +90,7 @@ type Derivation = (document: SearchDocument, node: FramedNode) => void;
 interface SearchSchema {
   readonly type: string; // sh:targetClass
   readonly fields: readonly SearchField[];
-  readonly derivations?: readonly Derivation[]; // computed fields: status, *_group, booleans
+  readonly derivations?: readonly Derivation[]; // computed fields: status, booleans
 }
 ```
 
@@ -100,10 +101,11 @@ eventual generator emits it unchanged. A field with **no `path`** is a derived f
 populated by a `Derivation` rather than projected from the IR – yet it still carries full
 query/schema/output behavior, which is how the former separate projection `FieldSpec` is
 subsumed. The physical field names a declaration fans out to (`${name}_search_${locale}`,
-`${name}_sort_${locale}`, `${name}_search`, `${name}_group`) follow one convention owned by
-`@lde/search`, so projection, collection schema and query compiler agree. The `group`
-companion (coarse grouped facets, e.g. `format_group`) and the `status_rank` tie-break sort
-are **deployment-specific deltas**, never in `@lde/search`. `relevance` is _not_ a delta:
+`${name}_sort_${locale}`, `${name}_search`) follow one convention owned by
+`@lde/search`, so projection, collection schema and query compiler agree. The `status_rank`
+tie-break sort is a **deployment-specific delta**, never in `@lde/search`. Grouped facets need
+no field-model mechanism at all: a deployment derivation materializes group tokens (e.g.
+`group:rdf`) into the field’s own values – see Consequences. `relevance` is _not_ a delta:
 every full-text engine ranks by match score, so it is a generic reserved sort the adapter
 understands.
 
@@ -164,8 +166,26 @@ variable-based clients (`$o: DatasetOrderBy`) break, so a future array is a deli
 
 **Inclusive bounds only** – `min`/`max`, no `gt`/`gte`/`lt`/`lte`: self-documenting,
 matches Typesense’s native inclusive range, covers every DR case, additively reversible.
-Grouped facets need no special shape – `group:`-prefixed tokens travel as ordinary `in`
-strings and the adapter splits/unions them.
+A numeric facet returns **range buckets** (`[min, max)` bins declared per field); the adapter
+maps them to the engine’s native range faceting.
+
+**Grouped facets need no special engine mechanism; they are denormalized at index time.**
+A coarse category alongside granular values (e.g. `group:rdf` next to media types, `group:person`
+next to class IRIs) is materialized into the field’s own values during projection, so at query
+time a group token is an ordinary value: faceted natively, filtered by plain membership
+(`field.in: ["group:rdf"]` unions with granular values for free), and — where the field is
+`output` – read like any other value. There is no `_group` companion, no `group:`-prefix split,
+no filter rewriting in the adapter; the engine stays dumb and denormalization (the document
+store’s strength) does the work. A cross-source signal that is not a subset of the field (e.g. a
+SPARQL capability derived from `conformsTo`, not a media type) is likewise materialized as a plain
+value by a deployment derivation.
+
+The trade-off this design accepts: **group membership is fixed at index time.** Because the
+group token is baked into each document’s values during projection, redefining a group (which
+granular values map to `group:rdf`) is an index-data change that takes effect only on **reindex** –
+there is no query-time mapping to edit. The constraint is acceptable here because group definitions
+are deployment projection config that already drives indexing, and reindexing is already the
+pipeline’s job; it would not suit a system where grouping is user-defined or changes frequently.
 
 ### Engine port and result
 
