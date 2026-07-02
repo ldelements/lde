@@ -17,7 +17,7 @@ export default mergeConfig(
         // exercised, which is why branch coverage is lower.
         thresholds: {
           functions: 97.14,
-          lines: 93.28,
+          lines: 93.31,
           branches: 83.75,
           statements: 93.37,
         },
