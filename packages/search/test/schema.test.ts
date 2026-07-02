@@ -7,12 +7,12 @@ import {
   searchableFields,
   sortableFields,
   type SearchField,
-  type SearchSchema,
+  type SearchType,
 } from '../src/schema.js';
 
 const DATASET = 'http://www.w3.org/ns/dcat#Dataset';
 
-const schema: SearchSchema = {
+const schema: SearchType = {
   type: DATASET,
   fields: [
     {

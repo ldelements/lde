@@ -4,11 +4,11 @@ import type {
   SearchEngine,
   SearchQuery,
   SearchResult,
-  SearchSchema,
+  SearchType,
 } from '@lde/search';
-import { buildSearchSchema, type SearchContext } from '../src/build-schema.js';
+import { buildGraphQLSchema, type SearchContext } from '../src/build-schema.js';
 
-const schema: SearchSchema = {
+const schema: SearchType = {
   type: 'http://www.w3.org/ns/dcat#Dataset',
   fields: [
     {
@@ -125,14 +125,14 @@ async function run(
   variables?: Record<string, unknown>,
 ) {
   return graphql({
-    schema: buildSearchSchema(schema, { typeName: 'Dataset' }),
+    schema: buildGraphQLSchema(schema, { typeName: 'Dataset' }),
     source,
     contextValue: context,
     variableValues: variables,
   });
 }
 
-describe('buildSearchSchema', () => {
+describe('buildGraphQLSchema', () => {
   it('resolves a query, mapping the result to the typed output', async () => {
     const { engine, received } = fakeEngine(canned);
     const result = await run(
@@ -454,7 +454,7 @@ describe('buildSearchSchema', () => {
         return canned;
       },
     };
-    const gqlSchema = buildSearchSchema(schema, {
+    const gqlSchema = buildGraphQLSchema(schema, {
       typeName: 'Dataset',
       queryDefaults: (query) => ({
         ...query,
@@ -474,7 +474,9 @@ describe('buildSearchSchema', () => {
   });
 
   it('derives nullability: required scalar non-null, optional scalar nullable, arrays/booleans non-null', () => {
-    const sdl = printSchema(buildSearchSchema(schema, { typeName: 'Dataset' }));
+    const sdl = printSchema(
+      buildGraphQLSchema(schema, { typeName: 'Dataset' }),
+    );
     expect(sdl).toMatch(/status: String!/); // required
     expect(sdl).toMatch(/size: Int\b(?!!)/); // optional → nullable
     expect(sdl).toMatch(/title: \[LanguageString!\]!/);
@@ -484,7 +486,9 @@ describe('buildSearchSchema', () => {
   });
 
   it('builds the where, orderBy enum and keyed facets object from the field model', () => {
-    const sdl = printSchema(buildSearchSchema(schema, { typeName: 'Dataset' }));
+    const sdl = printSchema(
+      buildGraphQLSchema(schema, { typeName: 'Dataset' }),
+    );
     expect(sdl).toMatch(/enum DatasetSortField/);
     expect(sdl).toMatch(/RELEVANCE/);
     expect(sdl).toMatch(/SIZE/);

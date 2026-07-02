@@ -1,15 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import type { SearchSchema } from '@lde/search';
-import { printSearchSchema } from '../src/build-schema.js';
+import type { SearchType } from '@lde/search';
+import { printGraphQLSchema } from '../src/build-schema.js';
 
 /**
  * A neutral fixture exercising every kind + capability — NOT a real domain. Its
  * SDL is snapshotted purely to pin the **generator**: any change to how
- * `buildSearchSchema` maps the field model (nullability, type names, enums,
+ * `buildGraphQLSchema` maps the field model (nullability, type names, enums,
  * reference reuse) surfaces as a snapshot diff before this library is published,
  * so a consumer’s contract can’t shift from under it by accident.
  */
-const THING: SearchSchema = {
+const THING: SearchType = {
   type: 'https://example.org/Thing',
   fields: [
     {
@@ -92,6 +92,6 @@ const THING: SearchSchema = {
 
 describe('GraphQL generator stability', () => {
   it('emits a stable SDL for a representative schema', () => {
-    expect(printSearchSchema(THING, { typeName: 'Thing' })).toMatchSnapshot();
+    expect(printGraphQLSchema(THING, { typeName: 'Thing' })).toMatchSnapshot();
   });
 });

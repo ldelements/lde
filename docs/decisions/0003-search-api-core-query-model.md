@@ -85,7 +85,9 @@ interface SearchField {
 
 type Derivation = (document: SearchDocument, node: FramedNode) => void;
 
-interface SearchSchema {
+// One root type (one SHACL NodeShape); a whole deployment’s declaration is the
+// SearchSchema, a map of SearchTypes keyed by type IRI (built with searchSchema()).
+interface SearchType {
   readonly type: string; // sh:targetClass
   readonly fields: readonly SearchField[];
   readonly derivations?: readonly Derivation[]; // computed fields: status, booleans
@@ -194,15 +196,15 @@ SearchEngine` readable.
 
 ```ts
 // FacetField / OutputField default to `string` (ergonomic) and a deployment narrows them
-// to its schema’s facetable / output field names for typo-safe facet and document access
-// (helpers FacetFieldsOf<Schema> / OutputFieldsOf<Schema>, or the EngineFor<Schema> alias).
+// to its type’s facetable / output field names for typo-safe facet and document access
+// (helpers FacetFieldsOf<Type> / OutputFieldsOf<Type>, or the EngineFor<Type> alias).
 interface SearchEngine<
   FacetField extends string = string,
   OutputField extends string = string,
 > {
   search(
     query: SearchQuery,
-    schema: SearchSchema,
+    searchType: SearchType,
   ): Promise<SearchResult<FacetField, OutputField>>;
 }
 

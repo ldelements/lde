@@ -5,6 +5,7 @@ import {
   physicalFields,
   type SearchField,
   type SearchSchema,
+  type SearchType,
 } from './schema.js';
 
 /** A flat search document. `id` is the engine document key. */
@@ -12,45 +13,44 @@ export type SearchDocument = { id: string } & Record<string, unknown>;
 
 /**
  * Project one framed JSON-LD node into a flat search document: apply each field
- * of the schema, then run the derivations (which may read fields the field specs
+ * of the type, then run the derivations (which may read fields the field specs
  * already set). The physical field names a field fans out to come from
  * {@link physicalFields}, the single source shared with the engine collection
  * schema and the query compiler.
  */
 export function projectDocument(
   node: FramedNode,
-  schema: SearchSchema,
+  searchType: SearchType,
 ): SearchDocument {
   const id = node['@id'];
   if (typeof id !== 'string') {
     throw new Error(
-      `Cannot project a ${schema.type} node without an @id: every search document needs a stable key, and an empty one would collide with other keyless nodes.`,
+      `Cannot project a ${searchType.type} node without an @id: every search document needs a stable key, and an empty one would collide with other keyless nodes.`,
     );
   }
   const document: SearchDocument = { id };
-  for (const field of schema.fields) {
+  for (const field of searchType.fields) {
     applyField(document, node, field);
   }
-  for (const derive of schema.derivations ?? []) {
+  for (const derive of searchType.derivations ?? []) {
     derive(document, node);
   }
   return document;
 }
 
 /**
- * Frame `quads` for every schema’s root type and project each node with its
- * type’s schema — the multi-shape pipeline. Streams one document at a time so
- * memory stays flat. The IR maps to a schema by type, so adding a shape is
- * adding a `SearchSchema` (no engine change).
+ * Frame `quads` for every root type in the schema and project each node with its
+ * type’s declaration — the multi-shape pipeline. Streams one document at a time
+ * so memory stays flat. The IR maps to a declaration by type, so adding a shape
+ * is adding a `SearchType` to the schema (no engine change).
  */
 export async function* projectGraph(
   quads: readonly Quad[],
-  schemas: readonly SearchSchema[],
+  schema: SearchSchema,
 ): AsyncIterable<SearchDocument> {
-  const byType = new Map(schemas.map((schema) => [schema.type, schema]));
-  for (const schema of byType.values()) {
-    for await (const node of frameByType(quads, schema.type)) {
-      yield projectDocument(node, schema);
+  for (const searchType of schema.values()) {
+    for await (const node of frameByType(quads, searchType.type)) {
+      yield projectDocument(node, searchType);
     }
   }
 }
@@ -91,7 +91,7 @@ function applyField(
         isoToUnix(firstLiteralOf(node, path)),
       );
   }
-  // `boolean` is not projected from a path in current schemas — booleans are
+  // `boolean` is not projected from a path in current search types — booleans are
   // derivation-populated (e.g. the compatibility vinkjes).
 }
 

@@ -7,7 +7,7 @@ import {
   type Filter,
   type SearchField,
   type SearchQuery,
-  type SearchSchema,
+  type SearchType,
   type Sort,
 } from '@lde/search';
 
@@ -31,17 +31,17 @@ export interface CompileOptions {
 
 export function buildSearchParams(
   query: SearchQuery,
-  schema: SearchSchema,
+  searchType: SearchType,
   options: CompileOptions = {},
 ): SearchParams<object> {
   const folded =
     query.text !== undefined && query.text.length > 0
       ? fold(query.text)
       : undefined;
-  const { names, weights } = queryFields(schema, query.locale);
-  const filterBy = compileFilterBy(query.where, schema);
+  const { names, weights } = queryFields(searchType, query.locale);
+  const filterBy = compileFilterBy(query.where, searchType);
   const sortBy = query.orderBy
-    .map((sort) => compileSort(sort, schema, query.locale))
+    .map((sort) => compileSort(sort, searchType, query.locale))
     .join(',');
   const params: SearchParams<object> = {
     q: folded ?? '*',
@@ -59,7 +59,7 @@ export function buildSearchParams(
     params.sort_by = sortBy;
   }
   if (query.facets.length > 0) {
-    params.facet_by = compileFacetBy(query.facets, schema);
+    params.facet_by = compileFacetBy(query.facets, searchType);
     if (options.maxFacetValues !== undefined) {
       params.max_facet_values = options.maxFacetValues;
     }
@@ -76,11 +76,13 @@ export function buildSearchParams(
  */
 function compileFacetBy(
   facets: readonly string[],
-  schema: SearchSchema,
+  searchType: SearchType,
 ): string {
   return facets
     .map((name) => {
-      const field = schema.fields.find((candidate) => candidate.name === name);
+      const field = searchType.fields.find(
+        (candidate) => candidate.name === name,
+      );
       return field?.facetRanges !== undefined && field.facetRanges.length > 0
         ? compileRangeFacet(field.name, field.facetRanges)
         : name;
@@ -107,12 +109,12 @@ function compileRangeFacet(
  * still surface.
  */
 function queryFields(
-  schema: SearchSchema,
+  searchType: SearchType,
   locale: string,
 ): { readonly names: string[]; readonly weights: number[] } {
   const names: string[] = [];
   const weights: number[] = [];
-  for (const field of searchableFields(schema)) {
+  for (const field of searchableFields(searchType)) {
     const search = physicalFields(field).search;
     const baseWeight = field.searchable.weight;
     if (field.kind === 'text' && field.localized === true) {
@@ -136,19 +138,19 @@ function queryFields(
 /** AND-join the compiled `where` clauses; skips unknown fields and empty clauses. */
 function compileFilterBy(
   where: readonly Filter[],
-  schema: SearchSchema,
+  searchType: SearchType,
 ): string {
   return where
-    .map((filter) => compileFilter(filter, schema))
+    .map((filter) => compileFilter(filter, searchType))
     .filter((clause): clause is string => clause !== undefined)
     .join(' && ');
 }
 
 function compileFilter(
   filter: Filter,
-  schema: SearchSchema,
+  searchType: SearchType,
 ): string | undefined {
-  const field = schema.fields.find(
+  const field = searchType.fields.find(
     (candidate) => candidate.name === filter.field,
   );
   if (field === undefined) {
@@ -209,11 +211,15 @@ function compileRange(
  * text field sorts on its active-locale folded key; any other field (including a
  * deployment tie-break like `status_rank`) sorts on its own name.
  */
-function compileSort(sort: Sort, schema: SearchSchema, locale: string): string {
+function compileSort(
+  sort: Sort,
+  searchType: SearchType,
+  locale: string,
+): string {
   if (sort.field === 'relevance') {
     return `_text_match:${sort.direction}`;
   }
-  const field = schema.fields.find(
+  const field = searchType.fields.find(
     (candidate) => candidate.name === sort.field,
   );
   if (

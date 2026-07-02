@@ -110,10 +110,22 @@ export type Derivation = (document: SearchDocument, node: FramedNode) => void;
  * shapes (and derived fields), `derivations` are its `sh:rule`-shaped computed
  * fields. A generator emits one of these per NodeShape.
  */
-export interface SearchSchema {
+export interface SearchType {
   readonly type: string;
   readonly fields: readonly SearchField[];
   readonly derivations?: readonly Derivation[];
+}
+
+/**
+ * The complete search declaration of a deployment: every root {@link SearchType},
+ * keyed by its `type` IRI — the runtime form of a whole SHACL shapes graph.
+ * Build one with {@link searchSchema}.
+ */
+export type SearchSchema = ReadonlyMap<string, SearchType>;
+
+/** Build a {@link SearchSchema} from root-type declarations, keyed by `type`. */
+export function searchSchema(...types: readonly SearchType[]): SearchSchema {
+  return new Map(types.map((searchType) => [searchType.type, searchType]));
 }
 
 /**
@@ -142,11 +154,11 @@ export interface PhysicalFields {
  * `searchable` weight.
  */
 export function searchableFields(
-  schema: SearchSchema,
+  searchType: SearchType,
 ): readonly (SearchField & {
   readonly searchable: { readonly weight: number };
 })[] {
-  return schema.fields
+  return searchType.fields
     .filter(
       (field): field is SearchField & { searchable: { weight: number } } =>
         field.searchable !== undefined,
@@ -155,23 +167,27 @@ export function searchableFields(
 }
 
 /** Fields returned as facet buckets, in declaration order. */
-export function facetableFields(schema: SearchSchema): readonly SearchField[] {
-  return schema.fields.filter((field) => field.facetable === true);
+export function facetableFields(
+  searchType: SearchType,
+): readonly SearchField[] {
+  return searchType.fields.filter((field) => field.facetable === true);
 }
 
 /** Fields usable in `where`, in declaration order. */
-export function filterableFields(schema: SearchSchema): readonly SearchField[] {
-  return schema.fields.filter((field) => field.filterable === true);
+export function filterableFields(
+  searchType: SearchType,
+): readonly SearchField[] {
+  return searchType.fields.filter((field) => field.filterable === true);
 }
 
 /** Fields publicly selectable in `orderBy`, in declaration order. */
-export function sortableFields(schema: SearchSchema): readonly SearchField[] {
-  return schema.fields.filter((field) => field.sortable === true);
+export function sortableFields(searchType: SearchType): readonly SearchField[] {
+  return searchType.fields.filter((field) => field.sortable === true);
 }
 
 /** Fields that appear in the API output type, in declaration order. */
-export function outputFields(schema: SearchSchema): readonly SearchField[] {
-  return schema.fields.filter((field) => field.output === true);
+export function outputFields(searchType: SearchType): readonly SearchField[] {
+  return searchType.fields.filter((field) => field.output === true);
 }
 
 /** Derive the physical engine field names a declaration produces. */

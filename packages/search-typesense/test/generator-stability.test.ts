@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { SearchSchema } from '@lde/search';
+import type { SearchType } from '@lde/search';
 import { buildCollectionSchema } from '../src/collection-schema.js';
 
 /**
@@ -9,7 +9,7 @@ import { buildCollectionSchema } from '../src/collection-schema.js';
  * types, the physical fanout, stem/locale, optional/default-sorting-field)
  * surfaces as a snapshot diff before this library is published.
  */
-const THING: SearchSchema = {
+const THING: SearchType = {
   type: 'https://example.org/Thing',
   fields: [
     {

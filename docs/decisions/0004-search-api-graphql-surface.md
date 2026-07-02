@@ -21,23 +21,23 @@ separate package).
 ### Runtime configuration, not code generation
 
 The surface is **constructed at runtime from the field-model configuration**
-(`buildSearchSchema(config)`), once at startup, with generic resolvers shipped in the package
+(`buildGraphQLSchema(config)`), once at startup, with generic resolvers shipped in the package
 attached to that schema – nothing is emitted or committed. The resolvers are inherently
 generic (one root resolver maps args to a `SearchQuery`, calls the engine, and maps the result
 back; the field model only parameterises data), so codegen would emit N near-identical stubs
 that all delegate to the same logic, plus a build step and staleness risk, for no benefit.
 
 A live GraphQL API serves its own schema via introspection, so clients need no committed
-`.graphql` file; the field-model diff is the reviewable change. `printSearchSchema()` exists
+`.graphql` file; the field-model diff is the reviewable change. `printGraphQLSchema()` exists
 only as an **optional** CI snapshot test guarding the frozen contract against accidental
 breaking changes – not a shipped artifact.
 
 ### The schema-building function
 
 ```ts
-// Generic over the config *value’s* type (capture it `as const satisfies SearchSchema`), so
+// Generic over the config *value’s* type (capture it `as const satisfies SearchType`), so
 // one declaration drives both the runtime schema and the static TS types below.
-function buildSearchSchema<const S extends SearchSchema>(
+function buildGraphQLSchema<const S extends SearchType>(
   schema: S,
   options: {
     typeName: string; // 'Dataset' – drives all derived type names
@@ -54,10 +54,10 @@ function buildSearchSchema<const S extends SearchSchema>(
 
 // Static types derived from the SAME config value’s type (compile-time only, erased at
 // runtime); one source, no codegen, no drift. Exported for typed in-process callers/tests.
-type OutputOf<S extends SearchSchema>; // { id: string; title: LanguageString[]; size: number | null; … }
-type WhereOf<S extends SearchSchema>; //  { format?: StringFilter; size?: FloatRange; … }
-type OrderByOf<S extends SearchSchema>; // { field: 'RELEVANCE' | 'TITLE' | …; direction: 'ASC' | 'DESC' }
-type FacetOf<S extends SearchSchema>; //   the facetable-field-name union
+type OutputOf<S extends SearchType>; // { id: string; title: LanguageString[]; size: number | null; … }
+type WhereOf<S extends SearchType>; //  { format?: StringFilter; size?: FloatRange; … }
+type OrderByOf<S extends SearchType>; // { field: 'RELEVANCE' | 'TITLE' | …; direction: 'ASC' | 'DESC' }
+type FacetOf<S extends SearchType>; //   the facetable-field-name union
 
 // also exported for manual composition / non-default servers:
 function buildSearchTypeDefsAndResolvers(
@@ -65,17 +65,17 @@ function buildSearchTypeDefsAndResolvers(
   options,
 ): { typeDefs: string; resolvers: object };
 // optional CI helper only:
-function printSearchSchema(schema, options): string; // SDL, for a snapshot/breaking-change test
+function printGraphQLSchema(schema, options): string; // SDL, for a snapshot/breaking-change test
 ```
 
-`buildSearchSchema` is the standalone, framework-agnostic artifact (depends only on
+`buildGraphQLSchema` is the standalone, framework-agnostic artifact (depends only on
 `graphql` + `@graphql-tools/schema`). Deep customisation passes `extendTypeDefs`/
 `extendResolvers` (merged before `makeExecutableSchema`, since Mercurius registers once) or
 composes the exported typeDefs/resolvers by hand.
 
 ### A typed surface the contract does not depend on
 
-One `as const satisfies SearchSchema` declaration drives two **independent** projections: the
+One `as const satisfies SearchType` declaration drives two **independent** projections: the
 **runtime contract** (the `GraphQLSchema`, built at startup by reading the value –
 `field.kind`, `output`, `facetable`, …) and a **static TS mirror** (`OutputOf<S>` /
 `WhereOf<S>` / `OrderByOf<S>` / `FacetOf<S>`, computed from `typeof schema` via mapped types).
@@ -83,8 +83,8 @@ One `as const satisfies SearchSchema` declaration drives two **independent** pro
 The contract **does not depend on the TS types.** `as const`/`satisfies` are compile-time only
 and erased, so the served schema is byte-identical whether or not the mirror exists – it is a
 developer-experience overlay. The two derivations can drift (the runtime kind→GraphQL-type
-mapping lives in `buildSearchSchema`; the type-level mapping in `OutputOf<S>` duplicates it),
-so the **contract** is guarded by the optional `printSearchSchema()` SDL snapshot (the real
+mapping lives in `buildGraphQLSchema`; the type-level mapping in `OutputOf<S>` duplicates it),
+so the **contract** is guarded by the optional `printGraphQLSchema()` SDL snapshot (the real
 artifact), while the TS mirror only catches our own coding mistakes against it.
 
 Values are typed at both ends, with the resolver as the typed transform between them:
@@ -294,7 +294,7 @@ untagged (`und`) last – so `[0]` is always the best available value.
 - **Hot path is the engine, not GraphQL.** Per-request cost is dominated by the Typesense
   round-trip; parse/validate/resolve of a small query is sub-millisecond.
 - **Introspection serves the contract** (cheap, client-cached). Leave it on, or disable in
-  production and use `printSearchSchema` for tooling.
+  production and use `printGraphQLSchema` for tooling.
 
 ### Context contract
 

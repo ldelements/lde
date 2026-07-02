@@ -2,7 +2,7 @@
 
 [Typesense](https://typesense.org/) engine adapter for the engine- and
 domain-agnostic [`@lde/search`](../search) core. **Engine-specific (Typesense) but
-domain-agnostic** – you supply a `SearchSchema`; this package never names your
+domain-agnostic** – you supply a `SearchType`; this package never names your
 domain. It is the Typesense implementation of the `SearchEngine` port: it derives
 a collection schema from the field model, compiles the neutral `SearchQuery` into
 Typesense search params, runs it, reconstructs the engine-neutral `SearchResult`,
@@ -10,10 +10,10 @@ and manages the index lifecycle (blue/green rebuild).
 
 ## Collection schema and engine
 
-`buildCollectionSchema(schema, { name, defaultSortingField, … })` derives a
+`buildCollectionSchema(searchType, { name, defaultSortingField, … })` derives a
 Typesense collection from the unified `SearchField` model — the Typesense field
 type comes from each field’s `kind`, and the physical fanout (per-locale
-search/sort keys, the `_group` companion) matches what the projection writes, via
+search/sort keys) matches what the projection writes, via
 `@lde/search`’s `physicalFields`, so the index and the documents cannot drift.
 
 `createTypesenseSearchEngine(client, { collection, labelsCollection })` is the

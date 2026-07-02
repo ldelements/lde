@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { LocalizedValue, SearchQuery, SearchSchema } from '@lde/search';
+import type { LocalizedValue, SearchQuery, SearchType } from '@lde/search';
 import type { Client } from 'typesense';
 import {
   createTypesenseSearchEngine,
@@ -7,7 +7,7 @@ import {
   parseSearchResponse,
 } from '../src/search.js';
 
-const schema: SearchSchema = {
+const schema: SearchType = {
   type: 'http://www.w3.org/ns/dcat#Dataset',
   fields: [
     {
@@ -150,7 +150,7 @@ describe('parseSearchResponse', () => {
 });
 
 describe('parseSearchResponse range facets', () => {
-  const rangeSchema: SearchSchema = {
+  const rangeSchema: SearchType = {
     type: 'http://www.w3.org/ns/dcat#Dataset',
     fields: [
       {

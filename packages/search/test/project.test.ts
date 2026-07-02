@@ -7,7 +7,12 @@ import {
   irisOf,
   type SearchDocument,
 } from '../src/project.js';
-import type { SearchField, SearchSchema, Derivation } from '../src/schema.js';
+import {
+  searchSchema,
+  type SearchField,
+  type SearchType,
+  type Derivation,
+} from '../src/schema.js';
 
 const DR = 'urn:dr:';
 const IANA = 'https://www.iana.org/assignments/media-types/';
@@ -80,7 +85,7 @@ const derivations: Derivation[] = [
   },
 ];
 
-const schema: SearchSchema = { type: DATASET, fields, derivations };
+const schema: SearchType = { type: DATASET, fields, derivations };
 
 describe('projectDocument', () => {
   it('projects every field kind and runs derivations', () => {
@@ -338,7 +343,7 @@ describe('projectDocument', () => {
 });
 
 describe('projectGraph', () => {
-  it('frames each schema’s type and projects matching nodes', async () => {
+  it('frames each root type in the schema and projects matching nodes', async () => {
     const quads = new Parser({ format: 'N-Triples' }).parse(`
       <https://ex/d/1> <${rdf.type.value}> <${DATASET}> .
       <https://ex/d/1> <${dcterms.title.value}> "Titel"@nl .
@@ -349,9 +354,10 @@ describe('projectGraph', () => {
     `);
 
     const documents: SearchDocument[] = [];
-    for await (const document of projectGraph(quads, [
-      { type: DATASET, fields },
-    ])) {
+    for await (const document of projectGraph(
+      quads,
+      searchSchema({ type: DATASET, fields }),
+    )) {
       documents.push(document);
     }
 

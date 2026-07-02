@@ -1,13 +1,14 @@
 // Projection: RDF CONSTRUCT quads → flat search documents, driven by the unified
-// SearchField/SearchSchema model below (one declaration; the fanout names come
+// SearchField/SearchType model below (one declaration; the fanout names come
 // from `physicalFields`).
 export { projectGraph, irisOf, literalsOf, firstLiteralOf } from './project.js';
 export type { SearchDocument } from './project.js';
 
 // Unified field model: one declaration drives projection, engine collection
-// schema, query semantics and the GraphQL surface. Plus the schema selectors and
+// schema, query semantics and the GraphQL surface. Plus the field selectors and
 // the physical field-name convention they all share.
 export {
+  searchSchema,
   physicalFields,
   searchableFields,
   facetableFields,
@@ -18,6 +19,7 @@ export {
 export type {
   FieldKind,
   SearchField,
+  SearchType,
   SearchSchema,
   Derivation,
   PhysicalFields,
