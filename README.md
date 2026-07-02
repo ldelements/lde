@@ -144,6 +144,11 @@ await pipeline.run();
   <td>Project RDF into engine-agnostic search documents (framing + a declarative field spec)</td>
 </tr>
 <tr>
+  <td><a href="packages/search-api-graphql">@lde/search-api-graphql</a></td>
+  <td><a href="https://www.npmjs.com/package/@lde/search-api-graphql"><img src="https://img.shields.io/npm/v/@lde/search-api-graphql" alt="npm"></a></td>
+  <td>Engine- and domain-agnostic GraphQL surface for search: builds an executable GraphQL schema from any SearchType at runtime</td>
+</tr>
+<tr>
   <td><a href="packages/search-typesense">@lde/search-typesense</a></td>
   <td><a href="https://www.npmjs.com/package/@lde/search-typesense"><img src="https://img.shields.io/npm/v/@lde/search-typesense" alt="npm"></a></td>
   <td>Typesense engine adapter: a single-flight, streaming blue/green index rebuild</td>
@@ -229,6 +234,10 @@ graph TD
   subgraph Publication
     fastify-rdf
     docgen
+    search --> text-normalization
+    search-api-graphql --> search
+    search-typesense --> search
+    search-typesense --> text-normalization
   end
 
   subgraph Monitoring
