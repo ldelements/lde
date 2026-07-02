@@ -8,10 +8,7 @@
     "types": ["node"]
   },
   "include": ["src/**/*.ts"],
-  "references": [
-    { "path": "../search/tsconfig.lib.json" },
-    { "path": "../text-normalization/tsconfig.lib.json" }
-  ],
+  "references": [{ "path": "../search/tsconfig.lib.json" }],
   "exclude": [
     "vite.config.ts",
     "vite.config.mts",

@@ -1,10 +1,10 @@
 {
-  "name": "@lde/search-typesense",
-  "version": "0.1.1",
-  "description": "Typesense implementation of the @lde/search SearchEngine port: collection-schema builder, query compiler, label-resolving result reconstruction, and blue/green index lifecycle. Engine-specific (Typesense) but domain-agnostic.",
+  "name": "@lde/search-api-graphql",
+  "version": "0.1.0",
+  "description": "Engine- and domain-agnostic GraphQL surface for @lde/search: builds an executable GraphQLSchema from any SearchType at runtime (no codegen), served by one generic resolver over any SearchEngine. You supply the search type and typeName; it names neither your domain nor your engine.",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
-    "directory": "packages/search-typesense"
+    "directory": "packages/search-api-graphql"
   },
   "license": "MIT",
   "type": "module",
@@ -26,11 +26,7 @@
   ],
   "dependencies": {
     "@lde/search": "^0.1.2",
-    "@lde/text-normalization": "^0.1.1",
-    "tslib": "^2.3.0",
-    "typesense": "^3.0.6"
-  },
-  "devDependencies": {
-    "testcontainers": "^12.0.3"
+    "graphql": "^15.8.0",
+    "tslib": "^2.3.0"
   }
 }

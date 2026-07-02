@@ -6,14 +6,14 @@ export default mergeConfig(
   baseConfig,
   defineConfig({
     root: __dirname,
-    cacheDir: '../../node_modules/.vite/packages/search',
+    cacheDir: '../../node_modules/.vite/packages/search-api-graphql',
     test: {
       coverage: {
         thresholds: {
           functions: 100,
-          lines: 97.84,
-          branches: 90.9,
-          statements: 97.91,
+          lines: 100,
+          branches: 88.63,
+          statements: 100,
         },
       },
     },
