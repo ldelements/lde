@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { EngineFor, SearchEngine, SearchResult } from '../src/engine.js';
 import type { SearchQuery } from '../src/query.js';
-import type { SearchSchema } from '../src/schema.js';
+import type { SearchType } from '../src/schema.js';
 
-const schema: SearchSchema = {
+const schema: SearchType = {
   type: 'http://www.w3.org/ns/dcat#Dataset',
   fields: [{ name: 'title', kind: 'text', localized: true, locales: ['nl'] }],
 };
@@ -73,7 +73,7 @@ describe('typed facet and document keys', () => {
         { name: 'format', kind: 'keyword', array: true, facetable: true },
         { name: 'status', kind: 'keyword', facetable: true },
       ],
-    } as const satisfies SearchSchema;
+    } as const satisfies SearchType;
 
     // facets ⊂ { format, status }, document keys ⊂ { title }. These object
     // literals would not compile if the helpers widened to `string`/`never`.

@@ -1,11 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Client } from 'typesense';
-import type { SearchEngine, SearchQuery, SearchSchema } from '@lde/search';
+import type { SearchEngine, SearchQuery, SearchType } from '@lde/search';
 import { buildCollectionSchema } from '../src/collection-schema.js';
 import { createTypesenseSearchEngine } from '../src/search.js';
 import { TypesenseContainer } from './typesense-container.js';
 
-const datasetSchema: SearchSchema = {
+const datasetSchema: SearchType = {
   type: 'http://www.w3.org/ns/dcat#Dataset',
   fields: [
     {

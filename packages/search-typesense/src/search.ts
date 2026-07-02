@@ -10,7 +10,7 @@ import {
   type SearchHit,
   type SearchQuery,
   type SearchResult,
-  type SearchSchema,
+  type SearchType,
   type SearchValue,
 } from '@lde/search';
 import { buildSearchParams, escapeFilterValue } from './query-compiler.js';
@@ -90,9 +90,9 @@ export function createTypesenseSearchEngine(
   return {
     async search(
       query: SearchQuery,
-      schema: SearchSchema,
+      searchType: SearchType,
     ): Promise<SearchResult> {
-      const params = buildSearchParams(query, schema, {
+      const params = buildSearchParams(query, searchType, {
         maxFacetValues: options.maxFacetValues,
       });
       const response = (await client
@@ -111,20 +111,20 @@ export function createTypesenseSearchEngine(
             options.labelsCollection,
             options.labelCacheTtlMs,
           );
-          labels = selectLabels(allLabels, referenceIris(response, schema));
+          labels = selectLabels(allLabels, referenceIris(response, searchType));
         } else {
           try {
             labels = await fetchLabels(
               client,
               options.labelsCollection,
-              referenceIris(response, schema),
+              referenceIris(response, searchType),
             );
           } catch (error) {
             options.onLabelError?.(error);
           }
         }
       }
-      return parseSearchResponse(response, schema, labels);
+      return parseSearchResponse(response, searchType, labels);
     },
   };
 }
@@ -169,17 +169,17 @@ function selectLabels(
 /** Every distinct reference IRI whose label the result will actually use. */
 function referenceIris(
   response: TypesenseSearchResponse,
-  schema: SearchSchema,
+  searchType: SearchType,
 ): string[] {
   const referenceFieldSet = new Set(
-    schema.fields
+    searchType.fields
       .filter((field) => field.kind === 'reference')
       .map((field) => field.name),
   );
   // Hits only carry labels for OUTPUT reference fields: reconstructDocument skips
   // non-output fields, so resolving a non-output reference's hit labels (e.g. a
   // facet-only `class` with dozens of IRIs per hit) is pure waste.
-  const outputReferenceFields = outputFields(schema)
+  const outputReferenceFields = outputFields(searchType)
     .filter((field) => field.kind === 'reference')
     .map((field) => field.name);
   const iris = new Set<string>();
@@ -288,17 +288,17 @@ export interface TypesenseSearchResponse {
  */
 export function parseSearchResponse(
   response: TypesenseSearchResponse,
-  schema: SearchSchema,
+  searchType: SearchType,
   labels: ReadonlyMap<string, LocalizedValue>,
 ): SearchResult {
   const hits: SearchHit[] = (response.hits ?? []).map((hit) => ({
     id: String(hit.document.id),
-    document: reconstructDocument(hit.document, schema, labels),
+    document: reconstructDocument(hit.document, searchType, labels),
   }));
   // Reference facets are IRI-keyed; their buckets carry a resolved data label.
   // Plain facets (tokens, free strings) carry no label — the consumer owns display.
   const referenceFacets = new Set(
-    schema.fields
+    searchType.fields
       .filter((field) => field.kind === 'reference')
       .map((field) => field.name),
   );
@@ -307,7 +307,7 @@ export function parseSearchResponse(
     const labelled = referenceFacets.has(facet.field_name);
     // A range facet echoes the declared range key as the bucket value; look the
     // bin's half-open bounds back up by key so the bucket is self-describing.
-    const field = schema.fields.find(
+    const field = searchType.fields.find(
       (candidate) => candidate.name === facet.field_name,
     );
     const rangesByKey =
@@ -332,11 +332,11 @@ export function parseSearchResponse(
 /** Rebuild one logical document from a flat Typesense document. */
 function reconstructDocument(
   flat: Record<string, unknown>,
-  schema: SearchSchema,
+  searchType: SearchType,
   labels: ReadonlyMap<string, LocalizedValue>,
 ): ResultDocument {
   const document: Record<string, SearchValue> = {};
-  for (const field of outputFields(schema)) {
+  for (const field of outputFields(searchType)) {
     if (field.kind === 'boolean') {
       // A boolean is always present; an absent value means false.
       document[field.name] = flat[field.name] === true;

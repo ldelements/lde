@@ -8,8 +8,9 @@ defined here. The library never names your domain — the same core drives a
 
 It provides four things:
 
-- **the unified field model** — `SearchField` / `SearchSchema`: one declaration
-  per field that drives all four consumers below, so they cannot drift;
+- **the unified field model** — `SearchField` / `SearchType` / `SearchSchema`:
+  one declaration per field that drives all four consumers below, so they
+  cannot drift;
 - **the neutral query IR** — `SearchQuery` / `Filter` / `Sort` + filter
   semantics, the shared compiler target every API surface parses into;
 - **the engine port** — `SearchEngine` and the logical result types
@@ -29,17 +30,36 @@ plus capability flags (`searchable` / `filterable` / `facetable` / `sortable` /
 `output`) describe projection, the engine collection schema, the query semantics,
 and the API output in a single place.
 
+## Terminology
+
+The model has three levels, mirroring both SHACL (the source vocabulary) and
+GraphQL (one of the surfaces):
+
+| Term           | What it is                                                                                                      | SHACL          | GraphQL     |
+| -------------- | --------------------------------------------------------------------------------------------------------------- | -------------- | ----------- |
+| `SearchField`  | One queryable field: a `kind`, the IR `path` it projects from, and the capability flags it opts into            | property shape | field       |
+| `SearchType`   | One root type’s complete declaration: its `type` IRI plus its fields and derivations                            | NodeShape      | object type |
+| `SearchSchema` | The whole search declaration: every `SearchType`, keyed by `type` IRI — build one with `searchSchema(...types)` | shapes graph   | schema      |
+
+`projectGraph` consumes a `SearchSchema` (it projects every type in one pass);
+the engine port and the GraphQL surface operate on one `SearchType` at a time.
+
 ## Field model
 
 The mapping is data, not code. Each field declares its `kind`, the IR `path` to
 read (omit it for a **derived** field, populated by a `derivation`), and the
 capabilities it opts into. The physical field names a declaration fans out to
-(per-locale search/sort keys, the grouped-facet companion) come from
+(per-locale search/sort keys) come from
 `physicalFields`, the single convention projection, the collection schema and the
 query compiler all share.
 
 ```ts
-import { projectGraph, irisOf, type SearchSchema } from '@lde/search';
+import {
+  projectGraph,
+  irisOf,
+  searchSchema,
+  type SearchType,
+} from '@lde/search';
 
 const DATASET = {
   type: 'http://www.w3.org/ns/dcat#Dataset',
@@ -74,14 +94,14 @@ const DATASET = {
       document.classCount = irisOf(node, 'urn:dr:class').length;
     },
   ],
-} as const satisfies SearchSchema;
+} as const satisfies SearchType;
 
-for await (const document of projectGraph(quads, [DATASET])) {
+for await (const document of projectGraph(quads, searchSchema(DATASET))) {
   // one flat search document per matching subject, streamed
 }
 ```
 
-Capturing the schema with `as const satisfies SearchSchema` keeps the field
+Capturing the type with `as const satisfies SearchType` keeps the field
 literals, so the API surface can derive typed facet/output keys from it (see
 `@lde/search-api-graphql`).
 

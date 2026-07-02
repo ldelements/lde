@@ -1,5 +1,5 @@
 import type { SearchQuery } from './query.js';
-import type { SearchSchema } from './schema.js';
+import type { SearchType } from './schema.js';
 
 /**
  * The engine port — the boundary a concrete engine adapter (e.g.
@@ -20,7 +20,7 @@ export interface SearchEngine<
 > {
   search(
     query: SearchQuery,
-    schema: SearchSchema,
+    searchType: SearchType,
   ): Promise<SearchResult<FacetField, OutputField>>;
 }
 
@@ -43,38 +43,38 @@ export type FacetMap<FacetField extends string = string> = Readonly<
 >;
 
 /**
- * The facet-field-name union of a schema — the keys a {@link SearchResult}’s
- * `facets` can hold. Requires the schema be captured as a literal type
- * (`as const satisfies SearchSchema`), so the `facetable: true` flags survive as
- * literals; a plain `: SearchSchema` annotation widens them and yields `never`.
+ * The facet-field-name union of a search type — the keys a {@link SearchResult}’s
+ * `facets` can hold. Requires the type be captured as a literal
+ * (`as const satisfies SearchType`), so the `facetable: true` flags survive as
+ * literals; a plain `: SearchType` annotation widens them and yields `never`.
  */
-export type FacetFieldsOf<Schema extends SearchSchema> = Extract<
-  Schema['fields'][number],
+export type FacetFieldsOf<Type extends SearchType> = Extract<
+  Type['fields'][number],
   { readonly facetable: true }
 >['name'];
 
 /**
- * The output-field-name union of a schema — the keys a {@link ResultDocument}
- * can hold. Like {@link FacetFieldsOf}, requires the schema captured as a literal
- * (`as const satisfies SearchSchema`).
+ * The output-field-name union of a search type — the keys a {@link ResultDocument}
+ * can hold. Like {@link FacetFieldsOf}, requires the type captured as a literal
+ * (`as const satisfies SearchType`).
  */
-export type OutputFieldsOf<Schema extends SearchSchema> = Extract<
-  Schema['fields'][number],
+export type OutputFieldsOf<Type extends SearchType> = Extract<
+  Type['fields'][number],
   { readonly output: true }
 >['name'];
 
-/** A {@link SearchEngine} narrowed to one schema: facet keys and document keys
- *  fixed to that schema’s facetable / output field names. The schema must be
- *  captured as `as const satisfies SearchSchema`. */
-export type EngineFor<Schema extends SearchSchema> = SearchEngine<
-  FacetFieldsOf<Schema>,
-  OutputFieldsOf<Schema>
+/** A {@link SearchEngine} narrowed to one search type: facet keys and document
+ *  keys fixed to that type’s facetable / output field names. The type must be
+ *  captured as `as const satisfies SearchType`. */
+export type EngineFor<Type extends SearchType> = SearchEngine<
+  FacetFieldsOf<Type>,
+  OutputFieldsOf<Type>
 >;
 
-/** A {@link SearchResult} narrowed to one schema (see {@link EngineFor}). */
-export type ResultFor<Schema extends SearchSchema> = SearchResult<
-  FacetFieldsOf<Schema>,
-  OutputFieldsOf<Schema>
+/** A {@link SearchResult} narrowed to one search type (see {@link EngineFor}). */
+export type ResultFor<Type extends SearchType> = SearchResult<
+  FacetFieldsOf<Type>,
+  OutputFieldsOf<Type>
 >;
 
 /**

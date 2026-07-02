@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import type { SearchQuery, SearchSchema } from '@lde/search';
+import type { SearchQuery, SearchType } from '@lde/search';
 import { buildSearchParams } from '../src/query-compiler.js';
 
-const schema: SearchSchema = {
+const schema: SearchType = {
   type: 'http://www.w3.org/ns/dcat#Dataset',
   fields: [
     {

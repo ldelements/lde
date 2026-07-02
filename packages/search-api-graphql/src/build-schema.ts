@@ -28,7 +28,7 @@ import {
   type SearchEngine,
   type SearchField,
   type SearchQuery,
-  type SearchSchema,
+  type SearchType,
   type Sort,
 } from '@lde/search';
 import {
@@ -50,7 +50,7 @@ export interface SearchContext {
   readonly onFacetError?: (field: string, error: unknown) => void;
 }
 
-export interface BuildSearchSchemaOptions {
+export interface BuildGraphQLSchemaOptions {
   /** Drives all derived type names, e.g. `Dataset`. */
   readonly typeName: string;
   /** Root query field; defaults to the lowercased plural of `typeName`. */
@@ -86,9 +86,9 @@ function screamingSnake(name: string): string {
  * arguments to a {@link SearchQuery}, calls `context.engine`, and maps the result
  * back; the field model only parameterises data.
  */
-export function buildSearchSchema(
-  schema: SearchSchema,
-  options: BuildSearchSchemaOptions,
+export function buildGraphQLSchema(
+  searchType: SearchType,
+  options: BuildGraphQLSchemaOptions,
 ): GraphQLSchema {
   const { typeName } = options;
   const languageOrder = options.languageOrder ?? defaultLanguageOrder;
@@ -96,7 +96,6 @@ export function buildSearchSchema(
     options.queryField ??
     `${typeName.charAt(0).toLowerCase()}${typeName.slice(1)}s`;
 
-  // --- Shared types ---
   const languageString = new GraphQLObjectType({
     name: 'LanguageString',
     fields: {
@@ -165,9 +164,9 @@ export function buildSearchSchema(
     },
   });
 
-  // --- Reference types, one per referenced shape, reused by every field. ---
+  // One reference type per referenced shape, reused by every field.
   const referenceTypes = new Map<string, GraphQLObjectType>();
-  for (const field of outputFields(schema)) {
+  for (const field of outputFields(searchType)) {
     if (
       field.kind === 'reference' &&
       field.ref &&
@@ -189,7 +188,6 @@ export function buildSearchSchema(
     }
   }
 
-  // --- Output type ---
   const outputType = new GraphQLObjectType({
     name: typeName,
     fields: () => {
@@ -199,7 +197,7 @@ export function buildSearchSchema(
       > = {
         id: { type: new GraphQLNonNull(GraphQLString) },
       };
-      for (const field of outputFields(schema)) {
+      for (const field of outputFields(searchType)) {
         fields[field.name] = outputFieldConfig(field);
       }
       return fields;
@@ -263,12 +261,11 @@ export function buildSearchSchema(
     }
   }
 
-  // --- where / orderBy / facets ---
   const whereInput = new GraphQLInputObjectType({
     name: `${typeName}Where`,
     fields: () => {
       const fields: Record<string, GraphQLInputFieldConfig> = {};
-      for (const field of filterableFields(schema)) {
+      for (const field of filterableFields(searchType)) {
         fields[field.name] = { type: whereFieldType(field) };
       }
       return fields;
@@ -293,7 +290,7 @@ export function buildSearchSchema(
   const sortValues: GraphQLEnumValueConfigMap = {
     RELEVANCE: { value: 'relevance' },
   };
-  for (const field of sortableFields(schema)) {
+  for (const field of sortableFields(searchType)) {
     sortValues[screamingSnake(field.name)] = { value: field.name };
   }
   const sortField = new GraphQLEnumType({
@@ -323,7 +320,7 @@ export function buildSearchSchema(
         string,
         GraphQLFieldConfig<Source, SearchContext>
       > = {};
-      for (const field of facetableFields(schema)) {
+      for (const field of facetableFields(searchType)) {
         const isRange =
           field.facetRanges !== undefined && field.facetRanges.length > 0;
         fields[field.name] = {
@@ -350,7 +347,10 @@ export function buildSearchSchema(
             // rather than failing the whole query (which would null the non-null
             // result and discard the items + every other facet).
             try {
-              const result = await context.engine.search(facetQuery, schema);
+              const result = await context.engine.search(
+                facetQuery,
+                searchType,
+              );
               return result.facets[field.name] ?? [];
             } catch (error) {
               context.onFacetError?.(field.name, error);
@@ -392,14 +392,14 @@ export function buildSearchSchema(
           perPage: { type: GraphQLInt, defaultValue: 20 },
         },
         resolve: async (_source, args, context: SearchContext) => {
-          const built = argsToQuery(args as QueryArgs, context, schema);
+          const built = argsToQuery(args as QueryArgs, context, searchType);
           const finalQuery = options.queryDefaults
             ? options.queryDefaults(built, context)
             : built;
           // Items + total only; facets are resolved lazily per selected key.
           const result = await context.engine.search(
             { ...finalQuery, facets: [] },
-            schema,
+            searchType,
           );
           return {
             items: result.hits.map((hit) => ({ id: hit.id, ...hit.document })),
@@ -425,14 +425,14 @@ export function buildSearchSchema(
 /**
  * The SDL of the built schema. Not a shipped artifact — a consumer uses it for an
  * optional CI snapshot test over its own schema, catching accidental breaking
- * changes to its frozen contract (including a `buildSearchSchema` change in a
+ * changes to its frozen contract (including a `buildGraphQLSchema` change in a
  * future version of this library silently altering it).
  */
-export function printSearchSchema(
-  schema: SearchSchema,
-  options: BuildSearchSchemaOptions,
+export function printGraphQLSchema(
+  searchType: SearchType,
+  options: BuildGraphQLSchemaOptions,
 ): string {
-  return printSchema(buildSearchSchema(schema, options));
+  return printSchema(buildGraphQLSchema(searchType, options));
 }
 
 interface QueryArgs {
@@ -447,13 +447,13 @@ interface QueryArgs {
 function argsToQuery(
   args: QueryArgs,
   context: SearchContext,
-  schema: SearchSchema,
+  searchType: SearchType,
 ): SearchQuery {
   const perPage = args.perPage ?? 20;
   const page = args.page ?? 1;
   return {
     text: args.query,
-    where: whereToFilters(args.where, schema),
+    where: whereToFilters(args.where, searchType),
     orderBy: args.orderBy
       ? [{ field: args.orderBy.field, direction: args.orderBy.direction }]
       : [],
@@ -467,13 +467,13 @@ function argsToQuery(
 
 function whereToFilters(
   where: Record<string, unknown> | undefined,
-  schema: SearchSchema,
+  searchType: SearchType,
 ): Filter[] {
   if (where === undefined) {
     return [];
   }
   const filters: Filter[] = [];
-  for (const field of filterableFields(schema)) {
+  for (const field of filterableFields(searchType)) {
     const value = where[field.name];
     if (value === undefined || value === null) {
       continue;

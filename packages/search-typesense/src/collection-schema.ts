@@ -1,10 +1,6 @@
 import type { CollectionCreateSchema } from 'typesense';
 import type { CollectionFieldSchema } from 'typesense/lib/Typesense/Collection.js';
-import {
-  physicalFields,
-  type SearchField,
-  type SearchSchema,
-} from '@lde/search';
+import { physicalFields, type SearchField, type SearchType } from '@lde/search';
 
 /** Deployment-specific options the generic field model does not carry. */
 export interface CollectionSchemaOptions {
@@ -20,7 +16,7 @@ export interface CollectionSchemaOptions {
 }
 
 /**
- * Build a Typesense collection schema from the unified {@link SearchSchema}, so
+ * Build a Typesense collection schema from the unified {@link SearchType}, so
  * the index and the projection are driven by one declarative source and cannot
  * drift. Each field fans out into the same physical fields the projection writes
  * ({@link physicalFields}); the Typesense field type is derived from the field
@@ -31,13 +27,13 @@ export interface CollectionSchemaOptions {
  * field stems in `defaultLocale`.
  */
 export function buildCollectionSchema(
-  schema: SearchSchema,
+  searchType: SearchType,
   options: CollectionSchemaOptions,
 ): CollectionCreateSchema {
   const defaultLocale = options.defaultLocale ?? 'nl';
   const collection: CollectionCreateSchema = {
     name: options.name,
-    fields: schema.fields.flatMap((field) =>
+    fields: searchType.fields.flatMap((field) =>
       typesenseFields(field, defaultLocale, options.defaultSortingField),
     ),
   };

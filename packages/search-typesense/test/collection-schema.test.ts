@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import type { SearchSchema } from '@lde/search';
+import type { SearchType } from '@lde/search';
 import { buildCollectionSchema } from '../src/collection-schema.js';
 
-const schema: SearchSchema = {
+const schema: SearchType = {
   type: 'http://www.w3.org/ns/dcat#Dataset',
   fields: [
     {
