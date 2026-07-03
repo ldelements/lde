@@ -3,7 +3,7 @@
 The **engine- and domain-agnostic core** for RDF-backed search. It bakes in no
 search engine, no API protocol, and no domain vocabulary: you supply a
 declarative `SearchSchema`, and engine adapters and API surfaces sit on the ports
-defined here. The library never names your domain — the same core drives a
+defined here. The library never names your domain: the same core drives a
 `Dataset`, `Person`, or `CreativeWork` search.
 
 It provides four things:
@@ -12,7 +12,8 @@ It provides four things:
   one declaration per field that drives all four consumers below, so they
   cannot drift;
 - **the neutral query IR** — `SearchQuery` / `Filter` / `Sort` + filter
-  semantics, the shared compiler target every API surface parses into;
+  semantics: every API surface compiles into it, every engine adapter compiles
+  out of it, so the two cannot drift;
 - **the engine port** — `SearchEngine` and the logical result types
   (`SearchResult` / `SearchHit` / `ResultDocument` / `Reference` / …);
 - **a streaming projection** — `projectGraph`, RDF `CONSTRUCT` quads → flat

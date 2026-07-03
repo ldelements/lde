@@ -110,8 +110,8 @@ understands.
 
 ### `SearchQuery` – the neutral query IR
 
-Both surfaces parse input into this; the adapter consumes this. It is the shared compiler
-target that keeps GraphQL and REST from drifting.
+Both surfaces compile input into this; the adapter compiles it into an engine query. One
+shared representation in the middle keeps GraphQL and REST from drifting.
 
 ```ts
 interface SearchQuery {

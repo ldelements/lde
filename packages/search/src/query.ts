@@ -1,10 +1,10 @@
 import type { FieldKind } from './schema.js';
 
 /**
- * The engine- and protocol-neutral query IR. Every API surface parses its input
- * into this; the engine adapter consumes it. It is the shared compiler target
- * that keeps the GraphQL surface, a later REST surface and the adapter from
- * drifting.
+ * The engine- and protocol-neutral query IR. Every API surface compiles its
+ * input into this; every engine adapter compiles it into an engine query. One
+ * shared representation in the middle keeps the GraphQL surface, a later REST
+ * surface and the adapter from drifting.
  */
 export interface SearchQuery {
   /** Free-text query; `undefined`/`''` means browse (no text ranking). */
