@@ -2,7 +2,7 @@ import type { SearchQuery } from './query.js';
 import type { SearchType } from './schema.js';
 
 /**
- * The engine port — the boundary a concrete engine adapter (e.g.
+ * The engine port: the boundary a concrete engine adapter (e.g.
  * `@lde/search-typesense`’s `TypesenseSearchEngine`) implements. The adapter
  * owns every engine specific (companion-field expansion, full-text field
  * selection and weights, filter compilation, sorting, result folding, faceting)
@@ -12,15 +12,18 @@ import type { SearchType } from './schema.js';
  *
  * `FacetField` keys the returned facet map; it defaults to `string` so an engine
  * stays ergonomic, and a deployment can narrow it to its own facet-field union
- * (see {@link FacetFieldsOf}) for typo-safe facet access.
+ * (see {@link FacetFieldsOf}) for typo-safe facet access. `Type` narrows the
+ * accepted `searchType` argument alongside, so an {@link EngineFor}-typed engine
+ * rejects a mismatched search type at compile time.
  */
 export interface SearchEngine<
   FacetField extends string = string,
   OutputField extends string = string,
+  Type extends SearchType = SearchType,
 > {
   search(
     query: SearchQuery,
-    searchType: SearchType,
+    searchType: Type,
   ): Promise<SearchResult<FacetField, OutputField>>;
 }
 
@@ -44,9 +47,10 @@ export type FacetMap<FacetField extends string = string> = Readonly<
 
 /**
  * The facet-field-name union of a search type — the keys a {@link SearchResult}’s
- * `facets` can hold. Requires the type be captured as a literal
- * (`as const satisfies SearchType`), so the `facetable: true` flags survive as
- * literals; a plain `: SearchType` annotation widens them and yields `never`.
+ * `facets` can hold. Requires the type be captured as a literal (via
+ * `defineSearchType` or `as const satisfies SearchType`), so the
+ * `facetable: true` flags survive as literals; a plain `: SearchType`
+ * annotation widens them and yields `never`.
  */
 export type FacetFieldsOf<Type extends SearchType> = Extract<
   Type['fields'][number],
@@ -56,7 +60,7 @@ export type FacetFieldsOf<Type extends SearchType> = Extract<
 /**
  * The output-field-name union of a search type — the keys a {@link ResultDocument}
  * can hold. Like {@link FacetFieldsOf}, requires the type captured as a literal
- * (`as const satisfies SearchType`).
+ * (via `defineSearchType` or `as const satisfies SearchType`).
  */
 export type OutputFieldsOf<Type extends SearchType> = Extract<
   Type['fields'][number],
@@ -64,12 +68,29 @@ export type OutputFieldsOf<Type extends SearchType> = Extract<
 >['name'];
 
 /** A {@link SearchEngine} narrowed to one search type: facet keys and document
- *  keys fixed to that type’s facetable / output field names. The type must be
- *  captured as `as const satisfies SearchType`. */
+ *  keys fixed to that type’s facetable / output field names, and `search()`
+ *  accepting only that search type. The type must be captured as a literal
+ *  (`defineSearchType` or `as const satisfies SearchType`); {@link engineFor}
+ *  is the ergonomic way to obtain one. */
 export type EngineFor<Type extends SearchType> = SearchEngine<
   FacetFieldsOf<Type>,
-  OutputFieldsOf<Type>
+  OutputFieldsOf<Type>,
+  Type
 >;
+
+/**
+ * Narrow an engine to one search type — the ergonomic route to an
+ * {@link EngineFor} view. The `const` type parameter captures the search type
+ * as a literal, so facet and document keys come out typo-safe without the
+ * caller writing any generics. Identity at runtime: the same engine instance
+ * is returned, only its type changes.
+ */
+export function engineFor<const Type extends SearchType>(
+  searchType: Type,
+  engine: SearchEngine,
+): EngineFor<Type> {
+  return engine;
+}
 
 /**
  * One result row. `id` (the stable document key, an IRI) is kept *out* of

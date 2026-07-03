@@ -8,6 +8,7 @@ export type { SearchDocument } from './project.js';
 // schema, query semantics and the GraphQL surface. Plus the field selectors and
 // the physical field-name convention they all share.
 export {
+  defineSearchType,
   searchSchema,
   physicalFields,
   searchableFields,
@@ -36,6 +37,7 @@ export { filterOperatorFor, pageForOffset } from './query.js';
 export type { SearchQuery, Filter, Sort, FilterOperator } from './query.js';
 
 // Engine port + the logical result document returned across it.
+export { engineFor } from './engine.js';
 export type {
   SearchEngine,
   SearchResult,

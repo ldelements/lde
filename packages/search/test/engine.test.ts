@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { engineFor } from '../src/engine.js';
 import type { EngineFor, SearchEngine, SearchResult } from '../src/engine.js';
 import type { SearchQuery } from '../src/query.js';
+import { defineSearchType } from '../src/schema.js';
 import type { SearchType } from '../src/schema.js';
 
 const schema: SearchType = {
@@ -106,5 +108,38 @@ describe('typed facet and document keys', () => {
 
     expect(result.facets.format).toEqual([{ value: 'text/turtle', count: 2 }]);
     expect(result.hits[0].document.title).toEqual({ nl: ['Titel'] });
+  });
+
+  it('accepts only the search type it was narrowed to', () => {
+    // `defineSearchType` captures the literal (no `as const` needed): the
+    // `facetable: true` flag must survive for `FacetFieldsOf` to see it.
+    const datasetSchema = defineSearchType({
+      type: 'http://www.w3.org/ns/dcat#Dataset',
+      fields: [{ name: 'format', kind: 'keyword', facetable: true }],
+    });
+    const organizationSchema = defineSearchType({
+      type: 'http://xmlns.com/foaf/0.1/Organization',
+      fields: [{ name: 'sector', kind: 'keyword', facetable: true }],
+    });
+    const query: SearchQuery = {
+      where: [],
+      orderBy: [],
+      limit: 10,
+      offset: 0,
+      facets: [],
+      locale: 'nl',
+    };
+
+    // `engineFor` narrows a generic adapter (plain `SearchEngine`) to any
+    // `EngineFor` — the same instance, identity at runtime.
+    const engine: EngineFor<typeof datasetSchema> = engineFor(
+      datasetSchema,
+      fake,
+    );
+    expect(engine).toBe(fake);
+
+    void engine.search(query, datasetSchema);
+    // @ts-expect-error — a mismatched search type is rejected at compile time
+    void engine.search(query, organizationSchema);
   });
 });

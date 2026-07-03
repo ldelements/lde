@@ -308,5 +308,5 @@ Each transport populates it per request; no framework type appears in the packag
   sole preference mechanism); metadata-language-availability filtering (a facetable dimension,
   not v1); schema extension hooks (`extendTypeDefs`/`extendResolvers` or exported
   typeDefs/resolvers for manual composition); a static TS mirror of the contract
-  (`OutputOf<S>` / `WhereOf<S>` / `OrderByOf<S>` / `FacetOf<S>` mapped types over an
-  `as const satisfies SearchType` declaration) for typed in-process callers.
+  (`OutputOf<S>` / `WhereOf<S>` / `OrderByOf<S>` / `FacetOf<S>` mapped types over a
+  `defineSearchType` declaration) for typed in-process callers.
