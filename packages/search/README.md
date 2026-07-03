@@ -1,16 +1,21 @@
 # @lde/search
 
-The **engine- and domain-agnostic core** for RDF-backed search. It bakes in no
-search engine, no API protocol, and no domain vocabulary: you supply a
-declarative `SearchSchema`, and engine adapters and API surfaces sit on the
-ports defined here. The library never names your domain: the same core drives a
-`Dataset`, `Person`, or `CreativeWork` search.
+The core of the LDE search family: packages that together act as a **generator
+for search engines**. You write one declarative `SearchSchema`, and everything
+a running search engine needs is derived from it — the document projection,
+the engine collection schema, the query semantics, and the API surface — rather
+than hand-written per deployment and kept in sync by discipline.
 
-Sitting on those ports:
+The core itself is **engine-, API- and domain-agnostic**: it bakes in no search
+engine, no API protocol, and no domain vocabulary. The engine- and API-specific
+halves are adapters that plug into the ports defined here:
 
 - **engine adapters** — [`@lde/search-typesense`](../search-typesense);
 - **API surfaces** — [`@lde/search-api-graphql`](../search-api-graphql), with a
   REST surface to follow.
+
+The library never names your domain: the same core drives a `Dataset`,
+`Person`, or `CreativeWork` search.
 
 It provides four things:
 
