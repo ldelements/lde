@@ -6,7 +6,7 @@ domain-agnostic** – you supply a `SearchType`; this package never names your
 domain. It is the Typesense implementation of the `SearchEngine` port: it derives
 a collection schema from the field model, compiles the neutral `SearchQuery` into
 Typesense search params, runs it, reconstructs the engine-neutral `SearchResult`,
-and manages the index lifecycle (blue/green rebuild).
+and manages the search index lifecycle (blue/green rebuild).
 
 ## Collection schema and engine
 
@@ -17,13 +17,19 @@ search/sort keys) matches what the projection writes, via
 `@lde/search`’s `physicalFields`, so the index and the documents cannot drift.
 
 `createTypesenseSearchEngine(client, { collection, labelsCollection })` is the
-`SearchEngine` implementation: it validates the query against the search type
-(the port contract — a structurally invalid query is rejected, never sent),
-compiles it, runs the search, resolves reference (and reference-facet) labels
-from the sidecar `labels` collection in a single lookup, and reconstructs the
-logical `SearchResult` — language maps, labelled references, labelled facet
-buckets. The pure halves `buildSearchParams` and `parseSearchResponse` are
-exported for direct use and testing.
+`SearchEngine` implementation. Each search:
+
+- validates the query against the search type (the port contract — a
+  structurally invalid query is rejected, never sent);
+- compiles it into Typesense search params (`buildSearchParams`);
+- runs the search;
+- resolves reference (and reference-facet) labels from the sidecar `labels`
+  collection in a single lookup;
+- reconstructs the logical `SearchResult` (`parseSearchResponse`) — language
+  maps, labelled references, labelled facet buckets.
+
+The pure halves `buildSearchParams` and `parseSearchResponse` are exported for
+direct use and testing.
 
 ## Indexing
 
@@ -47,7 +53,7 @@ const client = new Client({
 // `documents` is an async iterable (e.g. a streaming projection); only one
 // batch is held in memory at a time. `rebuild` returns the live collection name
 // and the imported count (or `null` if another rebuild was already running).
-const result = await rebuild(client, DATASET, documents, { name: 'datasets' });
+const result = await rebuild(client, documents, DATASET, { name: 'datasets' });
 ```
 
 The options accept everything `buildCollectionSchema` does (`defaultLocale`,

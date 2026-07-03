@@ -7,7 +7,6 @@ import {
   physicalFields,
   referenceFields,
   type FacetBucket,
-  type Filter,
   type LocalizedValue,
   type Reference,
   type ResultDocument,
@@ -19,32 +18,25 @@ import {
   type SearchType,
   type SearchValue,
 } from '@lde/search';
-import { buildSearchParams, escapeFilterValue } from './query-compiler.js';
+import {
+  buildSearchParams,
+  escapeFilterValue,
+  type BuildSearchParamsOptions,
+} from './query-compiler.js';
 
-/** Where the engine reads documents and (optionally) reference labels. */
-export interface TypesenseSearchEngineOptions {
+/** Where the engine reads documents and (optionally) reference labels — plus
+ *  every query-compiler knob ({@link BuildSearchParamsOptions}), declared once
+ *  there and forwarded wholesale into each search. */
+export interface TypesenseSearchEngineOptions extends BuildSearchParamsOptions {
   /** The dataset collection or alias to query. */
   readonly collection: string;
   /** The sidecar `labels` collection (IRI → label); omit for id-only references. */
   readonly labelsCollection?: string;
   /**
-   * Buckets returned per facet (`max_facet_values`). Typesense defaults to 10;
-   * raise it for high-cardinality facets (publisher, keyword) so their long
-   * value lists are not truncated.
-   */
-  readonly maxFacetValues?: number;
-  /**
    * Called when reference-label resolution fails; the search then degrades to
    * id-only references rather than failing. Optional — omit to swallow silently.
    */
   readonly onLabelError?: (error: unknown) => void;
-  /**
-   * Called for each vacuous `where` clause the query compiler skips as a no-op
-   * (an empty `in` list, a `range` with no usable bound). Structurally invalid
-   * queries never get this far — the engine rejects them up front
-   * (`assertValidQuery`). Optional — omit to swallow silently.
-   */
-  readonly onIgnoredFilter?: (filter: Filter) => void;
   /**
    * Opt-in in-memory label cache. When set (and {@link labelsCollection} is
    * set), the FULL sidecar `labels` collection is loaded once via the documents
@@ -108,10 +100,7 @@ export function createTypesenseSearchEngine(
       // The port contract: a structurally invalid query (unknown field, wrong
       // operator, unknown facet) is rejected up front, for EVERY caller.
       assertValidQuery(query, searchType);
-      const params = buildSearchParams(query, searchType, {
-        maxFacetValues: options.maxFacetValues,
-        onIgnoredFilter: options.onIgnoredFilter,
-      });
+      const params = buildSearchParams(query, searchType, options);
       // Cached path: the once-loaded full collection serves labels by in-memory
       // lookup (no per-search round-trip). The load does not depend on the
       // response, so it runs alongside the search; it never rejects (a failed

@@ -72,8 +72,8 @@ describe('search-typesense', () => {
   it('publishes a versioned collection and points the index alias at it', async () => {
     const result = await rebuild(
       client,
-      datasetType,
       stream([{ id: 'a', title: 'Verhaal van Utrecht', year: 2024 }]),
+      datasetType,
       { name: NAME },
     );
 
@@ -90,14 +90,14 @@ describe('search-typesense', () => {
   it('swaps the alias to a new collection and drops the previous one', async () => {
     const first = await rebuild(
       client,
-      datasetType,
       stream([{ id: 'a', title: 'Old', year: 2023 }]),
+      datasetType,
       { name: NAME },
     );
     const second = await rebuild(
       client,
-      datasetType,
       stream([{ id: 'a', title: 'New', year: 2024 }]),
+      datasetType,
       { name: NAME },
     );
 
@@ -115,7 +115,7 @@ describe('search-typesense', () => {
       year: 2024,
     }));
 
-    const result = await rebuild(client, datasetType, stream(documents), {
+    const result = await rebuild(client, stream(documents), datasetType, {
       name: NAME,
       batchSize: 2,
     });
@@ -129,8 +129,8 @@ describe('search-typesense', () => {
 
     const result = await rebuild(
       client,
-      datasetType,
       stream([{ id: 'a', title: 'A', year: 2024 }]),
+      datasetType,
       { name: NAME },
     );
 
@@ -143,8 +143,8 @@ describe('search-typesense', () => {
 
     const result = await rebuild(
       client,
-      datasetType,
       stream([{ id: 'a', title: 'A', year: 2024 }]),
+      datasetType,
       { name: NAME, lockTtlMs: 1_000 },
     );
 
@@ -155,8 +155,8 @@ describe('search-typesense', () => {
   it('leaves the live alias intact and drops the orphan when a build fails', async () => {
     await rebuild(
       client,
-      datasetType,
       stream([{ id: 'a', title: 'Live', year: 2024 }]),
+      datasetType,
       { name: NAME },
     );
     const live = await aliasTarget(client);
@@ -166,8 +166,8 @@ describe('search-typesense', () => {
     await expect(
       rebuild(
         client,
-        datasetType,
         stream([{ id: 'bad', title: 't', year: 'nope' }]),
+        datasetType,
         { name: NAME },
       ),
     ).rejects.toThrow(/failed/i);
@@ -180,7 +180,7 @@ describe('search-typesense', () => {
   });
 
   it('publishes an empty collection for an empty source', async () => {
-    const result = await rebuild(client, datasetType, stream([]), {
+    const result = await rebuild(client, stream([]), datasetType, {
       name: NAME,
     });
 

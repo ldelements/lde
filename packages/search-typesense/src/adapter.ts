@@ -57,8 +57,8 @@ export interface RebuildOptions extends CollectionSchemaOptions {
  */
 export async function rebuild<Document extends { id: string }>(
   client: Client,
-  searchType: SearchType,
   documents: AsyncIterable<Document>,
+  searchType: SearchType,
   options: RebuildOptions,
 ): Promise<{ collection: string; imported: number } | null> {
   const {

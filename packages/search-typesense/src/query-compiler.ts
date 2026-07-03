@@ -18,13 +18,11 @@ import {
 } from '@lde/search';
 
 /**
- * Compile the engine-neutral {@link SearchQuery} into Typesense search
- * parameters — the query half of the engine adapter. Pure (no client, no env),
- * so the mapping is asserted directly in unit tests. Field names come from
- * {@link physicalFields}, the same convention the projection and the collection
- * schema use, so a query can never reference a field the index does not carry.
+ * Options for {@link buildSearchParams} — the query half of the engine
+ * adapter. {@link TypesenseSearchEngineOptions} extends this, so each knob is
+ * declared once and the engine forwards its options wholesale.
  */
-export interface CompileOptions {
+export interface BuildSearchParamsOptions {
   /**
    * Cap on the number of buckets returned per facet (`max_facet_values`). Left
    * unset, Typesense defaults to 10 — too few for high-cardinality facets
@@ -38,15 +36,24 @@ export interface CompileOptions {
    * skipped: an unknown field, an operator that does not match the field’s
    * kind ({@link filterOperatorFor}), an empty `in` list, or a `range` with no
    * usable bound. Skipping keeps a malformed clause from reaching the engine
-   * as garbage; supply this to log it instead of losing it silently.
+   * as garbage; supply this to log it instead of losing it silently. Through
+   * the engine, a structurally invalid query throws up front
+   * (`assertValidQuery`), so there only the vacuous clauses reach this.
    */
   readonly onIgnoredFilter?: (filter: Filter) => void;
 }
 
+/**
+ * Compile the engine-neutral {@link SearchQuery} into Typesense search
+ * parameters — the query half of the engine adapter. Pure (no client, no env),
+ * so the mapping is asserted directly in unit tests. Field names come from
+ * {@link physicalFields}, the same convention the projection and the collection
+ * schema use, so a query can never reference a field the index does not carry.
+ */
 export function buildSearchParams(
   query: SearchQuery,
   searchType: SearchType,
-  options: CompileOptions = {},
+  options: BuildSearchParamsOptions = {},
 ): SearchParams<object> {
   const folded =
     query.text !== undefined && query.text.length > 0
