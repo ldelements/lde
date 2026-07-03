@@ -11,9 +11,9 @@ engine, no API protocol, and no domain vocabulary. The engine- and API-specific
 halves are adapters that plug into the ports defined here:
 
 - **engine adapters** implement the `SearchEngine` port:
-  [`@lde/search-typesense`](../search-typesense);
-- **API surfaces** drive it, parsing client input into `search(SearchQuery)`
-  calls: [`@lde/search-api-graphql`](../search-api-graphql), with a REST
+  [`@lde/search-typesense`](../search-typesense), with OpenSearch to follow;
+- **API surfaces** drive it, parsing client input into `search(SearchQuery)`:
+  [`@lde/search-api-graphql`](../search-api-graphql), with a REST
   surface to follow.
 
 The library never names your domain: the same core drives a `Dataset`,
@@ -39,16 +39,10 @@ SearchSchema ─┬─► projection      (projectGraph → flat documents)     
               └─► API surface     (GraphQL / REST)                       e.g. @lde/search-api-graphql
 ```
 
-One field, four consumers — that is why the model is unified: a field’s `kind`
-plus capability flags (`searchable` / `filterable` / `facetable` / `sortable` /
-`output`) describe projection, the engine collection schema, the query semantics,
-and the API output in a single place.
-
 ## Terminology
 
-The model has three levels, with analogues in SHACL (one possible source — see
-[Why a declarative model](#why-a-declarative-model)) and GraphQL (one of the
-surfaces):
+The model has three levels, with analogues in SHACL ([one possible source](#why-a-declarative-model))
+and GraphQL (one of the surfaces):
 
 | Term           | What it is                                                                                                      | SHACL          | GraphQL     |
 | -------------- | --------------------------------------------------------------------------------------------------------------- | -------------- | ----------- |
@@ -57,8 +51,7 @@ surfaces):
 | `SearchSchema` | The whole search declaration: every `SearchType`, keyed by `type` IRI — build one with `searchSchema(...types)` | shapes graph   | schema      |
 
 `projectGraph` and the GraphQL surface consume a `SearchSchema` (projecting
-every type in one pass, resp. emitting one root query field per type); the
-engine port executes one `SearchType` at a time.
+every type in one pass; the engine port executes one `SearchType` at a time.
 
 ## Field model
 
