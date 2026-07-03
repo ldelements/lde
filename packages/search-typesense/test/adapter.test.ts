@@ -1,16 +1,18 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import type { Client, CollectionCreateSchema } from 'typesense';
+import type { Client } from 'typesense';
+import type { SearchType } from '@lde/search';
 import { rebuild } from '../src/adapter.js';
 import { TypesenseContainer } from './typesense-container.js';
 
 const NAME = 'datasets';
 const LOCK_COLLECTION = 'rebuild_locks';
 
-const schema: CollectionCreateSchema = {
-  name: NAME,
+const datasetType: SearchType = {
+  name: 'Dataset',
+  type: 'https://example.org/Dataset',
   fields: [
-    { name: 'title', type: 'string' },
-    { name: 'year', type: 'int32' },
+    { name: 'title', kind: 'keyword' },
+    { name: 'year', kind: 'integer' },
   ],
 };
 
@@ -70,8 +72,9 @@ describe('search-typesense', () => {
   it('publishes a versioned collection and points the index alias at it', async () => {
     const result = await rebuild(
       client,
-      schema,
+      datasetType,
       stream([{ id: 'a', title: 'Verhaal van Utrecht', year: 2024 }]),
+      { name: NAME },
     );
 
     expect(result?.imported).toBe(1);
@@ -87,13 +90,15 @@ describe('search-typesense', () => {
   it('swaps the alias to a new collection and drops the previous one', async () => {
     const first = await rebuild(
       client,
-      schema,
+      datasetType,
       stream([{ id: 'a', title: 'Old', year: 2023 }]),
+      { name: NAME },
     );
     const second = await rebuild(
       client,
-      schema,
+      datasetType,
       stream([{ id: 'a', title: 'New', year: 2024 }]),
+      { name: NAME },
     );
 
     expect(second?.collection).not.toBe(first?.collection);
@@ -110,7 +115,8 @@ describe('search-typesense', () => {
       year: 2024,
     }));
 
-    const result = await rebuild(client, schema, stream(documents), {
+    const result = await rebuild(client, datasetType, stream(documents), {
+      name: NAME,
       batchSize: 2,
     });
 
@@ -123,8 +129,9 @@ describe('search-typesense', () => {
 
     const result = await rebuild(
       client,
-      schema,
+      datasetType,
       stream([{ id: 'a', title: 'A', year: 2024 }]),
+      { name: NAME },
     );
 
     expect(result).toBeNull();
@@ -136,9 +143,9 @@ describe('search-typesense', () => {
 
     const result = await rebuild(
       client,
-      schema,
+      datasetType,
       stream([{ id: 'a', title: 'A', year: 2024 }]),
-      { lockTtlMs: 1_000 },
+      { name: NAME, lockTtlMs: 1_000 },
     );
 
     expect(result?.imported).toBe(1);
@@ -148,8 +155,9 @@ describe('search-typesense', () => {
   it('leaves the live alias intact and drops the orphan when a build fails', async () => {
     await rebuild(
       client,
-      schema,
+      datasetType,
       stream([{ id: 'a', title: 'Live', year: 2024 }]),
+      { name: NAME },
     );
     const live = await aliasTarget(client);
     const collectionCount = (await client.collections().retrieve()).length;
@@ -158,8 +166,9 @@ describe('search-typesense', () => {
     await expect(
       rebuild(
         client,
-        schema,
+        datasetType,
         stream([{ id: 'bad', title: 't', year: 'nope' }]),
+        { name: NAME },
       ),
     ).rejects.toThrow(/failed/i);
 
@@ -171,7 +180,9 @@ describe('search-typesense', () => {
   });
 
   it('publishes an empty collection for an empty source', async () => {
-    const result = await rebuild(client, schema, stream([]));
+    const result = await rebuild(client, datasetType, stream([]), {
+      name: NAME,
+    });
 
     expect(result?.imported).toBe(0);
     expect((await client.collections(NAME).retrieve()).num_documents).toBe(0);

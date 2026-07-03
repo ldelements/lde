@@ -3,6 +3,7 @@ import type { SearchQuery, SearchType } from '@lde/search';
 import { buildSearchParams } from '../src/query-compiler.js';
 
 const schema: SearchType = {
+  name: 'Dataset',
   type: 'http://www.w3.org/ns/dcat#Dataset',
   fields: [
     {
@@ -113,6 +114,31 @@ describe('buildSearchParams', () => {
         'size:[1..10] && ' +
         'iiif:=true',
     );
+  });
+
+  it('skips a clause that compiles to nothing and reports it via onIgnoredFilter', () => {
+    const ignored: unknown[] = [];
+    const params = buildSearchParams(
+      {
+        ...base,
+        where: [
+          { field: 'status', in: ['valid'] }, // fine — kept
+          { field: 'nonexistent', in: ['x'] }, // unknown field
+          { field: 'keyword', range: { min: 1 } }, // operator ≠ field kind
+          { field: 'status', in: [] }, // empty membership
+          { field: 'size', range: {} }, // no usable bound
+        ],
+      },
+      schema,
+      { onIgnoredFilter: (filter) => ignored.push(filter) },
+    );
+    expect(params.filter_by).toBe('status:[`valid`]');
+    expect(ignored).toEqual([
+      { field: 'nonexistent', in: ['x'] },
+      { field: 'keyword', range: { min: 1 } },
+      { field: 'status', in: [] },
+      { field: 'size', range: {} },
+    ]);
   });
 
   it('compiles a one-sided range bound', () => {

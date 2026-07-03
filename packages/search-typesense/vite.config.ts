@@ -16,10 +16,10 @@ export default mergeConfig(
         // rethrow guards and best-effort cleanup paths are deliberately not
         // exercised, which is why branch coverage is lower.
         thresholds: {
-          functions: 96.87,
-          lines: 93.49,
-          branches: 84.05,
-          statements: 93.55,
+          functions: 96.92,
+          lines: 94.31,
+          branches: 86.91,
+          statements: 94.37,
         },
       },
     },

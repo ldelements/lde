@@ -6,8 +6,10 @@ import { physicalFields, type SearchField, type SearchType } from '@lde/search';
 export interface CollectionSchemaOptions {
   /** The Typesense collection (or alias) name. */
   readonly name: string;
-  /** Snowball stemming locale for non-localized searchable fields (default `nl`).
-   *  Localized text search fields stem in their own locale. */
+  /** Snowball stemming locale for non-localized searchable fields (e.g. `en`).
+   *  Unset, those fields are not stemmed — folding still applies — so no
+   *  language is ever assumed. Localized text search fields always stem in
+   *  their own locale. */
   readonly defaultLocale?: string;
   /** The field Typesense sorts by when a query imposes no order. */
   readonly defaultSortingField?: string;
@@ -22,15 +24,15 @@ export interface CollectionSchemaOptions {
  * ({@link physicalFields}); the Typesense field type is derived from the field
  * `kind`, never re-declared.
  *
- * Stemming is enabled on every folded `*_search` field: localized text stems
- * each `*_search_${locale}` in its own language, and a non-localized searchable
- * field stems in `defaultLocale`.
+ * Localized text stems each folded `*_search_${locale}` field in its own
+ * language; a non-localized searchable field stems in `defaultLocale` when one
+ * is set, and is left unstemmed (folded only) otherwise.
  */
 export function buildCollectionSchema(
   searchType: SearchType,
   options: CollectionSchemaOptions,
 ): CollectionCreateSchema {
-  const defaultLocale = options.defaultLocale ?? 'nl';
+  const { defaultLocale } = options;
   const collection: CollectionCreateSchema = {
     name: options.name,
     fields: searchType.fields.flatMap((field) =>
@@ -49,7 +51,7 @@ export function buildCollectionSchema(
 /** The physical Typesense fields one declaration produces. */
 function typesenseFields(
   field: SearchField,
-  defaultLocale: string,
+  defaultLocale: string | undefined,
   defaultSortingField: string | undefined,
 ): CollectionFieldSchema[] {
   const names = physicalFields(field);
@@ -105,8 +107,10 @@ function typesenseFields(
         name,
         type: valueType,
         optional: true,
-        stem: true,
-        locale: defaultLocale,
+        ...(defaultLocale !== undefined && {
+          stem: true,
+          locale: defaultLocale,
+        }),
       });
     }
   }

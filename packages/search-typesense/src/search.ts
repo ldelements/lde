@@ -6,6 +6,7 @@ import {
   physicalFields,
   referenceFields,
   type FacetBucket,
+  type Filter,
   type LocalizedValue,
   type Reference,
   type ResultDocument,
@@ -36,6 +37,12 @@ export interface TypesenseSearchEngineOptions {
    * id-only references rather than failing. Optional — omit to swallow silently.
    */
   readonly onLabelError?: (error: unknown) => void;
+  /**
+   * Called for each `where` clause the query compiler skips instead of sending
+   * to the engine (unknown field, operator not matching the field’s kind, empty
+   * `in` list or `range` bounds). Optional — omit to swallow silently.
+   */
+  readonly onIgnoredFilter?: (filter: Filter) => void;
   /**
    * Opt-in in-memory label cache. When set (and {@link labelsCollection} is
    * set), the FULL sidecar `labels` collection is loaded once via the documents
@@ -98,6 +105,7 @@ export function createTypesenseSearchEngine(
     ): Promise<SearchResult> {
       const params = buildSearchParams(query, searchType, {
         maxFacetValues: options.maxFacetValues,
+        onIgnoredFilter: options.onIgnoredFilter,
       });
       // Cached path: the once-loaded full collection serves labels by in-memory
       // lookup (no per-search round-trip). The load does not depend on the

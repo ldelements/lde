@@ -6,6 +6,7 @@ import { createTypesenseSearchEngine } from '../src/search.js';
 import { TypesenseContainer } from './typesense-container.js';
 
 const datasetSchema: SearchType = {
+  name: 'Dataset',
   type: 'http://www.w3.org/ns/dcat#Dataset',
   fields: [
     {

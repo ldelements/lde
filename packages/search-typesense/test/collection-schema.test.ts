@@ -3,6 +3,7 @@ import type { SearchType } from '@lde/search';
 import { buildCollectionSchema } from '../src/collection-schema.js';
 
 const schema: SearchType = {
+  name: 'Dataset',
   type: 'http://www.w3.org/ns/dcat#Dataset',
   fields: [
     {
@@ -188,5 +189,18 @@ describe('buildCollectionSchema', () => {
       stem: true,
       locale: 'nl',
     });
+  });
+
+  it('assumes no language: without defaultLocale the companion is folded but unstemmed', () => {
+    const withoutLocale = buildCollectionSchema(schema, { name: 'datasets' });
+    expect(withoutLocale.fields).toContainEqual({
+      name: 'keyword_search',
+      type: 'string[]',
+      optional: true,
+    });
+    // Localized text still stems per locale — that never depended on the default.
+    expect(withoutLocale.fields).toContainEqual(
+      expect.objectContaining({ name: 'title_search_nl', locale: 'nl' }),
+    );
   });
 });

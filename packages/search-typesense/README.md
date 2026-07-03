@@ -25,12 +25,13 @@ and `parseSearchResponse` are exported for direct use and testing.
 
 ## Indexing
 
-`rebuild` blue/green-rebuilds a search index in one call: it creates a fresh
-versioned collection (`${schema.name}_<timestamp>`), streams the documents into
-it in batches, atomically repoints the `schema.name` alias to it, then drops the
-collection it superseded. The caller passes only the logical index name (as
-`schema.name`) and a stream of documents; the versioned collection and the alias
-are managed for them.
+`rebuild` blue/green-rebuilds a search index in one call, straight from the
+declaration: it derives the collection schema from your `SearchType` (via
+`buildCollectionSchema`), creates a fresh versioned collection
+(`${name}_<timestamp>`), streams the documents into it in batches, atomically
+repoints the `name` alias to it, then drops the collection it superseded. The
+caller passes the `SearchType`, the logical index `name` and a stream of
+documents; the versioned collection and the alias are managed for them.
 
 ```ts
 import { Client } from 'typesense';
@@ -44,8 +45,12 @@ const client = new Client({
 // `documents` is an async iterable (e.g. a streaming projection); only one
 // batch is held in memory at a time. `rebuild` returns the live collection name
 // and the imported count (or `null` if another rebuild was already running).
-const result = await rebuild(client, schema, documents);
+const result = await rebuild(client, DATASET, documents, { name: 'datasets' });
 ```
+
+The options accept everything `buildCollectionSchema` does (`defaultLocale`,
+`defaultSortingField`, `synonymSets`) plus the rebuild knobs (`batchSize`,
+`lockTtlMs`).
 
 `rebuild` takes a `Client` the caller owns (and reuses for queries), so this
 package adds no connection or document type of its own – any object with an `id`

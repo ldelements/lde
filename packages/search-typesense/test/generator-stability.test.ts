@@ -10,6 +10,7 @@ import { buildCollectionSchema } from '../src/collection-schema.js';
  * surfaces as a snapshot diff before this library is published.
  */
 const THING: SearchType = {
+  name: 'Thing',
   type: 'https://example.org/Thing',
   fields: [
     {

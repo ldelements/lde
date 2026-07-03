@@ -1,12 +1,29 @@
-import type { Client, CollectionCreateSchema, ImportResponse } from 'typesense';
+import type { Client, ImportResponse } from 'typesense';
+import type { SearchType } from '@lde/search';
+import {
+  buildCollectionSchema,
+  type CollectionSchemaOptions,
+} from './collection-schema.js';
 
 const LOCK_COLLECTION = 'rebuild_locks';
 const DEFAULT_LOCK_TTL_MS = 10 * 60 * 1000;
 
+/** {@link rebuild} options: the collection-schema options (`name` is the
+ *  logical index name the alias is kept on) plus the rebuild tuning knobs. */
+export interface RebuildOptions extends CollectionSchemaOptions {
+  /** Documents imported per Typesense request (default 1000). */
+  readonly batchSize?: number;
+  /** A held lock older than this (ms) is reclaimed (default 10 minutes). */
+  readonly lockTtlMs?: number;
+}
+
 /**
- * Blue/green-rebuild the search index `name`.
+ * Blue/green-rebuild the search index `options.name` from one declarative
+ * source: the collection schema is derived from `searchType`
+ * ({@link buildCollectionSchema}) and the documents are streamed in — one call
+ * from declaration to live index.
  *
- * 1. create a fresh versioned collection (`${name}_<timestamp>`) from `schema`
+ * 1. create a fresh versioned collection (`${name}_<timestamp>`)
  * 2. stream `documents` into it in batches
  * 3. atomically repoint the `name` alias to the new collection, then
  *    drop the collection it superseded. The caller passes only the logical
@@ -40,17 +57,17 @@ const DEFAULT_LOCK_TTL_MS = 10 * 60 * 1000;
  */
 export async function rebuild<Document extends { id: string }>(
   client: Client,
-  schema: CollectionCreateSchema,
+  searchType: SearchType,
   documents: AsyncIterable<Document>,
-  options: {
-    /** Documents imported per Typesense request (default 1000). */
-    batchSize?: number;
-    /** A held lock older than this (ms) is reclaimed (default 10 minutes). */
-    lockTtlMs?: number;
-  } = {},
+  options: RebuildOptions,
 ): Promise<{ collection: string; imported: number } | null> {
-  const { batchSize = 1000, lockTtlMs = DEFAULT_LOCK_TTL_MS } = options;
-  const name = schema.name;
+  const {
+    batchSize = 1000,
+    lockTtlMs = DEFAULT_LOCK_TTL_MS,
+    ...schemaOptions
+  } = options;
+  const schema = buildCollectionSchema(searchType, schemaOptions);
+  const name = schemaOptions.name;
   if (!(await acquireLock(client, name, lockTtlMs))) {
     return null;
   }

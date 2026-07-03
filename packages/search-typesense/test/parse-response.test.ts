@@ -8,6 +8,7 @@ import {
 } from '../src/search.js';
 
 const schema: SearchType = {
+  name: 'Dataset',
   type: 'http://www.w3.org/ns/dcat#Dataset',
   fields: [
     {
@@ -151,6 +152,7 @@ describe('parseSearchResponse', () => {
 
 describe('parseSearchResponse range facets', () => {
   const rangeSchema: SearchType = {
+    name: 'Dataset',
     type: 'http://www.w3.org/ns/dcat#Dataset',
     fields: [
       {

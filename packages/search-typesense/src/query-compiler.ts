@@ -2,6 +2,7 @@ import type { SearchParams } from 'typesense/lib/Typesense/Documents.js';
 import { fold } from '@lde/text-normalization';
 import {
   fieldNamed,
+  filterOperatorFor,
   isoToUnixSeconds,
   isRangeFacet,
   pageForOffset,
@@ -31,6 +32,14 @@ export interface CompileOptions {
    * range count is still safe.
    */
   readonly maxFacetValues?: number;
+  /**
+   * Called for each `where` clause that compiles to nothing and is therefore
+   * skipped: an unknown field, an operator that does not match the field’s
+   * kind ({@link filterOperatorFor}), an empty `in` list, or a `range` with no
+   * usable bound. Skipping keeps a malformed clause from reaching the engine
+   * as garbage; supply this to log it instead of losing it silently.
+   */
+  readonly onIgnoredFilter?: (filter: Filter) => void;
 }
 
 export function buildSearchParams(
@@ -43,7 +52,11 @@ export function buildSearchParams(
       ? fold(query.text)
       : undefined;
   const { names, weights } = queryFields(searchType, query.locale);
-  const filterBy = compileFilterBy(query.where, searchType);
+  const filterBy = compileFilterBy(
+    query.where,
+    searchType,
+    options.onIgnoredFilter,
+  );
   const sortBy = query.orderBy
     .map((sort) => compileSort(sort, searchType, query.locale))
     .join(',');
@@ -135,13 +148,21 @@ function queryFields(
   return { names, weights };
 }
 
-/** AND-join the compiled `where` clauses; skips unknown fields and empty clauses. */
+/** AND-join the compiled `where` clauses; a clause that compiles to nothing is
+ *  skipped and reported to `onIgnoredFilter`. */
 function compileFilterBy(
   where: readonly Filter[],
   searchType: SearchType,
+  onIgnoredFilter: ((filter: Filter) => void) | undefined,
 ): string {
   return where
-    .map((filter) => compileFilter(filter, searchType))
+    .map((filter) => {
+      const clause = compileFilter(filter, searchType);
+      if (clause === undefined) {
+        onIgnoredFilter?.(filter);
+      }
+      return clause;
+    })
     .filter((clause): clause is string => clause !== undefined)
     .join(' && ');
 }
@@ -154,6 +175,11 @@ function compileFilter(
   if (field === undefined) {
     return undefined;
   }
+  // A clause whose operator does not match the field's kind (e.g. `range` on a
+  // keyword) would reach the engine as garbage syntax — skip it instead.
+  if (filterOperatorFor(field.kind) !== filterOperator(filter)) {
+    return undefined;
+  }
   if ('in' in filter) {
     return filter.in.length > 0
       ? compileMembership(field, filter.in)
@@ -163,6 +189,11 @@ function compileFilter(
     return compileRange(field, filter.range);
   }
   return `${field.name}:=${filter.is}`;
+}
+
+/** The operator a {@link Filter} value carries, from its discriminating key. */
+function filterOperator(filter: Filter): 'in' | 'range' | 'is' {
+  return 'in' in filter ? 'in' : 'range' in filter ? 'range' : 'is';
 }
 
 /**
