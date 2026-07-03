@@ -49,11 +49,11 @@ NodeShape + its `search:` annotations. **One `SearchField` declaration drives fo
 consumers** – projection (RDF→flat document), the engine collection schema, the query
 semantics, and the GraphQL surface – so they cannot drift.
 
-It is a **unified** model: one declaration in place of three otherwise-separate ones – the
-projection-side `FieldSpec`/`FieldKind`, the Typesense `SEARCH_FIELDS` (collection schema +
-weights), and the query model below. `kind` plus capability flags replace the discriminated
-projection kinds, derived fields are first-class, and the Typesense-vocabulary types are
-_derived_ from `kind` rather than re-declared.
+It is a **unified** model: a single declaration carries the projection, the collection
+schema and search weights, and the query semantics – concerns that would otherwise each
+need their own per-field configuration, free to drift apart. `kind` plus independent
+capability flags express them all, derived fields are first-class, and the
+Typesense-vocabulary types are _derived_ from `kind`, never declared.
 
 ```ts
 type FieldKind =
@@ -99,8 +99,7 @@ Maps onto SHACL + `search:` (`kind`←`sh:datatype`/`sh:nodeKind`, `path`←`sh:
 `sortable`←`search:sortable`, `ref`←`sh:node`/`sh:class` + `search:nestedStrategy`) so an
 eventual generator emits it unchanged. A field with **no `path`** is a derived field –
 populated by a `Derivation` rather than projected from the IR – yet it still carries full
-query/schema/output behavior, which is how the former separate projection `FieldSpec` is
-subsumed. The physical field names a declaration fans out to (`${name}_search_${locale}`,
+query/schema/output behavior. The physical field names a declaration fans out to (`${name}_search_${locale}`,
 `${name}_sort_${locale}`, `${name}_search`) follow one convention owned by
 `@lde/search`, so projection, collection schema and query compiler agree. The `status_rank`
 tie-break sort is a **deployment-specific delta**, never in `@lde/search`. Grouped facets need
@@ -315,9 +314,8 @@ not enabled for DR v1, more relevant for B/C.
 
 - One declarative source drives GraphQL, later REST, and the index; they cannot drift.
 - The engine is a swappable adapter; the contract outlives engine choices.
-- Carried through: the Stable API Contract discipline, the reference `strategy` concept, the
-  surface `LanguageString` list, folding at the adapter boundary + query side via
-  `@lde/text-normalization`, SDL-in-projection vs filter-compiler-in-adapter.
+- Folding (case/diacritics) happens at the adapter boundary and on the query side via
+  `@lde/text-normalization`, so index and query normalize identically.
 - Deferred: REST surface; framed-JSON-LD materialised view (nested storage, index-time
   label inlining, detail-page-on-index, terms-collection split); semantic/hybrid (vector)
   search.
