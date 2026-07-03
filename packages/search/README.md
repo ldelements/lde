@@ -32,8 +32,9 @@ and the API output in a single place.
 
 ## Terminology
 
-The model has three levels, mirroring both SHACL (the source vocabulary) and
-GraphQL (one of the surfaces):
+The model has three levels, with analogues in SHACL (one possible source — see
+[Why a declarative model](#why-a-declarative-model)) and GraphQL (one of the
+surfaces):
 
 | Term           | What it is                                                                                                      | SHACL          | GraphQL     |
 | -------------- | --------------------------------------------------------------------------------------------------------------- | -------------- | ----------- |
@@ -56,13 +57,13 @@ query compiler all share.
 
 ```ts
 import {
+  defineSearchType,
   projectGraph,
   irisOf,
   searchSchema,
-  type SearchType,
 } from '@lde/search';
 
-const DATASET = {
+const DATASET = defineSearchType({
   type: 'http://www.w3.org/ns/dcat#Dataset',
   fields: [
     // → title_nl, title_en, title_search_nl/_en, title_sort_nl/_en
@@ -95,16 +96,17 @@ const DATASET = {
       document.classCount = irisOf(node, 'urn:dr:class').length;
     },
   ],
-} as const satisfies SearchType;
+});
 
 for await (const document of projectGraph(quads, searchSchema(DATASET))) {
   // one flat search document per matching subject, streamed
 }
 ```
 
-Capturing the type with `as const satisfies SearchType` keeps the field
-literals, so the API surface can derive typed facet/output keys from it (see
-`@lde/search-api-graphql`).
+`defineSearchType` captures the declaration as a literal (what
+`as const satisfies SearchType` would do manually, with nothing to remember),
+so typed facet/output keys can be derived from it — see
+[Typed results](#typed-results) and `@lde/search-api-graphql`.
 
 **Kinds** (`FieldKind`): `text`, `keyword`, `integer`, `number`, `boolean`,
 `date`, `reference`. The Typesense/engine vocabulary and the GraphQL types are
@@ -166,6 +168,32 @@ or index and query normalize differently and matches silently miss. This contrac
 holds for **any** consumer, including an API built on this package — which is why
 engine adapters and surfaces compile through the shared `SearchQuery` IR and the
 `physicalFields` convention rather than re-deriving field names.
+
+## Typed results
+
+The `SearchEngine` port is loosely typed by default: facet and document keys
+are plain strings. That is the correct contract for an adapter (which cannot
+know your fields) and for a surface that builds queries from client input at
+runtime. An **in-process caller that knows its search type at compile time**
+should narrow the engine with `engineFor` — same instance, zero runtime cost:
+
+```ts
+import { engineFor } from '@lde/search';
+
+const datasetEngine = engineFor(DATASET, engine);
+
+const result = await datasetEngine.search(query, DATASET);
+result.facets.publisher; // typed: only DATASET’s facetable fields are keys
+result.facets.publsher; // compile error (typo)
+result.hits[0].document.title; // typed: only DATASET’s output fields are keys
+await datasetEngine.search(query, OTHER_TYPE); // compile error (wrong type)
+```
+
+This only works when the search type was declared with `defineSearchType` (or
+captured `as const satisfies SearchType`); a plain `: SearchType` annotation
+widens the field literals away. The underlying pieces (`EngineFor`,
+`FacetFieldsOf`, `OutputFieldsOf`) are exported for annotating your own
+signatures.
 
 ## Why a declarative model
 

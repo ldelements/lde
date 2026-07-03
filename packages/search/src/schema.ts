@@ -2,12 +2,11 @@ import type { FramedNode } from './frame-by-type.js';
 import type { SearchDocument } from './project.js';
 
 /**
- * The engine-neutral kind of a queryable field — the runtime form of one SHACL
- * property shape’s datatype/nodeKind. It drives every downstream behavior:
- * which physical fields the projection emits, the engine collection-schema
- * type, the `where`/facet/sort semantics, and the GraphQL output/input type.
- * The Typesense-vocabulary types (`string`, `int32`, …) are *derived* from this
- * by the engine adapter, never declared here.
+ * The engine-neutral kind of a queryable field. It drives every downstream
+ * behavior: which physical fields the projection emits, the engine
+ * collection-schema type, the `where`/facet/sort semantics, and the GraphQL
+ * output/input type. The Typesense-vocabulary types (`string`, `int32`, …) are
+ * *derived* from this by the engine adapter, never declared here.
  */
 export type FieldKind =
   | 'text'
@@ -21,10 +20,7 @@ export type FieldKind =
 /**
  * One queryable field — the single declarative source that drives all four
  * consumers (projection, engine collection schema, query semantics, and the
- * GraphQL surface). The vocabulary mirrors SHACL + the `search:` annotations so
- * a generator can later emit it unchanged from shapes:
- * `kind`←`sh:datatype`/`sh:nodeKind`, `path`←`sh:path`, `array`←`sh:maxCount`,
- * `localized`←`rdf:langString`/`sh:languageIn`, `ref`←`sh:node`/`sh:class`.
+ * GraphQL surface).
  *
  * Capability flags (`searchable`/`filterable`/`facetable`/`sortable`/`output`)
  * are independent opt-ins: a field exposes exactly the roles it declares. A
@@ -36,18 +32,24 @@ export type FieldKind =
  * keys) follow one convention, owned by
  * {@link physicalFields} so projection, collection-schema and query compiler
  * cannot disagree.
+ *
+ * SHACL is one possible *source*, not a dependency: a generator can emit a
+ * declaration from a NodeShape + `search:` annotations
+ * (`kind`←`sh:datatype`/`sh:nodeKind`, `path`←`sh:path`, `array`←`sh:maxCount`,
+ * `localized`←`rdf:langString`/`sh:languageIn`, `ref`←`sh:node`/`sh:class`),
+ * and a hand-written declaration is just as valid.
  */
 export interface SearchField {
   /** Logical API name; the physical fanout derives from it. Declare camelCase
    *  where it surfaces in GraphQL. */
   readonly name: string;
   readonly kind: FieldKind;
-  /** Framed-IR predicate IRI to project from (the SHACL `sh:path`). Omit for a
+  /** Framed-IR predicate IRI to project from. Omit for a
    *  derivation-populated field. */
   readonly path?: string;
-  /** Multi-valued (`sh:maxCount > 1`). */
+  /** Multi-valued. */
   readonly array?: boolean;
-  /** Always present (`sh:minCount ≥ 1`): a non-null scalar in the API output and
+  /** Always present: a non-null scalar in the API output and
    *  a non-optional field in the engine index. Moot for arrays/booleans/`id`,
    *  which are non-null regardless. */
   readonly required?: boolean;
@@ -105,10 +107,10 @@ export interface FacetRange {
 export type Derivation = (document: SearchDocument, node: FramedNode) => void;
 
 /**
- * One root type’s complete search declaration — the runtime form of a single
- * SHACL NodeShape: `type` is its `sh:targetClass`, `fields` are its property
- * shapes (and derived fields), `derivations` are its `sh:rule`-shaped computed
- * fields. A generator emits one of these per NodeShape.
+ * One root type’s complete search declaration: the `type` IRI its documents are
+ * instances of, the queryable `fields`, and the computed `derivations`. A SHACL
+ * generator can emit one per NodeShape (`type`←`sh:targetClass`, `fields`←its
+ * property shapes), but that is a source, not a requirement.
  */
 export interface SearchType {
   readonly type: string;
@@ -117,9 +119,22 @@ export interface SearchType {
 }
 
 /**
+ * Declare a {@link SearchType}, capturing it as a literal: the `const` type
+ * parameter preserves the field names and capability flags that the type-level
+ * helpers (`FacetFieldsOf`, `OutputFieldsOf`, `EngineFor`) read off the type —
+ * with none of the widening a plain `: SearchType` annotation causes and
+ * without having to remember `as const satisfies SearchType`. Identity at
+ * runtime.
+ */
+export function defineSearchType<const Type extends SearchType>(
+  searchType: Type,
+): Type {
+  return searchType;
+}
+
+/**
  * The complete search declaration of a deployment: every root {@link SearchType},
- * keyed by its `type` IRI — the runtime form of a whole SHACL shapes graph.
- * Build one with {@link searchSchema}.
+ * keyed by its `type` IRI. Build one with {@link searchSchema}.
  */
 export type SearchSchema = ReadonlyMap<string, SearchType>;
 

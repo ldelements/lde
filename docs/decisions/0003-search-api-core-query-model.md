@@ -44,10 +44,10 @@ behind the adapter and is swappable with no consumer impact. Nothing engine-spec
 
 ### Field model
 
-The engine-neutral description of a queryable field – the runtime form of one SHACL
-NodeShape + its `search:` annotations. **One `SearchField` declaration drives four
-consumers** – projection (RDF→flat document), the engine collection schema, the query
-semantics, and the GraphQL surface – so they cannot drift.
+The engine-neutral description of a queryable field. **One `SearchField` declaration drives
+four consumers** – projection (RDF→flat document), the engine collection schema, the query
+semantics, and the GraphQL surface – so they cannot drift. SHACL is one possible source
+(see the mapping below), not a dependency: a hand-written declaration is just as valid.
 
 It is a **unified** model: a single declaration carries the projection, the collection
 schema and search weights, and the query semantics – concerns that would otherwise each
@@ -195,15 +195,19 @@ SearchEngine` readable.
 
 ```ts
 // FacetField / OutputField default to `string` (ergonomic) and a deployment narrows them
-// to its type’s facetable / output field names for typo-safe facet and document access
-// (helpers FacetFieldsOf<Type> / OutputFieldsOf<Type>, or the EngineFor<Type> alias).
+// to its type’s facetable / output field names for typo-safe facet and document access;
+// Type narrows the accepted searchType argument alongside, so a narrowed engine cannot be
+// handed the wrong search type. The ergonomic route is engineFor(searchType, engine) over
+// a defineSearchType declaration (helpers FacetFieldsOf<Type> / OutputFieldsOf<Type> and
+// the EngineFor<Type> alias are exported for hand-written signatures).
 interface SearchEngine<
   FacetField extends string = string,
   OutputField extends string = string,
+  Type extends SearchType = SearchType,
 > {
   search(
     query: SearchQuery,
-    searchType: SearchType,
+    searchType: Type,
   ): Promise<SearchResult<FacetField, OutputField>>;
 }
 
