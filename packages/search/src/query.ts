@@ -1,4 +1,4 @@
-import type { FieldKind } from './schema.js';
+import { fieldNamed, type FieldKind, type SearchType } from './schema.js';
 
 /**
  * The engine- and protocol-neutral query IR. Every API surface compiles its
@@ -69,6 +69,107 @@ const OPERATOR_BY_KIND: Readonly<
  */
 export function filterOperatorFor(kind: FieldKind): FilterOperator | undefined {
   return OPERATOR_BY_KIND[kind];
+}
+
+/** The operator a {@link Filter} value carries, from its discriminating key. */
+export function filterOperator(filter: Filter): FilterOperator {
+  return 'in' in filter ? 'in' : 'range' in filter ? 'range' : 'is';
+}
+
+/**
+ * One structural problem {@link validateQuery} found: the query references a
+ * field the search type does not declare, or uses it in a role it does not
+ * opt into. Vacuous-but-valid clauses (an empty `in` list, a `range` with no
+ * bound) are NOT issues — a compiler skips those as no-ops.
+ */
+export interface QueryIssue {
+  readonly part: 'where' | 'facets' | 'orderBy';
+  readonly field: string;
+  readonly reason:
+    | 'unknown-field'
+    | 'not-filterable'
+    | 'operator-mismatch'
+    | 'not-facetable';
+}
+
+/**
+ * Structurally validate a query against its search type: every `where` clause
+ * targets a declared, `filterable` field with the operator its kind accepts
+ * ({@link filterOperatorFor}); every requested facet is a declared, `facetable`
+ * field; every sort is `relevance` or a declared field. Sorting deliberately
+ * checks declaration only, not the `sortable` flag: that flag means *publicly
+ * selectable*, and a deployment policy may sort on a private tie-break field.
+ *
+ * This is the port’s always-on guard: every {@link SearchEngine} adapter MUST
+ * reject a query with issues ({@link assertValidQuery}) instead of passing
+ * garbage to its engine, so validation holds for every caller — including
+ * `queryDefaults` policies and surfaces weaker than GraphQL.
+ */
+export function validateQuery(
+  query: SearchQuery,
+  searchType: SearchType,
+): readonly QueryIssue[] {
+  const issues: QueryIssue[] = [];
+  for (const filter of query.where) {
+    const field = fieldNamed(searchType, filter.field);
+    if (field === undefined) {
+      issues.push({
+        part: 'where',
+        field: filter.field,
+        reason: 'unknown-field',
+      });
+    } else if (field.filterable !== true) {
+      issues.push({
+        part: 'where',
+        field: filter.field,
+        reason: 'not-filterable',
+      });
+    } else if (filterOperatorFor(field.kind) !== filterOperator(filter)) {
+      issues.push({
+        part: 'where',
+        field: filter.field,
+        reason: 'operator-mismatch',
+      });
+    }
+  }
+  for (const name of query.facets) {
+    const field = fieldNamed(searchType, name);
+    if (field === undefined) {
+      issues.push({ part: 'facets', field: name, reason: 'unknown-field' });
+    } else if (field.facetable !== true) {
+      issues.push({ part: 'facets', field: name, reason: 'not-facetable' });
+    }
+  }
+  for (const sort of query.orderBy) {
+    if (
+      sort.field !== 'relevance' &&
+      fieldNamed(searchType, sort.field) === undefined
+    ) {
+      issues.push({
+        part: 'orderBy',
+        field: sort.field,
+        reason: 'unknown-field',
+      });
+    }
+  }
+  return issues;
+}
+
+/** Throw on the first structurally invalid query part ({@link validateQuery}),
+ *  naming every issue. The always-on entry point for engine adapters. */
+export function assertValidQuery(
+  query: SearchQuery,
+  searchType: SearchType,
+): void {
+  const issues = validateQuery(query, searchType);
+  if (issues.length > 0) {
+    const detail = issues
+      .map((issue) => `${issue.part}: “${issue.field}” (${issue.reason})`)
+      .join(', ');
+    throw new Error(
+      `Invalid search query for “${searchType.name}”: ${detail}.`,
+    );
+  }
 }
 
 /**

@@ -224,4 +224,32 @@ describe('createTypesenseSearchEngine (integration)', () => {
       },
     ]);
   });
+
+  it('always rejects a structurally invalid query, before reaching the engine', async () => {
+    await expect(
+      engine.search(
+        { ...baseQuery, where: [{ field: 'nonexistent', in: ['x'] }] },
+        datasetSchema,
+      ),
+    ).rejects.toThrow(/Invalid search query for “Dataset”/);
+    await expect(
+      engine.search({ ...baseQuery, facets: ['title'] }, datasetSchema),
+    ).rejects.toThrow(/not-facetable/);
+  });
+
+  it('reports a vacuous where clause via onIgnoredFilter and still searches', async () => {
+    const ignored: unknown[] = [];
+    const reporting = createTypesenseSearchEngine(client, {
+      collection: 'datasets',
+      onIgnoredFilter: (filter) => ignored.push(filter),
+    });
+
+    const result = await reporting.search(
+      { ...baseQuery, where: [{ field: 'status', in: [] }] },
+      datasetSchema,
+    );
+
+    expect(result.total).toBeGreaterThan(0); // empty membership = no constraint
+    expect(ignored).toEqual([{ field: 'status', in: [] }]);
+  });
 });

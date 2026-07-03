@@ -141,6 +141,14 @@ describe('buildSearchParams', () => {
     ]);
   });
 
+  it('skips a non-compiling clause silently when no onIgnoredFilter is given', () => {
+    const params = buildSearchParams(
+      { ...base, where: [{ field: 'nonexistent', in: ['x'] }] },
+      schema,
+    );
+    expect(params.filter_by).toBeUndefined();
+  });
+
   it('compiles a one-sided range bound', () => {
     expect(
       buildSearchParams(

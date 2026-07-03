@@ -2,6 +2,7 @@ import type { SearchParams } from 'typesense/lib/Typesense/Documents.js';
 import { fold } from '@lde/text-normalization';
 import {
   fieldNamed,
+  filterOperator,
   filterOperatorFor,
   isoToUnixSeconds,
   isRangeFacet,
@@ -189,11 +190,6 @@ function compileFilter(
     return compileRange(field, filter.range);
   }
   return `${field.name}:=${filter.is}`;
-}
-
-/** The operator a {@link Filter} value carries, from its discriminating key. */
-function filterOperator(filter: Filter): 'in' | 'range' | 'is' {
-  return 'in' in filter ? 'in' : 'range' in filter ? 'range' : 'is';
 }
 
 /**

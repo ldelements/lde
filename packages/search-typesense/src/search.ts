@@ -1,5 +1,6 @@
 import type { Client } from 'typesense';
 import {
+  assertValidQuery,
   fieldNamed,
   isRangeFacet,
   outputFields,
@@ -38,9 +39,10 @@ export interface TypesenseSearchEngineOptions {
    */
   readonly onLabelError?: (error: unknown) => void;
   /**
-   * Called for each `where` clause the query compiler skips instead of sending
-   * to the engine (unknown field, operator not matching the field’s kind, empty
-   * `in` list or `range` bounds). Optional — omit to swallow silently.
+   * Called for each vacuous `where` clause the query compiler skips as a no-op
+   * (an empty `in` list, a `range` with no usable bound). Structurally invalid
+   * queries never get this far — the engine rejects them up front
+   * (`assertValidQuery`). Optional — omit to swallow silently.
    */
   readonly onIgnoredFilter?: (filter: Filter) => void;
   /**
@@ -103,6 +105,9 @@ export function createTypesenseSearchEngine(
       query: SearchQuery,
       searchType: SearchType,
     ): Promise<SearchResult> {
+      // The port contract: a structurally invalid query (unknown field, wrong
+      // operator, unknown facet) is rejected up front, for EVERY caller.
+      assertValidQuery(query, searchType);
       const params = buildSearchParams(query, searchType, {
         maxFacetValues: options.maxFacetValues,
         onIgnoredFilter: options.onIgnoredFilter,

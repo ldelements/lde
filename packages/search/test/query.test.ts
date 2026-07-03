@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { filterOperatorFor, pageForOffset } from '../src/query.js';
+import {
+  assertValidQuery,
+  filterOperatorFor,
+  pageForOffset,
+  validateQuery,
+  type SearchQuery,
+} from '../src/query.js';
+import type { SearchType } from '../src/schema.js';
 
 describe('filterOperatorFor', () => {
   it('maps each field kind to its `where` operator', () => {
@@ -10,6 +17,100 @@ describe('filterOperatorFor', () => {
     expect(filterOperatorFor('number')).toBe('range');
     expect(filterOperatorFor('date')).toBe('range');
     expect(filterOperatorFor('boolean')).toBe('is');
+  });
+});
+
+describe('validateQuery', () => {
+  const searchType: SearchType = {
+    name: 'Dataset',
+    type: 'http://www.w3.org/ns/dcat#Dataset',
+    fields: [
+      { name: 'status', kind: 'keyword', facetable: true, filterable: true },
+      { name: 'size', kind: 'integer', filterable: true },
+      { name: 'license', kind: 'keyword' }, // declared, but no roles opted into
+      { name: 'statusRank', kind: 'integer', sortable: true },
+    ],
+  };
+  const base: SearchQuery = {
+    where: [],
+    orderBy: [],
+    limit: 10,
+    offset: 0,
+    facets: [],
+    locale: 'nl',
+  };
+
+  it('accepts a structurally valid query', () => {
+    expect(
+      validateQuery(
+        {
+          ...base,
+          where: [
+            { field: 'status', in: ['valid'] },
+            { field: 'size', range: { min: 1 } },
+          ],
+          facets: ['status'],
+          orderBy: [
+            { field: 'relevance', direction: 'desc' },
+            // Declared but not `sortable`: allowed — `sortable` means publicly
+            // selectable, and deployment policy may sort on a private tie-break.
+            { field: 'statusRank', direction: 'asc' },
+          ],
+        },
+        searchType,
+      ),
+    ).toEqual([]);
+  });
+
+  it('accepts vacuous clauses: they are no-ops, not structural issues', () => {
+    expect(
+      validateQuery(
+        {
+          ...base,
+          where: [
+            { field: 'status', in: [] },
+            { field: 'size', range: {} },
+          ],
+        },
+        searchType,
+      ),
+    ).toEqual([]);
+  });
+
+  it('flags every structurally invalid part', () => {
+    const issues = validateQuery(
+      {
+        ...base,
+        where: [
+          { field: 'nonexistent', in: ['x'] },
+          { field: 'license', in: ['MIT'] },
+          { field: 'status', range: { min: 1 } },
+        ],
+        facets: ['nonexistent', 'size'],
+        orderBy: [{ field: 'nonexistent', direction: 'asc' }],
+      },
+      searchType,
+    );
+    expect(issues).toEqual([
+      { part: 'where', field: 'nonexistent', reason: 'unknown-field' },
+      { part: 'where', field: 'license', reason: 'not-filterable' },
+      { part: 'where', field: 'status', reason: 'operator-mismatch' },
+      { part: 'facets', field: 'nonexistent', reason: 'unknown-field' },
+      { part: 'facets', field: 'size', reason: 'not-facetable' },
+      { part: 'orderBy', field: 'nonexistent', reason: 'unknown-field' },
+    ]);
+  });
+
+  it('assertValidQuery names the type and every issue', () => {
+    expect(() =>
+      assertValidQuery(
+        { ...base, where: [{ field: 'nonexistent', in: ['x'] }] },
+        searchType,
+      ),
+    ).toThrow(
+      'Invalid search query for “Dataset”: where: “nonexistent” (unknown-field).',
+    );
+    expect(() => assertValidQuery(base, searchType)).not.toThrow();
   });
 });
 

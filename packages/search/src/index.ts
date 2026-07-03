@@ -32,9 +32,22 @@ export type {
   FacetRange,
 } from './schema.js';
 
-// Engine- and protocol-neutral query IR + filter semantics.
-export { filterOperatorFor, pageForOffset } from './query.js';
-export type { SearchQuery, Filter, Sort, FilterOperator } from './query.js';
+// Engine- and protocol-neutral query IR + filter semantics, and the always-on
+// structural query validation every engine adapter enforces.
+export {
+  filterOperatorFor,
+  filterOperator,
+  validateQuery,
+  assertValidQuery,
+  pageForOffset,
+} from './query.js';
+export type {
+  SearchQuery,
+  Filter,
+  Sort,
+  FilterOperator,
+  QueryIssue,
+} from './query.js';
 
 // Engine port + the logical result document returned across it.
 export { engineFor } from './engine.js';

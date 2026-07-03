@@ -191,6 +191,14 @@ holds for **any** consumer, including an API built on this package — which is 
 engine adapters and surfaces compile through the shared `SearchQuery` IR and the
 `physicalFields` convention rather than re-deriving field names.
 
+Queries are **always validated**: the port contract requires every engine
+adapter to reject a structurally invalid `SearchQuery` (`assertValidQuery`) —
+unknown or non-`filterable` fields in `where`, an operator not matching the
+field’s kind, non-`facetable` facet requests — no matter which surface or
+policy produced it. A typed surface like GraphQL makes most of these
+unrepresentable; the port enforces them for everyone else (deployment
+`queryDefaults`, in-process callers, weaker-typed surfaces).
+
 ## Typed results
 
 The `SearchEngine` port is loosely typed by default: facet and document keys

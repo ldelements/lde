@@ -17,11 +17,13 @@ search/sort keys) matches what the projection writes, via
 `@lde/search`’s `physicalFields`, so the index and the documents cannot drift.
 
 `createTypesenseSearchEngine(client, { collection, labelsCollection })` is the
-`SearchEngine` implementation: it compiles the query, runs the search, resolves
-reference (and reference-facet) labels from the sidecar `labels` collection in a
-single lookup, and reconstructs the logical `SearchResult` — language maps,
-labelled references, labelled facet buckets. The pure halves `buildSearchParams`
-and `parseSearchResponse` are exported for direct use and testing.
+`SearchEngine` implementation: it validates the query against the search type
+(the port contract — a structurally invalid query is rejected, never sent),
+compiles it, runs the search, resolves reference (and reference-facet) labels
+from the sidecar `labels` collection in a single lookup, and reconstructs the
+logical `SearchResult` — language maps, labelled references, labelled facet
+buckets. The pure halves `buildSearchParams` and `parseSearchResponse` are
+exported for direct use and testing.
 
 ## Indexing
 

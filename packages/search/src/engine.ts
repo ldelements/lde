@@ -10,6 +10,12 @@ import type { SearchType } from './schema.js';
  * any consumer noticing.
  * Nothing engine-specific and nothing RDF-specific leaks past this port.
  *
+ * Port contract: an adapter ALWAYS validates the incoming query against the
+ * search type (`assertValidQuery`) and rejects a structurally invalid one —
+ * unknown or non-filterable fields, mismatched operators, unknown facets —
+ * rather than passing garbage to its engine. Validation is not the caller’s
+ * job: it must hold for every surface and for injected deployment policy.
+ *
  * `FacetField` keys the returned facet map; it defaults to `string` so an engine
  * stays ergonomic, and a deployment can narrow it to its own facet-field union
  * (see {@link FacetFieldsOf}) for typo-safe facet access. `Type` narrows the
