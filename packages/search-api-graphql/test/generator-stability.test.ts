@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { SearchType } from '@lde/search';
+import { searchSchema, type SearchType } from '@lde/search';
 import { printGraphQLSchema } from '../src/build-schema.js';
 
 /**
@@ -92,6 +92,10 @@ const THING: SearchType = {
 
 describe('GraphQL generator stability', () => {
   it('emits a stable SDL for a representative schema', () => {
-    expect(printGraphQLSchema(THING, { typeName: 'Thing' })).toMatchSnapshot();
+    expect(
+      printGraphQLSchema(searchSchema(THING), {
+        types: { [THING.type]: { typeName: 'Thing' } },
+      }),
+    ).toMatchSnapshot();
   });
 });

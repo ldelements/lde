@@ -146,7 +146,7 @@ await pipeline.run();
 <tr>
   <td><a href="packages/search-api-graphql">@lde/search-api-graphql</a></td>
   <td><a href="https://www.npmjs.com/package/@lde/search-api-graphql"><img src="https://img.shields.io/npm/v/@lde/search-api-graphql" alt="npm"></a></td>
-  <td>Engine- and domain-agnostic GraphQL surface for search: builds an executable GraphQL schema from any SearchType at runtime</td>
+  <td>Engine- and domain-agnostic GraphQL surface for search: builds an executable GraphQL schema from a SearchSchema at runtime, one root query field per type</td>
 </tr>
 <tr>
   <td><a href="packages/search-typesense">@lde/search-typesense</a></td>

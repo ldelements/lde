@@ -6,8 +6,8 @@ import type { SearchType } from './schema.js';
  * `@lde/search-typesense`’s `TypesenseSearchEngine`) implements. The adapter
  * owns every engine specific (companion-field expansion, full-text field
  * selection and weights, filter compilation, sorting, result folding, faceting)
- * and returns only logical
- * documents, so a deployment can swap engines without any consumer noticing.
+ * and returns only logical documents, so a deployment can swap engines without
+ * any consumer noticing.
  * Nothing engine-specific and nothing RDF-specific leaks past this port.
  *
  * `FacetField` keys the returned facet map; it defaults to `string` so an engine

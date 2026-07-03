@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { graphql, printSchema } from 'graphql';
-import type {
-  SearchEngine,
-  SearchQuery,
-  SearchResult,
-  SearchType,
+import {
+  searchSchema,
+  type SearchEngine,
+  type SearchQuery,
+  type SearchResult,
+  type SearchType,
 } from '@lde/search';
 import { buildGraphQLSchema, type SearchContext } from '../src/build-schema.js';
 
@@ -119,13 +120,17 @@ const canned: SearchResult = {
   facets: { keyword: [{ value: 'kaarten', count: 3 }] },
 };
 
+const datasetOptions = {
+  types: { [schema.type]: { typeName: 'Dataset' } },
+};
+
 async function run(
   source: string,
   context: SearchContext,
   variables?: Record<string, unknown>,
 ) {
   return graphql({
-    schema: buildGraphQLSchema(schema, { typeName: 'Dataset' }),
+    schema: buildGraphQLSchema(searchSchema(schema), datasetOptions),
     source,
     contextValue: context,
     variableValues: variables,
@@ -454,13 +459,17 @@ describe('buildGraphQLSchema', () => {
         return canned;
       },
     };
-    const gqlSchema = buildGraphQLSchema(schema, {
-      typeName: 'Dataset',
-      queryDefaults: (query) => ({
-        ...query,
-        where: [...query.where, { field: 'status', in: ['valid'] }],
-        orderBy: [{ field: 'relevance', direction: 'desc' }],
-      }),
+    const gqlSchema = buildGraphQLSchema(searchSchema(schema), {
+      types: {
+        [schema.type]: {
+          typeName: 'Dataset',
+          queryDefaults: (query) => ({
+            ...query,
+            where: [...query.where, { field: 'status', in: ['valid'] }],
+            orderBy: [{ field: 'relevance', direction: 'desc' }],
+          }),
+        },
+      },
     });
     await graphql({
       schema: gqlSchema,
@@ -475,7 +484,7 @@ describe('buildGraphQLSchema', () => {
 
   it('derives nullability: required scalar non-null, optional scalar nullable, arrays/booleans non-null', () => {
     const sdl = printSchema(
-      buildGraphQLSchema(schema, { typeName: 'Dataset' }),
+      buildGraphQLSchema(searchSchema(schema), datasetOptions),
     );
     expect(sdl).toMatch(/status: String!/); // required
     expect(sdl).toMatch(/size: Int\b(?!!)/); // optional → nullable
@@ -487,7 +496,7 @@ describe('buildGraphQLSchema', () => {
 
   it('builds the where, orderBy enum and keyed facets object from the field model', () => {
     const sdl = printSchema(
-      buildGraphQLSchema(schema, { typeName: 'Dataset' }),
+      buildGraphQLSchema(searchSchema(schema), datasetOptions),
     );
     expect(sdl).toMatch(/enum DatasetSortField/);
     expect(sdl).toMatch(/RELEVANCE/);
@@ -499,5 +508,118 @@ describe('buildGraphQLSchema', () => {
     expect(sdl).toMatch(/input DatasetWhere/);
     expect(sdl).toMatch(/status: StringFilter/);
     expect(sdl).toMatch(/size: IntRange/);
+  });
+
+  describe('multiple root types in one schema', () => {
+    const PERSON: SearchType = {
+      type: 'https://schema.org/Person',
+      fields: [
+        {
+          name: 'name',
+          kind: 'text',
+          localized: true,
+          locales: ['nl'],
+          output: true,
+          searchable: { weight: 5 },
+          sortable: true,
+        },
+        {
+          name: 'affiliation',
+          kind: 'reference',
+          facetable: true,
+          output: true,
+          ref: { type: 'Agent', strategy: 'labelOnly' },
+        },
+      ],
+    };
+    const CREATIVE_WORK: SearchType = {
+      type: 'https://schema.org/CreativeWork',
+      fields: [
+        {
+          name: 'title',
+          kind: 'text',
+          localized: true,
+          locales: ['nl'],
+          output: true,
+          searchable: { weight: 5 },
+        },
+        {
+          name: 'publisher',
+          kind: 'reference',
+          facetable: true,
+          output: true,
+          ref: { type: 'Agent', strategy: 'labelOnly' },
+        },
+        { name: 'pageCount', kind: 'integer', filterable: true, output: true },
+      ],
+    };
+    const twoTypeSchema = buildGraphQLSchema(
+      searchSchema(PERSON, CREATIVE_WORK),
+      {
+        types: {
+          [PERSON.type]: { typeName: 'Person', queryField: 'people' },
+          [CREATIVE_WORK.type]: { typeName: 'CreativeWork' },
+        },
+      },
+    );
+
+    it('exposes one root field per type, each with its own derived types', () => {
+      const sdl = printSchema(twoTypeSchema);
+      expect(sdl).toMatch(/people\([\s\S]*?\): PersonSearchResult!/);
+      expect(sdl).toMatch(
+        /creativeWorks\([\s\S]*?\): CreativeWorkSearchResult!/,
+      );
+      expect(sdl).toMatch(/enum PersonSortField/);
+      expect(sdl).toMatch(/input CreativeWorkWhere/);
+      // Person has no filterable fields, so it gets no `where` arg (an empty
+      // input object would be invalid GraphQL) — CreativeWork keeps its own.
+      expect(sdl).not.toMatch(/PersonWhere/);
+      // The shared reference shape is emitted once, reused by both types.
+      expect(sdl.match(/^type Agent /gm)).toHaveLength(1);
+    });
+
+    it('routes each root field to its own search type', async () => {
+      const searchedTypes: string[] = [];
+      const engine: SearchEngine = {
+        async search(_query, searchType) {
+          searchedTypes.push(searchType.type);
+          return { total: 0, hits: [], facets: {} };
+        },
+      };
+      const result = await graphql({
+        schema: twoTypeSchema,
+        source: `{ people { total } creativeWorks { total } }`,
+        contextValue: { engine, acceptLanguage: ['nl'] },
+      });
+      expect(result.errors).toBeUndefined();
+      expect(searchedTypes).toEqual([PERSON.type, CREATIVE_WORK.type]);
+    });
+
+    it('throws on a type without options, an unknown type, and a root-field clash', () => {
+      expect(() =>
+        buildGraphQLSchema(searchSchema(PERSON, CREATIVE_WORK), {
+          types: { [PERSON.type]: { typeName: 'Person' } },
+        }),
+      ).toThrow(/Missing options/);
+      expect(() =>
+        buildGraphQLSchema(searchSchema(PERSON), {
+          types: {
+            [PERSON.type]: { typeName: 'Person' },
+            'https://schema.org/Unknown': { typeName: 'Unknown' },
+          },
+        }),
+      ).toThrow(/not in the search schema/);
+      expect(() =>
+        buildGraphQLSchema(searchSchema(PERSON, CREATIVE_WORK), {
+          types: {
+            [PERSON.type]: { typeName: 'Person', queryField: 'items' },
+            [CREATIVE_WORK.type]: {
+              typeName: 'CreativeWork',
+              queryField: 'items',
+            },
+          },
+        }),
+      ).toThrow(/Duplicate root query field/);
+    });
   });
 });

@@ -30,6 +30,7 @@ import {
   type SearchEngine,
   type SearchField,
   type SearchQuery,
+  type SearchSchema,
   type SearchType,
 } from '@lde/search';
 import {
@@ -51,16 +52,24 @@ export interface SearchContext {
   readonly onFacetError?: (field: string, error: unknown) => void;
 }
 
-export interface BuildGraphQLSchemaOptions {
-  /** Drives all derived type names, e.g. `Dataset`. */
+/** Per-root-type options; what the schema value cannot carry. */
+export interface SearchTypeOptions {
+  /** Drives the type’s derived GraphQL type names, e.g. `Dataset`. */
   readonly typeName: string;
   /** Root query field; defaults to the lowercased plural of `typeName`. */
   readonly queryField?: string;
-  /** Consumer policy applied to every query (default status, sort, tie-breaks). */
+  /** Consumer policy applied to every query of this type (default status, sort,
+   *  tie-breaks). */
   readonly queryDefaults?: (
     query: SearchQuery,
     context: SearchContext,
   ) => SearchQuery;
+}
+
+export interface BuildGraphQLSchemaOptions {
+  /** Options per root type, keyed by type IRI (the {@link SearchType} `type`).
+   *  Every type in the schema needs an entry. */
+  readonly types: Readonly<Record<string, SearchTypeOptions>>;
   /** Output-language ordering; defaults to Accept-Language-first, `und` last. */
   readonly languageOrder?: LanguageOrder;
 }
@@ -82,20 +91,27 @@ function screamingSnake(name: string): string {
 }
 
 /**
- * Construct an executable GraphQL schema from the unified {@link SearchField}
- * model at runtime — no codegen, no SDL artifact. One generic resolver maps the
- * arguments to a {@link SearchQuery}, calls `context.engine`, and maps the result
- * back; the field model only parameterises data.
+ * Construct an executable GraphQL schema from the whole {@link SearchSchema} at
+ * runtime — no codegen, no SDL artifact. One root query field per
+ * {@link SearchType} (e.g. `datasets`, `people`), each searchable in its own
+ * way through its own output/`where`/`orderBy`/facet types, while the shared
+ * types (`LanguageString`, buckets, filter inputs, reference types) are created
+ * once. One generic resolver per root field maps the arguments to a
+ * {@link SearchQuery}, calls `context.engine`, and maps the result back; the
+ * field model only parameterises data.
  */
 export function buildGraphQLSchema(
-  searchType: SearchType,
+  schema: SearchSchema,
   options: BuildGraphQLSchemaOptions,
 ): GraphQLSchema {
-  const { typeName } = options;
   const languageOrder = options.languageOrder ?? defaultLanguageOrder;
-  const queryField =
-    options.queryField ??
-    `${typeName.charAt(0).toLowerCase()}${typeName.slice(1)}s`;
+  for (const typeIri of Object.keys(options.types)) {
+    if (!schema.has(typeIri)) {
+      throw new Error(
+        `Options given for type “${typeIri}”, which is not in the search schema.`,
+      );
+    }
+  }
 
   const languageString = new GraphQLObjectType({
     name: 'LanguageString',
@@ -159,44 +175,32 @@ export function buildGraphQLSchema(
     },
   });
 
-  // One reference type per referenced shape, reused by every field.
+  // One reference type per referenced shape, shared across every root type and
+  // reused by every field (Person and CreativeWork both referencing Agent yield
+  // one Agent type).
   const referenceTypes = new Map<string, GraphQLObjectType>();
-  for (const field of outputFields(searchType)) {
-    if (
-      field.kind === 'reference' &&
-      field.ref &&
-      !referenceTypes.has(field.ref.type)
-    ) {
-      referenceTypes.set(
-        field.ref.type,
-        new GraphQLObjectType({
-          name: field.ref.type,
-          fields: {
-            id: { type: new GraphQLNonNull(GraphQLString) },
-            name: labelList(
-              (source) => source.label as LocalizedValue | undefined,
-            ),
-          },
-        }),
-      );
+  for (const searchType of schema.values()) {
+    for (const field of outputFields(searchType)) {
+      if (
+        field.kind === 'reference' &&
+        field.ref &&
+        !referenceTypes.has(field.ref.type)
+      ) {
+        referenceTypes.set(
+          field.ref.type,
+          new GraphQLObjectType({
+            name: field.ref.type,
+            fields: {
+              id: { type: new GraphQLNonNull(GraphQLString) },
+              name: labelList(
+                (source) => source.label as LocalizedValue | undefined,
+              ),
+            },
+          }),
+        );
+      }
     }
   }
-
-  const outputType = new GraphQLObjectType({
-    name: typeName,
-    fields: () => {
-      const fields: Record<
-        string,
-        GraphQLFieldConfig<Source, SearchContext>
-      > = {
-        id: { type: new GraphQLNonNull(GraphQLString) },
-      };
-      for (const field of outputFields(searchType)) {
-        fields[field.name] = outputFieldConfig(field);
-      }
-      return fields;
-    },
-  });
 
   function outputFieldConfig(
     field: SearchField,
@@ -250,17 +254,6 @@ export function buildGraphQLSchema(
     }
   }
 
-  const whereInput = new GraphQLInputObjectType({
-    name: `${typeName}Where`,
-    fields: () => {
-      const fields: Record<string, GraphQLInputFieldConfig> = {};
-      for (const field of filterableFields(searchType)) {
-        fields[field.name] = { type: whereFieldType(field) };
-      }
-      return fields;
-    },
-  });
-
   function whereFieldType(field: SearchField): GraphQLInputType {
     switch (filterOperatorFor(field.kind)) {
       case 'in':
@@ -276,132 +269,213 @@ export function buildGraphQLSchema(
     }
   }
 
-  const sortValues: GraphQLEnumValueConfigMap = {
-    RELEVANCE: { value: 'relevance' },
-  };
-  for (const field of sortableFields(searchType)) {
-    sortValues[screamingSnake(field.name)] = { value: field.name };
-  }
-  const sortField = new GraphQLEnumType({
-    name: `${typeName}SortField`,
-    values: sortValues,
-  });
-  const orderByInput = new GraphQLInputObjectType({
-    name: `${typeName}OrderBy`,
-    fields: {
-      field: { type: new GraphQLNonNull(sortField) },
-      direction: {
-        type: new GraphQLNonNull(sortDirection),
-        defaultValue: 'desc',
-      },
-    },
-  });
+  /** The root query field for one {@link SearchType}, with its derived types. */
+  function rootField(
+    searchType: SearchType,
+    typeOptions: SearchTypeOptions,
+  ): GraphQLFieldConfig<Source, SearchContext> {
+    const { typeName } = typeOptions;
 
-  // Keyed facets object: one field per facetable field, typed by its kind
-  // (range fields → [RangeBucket!], else [ValueBucket!]). Each field's resolver
-  // computes that facet with its OWN where-filter removed (skip-own-filter), so a
-  // multi-select facet still lists its other options; only the selected fields
-  // are resolved (GraphQL prunes the rest), so the selection IS the request.
-  const facetsType = new GraphQLObjectType({
-    name: `${typeName}Facets`,
-    fields: () => {
-      const fields: Record<
-        string,
-        GraphQLFieldConfig<Source, SearchContext>
-      > = {};
-      for (const field of facetableFields(searchType)) {
-        fields[field.name] = {
-          type: nonNullListOf(isRangeFacet(field) ? rangeBucket : valueBucket),
-          resolve: async (
-            source: Source,
-            _args: unknown,
-            context: SearchContext,
-          ) => {
-            const query = source.query as SearchQuery;
-            // Drop this facet's own filter so its other options still count
-            // (a removed `status` filter also drops the valid-only default, so
-            // the status facet counts across every status).
-            const facetQuery: SearchQuery = {
-              ...query,
-              where: query.where.filter(
-                (filter) => filter.field !== field.name,
-              ),
-              facets: [field.name],
-              limit: 0,
-              offset: 0,
-            };
-            // A facet is supplementary: degrade a failed facet to an empty list
-            // rather than failing the whole query (which would null the non-null
-            // result and discard the items + every other facet).
-            try {
-              const result = await context.engine.search(
-                facetQuery,
-                searchType,
-              );
-              return result.facets[field.name] ?? [];
-            } catch (error) {
-              context.onFacetError?.(field.name, error);
-              return [];
-            }
-          },
+    const outputType = new GraphQLObjectType({
+      name: typeName,
+      fields: () => {
+        const fields: Record<
+          string,
+          GraphQLFieldConfig<Source, SearchContext>
+        > = {
+          id: { type: new GraphQLNonNull(GraphQLString) },
         };
-      }
-      return fields;
-    },
-  });
-
-  const resultType = new GraphQLObjectType({
-    name: `${typeName}SearchResult`,
-    fields: {
-      items: { type: nonNullListOf(outputType) },
-      total: { type: new GraphQLNonNull(GraphQLInt) },
-      page: { type: new GraphQLNonNull(GraphQLInt) },
-      perPage: { type: new GraphQLNonNull(GraphQLInt) },
-      // Resolved lazily, per selected key (skip-own-filter); the result object
-      // (which carries the resolved `query`) is the facets source.
-      facets: {
-        type: new GraphQLNonNull(facetsType),
-        resolve: (source: Source) => source,
+        for (const field of outputFields(searchType)) {
+          fields[field.name] = outputFieldConfig(field);
+        }
+        return fields;
       },
-    },
-  });
+    });
 
-  const query = new GraphQLObjectType({
-    name: 'Query',
-    fields: {
-      [queryField]: {
-        type: new GraphQLNonNull(resultType),
-        args: {
-          query: { type: GraphQLString },
-          where: { type: whereInput },
-          orderBy: { type: orderByInput },
-          page: { type: GraphQLInt, defaultValue: 1 },
-          perPage: { type: GraphQLInt, defaultValue: 20 },
+    // A GraphQL input object must have at least one field, so a type with no
+    // filterable fields gets no `where` arg at all rather than an invalid
+    // empty input.
+    const filterable = filterableFields(searchType);
+    const whereInput =
+      filterable.length === 0
+        ? undefined
+        : new GraphQLInputObjectType({
+            name: `${typeName}Where`,
+            fields: () => {
+              const fields: Record<string, GraphQLInputFieldConfig> = {};
+              for (const field of filterable) {
+                fields[field.name] = { type: whereFieldType(field) };
+              }
+              return fields;
+            },
+          });
+
+    const sortValues: GraphQLEnumValueConfigMap = {
+      RELEVANCE: { value: 'relevance' },
+    };
+    for (const field of sortableFields(searchType)) {
+      sortValues[screamingSnake(field.name)] = { value: field.name };
+    }
+    const sortField = new GraphQLEnumType({
+      name: `${typeName}SortField`,
+      values: sortValues,
+    });
+    const orderByInput = new GraphQLInputObjectType({
+      name: `${typeName}OrderBy`,
+      fields: {
+        field: { type: new GraphQLNonNull(sortField) },
+        direction: {
+          type: new GraphQLNonNull(sortDirection),
+          defaultValue: 'desc',
         },
-        resolve: async (_source, args, context: SearchContext) => {
-          const built = argsToQuery(args as QueryArgs, context, searchType);
-          const finalQuery = options.queryDefaults
-            ? options.queryDefaults(built, context)
-            : built;
-          // Items + total only; facets are resolved lazily per selected key.
-          const result = await context.engine.search(
-            { ...finalQuery, facets: [] },
-            searchType,
-          );
-          return {
-            items: result.hits.map((hit) => ({ id: hit.id, ...hit.document })),
-            total: result.total,
-            page: pageForOffset(finalQuery.offset, finalQuery.limit),
-            perPage: finalQuery.limit,
-            // Carried for the facets resolver (skip-own-filter per key).
-            query: finalQuery,
+      },
+    });
+
+    // Keyed facets object: one field per facetable field, typed by its kind
+    // (range fields → [RangeBucket!], else [ValueBucket!]). Each field's resolver
+    // computes that facet with its OWN where-filter removed (skip-own-filter), so a
+    // multi-select facet still lists its other options; only the selected fields
+    // are resolved (GraphQL prunes the rest), so the selection IS the request.
+    // Like `where`, omitted entirely for a type with no facetable fields (a
+    // GraphQL object type must have at least one field).
+    const facetable = facetableFields(searchType);
+    const facetsType =
+      facetable.length === 0
+        ? undefined
+        : facetsTypeFor(searchType, typeName, facetable);
+
+    const resultType = new GraphQLObjectType({
+      name: `${typeName}SearchResult`,
+      fields: {
+        items: { type: nonNullListOf(outputType) },
+        total: { type: new GraphQLNonNull(GraphQLInt) },
+        page: { type: new GraphQLNonNull(GraphQLInt) },
+        perPage: { type: new GraphQLNonNull(GraphQLInt) },
+        // Resolved lazily, per selected key (skip-own-filter); the result object
+        // (which carries the resolved `query`) is the facets source.
+        ...(facetsType && {
+          facets: {
+            type: new GraphQLNonNull(facetsType),
+            resolve: (source: Source) => source,
+          },
+        }),
+      },
+    });
+
+    return {
+      type: new GraphQLNonNull(resultType),
+      args: {
+        query: { type: GraphQLString },
+        ...(whereInput && { where: { type: whereInput } }),
+        orderBy: { type: orderByInput },
+        page: { type: GraphQLInt, defaultValue: 1 },
+        perPage: { type: GraphQLInt, defaultValue: 20 },
+      },
+      resolve: async (_source, args, context: SearchContext) => {
+        const built = argsToQuery(args as QueryArgs, context, searchType);
+        const finalQuery = typeOptions.queryDefaults
+          ? typeOptions.queryDefaults(built, context)
+          : built;
+        // Items + total only; facets are resolved lazily per selected key.
+        const result = await context.engine.search(
+          { ...finalQuery, facets: [] },
+          searchType,
+        );
+        return {
+          items: result.hits.map((hit) => ({ id: hit.id, ...hit.document })),
+          total: result.total,
+          page: pageForOffset(finalQuery.offset, finalQuery.limit),
+          perPage: finalQuery.limit,
+          // Carried for the facets resolver (skip-own-filter per key).
+          query: finalQuery,
+        };
+      },
+    };
+  }
+
+  /** The keyed facets object for one type (only called with ≥ 1 facetable field). */
+  function facetsTypeFor(
+    searchType: SearchType,
+    typeName: string,
+    facetable: readonly SearchField[],
+  ): GraphQLObjectType {
+    return new GraphQLObjectType({
+      name: `${typeName}Facets`,
+      fields: () => {
+        const fields: Record<
+          string,
+          GraphQLFieldConfig<Source, SearchContext>
+        > = {};
+        for (const field of facetable) {
+          fields[field.name] = {
+            type: nonNullListOf(
+              isRangeFacet(field) ? rangeBucket : valueBucket,
+            ),
+            resolve: async (
+              source: Source,
+              _args: unknown,
+              context: SearchContext,
+            ) => {
+              const query = source.query as SearchQuery;
+              // Drop this facet's own filter so its other options still count
+              // (a removed `status` filter also drops the valid-only default, so
+              // the status facet counts across every status).
+              const facetQuery: SearchQuery = {
+                ...query,
+                where: query.where.filter(
+                  (filter) => filter.field !== field.name,
+                ),
+                facets: [field.name],
+                limit: 0,
+                offset: 0,
+              };
+              // A facet is supplementary: degrade a failed facet to an empty list
+              // rather than failing the whole query (which would null the non-null
+              // result and discard the items + every other facet).
+              try {
+                const result = await context.engine.search(
+                  facetQuery,
+                  searchType,
+                );
+                return result.facets[field.name] ?? [];
+              } catch (error) {
+                context.onFacetError?.(field.name, error);
+                return [];
+              }
+            },
           };
-        },
+        }
+        return fields;
       },
-    },
-  });
+    });
+  }
 
-  return new GraphQLSchema({ query });
+  const queryFields: Record<
+    string,
+    GraphQLFieldConfig<Source, SearchContext>
+  > = {};
+  for (const searchType of schema.values()) {
+    const typeOptions = options.types[searchType.type];
+    if (typeOptions === undefined) {
+      throw new Error(
+        `Missing options (typeName) for type “${searchType.type}”.`,
+      );
+    }
+    const { typeName } = typeOptions;
+    const queryField =
+      typeOptions.queryField ??
+      `${typeName.charAt(0).toLowerCase()}${typeName.slice(1)}s`;
+    if (queryField in queryFields) {
+      throw new Error(
+        `Duplicate root query field “${queryField}”; set queryField to disambiguate.`,
+      );
+    }
+    queryFields[queryField] = rootField(searchType, typeOptions);
+  }
+
+  return new GraphQLSchema({
+    query: new GraphQLObjectType({ name: 'Query', fields: queryFields }),
+  });
 }
 
 /**
@@ -411,10 +485,10 @@ export function buildGraphQLSchema(
  * future version of this library silently altering it).
  */
 export function printGraphQLSchema(
-  searchType: SearchType,
+  schema: SearchSchema,
   options: BuildGraphQLSchemaOptions,
 ): string {
-  return printSchema(buildGraphQLSchema(searchType, options));
+  return printSchema(buildGraphQLSchema(schema, options));
 }
 
 interface QueryArgs {

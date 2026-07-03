@@ -21,11 +21,11 @@ separate package).
 ### Runtime configuration, not code generation
 
 The surface is **constructed at runtime from the field-model configuration**
-(`buildGraphQLSchema(config)`), once at startup, with generic resolvers shipped in the package
-attached to that schema – nothing is emitted or committed. The resolvers are inherently
-generic (one root resolver maps args to a `SearchQuery`, calls the engine, and maps the result
-back; the field model only parameterises data), so codegen would emit N near-identical stubs
-that all delegate to the same logic, plus a build step and staleness risk, for no benefit.
+(`buildGraphQLSchema(schema, options)`), once at startup, with generic resolvers shipped in the
+package attached to that schema – nothing is emitted or committed. The resolvers are inherently
+generic (one root resolver per type maps args to a `SearchQuery`, calls the engine, and maps the
+result back; the field model only parameterises data), so codegen would emit N near-identical
+stubs that all delegate to the same logic, plus a build step and staleness risk, for no benefit.
 
 A live GraphQL API serves its own schema via introspection, so clients need no committed
 `.graphql` file; the field-model diff is the reviewable change. `printGraphQLSchema()` exists
@@ -34,19 +34,31 @@ breaking changes – not a shipped artifact.
 
 ### The schema-building function
 
+The function takes the **whole `SearchSchema`** and emits one root query field per
+`SearchType` – a schema may declare multiple root types (e.g. `Person` AND `CreativeWork`),
+each searchable in its own way. Separately built `GraphQLSchema`s could never be merged later
+(one `Query` type; the shared types would collide), so multi-type composition happens before
+build, per the compose-before-build principle. Shared types (`LanguageString`, buckets,
+filter inputs, reference types) are created once and reused across root types.
+
 ```ts
 function buildGraphQLSchema(
-  searchType: SearchType,
+  schema: SearchSchema, // every root type, keyed by type IRI
   options: {
-    typeName: string; // 'Dataset' – drives all derived type names
-    queryField?: string; // root field; default lowercased plural of typeName
-    queryDefaults?: (q: SearchQuery, ctx: SearchContext) => SearchQuery; // consumer policy
+    types: Record<
+      string, // type IRI; every type in the schema needs an entry
+      {
+        typeName: string; // 'Dataset' – drives the type's derived GraphQL type names
+        queryField?: string; // root field; default lowercased plural of typeName
+        queryDefaults?: (q: SearchQuery, ctx: SearchContext) => SearchQuery; // per-type consumer policy
+      }
+    >;
     languageOrder?: LanguageOrder; // output-language ordering; default Accept-Language first
   },
 ): GraphQLSchema; // executable schema: types + generic resolvers attached
 
 // optional CI helper only:
-function printGraphQLSchema(searchType, options): string; // SDL, for a snapshot/breaking-change test
+function printGraphQLSchema(schema, options): string; // SDL, for a snapshot/breaking-change test
 ```
 
 `buildGraphQLSchema` is the standalone, framework-agnostic artifact (depends only on
@@ -71,9 +83,11 @@ the optional `printGraphQLSchema()` SDL snapshot (the real artifact).
 
 ### Construction rules (field model → schema)
 
-Type names derive from `typeName`; shared types (`LanguageString`, `ValueBucket`, `RangeBucket`,
-`SortDirection`, `StringFilter`, `IntRange`, `FloatRange`, `DateRange`) are emitted once, and the
-per-type keyed facets object is named `<typeName>Facets`.
+Type names derive from each type’s `typeName`; shared types (`LanguageString`, `ValueBucket`,
+`RangeBucket`, `SortDirection`, `StringFilter`, `IntRange`, `FloatRange`, `DateRange`, and the
+reference types) are emitted once across all root types, and the per-type keyed facets object
+is named `<typeName>Facets`. A type with no `filterable` fields gets no `where` arg, and one
+with no `facetable` fields no `facets` field (empty GraphQL types are invalid).
 GraphQL field names are the field model `name` verbatim (declare camelCase).
 
 - **Output type** – one field per `output` field: `text`+`localized` → `[LanguageString!]!` (best-first; `[0].language` = served language, the per-field `Content-Language`);

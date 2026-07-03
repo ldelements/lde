@@ -41,8 +41,9 @@ GraphQL (one of the surfaces):
 | `SearchType`   | One root type’s complete declaration: its `type` IRI plus its fields and derivations                            | NodeShape      | object type |
 | `SearchSchema` | The whole search declaration: every `SearchType`, keyed by `type` IRI — build one with `searchSchema(...types)` | shapes graph   | schema      |
 
-`projectGraph` consumes a `SearchSchema` (it projects every type in one pass);
-the engine port and the GraphQL surface operate on one `SearchType` at a time.
+`projectGraph` and the GraphQL surface consume a `SearchSchema` (projecting
+every type in one pass, resp. emitting one root query field per type); the
+engine port executes one `SearchType` at a time.
 
 ## Field model
 
