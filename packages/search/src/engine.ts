@@ -90,11 +90,15 @@ export type EngineFor<Type extends SearchType> = SearchEngine<
  * as a literal, so facet and document keys come out typo-safe without the
  * caller writing any generics. Identity at runtime: the same engine instance
  * is returned, only its type changes.
+ *
+ * Parameter order follows the family-wide convention: the value being
+ * operated on first, its `SearchType` right after.
  */
 export function engineFor<const Type extends SearchType>(
-  searchType: Type,
   engine: SearchEngine,
+  searchType: Type,
 ): EngineFor<Type> {
+  void searchType; // exists only to infer `Type`; the engine is returned as-is
   return engine;
 }
 

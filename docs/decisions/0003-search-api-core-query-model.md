@@ -200,7 +200,7 @@ SearchEngine` readable.
 // FacetField / OutputField default to `string` (ergonomic) and a deployment narrows them
 // to its type’s facetable / output field names for typo-safe facet and document access;
 // Type narrows the accepted searchType argument alongside, so a narrowed engine cannot be
-// handed the wrong search type. The ergonomic route is engineFor(searchType, engine) over
+// handed the wrong search type. The ergonomic route is engineFor(engine, searchType) over
 // a defineSearchType declaration (helpers FacetFieldsOf<Type> / OutputFieldsOf<Type> and
 // the EngineFor<Type> alias are exported for hand-written signatures).
 interface SearchEngine<

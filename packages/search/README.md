@@ -67,6 +67,11 @@ and GraphQL (one of the surfaces):
 `projectGraph` and the GraphQL surface consume a `SearchSchema` (projecting
 every type in one pass); the engine port executes one `SearchType` at a time.
 
+One parameter-order convention holds across the whole family: a function takes
+the value it operates on first and the `SearchType` declaration right after it
+— `search(query, type)`, `projectDocument(node, type)`,
+`engineFor(engine, type)`, `buildSearchParams(query, type)`.
+
 ## Field model
 
 The mapping is data, not code. Each field declares its `kind`, the IR `path` to
@@ -210,7 +215,7 @@ should narrow the engine with `engineFor` — same instance, zero runtime cost:
 ```ts
 import { engineFor } from '@lde/search';
 
-const datasetEngine = engineFor(DATASET, engine);
+const datasetEngine = engineFor(engine, DATASET);
 
 const result = await datasetEngine.search(query, DATASET);
 result.facets.publisher; // typed: only DATASET’s facetable fields are keys

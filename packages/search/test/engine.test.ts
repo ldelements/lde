@@ -137,8 +137,8 @@ describe('typed facet and document keys', () => {
     // `engineFor` narrows a generic adapter (plain `SearchEngine`) to any
     // `EngineFor` — the same instance, identity at runtime.
     const engine: EngineFor<typeof datasetSchema> = engineFor(
-      datasetSchema,
       fake,
+      datasetSchema,
     );
     expect(engine).toBe(fake);
 
