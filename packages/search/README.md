@@ -3,31 +3,34 @@
 The core of the LDE search family: packages that together act as a **generator
 for search engines**. You write one declarative `SearchSchema`, and everything
 a running search engine needs is derived from it: the document projection, the
-engine collection schema, the query semantics, and the API surface. None of
-these are hand-written per deployment or kept in sync by discipline.
+engine collection schema, the query semantics, and the API surface. All these
+are kept in sync automatically rather than handwritten per deployment.
 
 The core itself is **engine-, API- and domain-agnostic**: it bakes in no search
 engine, no API protocol, and no domain vocabulary. The engine- and API-specific
 halves are adapters that plug into the ports defined here:
 
-- **engine adapters** — [`@lde/search-typesense`](../search-typesense);
-- **API surfaces** — [`@lde/search-api-graphql`](../search-api-graphql), with a
-  REST surface to follow.
+- **engine adapters** implement the `SearchEngine` port:
+  [`@lde/search-typesense`](../search-typesense);
+- **API surfaces** drive that port from the other side, parsing client input
+  into the `SearchQuery` IR that `search()` accepts:
+  [`@lde/search-api-graphql`](../search-api-graphql), with a REST surface to
+  follow.
 
 The library never names your domain: the same core drives a `Dataset`,
 `Person`, or `CreativeWork` search.
 
 It provides four things:
 
-- **the unified field model** — `SearchField` / `SearchType` / `SearchSchema`:
+- **unified field model** — `SearchField` / `SearchType` / `SearchSchema`:
   one declaration per field that drives all four consumers below, so they
   cannot drift;
-- **the neutral query IR** — `SearchQuery` / `Filter` / `Sort` + filter
+- **neutral query IR** — `SearchQuery` / `Filter` / `Sort` + filter
   semantics: every API surface compiles into it, every engine adapter compiles
   out of it, so the two cannot drift;
-- **the engine port** — `SearchEngine` and the logical result types
+- **engine port** — `SearchEngine` and the logical result types
   (`SearchResult` / `SearchHit` / `ResultDocument` / `Reference` / …);
-- **a streaming projection** — `projectGraph`, RDF `CONSTRUCT` quads → flat
+- **streaming projection** — `projectGraph`, RDF `CONSTRUCT` quads → flat
   search documents.
 
 ```
