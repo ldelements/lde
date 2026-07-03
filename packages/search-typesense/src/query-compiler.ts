@@ -1,6 +1,10 @@
 import type { SearchParams } from 'typesense/lib/Typesense/Documents.js';
 import { fold } from '@lde/text-normalization';
 import {
+  fieldNamed,
+  isoToUnixSeconds,
+  isRangeFacet,
+  pageForOffset,
   physicalFields,
   searchableFields,
   type FacetRange,
@@ -48,9 +52,7 @@ export function buildSearchParams(
     query_by: names.join(','),
     query_by_weights: weights.join(','),
     per_page: query.limit,
-    // A facet-only query (`limit: 0`) fetches no hits; page is then meaningless,
-    // so pin it to 1 rather than dividing by zero.
-    page: query.limit > 0 ? Math.floor(query.offset / query.limit) + 1 : 1,
+    page: pageForOffset(query.offset, query.limit),
   };
   if (filterBy.length > 0) {
     params.filter_by = filterBy;
@@ -80,10 +82,8 @@ function compileFacetBy(
 ): string {
   return facets
     .map((name) => {
-      const field = searchType.fields.find(
-        (candidate) => candidate.name === name,
-      );
-      return field?.facetRanges !== undefined && field.facetRanges.length > 0
+      const field = fieldNamed(searchType, name);
+      return field !== undefined && isRangeFacet(field)
         ? compileRangeFacet(field.name, field.facetRanges)
         : name;
     })
@@ -150,9 +150,7 @@ function compileFilter(
   filter: Filter,
   searchType: SearchType,
 ): string | undefined {
-  const field = searchType.fields.find(
-    (candidate) => candidate.name === filter.field,
-  );
+  const field = fieldNamed(searchType, filter.field);
   if (field === undefined) {
     return undefined;
   }
@@ -162,7 +160,7 @@ function compileFilter(
       : undefined;
   }
   if ('range' in filter) {
-    return compileRange(field.name, filter.range);
+    return compileRange(field, filter.range);
   }
   return `${field.name}:=${filter.is}`;
 }
@@ -175,25 +173,20 @@ function compileMembership(
   field: SearchField,
   values: readonly string[],
 ): string {
-  const exact = field.facetable !== true;
-  return membership(field.name, values, exact);
-}
-
-function membership(
-  name: string,
-  values: readonly string[],
-  exact: boolean,
-): string {
   const list = `[${values.map(escapeFilterValue).join(',')}]`;
-  return exact ? `${name}:=${list}` : `${name}:${list}`;
+  return field.facetable !== true
+    ? `${field.name}:=${list}`
+    : `${field.name}:${list}`;
 }
 
 /** An inclusive Typesense range clause, or `undefined` when neither bound is set. */
 function compileRange(
-  name: string,
+  field: SearchField,
   range: { readonly min?: number | string; readonly max?: number | string },
 ): string | undefined {
-  const { min, max } = range;
+  const name = field.name;
+  const min = storedBound(field, range.min);
+  const max = storedBound(field, range.max);
   if (min !== undefined && max !== undefined) {
     return `${name}:[${min}..${max}]`;
   }
@@ -204,6 +197,17 @@ function compileRange(
     return `${name}:<=${max}`;
   }
   return undefined;
+}
+
+/** A range bound as stored: a `date` field’s ISO 8601 bound becomes the indexed
+ *  Unix seconds ({@link isoToUnixSeconds}); an unparseable bound is dropped. */
+function storedBound(
+  field: SearchField,
+  bound: number | string | undefined,
+): number | string | undefined {
+  return field.kind === 'date' && typeof bound === 'string'
+    ? isoToUnixSeconds(bound)
+    : bound;
 }
 
 /**
@@ -219,15 +223,17 @@ function compileSort(
   if (sort.field === 'relevance') {
     return `_text_match:${sort.direction}`;
   }
-  const field = searchType.fields.find(
-    (candidate) => candidate.name === sort.field,
-  );
+  const field = fieldNamed(searchType, sort.field);
   if (
     field !== undefined &&
     field.kind === 'text' &&
     field.localized === true
   ) {
-    return `${field.name}_sort_${locale}:${sort.direction}`;
+    const sortName =
+      physicalFields(field).sort[field.locales?.indexOf(locale) ?? -1];
+    if (sortName !== undefined) {
+      return `${sortName}:${sort.direction}`;
+    }
   }
   return `${sort.field}:${sort.direction}`;
 }

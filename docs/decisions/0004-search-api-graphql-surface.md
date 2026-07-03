@@ -35,71 +35,39 @@ breaking changes – not a shipped artifact.
 ### The schema-building function
 
 ```ts
-// Generic over the config *value’s* type (capture it `as const satisfies SearchType`), so
-// one declaration drives both the runtime schema and the static TS types below.
-function buildGraphQLSchema<const S extends SearchType>(
-  schema: S,
+function buildGraphQLSchema(
+  searchType: SearchType,
   options: {
     typeName: string; // 'Dataset' – drives all derived type names
     queryField?: string; // root field; default lowercased plural of typeName
     queryDefaults?: (q: SearchQuery, ctx: SearchContext) => SearchQuery; // consumer policy
-    languageOrder?: (
-      available: readonly string[],
-      accept: readonly string[],
-    ) => readonly string[];
-    extendTypeDefs?: string; // merged before build (compose-before-build)
-    extendResolvers?: Record<string, unknown>;
+    languageOrder?: LanguageOrder; // output-language ordering; default Accept-Language first
   },
 ): GraphQLSchema; // executable schema: types + generic resolvers attached
 
-// Static types derived from the SAME config value’s type (compile-time only, erased at
-// runtime); one source, no codegen, no drift. Exported for typed in-process callers/tests.
-type OutputOf<S extends SearchType>; // { id: string; title: LanguageString[]; size: number | null; … }
-type WhereOf<S extends SearchType>; //  { format?: StringFilter; size?: FloatRange; … }
-type OrderByOf<S extends SearchType>; // { field: 'RELEVANCE' | 'TITLE' | …; direction: 'ASC' | 'DESC' }
-type FacetOf<S extends SearchType>; //   the facetable-field-name union
-
-// also exported for manual composition / non-default servers:
-function buildSearchTypeDefsAndResolvers(
-  schema,
-  options,
-): { typeDefs: string; resolvers: object };
 // optional CI helper only:
-function printGraphQLSchema(schema, options): string; // SDL, for a snapshot/breaking-change test
+function printGraphQLSchema(searchType, options): string; // SDL, for a snapshot/breaking-change test
 ```
 
 `buildGraphQLSchema` is the standalone, framework-agnostic artifact (depends only on
-`graphql` + `@graphql-tools/schema`). Deep customisation passes `extendTypeDefs`/
-`extendResolvers` (merged before `makeExecutableSchema`, since Mercurius registers once) or
-composes the exported typeDefs/resolvers by hand.
+`graphql`). Deep customisation of the emitted schema is deferred (see Consequences).
 
-### A typed surface the contract does not depend on
-
-One `as const satisfies SearchType` declaration drives two **independent** projections: the
-**runtime contract** (the `GraphQLSchema`, built at startup by reading the value –
-`field.kind`, `output`, `facetable`, …) and a **static TS mirror** (`OutputOf<S>` /
-`WhereOf<S>` / `OrderByOf<S>` / `FacetOf<S>`, computed from `typeof schema` via mapped types).
-
-The contract **does not depend on the TS types.** `as const`/`satisfies` are compile-time only
-and erased, so the served schema is byte-identical whether or not the mirror exists – it is a
-developer-experience overlay. The two derivations can drift (the runtime kind→GraphQL-type
-mapping lives in `buildGraphQLSchema`; the type-level mapping in `OutputOf<S>` duplicates it),
-so the **contract** is guarded by the optional `printGraphQLSchema()` SDL snapshot (the real
-artifact), while the TS mirror only catches our own coding mistakes against it.
+### Typed boundaries, dynamic middle
 
 Values are typed at both ends, with the resolver as the typed transform between them:
 
-| layer                   | localized text                       | reference                   | int64            | keyword (array)         | boolean              |
-| ----------------------- | ------------------------------------ | --------------------------- | ---------------- | ----------------------- | -------------------- |
-| IR (`ResultDocument`)   | `LocalizedValue` (lang map)          | `Reference`                 | `number`         | `readonly string[]`     | `boolean`            |
-| GraphQL (`OutputOf<S>`) | `LanguageString[]` (best-first list) | named type (`Organization`) | `Float`/`number` | `[String!]!`/`string[]` | `Boolean!`/`boolean` |
+| layer                 | localized text                       | reference                   | int64            | keyword (array)         | boolean              |
+| --------------------- | ------------------------------------ | --------------------------- | ---------------- | ----------------------- | -------------------- |
+| IR (`ResultDocument`) | `LocalizedValue` (lang map)          | `Reference`                 | `number`         | `readonly string[]`     | `boolean`            |
+| GraphQL               | `LanguageString[]` (best-first list) | named type (`Organization`) | `Float`/`number` | `[String!]!`/`string[]` | `Boolean!`/`boolean` |
 
-What stays unchecked is only the generic resolver’s **dynamic middle**: it loops over the
-field model with runtime-string names, so TS cannot prove the object it builds matches
-`OutputOf<S>` – it casts at that boundary, and graphql-js’s executor (not TS) enforces the
+What stays unchecked is the generic resolver’s **dynamic middle**: it loops over the field
+model with runtime-string names, so TS cannot prove the object it builds matches the emitted
+output types – it casts at that boundary, and graphql-js’s executor (not TS) enforces the
 output types at runtime (a wrong-typed return raises a field error). Same “typed boundaries,
 dynamic middle” shape as the engine port and the projection: type the edges where it is
-honest, accept a cast where iteration is inherently dynamic.
+honest, accept a cast where iteration is inherently dynamic. The **contract** is guarded by
+the optional `printGraphQLSchema()` SDL snapshot (the real artifact).
 
 ### Construction rules (field model → schema)
 
@@ -324,4 +292,7 @@ Each transport populates it per request; no framework type appears in the packag
   `String`) and a `Long`/`BigInt` scalar for 64-bit integers (kept `Float`); transport-layer
   persisted queries / cost limits; a root or per-field language argument (Accept-Language is the
   sole preference mechanism); metadata-language-availability filtering (a facetable dimension,
-  not v1).
+  not v1); schema extension hooks (`extendTypeDefs`/`extendResolvers` or exported
+  typeDefs/resolvers for manual composition); a static TS mirror of the contract
+  (`OutputOf<S>` / `WhereOf<S>` / `OrderByOf<S>` / `FacetOf<S>` mapped types over an
+  `as const satisfies SearchType` declaration) for typed in-process callers.

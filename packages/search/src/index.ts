@@ -15,6 +15,11 @@ export {
   filterableFields,
   sortableFields,
   outputFields,
+  referenceFields,
+  fieldNamed,
+  isRangeFacet,
+  isoToUnixSeconds,
+  unixSecondsToIso,
 } from './schema.js';
 export type {
   FieldKind,
@@ -27,7 +32,7 @@ export type {
 } from './schema.js';
 
 // Engine- and protocol-neutral query IR + filter semantics.
-export { filterOperatorFor, filterOperator, acceptsFilter } from './query.js';
+export { filterOperatorFor, pageForOffset } from './query.js';
 export type { SearchQuery, Filter, Sort, FilterOperator } from './query.js';
 
 // Engine port + the logical result document returned across it.
@@ -44,7 +49,6 @@ export type {
   FacetFieldsOf,
   OutputFieldsOf,
   EngineFor,
-  ResultFor,
 } from './engine.js';
 
 export type { FramedNode } from './frame-by-type.js';

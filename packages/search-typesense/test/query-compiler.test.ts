@@ -48,6 +48,7 @@ const schema: SearchType = {
       ],
     },
     { name: 'iiif', kind: 'boolean', filterable: true, facetable: true },
+    { name: 'datePosted', kind: 'date', filterable: true, sortable: true },
   ],
 };
 
@@ -127,6 +128,43 @@ describe('buildSearchParams', () => {
         schema,
       ).filter_by,
     ).toBe('size:<=9');
+  });
+
+  it('converts a date field’s ISO bounds to the stored Unix seconds', () => {
+    const min = Date.parse('2024-01-01T00:00:00Z') / 1000;
+    const max = Date.parse('2025-01-01T00:00:00Z') / 1000;
+    expect(
+      buildSearchParams(
+        {
+          ...base,
+          where: [
+            {
+              field: 'datePosted',
+              range: {
+                min: '2024-01-01T00:00:00Z',
+                max: '2025-01-01T00:00:00Z',
+              },
+            },
+          ],
+        },
+        schema,
+      ).filter_by,
+    ).toBe(`datePosted:[${min}..${max}]`);
+    // An unparseable bound is dropped rather than compiled into garbage.
+    expect(
+      buildSearchParams(
+        {
+          ...base,
+          where: [
+            {
+              field: 'datePosted',
+              range: { min: 'not-a-date', max: '2025-01-01T00:00:00Z' },
+            },
+          ],
+        },
+        schema,
+      ).filter_by,
+    ).toBe(`datePosted:<=${max}`);
   });
 
   it('compiles orderBy: RELEVANCE → _text_match and a localized field → its sort key', () => {

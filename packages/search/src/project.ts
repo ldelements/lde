@@ -2,6 +2,7 @@ import type { Quad } from '@rdfjs/types';
 import { fold } from '@lde/text-normalization';
 import { frameByType, type FramedNode } from './frame-by-type.js';
 import {
+  isoToUnixSeconds,
   physicalFields,
   type SearchField,
   type SearchSchema,
@@ -84,15 +85,23 @@ function applyField(
         field.name,
         toNumber(firstLiteralOf(node, path)),
       );
-    case 'date':
+    case 'date': {
+      const literal = firstLiteralOf(node, path);
       return setNumber(
         document,
         field.name,
-        isoToUnix(firstLiteralOf(node, path)),
+        literal === undefined ? undefined : isoToUnixSeconds(literal),
       );
+    }
+    case 'boolean': {
+      // The xsd:boolean lexical space: true/false/1/0.
+      const literal = firstLiteralOf(node, path);
+      if (literal !== undefined) {
+        document[field.name] = literal === 'true' || literal === '1';
+      }
+      return;
+    }
   }
-  // `boolean` is not projected from a path in current search types — booleans are
-  // derivation-populated (e.g. the compatibility vinkjes).
 }
 
 /**
@@ -244,14 +253,6 @@ function toInteger(literal: string | undefined): number | undefined {
 
 function toNumber(literal: string | undefined): number | undefined {
   return literal === undefined ? undefined : Number(literal);
-}
-
-function isoToUnix(iso: string | undefined): number | undefined {
-  if (iso === undefined) {
-    return undefined;
-  }
-  const millis = new Date(iso).getTime();
-  return Number.isNaN(millis) ? undefined : Math.trunc(millis / 1000);
 }
 
 function setNumber(

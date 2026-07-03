@@ -401,30 +401,35 @@ describe('createTypesenseSearchEngine label cache (labelCacheTtlMs)', () => {
 
 describe('fetchLabels', () => {
   // A fake Typesense client whose multi_search returns the requested ids that
-  // exist in `docsById`, recording the id-list of each POST so batching is
-  // observable. (Resolving via multi_search/POST avoids the GET query-string
+  // exist in `docsById`, recording each POST's per-search id-lists so batching
+  // is observable. (Resolving via multi_search/POST avoids the GET query-string
   // limit that a large id-list would otherwise overflow.)
   function fakeClient(docsById: Record<string, Record<string, unknown>>) {
-    const calls: string[][] = [];
+    const posts: string[][][] = [];
     const client = {
       multiSearch: {
         perform: (request: { searches: { readonly filter_by: string }[] }) => {
-          const ids = [
-            ...request.searches[0].filter_by.matchAll(/`([^`]+)`/g),
-          ].map((match) => match[1]);
-          calls.push(ids);
-          const hits = ids
-            .filter((id) => docsById[id] !== undefined)
-            .map((id) => ({ document: { id, ...docsById[id] } }));
-          return Promise.resolve({ results: [{ found: hits.length, hits }] });
+          const batches = request.searches.map((search) =>
+            [...search.filter_by.matchAll(/`([^`]+)`/g)].map(
+              (match) => match[1],
+            ),
+          );
+          posts.push(batches);
+          const results = batches.map((ids) => {
+            const hits = ids
+              .filter((id) => docsById[id] !== undefined)
+              .map((id) => ({ document: { id, ...docsById[id] } }));
+            return { found: hits.length, hits };
+          });
+          return Promise.resolve({ results });
         },
       },
     };
-    return { client: client as unknown as Pick<Client, 'multiSearch'>, calls };
+    return { client: client as unknown as Pick<Client, 'multiSearch'>, posts };
   }
 
   it('resolves labels via multi_search, merging per-locale variants', async () => {
-    const { client, calls } = fakeClient({
+    const { client, posts } = fakeClient({
       'https://org/1': { label: 'KB', label_nl: 'KB' },
       // Only a default label (no locale variant) → untagged (`und`) fallback.
       'https://org/3': { label: 'Untagged' },
@@ -438,10 +443,10 @@ describe('fetchLabels', () => {
     expect(labels.get('https://org/3')).toEqual({ und: ['Untagged'] });
     // An IRI absent from the collection yields no entry.
     expect(labels.has('https://org/2')).toBe(false);
-    expect(calls).toHaveLength(1);
+    expect(posts).toHaveLength(1);
   });
 
-  it('batches a large id-list under the per_page cap, one POST per batch', async () => {
+  it('batches a large id-list under the per_page cap, in a single POST', async () => {
     const ids = Array.from(
       { length: 450 },
       (_unused, index) => `https://example.org/class/${index}`,
@@ -449,17 +454,18 @@ describe('fetchLabels', () => {
     const docsById = Object.fromEntries(
       ids.map((id) => [id, { label_nl: id }]),
     );
-    const { client, calls } = fakeClient(docsById);
+    const { client, posts } = fakeClient(docsById);
     const labels = await fetchLabels(client, 'labels', ids);
-    // 450 ids → batches of 200, 200, 50.
-    expect(calls.map((batch) => batch.length)).toEqual([200, 200, 50]);
+    // 450 ids → batches of 200, 200, 50, bundled into one round-trip.
+    expect(posts).toHaveLength(1);
+    expect(posts[0].map((batch) => batch.length)).toEqual([200, 200, 50]);
     expect(labels.size).toBe(450);
   });
 
   it('makes no request for an empty id-list', async () => {
-    const { client, calls } = fakeClient({});
+    const { client, posts } = fakeClient({});
     const labels = await fetchLabels(client, 'labels', []);
     expect(labels.size).toBe(0);
-    expect(calls).toHaveLength(0);
+    expect(posts).toHaveLength(0);
   });
 });

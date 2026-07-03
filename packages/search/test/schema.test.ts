@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
   facetableFields,
+  fieldNamed,
   filterableFields,
+  isoToUnixSeconds,
+  isRangeFacet,
   outputFields,
   physicalFields,
+  referenceFields,
   searchableFields,
   sortableFields,
+  unixSecondsToIso,
   type SearchField,
   type SearchType,
 } from '../src/schema.js';
@@ -94,7 +99,6 @@ describe('physicalFields', () => {
     };
 
     expect(physicalFields(keyword)).toEqual({
-      value: 'keyword',
       display: [],
       search: ['keyword_search'],
       sort: [],
@@ -134,7 +138,7 @@ describe('physicalFields', () => {
     });
   });
 
-  it('stores a reference field in one value field', () => {
+  it('fans a non-localized reference field out into no companion fields', () => {
     const publisher: SearchField = {
       name: 'publisher',
       kind: 'reference',
@@ -145,7 +149,6 @@ describe('physicalFields', () => {
     };
 
     expect(physicalFields(publisher)).toEqual({
-      value: 'publisher',
       display: [],
       search: [],
       sort: [],
@@ -184,5 +187,47 @@ describe('schema selectors', () => {
       'datePosted',
       'status',
     ]);
+  });
+
+  it('selects reference fields and looks a field up by name', () => {
+    const publisher: SearchField = {
+      name: 'publisher',
+      kind: 'reference',
+      facetable: true,
+      ref: { type: 'http://xmlns.com/foaf/0.1/Agent', strategy: 'labelOnly' },
+    };
+    const withReference: SearchType = {
+      type: DATASET,
+      fields: [...schema.fields, publisher],
+    };
+    expect(referenceFields(withReference)).toEqual([publisher]);
+    expect(fieldNamed(withReference, 'publisher')).toBe(publisher);
+    expect(fieldNamed(withReference, 'nonexistent')).toBeUndefined();
+  });
+});
+
+describe('isRangeFacet', () => {
+  it('requires a non-empty facetRanges declaration', () => {
+    const size: SearchField = {
+      name: 'size',
+      kind: 'integer',
+      facetable: true,
+      facetRanges: [{ key: '0', min: 1, max: 10 }],
+    };
+    expect(isRangeFacet(size)).toBe(true);
+    expect(isRangeFacet({ ...size, facetRanges: [] })).toBe(false);
+    expect(isRangeFacet({ ...size, facetRanges: undefined })).toBe(false);
+  });
+});
+
+describe('date storage codec', () => {
+  it('round-trips ISO 8601 through the stored Unix seconds', () => {
+    const seconds = isoToUnixSeconds('2024-01-01T00:00:00.000Z');
+    expect(seconds).toBe(Date.parse('2024-01-01T00:00:00.000Z') / 1000);
+    expect(unixSecondsToIso(seconds ?? 0)).toBe('2024-01-01T00:00:00.000Z');
+  });
+
+  it('returns undefined for an unparseable date', () => {
+    expect(isoToUnixSeconds('not-a-date')).toBeUndefined();
   });
 });

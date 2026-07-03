@@ -135,16 +135,13 @@ export function searchSchema(...types: readonly SearchType[]): SearchSchema {
  * query compiler (reads them) cannot disagree.
  */
 export interface PhysicalFields {
-  /** The lone stored field for a non-localized kind — faceted, filtered, sorted
-   *  and output directly. Absent for localized text (its value lives per locale). */
-  readonly value?: string;
   /** Per-locale output labels `${name}_${locale}` (localized text, `output`). */
   readonly display: readonly string[];
   /** Folded match fields: `${name}_search_${locale}` per locale (localized) or a
    *  single `${name}_search` (non-localized), when `searchable`. */
   readonly search: readonly string[];
   /** Per-locale folded sort keys `${name}_sort_${locale}` (localized text,
-   *  `sortable`); a non-localized field sorts on its `value`. */
+   *  `sortable`); a non-localized field sorts on its own `name` field. */
   readonly sort: readonly string[];
 }
 
@@ -190,14 +187,56 @@ export function outputFields(searchType: SearchType): readonly SearchField[] {
   return searchType.fields.filter((field) => field.output === true);
 }
 
+/** Fields of kind `reference` (IRI-valued, label-resolved), in declaration order. */
+export function referenceFields(
+  searchType: SearchType,
+): readonly SearchField[] {
+  return searchType.fields.filter((field) => field.kind === 'reference');
+}
+
+/** Look up a field by its logical name. */
+export function fieldNamed(
+  searchType: SearchType,
+  name: string,
+): SearchField | undefined {
+  return searchType.fields.find((field) => field.name === name);
+}
+
+/**
+ * Whether a facet on this field returns fixed range bins (a histogram) rather
+ * than one bucket per distinct value: it declares non-empty
+ * {@link SearchField.facetRanges}. One predicate for the surface’s facet type,
+ * the adapter’s facet clause and the bucket reconstruction, so they cannot
+ * disagree.
+ */
+export function isRangeFacet(
+  field: SearchField,
+): field is SearchField & { readonly facetRanges: readonly FacetRange[] } {
+  return field.facetRanges !== undefined && field.facetRanges.length > 0;
+}
+
+/**
+ * The engine storage codec for `date` fields: stored as Unix seconds (a
+ * sortable, range-filterable int64), ISO 8601 at the API edges. One pair for
+ * the projection (writes), the query compiler (filter bounds) and the surface
+ * (output), so the three cannot disagree. Returns `undefined` for an
+ * unparseable value.
+ */
+export function isoToUnixSeconds(iso: string): number | undefined {
+  const millis = new Date(iso).getTime();
+  return Number.isNaN(millis) ? undefined : Math.trunc(millis / 1000);
+}
+
+/** The inverse of {@link isoToUnixSeconds}: stored Unix seconds → ISO 8601. */
+export function unixSecondsToIso(seconds: number): string {
+  return new Date(seconds * 1000).toISOString();
+}
+
 /** Derive the physical engine field names a declaration produces. */
 export function physicalFields(field: SearchField): PhysicalFields {
   const localized = field.kind === 'text' && field.localized === true;
   const locales = localized ? (field.locales ?? []) : [];
   return {
-    // Localized text has no single value field — its values live in the
-    // per-locale fields; every other kind stores into one `${name}` field.
-    value: localized ? undefined : field.name,
     display:
       localized && field.output
         ? locales.map((locale) => `${field.name}_${locale}`)

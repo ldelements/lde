@@ -20,16 +20,17 @@ import {
   facetableFields,
   filterableFields,
   filterOperatorFor,
+  isRangeFacet,
   outputFields,
+  pageForOffset,
   sortableFields,
+  unixSecondsToIso,
   type Filter,
   type LocalizedValue,
-  type Reference,
   type SearchEngine,
   type SearchField,
   type SearchQuery,
   type SearchType,
-  type Sort,
 } from '@lde/search';
 import {
   defaultLanguageOrder,
@@ -127,14 +128,8 @@ export function buildGraphQLSchema(
   const rangeBucket = new GraphQLObjectType({
     name: 'RangeBucket',
     fields: {
-      min: {
-        type: GraphQLFloat,
-        resolve: (bucket: Source) => bucket.min ?? null,
-      },
-      max: {
-        type: GraphQLFloat,
-        resolve: (bucket: Source) => bucket.max ?? null,
-      },
+      min: { type: GraphQLFloat },
+      max: { type: GraphQLFloat },
       count: { type: new GraphQLNonNull(GraphQLInt) },
     },
   });
@@ -177,11 +172,10 @@ export function buildGraphQLSchema(
         new GraphQLObjectType({
           name: field.ref.type,
           fields: {
-            id: {
-              type: new GraphQLNonNull(GraphQLString),
-              resolve: (source: Source) => (source as unknown as Reference).id,
-            },
-            name: labelList((source) => (source as unknown as Reference).label),
+            id: { type: new GraphQLNonNull(GraphQLString) },
+            name: labelList(
+              (source) => source.label as LocalizedValue | undefined,
+            ),
           },
         }),
       );
@@ -207,7 +201,6 @@ export function buildGraphQLSchema(
   function outputFieldConfig(
     field: SearchField,
   ): GraphQLFieldConfig<Source, SearchContext> {
-    const passthrough = (source: Source) => source[field.name] ?? null;
     switch (field.kind) {
       case 'text':
         return labelList(
@@ -219,7 +212,7 @@ export function buildGraphQLSchema(
               type: nonNullListOf(GraphQLString),
               resolve: (s) => s[field.name] ?? [],
             }
-          : { type: scalarOutput(GraphQLString, field), resolve: passthrough };
+          : { type: scalarOutput(GraphQLString, field) };
       case 'reference': {
         const referenceType = referenceTypes.get(field.ref?.type ?? '')!;
         return field.array === true
@@ -232,16 +225,12 @@ export function buildGraphQLSchema(
                 field.required === true
                   ? new GraphQLNonNull(referenceType)
                   : referenceType,
-              resolve: passthrough,
             };
       }
       case 'integer':
-        return { type: scalarOutput(GraphQLInt, field), resolve: passthrough };
+        return { type: scalarOutput(GraphQLInt, field) };
       case 'number':
-        return {
-          type: scalarOutput(GraphQLFloat, field),
-          resolve: passthrough,
-        };
+        return { type: scalarOutput(GraphQLFloat, field) };
       case 'date':
         // Stored as Unix seconds (int64); the surface serves ISO 8601 (ADR 4).
         return {
@@ -249,7 +238,7 @@ export function buildGraphQLSchema(
           resolve: (source) => {
             const value = source[field.name];
             return typeof value === 'number'
-              ? new Date(value * 1000).toISOString()
+              ? unixSecondsToIso(value)
               : (value ?? null);
           },
         };
@@ -321,10 +310,8 @@ export function buildGraphQLSchema(
         GraphQLFieldConfig<Source, SearchContext>
       > = {};
       for (const field of facetableFields(searchType)) {
-        const isRange =
-          field.facetRanges !== undefined && field.facetRanges.length > 0;
         fields[field.name] = {
-          type: nonNullListOf(isRange ? rangeBucket : valueBucket),
+          type: nonNullListOf(isRangeFacet(field) ? rangeBucket : valueBucket),
           resolve: async (
             source: Source,
             _args: unknown,
@@ -404,12 +391,7 @@ export function buildGraphQLSchema(
           return {
             items: result.hits.map((hit) => ({ id: hit.id, ...hit.document })),
             total: result.total,
-            // Guard against a `perPage: 0` arg: `Math.floor(0/0)` is NaN, which a
-            // non-null `Int!` cannot serialize and would fail the whole query.
-            page:
-              finalQuery.limit > 0
-                ? Math.floor(finalQuery.offset / finalQuery.limit) + 1
-                : 1,
+            page: pageForOffset(finalQuery.offset, finalQuery.limit),
             perPage: finalQuery.limit,
             // Carried for the facets resolver (skip-own-filter per key).
             query: finalQuery,
@@ -509,6 +491,3 @@ function rangeInput(
     fields: { min: { type: bound }, max: { type: bound } },
   });
 }
-
-// Re-exported for callers that compose a sort manually.
-export type { Sort };

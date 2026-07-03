@@ -1,6 +1,10 @@
 import type { Client } from 'typesense';
 import {
+  fieldNamed,
+  isRangeFacet,
   outputFields,
+  physicalFields,
+  referenceFields,
   type FacetBucket,
   type LocalizedValue,
   type Reference,
@@ -95,6 +99,16 @@ export function createTypesenseSearchEngine(
       const params = buildSearchParams(query, searchType, {
         maxFacetValues: options.maxFacetValues,
       });
+      // Cached path: the once-loaded full collection serves labels by in-memory
+      // lookup (no per-search round-trip). The load does not depend on the
+      // response, so it runs alongside the search; it never rejects (a failed
+      // load degrades to an empty map), so it cannot leave an unhandled
+      // rejection behind if the search itself fails.
+      const cachedLabelsPromise =
+        options.labelsCollection !== undefined &&
+        options.labelCacheTtlMs !== undefined
+          ? cachedAllLabels(options.labelsCollection, options.labelCacheTtlMs)
+          : undefined;
       const response = (await client
         .collections(options.collection)
         .documents()
@@ -103,25 +117,17 @@ export function createTypesenseSearchEngine(
       // mid-rebuild) degrades to id-only references rather than failing the whole
       // search, so the listing still renders with bare IRIs.
       let labels: ReadonlyMap<string, LocalizedValue> = new Map();
-      if (options.labelsCollection !== undefined) {
-        if (options.labelCacheTtlMs !== undefined) {
-          // Cached path: resolve the page's references by in-memory lookup
-          // against the once-loaded collection (no Typesense round-trip).
-          const allLabels = await cachedAllLabels(
+      if (cachedLabelsPromise !== undefined) {
+        labels = await cachedLabelsPromise;
+      } else if (options.labelsCollection !== undefined) {
+        try {
+          labels = await fetchLabels(
+            client,
             options.labelsCollection,
-            options.labelCacheTtlMs,
+            referenceIris(response, searchType),
           );
-          labels = selectLabels(allLabels, referenceIris(response, searchType));
-        } else {
-          try {
-            labels = await fetchLabels(
-              client,
-              options.labelsCollection,
-              referenceIris(response, searchType),
-            );
-          } catch (error) {
-            options.onLabelError?.(error);
-          }
+        } catch (error) {
+          options.onLabelError?.(error);
         }
       }
       return parseSearchResponse(response, searchType, labels);
@@ -151,36 +157,19 @@ async function loadAllLabels(
   return labels;
 }
 
-/** Narrow the cached collection to just the labels `iris` actually need. */
-function selectLabels(
-  allLabels: ReadonlyMap<string, LocalizedValue>,
-  iris: readonly string[],
-): Map<string, LocalizedValue> {
-  const labels = new Map<string, LocalizedValue>();
-  for (const iri of iris) {
-    const label = allLabels.get(iri);
-    if (label !== undefined) {
-      labels.set(iri, label);
-    }
-  }
-  return labels;
-}
-
 /** Every distinct reference IRI whose label the result will actually use. */
 function referenceIris(
   response: TypesenseSearchResponse,
   searchType: SearchType,
 ): string[] {
   const referenceFieldSet = new Set(
-    searchType.fields
-      .filter((field) => field.kind === 'reference')
-      .map((field) => field.name),
+    referenceFields(searchType).map((field) => field.name),
   );
   // Hits only carry labels for OUTPUT reference fields: reconstructDocument skips
   // non-output fields, so resolving a non-output reference's hit labels (e.g. a
   // facet-only `class` with dozens of IRIs per hit) is pure waste.
-  const outputReferenceFields = outputFields(searchType)
-    .filter((field) => field.kind === 'reference')
+  const outputReferenceFields = referenceFields(searchType)
+    .filter((field) => field.output === true)
     .map((field) => field.name);
   const iris = new Set<string>();
   for (const hit of response.hits ?? []) {
@@ -212,12 +201,13 @@ function referenceIris(
  * `label_${locale}` becomes a language-map entry; the default `label` is the
  * untagged (`und`) fallback when no locale variant exists.
  *
- * Sent over `multi_search` (POST) in batches: the id-list of a page or facet
- * carrying many references — e.g. a dataset with dozens of classes — would
- * overflow Typesense’s GET query-string limit (4000 chars, and IRIs URL-encode
- * to several times their length) if it travelled in the URL. POST puts it in the
- * body; the batch size stays under Typesense’s `per_page` cap. Exported for
- * unit testing against a fake client.
+ * Sent as one `multi_search` (POST) call, the id-list split over per-search
+ * batches: the id-list of a page or facet carrying many references — e.g. a
+ * dataset with dozens of classes — would overflow Typesense’s GET query-string
+ * limit (4000 chars, and IRIs URL-encode to several times their length) if it
+ * travelled in the URL. POST puts it in the body; each batch stays under
+ * Typesense’s `per_page` cap, and bundling the batches keeps it one round-trip
+ * regardless of IRI count. Exported for unit testing against a fake client.
  */
 export async function fetchLabels(
   client: Pick<Client, 'multiSearch'>,
@@ -225,21 +215,25 @@ export async function fetchLabels(
   iris: readonly string[],
 ): Promise<Map<string, LocalizedValue>> {
   const labels = new Map<string, LocalizedValue>();
+  if (iris.length === 0) {
+    return labels;
+  }
+  const searches = [];
   for (let start = 0; start < iris.length; start += LABEL_BATCH_SIZE) {
     const batch = iris.slice(start, start + LABEL_BATCH_SIZE);
-    const filter = `id:[${batch.map(escapeFilterValue).join(',')}]`;
-    const { results } = (await client.multiSearch.perform({
-      searches: [
-        {
-          collection,
-          q: '*',
-          query_by: 'label',
-          filter_by: filter,
-          per_page: batch.length,
-        },
-      ],
-    })) as { results: readonly TypesenseSearchResponse[] };
-    for (const hit of results[0]?.hits ?? []) {
+    searches.push({
+      collection,
+      q: '*',
+      query_by: 'label',
+      filter_by: `id:[${batch.map(escapeFilterValue).join(',')}]`,
+      per_page: batch.length,
+    });
+  }
+  const { results } = (await client.multiSearch.perform({ searches })) as {
+    results: readonly TypesenseSearchResponse[];
+  };
+  for (const result of results) {
+    for (const hit of result.hits ?? []) {
       labels.set(String(hit.document.id), labelToLocalizedValue(hit.document));
     }
   }
@@ -298,20 +292,16 @@ export function parseSearchResponse(
   // Reference facets are IRI-keyed; their buckets carry a resolved data label.
   // Plain facets (tokens, free strings) carry no label — the consumer owns display.
   const referenceFacets = new Set(
-    searchType.fields
-      .filter((field) => field.kind === 'reference')
-      .map((field) => field.name),
+    referenceFields(searchType).map((field) => field.name),
   );
   const facets: Record<string, FacetBucket[]> = {};
   for (const facet of response.facet_counts ?? []) {
     const labelled = referenceFacets.has(facet.field_name);
     // A range facet echoes the declared range key as the bucket value; look the
     // bin's half-open bounds back up by key so the bucket is self-describing.
-    const field = searchType.fields.find(
-      (candidate) => candidate.name === facet.field_name,
-    );
+    const field = fieldNamed(searchType, facet.field_name);
     const rangesByKey =
-      field?.facetRanges !== undefined
+      field !== undefined && isRangeFacet(field)
         ? new Map(field.facetRanges.map((range) => [range.key, range]))
         : undefined;
     facets[facet.field_name] = facet.counts.map((bucket) => {
@@ -337,11 +327,6 @@ function reconstructDocument(
 ): ResultDocument {
   const document: Record<string, SearchValue> = {};
   for (const field of outputFields(searchType)) {
-    if (field.kind === 'boolean') {
-      // A boolean is always present; an absent value means false.
-      document[field.name] = flat[field.name] === true;
-      continue;
-    }
     const value = logicalValue(flat, field, labels);
     if (value !== undefined) {
       document[field.name] = value;
@@ -373,6 +358,7 @@ function logicalValue(
       return typeof value === 'number' ? value : undefined;
     }
     case 'boolean':
+      // A boolean is always present; an absent value means false.
       return flat[field.name] === true;
   }
 }
@@ -383,12 +369,13 @@ function localizedValue(
   field: SearchField,
 ): LocalizedValue | undefined {
   const map: Record<string, readonly string[]> = {};
-  for (const locale of field.locales ?? []) {
-    const value = flat[`${field.name}_${locale}`];
+  const display = physicalFields(field).display;
+  (field.locales ?? []).forEach((locale, index) => {
+    const value = flat[display[index]];
     if (typeof value === 'string') {
       map[locale] = [value];
     }
-  }
+  });
   return Object.keys(map).length > 0 ? map : undefined;
 }
 

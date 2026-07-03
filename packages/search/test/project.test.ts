@@ -162,6 +162,26 @@ describe('projectDocument', () => {
     expect(document.size).toBe(1234.5);
   });
 
+  it('projects a boolean field from a path (xsd:boolean lexical space)', () => {
+    const withBoolean: SearchType = {
+      type: DATASET,
+      fields: [{ name: 'iiif', path: `${DR}iiif`, kind: 'boolean' }],
+    };
+    const project = (value: unknown): SearchDocument =>
+      projectDocument(
+        { '@id': 'https://ex/d/5', [`${DR}iiif`]: { '@value': value } },
+        withBoolean,
+      );
+
+    expect(project('true').iiif).toBe(true);
+    expect(project('1').iiif).toBe(true);
+    expect(project('false').iiif).toBe(false);
+    // Absent value → no field (the adapter reconstructs absence as false).
+    expect(
+      projectDocument({ '@id': 'https://ex/d/5' }, withBoolean).iiif,
+    ).toBeUndefined();
+  });
+
   it('folds the transformed values (not the raw ones) for a facet search field', () => {
     const document = projectDocument(
       { '@id': 'https://ex/d/4', [`${DR}format`]: [`${IANA}text/turtle`] },

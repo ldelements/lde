@@ -71,12 +71,6 @@ export type EngineFor<Type extends SearchType> = SearchEngine<
   OutputFieldsOf<Type>
 >;
 
-/** A {@link SearchResult} narrowed to one search type (see {@link EngineFor}). */
-export type ResultFor<Type extends SearchType> = SearchResult<
-  FacetFieldsOf<Type>,
-  OutputFieldsOf<Type>
->;
-
 /**
  * One result row. `id` (the stable document key, an IRI) is kept *out* of
  * {@link ResultDocument}: it is always present and is the hit’s identity, a

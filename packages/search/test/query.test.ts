@@ -1,30 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { acceptsFilter, filterOperatorFor } from '../src/query.js';
-import type { SearchField } from '../src/schema.js';
-
-const keyword: SearchField = {
-  name: 'format',
-  kind: 'keyword',
-  array: true,
-  filterable: true,
-};
-const datePosted: SearchField = {
-  name: 'datePosted',
-  kind: 'date',
-  filterable: true,
-};
-const status: SearchField = {
-  name: 'status',
-  kind: 'keyword',
-  facetable: true,
-};
-const title: SearchField = {
-  name: 'title',
-  kind: 'text',
-  localized: true,
-  locales: ['nl'],
-  filterable: true,
-};
+import { filterOperatorFor, pageForOffset } from '../src/query.js';
 
 describe('filterOperatorFor', () => {
   it('maps each field kind to its `where` operator', () => {
@@ -38,41 +13,13 @@ describe('filterOperatorFor', () => {
   });
 });
 
-describe('acceptsFilter', () => {
-  it('accepts a filter whose shape matches the field’s operator', () => {
-    expect(
-      acceptsFilter(keyword, { field: 'format', in: ['text/turtle'] }),
-    ).toBe(true);
-    expect(
-      acceptsFilter(datePosted, {
-        field: 'datePosted',
-        range: { min: '2024' },
-      }),
-    ).toBe(true);
+describe('pageForOffset', () => {
+  it('maps an offset to its 1-based page', () => {
+    expect(pageForOffset(0, 20)).toBe(1);
+    expect(pageForOffset(40, 20)).toBe(3);
   });
 
-  it('rejects a filter whose shape does not match the field’s operator', () => {
-    expect(acceptsFilter(keyword, { field: 'format', range: { min: 1 } })).toBe(
-      false,
-    );
-  });
-
-  it('rejects a filter on a non-filterable field', () => {
-    expect(acceptsFilter(status, { field: 'status', in: ['valid'] })).toBe(
-      false,
-    );
-  });
-
-  it('rejects any filter on a text field (it feeds the free-text query)', () => {
-    expect(acceptsFilter(title, { field: 'title', in: ['x'] })).toBe(false);
-  });
-
-  it('accepts an `is` filter on a filterable boolean field', () => {
-    const iiif: SearchField = {
-      name: 'iiif',
-      kind: 'boolean',
-      filterable: true,
-    };
-    expect(acceptsFilter(iiif, { field: 'iiif', is: true })).toBe(true);
+  it('pins a facet-only query (limit 0) to page 1 instead of dividing by zero', () => {
+    expect(pageForOffset(0, 0)).toBe(1);
   });
 });

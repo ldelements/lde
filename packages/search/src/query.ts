@@ -1,4 +1,4 @@
-import type { FieldKind, SearchField } from './schema.js';
+import type { FieldKind } from './schema.js';
 
 /**
  * The engine- and protocol-neutral query IR. Every API surface parses its input
@@ -71,25 +71,12 @@ export function filterOperatorFor(kind: FieldKind): FilterOperator | undefined {
   return OPERATOR_BY_KIND[kind];
 }
 
-/** The operator a concrete {@link Filter} carries, from its shape. */
-export function filterOperator(filter: Filter): FilterOperator {
-  if ('in' in filter) {
-    return 'in';
-  }
-  if ('range' in filter) {
-    return 'range';
-  }
-  return 'is';
-}
-
 /**
- * Whether `field` can be filtered by `filter`: the field must be `filterable`
- * and the filter’s shape must be the operator its kind accepts. Surfaces use it
- * to reject malformed `where` input before it reaches the adapter.
+ * The 1-based page an `offset` falls on — the numbered-pagination presentation
+ * of the IR, shared by the surfaces and the adapters. `limit: 0` (a facet-only
+ * query) fetches no hits and has no meaningful page, so it pins to 1 rather
+ * than dividing by zero.
  */
-export function acceptsFilter(field: SearchField, filter: Filter): boolean {
-  return (
-    field.filterable === true &&
-    filterOperator(filter) === filterOperatorFor(field.kind)
-  );
+export function pageForOffset(offset: number, limit: number): number {
+  return limit > 0 ? Math.floor(offset / limit) + 1 : 1;
 }
