@@ -2,9 +2,15 @@
 
 The **engine- and domain-agnostic core** for RDF-backed search. It bakes in no
 search engine, no API protocol, and no domain vocabulary: you supply a
-declarative `SearchSchema`, and engine adapters and API surfaces sit on the ports
-defined here. The library never names your domain: the same core drives a
+declarative `SearchSchema`, and engine adapters and API surfaces sit on the
+ports defined here. The library never names your domain: the same core drives a
 `Dataset`, `Person`, or `CreativeWork` search.
+
+Sitting on those ports:
+
+- **engine adapters** — [`@lde/search-typesense`](../search-typesense);
+- **API surfaces** — [`@lde/search-api-graphql`](../search-api-graphql), with a
+  REST surface to follow.
 
 It provides four things:
 
