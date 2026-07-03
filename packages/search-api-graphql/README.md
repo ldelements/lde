@@ -15,7 +15,12 @@ is the `SearchType`’s own logical `name` — `Dataset`, `Person`, `CreativeWor
 ## Runtime configuration, not codegen
 
 `buildGraphQLSchema(schema)` constructs the GraphQL schema once at startup from
-the field model — no SDL artifact, no generated resolver stubs. The field model
+the field model — no SDL artifact, no generated resolver stubs. For you that
+means: no codegen step in the build, no generated files to commit and review,
+and no stale artifact that can drift from the declaration — change the
+`SearchType`, restart, and the API is current. (The flip side, no artifact
+showing contract changes as diffs, is restored by the
+[snapshot guard](#guarding-the-contract).) The field model
 is the single source; the GraphQL contract is derived from it. Type names
 come from each `SearchType`’s `name`; output types, the `where`/`orderBy`/facet
 inputs, reference types and nullability are all derived from each field’s
