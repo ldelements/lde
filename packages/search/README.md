@@ -12,10 +12,9 @@ halves are adapters that plug into the ports defined here:
 
 - **engine adapters** implement the `SearchEngine` port:
   [`@lde/search-typesense`](../search-typesense);
-- **API surfaces** drive that port from the other side, parsing client input
-  into the `SearchQuery` IR that `search()` accepts:
-  [`@lde/search-api-graphql`](../search-api-graphql), with a REST surface to
-  follow.
+- **API surfaces** drive it, parsing client input into `search(SearchQuery)`
+  calls: [`@lde/search-api-graphql`](../search-api-graphql), with a REST
+  surface to follow.
 
 The library never names your domain: the same core drives a `Dataset`,
 `Person`, or `CreativeWork` search.
