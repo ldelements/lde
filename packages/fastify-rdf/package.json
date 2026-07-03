@@ -35,9 +35,9 @@
   },
   "devDependencies": {
     "@rdfjs/types": "^2.0.0",
-    "fastify": "^5.8.5"
+    "fastify": "^5.9.0"
   },
   "peerDependencies": {
-    "fastify": "^5.8.5"
+    "fastify": "^5.9.0"
   }
 }
