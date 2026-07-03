@@ -67,10 +67,20 @@ and GraphQL (one of the surfaces):
 `projectGraph` and the GraphQL surface consume a `SearchSchema` (projecting
 every type in one pass); the engine port executes one `SearchType` at a time.
 
-One parameter-order convention holds across the whole family: a function takes
-the value it operates on first and the `SearchType` declaration right after it
-— `search(query, type)`, `projectDocument(node, type)`,
-`engineFor(engine, type)`, `buildSearchParams(query, type)`.
+### API conventions
+
+Two conventions hold across the whole family:
+
+- **Parameter order** — a function takes the value it operates on first and
+  the `SearchType` declaration right after it: `search(query, type)`,
+  `projectDocument(node, type)`, `engineFor(engine, type)`,
+  `buildSearchParams(query, type)`.
+- **Factory verbs** — the verb tells you what kind of thing comes back.
+  `define*` captures a declaration as a literal (`defineSearchType`);
+  `build*` is a pure data-to-data constructor (`buildCollectionSchema`,
+  `buildSearchParams`, `buildGraphQLSchema`); `create*` makes a stateful
+  instance (`createTypesenseSearchEngine`). A bare noun (`searchSchema`)
+  constructs the trivial container it names.
 
 ## Field model
 
