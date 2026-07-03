@@ -81,7 +81,7 @@ export interface SearchField {
    * histogram) rather than one bucket per distinct value — the per-bucket counts
    * a UI slider needs. Bins are query-time only (no index impact) and
    * engine-neutral: the Typesense adapter emits a `facet_by` range, an
-   * Elasticsearch adapter a `range` aggregation. See {@link FacetRange}.
+   * OpenSearch adapter a `range` aggregation. See {@link FacetRange}.
    */
   readonly facetRanges?: readonly FacetRange[];
 }
