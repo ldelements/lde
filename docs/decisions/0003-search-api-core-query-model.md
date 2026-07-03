@@ -88,6 +88,9 @@ type Derivation = (document: SearchDocument, node: FramedNode) => void;
 // One root type (one SHACL NodeShape); a whole deployment’s declaration is the
 // SearchSchema, a map of SearchTypes keyed by type IRI (built with searchSchema()).
 interface SearchType {
+  readonly name: string; // logical API name ('Dataset') – names the type in every surface,
+  // declared (like each field's name), never derived from the IRI, so vocabulary
+  // churn cannot silently rename the public contract
   readonly type: string; // sh:targetClass
   readonly fields: readonly SearchField[];
   readonly derivations?: readonly Derivation[]; // computed fields: status, booleans

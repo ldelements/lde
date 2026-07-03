@@ -85,7 +85,12 @@ const derivations: Derivation[] = [
   },
 ];
 
-const schema: SearchType = { type: DATASET, fields, derivations };
+const schema: SearchType = {
+  name: 'Dataset',
+  type: DATASET,
+  fields,
+  derivations,
+};
 
 describe('projectDocument', () => {
   it('projects every field kind and runs derivations', () => {
@@ -123,6 +128,7 @@ describe('projectDocument', () => {
         [`${DR}class`]: 'http://example.org/BareClass',
       },
       {
+        name: 'Dataset',
         type: DATASET,
         fields: [
           { name: 'size', path: `${DR}size`, kind: 'integer' },
@@ -155,6 +161,7 @@ describe('projectDocument', () => {
     const document = projectDocument(
       { '@id': 'https://ex/d/12', [`${DR}size`]: { '@value': '1234.5' } },
       {
+        name: 'Dataset',
         type: DATASET,
         fields: [{ name: 'size', path: `${DR}size`, kind: 'number' }],
       },
@@ -164,6 +171,7 @@ describe('projectDocument', () => {
 
   it('projects a boolean field from a path (xsd:boolean lexical space)', () => {
     const withBoolean: SearchType = {
+      name: 'Dataset',
       type: DATASET,
       fields: [{ name: 'iiif', path: `${DR}iiif`, kind: 'boolean' }],
     };
@@ -186,6 +194,7 @@ describe('projectDocument', () => {
     const document = projectDocument(
       { '@id': 'https://ex/d/4', [`${DR}format`]: [`${IANA}text/turtle`] },
       {
+        name: 'Dataset',
         type: DATASET,
         fields: [
           {
@@ -208,7 +217,7 @@ describe('projectDocument', () => {
         '@id': 'https://ex/d/2',
         [dcterms.title.value]: { '@language': 'nl', '@value': 'Solo' },
       },
-      { type: DATASET, fields },
+      { name: 'Dataset', type: DATASET, fields },
     );
     expect(document.id).toBe('https://ex/d/2');
     expect(document.title_search_nl).toBe('solo');
@@ -219,7 +228,7 @@ describe('projectDocument', () => {
   it('omits the sort field when there is no value to sort on', () => {
     const document = projectDocument(
       { '@id': 'https://ex/d/5' },
-      { type: DATASET, fields },
+      { name: 'Dataset', type: DATASET, fields },
     );
     expect(document.id).toBe('https://ex/d/5');
     expect(document.title_sort_nl).toBeUndefined();
@@ -231,7 +240,7 @@ describe('projectDocument', () => {
         '@id': 'https://ex/d/6',
         [dcterms.title.value]: { '@language': 'fr', '@value': 'Bonjour' },
       },
-      { type: DATASET, fields },
+      { name: 'Dataset', type: DATASET, fields },
     );
     // locales is ['nl', 'en'], so the French title is invisible — no display,
     // search or sort field is emitted for it.
@@ -247,7 +256,7 @@ describe('projectDocument', () => {
         '@id': 'https://ex/d/7',
         [dcterms.title.value]: { '@value': 'Naamloos' },
       },
-      { type: DATASET, fields },
+      { name: 'Dataset', type: DATASET, fields },
     );
     expect(document.title_nl).toBeUndefined();
     expect(document.title_search_nl).toBeUndefined();
@@ -261,6 +270,7 @@ describe('projectDocument', () => {
         [dcterms.title.value]: { '@language': 'nl', '@value': 'Verhalen' },
       },
       {
+        name: 'Dataset',
         type: DATASET,
         fields: [
           {
@@ -290,7 +300,7 @@ describe('projectDocument', () => {
           { '@language': 'nl', '@value': 'Ondertitel' },
         ],
       },
-      { type: DATASET, fields },
+      { name: 'Dataset', type: DATASET, fields },
     );
     // Display takes the first value; search folds them all so both are matchable.
     expect(document.title_nl).toBe('Titel');
@@ -304,6 +314,7 @@ describe('projectDocument', () => {
         [dcterms.title.value]: { '@language': 'nl', '@value': 'Titel' },
       },
       {
+        name: 'Dataset',
         type: DATASET,
         fields: [
           {
@@ -333,7 +344,7 @@ describe('projectDocument', () => {
     expect(() =>
       projectDocument(
         { [dcterms.title.value]: { '@value': 'No id' } },
-        { type: DATASET, fields },
+        { name: 'Dataset', type: DATASET, fields },
       ),
     ).toThrow(/without an @id/);
   });
@@ -346,6 +357,7 @@ describe('projectDocument', () => {
           [dcterms.title.value]: { '@language': 'nl', '@value': 'Titel' },
         },
         {
+          name: 'Dataset',
           type: DATASET,
           fields: [
             {
@@ -376,7 +388,7 @@ describe('projectGraph', () => {
     const documents: SearchDocument[] = [];
     for await (const document of projectGraph(
       quads,
-      searchSchema({ type: DATASET, fields }),
+      searchSchema({ name: 'Dataset', type: DATASET, fields }),
     )) {
       documents.push(document);
     }

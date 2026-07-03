@@ -18,6 +18,7 @@ import {
 const DATASET = 'http://www.w3.org/ns/dcat#Dataset';
 
 const schema: SearchType = {
+  name: 'Dataset',
   type: DATASET,
   fields: [
     {
@@ -197,6 +198,7 @@ describe('schema selectors', () => {
       ref: { type: 'http://xmlns.com/foaf/0.1/Agent', strategy: 'labelOnly' },
     };
     const withReference: SearchType = {
+      name: 'Dataset',
       type: DATASET,
       fields: [...schema.fields, publisher],
     };

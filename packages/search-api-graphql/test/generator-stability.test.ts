@@ -10,6 +10,7 @@ import { printGraphQLSchema } from '../src/build-schema.js';
  * so a consumer’s contract can’t shift from under it by accident.
  */
 const THING: SearchType = {
+  name: 'Thing',
   type: 'https://example.org/Thing',
   fields: [
     {
@@ -92,10 +93,6 @@ const THING: SearchType = {
 
 describe('GraphQL generator stability', () => {
   it('emits a stable SDL for a representative schema', () => {
-    expect(
-      printGraphQLSchema(searchSchema(THING), {
-        types: { [THING.type]: { typeName: 'Thing' } },
-      }),
-    ).toMatchSnapshot();
+    expect(printGraphQLSchema(searchSchema(THING))).toMatchSnapshot();
   });
 });

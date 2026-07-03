@@ -39,6 +39,20 @@ SearchSchema ─┬─► projection      (projectGraph → flat documents)     
               └─► API surface     (GraphQL / REST)                       e.g. @lde/search-api-graphql
 ```
 
+At runtime, everything those consumers do is a **pure transformation between
+data shapes**, each one parameterised by the schema — three chains, meeting at
+the engine:
+
+```
+indexing:  RDF quads ──frame──► FramedNode ──project──► SearchDocument ──import──► engine
+querying:  client input ──parse──► SearchQuery ──compile──► engine query
+results:   engine response ──parse──► SearchResult ──shape──► API output
+```
+
+Validation happens before the first arrow (SHACL over the RDF) and inside the
+last (the engine enforces its collection schema); between them every stage is
+a typed, deterministic function — easy to test, and swappable per deployment.
+
 ## Terminology
 
 The model has three levels, with analogues in SHACL ([one possible source](#why-a-declarative-model))
@@ -47,11 +61,11 @@ and GraphQL (one of the surfaces):
 | Term           | What it is                                                                                                      | SHACL          | GraphQL     |
 | -------------- | --------------------------------------------------------------------------------------------------------------- | -------------- | ----------- |
 | `SearchField`  | One queryable field: a `kind`, the IR `path` it projects from, and the capability flags it opts into            | property shape | field       |
-| `SearchType`   | One root type’s complete declaration: its `type` IRI plus its fields and derivations                            | NodeShape      | object type |
+| `SearchType`   | One root type’s complete declaration: its logical API `name`, its `type` IRI, its fields and derivations        | NodeShape      | object type |
 | `SearchSchema` | The whole search declaration: every `SearchType`, keyed by `type` IRI — build one with `searchSchema(...types)` | shapes graph   | schema      |
 
 `projectGraph` and the GraphQL surface consume a `SearchSchema` (projecting
-every type in one pass; the engine port executes one `SearchType` at a time.
+every type in one pass); the engine port executes one `SearchType` at a time.
 
 ## Field model
 
@@ -71,6 +85,7 @@ import {
 } from '@lde/search';
 
 const DATASET = defineSearchType({
+  name: 'Dataset', // logical API name: names the GraphQL type, a REST path, …
   type: 'http://www.w3.org/ns/dcat#Dataset',
   fields: [
     // → title_nl, title_en, title_search_nl/_en, title_sort_nl/_en

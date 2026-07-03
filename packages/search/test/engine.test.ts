@@ -6,6 +6,7 @@ import { defineSearchType } from '../src/schema.js';
 import type { SearchType } from '../src/schema.js';
 
 const schema: SearchType = {
+  name: 'Dataset',
   type: 'http://www.w3.org/ns/dcat#Dataset',
   fields: [{ name: 'title', kind: 'text', localized: true, locales: ['nl'] }],
 };
@@ -63,6 +64,7 @@ describe('typed facet and document keys', () => {
     // Captured as a literal (`as const satisfies`) so the `facetable`/`output`
     // flags survive and the `…Of` helpers can read the field names off the type.
     const datasetSchema = {
+      name: 'Dataset',
       type: 'http://www.w3.org/ns/dcat#Dataset',
       fields: [
         {
@@ -114,10 +116,12 @@ describe('typed facet and document keys', () => {
     // `defineSearchType` captures the literal (no `as const` needed): the
     // `facetable: true` flag must survive for `FacetFieldsOf` to see it.
     const datasetSchema = defineSearchType({
+      name: 'Dataset',
       type: 'http://www.w3.org/ns/dcat#Dataset',
       fields: [{ name: 'format', kind: 'keyword', facetable: true }],
     });
     const organizationSchema = defineSearchType({
+      name: 'Organization',
       type: 'http://xmlns.com/foaf/0.1/Organization',
       fields: [{ name: 'sector', kind: 'keyword', facetable: true }],
     });

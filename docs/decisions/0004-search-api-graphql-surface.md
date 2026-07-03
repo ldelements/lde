@@ -44,12 +44,11 @@ filter inputs, reference types) are created once and reused across root types.
 ```ts
 function buildGraphQLSchema(
   schema: SearchSchema, // every root type, keyed by type IRI
-  options: {
-    types: Record<
-      string, // type IRI; every type in the schema needs an entry
+  options?: {
+    types?: Record<
+      string, // type IRI; entries are optional fine-tuning – names come from SearchType.name
       {
-        typeName: string; // 'Dataset' – drives the type's derived GraphQL type names
-        queryField?: string; // root field; default lowercased plural of typeName
+        queryField?: string; // root field; default lowercased plural of the type's name
         queryDefaults?: (q: SearchQuery, ctx: SearchContext) => SearchQuery; // per-type consumer policy
       }
     >;
@@ -83,10 +82,11 @@ the optional `printGraphQLSchema()` SDL snapshot (the real artifact).
 
 ### Construction rules (field model → schema)
 
-Type names derive from each type’s `typeName`; shared types (`LanguageString`, `ValueBucket`,
-`RangeBucket`, `SortDirection`, `StringFilter`, `IntRange`, `FloatRange`, `DateRange`, and the
-reference types) are emitted once across all root types, and the per-type keyed facets object
-is named `<typeName>Facets`. A type with no `filterable` fields gets no `where` arg, and one
+Type names derive from each `SearchType`’s logical `name`; shared types (`LanguageString`,
+`ValueBucket`, `RangeBucket`, `SortDirection`, `StringFilter`, `IntRange`, `FloatRange`,
+`DateRange`, and the reference types) are emitted once across all root types, and the
+per-type keyed facets object is named `<name>Facets`. A type with no `filterable` fields gets
+no `where` arg, and one
 with no `facetable` fields no `facets` field (empty GraphQL types are invalid).
 GraphQL field names are the field model `name` verbatim (declare camelCase).
 

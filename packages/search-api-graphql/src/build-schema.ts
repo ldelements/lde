@@ -52,11 +52,11 @@ export interface SearchContext {
   readonly onFacetError?: (field: string, error: unknown) => void;
 }
 
-/** Per-root-type options; what the schema value cannot carry. */
+/** Per-root-type fine-tuning. The type’s name comes from the {@link SearchType}
+ *  itself (`name`); options exist only for what has a sensible default. */
 export interface SearchTypeOptions {
-  /** Drives the type’s derived GraphQL type names, e.g. `Dataset`. */
-  readonly typeName: string;
-  /** Root query field; defaults to the lowercased plural of `typeName`. */
+  /** Root query field; defaults to the lowercased plural of the type’s `name`
+   *  (e.g. `Dataset` → `datasets`). */
   readonly queryField?: string;
   /** Consumer policy applied to every query of this type (default status, sort,
    *  tie-breaks). */
@@ -67,9 +67,9 @@ export interface SearchTypeOptions {
 }
 
 export interface BuildGraphQLSchemaOptions {
-  /** Options per root type, keyed by type IRI (the {@link SearchType} `type`).
-   *  Every type in the schema needs an entry. */
-  readonly types: Readonly<Record<string, SearchTypeOptions>>;
+  /** Optional fine-tuning per root type, keyed by type IRI (the
+   *  {@link SearchType} `type`). A type without an entry gets the defaults. */
+  readonly types?: Readonly<Record<string, SearchTypeOptions>>;
   /** Output-language ordering; defaults to Accept-Language-first, `und` last. */
   readonly languageOrder?: LanguageOrder;
 }
@@ -102,10 +102,10 @@ function screamingSnake(name: string): string {
  */
 export function buildGraphQLSchema(
   schema: SearchSchema,
-  options: BuildGraphQLSchemaOptions,
+  options: BuildGraphQLSchemaOptions = {},
 ): GraphQLSchema {
   const languageOrder = options.languageOrder ?? defaultLanguageOrder;
-  for (const typeIri of Object.keys(options.types)) {
+  for (const typeIri of Object.keys(options.types ?? {})) {
     if (!schema.has(typeIri)) {
       throw new Error(
         `Options given for type “${typeIri}”, which is not in the search schema.`,
@@ -272,9 +272,9 @@ export function buildGraphQLSchema(
   /** The root query field for one {@link SearchType}, with its derived types. */
   function rootField(
     searchType: SearchType,
-    typeOptions: SearchTypeOptions,
+    typeOptions: SearchTypeOptions | undefined,
   ): GraphQLFieldConfig<Source, SearchContext> {
-    const { typeName } = typeOptions;
+    const typeName = searchType.name;
 
     const outputType = new GraphQLObjectType({
       name: typeName,
@@ -373,7 +373,7 @@ export function buildGraphQLSchema(
       },
       resolve: async (_source, args, context: SearchContext) => {
         const built = argsToQuery(args as QueryArgs, context, searchType);
-        const finalQuery = typeOptions.queryDefaults
+        const finalQuery = typeOptions?.queryDefaults
           ? typeOptions.queryDefaults(built, context)
           : built;
         // Items + total only; facets are resolved lazily per selected key.
@@ -455,15 +455,10 @@ export function buildGraphQLSchema(
     GraphQLFieldConfig<Source, SearchContext>
   > = {};
   for (const searchType of schema.values()) {
-    const typeOptions = options.types[searchType.type];
-    if (typeOptions === undefined) {
-      throw new Error(
-        `Missing options (typeName) for type “${searchType.type}”.`,
-      );
-    }
-    const { typeName } = typeOptions;
+    const typeOptions = options.types?.[searchType.type];
+    const typeName = searchType.name;
     const queryField =
-      typeOptions.queryField ??
+      typeOptions?.queryField ??
       `${typeName.charAt(0).toLowerCase()}${typeName.slice(1)}s`;
     if (queryField in queryFields) {
       throw new Error(
@@ -486,7 +481,7 @@ export function buildGraphQLSchema(
  */
 export function printGraphQLSchema(
   schema: SearchSchema,
-  options: BuildGraphQLSchemaOptions,
+  options: BuildGraphQLSchemaOptions = {},
 ): string {
   return printSchema(buildGraphQLSchema(schema, options));
 }

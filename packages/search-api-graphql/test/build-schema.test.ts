@@ -10,6 +10,7 @@ import {
 import { buildGraphQLSchema, type SearchContext } from '../src/build-schema.js';
 
 const schema: SearchType = {
+  name: 'Dataset',
   type: 'http://www.w3.org/ns/dcat#Dataset',
   fields: [
     {
@@ -120,9 +121,7 @@ const canned: SearchResult = {
   facets: { keyword: [{ value: 'kaarten', count: 3 }] },
 };
 
-const datasetOptions = {
-  types: { [schema.type]: { typeName: 'Dataset' } },
-};
+const datasetOptions = {};
 
 async function run(
   source: string,
@@ -462,7 +461,6 @@ describe('buildGraphQLSchema', () => {
     const gqlSchema = buildGraphQLSchema(searchSchema(schema), {
       types: {
         [schema.type]: {
-          typeName: 'Dataset',
           queryDefaults: (query) => ({
             ...query,
             where: [...query.where, { field: 'status', in: ['valid'] }],
@@ -512,6 +510,7 @@ describe('buildGraphQLSchema', () => {
 
   describe('multiple root types in one schema', () => {
     const PERSON: SearchType = {
+      name: 'Person',
       type: 'https://schema.org/Person',
       fields: [
         {
@@ -533,6 +532,7 @@ describe('buildGraphQLSchema', () => {
       ],
     };
     const CREATIVE_WORK: SearchType = {
+      name: 'CreativeWork',
       type: 'https://schema.org/CreativeWork',
       fields: [
         {
@@ -557,8 +557,7 @@ describe('buildGraphQLSchema', () => {
       searchSchema(PERSON, CREATIVE_WORK),
       {
         types: {
-          [PERSON.type]: { typeName: 'Person', queryField: 'people' },
-          [CREATIVE_WORK.type]: { typeName: 'CreativeWork' },
+          [PERSON.type]: { queryField: 'people' },
         },
       },
     );
@@ -595,28 +594,29 @@ describe('buildGraphQLSchema', () => {
       expect(searchedTypes).toEqual([PERSON.type, CREATIVE_WORK.type]);
     });
 
-    it('throws on a type without options, an unknown type, and a root-field clash', () => {
-      expect(() =>
-        buildGraphQLSchema(searchSchema(PERSON, CREATIVE_WORK), {
-          types: { [PERSON.type]: { typeName: 'Person' } },
-        }),
-      ).toThrow(/Missing options/);
+    it('builds without any options: names come from the search types', () => {
+      const sdl = printSchema(
+        buildGraphQLSchema(searchSchema(PERSON, CREATIVE_WORK)),
+      );
+      expect(sdl).toMatch(/persons\([\s\S]*?\): PersonSearchResult!/);
+      expect(sdl).toMatch(
+        /creativeWorks\([\s\S]*?\): CreativeWorkSearchResult!/,
+      );
+    });
+
+    it('throws on options for an unknown type and on a root-field clash', () => {
       expect(() =>
         buildGraphQLSchema(searchSchema(PERSON), {
           types: {
-            [PERSON.type]: { typeName: 'Person' },
-            'https://schema.org/Unknown': { typeName: 'Unknown' },
+            'https://schema.org/Unknown': { queryField: 'unknowns' },
           },
         }),
       ).toThrow(/not in the search schema/);
       expect(() =>
         buildGraphQLSchema(searchSchema(PERSON, CREATIVE_WORK), {
           types: {
-            [PERSON.type]: { typeName: 'Person', queryField: 'items' },
-            [CREATIVE_WORK.type]: {
-              typeName: 'CreativeWork',
-              queryField: 'items',
-            },
+            [PERSON.type]: { queryField: 'items' },
+            [CREATIVE_WORK.type]: { queryField: 'items' },
           },
         }),
       ).toThrow(/Duplicate root query field/);

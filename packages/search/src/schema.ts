@@ -107,12 +107,19 @@ export interface FacetRange {
 export type Derivation = (document: SearchDocument, node: FramedNode) => void;
 
 /**
- * One root type’s complete search declaration: the `type` IRI its documents are
- * instances of, the queryable `fields`, and the computed `derivations`. A SHACL
- * generator can emit one per NodeShape (`type`←`sh:targetClass`, `fields`←its
- * property shapes), but that is a source, not a requirement.
+ * One root type’s complete search declaration: its logical API `name`, the
+ * `type` IRI its documents are instances of, the queryable `fields`, and the
+ * computed `derivations`. A SHACL generator can emit one per NodeShape
+ * (`name`←`sh:name`/local name, `type`←`sh:targetClass`, `fields`←its property
+ * shapes), but that is a source, not a requirement.
  */
 export interface SearchType {
+  /** Logical API name (PascalCase, e.g. `Dataset`) — names the type in the API
+   *  surfaces (GraphQL type names, a REST path), the way each field’s
+   *  {@link SearchField.name} names that field. Deliberately declared rather
+   *  than derived from the `type` IRI, so re-modelling the vocabulary cannot
+   *  silently rename the public contract. */
+  readonly name: string;
   readonly type: string;
   readonly fields: readonly SearchField[];
   readonly derivations?: readonly Derivation[];
