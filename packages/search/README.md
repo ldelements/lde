@@ -2,9 +2,9 @@
 
 The core of the LDE search family: packages that together act as a **generator
 for search engines**. You write one declarative `SearchSchema`, and everything
-a running search engine needs is derived from it — the document projection,
-the engine collection schema, the query semantics, and the API surface — rather
-than hand-written per deployment and kept in sync by discipline.
+a running search engine needs is derived from it: the document projection, the
+engine collection schema, the query semantics, and the API surface. None of
+these are hand-written per deployment or kept in sync by discipline.
 
 The core itself is **engine-, API- and domain-agnostic**: it bakes in no search
 engine, no API protocol, and no domain vocabulary. The engine- and API-specific
