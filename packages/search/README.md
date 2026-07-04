@@ -158,6 +158,11 @@ _derived_ from the kind by the adapter and the surface — never declared here.
 | `date`               | `range` (inclusive)  | yes   | yes              | ISO 8601 string (surface)       |
 | `boolean`            | `is`                 | yes   | –                | boolean (absent = false)        |
 
+A `reference` carries `labelOnly` today (id + display label); the `idOnly` and
+`inline` strategies are forward declarations. References are object-shaped from
+day one so that `inline` can later **add** fields to a reference type without
+breaking clients.
+
 ## Projection
 
 `projectGraph` is fully streaming: subjects are grouped and framed one at a time

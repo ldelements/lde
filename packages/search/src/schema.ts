@@ -78,6 +78,11 @@ export interface SearchField {
      *  indexed root type (and until cross-collection references exist, it must
      *  not collide with one). */
     readonly typeName: string;
+    /** How much of the referenced entity the reference carries. Only
+     *  `labelOnly` (id + display label) is implemented; `idOnly` and `inline`
+     *  are forward declarations, so that declarations (and the SHACL
+     *  `search:nestedStrategy` mapping) keep their shape when those land, and
+     *  `inline` can then add fields to the reference type additively. */
     readonly strategy: 'labelOnly' | 'idOnly' | 'inline';
   };
   /** Projection-time value transform (e.g. strip a media-type prefix). */
