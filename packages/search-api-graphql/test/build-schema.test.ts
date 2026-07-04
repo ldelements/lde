@@ -36,7 +36,7 @@ const schema: SearchType = {
       facetable: true,
       filterable: true,
       output: true,
-      ref: { type: 'Organization', strategy: 'labelOnly' },
+      ref: { typeName: 'Organization', strategy: 'labelOnly' },
     },
     {
       name: 'size',
@@ -58,7 +58,7 @@ const schema: SearchType = {
       array: true,
       facetable: true,
       output: true,
-      ref: { type: 'Term', strategy: 'labelOnly' },
+      ref: { typeName: 'Term', strategy: 'labelOnly' },
     },
     {
       name: 'status',
@@ -527,7 +527,7 @@ describe('buildGraphQLSchema', () => {
           kind: 'reference',
           facetable: true,
           output: true,
-          ref: { type: 'Agent', strategy: 'labelOnly' },
+          ref: { typeName: 'Agent', strategy: 'labelOnly' },
         },
       ],
     };
@@ -548,7 +548,7 @@ describe('buildGraphQLSchema', () => {
           kind: 'reference',
           facetable: true,
           output: true,
-          ref: { type: 'Agent', strategy: 'labelOnly' },
+          ref: { typeName: 'Agent', strategy: 'labelOnly' },
         },
         { name: 'pageCount', kind: 'integer', filterable: true, output: true },
       ],
@@ -602,6 +602,36 @@ describe('buildGraphQLSchema', () => {
       expect(sdl).toMatch(
         /creativeWorks\([\s\S]*?\): CreativeWorkSearchResult!/,
       );
+    });
+
+    it('throws when a reference type name collides with a root type name', () => {
+      const withCollidingRef: SearchType = {
+        name: 'CreativeWork',
+        type: 'https://schema.org/CreativeWork',
+        fields: [
+          {
+            name: 'author',
+            kind: 'reference',
+            output: true,
+            // Person is also a root type in this schema — same GraphQL name.
+            ref: { typeName: 'Person', strategy: 'labelOnly' },
+          },
+        ],
+      };
+      expect(() =>
+        buildGraphQLSchema(searchSchema(PERSON, withCollidingRef)),
+      ).toThrow(/Reference type name “Person”.*collides with a root type/);
+    });
+
+    it('throws on a duplicate root type name', () => {
+      const alsoPerson: SearchType = {
+        name: 'Person',
+        type: 'https://example.org/OtherPerson',
+        fields: [{ name: 'name', kind: 'keyword', output: true }],
+      };
+      expect(() =>
+        buildGraphQLSchema(searchSchema(PERSON, alsoPerson)),
+      ).toThrow(/Duplicate root type name “Person”/);
     });
 
     it('throws on options for an unknown type and on a root-field clash', () => {

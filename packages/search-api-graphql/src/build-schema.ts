@@ -175,21 +175,39 @@ export function buildGraphQLSchema(
     },
   });
 
+  // Root type names and reference type names share the GraphQL type namespace;
+  // catch collisions here with a clear message instead of graphql-js's generic
+  // duplicately-named-types error at schema construction.
+  const rootTypeNames = new Set<string>();
+  for (const searchType of schema.values()) {
+    if (rootTypeNames.has(searchType.name)) {
+      throw new Error(
+        `Duplicate root type name “${searchType.name}”; every SearchType needs a unique name.`,
+      );
+    }
+    rootTypeNames.add(searchType.name);
+  }
+
   // One reference type per referenced shape, shared across every root type and
   // reused by every field (Person and CreativeWork both referencing Agent yield
   // one Agent type).
   const referenceTypes = new Map<string, GraphQLObjectType>();
   for (const searchType of schema.values()) {
     for (const field of outputFields(searchType)) {
-      if (
-        field.kind === 'reference' &&
-        field.ref &&
-        !referenceTypes.has(field.ref.type)
-      ) {
+      if (field.kind !== 'reference' || field.ref === undefined) {
+        continue;
+      }
+      const { typeName } = field.ref;
+      if (rootTypeNames.has(typeName)) {
+        throw new Error(
+          `Reference type name “${typeName}” (field “${field.name}” of “${searchType.name}”) collides with a root type of the same name; rename one — a reference does not resolve to a root type.`,
+        );
+      }
+      if (!referenceTypes.has(typeName)) {
         referenceTypes.set(
-          field.ref.type,
+          typeName,
           new GraphQLObjectType({
-            name: field.ref.type,
+            name: typeName,
             fields: {
               id: { type: new GraphQLNonNull(GraphQLString) },
               name: labelList(
@@ -218,7 +236,7 @@ export function buildGraphQLSchema(
             }
           : { type: scalarOutput(GraphQLString, field) };
       case 'reference': {
-        const referenceType = referenceTypes.get(field.ref?.type ?? '')!;
+        const referenceType = referenceTypes.get(field.ref?.typeName ?? '')!;
         return field.array === true
           ? {
               type: nonNullListOf(referenceType),

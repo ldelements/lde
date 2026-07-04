@@ -48,7 +48,7 @@ const THING: SearchType = {
       facetable: true,
       filterable: true,
       output: true,
-      ref: { type: 'Agent', strategy: 'labelOnly' },
+      ref: { typeName: 'Agent', strategy: 'labelOnly' },
     },
     {
       name: 'publisher',
@@ -56,7 +56,7 @@ const THING: SearchType = {
       facetable: true,
       filterable: true,
       output: true,
-      ref: { type: 'Agent', strategy: 'labelOnly' },
+      ref: { typeName: 'Agent', strategy: 'labelOnly' },
     },
     {
       name: 'size',
