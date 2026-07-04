@@ -33,7 +33,7 @@ const datasetSchema: SearchType = {
       array: true,
       facetable: true,
       output: true,
-      ref: { type: 'http://xmlns.com/foaf/0.1/Agent', strategy: 'labelOnly' },
+      ref: { typeName: 'Agent', strategy: 'labelOnly' },
     },
     { name: 'status', kind: 'keyword', facetable: true, filterable: true },
     { name: 'statusRank', kind: 'integer', sortable: true },

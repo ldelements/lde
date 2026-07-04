@@ -31,7 +31,7 @@ const schema: SearchType = {
       array: true,
       facetable: true,
       output: true,
-      ref: { type: 'http://xmlns.com/foaf/0.1/Agent', strategy: 'labelOnly' },
+      ref: { typeName: 'Agent', strategy: 'labelOnly' },
     },
     { name: 'size', kind: 'integer', output: true },
     { name: 'datePosted', kind: 'date', output: true },
