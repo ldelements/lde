@@ -146,7 +146,7 @@ describe('physicalFields', () => {
       facetable: true,
       filterable: true,
       output: true,
-      ref: { type: 'http://xmlns.com/foaf/0.1/Agent', strategy: 'labelOnly' },
+      ref: { typeName: 'Agent', strategy: 'labelOnly' },
     };
 
     expect(physicalFields(publisher)).toEqual({
@@ -195,7 +195,7 @@ describe('schema selectors', () => {
       name: 'publisher',
       kind: 'reference',
       facetable: true,
-      ref: { type: 'http://xmlns.com/foaf/0.1/Agent', strategy: 'labelOnly' },
+      ref: { typeName: 'Agent', strategy: 'labelOnly' },
     };
     const withReference: SearchType = {
       name: 'Dataset',

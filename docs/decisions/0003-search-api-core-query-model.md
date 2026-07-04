@@ -78,7 +78,10 @@ interface SearchField {
   readonly filterable?: boolean; // usable in `where`
   readonly facetable?: boolean;
   readonly sortable?: boolean;
-  readonly ref?: { type: string; strategy: 'labelOnly' | 'idOnly' | 'inline' }; // kind: 'reference'
+  readonly ref?: {
+    typeName: string;
+    strategy: 'labelOnly' | 'idOnly' | 'inline';
+  }; // kind: 'reference'; typeName names the reference's API type ('Organization') – a name, not a key
   readonly transform?: (value: string) => string; // projection-time value transform
   readonly facetRanges?: readonly FacetRange[]; // numeric facet: fixed [min, max) range bins (histogram) vs per-value buckets
 }

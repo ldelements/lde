@@ -68,9 +68,16 @@ export interface SearchField {
   readonly facetable?: boolean;
   /** Publicly selectable in `orderBy`; localized text also emits a folded sort key. */
   readonly sortable?: boolean;
-  /** For `kind: 'reference'`: the referenced shape and how much of it to carry. */
+  /** For `kind: 'reference'`: the referenced entity’s shape and how much of it
+   *  to carry. */
   readonly ref?: {
-    readonly type: string;
+    /** Logical API type name of the referenced entity (PascalCase, e.g.
+     *  `Organization`) — names the reference’s type in the API surfaces, the
+     *  way {@link SearchType.name} names a root type; fields sharing it share
+     *  one emitted type. A name, not a key: it need not correspond to any
+     *  indexed root type (and until cross-collection references exist, it must
+     *  not collide with one). */
+    readonly typeName: string;
     readonly strategy: 'labelOnly' | 'idOnly' | 'inline';
   };
   /** Projection-time value transform (e.g. strip a media-type prefix). */

@@ -121,7 +121,7 @@ const DATASET = defineSearchType({
       kind: 'reference',
       facetable: true,
       output: true,
-      ref: { type: 'Organization', strategy: 'labelOnly' },
+      ref: { typeName: 'Organization', strategy: 'labelOnly' },
     },
     // → size (int)
     { name: 'size', path: 'urn:dr:size', kind: 'integer', sortable: true },
