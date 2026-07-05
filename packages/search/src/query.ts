@@ -1,4 +1,4 @@
-import { fieldNamed, type FieldKind, type SearchType } from './schema.js';
+import { fieldNamed, filterOperatorFor, type SearchType } from './schema.js';
 
 /**
  * The engine- and protocol-neutral query IR. Every API surface compiles its
@@ -45,31 +45,12 @@ export interface Sort {
   readonly direction: 'asc' | 'desc';
 }
 
-/** The `where` operator a kind accepts, or `undefined` when it is not filterable
- *  through `where` (`text` feeds the free-text `query` instead). */
-export type FilterOperator = 'in' | 'range' | 'is';
-
-const OPERATOR_BY_KIND: Readonly<
-  Record<FieldKind, FilterOperator | undefined>
-> = {
-  text: undefined,
-  keyword: 'in',
-  reference: 'in',
-  integer: 'range',
-  number: 'range',
-  date: 'range',
-  boolean: 'is',
-};
-
-/**
- * The `where` operator a field of this kind accepts (per the ADR filter-semantics
- * table), or `undefined` for `text` — which feeds the free-text `query` rather
- * than `where`. Drives both the surface’s `where` input type and the adapter’s
- * filter compiler from one rule.
- */
-export function filterOperatorFor(kind: FieldKind): FilterOperator | undefined {
-  return OPERATOR_BY_KIND[kind];
-}
+// The kind→operator table lives with the field model in schema.ts (one source
+// for the query IR, the surfaces, the adapters AND declaration validation);
+// re-exported here so the query-IR module stays the natural import site.
+export { filterOperatorFor } from './schema.js';
+export type { FilterOperator } from './schema.js';
+import type { FilterOperator } from './schema.js';
 
 /** The operator a {@link Filter} value carries, from its discriminating key. */
 export function filterOperator(filter: Filter): FilterOperator {

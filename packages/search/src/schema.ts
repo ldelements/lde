@@ -17,6 +17,32 @@ export type FieldKind =
   | 'date'
   | 'reference';
 
+/** The `where` operator a kind accepts, or `undefined` when it is not filterable
+ *  through `where` (`text` feeds the free-text `query` instead). */
+export type FilterOperator = 'in' | 'range' | 'is';
+
+const OPERATOR_BY_KIND: Readonly<
+  Record<FieldKind, FilterOperator | undefined>
+> = {
+  text: undefined,
+  keyword: 'in',
+  reference: 'in',
+  integer: 'range',
+  number: 'range',
+  date: 'range',
+  boolean: 'is',
+};
+
+/**
+ * The `where` operator a field of this kind accepts (per the ADR filter-semantics
+ * table), or `undefined` for `text` — which feeds the free-text `query` rather
+ * than `where`. The ONE source for the surface’s `where` input type, the
+ * adapter’s filter compiler and declaration validation, so they cannot drift.
+ */
+export function filterOperatorFor(kind: FieldKind): FilterOperator | undefined {
+  return OPERATOR_BY_KIND[kind];
+}
+
 /**
  * One queryable field — the single declarative source that drives all four
  * consumers (projection, engine collection schema, query semantics, and the
@@ -303,9 +329,6 @@ export interface SearchTypeIssue {
     | 'text-not-facetable';
 }
 
-/** Kinds whose facets may declare {@link RangeFacetable.facetRanges} bins. */
-const NUMERIC_KINDS: readonly FieldKind[] = ['integer', 'number', 'date'];
-
 /** Kinds that can feed full-text search (project a folded search field). */
 const SEARCHABLE_KINDS: readonly FieldKind[] = ['text', 'keyword', 'reference'];
 
@@ -324,9 +347,9 @@ const TRANSFORMABLE_KINDS: readonly FieldKind[] = ['keyword', 'reference'];
  *   result reconstruction have no representation for unlocalized text — use
  *   `keyword` for untagged strings); `locales` on any other kind is
  *   meaningless;
- * - `text` is not `filterable` or `facetable` (it feeds the free-text query;
- *   a `where` clause on it could never match an operator);
- * - `facetRanges` only on the numeric kinds (`integer`/`number`/`date`);
+ * - a kind without a `where` operator (`text` — it feeds the free-text query)
+ *   is neither `filterable` nor `facetable`;
+ * - `facetRanges` only on the `range`-operator kinds (`integer`/`number`/`date`);
  * - `searchable` only on `text`/`keyword`/`reference` (projection emits no
  *   folded search field for the other kinds);
  * - `transform` only on `keyword`/`reference` (the only kinds whose
@@ -364,18 +387,27 @@ export function validateSearchType(
       if ((field.locales ?? []).length === 0) {
         issue('text-requires-locales');
       }
-      if (field.filterable === true) {
-        issue('text-not-filterable');
-      }
-      if (field.facetable === true) {
-        issue('text-not-facetable');
-      }
     } else if (field.locales !== undefined) {
       issue('locales-not-allowed');
     }
+    // Derived from the kind→operator table, so validation, the surfaces and
+    // the compilers cannot disagree: a kind without a `where` operator (text)
+    // is neither filterable nor facetable, and only `range` kinds bin.
+    if (
+      field.filterable === true &&
+      filterOperatorFor(field.kind) === undefined
+    ) {
+      issue('text-not-filterable');
+    }
+    if (
+      field.facetable === true &&
+      filterOperatorFor(field.kind) === undefined
+    ) {
+      issue('text-not-facetable');
+    }
     if (
       field.facetRanges !== undefined &&
-      !NUMERIC_KINDS.includes(field.kind)
+      filterOperatorFor(field.kind) !== 'range'
     ) {
       issue('facet-ranges-not-allowed');
     }
