@@ -51,9 +51,7 @@ export type SearchField =
   | LocalizedTextField
   | KeywordField
   | ReferenceField
-  | IntegerField
-  | NumberField
-  | DateField
+  | NumericField
   | BooleanField;
 
 /** The declaration members every {@link SearchField} kind shares. */
@@ -109,6 +107,7 @@ export interface LocalizedTextField extends SearchFieldBase, Searchable {
   readonly locales: readonly string[];
   readonly filterable?: never;
   readonly facetable?: never;
+  readonly facetRanges?: never;
 }
 
 /**
@@ -126,6 +125,7 @@ export interface TextField extends SearchFieldBase, Searchable {
   readonly locales?: never;
   readonly filterable?: never;
   readonly facetable?: never;
+  readonly facetRanges?: never;
 }
 
 /** An exact-match token or free string: filtered by membership, faceted per
@@ -134,6 +134,7 @@ export interface KeywordField extends SearchFieldBase, Searchable {
   readonly kind: 'keyword';
   /** Projection-time value transform (e.g. strip a media-type prefix). */
   readonly transform?: (value: string) => string;
+  readonly facetRanges?: never;
 }
 
 /** An IRI-valued reference to another entity, label-resolved at the surface. */
@@ -141,6 +142,7 @@ export interface ReferenceField extends SearchFieldBase, Searchable {
   readonly kind: 'reference';
   /** Projection-time value transform. */
   readonly transform?: (value: string) => string;
+  readonly facetRanges?: never;
   /** The referenced entity’s shape and how much of it to carry. Required when
    *  the field is `output` (the API surfaces need the reference type name);
    *  optional for a facet- or filter-only reference. */
@@ -173,24 +175,22 @@ export interface RangeFacetable {
   readonly facetRanges?: readonly FacetRange[];
 }
 
-/** A whole number; range-filtered, range- or value-faceted, sortable. */
-export interface IntegerField extends SearchFieldBase, RangeFacetable {
-  readonly kind: 'integer';
-}
-
-/** A floating-point number; range-filtered, range- or value-faceted, sortable. */
-export interface NumberField extends SearchFieldBase, RangeFacetable {
-  readonly kind: 'number';
-}
-
-/** A point in time: ISO 8601 at the edges, Unix seconds in the index. */
-export interface DateField extends SearchFieldBase, RangeFacetable {
-  readonly kind: 'date';
+/**
+ * A numeric value: range-filtered, range- or value-faceted, sortable.
+ * `integer` is a whole number, `number` a float, `date` a point in time
+ * (ISO 8601 at the edges, Unix seconds in the index) — identical capabilities,
+ * so one interface serves all three kinds; `field.kind` still narrows.
+ */
+export interface NumericField extends SearchFieldBase, RangeFacetable {
+  readonly kind: 'integer' | 'number' | 'date';
+  readonly searchable?: never;
 }
 
 /** A boolean flag; absent in a document means `false`. */
 export interface BooleanField extends SearchFieldBase {
   readonly kind: 'boolean';
+  readonly searchable?: never;
+  readonly facetRanges?: never;
 }
 
 /**
@@ -226,7 +226,7 @@ export interface SearchType {
 /**
  * Declare a {@link SearchType}, capturing it as a literal: the `const` type
  * parameter preserves the field names and capability flags that the type-level
- * helpers (`FacetFieldsOf`, `OutputFieldsOf`, `EngineFor`) read off the type —
+ * helpers (`FacetFieldsOf`, `OutputFieldsOf`) read off the type —
  * with none of the widening a plain `: SearchType` annotation causes and
  * without having to remember `as const satisfies SearchType`. Identity at
  * runtime.
@@ -304,13 +304,13 @@ export interface SearchTypeIssue {
     | 'text-not-facetable';
 }
 
-/** Kinds whose facets may declare {@link SearchField.facetRanges} bins. */
+/** Kinds whose facets may declare {@link RangeFacetable.facetRanges} bins. */
 const NUMERIC_KINDS: readonly FieldKind[] = ['integer', 'number', 'date'];
 
 /** Kinds that can feed full-text search (project a folded search field). */
 const SEARCHABLE_KINDS: readonly FieldKind[] = ['text', 'keyword', 'reference'];
 
-/** Kinds whose projection applies the {@link SearchField.transform}. */
+/** Kinds whose projection applies the {@link KeywordField.transform}. */
 const TRANSFORMABLE_KINDS: readonly FieldKind[] = ['keyword', 'reference'];
 
 /**
@@ -414,6 +414,27 @@ interface FlatField extends SearchFieldBase, Searchable, RangeFacetable {
   readonly transform?: (value: string) => string;
 }
 
+/**
+ * Throw when `searchType` is not a member of `schema` — the port membership
+ * guard every engine adapter applies before searching, so a query can never
+ * meet an index the deployment did not declare. Identity-based: the exact
+ * declaration object must be in the schema, not a lookalike.
+ */
+export function assertTypeInSchema(
+  schema: SearchSchema,
+  searchType: SearchType,
+): void {
+  if (schema.get(searchType.type) !== searchType) {
+    throw new Error(
+      `Search type “${searchType.name}” is not in this engine’s schema; it serves ${[
+        ...schema.values(),
+      ]
+        .map((declared) => `“${declared.name}”`)
+        .join(', ')}.`,
+    );
+  }
+}
+
 /** Throw on a structurally invalid {@link SearchType} ({@link validateSearchType}),
  *  naming every issue. Called by {@link searchSchema} for each declaration. */
 export function assertValidSearchType(searchType: SearchType): void {
@@ -456,7 +477,7 @@ export function searchableFields(
   return searchType.fields
     .filter(
       (field): field is SearchField & { searchable: { weight: number } } =>
-        (field as FlatField).searchable !== undefined,
+        field.searchable !== undefined,
     )
     .sort((left, right) => right.searchable.weight - left.searchable.weight);
 }
@@ -509,9 +530,8 @@ export function fieldNamed(
  */
 export function isRangeFacet(
   field: SearchField,
-): field is SearchField & { readonly facetRanges: readonly FacetRange[] } {
-  const ranges = (field as FlatField).facetRanges;
-  return ranges !== undefined && ranges.length > 0;
+): field is NumericField & { readonly facetRanges: readonly FacetRange[] } {
+  return field.facetRanges !== undefined && field.facetRanges.length > 0;
 }
 
 /**
@@ -547,10 +567,9 @@ export function physicalFields(field: SearchField): PhysicalFields {
         : [],
     };
   }
-  const searchable = (field as FlatField).searchable !== undefined;
   return {
     display: [],
-    search: searchable ? [`${field.name}_search`] : [],
+    search: field.searchable !== undefined ? [`${field.name}_search`] : [],
     sort: [],
   };
 }

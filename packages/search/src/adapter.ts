@@ -7,6 +7,7 @@
  * this; the main entry point carries that (small) authoring surface.
  */
 export {
+  assertTypeInSchema,
   physicalFields,
   searchableFields,
   facetableFields,

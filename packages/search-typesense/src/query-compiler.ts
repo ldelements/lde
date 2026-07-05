@@ -141,7 +141,7 @@ function queryFields(
     const search = physicalFields(field).search;
     const baseWeight = field.searchable.weight;
     if (field.kind === 'text' && field.localized === true) {
-      const locales = field.locales ?? [];
+      const locales = field.locales;
       search.forEach((name, index) => {
         names.push(name);
         weights.push(
@@ -265,8 +265,7 @@ function compileSort(
     field.kind === 'text' &&
     field.localized === true
   ) {
-    const sortName =
-      physicalFields(field).sort[field.locales?.indexOf(locale) ?? -1];
+    const sortName = physicalFields(field).sort[field.locales.indexOf(locale)];
     if (sortName !== undefined) {
       return `${sortName}:${sort.direction}`;
     }

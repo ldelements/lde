@@ -126,12 +126,9 @@ function applyLocalizedText(
   values: readonly LangValue[],
   field: LocalizedTextField,
 ): void {
+  // Empty `locales` is rejected at declaration time (`validateSearchType`);
+  // here it simply projects nothing.
   const locales = field.locales;
-  if (locales.length === 0) {
-    throw new Error(
-      `Localized text field “${field.name}” must declare at least one locale; nothing would be projected otherwise.`,
-    );
-  }
   const names = physicalFields(field);
   locales.forEach((locale, index) => {
     const localeValues = values
@@ -145,11 +142,7 @@ function applyLocalizedText(
       setString(document, names.display[index], primary);
     }
     if (field.searchable) {
-      setString(
-        document,
-        names.search[index],
-        fold(localeValues.join(' ')).trim(),
-      );
+      setString(document, names.search[index], foldedSearchValue(localeValues));
     }
     if (field.sortable) {
       setString(document, names.sort[index], fold(primary));
@@ -178,9 +171,14 @@ function applyMonolingualText(
     setString(
       document,
       physicalFields(field).search[0],
-      fold(values.join(' ')).trim(),
+      foldedSearchValue(values),
     );
   }
+}
+
+/** The projection’s definition of a folded free-text search value. */
+function foldedSearchValue(values: readonly string[]): string {
+  return fold(values.join(' ')).trim();
 }
 
 /**

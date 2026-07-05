@@ -65,8 +65,8 @@ type FieldKind =
   | 'date'
   | 'reference';
 
-// The public type is a DISCRIMINATED UNION by kind (TextField | KeywordField |
-// ReferenceField | IntegerField | NumberField | DateField | BooleanField):
+// The public type is a DISCRIMINATED UNION by kind (TextField | LocalizedTextField |
+// KeywordField | ReferenceField | NumericField | BooleanField):
 // each kind carries exactly the properties it can honour (locales on text,
 // ref on references, facetRanges on numerics), so an illegal declaration
 // fails to compile; validateSearchType enforces the same rules at runtime
@@ -117,7 +117,7 @@ query/schema/output behavior. The physical field names a declaration fans out to
 `${name}_sort_${locale}`, `${name}_search`) follow one convention owned by
 `@lde/search`, so projection, collection schema and query compiler agree. The `status_rank`
 tie-break sort is a **deployment-specific delta**, never in `@lde/search`. Grouped facets need
-no field-model mechanism at all: a deployment derivation materializes group tokens (e.g.
+no field-model mechanism at all: a deployment `derive` function materializes group tokens (e.g.
 `group:rdf`) into the field’s own values – see Consequences. `relevance` is _not_ a delta:
 every full-text engine ranks by match score, so it is a generic reserved sort the adapter
 understands.
@@ -191,7 +191,7 @@ time a group token is an ordinary value: faceted natively, filtered by plain mem
 no filter rewriting in the adapter; the engine stays dumb and denormalization (the document
 store’s strength) does the work. A cross-source signal that is not a subset of the field (e.g. a
 SPARQL capability derived from `conformsTo`, not a media type) is likewise materialized as a plain
-value by a deployment derivation.
+value by a deployment `derive` function.
 
 The trade-off this design accepts: **group membership is fixed at index time.** Because the
 group token is baked into each document’s values during projection, redefining a group (which
@@ -216,7 +216,7 @@ SearchEngine` readable.
 // search, facet batching) have one home. searchSchema() captures the declared types
 // as a literal tuple `Types`, so search() only accepts the deployment's own types
 // (foreign type = compile error), the collections map is exhaustive at compile time,
-// and results are keyed per call by the type passed (FacetKeysOf<T>/OutputKeysOf<T>;
+// and results are keyed per call by the type passed (FacetFieldsOf<T>/OutputFieldsOf<T>;
 // widened schemas degrade to string keys). Design history: a global engine taking
 // (query, searchType) let any type meet one fixed collection, and its engineFor
 // narrowing was an unchecked cast; one-engine-per-type fixed that but shattered
@@ -230,7 +230,7 @@ interface SearchEngine<
   search<T extends Types[number]>(
     searchType: T,
     query: SearchQuery,
-  ): Promise<SearchResult<FacetKeysOf<T>, OutputKeysOf<T>>>;
+  ): Promise<SearchResult<FacetFieldsOf<T>, OutputFieldsOf<T>>>;
 }
 
 interface SearchResult<

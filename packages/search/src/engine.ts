@@ -29,7 +29,7 @@ import type { SearchSchema, SearchType } from './schema.js';
  * `defineSearchType` declaration, `search()` only accepts the deployment’s
  * own types (a foreign type is a compile error) and returns facet/document
  * keys typed by the type passed. A widened `: SearchSchema` degrades
- * gracefully to string keys ({@link FacetKeysOf}).
+ * gracefully to string keys ({@link FacetFieldsOf}).
  */
 export interface SearchEngine<
   Types extends readonly SearchType[] = readonly SearchType[],
@@ -40,21 +40,8 @@ export interface SearchEngine<
   search<T extends Types[number]>(
     searchType: T,
     query: SearchQuery,
-  ): Promise<SearchResult<FacetKeysOf<T>, OutputKeysOf<T>>>;
+  ): Promise<SearchResult<FacetFieldsOf<T>, OutputFieldsOf<T>>>;
 }
-
-/** The facet keys `search()` returns for the type passed: narrowed for a
- *  literal declaration, `string` for a widened `SearchType` (whose field
- *  names are not statically known and would otherwise collapse to `never`). */
-export type FacetKeysOf<T extends SearchType> = SearchType extends T
-  ? string
-  : FacetFieldsOf<T>;
-
-/** The document keys `search()` returns for the type passed; see
- *  {@link FacetKeysOf}. */
-export type OutputKeysOf<T extends SearchType> = SearchType extends T
-  ? string
-  : OutputFieldsOf<T>;
 
 /** What an engine returns: logical hits, a total, and the requested facets. */
 export interface SearchResult<
@@ -76,25 +63,23 @@ export type FacetMap<FacetField extends string = string> = Readonly<
 
 /**
  * The facet-field-name union of a search type — the keys a {@link SearchResult}’s
- * `facets` can hold. Requires the type be captured as a literal (via
- * `defineSearchType` or `as const satisfies SearchType`), so the
- * `facetable: true` flags survive as literals; a plain `: SearchType`
- * annotation widens them and yields `never`.
+ * `facets` can hold. Narrow for a declaration captured as a literal (via
+ * `defineSearchType` or `as const satisfies SearchType`); a plain
+ * `: SearchType` annotation degrades to `string` (its field names are not
+ * statically known).
  */
-export type FacetFieldsOf<Type extends SearchType> = Extract<
-  Type['fields'][number],
-  { readonly facetable: true }
->['name'];
+export type FacetFieldsOf<Type extends SearchType> = SearchType extends Type
+  ? string
+  : Extract<Type['fields'][number], { readonly facetable: true }>['name'];
 
 /**
  * The output-field-name union of a search type — the keys a {@link ResultDocument}
- * can hold. Like {@link FacetFieldsOf}, requires the type captured as a literal
- * (via `defineSearchType` or `as const satisfies SearchType`).
+ * can hold. Like {@link FacetFieldsOf}, degrades to `string` for a widened
+ * declaration.
  */
-export type OutputFieldsOf<Type extends SearchType> = Extract<
-  Type['fields'][number],
-  { readonly output: true }
->['name'];
+export type OutputFieldsOf<Type extends SearchType> = SearchType extends Type
+  ? string
+  : Extract<Type['fields'][number], { readonly output: true }>['name'];
 
 /**
  * One result row. `id` (the stable document key, an IRI) is kept *out* of

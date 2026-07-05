@@ -57,7 +57,7 @@ function typesenseFields(
 ): CollectionFieldSchema[] {
   const names = physicalFields(field);
   if (field.kind === 'text' && field.localized === true) {
-    const locales = field.locales ?? [];
+    const locales = field.locales;
     return [
       // Display labels: stored, not indexed for search (search uses the folded
       // companions), accents preserved.
@@ -102,23 +102,18 @@ function typesenseFields(
       optional: field.required !== true && field.name !== defaultSortingField,
     },
   ];
-  const searchable =
-    (field.kind === 'keyword' ||
-      field.kind === 'reference' ||
-      field.kind === 'text') &&
-    field.searchable !== undefined;
-  if (searchable) {
-    for (const name of names.search) {
-      fields.push({
-        name,
-        type: valueType,
-        optional: true,
-        ...(defaultLocale !== undefined && {
-          stem: true,
-          locale: defaultLocale,
-        }),
-      });
-    }
+  // `names.search` is non-empty exactly when the field projects a folded
+  // search companion — physicalFields owns that rule.
+  for (const name of names.search) {
+    fields.push({
+      name,
+      type: valueType,
+      optional: true,
+      ...(defaultLocale !== undefined && {
+        stem: true,
+        locale: defaultLocale,
+      }),
+    });
   }
   return fields;
 }

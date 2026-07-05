@@ -27,12 +27,8 @@ export type {
   LocalizedTextField,
   KeywordField,
   ReferenceField,
-  IntegerField,
-  NumberField,
-  DateField,
+  NumericField,
   BooleanField,
-  Searchable,
-  RangeFacetable,
   SearchType,
   SearchTypeIssue,
   SearchSchema,
@@ -44,7 +40,7 @@ export type {
 export type { SearchQuery, Filter, Sort } from './query.js';
 
 // Engine port + the logical result document returned across it. An engine is
-// bound to one SearchType at construction by its adapter factory.
+// bound to the whole SearchSchema at construction by its adapter factory.
 export type {
   SearchEngine,
   SearchResult,
@@ -57,8 +53,6 @@ export type {
   FacetMap,
   FacetFieldsOf,
   OutputFieldsOf,
-  FacetKeysOf,
-  OutputKeysOf,
 } from './engine.js';
 
 export type { FramedNode } from './frame-by-type.js';

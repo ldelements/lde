@@ -75,7 +75,7 @@ and GraphQL (one of the surfaces):
 | Term           | What it is                                                                                                      | SHACL          | GraphQL     |
 | -------------- | --------------------------------------------------------------------------------------------------------------- | -------------- | ----------- |
 | `SearchField`  | One queryable field: a `kind`, the IR `path` it projects from, and the capability flags it opts into            | property shape | field       |
-| `SearchType`   | One root type’s complete declaration: its logical API `name`, its `type` IRI, its fields and derivations        | NodeShape      | object type |
+| `SearchType`   | One root type’s complete declaration: its logical API `name`, its `type` IRI and its fields (incl. derived)     | NodeShape      | object type |
 | `SearchSchema` | The whole search declaration: every `SearchType`, keyed by `type` IRI — build one with `searchSchema(...types)` | shapes graph   | schema      |
 
 `projectGraph` and the GraphQL surface consume a `SearchSchema` (projecting
@@ -207,7 +207,7 @@ breaking clients.
 and documents are yielded as produced, so beyond a subject index memory stays
 flat at scale (framing the whole graph at once is roughly O(N²)). Duplicate
 triples are collapsed first, because some SPARQL engines (e.g. QLever) do not
-deduplicate `CONSTRUCT` output. The IR carries no `@context`, so a `derivation`
+deduplicate `CONSTRUCT` output. The IR carries no `@context`, so a `derive` function
 reading it sees full predicate IRIs with language tags preserved.
 
 ## Locales
@@ -285,8 +285,7 @@ await engine.search(OTHER_TYPE, query); // compile error: not in this schema
 This only works when the types were declared with `defineSearchType` (or
 captured `as const satisfies SearchType`) and composed with `searchSchema()`;
 a plain `: SearchSchema` annotation widens gracefully to string keys.
-`FacetKeysOf`/`OutputKeysOf` (and the underlying
-`FacetFieldsOf`/`OutputFieldsOf`) are exported for annotating your own
+`FacetFieldsOf`/`OutputFieldsOf` are exported for annotating your own
 signatures, and `engine.schema` exposes the bound declaration for routing.
 A single-type deployment may use the `collection: 'datasets'` shorthand.
 

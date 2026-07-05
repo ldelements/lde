@@ -16,6 +16,7 @@ import {
   type LocalizedTextField,
 } from '@lde/search';
 import {
+  assertTypeInSchema,
   assertValidQuery,
   fieldNamed,
   isRangeFacet,
@@ -84,20 +85,24 @@ export function createTypesenseSearchEngine<
   schema: SearchSchema<Types>,
   options: TypesenseSearchEngineOptions<Types[number]['name']>,
 ): SearchEngine<Types> {
-  const collectionFor = (searchType: SearchType): string => {
-    const named = (
-      options.collections as Readonly<Record<string, string>> | undefined
-    )?.[searchType.name];
-    if (named !== undefined) {
-      return named;
-    }
-    if (options.collection !== undefined && schema.size === 1) {
-      return options.collection;
-    }
-    throw new Error(
-      `No collection configured for search type “${searchType.name}”; set options.collections.${searchType.name} (the single-type “collection” shorthand needs a one-type schema).`,
-    );
-  };
+  // Resolve every type's collection ONCE at construction, so a
+  // misconfiguration fails at startup — never on the first search that
+  // happens to hit the unwired type.
+  const collections = new Map<string, string>(
+    [...schema.values()].map((searchType) => {
+      const named = (
+        options.collections as Readonly<Record<string, string>> | undefined
+      )?.[searchType.name];
+      const collection =
+        named ?? (schema.size === 1 ? options.collection : undefined);
+      if (collection === undefined) {
+        throw new Error(
+          `No collection configured for search type “${searchType.name}”; set options.collections.${searchType.name} (the single-type “collection” shorthand needs a one-type schema).`,
+        );
+      }
+      return [searchType.type, collection];
+    }),
+  );
   // Process-lifetime cache for the FULL `labels` collection, held in the engine
   // closure. Populated lazily on the first cached search; `loadAll` is the
   // single-flight in-flight promise so concurrent first-loads share one export.
@@ -140,15 +145,7 @@ export function createTypesenseSearchEngine<
       // The port contract: a type outside the bound schema and a structurally
       // invalid query (unknown field, wrong operator, unknown facet) are both
       // rejected up front, for EVERY caller.
-      if (schema.get(searchType.type) !== searchType) {
-        throw new Error(
-          `Search type “${searchType.name}” is not in this engine’s schema; it serves ${[
-            ...schema.values(),
-          ]
-            .map((declared) => `“${declared.name}”`)
-            .join(', ')}.`,
-        );
-      }
+      assertTypeInSchema(schema, searchType);
       assertValidQuery(query, searchType);
       const params = buildSearchParams(query, searchType, options);
       // Cached path: the once-loaded full collection serves labels by in-memory
@@ -162,7 +159,7 @@ export function createTypesenseSearchEngine<
           ? cachedAllLabels(options.labelsCollection, options.labelCacheTtlMs)
           : undefined;
       const response = (await client
-        .collections(collectionFor(searchType))
+        .collections(collections.get(searchType.type) as string)
         .documents()
         .search(params)) as TypesenseSearchResponse;
       // Labels are supplementary: a failed lookup (e.g. the sidecar collection

@@ -116,11 +116,13 @@ export function buildGraphQLSchema(
 ): GraphQLSchema {
   const languageOrder = options.languageOrder ?? defaultLanguageOrder;
   const maxPerPage = options.maxPerPage ?? 100;
-  const typeNames = new Set(
+  // One set serves both guards below: unknown option keys and (for a
+  // hand-built map that bypassed searchSchema()) duplicate root type names.
+  const rootTypeNames = new Set(
     [...schema.values()].map((searchType) => searchType.name),
   );
   for (const name of Object.keys(options.types ?? {})) {
-    if (!typeNames.has(name)) {
+    if (!rootTypeNames.has(name)) {
       throw new Error(
         `Options given for type “${name}”, which is not in the search schema.`,
       );
@@ -191,15 +193,18 @@ export function buildGraphQLSchema(
 
   // Root type names and reference type names share the GraphQL type namespace;
   // catch collisions here with a clear message instead of graphql-js's generic
-  // duplicately-named-types error at schema construction.
-  const rootTypeNames = new Set<string>();
-  for (const searchType of schema.values()) {
-    if (rootTypeNames.has(searchType.name)) {
-      throw new Error(
-        `Duplicate root type name “${searchType.name}”; every SearchType needs a unique name.`,
-      );
+  // duplicately-named-types error at schema construction. (searchSchema()
+  // already rejects duplicates; this guards a hand-built map that bypassed it.)
+  if (rootTypeNames.size !== schema.size) {
+    const seen = new Set<string>();
+    for (const searchType of schema.values()) {
+      if (seen.has(searchType.name)) {
+        throw new Error(
+          `Duplicate root type name “${searchType.name}”; every SearchType needs a unique name.`,
+        );
+      }
+      seen.add(searchType.name);
     }
-    rootTypeNames.add(searchType.name);
   }
 
   // One reference type per referenced shape, shared across every root type and

@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { SearchEngine } from './engine.js';
-import type { SearchQuery } from './query.js';
-import { filterOperatorFor, type FilterOperator } from './query.js';
+import {
+  filterOperatorFor,
+  type Filter,
+  type FilterOperator,
+  type SearchQuery,
+} from './query.js';
 import { filterableFields, type SearchType } from './schema.js';
-import type { Filter } from './query.js';
 
 /**
  * The executable {@link SearchEngine} port contract (import from

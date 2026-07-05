@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  assertTypeInSchema,
   assertValidSearchType,
   facetableFields,
   fieldNamed,
@@ -376,6 +377,17 @@ describe('validateSearchType', () => {
         }),
       ),
     ).toEqual([{ field: 'size', reason: 'transform-not-allowed' }]);
+  });
+});
+
+describe('assertTypeInSchema', () => {
+  it('accepts a member and rejects a foreign or lookalike type', () => {
+    const withSchema = searchSchema(schema);
+    expect(() => assertTypeInSchema(withSchema, schema)).not.toThrow();
+    // A structural copy is not the declared member: identity-based.
+    expect(() => assertTypeInSchema(withSchema, { ...schema })).toThrow(
+      /not in this engine’s schema; it serves “Dataset”/,
+    );
   });
 });
 

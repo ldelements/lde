@@ -558,21 +558,20 @@ describe('schema binding', () => {
     );
   });
 
-  it('rejects a type with no configured collection (shorthand needs one type)', async () => {
+  it('rejects a missing collection at construction, not on the first search', () => {
     const other: SearchType = {
       name: 'Other',
       type: 'urn:example:Other',
       fields: [],
     };
-    const engine = createTypesenseSearchEngine(
-      noClient,
-      searchSchema(schema, other),
-      // Multi-type schema with the single-type shorthand: no collection for
-      // either type resolves.
-      { collection: 'datasets' },
-    );
-    await expect(engine.search(other, browse)).rejects.toThrow(
-      /No collection configured for search type “Other”/,
-    );
+    expect(() =>
+      createTypesenseSearchEngine(
+        noClient,
+        searchSchema(schema, other),
+        // Multi-type schema with the single-type shorthand: no collection for
+        // either type resolves.
+        { collection: 'datasets' },
+      ),
+    ).toThrow(/No collection configured for search type “Dataset”/);
   });
 });

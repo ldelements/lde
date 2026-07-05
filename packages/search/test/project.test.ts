@@ -441,28 +441,29 @@ describe('projectDocument', () => {
     ).toThrow(/without an @id/);
   });
 
-  it('throws when a langText field declares no locales', () => {
-    expect(() =>
-      projectDocument(
-        {
-          '@id': 'https://ex/d/9',
-          [dcterms.title.value]: { '@language': 'nl', '@value': 'Titel' },
-        },
-        {
-          name: 'Dataset',
-          type: DATASET,
-          fields: [
-            {
-              name: 'title',
-              path: dcterms.title.value,
-              kind: 'text',
-              localized: true,
-              locales: [],
-            },
-          ],
-        },
-      ),
-    ).toThrow(/at least one locale/);
+  it('projects nothing for a localized field with no locales (rejected at declaration time)', () => {
+    // validateSearchType owns the empty-locales rule; the projection itself
+    // stays total for hand-built maps that bypassed searchSchema().
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/d/9',
+        [dcterms.title.value]: { '@language': 'nl', '@value': 'Titel' },
+      },
+      {
+        name: 'Dataset',
+        type: DATASET,
+        fields: [
+          {
+            name: 'title',
+            path: dcterms.title.value,
+            kind: 'text',
+            localized: true,
+            locales: [],
+          },
+        ],
+      },
+    );
+    expect(document).toEqual({ id: 'https://ex/d/9' });
   });
 });
 

@@ -16,12 +16,14 @@ export default mergeConfig(
         // rethrow guards and best-effort cleanup paths are deliberately not
         // exercised, which is why branch coverage is lower.
         thresholds: {
-          // functions dipped a hair when the shared `filterOperator` helper
-          // moved to @lde/search (one fewer covered function in this package).
-          functions: 96.96,
-          lines: 94.9,
-          branches: 89.73,
-          statements: 94.95,
+          // Dipped a hair when covered plumbing moved to @lde/search
+          // (filterOperator, the schema-membership guard) and the hand-rolled
+          // searchable predicate was deleted: fewer covered lines in this
+          // package, same substantive coverage.
+          functions: 96.92,
+          lines: 95.14,
+          branches: 90.95,
+          statements: 95.19,
         },
       },
     },
