@@ -1,0 +1,101 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`GraphQL generator stability > emits a stable SDL for a representative schema 1`] = `
+"type Query {
+  things(query: String, where: ThingWhere, orderBy: ThingOrderBy, page: Int = 1, perPage: Int = 20): ThingSearchResult!
+}
+
+type ThingSearchResult {
+  items: [Thing!]!
+  total: Int!
+  page: Int!
+  perPage: Int!
+  facets: ThingFacets!
+}
+
+type Thing {
+  id: String!
+  title: [LanguageString!]!
+  description: [LanguageString!]!
+  keyword: [String!]!
+  creator: [Agent!]!
+  publisher: Agent
+  size: Int
+  score: Float
+  created: String
+  status: String!
+  open: Boolean!
+}
+
+type LanguageString {
+  language: String
+  value: String!
+}
+
+type Agent {
+  id: String!
+  name: [LanguageString!]!
+}
+
+type ThingFacets {
+  keyword: [ValueBucket!]!
+  creator: [ValueBucket!]!
+  publisher: [ValueBucket!]!
+  status: [ValueBucket!]!
+  open: [ValueBucket!]!
+}
+
+type ValueBucket {
+  value: String!
+  count: Int!
+  label: [LanguageString!]
+}
+
+input ThingWhere {
+  keyword: StringFilter
+  creator: StringFilter
+  publisher: StringFilter
+  size: IntRange
+  score: FloatRange
+  created: DateRange
+  status: StringFilter
+  open: Boolean
+}
+
+input StringFilter {
+  in: [String!]
+}
+
+input IntRange {
+  min: Int
+  max: Int
+}
+
+input FloatRange {
+  min: Float
+  max: Float
+}
+
+input DateRange {
+  min: String
+  max: String
+}
+
+input ThingOrderBy {
+  field: ThingSortField!
+  direction: SortDirection! = DESC
+}
+
+enum ThingSortField {
+  RELEVANCE
+  TITLE
+  SIZE
+  CREATED
+}
+
+enum SortDirection {
+  ASC
+  DESC
+}
+"
+`;

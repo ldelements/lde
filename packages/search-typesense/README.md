@@ -1,22 +1,45 @@
 # @lde/search-typesense
 
-[Typesense](https://typesense.org/) engine adapter for RDF-backed search
-pipelines. Engine-specific (Typesense) but domain-agnostic – the caller supplies
-the collection schema and documents.
+[Typesense](https://typesense.org/) engine adapter for the engine- and
+domain-agnostic [`@lde/search`](../search) core. **Engine-specific (Typesense) but
+domain-agnostic** – you supply a `SearchType`; this package never names your
+domain. It is the Typesense implementation of the `SearchEngine` port: it derives
+a collection schema from the field model, compiles the neutral `SearchQuery` into
+Typesense search params, runs it, reconstructs the engine-neutral `SearchResult`,
+and manages the search index lifecycle (blue/green rebuild).
 
-The engine-agnostic half of the pipeline – framing `CONSTRUCT` quads into a
-JSON-LD IR and projecting that IR into flat documents from a declarative field
-spec – lives in [`@lde/search`](../search). This package consumes those
-documents and writes them to Typesense.
+## Collection schema and engine
+
+`buildCollectionSchema(searchType, { name, defaultSortingField, … })` derives a
+Typesense collection from the unified `SearchField` model — the Typesense field
+type comes from each field’s `kind`, and the physical fanout (per-locale
+search/sort keys) matches what the projection writes, via
+`@lde/search`’s `physicalFields`, so the index and the documents cannot drift.
+
+`createTypesenseSearchEngine(client, { collection, labelsCollection })` is the
+`SearchEngine` implementation. Each search:
+
+- validates the query against the search type (the port contract — a
+  structurally invalid query is rejected, never sent);
+- compiles it into Typesense search params (`buildSearchParams`);
+- runs the search;
+- resolves reference (and reference-facet) labels from the sidecar `labels`
+  collection in a single lookup;
+- reconstructs the logical `SearchResult` (`parseSearchResponse`) — language
+  maps, labelled references, labelled facet buckets.
+
+The pure halves `buildSearchParams` and `parseSearchResponse` are exported for
+direct use and testing.
 
 ## Indexing
 
-`rebuild` blue/green-rebuilds a search index in one call: it creates a fresh
-versioned collection (`${schema.name}_<timestamp>`), streams the documents into
-it in batches, atomically repoints the `schema.name` alias to it, then drops the
-collection it superseded. The caller passes only the logical index name (as
-`schema.name`) and a stream of documents; the versioned collection and the alias
-are managed for them.
+`rebuild` blue/green-rebuilds a search index in one call, straight from the
+declaration: it derives the collection schema from your `SearchType` (via
+`buildCollectionSchema`), creates a fresh versioned collection
+(`${name}_<timestamp>`), streams the documents into it in batches, atomically
+repoints the `name` alias to it, then drops the collection it superseded. The
+caller passes the `SearchType`, the logical index `name` and a stream of
+documents; the versioned collection and the alias are managed for them.
 
 ```ts
 import { Client } from 'typesense';
@@ -30,8 +53,12 @@ const client = new Client({
 // `documents` is an async iterable (e.g. a streaming projection); only one
 // batch is held in memory at a time. `rebuild` returns the live collection name
 // and the imported count (or `null` if another rebuild was already running).
-const result = await rebuild(client, schema, documents);
+const result = await rebuild(client, documents, DATASET, { name: 'datasets' });
 ```
+
+The options accept everything `buildCollectionSchema` does (`defaultLocale`,
+`defaultSortingField`, `synonymSets`) plus the rebuild knobs (`batchSize`,
+`lockTtlMs`).
 
 `rebuild` takes a `Client` the caller owns (and reuses for queries), so this
 package adds no connection or document type of its own – any object with an `id`

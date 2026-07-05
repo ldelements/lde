@@ -1,7 +1,7 @@
 {
   "name": "@lde/search",
   "version": "0.1.2",
-  "description": "Engine-agnostic search projection for RDF-backed pipelines: frame CONSTRUCT quads into a JSON-LD IR, then project that IR into flat search documents from a declarative field spec (the artifact a SHACL generator would emit)",
+  "description": "Engine- and domain-agnostic core for RDF-backed search: a unified declarative field model (SearchField/SearchType/SearchSchema), a neutral query IR, the SearchEngine port with logical result types, and a streaming CONSTRUCT-to-document projection. Bakes in no engine, protocol, or domain.",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
     "directory": "packages/search"
@@ -15,6 +15,18 @@
       "import": "./dist/index.js",
       "development": "./src/index.ts",
       "default": "./dist/index.js"
+    },
+    "./adapter": {
+      "types": "./dist/adapter.d.ts",
+      "import": "./dist/adapter.js",
+      "development": "./src/adapter.ts",
+      "default": "./dist/adapter.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "import": "./dist/testing.js",
+      "development": "./src/testing.ts",
+      "default": "./dist/testing.js"
     }
   },
   "main": "./dist/index.js",
@@ -34,5 +46,13 @@
   "devDependencies": {
     "@types/jsonld": "^1.5.15",
     "n3": "^2.1.0"
+  },
+  "peerDependencies": {
+    "vitest": "^4.0.0"
+  },
+  "peerDependenciesMeta": {
+    "vitest": {
+      "optional": true
+    }
   }
 }

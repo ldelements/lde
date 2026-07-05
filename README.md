@@ -144,6 +144,11 @@ await pipeline.run();
   <td>Project RDF into engine-agnostic search documents (framing + a declarative field spec)</td>
 </tr>
 <tr>
+  <td><a href="packages/search-api-graphql">@lde/search-api-graphql</a></td>
+  <td><a href="https://www.npmjs.com/package/@lde/search-api-graphql"><img src="https://img.shields.io/npm/v/@lde/search-api-graphql" alt="npm"></a></td>
+  <td>Engine- and domain-agnostic GraphQL surface for search: builds an executable GraphQL schema from a SearchSchema at runtime, one root query field per type</td>
+</tr>
+<tr>
   <td><a href="packages/search-typesense">@lde/search-typesense</a></td>
   <td><a href="https://www.npmjs.com/package/@lde/search-typesense"><img src="https://img.shields.io/npm/v/@lde/search-typesense" alt="npm"></a></td>
   <td>Typesense engine adapter: a single-flight, streaming blue/green index rebuild</td>
@@ -229,6 +234,10 @@ graph TD
   subgraph Publication
     fastify-rdf
     docgen
+    search --> text-normalization
+    search-api-graphql --> search
+    search-typesense --> search
+    search-typesense --> text-normalization
   end
 
   subgraph Monitoring
@@ -253,6 +262,8 @@ graph TD
 <a href="https://netwerkdigitaalerfgoed.nl/en/"><img src="https://github.com/netwerk-digitaal-erfgoed.png?size=40" width="20" valign="middle"></a>&ensp;<a href="https://netwerkdigitaalerfgoed.nl/en/">Netwerk Digitaal Erfgoed</a> — Dutch national digital heritage infrastructure, commissioned by the Ministry of Education, Culture and Science
 
 <a href="https://dc4eu.nl"><img src="https://dc4eu.nl/wp-content/uploads/2022/01/logo.png" width="20" valign="middle"></a>&ensp;<a href="https://dc4eu.nl">DC4EU</a> — Dutch Collections for Europe, the accredited national aggregator connecting Dutch heritage institutions with Europeana
+
+<a href="https://www.linkedopenlimburg.nl">Linked Open Limburg</a> — Coöperatie Erfgoed Limburg’s regional heritage programme, built on LDE’s pipeline components
 
 ## Comparison
 

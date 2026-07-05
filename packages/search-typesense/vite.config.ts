@@ -16,10 +16,12 @@ export default mergeConfig(
         // rethrow guards and best-effort cleanup paths are deliberately not
         // exercised, which is why branch coverage is lower.
         thresholds: {
-          functions: 87.5,
-          lines: 84.7,
-          branches: 66.66,
-          statements: 84.88,
+          // Honest full-suite baseline (autoUpdate raises it from here); a
+          // partial vitest run must never rewrite these — see AGENTS.md.
+          functions: 96.92,
+          lines: 95.11,
+          branches: 90.73,
+          statements: 95.16,
         },
       },
     },

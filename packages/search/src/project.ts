@@ -1,135 +1,58 @@
 import type { Quad } from '@rdfjs/types';
 import { fold } from '@lde/text-normalization';
 import { frameByType, type FramedNode } from './frame-by-type.js';
+import {
+  isoToUnixSeconds,
+  physicalFields,
+  type KeywordField,
+  type ReferenceField,
+  type SearchField,
+  type SearchSchema,
+  type SearchType,
+  type TextField,
+} from './schema.js';
 
 /** A flat search document. `id` is the engine document key. */
 export type SearchDocument = { id: string } & Record<string, unknown>;
 
 /**
- * How one framed-IR property projects into search fields. The vocabulary mirrors
- * SHACL so a generator can later emit it from shapes + search annotations:
- * `path` is `sh:path`, and the kind is derivable from `sh:datatype`/`sh:nodeKind`
- * /`sh:maxCount` plus the search annotations.
- */
-export type FieldKind = LangTextKind | FacetKind | NumberKind | DateKind;
-
-/**
- * Language-tagged text, projected per locale. `locales` is the single source of
- * truth for which languages this field emits; `display`, `search` and `sort` are
- * three independent opt-in families that each fan out over it:
- * - `display` → `${name}_${locale}` display label, accents preserved;
- * - `search` → `${name}_search_${locale}` folded match field (one per locale so
- *   the engine can tokenize/stem each language and the query can rank the user’s
- *   locale higher);
- * - `sort` → `${name}_sort_${locale}` folded sort key (one per locale so a
- *   locale-switching UI sorts on the active language).
- *
- * All three default off — a field emits exactly the families it opts into (e.g.
- * `search` alone is a search-only field, shown via a separate label). Only listed
- * locales are projected: a value whose language tag is not in `locales` (and is
- * not mapped in by `untaggedLanguage`) is not indexed at all.
- */
-export interface LangTextKind {
-  readonly type: 'langText';
-  /** The languages to project; drives whichever of the families are enabled. */
-  readonly locales: readonly string[];
-  /** Emit the per-locale display labels `${name}_${locale}` (accents preserved). */
-  readonly display?: boolean;
-  /** Emit a folded `${name}_search_${locale}` per locale (matchable). */
-  readonly search?: boolean;
-  /** Emit a folded `${name}_sort_${locale}` per locale (sortable). */
-  readonly sort?: boolean;
-}
-
-/** A faceted multi-value field, optionally also folded for search. */
-export interface FacetKind {
-  readonly type: 'facet';
-  /** Read IRI references (`@id`) rather than literal values. */
-  readonly iri?: boolean;
-  /** Also emit a folded `${name}_search` array. */
-  readonly search?: boolean;
-  /** Transform each value before faceting (e.g. strip a media-type prefix). */
-  readonly transform?: (value: string) => string;
-}
-
-/** A numeric scalar. */
-export interface NumberKind {
-  readonly type: 'number';
-}
-
-/** An ISO date-time, parsed into Unix seconds. */
-export interface DateKind {
-  readonly type: 'date';
-}
-
-/**
- * One field of a projection: an output `name`, the framed-IR predicate `path` to
- * read (the SHACL `sh:path`), and the kind-specific config discriminated by
- * `type`.
- */
-export type FieldSpec = {
-  /** Output field base name; per-kind suffixes are appended. */
-  readonly name: string;
-  /** Framed-IR predicate IRI to read (the SHACL `sh:path`). */
-  readonly path: string;
-} & FieldKind;
-
-/** A computed field that is not a direct projection of a single path
- *  (e.g. a status rank, or a group derived from a code table). */
-export type Derivation = (document: SearchDocument, node: FramedNode) => void;
-
-/**
- * One root type’s complete projection — the runtime form of a single SHACL
- * NodeShape: `type` is its `sh:targetClass` (and the framed node’s `@type`),
- * `fields` are its property shapes, and `derivations` are its `sh:rule`-shaped
- * computed fields. A generator emits one of these per NodeShape.
- */
-export interface Projection {
-  readonly type: string;
-  readonly fields: readonly FieldSpec[];
-  readonly derivations?: readonly Derivation[];
-}
-
-/**
  * Project one framed JSON-LD node into a flat search document: apply each field
- * spec, then run the derivations (which may read fields the specs already set).
+ * of the type in declaration order. A field with a `derive` function computes
+ * its value from the node and the document as populated so far (so a derived
+ * field may read fields declared before it). The physical field names a field
+ * fans out to come from {@link physicalFields}, the single source shared with
+ * the engine collection schema and the query compiler.
  */
 export function projectDocument(
   node: FramedNode,
-  projection: Projection,
+  searchType: SearchType,
 ): SearchDocument {
   const id = node['@id'];
   if (typeof id !== 'string') {
     throw new Error(
-      `Cannot project a ${projection.type} node without an @id: every search document needs a stable key, and an empty one would collide with other keyless nodes.`,
+      `Cannot project a ${searchType.type} node without an @id: every search document needs a stable key, and an empty one would collide with other keyless nodes.`,
     );
   }
   const document: SearchDocument = { id };
-  for (const field of projection.fields) {
+  for (const field of searchType.fields) {
     applyField(document, node, field);
-  }
-  for (const derive of projection.derivations ?? []) {
-    derive(document, node);
   }
   return document;
 }
 
 /**
- * Frame `quads` for every projection’s root type and project each node with its
- * type’s projection — the multi-shape pipeline. Streams one document at a time
- * so memory stays flat. The IR maps to a projection by type, so adding a shape
- * is adding a `Projection` (no engine change).
+ * Frame `quads` for every root type in the schema and project each node with its
+ * type’s declaration — the multi-shape pipeline. Streams one document at a time
+ * so memory stays flat. The IR maps to a declaration by type, so adding a shape
+ * is adding a `SearchType` to the schema (no engine change).
  */
 export async function* projectGraph(
   quads: readonly Quad[],
-  projections: readonly Projection[],
+  schema: SearchSchema,
 ): AsyncIterable<SearchDocument> {
-  const byType = new Map(
-    projections.map((projection) => [projection.type, projection]),
-  );
-  for (const projection of byType.values()) {
-    for await (const node of frameByType(quads, projection.type)) {
-      yield projectDocument(node, projection);
+  for (const searchType of schema.values()) {
+    for await (const node of frameByType(quads, searchType.type)) {
+      yield projectDocument(node, searchType);
     }
   }
 }
@@ -137,77 +60,116 @@ export async function* projectGraph(
 function applyField(
   document: SearchDocument,
   node: FramedNode,
-  field: FieldSpec,
+  field: SearchField,
 ): void {
-  switch (field.type) {
-    case 'langText':
-      return applyLangText(document, langValuesOf(node, field.path), field);
-    case 'facet':
-      return applyFacet(document, node, field);
+  if (field.derive !== undefined) {
+    const value = field.derive(node, document);
+    if (value !== undefined) {
+      document[field.name] = value;
+    }
+    return;
+  }
+  const path = field.path;
+  if (path === undefined) {
+    // Neither path nor derive: populated outside the projection, if at all.
+    return;
+  }
+  switch (field.kind) {
+    case 'text':
+      return applyText(document, langValuesOf(node, path), field);
+    case 'keyword':
+      return applyFacet(document, literalsOf(node, path), field);
+    case 'reference':
+      return applyFacet(document, irisOf(node, path), field);
+    case 'integer':
+      return setNumber(
+        document,
+        field.name,
+        toInteger(firstLiteralOf(node, path)),
+      );
     case 'number':
       return setNumber(
         document,
         field.name,
-        toInteger(firstLiteralOf(node, field.path)),
+        toNumber(firstLiteralOf(node, path)),
       );
-    case 'date':
+    case 'date': {
+      const literal = firstLiteralOf(node, path);
       return setNumber(
         document,
         field.name,
-        isoToUnix(firstLiteralOf(node, field.path)),
+        literal === undefined ? undefined : isoToUnixSeconds(literal),
       );
+    }
+    case 'boolean': {
+      // The xsd:boolean lexical space: true/false/1/0.
+      const literal = firstLiteralOf(node, path);
+      if (literal !== undefined) {
+        document[field.name] = literal === 'true' || literal === '1';
+      }
+      return;
+    }
   }
 }
 
-function applyLangText(
+/**
+ * Project a text field per locale (untagged literals land in the `und`
+ * locale). Display shows one label (accents preserved) when the field is
+ * `output`; sort keys off that same primary value (folded) when `sortable`;
+ * search folds every value of the locale when `searchable`, so all are
+ * matchable. Absent locales emit nothing.
+ */
+function applyText(
   document: SearchDocument,
   values: readonly LangValue[],
-  { name, locales, display, search, sort }: Extract<FieldSpec, LangTextKind>,
+  field: TextField,
 ): void {
-  if (locales.length === 0) {
-    throw new Error(
-      `langText field “${name}” must declare at least one locale; nothing would be projected otherwise.`,
-    );
-  }
-  for (const locale of locales) {
+  // Empty `locales` is rejected at declaration time (`validateSearchType`);
+  // here it simply projects nothing.
+  const locales = field.locales;
+  const names = physicalFields(field);
+  locales.forEach((locale, index) => {
     const localeValues = values
       .filter((value) => value.lang === locale)
       .map((value) => value.value);
     if (localeValues.length === 0) {
-      continue;
+      return;
     }
-    // Display shows one label (accents preserved); sort keys off that same
-    // primary value (folded); search folds every value of the locale so all
-    // are matchable. Absent locales emit nothing (the field stays optional).
     const [primary] = localeValues;
-    if (display) {
-      setString(document, `${name}_${locale}`, primary);
+    if (field.output) {
+      setString(document, names.display[index], primary);
     }
-    if (search) {
-      setString(
-        document,
-        `${name}_search_${locale}`,
-        fold(localeValues.join(' ')).trim(),
-      );
+    if (field.searchable) {
+      setString(document, names.search[index], foldedSearchValue(localeValues));
     }
-    if (sort) {
-      setString(document, `${name}_sort_${locale}`, fold(primary));
+    if (field.sortable) {
+      setString(document, names.sort[index], fold(primary));
     }
-  }
+  });
 }
 
+/** The projection’s definition of a folded free-text search value. */
+function foldedSearchValue(values: readonly string[]): string {
+  return fold(values.join(' ')).trim();
+}
+
+/**
+ * Project a faceted multi-value field: dedupe (after the optional transform),
+ * write the value field, and — when `searchable` — a folded `${name}_search`
+ * array. `keyword` reads literals; `reference` reads IRIs (the caller passes the
+ * already-read raw values).
+ */
 function applyFacet(
   document: SearchDocument,
-  node: FramedNode,
-  { name, path, iri, search, transform }: Extract<FieldSpec, FacetKind>,
+  raw: readonly string[],
+  field: KeywordField | ReferenceField,
 ): void {
-  const raw = iri ? irisOf(node, path) : literalsOf(node, path);
-  const values = dedupe(transform ? raw.map(transform) : raw);
-  setArray(document, name, values);
-  if (search) {
+  const values = dedupe(field.transform ? raw.map(field.transform) : raw);
+  setArray(document, field.name, values);
+  if (field.searchable) {
     setArray(
       document,
-      `${name}_search`,
+      physicalFields(field).search[0],
       dedupe(values.map((value) => fold(value))),
     );
   }
@@ -259,10 +221,11 @@ function toLangValue(value: unknown): LangValue | undefined {
   if (literal === undefined) {
     return undefined;
   }
+  // Untagged literals (JSON-LD @none) land in the reserved `und` locale.
   const lang =
     isObject(value) && typeof value['@language'] === 'string'
       ? value['@language']
-      : '';
+      : 'und';
   return { value: literal, lang };
 }
 
@@ -296,12 +259,8 @@ function toInteger(literal: string | undefined): number | undefined {
   return literal === undefined ? undefined : Math.trunc(Number(literal));
 }
 
-function isoToUnix(iso: string | undefined): number | undefined {
-  if (iso === undefined) {
-    return undefined;
-  }
-  const millis = new Date(iso).getTime();
-  return Number.isNaN(millis) ? undefined : Math.trunc(millis / 1000);
+function toNumber(literal: string | undefined): number | undefined {
+  return literal === undefined ? undefined : Number(literal);
 }
 
 function setNumber(

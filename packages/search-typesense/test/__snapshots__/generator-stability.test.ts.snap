@@ -1,0 +1,114 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`collection-schema generator stability > derives a stable Typesense collection for a representative schema 1`] = `
+{
+  "default_sorting_field": "size",
+  "fields": [
+    {
+      "index": false,
+      "name": "title_nl",
+      "optional": true,
+      "type": "string",
+    },
+    {
+      "index": false,
+      "name": "title_en",
+      "optional": true,
+      "type": "string",
+    },
+    {
+      "locale": "nl",
+      "name": "title_search_nl",
+      "optional": true,
+      "stem": true,
+      "type": "string",
+    },
+    {
+      "locale": "en",
+      "name": "title_search_en",
+      "optional": true,
+      "stem": true,
+      "type": "string",
+    },
+    {
+      "name": "title_sort_nl",
+      "optional": true,
+      "sort": true,
+      "type": "string",
+    },
+    {
+      "name": "title_sort_en",
+      "optional": true,
+      "sort": true,
+      "type": "string",
+    },
+    {
+      "facet": true,
+      "name": "keyword",
+      "optional": true,
+      "sort": false,
+      "type": "string[]",
+    },
+    {
+      "locale": "nl",
+      "name": "keyword_search",
+      "optional": true,
+      "stem": true,
+      "type": "string[]",
+    },
+    {
+      "facet": true,
+      "name": "format",
+      "optional": true,
+      "sort": false,
+      "type": "string[]",
+    },
+    {
+      "facet": true,
+      "name": "creator",
+      "optional": true,
+      "sort": false,
+      "type": "string[]",
+    },
+    {
+      "facet": true,
+      "name": "status",
+      "optional": false,
+      "sort": false,
+      "type": "string",
+    },
+    {
+      "facet": true,
+      "name": "size",
+      "optional": false,
+      "sort": true,
+      "type": "int64",
+    },
+    {
+      "facet": true,
+      "name": "score",
+      "optional": true,
+      "sort": false,
+      "type": "float",
+    },
+    {
+      "facet": false,
+      "name": "created",
+      "optional": true,
+      "sort": true,
+      "type": "int64",
+    },
+    {
+      "facet": true,
+      "name": "open",
+      "optional": true,
+      "sort": false,
+      "type": "bool",
+    },
+  ],
+  "name": "things",
+  "synonym_sets": [
+    "things-synonyms",
+  ],
+}
+`;
