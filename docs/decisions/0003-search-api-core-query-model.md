@@ -65,10 +65,16 @@ type FieldKind =
   | 'date'
   | 'reference';
 
+// The public type is a DISCRIMINATED UNION by kind (TextField | KeywordField |
+// ReferenceField | IntegerField | NumberField | DateField | BooleanField):
+// each kind carries exactly the properties it can honour (locales on text,
+// ref on references, facetRanges on numerics), so an illegal declaration
+// fails to compile; validateSearchType enforces the same rules at runtime
+// for generated/JS declarations. Flattened here for overview:
 interface SearchField {
   readonly name: string; // logical API name; the physical fanout derives from it
   readonly kind: FieldKind;
-  readonly path?: string; // sh:path to project from; omit for a derivation-populated field
+  readonly path?: string; // sh:path to project from; omit for a `derive`-computed field
   readonly array?: boolean; // sh:maxCount
   readonly required?: boolean; // sh:minCount ≥ 1 — non-null in output, non-optional in the index
   readonly localized?: boolean; // rdf:langString / sh:languageIn (text only)
@@ -83,20 +89,22 @@ interface SearchField {
     strategy: 'labelOnly' | 'idOnly' | 'inline';
   }; // kind: 'reference'; typeName names the reference's API type ('Organization') – a name, not a key
   readonly transform?: (value: string) => string; // projection-time value transform
+  readonly derive?: (node: FramedNode, document: SearchDocument) => unknown; // computed field
+  // (status, booleans, counts) – mutually exclusive with `path`; runs in declaration order,
+  // so a derived field may read fields declared before it (statusRank reading status)
   readonly facetRanges?: readonly FacetRange[]; // numeric facet: fixed [min, max) range bins (histogram) vs per-value buckets
 }
 
-type Derivation = (document: SearchDocument, node: FramedNode) => void;
-
 // One root type (one SHACL NodeShape); a whole deployment’s declaration is the
-// SearchSchema, a map of SearchTypes keyed by type IRI (built with searchSchema()).
+// SearchSchema, a map of SearchTypes keyed by type IRI (built with searchSchema(),
+// which validates every declaration – the declaration-time counterpart of the
+// port’s assertValidQuery).
 interface SearchType {
   readonly name: string; // logical API name ('Dataset') – names the type in every surface,
   // declared (like each field's name), never derived from the IRI, so vocabulary
   // churn cannot silently rename the public contract
   readonly type: string; // sh:targetClass
   readonly fields: readonly SearchField[];
-  readonly derivations?: readonly Derivation[]; // computed fields: status, booleans
 }
 ```
 
@@ -104,7 +112,7 @@ Maps onto SHACL + `search:` (`kind`←`sh:datatype`/`sh:nodeKind`, `path`←`sh:
 `array`←`sh:maxCount`, `localized`←`sh:languageIn`, `facetable`←`search:facetable`,
 `sortable`←`search:sortable`, `ref`←`sh:node`/`sh:class` + `search:nestedStrategy`) so an
 eventual generator emits it unchanged. A field with **no `path`** is a derived field –
-populated by a `Derivation` rather than projected from the IR – yet it still carries full
+computed by its `derive` function rather than projected from the IR – yet it still carries full
 query/schema/output behavior. The physical field names a declaration fans out to (`${name}_search_${locale}`,
 `${name}_sort_${locale}`, `${name}_search`) follow one convention owned by
 `@lde/search`, so projection, collection schema and query compiler agree. The `status_rank`
@@ -200,21 +208,29 @@ capability (`SearchEngine`), not the pattern piece, keeps `TypesenseSearchEngine
 SearchEngine` readable.
 
 ```ts
-// FacetField / OutputField default to `string` (ergonomic) and a deployment narrows them
-// to its type’s facetable / output field names for typo-safe facet and document access;
-// Type narrows the accepted searchType argument alongside, so a narrowed engine cannot be
-// handed the wrong search type. The ergonomic route is engineFor(engine, searchType) over
-// a defineSearchType declaration (helpers FacetFieldsOf<Type> / OutputFieldsOf<Type> and
-// the EngineFor<Type> alias are exported for hand-written signatures).
+// An engine is BOUND to the whole SearchSchema at construction — like every other
+// schema consumer (projectGraph(quads, schema), buildGraphQLSchema(schema)): the
+// adapter factory takes the deployment's declaration plus each type's collection
+// (createTypesenseSearchEngine(client, schema, { collections })), so a query can
+// never meet the wrong index and deployment-level concerns (label cache, cross-type
+// search, facet batching) have one home. searchSchema() captures the declared types
+// as a literal tuple `Types`, so search() only accepts the deployment's own types
+// (foreign type = compile error), the collections map is exhaustive at compile time,
+// and results are keyed per call by the type passed (FacetKeysOf<T>/OutputKeysOf<T>;
+// widened schemas degrade to string keys). Design history: a global engine taking
+// (query, searchType) let any type meet one fixed collection, and its engineFor
+// narrowing was an unchecked cast; one-engine-per-type fixed that but shattered
+// deployment concerns across instances and made multi-type wiring a runtime-checked
+// map. Schema-bound keeps the per-call ergonomics with construction-derived
+// guarantees.
 interface SearchEngine<
-  FacetField extends string = string,
-  OutputField extends string = string,
-  Type extends SearchType = SearchType,
+  Types extends readonly SearchType[] = readonly SearchType[],
 > {
-  search(
+  readonly schema: SearchSchema<Types>;
+  search<T extends Types[number]>(
+    searchType: T,
     query: SearchQuery,
-    searchType: Type,
-  ): Promise<SearchResult<FacetField, OutputField>>;
+  ): Promise<SearchResult<FacetKeysOf<T>, OutputKeysOf<T>>>;
 }
 
 interface SearchResult<

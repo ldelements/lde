@@ -18,10 +18,10 @@ export default mergeConfig(
         thresholds: {
           // functions dipped a hair when the shared `filterOperator` helper
           // moved to @lde/search (one fewer covered function in this package).
-          functions: 96.87,
-          lines: 94.31,
-          branches: 87.14,
-          statements: 94.37,
+          functions: 96.96,
+          lines: 94.9,
+          branches: 89.73,
+          statements: 94.95,
         },
       },
     },

@@ -1,23 +1,28 @@
 import type { Client } from 'typesense';
 import {
+  type FacetBucket,
+  type LocalizedValue,
+  type Reference,
+  type ReferenceField,
+  type ResultDocument,
+  type SearchField,
+  type SearchHit,
+  type SearchEngine,
+  type SearchQuery,
+  type SearchResult,
+  type SearchSchema,
+  type SearchType,
+  type SearchValue,
+  type LocalizedTextField,
+} from '@lde/search';
+import {
   assertValidQuery,
   fieldNamed,
   isRangeFacet,
   outputFields,
   physicalFields,
   referenceFields,
-  type FacetBucket,
-  type LocalizedValue,
-  type Reference,
-  type ResultDocument,
-  type SearchEngine,
-  type SearchField,
-  type SearchHit,
-  type SearchQuery,
-  type SearchResult,
-  type SearchType,
-  type SearchValue,
-} from '@lde/search';
+} from '@lde/search/adapter';
 import {
   buildSearchParams,
   escapeFilterValue,
@@ -26,10 +31,18 @@ import {
 
 /** Where the engine reads documents and (optionally) reference labels — plus
  *  every query-compiler knob ({@link BuildSearchParamsOptions}), declared once
- *  there and forwarded wholesale into each search. */
-export interface TypesenseSearchEngineOptions extends BuildSearchParamsOptions {
-  /** The dataset collection or alias to query. */
-  readonly collection: string;
+ *  there and forwarded wholesale into each search. `TypeName` is the union of
+ *  the schema’s type names, so a literal schema makes the `collections` map
+ *  exhaustive at compile time. */
+export interface TypesenseSearchEngineOptions<
+  TypeName extends string = string,
+> extends BuildSearchParamsOptions {
+  /** The collection (or alias) per search type, keyed by the type’s `name` —
+   *  with a literal schema, omitting a type is a compile error. */
+  readonly collections?: Readonly<Record<TypeName, string>>;
+  /** Single-type shorthand for {@link collections}; only valid when the
+   *  schema declares exactly one type. */
+  readonly collection?: string;
   /** The sidecar `labels` collection (IRI → label); omit for id-only references. */
   readonly labelsCollection?: string;
   /**
@@ -49,16 +62,42 @@ export interface TypesenseSearchEngineOptions extends BuildSearchParamsOptions {
 }
 
 /**
- * A Typesense-backed {@link SearchEngine}. `search` compiles the query
- * ({@link buildSearchParams}), runs it, resolves the reference labels for the
- * page of hits from the sidecar `labels` collection in one lookup, and
- * reconstructs the engine-neutral {@link SearchResult} ({@link parseSearchResponse}).
- * Every engine specific stays here; consumers see only logical documents.
+ * A Typesense-backed {@link SearchEngine}, bound to the whole
+ * {@link SearchSchema} at construction — like every other schema consumer.
+ * Each type’s collection comes from `options.collections` (or the
+ * single-type `collection` shorthand); the label sidecar and its cache are
+ * shared across all types. `search` compiles the query
+ * ({@link buildSearchParams}), runs it against the type’s collection,
+ * resolves the reference labels for the page of hits from the sidecar
+ * `labels` collection in one lookup, and reconstructs the engine-neutral
+ * {@link SearchResult} ({@link parseSearchResponse}). Every engine specific
+ * stays here; consumers see only logical documents.
+ *
+ * With a schema built by `searchSchema` over `defineSearchType` literals,
+ * `search()` accepts only the deployment’s own types and returns typo-safe
+ * facet/document keys per call — no caller-side generics.
  */
-export function createTypesenseSearchEngine(
+export function createTypesenseSearchEngine<
+  const Types extends readonly SearchType[],
+>(
   client: Client,
-  options: TypesenseSearchEngineOptions,
-): SearchEngine {
+  schema: SearchSchema<Types>,
+  options: TypesenseSearchEngineOptions<Types[number]['name']>,
+): SearchEngine<Types> {
+  const collectionFor = (searchType: SearchType): string => {
+    const named = (
+      options.collections as Readonly<Record<string, string>> | undefined
+    )?.[searchType.name];
+    if (named !== undefined) {
+      return named;
+    }
+    if (options.collection !== undefined && schema.size === 1) {
+      return options.collection;
+    }
+    throw new Error(
+      `No collection configured for search type “${searchType.name}”; set options.collections.${searchType.name} (the single-type “collection” shorthand needs a one-type schema).`,
+    );
+  };
   // Process-lifetime cache for the FULL `labels` collection, held in the engine
   // closure. Populated lazily on the first cached search; `loadAll` is the
   // single-flight in-flight promise so concurrent first-loads share one export.
@@ -92,13 +131,24 @@ export function createTypesenseSearchEngine(
     return inFlightLoad;
   }
 
-  return {
+  const engine: SearchEngine = {
+    schema,
     async search(
-      query: SearchQuery,
       searchType: SearchType,
+      query: SearchQuery,
     ): Promise<SearchResult> {
-      // The port contract: a structurally invalid query (unknown field, wrong
-      // operator, unknown facet) is rejected up front, for EVERY caller.
+      // The port contract: a type outside the bound schema and a structurally
+      // invalid query (unknown field, wrong operator, unknown facet) are both
+      // rejected up front, for EVERY caller.
+      if (schema.get(searchType.type) !== searchType) {
+        throw new Error(
+          `Search type “${searchType.name}” is not in this engine’s schema; it serves ${[
+            ...schema.values(),
+          ]
+            .map((declared) => `“${declared.name}”`)
+            .join(', ')}.`,
+        );
+      }
       assertValidQuery(query, searchType);
       const params = buildSearchParams(query, searchType, options);
       // Cached path: the once-loaded full collection serves labels by in-memory
@@ -112,7 +162,7 @@ export function createTypesenseSearchEngine(
           ? cachedAllLabels(options.labelsCollection, options.labelCacheTtlMs)
           : undefined;
       const response = (await client
-        .collections(options.collection)
+        .collections(collectionFor(searchType))
         .documents()
         .search(params)) as TypesenseSearchResponse;
       // Labels are supplementary: a failed lookup (e.g. the sidecar collection
@@ -135,6 +185,8 @@ export function createTypesenseSearchEngine(
       return parseSearchResponse(response, searchType, labels);
     },
   };
+  // The runtime object is string-keyed; the literal-schema typing narrows it.
+  return engine as SearchEngine<Types>;
 }
 
 /**
@@ -343,8 +395,13 @@ function logicalValue(
   labels: ReadonlyMap<string, LocalizedValue>,
 ): SearchValue | undefined {
   switch (field.kind) {
-    case 'text':
-      return localizedValue(flat, field);
+    case 'text': {
+      if (field.localized === true) {
+        return localizedValue(flat, field);
+      }
+      const value = flat[field.name];
+      return typeof value === 'string' ? value : undefined;
+    }
     case 'reference':
       return referenceValue(flat, field, labels);
     case 'keyword': {
@@ -368,11 +425,11 @@ function logicalValue(
 /** Gather the per-locale display fields back into a language map. */
 function localizedValue(
   flat: Record<string, unknown>,
-  field: SearchField,
+  field: LocalizedTextField,
 ): LocalizedValue | undefined {
   const map: Record<string, readonly string[]> = {};
   const display = physicalFields(field).display;
-  (field.locales ?? []).forEach((locale, index) => {
+  field.locales.forEach((locale, index) => {
     const value = flat[display[index]];
     if (typeof value === 'string') {
       map[locale] = [value];
@@ -384,7 +441,7 @@ function localizedValue(
 /** Map stored reference IRIs to labelled references; id-only when no label. */
 function referenceValue(
   flat: Record<string, unknown>,
-  field: SearchField,
+  field: ReferenceField,
   labels: ReadonlyMap<string, LocalizedValue>,
 ): SearchValue | undefined {
   const raw = flat[field.name];

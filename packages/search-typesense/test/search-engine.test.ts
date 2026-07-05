@@ -1,6 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Client } from 'typesense';
-import type { SearchEngine, SearchQuery, SearchType } from '@lde/search';
+import {
+  searchSchema,
+  type SearchEngine,
+  type SearchQuery,
+  type SearchType,
+} from '@lde/search';
+import { describeSearchEngineContract } from '@lde/search/testing';
 import { buildCollectionSchema } from '../src/collection-schema.js';
 import { createTypesenseSearchEngine } from '../src/search.js';
 import { TypesenseContainer } from './typesense-container.js';
@@ -138,7 +144,7 @@ describe('createTypesenseSearchEngine (integration)', () => {
       .documents()
       .import(labelDocuments, { action: 'create' });
 
-    engine = createTypesenseSearchEngine(client, {
+    engine = createTypesenseSearchEngine(client, searchSchema(datasetSchema), {
       collection: 'datasets',
       labelsCollection: 'labels',
     });
@@ -148,18 +154,19 @@ describe('createTypesenseSearchEngine (integration)', () => {
     await container.stop();
   });
 
+  // The executable port contract from @lde/search/testing, run against the
+  // live container-backed engine.
+  describeSearchEngineContract('TypesenseSearchEngine', () => engine);
+
   it('filters by status, sorts by the localized title key, and resolves reference labels', async () => {
-    const result = await engine.search(
-      {
-        ...baseQuery,
-        where: [{ field: 'status', in: ['valid'] }],
-        orderBy: [
-          { field: 'title', direction: 'asc' },
-          { field: 'statusRank', direction: 'asc' },
-        ],
-      },
-      datasetSchema,
-    );
+    const result = await engine.search(datasetSchema, {
+      ...baseQuery,
+      where: [{ field: 'status', in: ['valid'] }],
+      orderBy: [
+        { field: 'title', direction: 'asc' },
+        { field: 'statusRank', direction: 'asc' },
+      ],
+    });
 
     // d3 is invalid → filtered out; remaining two sorted by folded title.
     expect(result.total).toBe(2);
@@ -179,24 +186,21 @@ describe('createTypesenseSearchEngine (integration)', () => {
   });
 
   it('ranks a full-text query through the weighted query_by fields', async () => {
-    const result = await engine.search(
-      {
-        ...baseQuery,
-        text: 'Utrecht',
-        orderBy: [{ field: 'relevance', direction: 'desc' }],
-      },
-      datasetSchema,
-    );
+    const result = await engine.search(datasetSchema, {
+      ...baseQuery,
+      text: 'Utrecht',
+      orderBy: [{ field: 'relevance', direction: 'desc' }],
+    });
 
     expect(result.hits[0].id).toBe('d1');
     expect(result.hits.map((hit) => hit.id)).not.toContain('d2');
   });
 
   it('returns facet buckets with counts, labelling reference facets', async () => {
-    const result = await engine.search(
-      { ...baseQuery, facets: ['keyword', 'publisher'] },
-      datasetSchema,
-    );
+    const result = await engine.search(datasetSchema, {
+      ...baseQuery,
+      facets: ['keyword', 'publisher'],
+    });
 
     // Plain facet: value + count, no label.
     const keyword = [...(result.facets.keyword ?? [])].sort(
@@ -227,27 +231,31 @@ describe('createTypesenseSearchEngine (integration)', () => {
 
   it('always rejects a structurally invalid query, before reaching the engine', async () => {
     await expect(
-      engine.search(
-        { ...baseQuery, where: [{ field: 'nonexistent', in: ['x'] }] },
-        datasetSchema,
-      ),
+      engine.search(datasetSchema, {
+        ...baseQuery,
+        where: [{ field: 'nonexistent', in: ['x'] }],
+      }),
     ).rejects.toThrow(/Invalid search query for “Dataset”/);
     await expect(
-      engine.search({ ...baseQuery, facets: ['title'] }, datasetSchema),
+      engine.search(datasetSchema, { ...baseQuery, facets: ['title'] }),
     ).rejects.toThrow(/not-facetable/);
   });
 
   it('reports a vacuous where clause via onIgnoredFilter and still searches', async () => {
     const ignored: unknown[] = [];
-    const reporting = createTypesenseSearchEngine(client, {
-      collection: 'datasets',
-      onIgnoredFilter: (filter) => ignored.push(filter),
-    });
-
-    const result = await reporting.search(
-      { ...baseQuery, where: [{ field: 'status', in: [] }] },
-      datasetSchema,
+    const reporting = createTypesenseSearchEngine(
+      client,
+      searchSchema(datasetSchema),
+      {
+        collection: 'datasets',
+        onIgnoredFilter: (filter) => ignored.push(filter),
+      },
     );
+
+    const result = await reporting.search(datasetSchema, {
+      ...baseQuery,
+      where: [{ field: 'status', in: [] }],
+    });
 
     expect(result.total).toBeGreaterThan(0); // empty membership = no constraint
     expect(ignored).toEqual([{ field: 'status', in: [] }]);

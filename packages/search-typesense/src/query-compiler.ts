@@ -1,6 +1,14 @@
 import type { SearchParams } from 'typesense/lib/Typesense/Documents.js';
 import { fold } from '@lde/text-normalization';
 import {
+  type FacetRange,
+  type Filter,
+  type SearchField,
+  type SearchQuery,
+  type SearchType,
+  type Sort,
+} from '@lde/search';
+import {
   fieldNamed,
   filterOperator,
   filterOperatorFor,
@@ -9,13 +17,7 @@ import {
   pageForOffset,
   physicalFields,
   searchableFields,
-  type FacetRange,
-  type Filter,
-  type SearchField,
-  type SearchQuery,
-  type SearchType,
-  type Sort,
-} from '@lde/search';
+} from '@lde/search/adapter';
 
 /**
  * Options for {@link buildSearchParams} — the query half of the engine

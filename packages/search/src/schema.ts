@@ -22,11 +22,18 @@ export type FieldKind =
  * consumers (projection, engine collection schema, query semantics, and the
  * GraphQL surface).
  *
+ * A **discriminated union by `kind`**: each kind declares exactly the
+ * properties it can honour (`ref` on references, `locales` on text,
+ * `facetRanges` on numerics), so an illegal declaration fails to compile.
+ * {@link validateSearchType} enforces the same rules at runtime for
+ * declarations built outside TypeScript (a SHACL generator, plain JS).
+ *
  * Capability flags (`searchable`/`filterable`/`facetable`/`sortable`/`output`)
  * are independent opt-ins: a field exposes exactly the roles it declares. A
- * field with no `path` is a **derived field** — populated by a
- * {@link Derivation} rather than projected from the IR — yet it still carries
- * full query/schema/output behavior (e.g. `status`, the compatibility booleans).
+ * field with a {@link SearchFieldBase.derive `derive`} function instead of a
+ * `path` is a **derived field** — computed from the framed node rather than
+ * projected from the IR — yet it still carries full query/schema/output
+ * behavior (e.g. `status`, the compatibility booleans).
  *
  * The physical field names a declaration fans out to (per-locale search/sort
  * keys) follow one convention, owned by
@@ -39,13 +46,23 @@ export type FieldKind =
  * `localized`←`rdf:langString`/`sh:languageIn`, `ref`←`sh:node`/`sh:class`),
  * and a hand-written declaration is just as valid.
  */
-export interface SearchField {
+export type SearchField =
+  | TextField
+  | LocalizedTextField
+  | KeywordField
+  | ReferenceField
+  | IntegerField
+  | NumberField
+  | DateField
+  | BooleanField;
+
+/** The declaration members every {@link SearchField} kind shares. */
+export interface SearchFieldBase {
   /** Logical API name; the physical fanout derives from it. Declare camelCase
    *  where it surfaces in GraphQL. */
   readonly name: string;
-  readonly kind: FieldKind;
-  /** Framed-IR predicate IRI to project from. Omit for a
-   *  derivation-populated field. */
+  /** Framed-IR predicate IRI to project from. Omit for a field populated by
+   *  {@link SearchFieldBase.derive} (or outside the projection entirely). */
   readonly path?: string;
   /** Multi-valued. */
   readonly array?: boolean;
@@ -53,23 +70,80 @@ export interface SearchField {
    *  a non-optional field in the engine index. Moot for arrays/booleans/`id`,
    *  which are non-null regardless. */
   readonly required?: boolean;
-  /** Language-tagged text (`rdf:langString`); projected per locale. `text` only. */
-  readonly localized?: boolean;
-  /** When `localized`, the languages to emit (the per-locale fanout). */
-  readonly locales?: readonly string[];
   /** Appears in the API output type / carries a display label. */
   readonly output?: boolean;
-  /** Full-text inclusion with a `query_by` weight (folded; per-locale when
-   *  `localized`). Presence is what makes a field searchable. */
-  readonly searchable?: { readonly weight: number };
   /** Usable in `where`. */
   readonly filterable?: boolean;
   /** Returned as facet buckets. */
   readonly facetable?: boolean;
   /** Publicly selectable in `orderBy`; localized text also emits a folded sort key. */
   readonly sortable?: boolean;
-  /** For `kind: 'reference'`: the referenced entity’s shape and how much of it
-   *  to carry. */
+  /**
+   * Compute this field’s value instead of projecting it from a `path` — a
+   * status token, a compatibility boolean, a count over the framed node.
+   * Mutually exclusive with `path`. Runs in declaration order during
+   * projection, receiving the framed node and the document as populated so
+   * far, so a derived field may read fields declared before it (e.g. a
+   * `statusRank` reading the derived `status`). Return `undefined` to leave
+   * the field absent. The field still carries full query/schema/output
+   * behaviour like any other.
+   */
+  readonly derive?: (node: FramedNode, document: SearchDocument) => unknown;
+}
+
+/** Full-text inclusion with a `query_by` weight (folded; per-locale for
+ *  localized text). Presence is what makes a field searchable. */
+export interface Searchable {
+  readonly searchable?: { readonly weight: number };
+}
+
+/**
+ * Language-tagged text (`rdf:langString`, prose), projected per locale. Like
+ * {@link TextField}, it feeds the free-text query rather than `where`/facets,
+ * so it is deliberately not filterable or facetable.
+ */
+export interface LocalizedTextField extends SearchFieldBase, Searchable {
+  readonly kind: 'text';
+  readonly localized: true;
+  /** The languages to emit (the per-locale fanout); at least one. */
+  readonly locales: readonly string[];
+  readonly filterable?: never;
+  readonly facetable?: never;
+}
+
+/**
+ * Monolingual (or untagged) free-running text (prose): projected as one
+ * display value plus one folded `${name}_search` companion, regardless of
+ * language tags in the data; the engine stems it in the deployment’s default
+ * locale, if one is set. Feeds the free-text query rather than `where`/facets,
+ * so it is deliberately not filterable or facetable. Use
+ * {@link LocalizedTextField} for language-tagged text and
+ * {@link KeywordField} only for exact-match tokens, never for prose.
+ */
+export interface TextField extends SearchFieldBase, Searchable {
+  readonly kind: 'text';
+  readonly localized?: false;
+  readonly locales?: never;
+  readonly filterable?: never;
+  readonly facetable?: never;
+}
+
+/** An exact-match token or free string: filtered by membership, faceted per
+ *  value, searchable folded. */
+export interface KeywordField extends SearchFieldBase, Searchable {
+  readonly kind: 'keyword';
+  /** Projection-time value transform (e.g. strip a media-type prefix). */
+  readonly transform?: (value: string) => string;
+}
+
+/** An IRI-valued reference to another entity, label-resolved at the surface. */
+export interface ReferenceField extends SearchFieldBase, Searchable {
+  readonly kind: 'reference';
+  /** Projection-time value transform. */
+  readonly transform?: (value: string) => string;
+  /** The referenced entity’s shape and how much of it to carry. Required when
+   *  the field is `output` (the API surfaces need the reference type name);
+   *  optional for a facet- or filter-only reference. */
   readonly ref?: {
     /** Logical API type name of the referenced entity (PascalCase, e.g.
      *  `Organization`) — names the reference’s type in the API surfaces, the
@@ -85,17 +159,38 @@ export interface SearchField {
      *  `inline` can then add fields to the reference type additively. */
     readonly strategy: 'labelOnly' | 'idOnly' | 'inline';
   };
-  /** Projection-time value transform (e.g. strip a media-type prefix). */
-  readonly transform?: (value: string) => string;
-  /**
-   * Range-facet bins for a numeric (`integer`/`number`/`date`) facetable field.
-   * When set, the field facets into these fixed half-open `[min, max)` ranges (a
-   * histogram) rather than one bucket per distinct value — the per-bucket counts
-   * a UI slider needs. Bins are query-time only (no index impact) and
-   * engine-neutral: the Typesense adapter emits a `facet_by` range, an
-   * OpenSearch adapter a `range` aggregation. See {@link FacetRange}.
-   */
+}
+
+/**
+ * Range-facet bins for a numeric (`integer`/`number`/`date`) facetable field.
+ * When set, the field facets into these fixed half-open `[min, max)` ranges (a
+ * histogram) rather than one bucket per distinct value — the per-bucket counts
+ * a UI slider needs. Bins are query-time only (no index impact) and
+ * engine-neutral: the Typesense adapter emits a `facet_by` range, an
+ * OpenSearch adapter a `range` aggregation. See {@link FacetRange}.
+ */
+export interface RangeFacetable {
   readonly facetRanges?: readonly FacetRange[];
+}
+
+/** A whole number; range-filtered, range- or value-faceted, sortable. */
+export interface IntegerField extends SearchFieldBase, RangeFacetable {
+  readonly kind: 'integer';
+}
+
+/** A floating-point number; range-filtered, range- or value-faceted, sortable. */
+export interface NumberField extends SearchFieldBase, RangeFacetable {
+  readonly kind: 'number';
+}
+
+/** A point in time: ISO 8601 at the edges, Unix seconds in the index. */
+export interface DateField extends SearchFieldBase, RangeFacetable {
+  readonly kind: 'date';
+}
+
+/** A boolean flag; absent in a document means `false`. */
+export interface BooleanField extends SearchFieldBase {
+  readonly kind: 'boolean';
 }
 
 /**
@@ -111,19 +206,11 @@ export interface FacetRange {
 }
 
 /**
- * A computed field that is not a direct projection of a single path — a status
- * rank, a compatibility boolean. Reads
- * the framed node and writes onto the flat document the field specs already
- * populated.
- */
-export type Derivation = (document: SearchDocument, node: FramedNode) => void;
-
-/**
  * One root type’s complete search declaration: its logical API `name`, the
- * `type` IRI its documents are instances of, the queryable `fields`, and the
- * computed `derivations`. A SHACL generator can emit one per NodeShape
- * (`name`←`sh:name`/local name, `type`←`sh:targetClass`, `fields`←its property
- * shapes), but that is a source, not a requirement.
+ * `type` IRI its documents are instances of, and the queryable `fields`
+ * (including {@link SearchField.derive derived} ones). A SHACL generator can
+ * emit one per NodeShape (`name`←`sh:name`/local name, `type`←`sh:targetClass`,
+ * `fields`←its property shapes), but that is a source, not a requirement.
  */
 export interface SearchType {
   /** Logical API name (PascalCase, e.g. `Dataset`) — names the type in the API
@@ -134,7 +221,6 @@ export interface SearchType {
   readonly name: string;
   readonly type: string;
   readonly fields: readonly SearchField[];
-  readonly derivations?: readonly Derivation[];
 }
 
 /**
@@ -153,13 +239,191 @@ export function defineSearchType<const Type extends SearchType>(
 
 /**
  * The complete search declaration of a deployment: every root {@link SearchType},
- * keyed by its `type` IRI. Build one with {@link searchSchema}.
+ * keyed by its `type` IRI. Build one with {@link searchSchema}, which captures
+ * the declared types as a literal tuple (`Types`), so schema-bound consumers
+ * (the engine port) can type their per-type behaviour off it. A plain
+ * `: SearchSchema` annotation widens gracefully to `SearchType`.
  */
-export type SearchSchema = ReadonlyMap<string, SearchType>;
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type, @typescript-eslint/no-empty-interface -- carries the literal `Types` tuple; a bare alias would erase it
+export interface SearchSchema<
+  Types extends readonly SearchType[] = readonly SearchType[],
+> extends ReadonlyMap<string, Types[number]> {}
 
-/** Build a {@link SearchSchema} from root-type declarations, keyed by `type`. */
-export function searchSchema(...types: readonly SearchType[]): SearchSchema {
+/**
+ * Build a {@link SearchSchema} from root-type declarations, keyed by `type`.
+ *
+ * Every declaration is validated ({@link assertValidSearchType}) — the
+ * declaration-time counterpart of the port’s `assertValidQuery` — and the
+ * schema-wide invariants are enforced: no two types may share a `type` IRI
+ * (they would silently overwrite each other in the map) or a `name` (names
+ * key the API surfaces). Throws on the first invalid declaration, so a bad
+ * schema fails at startup, not per document at index time or per query.
+ */
+export function searchSchema<const Types extends readonly SearchType[]>(
+  ...types: Types
+): SearchSchema<Types> {
+  const typeIris = new Set<string>();
+  const names = new Set<string>();
+  for (const searchType of types) {
+    assertValidSearchType(searchType);
+    if (typeIris.has(searchType.type)) {
+      throw new Error(
+        `Duplicate search type IRI “${searchType.type}”; each SearchType must declare a distinct type.`,
+      );
+    }
+    if (names.has(searchType.name)) {
+      throw new Error(
+        `Duplicate search type name “${searchType.name}”; each SearchType must declare a distinct name.`,
+      );
+    }
+    typeIris.add(searchType.type);
+    names.add(searchType.name);
+  }
   return new Map(types.map((searchType) => [searchType.type, searchType]));
+}
+
+/**
+ * One structural problem {@link validateSearchType} found: a field declares a
+ * capability or property its `kind` cannot honour, or the declaration is
+ * internally inconsistent. Each reason names the field-level rule it violates;
+ * the rules mirror the per-kind semantics table in the README.
+ */
+export interface SearchTypeIssue {
+  readonly field: string;
+  readonly reason:
+    | 'duplicate-field-name'
+    | 'missing-ref'
+    | 'ref-not-allowed'
+    | 'text-requires-locales'
+    | 'localized-not-allowed'
+    | 'facet-ranges-not-allowed'
+    | 'searchable-not-allowed'
+    | 'transform-not-allowed'
+    | 'derive-with-path'
+    | 'text-not-filterable'
+    | 'text-not-facetable';
+}
+
+/** Kinds whose facets may declare {@link SearchField.facetRanges} bins. */
+const NUMERIC_KINDS: readonly FieldKind[] = ['integer', 'number', 'date'];
+
+/** Kinds that can feed full-text search (project a folded search field). */
+const SEARCHABLE_KINDS: readonly FieldKind[] = ['text', 'keyword', 'reference'];
+
+/** Kinds whose projection applies the {@link SearchField.transform}. */
+const TRANSFORMABLE_KINDS: readonly FieldKind[] = ['keyword', 'reference'];
+
+/**
+ * Structurally validate one {@link SearchType} declaration — the
+ * declaration-time counterpart of `validateQuery`. Rules:
+ *
+ * - field names are unique (a duplicate would silently shadow in every
+ *   consumer, each picking a different winner);
+ * - a `reference` field that is `output` declares `ref` (the API surfaces
+ *   need the reference type name); `ref` on any other kind is meaningless;
+ * - a `text` field is `localized` with at least one locale (projection and
+ *   result reconstruction have no representation for unlocalized text — use
+ *   `keyword` for untagged strings); `localized`/`locales` on any other kind
+ *   is meaningless;
+ * - `text` is not `filterable` or `facetable` (it feeds the free-text query;
+ *   a `where` clause on it could never match an operator);
+ * - `facetRanges` only on the numeric kinds (`integer`/`number`/`date`);
+ * - `searchable` only on `text`/`keyword`/`reference` (projection emits no
+ *   folded search field for the other kinds);
+ * - `transform` only on `keyword`/`reference` (the only kinds whose
+ *   projection applies it);
+ * - `derive` and `path` are mutually exclusive (a field is projected or
+ *   computed, never both).
+ *
+ * Pure and total: returns every issue rather than throwing;
+ * {@link assertValidSearchType} is the throwing entry point.
+ */
+export function validateSearchType(
+  searchType: SearchType,
+): readonly SearchTypeIssue[] {
+  const issues: SearchTypeIssue[] = [];
+  const seen = new Set<string>();
+  for (const declared of searchType.fields) {
+    // Validation guards declarations built OUTSIDE TypeScript (a SHACL
+    // generator, plain JS), so it inspects the uniform flat shape rather
+    // than trusting the discriminated union.
+    const field = declared as FlatField;
+    const issue = (reason: SearchTypeIssue['reason']) =>
+      issues.push({ field: field.name, reason });
+    if (seen.has(field.name)) {
+      issue('duplicate-field-name');
+    }
+    seen.add(field.name);
+    if (field.kind === 'reference') {
+      if (field.output === true && field.ref === undefined) {
+        issue('missing-ref');
+      }
+    } else if (field.ref !== undefined) {
+      issue('ref-not-allowed');
+    }
+    if (field.kind === 'text') {
+      // Monolingual text (no `localized`) is valid; localized text must
+      // declare its locales, and `locales` implies `localized`.
+      if (
+        (field.localized === true && (field.locales ?? []).length === 0) ||
+        (field.localized !== true && field.locales !== undefined)
+      ) {
+        issue('text-requires-locales');
+      }
+      if (field.filterable === true) {
+        issue('text-not-filterable');
+      }
+      if (field.facetable === true) {
+        issue('text-not-facetable');
+      }
+    } else if (field.localized !== undefined || field.locales !== undefined) {
+      issue('localized-not-allowed');
+    }
+    if (
+      field.facetRanges !== undefined &&
+      !NUMERIC_KINDS.includes(field.kind)
+    ) {
+      issue('facet-ranges-not-allowed');
+    }
+    if (
+      field.searchable !== undefined &&
+      !SEARCHABLE_KINDS.includes(field.kind)
+    ) {
+      issue('searchable-not-allowed');
+    }
+    if (
+      field.transform !== undefined &&
+      !TRANSFORMABLE_KINDS.includes(field.kind)
+    ) {
+      issue('transform-not-allowed');
+    }
+    if (field.derive !== undefined && field.path !== undefined) {
+      issue('derive-with-path');
+    }
+  }
+  return issues;
+}
+
+/** The union flattened to every possible member — the uniform shape runtime
+ *  validation and generic iteration read; never a declaration type. */
+interface FlatField extends SearchFieldBase, Searchable, RangeFacetable {
+  readonly kind: FieldKind;
+  readonly localized?: boolean;
+  readonly locales?: readonly string[];
+  readonly ref?: ReferenceField['ref'];
+  readonly transform?: (value: string) => string;
+}
+
+/** Throw on a structurally invalid {@link SearchType} ({@link validateSearchType}),
+ *  naming every issue. Called by {@link searchSchema} for each declaration. */
+export function assertValidSearchType(searchType: SearchType): void {
+  const issues = validateSearchType(searchType);
+  if (issues.length > 0) {
+    const detail = issues
+      .map((issue) => `“${issue.field}” (${issue.reason})`)
+      .join(', ');
+    throw new Error(`Invalid search type “${searchType.name}”: ${detail}.`);
+  }
 }
 
 /**
@@ -192,7 +456,7 @@ export function searchableFields(
   return searchType.fields
     .filter(
       (field): field is SearchField & { searchable: { weight: number } } =>
-        field.searchable !== undefined,
+        (field as FlatField).searchable !== undefined,
     )
     .sort((left, right) => right.searchable.weight - left.searchable.weight);
 }
@@ -239,14 +503,15 @@ export function fieldNamed(
 /**
  * Whether a facet on this field returns fixed range bins (a histogram) rather
  * than one bucket per distinct value: it declares non-empty
- * {@link SearchField.facetRanges}. One predicate for the surface’s facet type,
- * the adapter’s facet clause and the bucket reconstruction, so they cannot
- * disagree.
+ * {@link RangeFacetable.facetRanges}. One predicate for the surface’s facet
+ * type, the adapter’s facet clause and the bucket reconstruction, so they
+ * cannot disagree.
  */
 export function isRangeFacet(
   field: SearchField,
 ): field is SearchField & { readonly facetRanges: readonly FacetRange[] } {
-  return field.facetRanges !== undefined && field.facetRanges.length > 0;
+  const ranges = (field as FlatField).facetRanges;
+  return ranges !== undefined && ranges.length > 0;
 }
 
 /**
@@ -268,21 +533,24 @@ export function unixSecondsToIso(seconds: number): string {
 
 /** Derive the physical engine field names a declaration produces. */
 export function physicalFields(field: SearchField): PhysicalFields {
-  const localized = field.kind === 'text' && field.localized === true;
-  const locales = localized ? (field.locales ?? []) : [];
-  return {
-    display:
-      localized && field.output
+  if (field.kind === 'text' && field.localized === true) {
+    const locales = field.locales;
+    return {
+      display: field.output
         ? locales.map((locale) => `${field.name}_${locale}`)
         : [],
-    search: field.searchable
-      ? localized
+      search: field.searchable
         ? locales.map((locale) => `${field.name}_search_${locale}`)
-        : [`${field.name}_search`]
-      : [],
-    sort:
-      localized && field.sortable
+        : [],
+      sort: field.sortable
         ? locales.map((locale) => `${field.name}_sort_${locale}`)
         : [],
+    };
+  }
+  const searchable = (field as FlatField).searchable !== undefined;
+  return {
+    display: [],
+    search: searchable ? [`${field.name}_search`] : [],
+    sort: [],
   };
 }

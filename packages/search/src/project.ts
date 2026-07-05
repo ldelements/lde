@@ -4,6 +4,10 @@ import { frameByType, type FramedNode } from './frame-by-type.js';
 import {
   isoToUnixSeconds,
   physicalFields,
+  type KeywordField,
+  type LocalizedTextField,
+  type TextField,
+  type ReferenceField,
   type SearchField,
   type SearchSchema,
   type SearchType,
@@ -14,10 +18,11 @@ export type SearchDocument = { id: string } & Record<string, unknown>;
 
 /**
  * Project one framed JSON-LD node into a flat search document: apply each field
- * of the type, then run the derivations (which may read fields the field specs
- * already set). The physical field names a field fans out to come from
- * {@link physicalFields}, the single source shared with the engine collection
- * schema and the query compiler.
+ * of the type in declaration order. A field with a `derive` function computes
+ * its value from the node and the document as populated so far (so a derived
+ * field may read fields declared before it). The physical field names a field
+ * fans out to come from {@link physicalFields}, the single source shared with
+ * the engine collection schema and the query compiler.
  */
 export function projectDocument(
   node: FramedNode,
@@ -32,9 +37,6 @@ export function projectDocument(
   const document: SearchDocument = { id };
   for (const field of searchType.fields) {
     applyField(document, node, field);
-  }
-  for (const derive of searchType.derivations ?? []) {
-    derive(document, node);
   }
   return document;
 }
@@ -61,14 +63,23 @@ function applyField(
   node: FramedNode,
   field: SearchField,
 ): void {
+  if (field.derive !== undefined) {
+    const value = field.derive(node, document);
+    if (value !== undefined) {
+      document[field.name] = value;
+    }
+    return;
+  }
   const path = field.path;
   if (path === undefined) {
-    // A derived field — populated by a derivation, not projected from a path.
+    // Neither path nor derive: populated outside the projection, if at all.
     return;
   }
   switch (field.kind) {
     case 'text':
-      return applyLocalizedText(document, langValuesOf(node, path), field);
+      return field.localized === true
+        ? applyLocalizedText(document, langValuesOf(node, path), field)
+        : applyMonolingualText(document, literalsOf(node, path), field);
     case 'keyword':
       return applyFacet(document, literalsOf(node, path), field);
     case 'reference':
@@ -113,9 +124,9 @@ function applyField(
 function applyLocalizedText(
   document: SearchDocument,
   values: readonly LangValue[],
-  field: SearchField,
+  field: LocalizedTextField,
 ): void {
-  const locales = field.locales ?? [];
+  const locales = field.locales;
   if (locales.length === 0) {
     throw new Error(
       `Localized text field “${field.name}” must declare at least one locale; nothing would be projected otherwise.`,
@@ -147,6 +158,32 @@ function applyLocalizedText(
 }
 
 /**
+ * Project a monolingual text field: every literal regardless of language tag
+ * (monolingual by declaration, not by data). Display shows the first value
+ * (accents preserved) when `output`; search folds every value when
+ * `searchable`. The value field itself carries sorting (no separate key).
+ */
+function applyMonolingualText(
+  document: SearchDocument,
+  values: readonly string[],
+  field: TextField,
+): void {
+  if (values.length === 0) {
+    return;
+  }
+  if (field.output === true || field.sortable === true) {
+    setString(document, field.name, values[0]);
+  }
+  if (field.searchable) {
+    setString(
+      document,
+      physicalFields(field).search[0],
+      fold(values.join(' ')).trim(),
+    );
+  }
+}
+
+/**
  * Project a faceted multi-value field: dedupe (after the optional transform),
  * write the value field, and — when `searchable` — a folded `${name}_search`
  * array. `keyword` reads literals; `reference` reads IRIs (the caller passes the
@@ -155,7 +192,7 @@ function applyLocalizedText(
 function applyFacet(
   document: SearchDocument,
   raw: readonly string[],
-  field: SearchField,
+  field: KeywordField | ReferenceField,
 ): void {
   const values = dedupe(field.transform ? raw.map(field.transform) : raw);
   setArray(document, field.name, values);

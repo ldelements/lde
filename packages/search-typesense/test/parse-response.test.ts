@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { LocalizedValue, SearchQuery, SearchType } from '@lde/search';
+import {
+  searchSchema,
+  type LocalizedValue,
+  type SearchQuery,
+  type SearchType,
+} from '@lde/search';
 import type { Client } from 'typesense';
 import {
   createTypesenseSearchEngine,
@@ -219,6 +224,10 @@ describe('createTypesenseSearchEngine label degradation', () => {
                 {
                   document: { id: 'https://d/1', publisher: ['https://org/1'] },
                 },
+                // A scalar (non-array) stored reference value.
+                {
+                  document: { id: 'https://d/2', publisher: 'https://org/2' },
+                },
               ],
             }),
         }),
@@ -232,18 +241,25 @@ describe('createTypesenseSearchEngine label degradation', () => {
 
   it('degrades to id-only references when the label lookup fails, reporting the cause', async () => {
     let capturedError: unknown;
-    const engine = createTypesenseSearchEngine(fakeClient(), {
-      collection: 'datasets',
-      labelsCollection: 'labels',
-      onLabelError: (error) => {
-        capturedError = error;
+    const engine = createTypesenseSearchEngine(
+      fakeClient(),
+      searchSchema(schema),
+      {
+        collection: 'datasets',
+        labelsCollection: 'labels',
+        onLabelError: (error) => {
+          capturedError = error;
+        },
       },
-    });
-    const result = await engine.search(baseQuery, schema);
+    );
+    const result = await engine.search(schema, baseQuery);
     // The reference is present but unlabelled: the failed lookup degraded
     // rather than failing the whole search.
     expect(result.hits[0].document.publisher).toEqual([
       { id: 'https://org/1' },
+    ]);
+    expect(result.hits[1].document.publisher).toEqual([
+      { id: 'https://org/2' },
     ]);
     expect(capturedError).toBeInstanceOf(Error);
   });
@@ -281,6 +297,10 @@ describe('createTypesenseSearchEngine label cache (labelCacheTtlMs)', () => {
                 {
                   document: { id: 'https://d/1', publisher: ['https://org/1'] },
                 },
+                // A scalar (non-array) stored reference value.
+                {
+                  document: { id: 'https://d/2', publisher: 'https://org/2' },
+                },
               ],
             }),
           export: () => {
@@ -304,16 +324,16 @@ describe('createTypesenseSearchEngine label cache (labelCacheTtlMs)', () => {
     const { client, exportCalls } = fakeClient(() =>
       Promise.resolve(labelsJsonl),
     );
-    const engine = createTypesenseSearchEngine(client, {
+    const engine = createTypesenseSearchEngine(client, searchSchema(schema), {
       collection: 'datasets',
       labelsCollection: 'labels',
       labelCacheTtlMs: 60_000,
     });
 
     const results = await Promise.all([
-      engine.search(baseQuery, schema),
-      engine.search(baseQuery, schema),
-      engine.search(baseQuery, schema),
+      engine.search(schema, baseQuery),
+      engine.search(schema, baseQuery),
+      engine.search(schema, baseQuery),
     ]);
 
     // One export served all three concurrent searches.
@@ -329,14 +349,14 @@ describe('createTypesenseSearchEngine label cache (labelCacheTtlMs)', () => {
     const { client, exportCalls } = fakeClient(() =>
       Promise.resolve(labelsJsonl),
     );
-    const engine = createTypesenseSearchEngine(client, {
+    const engine = createTypesenseSearchEngine(client, searchSchema(schema), {
       collection: 'datasets',
       labelsCollection: 'labels',
       labelCacheTtlMs: 60_000,
     });
 
-    await engine.search(baseQuery, schema);
-    await engine.search(baseQuery, schema);
+    await engine.search(schema, baseQuery);
+    await engine.search(schema, baseQuery);
 
     expect(exportCalls()).toBe(1);
   });
@@ -346,23 +366,23 @@ describe('createTypesenseSearchEngine label cache (labelCacheTtlMs)', () => {
     const { client, exportCalls } = fakeClient(() =>
       Promise.resolve(labelsJsonl),
     );
-    const engine = createTypesenseSearchEngine(client, {
+    const engine = createTypesenseSearchEngine(client, searchSchema(schema), {
       collection: 'datasets',
       labelsCollection: 'labels',
       labelCacheTtlMs: 1000,
     });
 
-    await engine.search(baseQuery, schema);
+    await engine.search(schema, baseQuery);
     expect(exportCalls()).toBe(1);
 
     // Within the TTL: still cached.
     vi.advanceTimersByTime(500);
-    await engine.search(baseQuery, schema);
+    await engine.search(schema, baseQuery);
     expect(exportCalls()).toBe(1);
 
     // Past the TTL: reload.
     vi.advanceTimersByTime(600);
-    await engine.search(baseQuery, schema);
+    await engine.search(schema, baseQuery);
     expect(exportCalls()).toBe(2);
   });
 
@@ -375,7 +395,7 @@ describe('createTypesenseSearchEngine label cache (labelCacheTtlMs)', () => {
         ? Promise.reject(new Error('labels collection unavailable'))
         : Promise.resolve(labelsJsonl);
     });
-    const engine = createTypesenseSearchEngine(client, {
+    const engine = createTypesenseSearchEngine(client, searchSchema(schema), {
       collection: 'datasets',
       labelsCollection: 'labels',
       labelCacheTtlMs: 60_000,
@@ -385,7 +405,7 @@ describe('createTypesenseSearchEngine label cache (labelCacheTtlMs)', () => {
     });
 
     // First load fails: id-only reference, error reported, nothing cached.
-    const failed = await engine.search(baseQuery, schema);
+    const failed = await engine.search(schema, baseQuery);
     expect(failed.hits[0].document.publisher).toEqual([
       { id: 'https://org/1' },
     ]);
@@ -393,7 +413,7 @@ describe('createTypesenseSearchEngine label cache (labelCacheTtlMs)', () => {
     expect(exportCalls()).toBe(1);
 
     // Next search retries the load (the failure was not cached) and resolves.
-    const recovered = await engine.search(baseQuery, schema);
+    const recovered = await engine.search(schema, baseQuery);
     expect(recovered.hits[0].document.publisher).toEqual([
       { id: 'https://org/1', label: { nl: ['Het Utrechts Archief'] } },
     ]);
@@ -469,5 +489,90 @@ describe('fetchLabels', () => {
     const labels = await fetchLabels(client, 'labels', []);
     expect(labels.size).toBe(0);
     expect(posts).toHaveLength(0);
+  });
+});
+
+describe('monolingual text reconstruction', () => {
+  it('returns the stored string for a monolingual text output field', () => {
+    const result = parseSearchResponse(
+      {
+        found: 1,
+        hits: [
+          {
+            document: {
+              id: 'https://d/1',
+              summary: 'Plain prose',
+              bad: 1,
+              publisher: 'https://o/1',
+            },
+          },
+        ],
+      },
+      {
+        name: 'Doc',
+        type: 'urn:example:Doc',
+        fields: [
+          { name: 'summary', kind: 'text', output: true },
+          // A non-string stored value for a text field is dropped.
+          { name: 'bad', kind: 'text', output: true },
+          // A single (non-array) stored reference IRI.
+          {
+            name: 'publisher',
+            kind: 'reference',
+            output: true,
+            ref: { typeName: 'Organization', strategy: 'labelOnly' },
+          },
+        ],
+      },
+      new Map(),
+    );
+    expect(result.hits[0].document.summary).toBe('Plain prose');
+    expect(result.hits[0].document).not.toHaveProperty('bad');
+    expect(result.hits[0].document.publisher).toEqual({ id: 'https://o/1' });
+  });
+});
+
+describe('schema binding', () => {
+  // These reject before any client call is made.
+  const noClient = {} as unknown as Client;
+  const browse: SearchQuery = {
+    where: [],
+    orderBy: [],
+    limit: 1,
+    offset: 0,
+    facets: [],
+    locale: 'nl',
+  };
+
+  it('rejects a search type outside the bound schema', async () => {
+    const foreign: SearchType = {
+      name: 'Other',
+      type: 'urn:example:Other',
+      fields: [],
+    };
+    const engine = createTypesenseSearchEngine(noClient, searchSchema(schema), {
+      collection: 'datasets',
+    });
+    await expect(engine.search(foreign, browse)).rejects.toThrow(
+      /not in this engine/,
+    );
+  });
+
+  it('rejects a type with no configured collection (shorthand needs one type)', async () => {
+    const other: SearchType = {
+      name: 'Other',
+      type: 'urn:example:Other',
+      fields: [],
+    };
+    const engine = createTypesenseSearchEngine(
+      noClient,
+      searchSchema(schema, other),
+      // Multi-type schema with the single-type shorthand: no collection for
+      // either type resolves.
+      { collection: 'datasets' },
+    );
+    await expect(engine.search(other, browse)).rejects.toThrow(
+      /No collection configured for search type “Other”/,
+    );
   });
 });

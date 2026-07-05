@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  assertValidSearchType,
   facetableFields,
   fieldNamed,
   filterableFields,
@@ -9,8 +10,10 @@ import {
   physicalFields,
   referenceFields,
   searchableFields,
+  searchSchema,
   sortableFields,
   unixSecondsToIso,
+  validateSearchType,
   type SearchField,
   type SearchType,
 } from '../src/schema.js';
@@ -127,6 +130,7 @@ describe('physicalFields', () => {
       name: 'title',
       kind: 'text',
       localized: true,
+      locales: [],
       output: true,
       searchable: { weight: 5 },
       sortable: true,
@@ -219,6 +223,198 @@ describe('isRangeFacet', () => {
     expect(isRangeFacet(size)).toBe(true);
     expect(isRangeFacet({ ...size, facetRanges: [] })).toBe(false);
     expect(isRangeFacet({ ...size, facetRanges: undefined })).toBe(false);
+  });
+});
+
+describe('validateSearchType', () => {
+  // Deliberately untyped: these tests exercise the RUNTIME guard for
+  // declarations built outside TypeScript (a SHACL generator, plain JS),
+  // which the discriminated SearchField union would reject at compile time.
+  const typeWith = (...fields: object[]): SearchType => ({
+    name: 'Dataset',
+    type: DATASET,
+    fields: fields as SearchField[],
+  });
+
+  it('accepts a well-formed declaration', () => {
+    expect(validateSearchType(schema)).toEqual([]);
+    expect(() => assertValidSearchType(schema)).not.toThrow();
+  });
+
+  it('rejects duplicate field names', () => {
+    const type = typeWith(
+      { name: 'status', kind: 'keyword' },
+      { name: 'status', kind: 'boolean' },
+    );
+    expect(validateSearchType(type)).toEqual([
+      { field: 'status', reason: 'duplicate-field-name' },
+    ]);
+  });
+
+  it('requires ref on an output reference field, but not on a facet-only one', () => {
+    expect(
+      validateSearchType(
+        typeWith({ name: 'publisher', kind: 'reference', output: true }),
+      ),
+    ).toEqual([{ field: 'publisher', reason: 'missing-ref' }]);
+    expect(
+      validateSearchType(
+        typeWith({ name: 'class', kind: 'reference', facetable: true }),
+      ),
+    ).toEqual([]);
+  });
+
+  it('rejects ref on a non-reference kind', () => {
+    const type = typeWith({
+      name: 'format',
+      kind: 'keyword',
+      ref: { typeName: 'Format', strategy: 'labelOnly' },
+    });
+    expect(validateSearchType(type)).toEqual([
+      { field: 'format', reason: 'ref-not-allowed' },
+    ]);
+  });
+
+  it('accepts monolingual text; localized text must declare locales', () => {
+    // Monolingual (no `localized`) is a valid text shape.
+    expect(
+      validateSearchType(typeWith({ name: 'title', kind: 'text' })),
+    ).toEqual([]);
+    expect(
+      validateSearchType(
+        typeWith({ name: 'title', kind: 'text', localized: true, locales: [] }),
+      ),
+    ).toEqual([{ field: 'title', reason: 'text-requires-locales' }]);
+    // `locales` without `localized` is incoherent.
+    expect(
+      validateSearchType(
+        typeWith({ name: 'title', kind: 'text', locales: ['nl'] }),
+      ),
+    ).toEqual([{ field: 'title', reason: 'text-requires-locales' }]);
+  });
+
+  it('rejects localized/locales on a non-text kind', () => {
+    expect(
+      validateSearchType(
+        typeWith({ name: 'format', kind: 'keyword', localized: true }),
+      ),
+    ).toEqual([{ field: 'format', reason: 'localized-not-allowed' }]);
+    expect(
+      validateSearchType(
+        typeWith({ name: 'format', kind: 'keyword', locales: ['nl'] }),
+      ),
+    ).toEqual([{ field: 'format', reason: 'localized-not-allowed' }]);
+  });
+
+  it('rejects filterable and facetable on text (it feeds the free-text query)', () => {
+    const type = typeWith({
+      name: 'title',
+      kind: 'text',
+      localized: true,
+      locales: ['nl'],
+      filterable: true,
+      facetable: true,
+    });
+    expect(validateSearchType(type)).toEqual([
+      { field: 'title', reason: 'text-not-filterable' },
+      { field: 'title', reason: 'text-not-facetable' },
+    ]);
+  });
+
+  it('allows facetRanges on numeric kinds only', () => {
+    const ranges = [{ key: 'small', max: 10 }];
+    expect(
+      validateSearchType(
+        typeWith({
+          name: 'size',
+          kind: 'integer',
+          facetable: true,
+          facetRanges: ranges,
+        }),
+      ),
+    ).toEqual([]);
+    expect(
+      validateSearchType(
+        typeWith({
+          name: 'format',
+          kind: 'keyword',
+          facetable: true,
+          facetRanges: ranges,
+        }),
+      ),
+    ).toEqual([{ field: 'format', reason: 'facet-ranges-not-allowed' }]);
+  });
+
+  it('allows searchable on text/keyword/reference only', () => {
+    expect(
+      validateSearchType(
+        typeWith({ name: 'size', kind: 'integer', searchable: { weight: 1 } }),
+      ),
+    ).toEqual([{ field: 'size', reason: 'searchable-not-allowed' }]);
+  });
+
+  it('rejects a field declaring both path and derive', () => {
+    expect(
+      validateSearchType(
+        typeWith({
+          name: 'status',
+          kind: 'keyword',
+          path: 'urn:dr:status',
+          derive: () => 'valid',
+        }),
+      ),
+    ).toEqual([{ field: 'status', reason: 'derive-with-path' }]);
+  });
+
+  it('allows transform on keyword/reference only', () => {
+    expect(
+      validateSearchType(
+        typeWith({
+          name: 'size',
+          kind: 'integer',
+          transform: (value: string) => value,
+        }),
+      ),
+    ).toEqual([{ field: 'size', reason: 'transform-not-allowed' }]);
+  });
+});
+
+describe('searchSchema validation', () => {
+  it('throws on an invalid declaration, naming type, field and reason', () => {
+    expect(() =>
+      searchSchema({
+        name: 'Dataset',
+        type: DATASET,
+        fields: [
+          {
+            name: 'title',
+            kind: 'text',
+            localized: true,
+            locales: [],
+          } as unknown as SearchField,
+        ],
+      }),
+    ).toThrow(
+      /Invalid search type “Dataset”: “title” \(text-requires-locales\)/,
+    );
+  });
+
+  it('rejects two types sharing a type IRI (the map key)', () => {
+    expect(() =>
+      searchSchema(
+        { name: 'Dataset', type: DATASET, fields: [] },
+        { name: 'Other', type: DATASET, fields: [] },
+      ),
+    ).toThrow(/Duplicate search type IRI/);
+  });
+
+  it('rejects two types sharing a name (the API key)', () => {
+    expect(() =>
+      searchSchema(
+        { name: 'Dataset', type: DATASET, fields: [] },
+        { name: 'Dataset', type: 'urn:other', fields: [] },
+      ),
+    ).toThrow(/Duplicate search type name/);
   });
 });
 

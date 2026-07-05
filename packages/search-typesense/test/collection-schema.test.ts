@@ -33,7 +33,7 @@ const schema: SearchType = {
       facetable: true,
     },
     // Derived fields (no path) still get collection fields — populated at index
-    // time by derivations, not projected.
+    // time by `derive` functions, not projected.
     { name: 'status', kind: 'keyword', facetable: true, required: true },
     { name: 'statusRank', kind: 'integer', sortable: true },
     {
@@ -202,5 +202,42 @@ describe('buildCollectionSchema', () => {
     expect(withoutLocale.fields).toContainEqual(
       expect.objectContaining({ name: 'title_search_nl', locale: 'nl' }),
     );
+  });
+});
+
+describe('monolingual text', () => {
+  it('emits a value field plus a folded search companion, stemmed in the default locale', () => {
+    const schema = buildCollectionSchema(
+      {
+        name: 'Doc',
+        type: 'urn:example:Doc',
+        fields: [
+          {
+            name: 'summary',
+            kind: 'text',
+            output: true,
+            sortable: true,
+            searchable: { weight: 1 },
+          },
+        ],
+      },
+      { name: 'docs', defaultLocale: 'en' },
+    );
+    expect(schema.fields).toEqual([
+      {
+        name: 'summary',
+        type: 'string',
+        facet: false,
+        sort: true,
+        optional: true,
+      },
+      {
+        name: 'summary_search',
+        type: 'string',
+        optional: true,
+        stem: true,
+        locale: 'en',
+      },
+    ]);
   });
 });

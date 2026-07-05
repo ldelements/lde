@@ -53,6 +53,20 @@ Validation happens before the first arrow (SHACL over the RDF) and inside the
 last (the engine enforces its collection schema); between them every stage is
 a typed, deterministic function — easy to test, and swappable per deployment.
 
+## Entry points
+
+Exports are stratified by audience:
+
+- **`@lde/search`** — the authoring surface: `defineSearchType`,
+  `searchSchema`, `projectGraph` (+ the IR readers `derive` functions use),
+  validation, and every model/query/result type.
+- **`@lde/search/adapter`** — plumbing for engine adapters and API surfaces:
+  `physicalFields`, the field selectors, `assertValidQuery`, the filter
+  operators and storage codecs.
+- **`@lde/search/testing`** — `describeSearchEngineContract`, the executable
+  port contract every engine adapter runs against a live instance of itself
+  (vitest; optional peer).
+
 ## Terminology
 
 The model has three levels, with analogues in SHACL ([one possible source](#why-a-declarative-model))
@@ -72,9 +86,10 @@ every type in one pass); the engine port executes one `SearchType` at a time.
 Two conventions hold across the whole family:
 
 - **Parameter order** — a function takes the value it operates on first and
-  the `SearchType` declaration right after it: `search(query, type)`,
-  `projectDocument(node, type)`, `engineFor(engine, type)`,
-  `buildSearchParams(query, type)`.
+  the declaration right after it: `projectDocument(node, type)`,
+  `buildSearchParams(query, type)`,
+  `createTypesenseSearchEngine(client, schema, options)`,
+  `engine.search(type, query)`.
 - **Factory verbs** — the verb tells you what kind of thing comes back.
   `define*` captures a declaration as a literal (`defineSearchType`);
   `build*` is a pure data-to-data constructor (`buildCollectionSchema`,
@@ -85,7 +100,8 @@ Two conventions hold across the whole family:
 ## Field model
 
 The mapping is data, not code. Each field declares its `kind`, the IR `path` to
-read (omit it for a **derived** field, populated by a `derivation`), and the
+read (or a `derive` function for a **derived** field, computed from the framed
+node in declaration order — so it may read fields declared before it), and the
 capabilities it opts into. The physical field names a declaration fans out to
 (per-locale search/sort keys) come from
 `physicalFields`, the single convention projection, the collection schema and the
@@ -125,12 +141,12 @@ const DATASET = defineSearchType({
     },
     // → size (int)
     { name: 'size', path: 'urn:dr:size', kind: 'integer', sortable: true },
-    // derived field (no path): populated by the derivation below
-    { name: 'classCount', kind: 'integer', sortable: true },
-  ],
-  derivations: [
-    (document, node) => {
-      document.classCount = irisOf(node, 'urn:dr:class').length;
+    // derived field (no path): computed from the framed node
+    {
+      name: 'classCount',
+      kind: 'integer',
+      sortable: true,
+      derive: (node) => irisOf(node, 'urn:dr:class').length,
     },
   ],
 });
@@ -148,6 +164,28 @@ so typed facet/output keys can be derived from it — see
 **Kinds** (`FieldKind`): `text`, `keyword`, `integer`, `number`, `boolean`,
 `date`, `reference`. The Typesense/engine vocabulary and the GraphQL types are
 _derived_ from the kind by the adapter and the surface — never declared here.
+
+`SearchField` is a **discriminated union by `kind`** (`TextField`,
+`LocalizedTextField`, `KeywordField`, `ReferenceField`, …): each kind declares
+exactly the properties it can honour — `locales` on localized text, `ref` on
+references, `facetRanges` on numerics — so an illegal declaration fails to
+compile. Text comes in two shapes: `TextField` is **monolingual** (or
+untagged) prose — one display value, one folded `${name}_search` companion,
+stemmed in the deployment's default locale — while `LocalizedTextField`
+(`localized: true` + `locales`) fans out per locale. Use `keyword` for
+exact-match tokens, never for prose.
+
+**Declarations are also validated at runtime** (for declarations built
+outside TypeScript — a SHACL generator, plain JS): `searchSchema()`
+rejects a structurally invalid declaration (duplicate field names, an `output`
+reference without `ref`, `localized` text without locales, `localized` on a non-text kind,
+`facetRanges` on a non-numeric kind, `searchable`/`transform` on a kind whose
+projection cannot honour it, `filterable`/`facetable` on `text`, two types
+sharing a `type` IRI or `name`) — the declaration-time counterpart of the
+port’s always-on query validation, so a bad schema fails at startup rather
+than per document at index time. `validateSearchType` /
+`assertValidSearchType` are exported for validating a single declaration
+directly.
 
 | kind                 | `where`              | facet | sort             | output                          |
 | -------------------- | -------------------- | ----- | ---------------- | ------------------------------- |
@@ -221,29 +259,36 @@ unrepresentable; the port enforces them for everyone else (deployment
 
 ## Typed results
 
-The `SearchEngine` port is loosely typed by default: facet and document keys
-are plain strings. That is the correct contract for an adapter (which cannot
-know your fields) and for a surface that builds queries from client input at
-runtime. An **in-process caller that knows its search type at compile time**
-should narrow the engine with `engineFor` — same instance, zero runtime cost:
+An engine is **bound to the whole `SearchSchema` at construction** — like
+every other schema consumer (`projectGraph(quads, schema)`,
+`buildGraphQLSchema(schema)`): the adapter factory takes the deployment’s
+declaration together with each type’s physical location, so a query can never
+meet the wrong index, and deployment-level concerns (the label cache,
+cross-type search, facet batching) have one home. A search names its type per
+call. Because `searchSchema()` captures the declared types as a literal
+tuple, `search()` accepts **only the deployment’s own types** (a foreign type
+is a compile error) and returns facet/document keys typed by the type passed
+— no caller-side generics:
 
 ```ts
-import { engineFor } from '@lde/search';
+const engine = createTypesenseSearchEngine(client, schema, {
+  collections: { Dataset: 'datasets', Person: 'people' }, // omitting one = type error
+});
 
-const datasetEngine = engineFor(engine, DATASET);
-
-const result = await datasetEngine.search(query, DATASET);
+const result = await engine.search(DATASET, query);
 result.facets.publisher; // typed: only DATASET’s facetable fields are keys
 result.facets.publsher; // compile error (typo)
 result.hits[0].document.title; // typed: only DATASET’s output fields are keys
-await datasetEngine.search(query, OTHER_TYPE); // compile error (wrong type)
+await engine.search(OTHER_TYPE, query); // compile error: not in this schema
 ```
 
-This only works when the search type was declared with `defineSearchType` (or
-captured `as const satisfies SearchType`); a plain `: SearchType` annotation
-widens the field literals away. The underlying pieces (`EngineFor`,
-`FacetFieldsOf`, `OutputFieldsOf`) are exported for annotating your own
-signatures.
+This only works when the types were declared with `defineSearchType` (or
+captured `as const satisfies SearchType`) and composed with `searchSchema()`;
+a plain `: SearchSchema` annotation widens gracefully to string keys.
+`FacetKeysOf`/`OutputKeysOf` (and the underlying
+`FacetFieldsOf`/`OutputFieldsOf`) are exported for annotating your own
+signatures, and `engine.schema` exposes the bound declaration for routing.
+A single-type deployment may use the `collection: 'datasets'` shorthand.
 
 ## Why a declarative model
 

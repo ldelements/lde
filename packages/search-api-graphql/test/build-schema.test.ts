@@ -86,7 +86,8 @@ function fakeEngine(result: SearchResult): {
   let captured: SearchQuery;
   return {
     engine: {
-      async search(query) {
+      schema: searchSchema(schema),
+      async search(_searchType, query) {
         captured = query;
         return result;
       },
@@ -190,6 +191,20 @@ describe('buildGraphQLSchema', () => {
     });
     // The free-text arg became the query text.
     expect(received().text).toBe('kaart');
+  });
+
+  it('rejects out-of-bounds paging before it reaches the engine', async () => {
+    const { engine } = fakeEngine(canned);
+    const context = { engine, acceptLanguage: ['nl'] };
+    const badPage = await run(`{ datasets(page: 0) { total } }`, context);
+    expect(badPage.errors?.[0]?.message).toMatch(/page must be at least 1/);
+    const badPerPage = await run(
+      `{ datasets(perPage: 101) { total } }`,
+      context,
+    );
+    expect(badPerPage.errors?.[0]?.message).toMatch(
+      /perPage must be between 0 and 100/,
+    );
   });
 
   it('orders the output list best-first for the requested language', async () => {
@@ -371,7 +386,8 @@ describe('buildGraphQLSchema', () => {
     // `facets` set). Fail only that, leaving the listing search untouched.
     const failedFacets: string[] = [];
     const engine: SearchEngine = {
-      async search(query) {
+      schema: searchSchema(schema),
+      async search(_searchType, query) {
         if (query.facets.length > 0) {
           throw new Error('facet backend unavailable');
         }
@@ -453,14 +469,15 @@ describe('buildGraphQLSchema', () => {
   it('applies queryDefaults before calling the engine', async () => {
     let captured: SearchQuery | undefined;
     const engine: SearchEngine = {
-      async search(query) {
+      schema: searchSchema(schema),
+      async search(_searchType, query) {
         captured = query;
         return canned;
       },
     };
     const gqlSchema = buildGraphQLSchema(searchSchema(schema), {
       types: {
-        [schema.type]: {
+        [schema.name]: {
           queryDefaults: (query) => ({
             ...query,
             where: [...query.where, { field: 'status', in: ['valid'] }],
@@ -557,7 +574,7 @@ describe('buildGraphQLSchema', () => {
       searchSchema(PERSON, CREATIVE_WORK),
       {
         types: {
-          [PERSON.type]: { queryField: 'people' },
+          [PERSON.name]: { queryField: 'people' },
         },
       },
     );
@@ -577,10 +594,11 @@ describe('buildGraphQLSchema', () => {
       expect(sdl.match(/^type Agent /gm)).toHaveLength(1);
     });
 
-    it('routes each root field to its own search type', async () => {
+    it('routes each root field through the schema-bound engine', async () => {
       const searchedTypes: string[] = [];
       const engine: SearchEngine = {
-        async search(_query, searchType) {
+        schema: searchSchema(PERSON, CREATIVE_WORK),
+        async search(searchType: SearchType): Promise<SearchResult> {
           searchedTypes.push(searchType.type);
           return { total: 0, hits: [], facets: {} };
         },
@@ -629,27 +647,89 @@ describe('buildGraphQLSchema', () => {
         type: 'https://example.org/OtherPerson',
         fields: [{ name: 'name', kind: 'keyword', output: true }],
       };
-      expect(() =>
-        buildGraphQLSchema(searchSchema(PERSON, alsoPerson)),
-      ).toThrow(/Duplicate root type name “Person”/);
+      // searchSchema() rejects the duplicate name at declaration time…
+      expect(() => searchSchema(PERSON, alsoPerson)).toThrow(
+        /Duplicate search type name “Person”/,
+      );
+      // …and the builder still guards a hand-built map that bypasses it.
+      const handBuilt = new Map([
+        [PERSON.type, PERSON],
+        [alsoPerson.type, alsoPerson],
+      ]);
+      expect(() => buildGraphQLSchema(handBuilt)).toThrow(
+        /Duplicate root type name “Person”/,
+      );
     });
 
     it('throws on options for an unknown type and on a root-field clash', () => {
       expect(() =>
         buildGraphQLSchema(searchSchema(PERSON), {
           types: {
-            'https://schema.org/Unknown': { queryField: 'unknowns' },
+            Unknown: { queryField: 'unknowns' },
           },
         }),
       ).toThrow(/not in the search schema/);
       expect(() =>
         buildGraphQLSchema(searchSchema(PERSON, CREATIVE_WORK), {
           types: {
-            [PERSON.type]: { queryField: 'items' },
-            [CREATIVE_WORK.type]: { queryField: 'items' },
+            [PERSON.name]: { queryField: 'items' },
+            [CREATIVE_WORK.name]: { queryField: 'items' },
           },
         }),
       ).toThrow(/Duplicate root query field/);
     });
+  });
+});
+
+describe('monolingual text output', () => {
+  it('emits String (not LanguageString) and resolves the stored value', async () => {
+    const doc: SearchType = {
+      name: 'Doc',
+      type: 'urn:example:Doc',
+      fields: [{ name: 'summary', kind: 'text', output: true }],
+    };
+    const gqlSchema = buildGraphQLSchema(searchSchema(doc));
+    expect(printSchema(gqlSchema)).toMatch(/summary: String\n/);
+    const engine: SearchEngine = {
+      schema: searchSchema(doc),
+      async search(): Promise<SearchResult> {
+        return {
+          total: 1,
+          facets: {},
+          hits: [{ id: 'https://d/1', document: { summary: 'Plain prose' } }],
+        };
+      },
+    };
+    const result = await graphql({
+      schema: gqlSchema,
+      source: `{ docs { items { summary } } }`,
+      contextValue: { engine, acceptLanguage: ['nl'] },
+    });
+    expect(result.errors).toBeUndefined();
+    const items = (result.data?.docs as { items: { summary: string }[] }).items;
+    expect(items[0].summary).toBe('Plain prose');
+  });
+});
+
+describe('required single reference', () => {
+  it('emits a non-null named reference type', () => {
+    const sdl = printSchema(
+      buildGraphQLSchema(
+        searchSchema({
+          name: 'Doc',
+          type: 'urn:example:Doc',
+          fields: [
+            {
+              name: 'publisher',
+              kind: 'reference',
+              output: true,
+              required: true,
+              ref: { typeName: 'Organization', strategy: 'labelOnly' },
+            },
+          ],
+        }),
+      ),
+    );
+    expect(sdl).toMatch(/publisher: Organization!/);
   });
 });

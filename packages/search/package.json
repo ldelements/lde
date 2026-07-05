@@ -15,6 +15,18 @@
       "import": "./dist/index.js",
       "development": "./src/index.ts",
       "default": "./dist/index.js"
+    },
+    "./adapter": {
+      "types": "./dist/adapter.d.ts",
+      "import": "./dist/adapter.js",
+      "development": "./src/adapter.ts",
+      "default": "./dist/adapter.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "import": "./dist/testing.js",
+      "development": "./src/testing.ts",
+      "default": "./dist/testing.js"
     }
   },
   "main": "./dist/index.js",
@@ -34,5 +46,13 @@
   "devDependencies": {
     "@types/jsonld": "^1.5.15",
     "n3": "^2.1.0"
+  },
+  "peerDependencies": {
+    "vitest": "^4.0.0"
+  },
+  "peerDependenciesMeta": {
+    "vitest": {
+      "optional": true
+    }
   }
 }

@@ -11,7 +11,6 @@ import {
   searchSchema,
   type SearchField,
   type SearchType,
-  type Derivation,
 } from '../src/schema.js';
 
 const DR = 'urn:dr:';
@@ -45,7 +44,7 @@ const fields: SearchField[] = [
     sortable: true,
   },
   {
-    name: 'publisher',
+    name: 'publisherName',
     path: `${DR}publisherName`,
     kind: 'text',
     localized: true,
@@ -79,21 +78,21 @@ const fields: SearchField[] = [
   { name: 'size', path: `${DR}size`, kind: 'integer' },
 ];
 
-const derivations: Derivation[] = [
-  (document, framed) => {
-    document.class_count = irisOf(framed, `${DR}class`).length;
-  },
-];
-
 const schema: SearchType = {
   name: 'Dataset',
   type: DATASET,
-  fields,
-  derivations,
+  fields: [
+    ...fields,
+    {
+      name: 'class_count',
+      kind: 'integer',
+      derive: (framed) => irisOf(framed, `${DR}class`).length,
+    },
+  ],
 };
 
 describe('projectDocument', () => {
-  it('projects every field kind and runs derivations', () => {
+  it('projects every field kind and computes derived fields', () => {
     const document = projectDocument(node, schema);
 
     expect(document.id).toBe('https://ex/d/1');
@@ -103,9 +102,9 @@ describe('projectDocument', () => {
     expect(document.title_search_en).toBe('title');
     expect(document.title_sort_nl).toBe('titel');
     expect(document.title_sort_en).toBe('title');
-    expect(document.publisher_nl).toBe('Erfgoed');
-    expect(document.publisher_search_nl).toBe('erfgoed');
-    expect(document.publisher_en).toBeUndefined();
+    expect(document.publisherName_nl).toBe('Erfgoed');
+    expect(document.publisherName_search_nl).toBe('erfgoed');
+    expect(document.publisherName_en).toBeUndefined();
     expect(document.publisher).toEqual(['https://ex/o/1']);
     expect(document.keyword).toEqual(['Erfgoed']);
     expect(document.keyword_search).toEqual(['erfgoed']);
@@ -307,7 +306,7 @@ describe('projectDocument', () => {
     expect(document.title_search_nl).toBe('titel ondertitel');
   });
 
-  it('skips a field with no path, leaving it to a derivation (derived field)', () => {
+  it('computes a derived field via derive, which may read earlier fields', () => {
     const document = projectDocument(
       {
         '@id': 'https://ex/d/11',
@@ -325,19 +324,112 @@ describe('projectDocument', () => {
             locales: ['nl'],
             output: true,
           },
-          // No `path`: a derived field — its value comes from a derivation,
-          // never from projection.
-          { name: 'status', kind: 'keyword', facetable: true },
-        ],
-        derivations: [
-          (derived) => {
-            derived.status = 'valid';
+          // No `path`: a derived field — computed by `derive`, never
+          // projected.
+          {
+            name: 'status',
+            kind: 'keyword',
+            facetable: true,
+            derive: () => 'valid',
           },
+          // Runs after `status` (declaration order), so it can read it.
+          {
+            name: 'statusRank',
+            kind: 'integer',
+            sortable: true,
+            derive: (_node, partial) => (partial.status === 'valid' ? 1 : 0),
+          },
+          // Returning undefined leaves the field absent.
+          { name: 'absent', kind: 'keyword', derive: () => undefined },
+          // Neither path nor derive: populated outside the projection, if at
+          // all — skipped here.
+          { name: 'external', kind: 'keyword' },
         ],
       },
     );
     expect(document.title_nl).toBe('Titel');
     expect(document.status).toBe('valid');
+    expect(document.statusRank).toBe(1);
+    expect(document).not.toHaveProperty('absent');
+    expect(document).not.toHaveProperty('external');
+  });
+
+  it('projects a monolingual text field: display value + folded search, any tag', () => {
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/d/13',
+        [dcterms.title.value]: [
+          { '@language': 'nl', '@value': 'Café' },
+          'Untagged subtitle',
+        ],
+      },
+      {
+        name: 'Dataset',
+        type: DATASET,
+        fields: [
+          {
+            name: 'title',
+            path: dcterms.title.value,
+            kind: 'text',
+            output: true,
+            sortable: true,
+            searchable: { weight: 3 },
+          },
+          // No values at this path: nothing is emitted.
+          { name: 'subtitle', path: 'urn:dr:none', kind: 'text', output: true },
+          // Search-only: folded companion, no display value.
+          {
+            name: 'note',
+            path: dcterms.title.value,
+            kind: 'text',
+            searchable: { weight: 1 },
+          },
+        ],
+      },
+    );
+    // Display keeps accents; search folds every value regardless of tag.
+    expect(document.title).toBe('Café');
+    expect(document.title_search).toBe('cafe untagged subtitle');
+    expect(document).not.toHaveProperty('subtitle');
+    expect(document).not.toHaveProperty('note');
+    expect(document.note_search).toBe('cafe untagged subtitle');
+  });
+
+  it('ignores IR values it cannot read (non-literal @value, node without @id)', () => {
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/d/12',
+        [dcterms.title.value]: [
+          { '@language': 'nl', '@value': 'Titel' },
+          { '@language': 'nl', '@value': { nested: true } },
+        ],
+        [dcat.keyword.value]: [{ '@value': { nested: true } }, 'kaart'],
+        [dcterms.publisher.value]: [{ nested: true }, { '@id': 'https://o/1' }],
+      },
+      {
+        name: 'Dataset',
+        type: DATASET,
+        fields: [
+          {
+            name: 'title',
+            path: dcterms.title.value,
+            kind: 'text',
+            localized: true,
+            locales: ['nl'],
+            output: true,
+          },
+          { name: 'keyword', path: dcat.keyword.value, kind: 'keyword' },
+          {
+            name: 'publisher',
+            path: dcterms.publisher.value,
+            kind: 'reference',
+          },
+        ],
+      },
+    );
+    expect(document.title_nl).toBe('Titel');
+    expect(document.keyword).toEqual(['kaart']);
+    expect(document.publisher).toEqual(['https://o/1']);
   });
 
   it('throws when the framed node has no @id', () => {

@@ -1,37 +1,60 @@
 import type { SearchQuery } from './query.js';
-import type { SearchType } from './schema.js';
+import type { SearchSchema, SearchType } from './schema.js';
 
 /**
- * The engine port: the boundary a concrete engine adapter (e.g.
- * `@lde/search-typesense`’s `TypesenseSearchEngine`) implements. The adapter
- * owns every engine specific (companion-field expansion, full-text field
- * selection and weights, filter compilation, sorting, result folding, faceting)
- * and returns only logical documents, so a deployment can swap engines without
- * any consumer noticing.
- * Nothing engine-specific and nothing RDF-specific leaks past this port.
+ * The engine port: the boundary a concrete engine adapter (e.g. the engine
+ * `@lde/search-typesense`’s `createTypesenseSearchEngine` returns) implements.
+ * An engine is **bound to the whole {@link SearchSchema} at construction** —
+ * the adapter factory takes the deployment’s declaration together with the
+ * physical location of every type (its collections map), mirroring the other
+ * schema consumers (`projectGraph(quads, schema)`,
+ * `buildGraphQLSchema(schema)`): everything is a function of the schema. A
+ * query can never meet the wrong index, deployment-level concerns (label
+ * cache, cross-type search, facet batching) have one home, and a search names
+ * its type per call.
+ * The adapter owns every engine specific (companion-field expansion,
+ * full-text field selection and weights, filter compilation, sorting, result
+ * folding, faceting) and returns only logical documents, so a deployment can
+ * swap engines without any consumer noticing. Nothing engine-specific and
+ * nothing RDF-specific leaks past this port.
  *
- * Port contract: an adapter ALWAYS validates the incoming query against the
- * search type (`assertValidQuery`) and rejects a structurally invalid one —
- * unknown or non-filterable fields, mismatched operators, unknown facets —
- * rather than passing garbage to its engine. Validation is not the caller’s
- * job: it must hold for every surface and for injected deployment policy.
+ * Port contract: an adapter ALWAYS rejects a `searchType` that is not in its
+ * bound schema, and ALWAYS validates the incoming query against it
+ * (`assertValidQuery`) — unknown or non-filterable fields, mismatched
+ * operators, unknown facets — rather than passing garbage to its engine.
+ * Validation is not the caller’s job: it must hold for every surface and for
+ * injected deployment policy.
  *
- * `FacetField` keys the returned facet map; it defaults to `string` so an engine
- * stays ergonomic, and a deployment can narrow it to its own facet-field union
- * (see {@link FacetFieldsOf}) for typo-safe facet access. `Type` narrows the
- * accepted `searchType` argument alongside, so an {@link EngineFor}-typed engine
- * rejects a mismatched search type at compile time.
+ * `Types` is the literal tuple {@link searchSchema} captured: with a
+ * `defineSearchType` declaration, `search()` only accepts the deployment’s
+ * own types (a foreign type is a compile error) and returns facet/document
+ * keys typed by the type passed. A widened `: SearchSchema` degrades
+ * gracefully to string keys ({@link FacetKeysOf}).
  */
 export interface SearchEngine<
-  FacetField extends string = string,
-  OutputField extends string = string,
-  Type extends SearchType = SearchType,
+  Types extends readonly SearchType[] = readonly SearchType[],
 > {
-  search(
+  /** The declaration this engine serves — exposed so a surface can route and
+   *  a caller can enumerate the searchable types. */
+  readonly schema: SearchSchema<Types>;
+  search<T extends Types[number]>(
+    searchType: T,
     query: SearchQuery,
-    searchType: Type,
-  ): Promise<SearchResult<FacetField, OutputField>>;
+  ): Promise<SearchResult<FacetKeysOf<T>, OutputKeysOf<T>>>;
 }
+
+/** The facet keys `search()` returns for the type passed: narrowed for a
+ *  literal declaration, `string` for a widened `SearchType` (whose field
+ *  names are not statically known and would otherwise collapse to `never`). */
+export type FacetKeysOf<T extends SearchType> = SearchType extends T
+  ? string
+  : FacetFieldsOf<T>;
+
+/** The document keys `search()` returns for the type passed; see
+ *  {@link FacetKeysOf}. */
+export type OutputKeysOf<T extends SearchType> = SearchType extends T
+  ? string
+  : OutputFieldsOf<T>;
 
 /** What an engine returns: logical hits, a total, and the requested facets. */
 export interface SearchResult<
@@ -72,35 +95,6 @@ export type OutputFieldsOf<Type extends SearchType> = Extract<
   Type['fields'][number],
   { readonly output: true }
 >['name'];
-
-/** A {@link SearchEngine} narrowed to one search type: facet keys and document
- *  keys fixed to that type’s facetable / output field names, and `search()`
- *  accepting only that search type. The type must be captured as a literal
- *  (`defineSearchType` or `as const satisfies SearchType`); {@link engineFor}
- *  is the ergonomic way to obtain one. */
-export type EngineFor<Type extends SearchType> = SearchEngine<
-  FacetFieldsOf<Type>,
-  OutputFieldsOf<Type>,
-  Type
->;
-
-/**
- * Narrow an engine to one search type — the ergonomic route to an
- * {@link EngineFor} view. The `const` type parameter captures the search type
- * as a literal, so facet and document keys come out typo-safe without the
- * caller writing any generics. Identity at runtime: the same engine instance
- * is returned, only its type changes.
- *
- * Parameter order follows the family-wide convention: the value being
- * operated on first, its `SearchType` right after.
- */
-export function engineFor<const Type extends SearchType>(
-  engine: SearchEngine,
-  searchType: Type,
-): EngineFor<Type> {
-  void searchType; // exists only to infer `Type`; the engine is returned as-is
-  return engine;
-}
 
 /**
  * One result row. `id` (the stable document key, an IRI) is kept *out* of

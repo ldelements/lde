@@ -1,12 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import {
   assertValidQuery,
+  filterOperator,
   filterOperatorFor,
   pageForOffset,
   validateQuery,
   type SearchQuery,
 } from '../src/query.js';
 import type { SearchType } from '../src/schema.js';
+
+describe('filterOperator', () => {
+  it('reads the operator off a filter’s discriminating key', () => {
+    expect(filterOperator({ field: 'format', in: ['text/turtle'] })).toBe('in');
+    expect(filterOperator({ field: 'size', range: { min: 1 } })).toBe('range');
+    expect(filterOperator({ field: 'iiif', is: true })).toBe('is');
+  });
+});
 
 describe('filterOperatorFor', () => {
   it('maps each field kind to its `where` operator', () => {

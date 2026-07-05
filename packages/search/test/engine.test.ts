@@ -1,11 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { engineFor } from '../src/engine.js';
-import type { EngineFor, SearchEngine, SearchResult } from '../src/engine.js';
+import type { SearchEngine, SearchResult } from '../src/engine.js';
 import type { SearchQuery } from '../src/query.js';
-import { defineSearchType } from '../src/schema.js';
+import { defineSearchType, searchSchema } from '../src/schema.js';
 import type { SearchType } from '../src/schema.js';
 
-const schema: SearchType = {
+const datasetType: SearchType = {
   name: 'Dataset',
   type: 'http://www.w3.org/ns/dcat#Dataset',
   fields: [{ name: 'title', kind: 'text', localized: true, locales: ['nl'] }],
@@ -13,8 +12,13 @@ const schema: SearchType = {
 
 // A fake engine: the port is implementable and the result types compose into a
 // logical document (language map + reference) the way a real engine returns.
+// The engine is bound to the whole schema at construction and exposes it.
 const fake: SearchEngine = {
-  async search(query: SearchQuery): Promise<SearchResult> {
+  schema: searchSchema(datasetType),
+  async search(
+    _searchType: SearchType,
+    query: SearchQuery,
+  ): Promise<SearchResult> {
     return {
       total: 1,
       hits: [
@@ -47,8 +51,9 @@ describe('SearchEngine port', () => {
       locale: 'nl',
     };
 
-    const result = await fake.search(query, schema);
+    const result = await fake.search(datasetType, query);
 
+    expect(fake.schema.get(datasetType.type)).toBe(datasetType);
     expect(result.total).toBe(1);
     expect(result.hits[0].id).toBe('https://example/dataset/1');
     expect(result.hits[0].document.title).toEqual({
@@ -59,11 +64,13 @@ describe('SearchEngine port', () => {
   });
 });
 
-describe('typed facet and document keys', () => {
-  it('keys facets and the result document by the schema’s field names', async () => {
-    // Captured as a literal (`as const satisfies`) so the `facetable`/`output`
-    // flags survive and the `…Of` helpers can read the field names off the type.
-    const datasetSchema = {
+describe('typed schema-bound engine', () => {
+  it('accepts only its own types and keys results by the type passed', async () => {
+    // Captured as literals (`defineSearchType` + `searchSchema`), so the
+    // engine's accepted types and the per-call facet/document keys are read
+    // off the declaration — the narrowing an adapter factory's `const` type
+    // parameter performs for its callers.
+    const dataset = defineSearchType({
       name: 'Dataset',
       type: 'http://www.w3.org/ns/dcat#Dataset',
       fields: [
@@ -75,14 +82,25 @@ describe('typed facet and document keys', () => {
           output: true,
         },
         { name: 'format', kind: 'keyword', array: true, facetable: true },
-        { name: 'status', kind: 'keyword', facetable: true },
       ],
-    } as const satisfies SearchType;
+    });
+    const person = defineSearchType({
+      name: 'Person',
+      type: 'https://schema.org/Person',
+      fields: [{ name: 'status', kind: 'keyword', facetable: true }],
+    });
+    const organization = defineSearchType({
+      name: 'Organization',
+      type: 'http://xmlns.com/foaf/0.1/Organization',
+      fields: [{ name: 'sector', kind: 'keyword', facetable: true }],
+    });
+    const schema = searchSchema(dataset, person);
 
-    // facets ⊂ { format, status }, document keys ⊂ { title }. These object
-    // literals would not compile if the helpers widened to `string`/`never`.
-    const engine: EngineFor<typeof datasetSchema> = {
-      async search() {
+    // Implemented string-keyed and cast once — the same shape an adapter
+    // factory uses (the runtime object cannot know the literal keys).
+    const untyped: SearchEngine = {
+      schema,
+      async search(): Promise<SearchResult> {
         return {
           total: 1,
           hits: [
@@ -95,55 +113,26 @@ describe('typed facet and document keys', () => {
         };
       },
     };
+    const engine = untyped as SearchEngine<
+      readonly [typeof dataset, typeof person]
+    >;
 
-    const result = await engine.search(
-      {
-        where: [],
-        orderBy: [],
-        limit: 10,
-        offset: 0,
-        facets: ['format'],
-        locale: 'nl',
-      },
-      datasetSchema,
-    );
-
-    expect(result.facets.format).toEqual([{ value: 'text/turtle', count: 2 }]);
-    expect(result.hits[0].document.title).toEqual({ nl: ['Titel'] });
-  });
-
-  it('accepts only the search type it was narrowed to', () => {
-    // `defineSearchType` captures the literal (no `as const` needed): the
-    // `facetable: true` flag must survive for `FacetFieldsOf` to see it.
-    const datasetSchema = defineSearchType({
-      name: 'Dataset',
-      type: 'http://www.w3.org/ns/dcat#Dataset',
-      fields: [{ name: 'format', kind: 'keyword', facetable: true }],
-    });
-    const organizationSchema = defineSearchType({
-      name: 'Organization',
-      type: 'http://xmlns.com/foaf/0.1/Organization',
-      fields: [{ name: 'sector', kind: 'keyword', facetable: true }],
-    });
     const query: SearchQuery = {
       where: [],
       orderBy: [],
       limit: 10,
       offset: 0,
-      facets: [],
+      facets: ['format'],
       locale: 'nl',
     };
+    const result = await engine.search(dataset, query);
 
-    // `engineFor` narrows a generic adapter (plain `SearchEngine`) to any
-    // `EngineFor` — the same instance, identity at runtime.
-    const engine: EngineFor<typeof datasetSchema> = engineFor(
-      fake,
-      datasetSchema,
-    );
-    expect(engine).toBe(fake);
+    expect(result.facets.format).toEqual([{ value: 'text/turtle', count: 2 }]);
+    // @ts-expect-error — a facet key outside the declaration is a compile error
+    void result.facets.formaat;
+    expect(result.hits[0].document.title).toEqual({ nl: ['Titel'] });
 
-    void engine.search(query, datasetSchema);
-    // @ts-expect-error — a mismatched search type is rejected at compile time
-    void engine.search(query, organizationSchema);
+    // @ts-expect-error — a type outside the engine's schema is a compile error
+    void engine.search(organization, query);
   });
 });

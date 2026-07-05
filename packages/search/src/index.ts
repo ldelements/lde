@@ -1,56 +1,50 @@
-// Projection: RDF CONSTRUCT quads → flat search documents, driven by the unified
-// SearchField/SearchType model below (one declaration; the fanout names come
-// from `physicalFields`).
+// The AUTHORING surface: what a deployment declares a schema with, projects
+// documents through, and holds engines and results as. The adapter/surface
+// plumbing (field selectors, physical fanout, query validation, codecs) lives
+// under `@lde/search/adapter`; the engine-port conformance suite under
+// `@lde/search/testing`.
+
+// Projection: RDF CONSTRUCT quads → flat search documents, driven by the
+// unified SearchField/SearchType model. The IR readers (irisOf, …) are here
+// because `derive` functions are written against them.
 export { projectGraph, irisOf, literalsOf, firstLiteralOf } from './project.js';
 export type { SearchDocument } from './project.js';
 
 // Unified field model: one declaration drives projection, engine collection
-// schema, query semantics and the GraphQL surface. Plus the field selectors and
-// the physical field-name convention they all share.
+// schema, query semantics and the GraphQL surface — a discriminated union by
+// `kind`, validated again at runtime when the schema is built.
 export {
   defineSearchType,
   searchSchema,
-  physicalFields,
-  searchableFields,
-  facetableFields,
-  filterableFields,
-  sortableFields,
-  outputFields,
-  referenceFields,
-  fieldNamed,
-  isRangeFacet,
-  isoToUnixSeconds,
-  unixSecondsToIso,
+  validateSearchType,
+  assertValidSearchType,
 } from './schema.js';
 export type {
   FieldKind,
   SearchField,
+  SearchFieldBase,
+  TextField,
+  LocalizedTextField,
+  KeywordField,
+  ReferenceField,
+  IntegerField,
+  NumberField,
+  DateField,
+  BooleanField,
+  Searchable,
+  RangeFacetable,
   SearchType,
+  SearchTypeIssue,
   SearchSchema,
-  Derivation,
-  PhysicalFields,
   FacetRange,
 } from './schema.js';
 
-// Engine- and protocol-neutral query IR + filter semantics, and the always-on
-// structural query validation every engine adapter enforces.
-export {
-  filterOperatorFor,
-  filterOperator,
-  validateQuery,
-  assertValidQuery,
-  pageForOffset,
-} from './query.js';
-export type {
-  SearchQuery,
-  Filter,
-  Sort,
-  FilterOperator,
-  QueryIssue,
-} from './query.js';
+// Engine- and protocol-neutral query IR (what a `queryDefaults` policy or an
+// in-process caller writes).
+export type { SearchQuery, Filter, Sort } from './query.js';
 
-// Engine port + the logical result document returned across it.
-export { engineFor } from './engine.js';
+// Engine port + the logical result document returned across it. An engine is
+// bound to one SearchType at construction by its adapter factory.
 export type {
   SearchEngine,
   SearchResult,
@@ -63,7 +57,8 @@ export type {
   FacetMap,
   FacetFieldsOf,
   OutputFieldsOf,
-  EngineFor,
+  FacetKeysOf,
+  OutputKeysOf,
 } from './engine.js';
 
 export type { FramedNode } from './frame-by-type.js';

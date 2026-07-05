@@ -46,7 +46,7 @@ function buildGraphQLSchema(
   schema: SearchSchema, // every root type, keyed by type IRI
   options?: {
     types?: Record<
-      string, // type IRI; entries are optional fine-tuning – names come from SearchType.name
+      string, // SearchType.name (the logical API name); entries are optional fine-tuning
       {
         queryField?: string; // root field; default lowercased plural of the type's name
         queryDefaults?: (q: SearchQuery, ctx: SearchContext) => SearchQuery; // per-type consumer policy
@@ -259,7 +259,7 @@ The single, generic root resolver (shipped in the package, not emitted):
 2. **Apply `options.queryDefaults`** – the generic resolver bakes no deployment defaults; DR
    injects its policy here: default `status:=valid`; default sort `relevance` when a `query` is
    present else `title`; and the `status_rank` tie-break appended to either.
-3. **`context.engine.search(query, schema)` → `SearchResult`.**
+3. **`context.engine.search(searchType, query)` → `SearchResult`** (the engine is bound to the whole schema at construction and routes per type).
 4. **`SearchResult` → output** – scalars pass through; a `LocalizedValue` map →
    `[LanguageString]` ordered by `options.languageOrder(available, acceptLanguage)`; reference
    values likewise; facets keyed logical→enum. GraphQL field selection prunes.
@@ -282,7 +282,10 @@ untagged (`und`) last – so `[0]` is always the best available value.
 
 ```ts
 interface SearchContext {
-  engine: SearchEngine; // the port; any engine adapter
+  // The deployment's engine, bound to the whole SearchSchema at construction;
+  // resolvers pass each root field's search type per call and the engine
+  // routes it to its collection (rejecting a type outside its schema).
+  engine: SearchEngine;
   acceptLanguage: readonly string[]; // parsed, ordered; drives locale + output ordering
 }
 ```

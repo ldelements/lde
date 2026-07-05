@@ -17,14 +17,6 @@ import {
   type GraphQLOutputType,
 } from 'graphql';
 import {
-  facetableFields,
-  filterableFields,
-  filterOperatorFor,
-  isRangeFacet,
-  outputFields,
-  pageForOffset,
-  sortableFields,
-  unixSecondsToIso,
   type Filter,
   type LocalizedValue,
   type SearchEngine,
@@ -34,6 +26,16 @@ import {
   type SearchType,
 } from '@lde/search';
 import {
+  facetableFields,
+  filterableFields,
+  filterOperatorFor,
+  isRangeFacet,
+  outputFields,
+  pageForOffset,
+  sortableFields,
+  unixSecondsToIso,
+} from '@lde/search/adapter';
+import {
   defaultLanguageOrder,
   toLanguageStrings,
   type LanguageOrder,
@@ -41,6 +43,9 @@ import {
 
 /** Populated per request by the transport; no framework type appears here. */
 export interface SearchContext {
+  /** The deployment’s engine, bound to the whole {@link SearchSchema} at
+   *  construction; the resolvers pass each root field’s search type per call
+   *  and the engine routes it to its collection. */
   readonly engine: SearchEngine;
   /** Parsed, ordered `Accept-Language`; drives locale selection and output order. */
   readonly acceptLanguage: readonly string[];
@@ -67,11 +72,16 @@ export interface SearchTypeOptions {
 }
 
 export interface BuildGraphQLSchemaOptions {
-  /** Optional fine-tuning per root type, keyed by type IRI (the
-   *  {@link SearchType} `type`). A type without an entry gets the defaults. */
+  /** Optional fine-tuning per root type, keyed by the {@link SearchType}
+   *  `name` (the logical API name, e.g. `Dataset`) — the key a consumer knows
+   *  the type by. A type without an entry gets the defaults. */
   readonly types?: Readonly<Record<string, SearchTypeOptions>>;
   /** Output-language ordering; defaults to Accept-Language-first, `und` last. */
   readonly languageOrder?: LanguageOrder;
+  /** Upper bound for the `perPage` argument (default 100). A request outside
+   *  `1 ≤ perPage ≤ maxPerPage` or with `page < 1` is rejected with a clear
+   *  error instead of reaching the engine. */
+  readonly maxPerPage?: number;
 }
 
 type Source = Record<string, unknown>;
@@ -105,10 +115,14 @@ export function buildGraphQLSchema(
   options: BuildGraphQLSchemaOptions = {},
 ): GraphQLSchema {
   const languageOrder = options.languageOrder ?? defaultLanguageOrder;
-  for (const typeIri of Object.keys(options.types ?? {})) {
-    if (!schema.has(typeIri)) {
+  const maxPerPage = options.maxPerPage ?? 100;
+  const typeNames = new Set(
+    [...schema.values()].map((searchType) => searchType.name),
+  );
+  for (const name of Object.keys(options.types ?? {})) {
+    if (!typeNames.has(name)) {
       throw new Error(
-        `Options given for type “${typeIri}”, which is not in the search schema.`,
+        `Options given for type “${name}”, which is not in the search schema.`,
       );
     }
   }
@@ -225,9 +239,13 @@ export function buildGraphQLSchema(
   ): GraphQLFieldConfig<Source, SearchContext> {
     switch (field.kind) {
       case 'text':
-        return labelList(
-          (source) => source[field.name] as LocalizedValue | undefined,
-        );
+        // Localized text is a best-first language list; monolingual text a
+        // plain (nullable) string.
+        return field.localized === true
+          ? labelList(
+              (source) => source[field.name] as LocalizedValue | undefined,
+            )
+          : { type: scalarOutput(GraphQLString, field) };
       case 'keyword':
         return field.array === true
           ? {
@@ -390,15 +408,20 @@ export function buildGraphQLSchema(
         perPage: { type: GraphQLInt, defaultValue: 20 },
       },
       resolve: async (_source, args, context: SearchContext) => {
-        const built = argsToQuery(args as QueryArgs, context, searchType);
+        const built = argsToQuery(
+          args as QueryArgs,
+          context,
+          searchType,
+          maxPerPage,
+        );
         const finalQuery = typeOptions?.queryDefaults
           ? typeOptions.queryDefaults(built, context)
           : built;
         // Items + total only; facets are resolved lazily per selected key.
-        const result = await context.engine.search(
-          { ...finalQuery, facets: [] },
-          searchType,
-        );
+        const result = await context.engine.search(searchType, {
+          ...finalQuery,
+          facets: [],
+        });
         return {
           items: result.hits.map((hit) => ({ id: hit.id, ...hit.document })),
           total: result.total,
@@ -452,8 +475,8 @@ export function buildGraphQLSchema(
               // result and discard the items + every other facet).
               try {
                 const result = await context.engine.search(
-                  facetQuery,
                   searchType,
+                  facetQuery,
                 );
                 return result.facets[field.name] ?? [];
               } catch (error) {
@@ -473,7 +496,7 @@ export function buildGraphQLSchema(
     GraphQLFieldConfig<Source, SearchContext>
   > = {};
   for (const searchType of schema.values()) {
-    const typeOptions = options.types?.[searchType.type];
+    const typeOptions = options.types?.[searchType.name];
     const typeName = searchType.name;
     const queryField =
       typeOptions?.queryField ??
@@ -512,14 +535,26 @@ interface QueryArgs {
   readonly perPage?: number;
 }
 
-/** Pure args → {@link SearchQuery} mapping. */
+/** Pure args → {@link SearchQuery} mapping. Rejects out-of-bounds paging
+ *  (`page < 1`, `perPage` outside `1..maxPerPage`) with a clear error — a
+ *  negative offset or an unbounded page size must not reach the engine. */
 function argsToQuery(
   args: QueryArgs,
   context: SearchContext,
   searchType: SearchType,
+  maxPerPage: number,
 ): SearchQuery {
   const perPage = args.perPage ?? 20;
   const page = args.page ?? 1;
+  if (page < 1) {
+    throw new Error(`page must be at least 1; got ${page}.`);
+  }
+  // perPage: 0 is a legitimate facet-only query (no hits, page pins to 1).
+  if (perPage < 0 || perPage > maxPerPage) {
+    throw new Error(
+      `perPage must be between 0 and ${maxPerPage}; got ${perPage}.`,
+    );
+  }
   return {
     text: args.query,
     where: whereToFilters(args.where, searchType),

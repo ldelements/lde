@@ -1,6 +1,7 @@
 import type { CollectionCreateSchema } from 'typesense';
 import type { CollectionFieldSchema } from 'typesense/lib/Typesense/Collection.js';
-import { physicalFields, type SearchField, type SearchType } from '@lde/search';
+import { type SearchField, type SearchType } from '@lde/search';
+import { physicalFields } from '@lde/search/adapter';
 
 /** Deployment-specific options the generic field model does not carry. */
 export interface CollectionSchemaOptions {
@@ -101,7 +102,12 @@ function typesenseFields(
       optional: field.required !== true && field.name !== defaultSortingField,
     },
   ];
-  if (field.searchable) {
+  const searchable =
+    (field.kind === 'keyword' ||
+      field.kind === 'reference' ||
+      field.kind === 'text') &&
+    field.searchable !== undefined;
+  if (searchable) {
     for (const name of names.search) {
       fields.push({
         name,

@@ -9,7 +9,7 @@ served by the same resolver implementation (no per-type code, no codegen);
 each root field gets its own instance of it, bound to that field’s
 `SearchType`, over any `SearchEngine`. It names neither your **domain** (each type’s GraphQL name
 is the `SearchType`’s own logical `name` — `Dataset`, `Person`, `CreativeWork`,
-…) nor your **engine** (the resolver calls `context.engine`, be it
+…) nor your **engine** (the resolver calls the schema-bound `context.engine`, be it
 [`@lde/search-typesense`](../search-typesense) or another adapter).
 
 ## Runtime configuration, not codegen
@@ -45,13 +45,13 @@ type:
 ```ts
 const gqlSchema = buildGraphQLSchema(searchSchema(DATASET, PERSON), {
   types: {
-    [DATASET.type]: {
+    Dataset: {
       queryDefaults: (query) => ({
         ...query,
         where: [...query.where, { field: 'status', in: ['valid'] }],
       }),
     },
-    [PERSON.type]: { queryField: 'people' },
+    Person: { queryField: 'people' },
   },
 });
 ```
