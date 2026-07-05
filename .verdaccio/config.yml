@@ -1,0 +1,29 @@
+# Local registry for testing publishable packages (nx local-registry / @nx/js:verdaccio).
+# Storage is overridden by the target option (tmp/local-registry/storage).
+storage: ../tmp/local-registry/storage
+
+uplinks:
+  npmjs:
+    url: https://registry.npmjs.org/
+    maxage: 60m
+
+packages:
+  # @lde/* falls through to this rule: locally-published packages (the four we
+  # publish here) are served from local storage and shadow npmjs; any @lde package
+  # not published locally (DR also uses @lde/dataset, @lde/pipeline, …) proxies npmjs.
+  '@*/*':
+    access: $all
+    publish: $all
+    unpublish: $all
+    proxy: npmjs
+  '**':
+    access: $all
+    publish: $all
+    unpublish: $all
+    proxy: npmjs
+
+# Allow republishing the same version during local iteration.
+publish:
+  allow_offline: true
+
+log: { type: stdout, format: pretty, level: warn }
