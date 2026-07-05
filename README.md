@@ -263,6 +263,8 @@ graph TD
 
 <a href="https://dc4eu.nl"><img src="https://dc4eu.nl/wp-content/uploads/2022/01/logo.png" width="20" valign="middle"></a>&ensp;<a href="https://dc4eu.nl">DC4EU</a> — Dutch Collections for Europe, the accredited national aggregator connecting Dutch heritage institutions with Europeana
 
+<a href="https://www.linkedopenlimburg.nl">Linked Open Limburg</a> — Coöperatie Erfgoed Limburg’s regional heritage programme, built on LDE’s pipeline components
+
 ## Comparison
 
 |                       | **LD Elements**           | **[TriplyETL](https://docs.triply.cc/triply-etl/)** | **[rdf-connect](https://rdf-connect.github.io)** | **[OpenLDES / LDI](https://informatievlaanderen.github.io/VSDS-Linked-Data-Interactions/)** |
