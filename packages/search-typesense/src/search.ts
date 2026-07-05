@@ -13,7 +13,7 @@ import {
   type SearchSchema,
   type SearchType,
   type SearchValue,
-  type LocalizedTextField,
+  type TextField,
 } from '@lde/search';
 import {
   assertTypeInSchema,
@@ -40,10 +40,7 @@ export interface TypesenseSearchEngineOptions<
 > extends BuildSearchParamsOptions {
   /** The collection (or alias) per search type, keyed by the type’s `name` —
    *  with a literal schema, omitting a type is a compile error. */
-  readonly collections?: Readonly<Record<TypeName, string>>;
-  /** Single-type shorthand for {@link collections}; only valid when the
-   *  schema declares exactly one type. */
-  readonly collection?: string;
+  readonly collections: Readonly<Record<TypeName, string>>;
   /** The sidecar `labels` collection (IRI → label); omit for id-only references. */
   readonly labelsCollection?: string;
   /**
@@ -65,9 +62,8 @@ export interface TypesenseSearchEngineOptions<
 /**
  * A Typesense-backed {@link SearchEngine}, bound to the whole
  * {@link SearchSchema} at construction — like every other schema consumer.
- * Each type’s collection comes from `options.collections` (or the
- * single-type `collection` shorthand); the label sidecar and its cache are
- * shared across all types. `search` compiles the query
+ * Each type’s collection comes from `options.collections`; the label sidecar
+ * and its cache are shared across all types. `search` compiles the query
  * ({@link buildSearchParams}), runs it against the type’s collection,
  * resolves the reference labels for the page of hits from the sidecar
  * `labels` collection in one lookup, and reconstructs the engine-neutral
@@ -90,14 +86,12 @@ export function createTypesenseSearchEngine<
   // happens to hit the unwired type.
   const collections = new Map<string, string>(
     [...schema.values()].map((searchType) => {
-      const named = (
-        options.collections as Readonly<Record<string, string>> | undefined
-      )?.[searchType.name];
-      const collection =
-        named ?? (schema.size === 1 ? options.collection : undefined);
+      const collection = (
+        options.collections as Readonly<Record<string, string>>
+      )[searchType.name];
       if (collection === undefined) {
         throw new Error(
-          `No collection configured for search type “${searchType.name}”; set options.collections.${searchType.name} (the single-type “collection” shorthand needs a one-type schema).`,
+          `No collection configured for search type “${searchType.name}”; set options.collections.${searchType.name}.`,
         );
       }
       return [searchType.type, collection];
@@ -392,13 +386,8 @@ function logicalValue(
   labels: ReadonlyMap<string, LocalizedValue>,
 ): SearchValue | undefined {
   switch (field.kind) {
-    case 'text': {
-      if (field.localized === true) {
-        return localizedValue(flat, field);
-      }
-      const value = flat[field.name];
-      return typeof value === 'string' ? value : undefined;
-    }
+    case 'text':
+      return localizedValue(flat, field);
     case 'reference':
       return referenceValue(flat, field, labels);
     case 'keyword': {
@@ -422,7 +411,7 @@ function logicalValue(
 /** Gather the per-locale display fields back into a language map. */
 function localizedValue(
   flat: Record<string, unknown>,
-  field: LocalizedTextField,
+  field: TextField,
 ): LocalizedValue | undefined {
   const map: Record<string, readonly string[]> = {};
   const display = physicalFields(field).display;

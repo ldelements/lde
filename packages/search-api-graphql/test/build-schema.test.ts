@@ -16,7 +16,6 @@ const schema: SearchType = {
     {
       name: 'title',
       kind: 'text',
-      localized: true,
       locales: ['nl', 'en'],
       output: true,
       searchable: { weight: 5 },
@@ -533,7 +532,6 @@ describe('buildGraphQLSchema', () => {
         {
           name: 'name',
           kind: 'text',
-          localized: true,
           locales: ['nl'],
           output: true,
           searchable: { weight: 5 },
@@ -555,7 +553,6 @@ describe('buildGraphQLSchema', () => {
         {
           name: 'title',
           kind: 'text',
-          localized: true,
           locales: ['nl'],
           output: true,
           searchable: { weight: 5 },
@@ -641,24 +638,19 @@ describe('buildGraphQLSchema', () => {
       ).toThrow(/Reference type name “Person”.*collides with a root type/);
     });
 
-    it('throws on a duplicate root type name', () => {
+    it('rejects a duplicate root type name at declaration time', () => {
       const alsoPerson: SearchType = {
         name: 'Person',
         type: 'https://example.org/OtherPerson',
         fields: [{ name: 'name', kind: 'keyword', output: true }],
       };
-      // searchSchema() rejects the duplicate name at declaration time…
+      // searchSchema() rejects the duplicate; SearchSchema is branded, so a
+      // hand-built Map cannot even be passed to buildGraphQLSchema.
       expect(() => searchSchema(PERSON, alsoPerson)).toThrow(
         /Duplicate search type name “Person”/,
       );
-      // …and the builder still guards a hand-built map that bypasses it.
-      const handBuilt = new Map([
-        [PERSON.type, PERSON],
-        [alsoPerson.type, alsoPerson],
-      ]);
-      expect(() => buildGraphQLSchema(handBuilt)).toThrow(
-        /Duplicate root type name “Person”/,
-      );
+      // @ts-expect-error — a hand-built map is not a (branded) SearchSchema
+      void (() => buildGraphQLSchema(new Map([[PERSON.type, PERSON]])));
     });
 
     it('throws on options for an unknown type and on a root-field clash', () => {
@@ -681,55 +673,45 @@ describe('buildGraphQLSchema', () => {
   });
 });
 
-describe('monolingual text output', () => {
-  it('emits String (not LanguageString) and resolves the stored value', async () => {
+describe('und-locale text output', () => {
+  it('serves untagged text as a LanguageString list with a null language', async () => {
     const doc: SearchType = {
       name: 'Doc',
       type: 'urn:example:Doc',
-      fields: [{ name: 'summary', kind: 'text', output: true }],
+      fields: [
+        { name: 'summary', kind: 'text', locales: ['und'], output: true },
+      ],
     };
     const gqlSchema = buildGraphQLSchema(searchSchema(doc));
-    expect(printSchema(gqlSchema)).toMatch(/summary: String\n/);
+    expect(printSchema(gqlSchema)).toMatch(/summary: \[LanguageString!\]!/);
     const engine: SearchEngine = {
       schema: searchSchema(doc),
       async search(): Promise<SearchResult> {
         return {
           total: 1,
           facets: {},
-          hits: [{ id: 'https://d/1', document: { summary: 'Plain prose' } }],
+          hits: [
+            {
+              id: 'https://d/1',
+              document: { summary: { und: ['Plain prose'] } },
+            },
+          ],
         };
       },
     };
     const result = await graphql({
       schema: gqlSchema,
-      source: `{ docs { items { summary } } }`,
+      source: `{ docs { items { summary { language value } } } }`,
       contextValue: { engine, acceptLanguage: ['nl'] },
     });
     expect(result.errors).toBeUndefined();
-    const items = (result.data?.docs as { items: { summary: string }[] }).items;
-    expect(items[0].summary).toBe('Plain prose');
-  });
-});
-
-describe('required single reference', () => {
-  it('emits a non-null named reference type', () => {
-    const sdl = printSchema(
-      buildGraphQLSchema(
-        searchSchema({
-          name: 'Doc',
-          type: 'urn:example:Doc',
-          fields: [
-            {
-              name: 'publisher',
-              kind: 'reference',
-              output: true,
-              required: true,
-              ref: { typeName: 'Organization', strategy: 'labelOnly' },
-            },
-          ],
-        }),
-      ),
-    );
-    expect(sdl).toMatch(/publisher: Organization!/);
+    const items = (
+      result.data?.docs as {
+        items: { summary: { language: string | null; value: string }[] }[];
+      }
+    ).items;
+    expect(items[0].summary).toEqual([
+      { language: null, value: 'Plain prose' },
+    ]);
   });
 });

@@ -124,7 +124,6 @@ const DATASET = defineSearchType({
       name: 'title',
       path: 'http://purl.org/dc/terms/title',
       kind: 'text',
-      localized: true,
       locales: ['nl', 'en'],
       output: true,
       searchable: { weight: 5 },
@@ -166,19 +165,22 @@ so typed facet/output keys can be derived from it — see
 _derived_ from the kind by the adapter and the surface — never declared here.
 
 `SearchField` is a **discriminated union by `kind`** (`TextField`,
-`LocalizedTextField`, `KeywordField`, `ReferenceField`, …): each kind declares
-exactly the properties it can honour — `locales` on localized text, `ref` on
+`KeywordField`, `ReferenceField`, `NumericField`, `BooleanField`): each kind
+declares exactly the properties it can honour — `locales` on text, `ref` on
 references, `facetRanges` on numerics — so an illegal declaration fails to
-compile. Text comes in two shapes: `TextField` is **monolingual** (or
-untagged) prose — one display value, one folded `${name}_search` companion,
-stemmed in the deployment's default locale — while `LocalizedTextField`
-(`localized: true` + `locales`) fans out per locale. Use `keyword` for
-exact-match tokens, never for prose.
+compile. Text is **always multilingual in shape**: `locales` lists the
+language tags to fan out, and the reserved **`und`** locale (JSON-LD `@none`,
+RDF `und`) buckets untagged literals — a monolingual or untagged corpus
+declares `locales: ['und']`, mixed data `['nl', 'und']`. Declaring a real
+language is recommended (it drives per-locale stemming); `und` is folded but
+unstemmed unless `defaultLocale` opts in, is never demoted in search
+weighting, and adding a language later is additive — the API output shape
+never changes. Use `keyword` for exact-match tokens, never for prose.
 
 **Declarations are also validated at runtime** (for declarations built
 outside TypeScript — a SHACL generator, plain JS): `searchSchema()`
 rejects a structurally invalid declaration (duplicate field names, an `output`
-reference without `ref`, `localized` text without locales, `localized` on a non-text kind,
+reference without `ref`, `text` without locales, `locales` on a non-text kind,
 `facetRanges` on a non-numeric kind, `searchable`/`transform` on a kind whose
 projection cannot honour it, `filterable`/`facetable` on `text`, two types
 sharing a `type` IRI or `name`) — the declaration-time counterpart of the
@@ -189,7 +191,7 @@ directly.
 
 | kind                 | `where`              | facet | sort             | output                          |
 | -------------------- | -------------------- | ----- | ---------------- | ------------------------------- |
-| `text` (`localized`) | – (feeds free text)  | –     | yes (per-locale) | best-first language list        |
+| `text`               | – (feeds free text)  | –     | yes (per-locale) | best-first language list        |
 | `keyword`            | `in` (membership)    | yes   | –                | string / `string[]`             |
 | `reference`          | `in` (membership)    | yes   | –                | labelled reference (id + label) |
 | `integer` / `number` | `range { min, max }` | yes   | yes              | number                          |
@@ -212,7 +214,8 @@ reading it sees full predicate IRIs with language tags preserved.
 
 ## Locales
 
-`locales` is the **single** list of languages a localized `text` field projects;
+`locales` is the **single** list of locales a `text` field projects (`und` =
+untagged literals);
 `output`, `searchable` and `sortable` are independent opt-ins that each fan out
 over it (so a field emits exactly what it opts into):
 
@@ -226,8 +229,8 @@ over it (so a field emits exactly what it opts into):
 
 A field with `searchable` but no `output` is **search-only** — folded and stemmed
 for retrieval but never rendered (e.g. a creator searched here but shown via a
-separate label). **Only listed locales are indexed**; a literal whose language tag
-is not in `locales` (or has no tag) is not projected at all. Per-locale fields are
+separate label). **Only listed locales are indexed**; a literal whose language tag is not in
+`locales` is not projected (declare `und` to catch untagged literals). Per-locale fields are
 **omitted, never empty**, when a document lacks that language, so declare them
 optional in the engine schema and sort with `missing_values: last`.
 
@@ -287,12 +290,11 @@ captured `as const satisfies SearchType`) and composed with `searchSchema()`;
 a plain `: SearchSchema` annotation widens gracefully to string keys.
 `FacetFieldsOf`/`OutputFieldsOf` are exported for annotating your own
 signatures, and `engine.schema` exposes the bound declaration for routing.
-A single-type deployment may use the `collection: 'datasets'` shorthand.
 
 ## Why a declarative model
 
 The vocabulary mirrors SHACL on purpose: `path` is `sh:path`, `array` is
-`sh:maxCount`, `required` is `sh:minCount`, `localized` is `sh:languageIn`, `ref`
+`sh:maxCount`, `required` is `sh:minCount`, `locales` is `sh:languageIn`, `ref`
 is `sh:class`/`sh:node`. So the same core that runs a hand-written `SearchSchema`
 today will run a **SHACL-generated** one tomorrow — the model, the ports and the
 IR stay; only schema-authoring gets automated.

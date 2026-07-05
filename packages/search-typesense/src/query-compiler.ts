@@ -140,12 +140,17 @@ function queryFields(
   for (const field of searchableFields(searchType)) {
     const search = physicalFields(field).search;
     const baseWeight = field.searchable.weight;
-    if (field.kind === 'text' && field.localized === true) {
+    if (field.kind === 'text') {
       const locales = field.locales;
       search.forEach((name, index) => {
         names.push(name);
+        // The active locale keeps full weight; `und` is language-neutral, so
+        // it is never demoted (an untagged-only field would otherwise always
+        // rank below its declared weight).
         weights.push(
-          locales[index] === locale ? baseWeight : Math.max(1, baseWeight - 1),
+          locales[index] === locale || locales[index] === 'und'
+            ? baseWeight
+            : Math.max(1, baseWeight - 1),
         );
       });
     } else {
@@ -260,12 +265,11 @@ function compileSort(
     return `_text_match:${sort.direction}`;
   }
   const field = fieldNamed(searchType, sort.field);
-  if (
-    field !== undefined &&
-    field.kind === 'text' &&
-    field.localized === true
-  ) {
-    const sortName = physicalFields(field).sort[field.locales.indexOf(locale)];
+  if (field !== undefined && field.kind === 'text') {
+    // Sort on the active locale's key, falling back to the first declared
+    // locale (e.g. an und-only field sorted by a user in any language).
+    const index = field.locales.indexOf(locale);
+    const sortName = physicalFields(field).sort[index === -1 ? 0 : index];
     if (sortName !== undefined) {
       return `${sortName}:${sort.direction}`;
     }

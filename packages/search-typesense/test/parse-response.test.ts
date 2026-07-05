@@ -19,7 +19,6 @@ const schema: SearchType = {
     {
       name: 'title',
       kind: 'text',
-      localized: true,
       locales: ['nl', 'en'],
       output: true,
     },
@@ -245,7 +244,7 @@ describe('createTypesenseSearchEngine label degradation', () => {
       fakeClient(),
       searchSchema(schema),
       {
-        collection: 'datasets',
+        collections: { Dataset: 'datasets' },
         labelsCollection: 'labels',
         onLabelError: (error) => {
           capturedError = error;
@@ -325,7 +324,7 @@ describe('createTypesenseSearchEngine label cache (labelCacheTtlMs)', () => {
       Promise.resolve(labelsJsonl),
     );
     const engine = createTypesenseSearchEngine(client, searchSchema(schema), {
-      collection: 'datasets',
+      collections: { Dataset: 'datasets' },
       labelsCollection: 'labels',
       labelCacheTtlMs: 60_000,
     });
@@ -350,7 +349,7 @@ describe('createTypesenseSearchEngine label cache (labelCacheTtlMs)', () => {
       Promise.resolve(labelsJsonl),
     );
     const engine = createTypesenseSearchEngine(client, searchSchema(schema), {
-      collection: 'datasets',
+      collections: { Dataset: 'datasets' },
       labelsCollection: 'labels',
       labelCacheTtlMs: 60_000,
     });
@@ -367,7 +366,7 @@ describe('createTypesenseSearchEngine label cache (labelCacheTtlMs)', () => {
       Promise.resolve(labelsJsonl),
     );
     const engine = createTypesenseSearchEngine(client, searchSchema(schema), {
-      collection: 'datasets',
+      collections: { Dataset: 'datasets' },
       labelsCollection: 'labels',
       labelCacheTtlMs: 1000,
     });
@@ -396,7 +395,7 @@ describe('createTypesenseSearchEngine label cache (labelCacheTtlMs)', () => {
         : Promise.resolve(labelsJsonl);
     });
     const engine = createTypesenseSearchEngine(client, searchSchema(schema), {
-      collection: 'datasets',
+      collections: { Dataset: 'datasets' },
       labelsCollection: 'labels',
       labelCacheTtlMs: 60_000,
       onLabelError: (error) => {
@@ -492,8 +491,8 @@ describe('fetchLabels', () => {
   });
 });
 
-describe('monolingual text reconstruction', () => {
-  it('returns the stored string for a monolingual text output field', () => {
+describe('und-locale text reconstruction', () => {
+  it('gathers the und display field into the language map', () => {
     const result = parseSearchResponse(
       {
         found: 1,
@@ -501,8 +500,8 @@ describe('monolingual text reconstruction', () => {
           {
             document: {
               id: 'https://d/1',
-              summary: 'Plain prose',
-              bad: 1,
+              summary_und: 'Plain prose',
+              bad_und: 1,
               publisher: 'https://o/1',
             },
           },
@@ -512,9 +511,9 @@ describe('monolingual text reconstruction', () => {
         name: 'Doc',
         type: 'urn:example:Doc',
         fields: [
-          { name: 'summary', kind: 'text', output: true },
+          { name: 'summary', kind: 'text', locales: ['und'], output: true },
           // A non-string stored value for a text field is dropped.
-          { name: 'bad', kind: 'text', output: true },
+          { name: 'bad', kind: 'text', locales: ['und'], output: true },
           // A single (non-array) stored reference IRI.
           {
             name: 'publisher',
@@ -526,7 +525,7 @@ describe('monolingual text reconstruction', () => {
       },
       new Map(),
     );
-    expect(result.hits[0].document.summary).toBe('Plain prose');
+    expect(result.hits[0].document.summary).toEqual({ und: ['Plain prose'] });
     expect(result.hits[0].document).not.toHaveProperty('bad');
     expect(result.hits[0].document.publisher).toEqual({ id: 'https://o/1' });
   });
@@ -551,7 +550,7 @@ describe('schema binding', () => {
       fields: [],
     };
     const engine = createTypesenseSearchEngine(noClient, searchSchema(schema), {
-      collection: 'datasets',
+      collections: { Dataset: 'datasets' },
     });
     await expect(engine.search(foreign, browse)).rejects.toThrow(
       /not in this engine/,
@@ -568,10 +567,10 @@ describe('schema binding', () => {
       createTypesenseSearchEngine(
         noClient,
         searchSchema(schema, other),
-        // Multi-type schema with the single-type shorthand: no collection for
-        // either type resolves.
-        { collection: 'datasets' },
+        // The widened schema loses compile-time exhaustiveness; the
+        // constructor still rejects the missing entry at startup.
+        { collections: { Dataset: 'datasets' } },
       ),
-    ).toThrow(/No collection configured for search type “Dataset”/);
+    ).toThrow(/No collection configured for search type “Other”/);
   });
 });

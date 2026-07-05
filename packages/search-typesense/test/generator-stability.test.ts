@@ -16,7 +16,6 @@ const THING: SearchType = {
     {
       name: 'title',
       kind: 'text',
-      localized: true,
       locales: ['nl', 'en'],
       output: true,
       searchable: { weight: 5 },

@@ -12,7 +12,9 @@ export default mergeConfig(
         thresholds: {
           functions: 100,
           lines: 100,
-          branches: 93.69,
+          // Branches dipped when the monolingual-text output branch was
+          // deleted in favour of the single und-locale text model.
+          branches: 92.38,
           statements: 100,
         },
       },

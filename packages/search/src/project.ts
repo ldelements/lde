@@ -5,12 +5,11 @@ import {
   isoToUnixSeconds,
   physicalFields,
   type KeywordField,
-  type LocalizedTextField,
-  type TextField,
   type ReferenceField,
   type SearchField,
   type SearchSchema,
   type SearchType,
+  type TextField,
 } from './schema.js';
 
 /** A flat search document. `id` is the engine document key. */
@@ -77,9 +76,7 @@ function applyField(
   }
   switch (field.kind) {
     case 'text':
-      return field.localized === true
-        ? applyLocalizedText(document, langValuesOf(node, path), field)
-        : applyMonolingualText(document, literalsOf(node, path), field);
+      return applyText(document, langValuesOf(node, path), field);
     case 'keyword':
       return applyFacet(document, literalsOf(node, path), field);
     case 'reference':
@@ -116,15 +113,16 @@ function applyField(
 }
 
 /**
- * Project a language-tagged text field per locale. Display shows one label
- * (accents preserved) when the field is `output`; sort keys off that same
- * primary value (folded) when `sortable`; search folds every value of the locale
- * when `searchable`, so all are matchable. Absent locales emit nothing.
+ * Project a text field per locale (untagged literals land in the `und`
+ * locale). Display shows one label (accents preserved) when the field is
+ * `output`; sort keys off that same primary value (folded) when `sortable`;
+ * search folds every value of the locale when `searchable`, so all are
+ * matchable. Absent locales emit nothing.
  */
-function applyLocalizedText(
+function applyText(
   document: SearchDocument,
   values: readonly LangValue[],
-  field: LocalizedTextField,
+  field: TextField,
 ): void {
   // Empty `locales` is rejected at declaration time (`validateSearchType`);
   // here it simply projects nothing.
@@ -148,32 +146,6 @@ function applyLocalizedText(
       setString(document, names.sort[index], fold(primary));
     }
   });
-}
-
-/**
- * Project a monolingual text field: every literal regardless of language tag
- * (monolingual by declaration, not by data). Display shows the first value
- * (accents preserved) when `output`; search folds every value when
- * `searchable`. The value field itself carries sorting (no separate key).
- */
-function applyMonolingualText(
-  document: SearchDocument,
-  values: readonly string[],
-  field: TextField,
-): void {
-  if (values.length === 0) {
-    return;
-  }
-  if (field.output === true || field.sortable === true) {
-    setString(document, field.name, values[0]);
-  }
-  if (field.searchable) {
-    setString(
-      document,
-      physicalFields(field).search[0],
-      foldedSearchValue(values),
-    );
-  }
 }
 
 /** The projection’s definition of a folded free-text search value. */
@@ -249,10 +221,11 @@ function toLangValue(value: unknown): LangValue | undefined {
   if (literal === undefined) {
     return undefined;
   }
+  // Untagged literals (JSON-LD @none) land in the reserved `und` locale.
   const lang =
     isObject(value) && typeof value['@language'] === 'string'
       ? value['@language']
-      : '';
+      : 'und';
   return { value: literal, lang };
 }
 

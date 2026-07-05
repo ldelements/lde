@@ -28,7 +28,6 @@ const schema: SearchType = {
     {
       name: 'title',
       kind: 'text',
-      localized: true,
       locales: ['nl', 'en'],
       output: true,
       searchable: { weight: 5 },
@@ -37,7 +36,6 @@ const schema: SearchType = {
     {
       name: 'description',
       kind: 'text',
-      localized: true,
       locales: ['nl', 'en'],
       output: true,
       searchable: { weight: 2 },
@@ -79,7 +77,6 @@ describe('physicalFields', () => {
     const title: SearchField = {
       name: 'title',
       kind: 'text',
-      localized: true,
       locales: ['nl', 'en'],
       output: true,
       searchable: { weight: 5 },
@@ -114,7 +111,6 @@ describe('physicalFields', () => {
     const creator: SearchField = {
       name: 'creator',
       kind: 'text',
-      localized: true,
       locales: ['nl', 'en'],
       searchable: { weight: 2 },
     };
@@ -130,7 +126,6 @@ describe('physicalFields', () => {
     const title: SearchField = {
       name: 'title',
       kind: 'text',
-      localized: true,
       locales: [],
       output: true,
       searchable: { weight: 5 },
@@ -276,42 +271,35 @@ describe('validateSearchType', () => {
     ]);
   });
 
-  it('accepts monolingual text; localized text must declare locales', () => {
-    // Monolingual (no `localized`) is a valid text shape.
+  it('requires text to declare at least one locale (und counts)', () => {
     expect(
       validateSearchType(typeWith({ name: 'title', kind: 'text' })),
+    ).toEqual([{ field: 'title', reason: 'text-requires-locales' }]);
+    expect(
+      validateSearchType(
+        typeWith({ name: 'title', kind: 'text', locales: [] }),
+      ),
+    ).toEqual([{ field: 'title', reason: 'text-requires-locales' }]);
+    // An untagged corpus declares the reserved `und` locale.
+    expect(
+      validateSearchType(
+        typeWith({ name: 'title', kind: 'text', locales: ['und'] }),
+      ),
     ).toEqual([]);
-    expect(
-      validateSearchType(
-        typeWith({ name: 'title', kind: 'text', localized: true, locales: [] }),
-      ),
-    ).toEqual([{ field: 'title', reason: 'text-requires-locales' }]);
-    // `locales` without `localized` is incoherent.
-    expect(
-      validateSearchType(
-        typeWith({ name: 'title', kind: 'text', locales: ['nl'] }),
-      ),
-    ).toEqual([{ field: 'title', reason: 'text-requires-locales' }]);
   });
 
-  it('rejects localized/locales on a non-text kind', () => {
-    expect(
-      validateSearchType(
-        typeWith({ name: 'format', kind: 'keyword', localized: true }),
-      ),
-    ).toEqual([{ field: 'format', reason: 'localized-not-allowed' }]);
+  it('rejects locales on a non-text kind', () => {
     expect(
       validateSearchType(
         typeWith({ name: 'format', kind: 'keyword', locales: ['nl'] }),
       ),
-    ).toEqual([{ field: 'format', reason: 'localized-not-allowed' }]);
+    ).toEqual([{ field: 'format', reason: 'locales-not-allowed' }]);
   });
 
   it('rejects filterable and facetable on text (it feeds the free-text query)', () => {
     const type = typeWith({
       name: 'title',
       kind: 'text',
-      localized: true,
       locales: ['nl'],
       filterable: true,
       facetable: true,
@@ -401,7 +389,6 @@ describe('searchSchema validation', () => {
           {
             name: 'title',
             kind: 'text',
-            localized: true,
             locales: [],
           } as unknown as SearchField,
         ],

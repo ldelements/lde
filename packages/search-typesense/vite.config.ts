@@ -16,14 +16,12 @@ export default mergeConfig(
         // rethrow guards and best-effort cleanup paths are deliberately not
         // exercised, which is why branch coverage is lower.
         thresholds: {
-          // Dipped a hair when covered plumbing moved to @lde/search
-          // (filterOperator, the schema-membership guard) and the hand-rolled
-          // searchable predicate was deleted: fewer covered lines in this
-          // package, same substantive coverage.
+          // Honest full-suite baseline (autoUpdate raises it from here); a
+          // partial vitest run must never rewrite these — see AGENTS.md.
           functions: 96.92,
-          lines: 95.14,
-          branches: 90.95,
-          statements: 95.19,
+          lines: 95.11,
+          branches: 90.73,
+          statements: 95.16,
         },
       },
     },

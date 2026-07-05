@@ -37,7 +37,6 @@ const fields: SearchField[] = [
     name: 'title',
     path: dcterms.title.value,
     kind: 'text',
-    localized: true,
     locales: ['nl', 'en'],
     output: true,
     searchable: { weight: 1 },
@@ -47,7 +46,6 @@ const fields: SearchField[] = [
     name: 'publisherName',
     path: `${DR}publisherName`,
     kind: 'text',
-    localized: true,
     locales: ['nl', 'en'],
     output: true,
     searchable: { weight: 1 },
@@ -277,7 +275,6 @@ describe('projectDocument', () => {
             path: dcterms.title.value,
             // search only — display (output) and sort not opted into.
             kind: 'text',
-            localized: true,
             locales: ['nl', 'en'],
             searchable: { weight: 1 },
           },
@@ -320,7 +317,6 @@ describe('projectDocument', () => {
             name: 'title',
             path: dcterms.title.value,
             kind: 'text',
-            localized: true,
             locales: ['nl'],
             output: true,
           },
@@ -354,7 +350,7 @@ describe('projectDocument', () => {
     expect(document).not.toHaveProperty('external');
   });
 
-  it('projects a monolingual text field: display value + folded search, any tag', () => {
+  it('buckets untagged literals into the reserved und locale', () => {
     const document = projectDocument(
       {
         '@id': 'https://ex/d/13',
@@ -371,28 +367,39 @@ describe('projectDocument', () => {
             name: 'title',
             path: dcterms.title.value,
             kind: 'text',
+            locales: ['nl', 'und'],
             output: true,
             sortable: true,
             searchable: { weight: 3 },
           },
           // No values at this path: nothing is emitted.
-          { name: 'subtitle', path: 'urn:dr:none', kind: 'text', output: true },
-          // Search-only: folded companion, no display value.
+          {
+            name: 'subtitle',
+            path: 'urn:dr:none',
+            kind: 'text',
+            locales: ['und'],
+            output: true,
+          },
+          // Search-only: folded companions, no display values.
           {
             name: 'note',
             path: dcterms.title.value,
             kind: 'text',
+            locales: ['und'],
             searchable: { weight: 1 },
           },
         ],
       },
     );
-    // Display keeps accents; search folds every value regardless of tag.
-    expect(document.title).toBe('Café');
-    expect(document.title_search).toBe('cafe untagged subtitle');
-    expect(document).not.toHaveProperty('subtitle');
-    expect(document).not.toHaveProperty('note');
-    expect(document.note_search).toBe('cafe untagged subtitle');
+    // Display keeps accents, one value per locale bucket.
+    expect(document.title_nl).toBe('Café');
+    expect(document.title_und).toBe('Untagged subtitle');
+    expect(document.title_search_nl).toBe('cafe');
+    expect(document.title_search_und).toBe('untagged subtitle');
+    expect(document.title_sort_und).toBe('untagged subtitle');
+    expect(document).not.toHaveProperty('subtitle_und');
+    expect(document).not.toHaveProperty('note_und');
+    expect(document.note_search_und).toBe('untagged subtitle');
   });
 
   it('ignores IR values it cannot read (non-literal @value, node without @id)', () => {
@@ -414,7 +421,6 @@ describe('projectDocument', () => {
             name: 'title',
             path: dcterms.title.value,
             kind: 'text',
-            localized: true,
             locales: ['nl'],
             output: true,
           },
@@ -457,7 +463,6 @@ describe('projectDocument', () => {
             name: 'title',
             path: dcterms.title.value,
             kind: 'text',
-            localized: true,
             locales: [],
           },
         ],

@@ -24,7 +24,6 @@ export type {
   SearchField,
   SearchFieldBase,
   TextField,
-  LocalizedTextField,
   KeywordField,
   ReferenceField,
   NumericField,

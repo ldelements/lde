@@ -127,11 +127,7 @@ function mismatchedFilter(
 /** The locale a query against this type may select (any is contract-valid). */
 function firstLocale(searchType: SearchType): string {
   for (const field of searchType.fields) {
-    if (
-      field.kind === 'text' &&
-      field.localized === true &&
-      field.locales.length > 0
-    ) {
+    if (field.kind === 'text' && field.locales.length > 0) {
       return field.locales[0];
     }
   }

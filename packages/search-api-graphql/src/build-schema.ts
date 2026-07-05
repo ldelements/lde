@@ -116,8 +116,6 @@ export function buildGraphQLSchema(
 ): GraphQLSchema {
   const languageOrder = options.languageOrder ?? defaultLanguageOrder;
   const maxPerPage = options.maxPerPage ?? 100;
-  // One set serves both guards below: unknown option keys and (for a
-  // hand-built map that bypassed searchSchema()) duplicate root type names.
   const rootTypeNames = new Set(
     [...schema.values()].map((searchType) => searchType.name),
   );
@@ -191,21 +189,8 @@ export function buildGraphQLSchema(
     },
   });
 
-  // Root type names and reference type names share the GraphQL type namespace;
-  // catch collisions here with a clear message instead of graphql-js's generic
-  // duplicately-named-types error at schema construction. (searchSchema()
-  // already rejects duplicates; this guards a hand-built map that bypassed it.)
-  if (rootTypeNames.size !== schema.size) {
-    const seen = new Set<string>();
-    for (const searchType of schema.values()) {
-      if (seen.has(searchType.name)) {
-        throw new Error(
-          `Duplicate root type name “${searchType.name}”; every SearchType needs a unique name.`,
-        );
-      }
-      seen.add(searchType.name);
-    }
-  }
+  // Duplicate root type names cannot occur: SearchSchema is branded, so
+  // searchSchema() — which rejects duplicates — is the only constructor.
 
   // One reference type per referenced shape, shared across every root type and
   // reused by every field (Person and CreativeWork both referencing Agent yield
@@ -244,13 +229,9 @@ export function buildGraphQLSchema(
   ): GraphQLFieldConfig<Source, SearchContext> {
     switch (field.kind) {
       case 'text':
-        // Localized text is a best-first language list; monolingual text a
-        // plain (nullable) string.
-        return field.localized === true
-          ? labelList(
-              (source) => source[field.name] as LocalizedValue | undefined,
-            )
-          : { type: scalarOutput(GraphQLString, field) };
+        return labelList(
+          (source) => source[field.name] as LocalizedValue | undefined,
+        );
       case 'keyword':
         return field.array === true
           ? {

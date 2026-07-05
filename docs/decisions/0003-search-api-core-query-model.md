@@ -65,8 +65,8 @@ type FieldKind =
   | 'date'
   | 'reference';
 
-// The public type is a DISCRIMINATED UNION by kind (TextField | LocalizedTextField |
-// KeywordField | ReferenceField | NumericField | BooleanField):
+// The public type is a DISCRIMINATED UNION by kind (TextField | KeywordField |
+// ReferenceField | NumericField | BooleanField):
 // each kind carries exactly the properties it can honour (locales on text,
 // ref on references, facetRanges on numerics), so an illegal declaration
 // fails to compile; validateSearchType enforces the same rules at runtime
@@ -77,8 +77,9 @@ interface SearchField {
   readonly path?: string; // sh:path to project from; omit for a `derive`-computed field
   readonly array?: boolean; // sh:maxCount
   readonly required?: boolean; // sh:minCount ≥ 1 — non-null in output, non-optional in the index
-  readonly localized?: boolean; // rdf:langString / sh:languageIn (text only)
-  readonly locales?: readonly string[]; // when localized: which languages to emit
+  readonly locales?: readonly string[]; // text only: locales to emit (sh:languageIn);
+  // the reserved 'und' locale (JSON-LD @none / RDF und) buckets untagged literals, so
+  // text is always multilingual in shape and adding a language later is additive
   readonly output?: boolean; // appears in the schema output type
   readonly searchable?: { weight: number }; // free-text inclusion + weight (per-locale when localized)
   readonly filterable?: boolean; // usable in `where`
@@ -96,9 +97,10 @@ interface SearchField {
 }
 
 // One root type (one SHACL NodeShape); a whole deployment’s declaration is the
-// SearchSchema, a map of SearchTypes keyed by type IRI (built with searchSchema(),
-// which validates every declaration – the declaration-time counterpart of the
-// port’s assertValidQuery).
+// SearchSchema, a map of SearchTypes keyed by type IRI. searchSchema() validates every
+// declaration (the declaration-time counterpart of the port’s assertValidQuery) and the
+// type is BRANDED (nominal): searchSchema() is the only constructor, so consumers never
+// re-validate hand-built maps.
 interface SearchType {
   readonly name: string; // logical API name ('Dataset') – names the type in every surface,
   // declared (like each field's name), never derived from the IRI, so vocabulary

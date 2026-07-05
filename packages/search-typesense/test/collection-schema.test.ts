@@ -10,7 +10,6 @@ const schema: SearchType = {
       name: 'title',
       path: 'http://purl.org/dc/terms/title',
       kind: 'text',
-      localized: true,
       locales: ['nl', 'en'],
       output: true,
       searchable: { weight: 5 },
@@ -205,8 +204,8 @@ describe('buildCollectionSchema', () => {
   });
 });
 
-describe('monolingual text', () => {
-  it('emits a value field plus a folded search companion, stemmed in the default locale', () => {
+describe('und-locale text', () => {
+  it('folds the und search field, stemming only via the default locale', () => {
     const schema = buildCollectionSchema(
       {
         name: 'Doc',
@@ -215,6 +214,7 @@ describe('monolingual text', () => {
           {
             name: 'summary',
             kind: 'text',
+            locales: ['und'],
             output: true,
             sortable: true,
             searchable: { weight: 1 },
@@ -224,20 +224,15 @@ describe('monolingual text', () => {
       { name: 'docs', defaultLocale: 'en' },
     );
     expect(schema.fields).toEqual([
+      { name: 'summary_und', type: 'string', index: false, optional: true },
       {
-        name: 'summary',
-        type: 'string',
-        facet: false,
-        sort: true,
-        optional: true,
-      },
-      {
-        name: 'summary_search',
+        name: 'summary_search_und',
         type: 'string',
         optional: true,
         stem: true,
         locale: 'en',
       },
+      { name: 'summary_sort_und', type: 'string', sort: true, optional: true },
     ]);
   });
 });

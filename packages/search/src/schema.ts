@@ -43,12 +43,12 @@ export type FieldKind =
  * SHACL is one possible *source*, not a dependency: a generator can emit a
  * declaration from a NodeShape + `search:` annotations
  * (`kind`←`sh:datatype`/`sh:nodeKind`, `path`←`sh:path`, `array`←`sh:maxCount`,
- * `localized`←`rdf:langString`/`sh:languageIn`, `ref`←`sh:node`/`sh:class`),
+ * `locales`←`sh:languageIn` (plus `und` where plain strings are allowed),
+ * `ref`←`sh:node`/`sh:class`),
  * and a hand-written declaration is just as valid.
  */
 export type SearchField =
   | TextField
-  | LocalizedTextField
   | KeywordField
   | ReferenceField
   | NumericField
@@ -96,33 +96,22 @@ export interface Searchable {
 }
 
 /**
- * Language-tagged text (`rdf:langString`, prose), projected per locale. Like
- * {@link TextField}, it feeds the free-text query rather than `where`/facets,
- * so it is deliberately not filterable or facetable.
- */
-export interface LocalizedTextField extends SearchFieldBase, Searchable {
-  readonly kind: 'text';
-  readonly localized: true;
-  /** The languages to emit (the per-locale fanout); at least one. */
-  readonly locales: readonly string[];
-  readonly filterable?: never;
-  readonly facetable?: never;
-  readonly facetRanges?: never;
-}
-
-/**
- * Monolingual (or untagged) free-running text (prose): projected as one
- * display value plus one folded `${name}_search` companion, regardless of
- * language tags in the data; the engine stems it in the deployment’s default
- * locale, if one is set. Feeds the free-text query rather than `where`/facets,
- * so it is deliberately not filterable or facetable. Use
- * {@link LocalizedTextField} for language-tagged text and
+ * Free-running text (prose), always multilingual in shape: projected per
+ * locale into display/search/sort companions. `locales` lists the language
+ * tags to emit; the reserved locale **`und`** (JSON-LD `@none`, RDF `und`)
+ * buckets untagged literals, so a monolingual or untagged corpus declares
+ * `locales: ['und']` and mixed data `['nl', 'und']` — one mechanism, and
+ * adding a language later is additive (the API output shape never changes).
+ * Declaring a real language is RECOMMENDED where the data has one: it drives
+ * the engine’s per-locale stemming; `und` is folded but unstemmed (unless the
+ * deployment’s `defaultLocale` opts in). Feeds the free-text query rather
+ * than `where`/facets, so it is deliberately not filterable or facetable. Use
  * {@link KeywordField} only for exact-match tokens, never for prose.
  */
 export interface TextField extends SearchFieldBase, Searchable {
   readonly kind: 'text';
-  readonly localized?: false;
-  readonly locales?: never;
+  /** The locales to emit (per-locale fanout); at least one. `und` = untagged. */
+  readonly locales: readonly string[];
   readonly filterable?: never;
   readonly facetable?: never;
   readonly facetRanges?: never;
@@ -244,10 +233,17 @@ export function defineSearchType<const Type extends SearchType>(
  * (the engine port) can type their per-type behaviour off it. A plain
  * `: SearchSchema` annotation widens gracefully to `SearchType`.
  */
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type, @typescript-eslint/no-empty-interface -- carries the literal `Types` tuple; a bare alias would erase it
+/** Brand for {@link SearchSchema}: type-only, no runtime existence. Makes the
+ *  schema NOMINAL — a hand-built `Map` is not assignable, so `searchSchema()`
+ *  (which validates) is the only way to obtain one and downstream consumers
+ *  need no defensive re-validation. */
+export declare const validSearchSchema: unique symbol;
+
 export interface SearchSchema<
   Types extends readonly SearchType[] = readonly SearchType[],
-> extends ReadonlyMap<string, Types[number]> {}
+> extends ReadonlyMap<string, Types[number]> {
+  readonly [validSearchSchema]: true;
+}
 
 /**
  * Build a {@link SearchSchema} from root-type declarations, keyed by `type`.
@@ -279,7 +275,10 @@ export function searchSchema<const Types extends readonly SearchType[]>(
     typeIris.add(searchType.type);
     names.add(searchType.name);
   }
-  return new Map(types.map((searchType) => [searchType.type, searchType]));
+  // The one blessed cast: only this validated constructor mints the brand.
+  return new Map(
+    types.map((searchType) => [searchType.type, searchType]),
+  ) as unknown as SearchSchema<Types>;
 }
 
 /**
@@ -295,7 +294,7 @@ export interface SearchTypeIssue {
     | 'missing-ref'
     | 'ref-not-allowed'
     | 'text-requires-locales'
-    | 'localized-not-allowed'
+    | 'locales-not-allowed'
     | 'facet-ranges-not-allowed'
     | 'searchable-not-allowed'
     | 'transform-not-allowed'
@@ -321,10 +320,10 @@ const TRANSFORMABLE_KINDS: readonly FieldKind[] = ['keyword', 'reference'];
  *   consumer, each picking a different winner);
  * - a `reference` field that is `output` declares `ref` (the API surfaces
  *   need the reference type name); `ref` on any other kind is meaningless;
- * - a `text` field is `localized` with at least one locale (projection and
+ * - a `text` field declares at least one locale (`und` = untagged; projection and
  *   result reconstruction have no representation for unlocalized text — use
- *   `keyword` for untagged strings); `localized`/`locales` on any other kind
- *   is meaningless;
+ *   `keyword` for untagged strings); `locales` on any other kind is
+ *   meaningless;
  * - `text` is not `filterable` or `facetable` (it feeds the free-text query;
  *   a `where` clause on it could never match an operator);
  * - `facetRanges` only on the numeric kinds (`integer`/`number`/`date`);
@@ -362,12 +361,7 @@ export function validateSearchType(
       issue('ref-not-allowed');
     }
     if (field.kind === 'text') {
-      // Monolingual text (no `localized`) is valid; localized text must
-      // declare its locales, and `locales` implies `localized`.
-      if (
-        (field.localized === true && (field.locales ?? []).length === 0) ||
-        (field.localized !== true && field.locales !== undefined)
-      ) {
+      if ((field.locales ?? []).length === 0) {
         issue('text-requires-locales');
       }
       if (field.filterable === true) {
@@ -376,8 +370,8 @@ export function validateSearchType(
       if (field.facetable === true) {
         issue('text-not-facetable');
       }
-    } else if (field.localized !== undefined || field.locales !== undefined) {
-      issue('localized-not-allowed');
+    } else if (field.locales !== undefined) {
+      issue('locales-not-allowed');
     }
     if (
       field.facetRanges !== undefined &&
@@ -408,7 +402,6 @@ export function validateSearchType(
  *  validation and generic iteration read; never a declaration type. */
 interface FlatField extends SearchFieldBase, Searchable, RangeFacetable {
   readonly kind: FieldKind;
-  readonly localized?: boolean;
   readonly locales?: readonly string[];
   readonly ref?: ReferenceField['ref'];
   readonly transform?: (value: string) => string;
@@ -553,7 +546,7 @@ export function unixSecondsToIso(seconds: number): string {
 
 /** Derive the physical engine field names a declaration produces. */
 export function physicalFields(field: SearchField): PhysicalFields {
-  if (field.kind === 'text' && field.localized === true) {
+  if (field.kind === 'text') {
     const locales = field.locales;
     return {
       display: field.output

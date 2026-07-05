@@ -7,7 +7,7 @@ import type { SearchType } from '../src/schema.js';
 const datasetType: SearchType = {
   name: 'Dataset',
   type: 'http://www.w3.org/ns/dcat#Dataset',
-  fields: [{ name: 'title', kind: 'text', localized: true, locales: ['nl'] }],
+  fields: [{ name: 'title', kind: 'text', locales: ['nl'] }],
 };
 
 // A fake engine: the port is implementable and the result types compose into a
@@ -77,7 +77,6 @@ describe('typed schema-bound engine', () => {
         {
           name: 'title',
           kind: 'text',
-          localized: true,
           locales: ['nl'],
           output: true,
         },

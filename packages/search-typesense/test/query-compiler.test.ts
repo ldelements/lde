@@ -10,7 +10,6 @@ const schema: SearchType = {
       name: 'title',
       path: 'http://purl.org/dc/terms/title',
       kind: 'text',
-      localized: true,
       locales: ['nl', 'en'],
       output: true,
       searchable: { weight: 5 },
@@ -269,5 +268,43 @@ describe('buildSearchParams', () => {
         maxFacetValues: 250,
       }).max_facet_values,
     ).toBe(250);
+  });
+});
+
+describe('und locale', () => {
+  const undSchema: SearchType = {
+    name: 'Doc',
+    type: 'urn:example:Doc',
+    fields: [
+      {
+        name: 'title',
+        kind: 'text',
+        locales: ['nl', 'und'],
+        output: true,
+        sortable: true,
+        searchable: { weight: 5 },
+      },
+    ],
+  };
+
+  it('never demotes the language-neutral und search field', () => {
+    const params = buildSearchParams({ ...base, locale: 'en' }, undSchema);
+    // Neither locale is active: nl is demoted, und keeps full weight.
+    expect(params.query_by).toBe('title_search_nl,title_search_und');
+    expect(params.query_by_weights).toBe('4,5');
+  });
+
+  it('falls back to the first declared locale for sorting', () => {
+    const params = buildSearchParams(
+      {
+        ...base,
+        locale: 'en',
+        orderBy: [{ field: 'title', direction: 'asc' }],
+      },
+      undSchema,
+    );
+    // en is not declared: sort on the first locale's key rather than a
+    // nonexistent physical field.
+    expect(params.sort_by).toBe('title_sort_nl:asc');
   });
 });

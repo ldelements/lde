@@ -18,7 +18,6 @@ const datasetSchema: SearchType = {
     {
       name: 'title',
       kind: 'text',
-      localized: true,
       locales: ['nl', 'en'],
       output: true,
       searchable: { weight: 5 },
@@ -145,7 +144,7 @@ describe('createTypesenseSearchEngine (integration)', () => {
       .import(labelDocuments, { action: 'create' });
 
     engine = createTypesenseSearchEngine(client, searchSchema(datasetSchema), {
-      collection: 'datasets',
+      collections: { Dataset: 'datasets' },
       labelsCollection: 'labels',
     });
   }, 120_000);
@@ -247,7 +246,7 @@ describe('createTypesenseSearchEngine (integration)', () => {
       client,
       searchSchema(datasetSchema),
       {
-        collection: 'datasets',
+        collections: { Dataset: 'datasets' },
         onIgnoredFilter: (filter) => ignored.push(filter),
       },
     );

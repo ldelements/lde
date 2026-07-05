@@ -25,9 +25,10 @@ export interface CollectionSchemaOptions {
  * ({@link physicalFields}); the Typesense field type is derived from the field
  * `kind`, never re-declared.
  *
- * Localized text stems each folded `*_search_${locale}` field in its own
- * language; a non-localized searchable field stems in `defaultLocale` when one
- * is set, and is left unstemmed (folded only) otherwise.
+ * Text stems each folded `*_search_${locale}` field in its own language; the
+ * untagged `und` locale (and any searchable keyword/reference companion)
+ * stems in `defaultLocale` when one is set, and is left unstemmed (folded
+ * only) otherwise.
  */
 export function buildCollectionSchema(
   searchType: SearchType,
@@ -56,7 +57,7 @@ function typesenseFields(
   defaultSortingField: string | undefined,
 ): CollectionFieldSchema[] {
   const names = physicalFields(field);
-  if (field.kind === 'text' && field.localized === true) {
+  if (field.kind === 'text') {
     const locales = field.locales;
     return [
       // Display labels: stored, not indexed for search (search uses the folded
@@ -69,16 +70,19 @@ function typesenseFields(
           optional: true,
         }),
       ),
-      // One folded search field per locale, each stemmed in its own language.
-      ...names.search.map(
-        (name, index): CollectionFieldSchema => ({
+      // One folded search field per locale, each stemmed in its own
+      // language; the untagged `und` locale is folded but unstemmed unless
+      // the deployment opts in via `defaultLocale`.
+      ...names.search.map((name, index): CollectionFieldSchema => {
+        const locale =
+          locales[index] === 'und' ? defaultLocale : locales[index];
+        return {
           name,
           type: 'string',
           optional: true,
-          stem: true,
-          locale: locales[index],
-        }),
-      ),
+          ...(locale !== undefined && { stem: true, locale }),
+        };
+      }),
       ...names.sort.map(
         (name): CollectionFieldSchema => ({
           name,
