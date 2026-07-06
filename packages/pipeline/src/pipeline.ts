@@ -175,6 +175,18 @@ class FanOutWriter implements Writer {
   }
 }
 
+/**
+ * Run independent branch operations concurrently, giving every branch its
+ * chance even when one fails; the first failure is rethrown afterwards.
+ */
+async function settleBranches(tasks: readonly Promise<void>[]): Promise<void> {
+  const results = await Promise.allSettled(tasks);
+  const failed = results.find(
+    (result): result is PromiseRejectedResult => result.status === 'rejected',
+  );
+  if (failed) throw failed.reason;
+}
+
 class FanOutRunWriter implements RunWriter {
   constructor(private readonly runs: RunWriter[]) {}
 
@@ -194,19 +206,15 @@ class FanOutRunWriter implements RunWriter {
   }
 
   async commit(): Promise<void> {
-    for (const run of this.runs) await run.commit();
+    // Destinations are independent, so their commits (alias swaps, sweeps –
+    // the slowest part of a run) need not queue behind each other.
+    await settleBranches(this.runs.map((run) => run.commit()));
   }
 
   async abort(error: unknown): Promise<void> {
     // Abort every branch even when one abort fails: each destination must get
-    // its chance to clean up. The first failure is rethrown afterwards.
-    const results = await Promise.allSettled(
-      this.runs.map((run) => run.abort(error)),
-    );
-    const failed = results.find(
-      (result): result is PromiseRejectedResult => result.status === 'rejected',
-    );
-    if (failed) throw failed.reason;
+    // its chance to clean up.
+    await settleBranches(this.runs.map((run) => run.abort(error)));
   }
 }
 
@@ -753,7 +761,9 @@ export class Pipeline {
     const outputFiles: string[] = [];
 
     // Run one chained stage into its scratch FileWriter and flush it, so the
-    // output file exists on its final path before the resolver reads it.
+    // output file exists on its final path before the resolver reads it. The
+    // scratch run is bracketed like any other: committed on success, aborted
+    // on failure so no half-written temp file is left behind.
     const runScratchStage = async (
       chainedStage: Stage,
       stageDistribution: Distribution,
@@ -763,14 +773,20 @@ export class Pipeline {
         format: 'n-triples',
       });
       const scratchRun = await scratchWriter.openRun(context);
-      await this.runChainedStage(
-        dataset,
-        stageDistribution,
-        chainedStage,
-        scratchRun,
-        timeout,
-      );
-      await scratchRun.flush(dataset);
+      try {
+        await this.runChainedStage(
+          dataset,
+          stageDistribution,
+          chainedStage,
+          scratchRun,
+          timeout,
+        );
+        await scratchRun.flush(dataset);
+        await scratchRun.commit();
+      } catch (error) {
+        await scratchRun.abort(error);
+        throw error;
+      }
       return scratchWriter.getOutputPath(dataset);
     };
 

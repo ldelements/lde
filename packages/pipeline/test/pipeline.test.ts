@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { Pipeline, type PipelinePlugin } from '../src/pipeline.js';
 import { Dataset, Distribution } from '@lde/dataset';
 import { Stage } from '../src/stage.js';
@@ -745,6 +748,49 @@ describe('Pipeline', () => {
       expect(stageOutputResolver.cleanup).toHaveBeenCalledTimes(1);
     });
 
+    it('aborts a failing stage’s scratch run, leaving no temp file behind', async () => {
+      const outputDir = await mkdtemp(join(tmpdir(), 'pipeline-chain-test-'));
+      const stageOutputResolver = makeStageOutputResolver();
+      const child = makeStage('child');
+      const failingParent = new Stage({
+        name: 'failing',
+        readers: [],
+        stages: [child],
+      });
+      // The stage writes into its scratch run, then hard-fails: the abort must
+      // discard the temp output rather than leave a stale `*.tmp` behind.
+      vi.spyOn(failingParent, 'run').mockImplementation(
+        async (staged, _distribution, stageWriter) => {
+          await stageWriter.write(
+            staged,
+            (async function* () {
+              yield DataFactory.quad(
+                DataFactory.namedNode('http://s'),
+                DataFactory.namedNode('http://p'),
+                DataFactory.namedNode('http://o'),
+              );
+            })(),
+          );
+          throw new Error('Stage failed after writing');
+        },
+      );
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [failingParent],
+        writers: writer,
+        distributionResolver: makeResolver(makeResolvedDistribution()),
+        chaining: { stageOutputResolver, outputDir },
+      });
+
+      try {
+        await pipeline.run();
+        expect(await readdir(join(outputDir, 'failing'))).toEqual([]);
+      } finally {
+        await rm(outputDir, { recursive: true, force: true });
+      }
+    });
+
     it('reports a chained stage that returns NotSupported and skips the concat', async () => {
       const stageOutputResolver = makeStageOutputResolver();
       const child = makeStage('child');
@@ -898,6 +944,37 @@ describe('Pipeline', () => {
         quadsGenerated: 12,
         duration: expect.any(Number),
       });
+    });
+
+    it('reports each stage validator’s per-dataset verdict after the stages ran', async () => {
+      const reporter = makeReporter();
+      const report = { conforms: true, violations: 0, quadsValidated: 7 };
+      const validator = {
+        validate: vi.fn().mockResolvedValue({ conforms: true, violations: 0 }),
+        report: vi.fn().mockResolvedValue(report),
+      };
+      const stage = new Stage({
+        name: 'stage1',
+        readers: [],
+        validation: { validator },
+      });
+      vi.spyOn(stage, 'run').mockResolvedValue(undefined);
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [stage],
+        writers: writer,
+        distributionResolver: makeResolver(makeResolvedDistribution()),
+        reporter,
+      });
+
+      await pipeline.run();
+
+      expect(validator.report).toHaveBeenCalledExactlyOnceWith(dataset);
+      expect(reporter.datasetValidated).toHaveBeenCalledExactlyOnceWith(
+        dataset,
+        report,
+      );
     });
 
     it('calls reporter hooks for parent and child stages in chain', async () => {

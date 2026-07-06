@@ -83,6 +83,10 @@ export interface RunWriter<Item = Quad> extends DatasetWriter<Item> {
    * writer atomically swaps its alias to the freshly built collection; an
    * In-place writer sweeps documents the run did not touch and releases its
    * lock. Called exactly once, after every dataset has been processed.
+   *
+   * The driver flushes every written dataset before committing (the Pipeline
+   * does), so unflushed writes only reach `commit` under direct use; a writer
+   * that can encounter them should finalize them non-destructively.
    */
   commit(): Promise<void>;
 
@@ -131,8 +135,8 @@ export function perDatasetWriter<Item = Quad>(
     async openRun(): Promise<RunWriter<Item>> {
       return {
         write: (dataset, items) => writer.write(dataset, items),
-        flush: writer.flush ? (dataset) => writer.flush!(dataset) : undefined,
-        reset: writer.reset ? (dataset) => writer.reset!(dataset) : undefined,
+        flush: writer.flush?.bind(writer),
+        reset: writer.reset?.bind(writer),
         commit: () => Promise.resolve(),
         abort: () => Promise.resolve(),
       };
