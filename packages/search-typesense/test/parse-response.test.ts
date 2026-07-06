@@ -4,6 +4,7 @@ import {
   type LocalizedValue,
   type SearchQuery,
   type SearchType,
+  type TextField,
 } from '@lde/search';
 import type { Client } from 'typesense';
 import {
@@ -24,6 +25,22 @@ const referenceHits = {
   hits: [
     { document: { id: 'https://d/1', publisher: ['https://org/1'] } },
     { document: { id: 'https://d/2', publisher: 'https://org/2' } },
+  ],
+};
+
+// The label source the `publisher` reference resolves against; its collection
+// is the `labels` entry in the engines' `collections` maps below.
+const organization: SearchType = {
+  name: 'Organization',
+  type: 'https://example.org/Organization',
+  fields: [
+    {
+      name: 'label',
+      kind: 'text',
+      locales: ['nl'],
+      output: true,
+      searchable: { weight: 1 },
+    },
   ],
 };
 
@@ -51,6 +68,7 @@ const schema: SearchType = {
       facetable: true,
       output: true,
       ref: { typeName: 'Agent', strategy: 'labelOnly' },
+      labelSource: 'Organization',
     },
     { name: 'size', kind: 'integer', output: true },
     { name: 'datePosted', kind: 'date', output: true },
@@ -59,6 +77,10 @@ const schema: SearchType = {
     { name: 'status', kind: 'keyword', facetable: true, filterable: true },
   ],
 };
+
+/** The engine-facing schema and collections wiring shared by the label tests. */
+const labelledSchema = () => searchSchema(organization, schema);
+const labelledCollections = { Dataset: 'datasets', Organization: 'labels' };
 
 const labels = new Map<string, LocalizedValue>([
   ['https://org/1', { nl: ['Het Utrechts Archief'] }],
@@ -235,9 +257,8 @@ describe('createTypesenseSearchEngine label degradation', () => {
         throw new Error('labels collection unavailable');
       },
     });
-    const engine = createTypesenseSearchEngine(client, searchSchema(schema), {
-      collections: { Dataset: 'datasets' },
-      labelsCollection: 'labels',
+    const engine = createTypesenseSearchEngine(client, labelledSchema(), {
+      collections: labelledCollections,
       onLabelError: (error) => {
         capturedError = error;
       },
@@ -289,9 +310,8 @@ describe('createTypesenseSearchEngine label cache (labelCacheTtlMs)', () => {
     const { client, exportCalls } = fakeClient(() =>
       Promise.resolve(labelsJsonl),
     );
-    const engine = createTypesenseSearchEngine(client, searchSchema(schema), {
-      collections: { Dataset: 'datasets' },
-      labelsCollection: 'labels',
+    const engine = createTypesenseSearchEngine(client, labelledSchema(), {
+      collections: labelledCollections,
       labelCacheTtlMs: 60_000,
     });
 
@@ -314,9 +334,8 @@ describe('createTypesenseSearchEngine label cache (labelCacheTtlMs)', () => {
     const { client, exportCalls } = fakeClient(() =>
       Promise.resolve(labelsJsonl),
     );
-    const engine = createTypesenseSearchEngine(client, searchSchema(schema), {
-      collections: { Dataset: 'datasets' },
-      labelsCollection: 'labels',
+    const engine = createTypesenseSearchEngine(client, labelledSchema(), {
+      collections: labelledCollections,
       labelCacheTtlMs: 60_000,
     });
 
@@ -331,9 +350,8 @@ describe('createTypesenseSearchEngine label cache (labelCacheTtlMs)', () => {
     const { client, exportCalls } = fakeClient(() =>
       Promise.resolve(labelsJsonl),
     );
-    const engine = createTypesenseSearchEngine(client, searchSchema(schema), {
-      collections: { Dataset: 'datasets' },
-      labelsCollection: 'labels',
+    const engine = createTypesenseSearchEngine(client, labelledSchema(), {
+      collections: labelledCollections,
       labelCacheTtlMs: 1000,
     });
 
@@ -360,9 +378,8 @@ describe('createTypesenseSearchEngine label cache (labelCacheTtlMs)', () => {
         ? Promise.reject(new Error('labels collection unavailable'))
         : Promise.resolve(labelsJsonl);
     });
-    const engine = createTypesenseSearchEngine(client, searchSchema(schema), {
-      collections: { Dataset: 'datasets' },
-      labelsCollection: 'labels',
+    const engine = createTypesenseSearchEngine(client, labelledSchema(), {
+      collections: labelledCollections,
       labelCacheTtlMs: 60_000,
       onLabelError: (error) => {
         capturedError = error;
@@ -409,8 +426,8 @@ describe('createTypesenseSearchEngine searchFacets (multi_search batching)', () 
         ],
       }),
     });
-    const engine = createTypesenseSearchEngine(client, searchSchema(schema), {
-      collections: { Dataset: 'datasets' },
+    const engine = createTypesenseSearchEngine(client, labelledSchema(), {
+      collections: labelledCollections,
     });
 
     const outcomes = await engine.searchFacets(schema, [
@@ -444,8 +461,8 @@ describe('createTypesenseSearchEngine searchFacets (multi_search batching)', () 
     const { client, performs } = fakeTypesenseClient({
       multiSearch: () => ({ found: 0, hits: [] }),
     });
-    const engine = createTypesenseSearchEngine(client, searchSchema(schema), {
-      collections: { Dataset: 'datasets' },
+    const engine = createTypesenseSearchEngine(client, labelledSchema(), {
+      collections: labelledCollections,
     });
     await expect(engine.searchFacets(schema, [])).resolves.toEqual([]);
     expect(performs).toHaveLength(0);
@@ -458,8 +475,8 @@ describe('createTypesenseSearchEngine searchFacets (multi_search batching)', () 
           ? { code: 404, error: 'collection not found' }
           : { found: 0, hits: [], facet_counts: [] },
     });
-    const engine = createTypesenseSearchEngine(client, searchSchema(schema), {
-      collections: { Dataset: 'datasets' },
+    const engine = createTypesenseSearchEngine(client, labelledSchema(), {
+      collections: labelledCollections,
     });
 
     const outcomes = await engine.searchFacets(schema, [
@@ -483,8 +500,8 @@ describe('createTypesenseSearchEngine searchFacets (multi_search batching)', () 
     const { client } = fakeTypesenseClient({
       multiSearch: () => ({ error: 'malformed query' }),
     });
-    const engine = createTypesenseSearchEngine(client, searchSchema(schema), {
-      collections: { Dataset: 'datasets' },
+    const engine = createTypesenseSearchEngine(client, labelledSchema(), {
+      collections: labelledCollections,
     });
     const [outcome] = await engine.searchFacets(schema, [
       { ...facetBrowse, facets: ['keyword'] },
@@ -517,9 +534,8 @@ describe('createTypesenseSearchEngine searchFacets (multi_search batching)', () 
         ],
       }),
     });
-    const engine = createTypesenseSearchEngine(client, searchSchema(schema), {
-      collections: { Dataset: 'datasets' },
-      labelsCollection: 'labels',
+    const engine = createTypesenseSearchEngine(client, labelledSchema(), {
+      collections: labelledCollections,
       labelCacheTtlMs: 60_000,
     });
 
@@ -551,7 +567,7 @@ describe('createTypesenseSearchEngine searchFacets (multi_search batching)', () 
     };
     const { client, performs } = fakeTypesenseClient({
       multiSearch: (search, index) =>
-        search.query_by === 'label'
+        search.collection === 'labels'
           ? labelLookup(labelDocs)(search)
           : {
               found: 0,
@@ -569,9 +585,8 @@ describe('createTypesenseSearchEngine searchFacets (multi_search batching)', () 
               ],
             },
     });
-    const engine = createTypesenseSearchEngine(client, searchSchema(schema), {
-      collections: { Dataset: 'datasets' },
-      labelsCollection: 'labels',
+    const engine = createTypesenseSearchEngine(client, labelledSchema(), {
+      collections: labelledCollections,
     });
 
     const outcomes = await engine.searchFacets(schema, [
@@ -611,6 +626,13 @@ describe('fetchLabels', () => {
   // Resolving via multi_search/POST avoids the GET query-string limit that a
   // large id-list would otherwise overflow; each POST's per-search id-lists
   // are recoverable from `performs` so batching is observable.
+  const labelsSource = {
+    collection: 'labels',
+    labelField: organization.fields[0] as TextField,
+    queryBy: 'label_search_nl',
+  };
+  const group = (iris: readonly string[]) => [{ source: labelsSource, iris }];
+
   it('resolves labels via multi_search, merging per-locale variants', async () => {
     const { client, performs } = fakeTypesenseClient({
       multiSearch: labelLookup({
@@ -619,11 +641,10 @@ describe('fetchLabels', () => {
         'https://org/3': { label: 'Untagged' },
       }),
     });
-    const labels = await fetchLabels(client, 'labels', [
-      'https://org/1',
-      'https://org/2',
-      'https://org/3',
-    ]);
+    const labels = await fetchLabels(
+      client,
+      group(['https://org/1', 'https://org/2', 'https://org/3']),
+    );
     expect(labels.get('https://org/1')).toEqual({ nl: ['KB'] });
     expect(labels.get('https://org/3')).toEqual({ und: ['Untagged'] });
     // An IRI absent from the collection yields no entry.
@@ -642,7 +663,7 @@ describe('fetchLabels', () => {
     const { client, performs } = fakeTypesenseClient({
       multiSearch: labelLookup(docsById),
     });
-    const labels = await fetchLabels(client, 'labels', ids);
+    const labels = await fetchLabels(client, group(ids));
     // 450 ids → batches of 200, 200, 50, bundled into one round-trip.
     expect(performs).toHaveLength(1);
     expect(
@@ -655,7 +676,7 @@ describe('fetchLabels', () => {
     const { client, performs } = fakeTypesenseClient({
       multiSearch: labelLookup({}),
     });
-    const labels = await fetchLabels(client, 'labels', []);
+    const labels = await fetchLabels(client, group([]));
     expect(labels.size).toBe(0);
     expect(performs).toHaveLength(0);
   });
@@ -667,17 +688,17 @@ describe('fetchLabels', () => {
     const { client } = fakeTypesenseClient({
       multiSearch: () => ({ code: 503, error: 'lookup failed' }),
     });
-    await expect(
-      fetchLabels(client, 'labels', ['https://org/1']),
-    ).rejects.toThrow(/label lookup failed \(503\): lookup failed/);
+    await expect(fetchLabels(client, group(['https://org/1']))).rejects.toThrow(
+      /label lookup in “labels” failed \(503\): lookup failed/,
+    );
 
     // An error entry without a status code still throws.
     const { client: clientWithoutCode } = fakeTypesenseClient({
       multiSearch: () => ({ error: 'lookup failed' }),
     });
     await expect(
-      fetchLabels(clientWithoutCode, 'labels', ['https://org/1']),
-    ).rejects.toThrow(/label lookup failed: lookup failed/);
+      fetchLabels(clientWithoutCode, group(['https://org/1'])),
+    ).rejects.toThrow(/label lookup in “labels” failed: lookup failed/);
   });
 });
 
@@ -739,8 +760,8 @@ describe('schema binding', () => {
       type: 'urn:example:Other',
       fields: [],
     };
-    const engine = createTypesenseSearchEngine(noClient, searchSchema(schema), {
-      collections: { Dataset: 'datasets' },
+    const engine = createTypesenseSearchEngine(noClient, labelledSchema(), {
+      collections: labelledCollections,
     });
     await expect(engine.search(foreign, browse)).rejects.toThrow(
       /not in this engine/,
@@ -756,10 +777,10 @@ describe('schema binding', () => {
     expect(() =>
       createTypesenseSearchEngine(
         noClient,
-        searchSchema(schema, other),
+        searchSchema(organization, schema, other),
         // The widened schema loses compile-time exhaustiveness; the
         // constructor still rejects the missing entry at startup.
-        { collections: { Dataset: 'datasets' } },
+        { collections: labelledCollections },
       ),
     ).toThrow(/No collection configured for search type “Other”/);
   });

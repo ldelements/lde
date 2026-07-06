@@ -415,6 +415,107 @@ describe('searchSchema validation', () => {
       ),
     ).toThrow(/Duplicate search type name/);
   });
+
+  describe('reference label sources', () => {
+    const organization = {
+      name: 'Organization',
+      type: 'https://example.org/Organization',
+      fields: [
+        {
+          name: 'label',
+          kind: 'text',
+          locales: ['und', 'nl'],
+          output: true,
+          searchable: { weight: 1 },
+        },
+      ],
+    } as const;
+
+    it('accepts a reference whose labelSource names a type with a resolvable label', () => {
+      expect(() =>
+        searchSchema(organization, {
+          name: 'Dataset',
+          type: DATASET,
+          fields: [
+            {
+              name: 'publisher',
+              kind: 'reference',
+              facetable: true,
+              labelSource: 'Organization',
+            },
+          ],
+        }),
+      ).not.toThrow();
+    });
+
+    it('rejects a labelSource that names no declared type', () => {
+      expect(() =>
+        searchSchema({
+          name: 'Dataset',
+          type: DATASET,
+          fields: [
+            {
+              name: 'publisher',
+              kind: 'reference',
+              labelSource: 'Organization',
+            },
+          ],
+        }),
+      ).toThrow(/label source “Organization”/);
+    });
+
+    it('rejects a label source without an output, searchable text “label” field', () => {
+      const withLabelField = (label: Record<string, unknown>) => () =>
+        searchSchema(
+          {
+            name: 'Organization',
+            type: 'https://example.org/Organization',
+            fields: [{ name: 'label', kind: 'text', ...label } as never],
+          },
+          {
+            name: 'Dataset',
+            type: DATASET,
+            fields: [
+              {
+                name: 'publisher',
+                kind: 'reference',
+                labelSource: 'Organization',
+              },
+            ],
+          },
+        );
+
+      // Not output: nothing to reconstruct a label from.
+      expect(
+        withLabelField({ locales: ['und'], searchable: { weight: 1 } }),
+      ).toThrow(/label source/);
+      // Not searchable: nothing to type ahead against, and no query_by.
+      expect(withLabelField({ locales: ['und'], output: true })).toThrow(
+        /label source/,
+      );
+      // No `label` field at all.
+      expect(() =>
+        searchSchema(
+          {
+            name: 'Organization',
+            type: 'https://example.org/Organization',
+            fields: [],
+          },
+          {
+            name: 'Dataset',
+            type: DATASET,
+            fields: [
+              {
+                name: 'publisher',
+                kind: 'reference',
+                labelSource: 'Organization',
+              },
+            ],
+          },
+        ),
+      ).toThrow(/label source/);
+    });
+  });
 });
 
 describe('date storage codec', () => {

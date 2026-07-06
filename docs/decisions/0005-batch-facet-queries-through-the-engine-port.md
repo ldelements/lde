@@ -16,7 +16,7 @@ The keyed facets object of ADR 4 resolves each selected facet with its own
 `where`-filter removed (skip-own-filter). Implemented as one `engine.search`
 call per selected facet, a typical listing page fanned out into 1 listing
 search + N facet searches – ~4–5× the engine round-trips of the pre-migration
-direct-Typesense path, which computed the whole sidebar in a single
+direct-Typesense path, which computed every facet in a single
 `multi_search`. Skip-own-filter only _changes_ the result for a facet whose
 own field is actively filtered; for every other facet the dedicated query is
 identical except for its `facet_by`.

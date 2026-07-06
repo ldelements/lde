@@ -158,6 +158,15 @@ export interface ReferenceField extends SearchFieldBase, Searchable {
   /** Projection-time value transform. */
   readonly transform?: (value: string) => string;
   readonly facetRanges?: never;
+  /**
+   * The `name` of the {@link SearchType} whose collection resolves this
+   * reference’s labels – its ‘label source’. The named type must declare an
+   * `output`, `searchable` text field called `label` (validated by
+   * {@link searchSchema}), so an engine can both reconstruct the label and
+   * search it (typeahead). Omit for an id-only reference: no label
+   * resolution.
+   */
+  readonly labelSource?: string;
   /** The referenced entity’s shape and how much of it to carry. Required when
    *  the field is `output` (the API surfaces need the reference type name);
    *  optional for a facet- or filter-only reference. */
@@ -301,10 +310,47 @@ export function searchSchema<const Types extends readonly SearchType[]>(
     typeIris.add(searchType.type);
     names.add(searchType.name);
   }
+  assertResolvableLabelSources(types);
   // The one blessed cast: only this validated constructor mints the brand.
   return new Map(
     types.map((searchType) => [searchType.type, searchType]),
   ) as unknown as SearchSchema<Types>;
+}
+
+/**
+ * Every {@link ReferenceField.labelSource} must name a declared type that can
+ * actually serve labels: an `output` (something to reconstruct a label from),
+ * `searchable` (something to type ahead against) text field called `label`.
+ * Checked schema-wide, because a single declaration cannot see its siblings.
+ */
+function assertResolvableLabelSources(types: readonly SearchType[]): void {
+  const byName = new Map(
+    types.map((searchType) => [searchType.name, searchType]),
+  );
+  for (const searchType of types) {
+    for (const field of searchType.fields) {
+      if (field.kind !== 'reference' || field.labelSource === undefined) {
+        continue;
+      }
+      const source = byName.get(field.labelSource);
+      if (source === undefined) {
+        throw new Error(
+          `Reference “${searchType.name}.${field.name}” names unknown label source “${field.labelSource}”; declare a SearchType with that name.`,
+        );
+      }
+      const labelField = fieldNamed(source, 'label');
+      if (
+        labelField === undefined ||
+        labelField.kind !== 'text' ||
+        labelField.output !== true ||
+        labelField.searchable === undefined
+      ) {
+        throw new Error(
+          `Reference “${searchType.name}.${field.name}” uses label source “${field.labelSource}”, which must declare an output, searchable text field “label”.`,
+        );
+      }
+    }
+  }
 }
 
 /**
@@ -534,7 +580,7 @@ export function outputFields(searchType: SearchType): readonly SearchField[] {
 /** Fields of kind `reference` (IRI-valued, label-resolved), in declaration order. */
 export function referenceFields(
   searchType: SearchType,
-): readonly SearchField[] {
+): readonly ReferenceField[] {
   return searchType.fields.filter((field) => field.kind === 'reference');
 }
 

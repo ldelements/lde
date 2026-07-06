@@ -203,6 +203,12 @@ A `reference` carries `labelOnly` today (id + display label); the `idOnly` and
 day one so that `inline` can later **add** fields to a reference type without
 breaking clients.
 
+A reference resolves its label from a **label source**: `labelSource` names
+the `SearchType` whose collection holds the referenced entities. The named
+type must declare an `output`, `searchable` text field called `label` –
+`searchSchema` validates this schema-wide, so a dangling or unsuitable label
+source fails at startup. A reference without a `labelSource` stays id-only.
+
 ## Projection
 
 `projectGraph` is fully streaming: subjects are grouped and framed one at a time
@@ -286,7 +292,7 @@ await engine.search(OTHER_TYPE, query); // compile error: not in this schema
 ```
 
 `searchFacets(type, queries)` is the port’s **batch entry point**: several
-facet-only queries – e.g. a faceted sidebar’s skip-own-filter variants –
+facet-only queries – e.g. a faceted listing’s skip-own-filter variants –
 answered in one engine round-trip (Typesense: a single `multi_search`), one
 outcome per query, positionally aligned – its facet map, or an in-place error,
 so one failed query never discards its siblings’ facets. The same schema

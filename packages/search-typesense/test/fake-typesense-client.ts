@@ -22,8 +22,8 @@ export function labelLookup(
 export interface FakeTypesenseClientOptions {
   /** Answer for `collections().documents().search()`. */
   readonly searchResponse?: Record<string, unknown>;
-  /** The labels-collection export endpoint (JSONL); calls are counted. */
-  readonly exportJsonl?: () => Promise<string>;
+  /** The documents export endpoint (JSONL) per collection; calls are counted. */
+  readonly exportJsonl?: (collection: string) => Promise<string>;
   /** Answers one `multi_search` entry (an inline `{ error }` entry included);
    *  a throw rejects the whole perform. */
   readonly multiSearch?: (
@@ -54,7 +54,7 @@ export function fakeTypesenseClient(
   const performs: (readonly Record<string, unknown>[])[] = [];
   let exportCalls = 0;
   const client = {
-    collections: () => ({
+    collections: (name?: string) => ({
       documents: () => ({
         search: () =>
           Promise.resolve(options.searchResponse ?? { found: 0, hits: [] }),
@@ -62,7 +62,7 @@ export function fakeTypesenseClient(
           exportCalls += 1;
           return options.exportJsonl === undefined
             ? Promise.reject(new Error('No exportJsonl configured.'))
-            : options.exportJsonl();
+            : options.exportJsonl(String(name));
         },
       }),
     }),
