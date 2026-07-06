@@ -318,10 +318,27 @@ export function searchSchema<const Types extends readonly SearchType[]>(
 }
 
 /**
- * Every {@link ReferenceField.labelSource} must name a declared type that can
- * actually serve labels: an `output` (something to reconstruct a label from),
+ * The text field a label source serves labels from – the ‘label’ convention
+ * in one place: an `output` (something to reconstruct a label from),
  * `searchable` (something to type ahead against) text field called `label`.
- * Checked schema-wide, because a single declaration cannot see its siblings.
+ * Returns `undefined` when the type declares no such field; a schema built by
+ * {@link searchSchema} guarantees it for every type named as a
+ * {@link ReferenceField.labelSource}.
+ */
+export function labelFieldOf(searchType: SearchType): TextField | undefined {
+  const field = fieldNamed(searchType, 'label');
+  return field !== undefined &&
+    field.kind === 'text' &&
+    field.output === true &&
+    field.searchable !== undefined
+    ? field
+    : undefined;
+}
+
+/**
+ * Every {@link ReferenceField.labelSource} must name a declared type that can
+ * actually serve labels ({@link labelFieldOf}). Checked schema-wide, because
+ * a single declaration cannot see its siblings.
  */
 function assertResolvableLabelSources(types: readonly SearchType[]): void {
   const byName = new Map(
@@ -338,13 +355,7 @@ function assertResolvableLabelSources(types: readonly SearchType[]): void {
           `Reference “${searchType.name}.${field.name}” names unknown label source “${field.labelSource}”; declare a SearchType with that name.`,
         );
       }
-      const labelField = fieldNamed(source, 'label');
-      if (
-        labelField === undefined ||
-        labelField.kind !== 'text' ||
-        labelField.output !== true ||
-        labelField.searchable === undefined
-      ) {
+      if (labelFieldOf(source) === undefined) {
         throw new Error(
           `Reference “${searchType.name}.${field.name}” uses label source “${field.labelSource}”, which must declare an output, searchable text field “label”.`,
         );

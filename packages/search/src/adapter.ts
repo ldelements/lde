@@ -16,6 +16,7 @@ export {
   outputFields,
   referenceFields,
   fieldNamed,
+  labelFieldOf,
   isRangeFacet,
   isoToUnixSeconds,
   unixSecondsToIso,

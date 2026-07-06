@@ -21,6 +21,7 @@ import {
   assertValidQuery,
   fieldNamed,
   isRangeFacet,
+  labelFieldOf,
   outputFields,
   physicalFields,
   referenceFields,
@@ -114,8 +115,8 @@ export function createTypesenseSearchEngine<
     }),
   );
   // Resolve every reference field's label source ONCE at construction. The
-  // schema already guarantees the named type exists and declares a suitable
-  // `label` field (`searchSchema`), and `collections` is exhaustive per type.
+  // schema already guarantees the named type exists and serves labels
+  // (`searchSchema`/`labelFieldOf`), and `collections` is exhaustive per type.
   const typesByName = new Map(
     [...schema.values()].map((searchType) => [searchType.name, searchType]),
   );
@@ -127,7 +128,7 @@ export function createTypesenseSearchEngine<
           .filter((field) => field.labelSource !== undefined)
           .map((field) => {
             const source = typesByName.get(field.labelSource!) as SearchType;
-            const labelField = fieldNamed(source, 'label') as TextField;
+            const labelField = labelFieldOf(source) as TextField;
             return [
               field.name,
               {
@@ -138,6 +139,18 @@ export function createTypesenseSearchEngine<
             ];
           }),
       ),
+    ]),
+  );
+  // The distinct source collections per type, for the cached path – fixed at
+  // construction, so no per-search dedup dance.
+  const distinctLabelSources = new Map<string, readonly LabelSource[]>(
+    [...labelSources].map(([type, sources]) => [
+      type,
+      [
+        ...new Map(
+          [...sources.values()].map((source) => [source.collection, source]),
+        ).values(),
+      ],
     ]),
   );
 
@@ -185,6 +198,34 @@ export function createTypesenseSearchEngine<
     return load;
   }
 
+  // The merged per-type view over the cached per-collection maps, reused
+  // until any constituent map reloads (same instances = still valid), so a
+  // multi-source type does not pay an O(all labels) merge per search.
+  const mergedCache = new Map<
+    string,
+    {
+      parts: readonly ReadonlyMap<string, LocalizedValue>[];
+      merged: ReadonlyMap<string, LocalizedValue>;
+    }
+  >();
+
+  function mergeCachedLabels(
+    typeIri: string,
+    parts: readonly ReadonlyMap<string, LocalizedValue>[],
+  ): ReadonlyMap<string, LocalizedValue> {
+    const cached = mergedCache.get(typeIri);
+    if (
+      cached !== undefined &&
+      cached.parts.length === parts.length &&
+      cached.parts.every((part, index) => part === parts[index])
+    ) {
+      return cached.merged;
+    }
+    const merged = mergeLabels(parts);
+    mergedCache.set(typeIri, { parts, merged });
+    return merged;
+  }
+
   // Cached path: the once-loaded full collections serve labels by in-memory
   // lookup (no per-search round-trip). The load does not depend on the
   // response, so it is started BEFORE awaiting the search and runs alongside
@@ -194,23 +235,18 @@ export function createTypesenseSearchEngine<
   function startCachedLabels(
     searchType: SearchType,
   ): Promise<ReadonlyMap<string, LocalizedValue>> | undefined {
-    const sources = labelSources.get(searchType.type);
+    const sources = distinctLabelSources.get(searchType.type);
     if (
       options.labelCacheTtlMs === undefined ||
       sources === undefined ||
-      sources.size === 0
+      sources.length === 0
     ) {
       return undefined;
     }
     const ttlMs = options.labelCacheTtlMs;
-    const distinct = [
-      ...new Map(
-        [...sources.values()].map((source) => [source.collection, source]),
-      ).values(),
-    ];
     return Promise.all(
-      distinct.map((source) => cachedAllLabels(source, ttlMs)),
-    ).then((maps) => mergeLabels(maps));
+      sources.map((source) => cachedAllLabels(source, ttlMs)),
+    ).then((maps) => mergeCachedLabels(searchType.type, maps));
   }
 
   // Labels are supplementary: a failed lookup (e.g. a label-source collection
@@ -488,18 +524,12 @@ function labelValue(
   document: Record<string, unknown>,
   labelField: TextField,
 ): LocalizedValue {
-  const map: Record<string, readonly string[]> = {};
-  const display = physicalFields(labelField).display;
-  labelField.locales.forEach((locale, index) => {
-    const value = document[display[index]];
-    if (typeof value === 'string') {
-      map[locale] = [value];
-    }
-  });
-  if (Object.keys(map).length === 0 && typeof document.label === 'string') {
-    map.und = [document.label];
+  const localized = localizedValue(document, labelField);
+  if (localized !== undefined) {
+    return localized;
   }
-  return map;
+  const untagged = document[labelField.name];
+  return typeof untagged === 'string' ? { und: [untagged] } : {};
 }
 
 /** Merge per-collection label maps into one IRI-keyed map (URI identity). */
