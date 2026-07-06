@@ -79,6 +79,9 @@
     },
     {
       "path": "./packages/search-api-graphql"
+    },
+    {
+      "path": "./packages/search-pipeline"
     }
   ]
 }
