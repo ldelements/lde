@@ -7,6 +7,7 @@ import type { DatasetSelector } from './selector.js';
 import { Stage } from './stage.js';
 import type { QuadTransform } from './stage.js';
 import type {
+  DatasetOutcome,
   DatasetWriter,
   RunContext,
   RunWriter,
@@ -197,8 +198,8 @@ class FanOutRunWriter implements RunWriter {
     );
   }
 
-  async flush(dataset: Dataset): Promise<void> {
-    for (const run of this.runs) await run.flush?.(dataset);
+  async flush(dataset: Dataset, outcome: DatasetOutcome): Promise<void> {
+    for (const run of this.runs) await run.flush?.(dataset, outcome);
   }
 
   async reset(dataset: Dataset): Promise<void> {
@@ -533,7 +534,7 @@ export class Pipeline {
       unsubscribe?.();
     }
 
-    await runWriter.flush?.(dataset);
+    await runWriter.flush?.(dataset, stageFailed ? 'failed' : 'success');
     await this.reportValidators(dataset);
     // A dataset whose stages threw produced incomplete output; record it as
     // ‘failed’ rather than freezing a broken result under a ‘success’ record.
@@ -781,7 +782,7 @@ export class Pipeline {
           scratchRun,
           timeout,
         );
-        await scratchRun.flush(dataset);
+        await scratchRun.flush(dataset, 'success');
         await scratchRun.commit();
       } catch (error) {
         await scratchRun.abort(error);
