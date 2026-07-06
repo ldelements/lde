@@ -18,10 +18,10 @@ export default mergeConfig(
         thresholds: {
           // Honest full-suite baseline (autoUpdate raises it from here); a
           // partial vitest run must never rewrite these — see AGENTS.md.
-          functions: 97.7,
-          lines: 95.4,
-          branches: 90.09,
-          statements: 95.46,
+          functions: 98.24,
+          lines: 98.07,
+          branches: 92.97,
+          statements: 98.1,
         },
       },
     },

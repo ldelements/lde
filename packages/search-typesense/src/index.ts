@@ -1,5 +1,13 @@
-export { rebuild } from './adapter.js';
-export type { RebuildOptions } from './adapter.js';
+export { BlueGreenRebuild } from './blue-green-rebuild.js';
+export type { BlueGreenRebuildOptions } from './blue-green-rebuild.js';
+export { InPlaceRebuild } from './in-place-rebuild.js';
+export type { InPlaceRebuildOptions } from './in-place-rebuild.js';
+export { RebuildAlreadyRunning } from './lock.js';
+export {
+  departedSources,
+  sourceDocumentsFilter,
+  staleDocumentsFilter,
+} from './sweep.js';
 export { buildCollectionSchema } from './collection-schema.js';
 export type { CollectionSchemaOptions } from './collection-schema.js';
 export { buildSearchParams } from './query-compiler.js';

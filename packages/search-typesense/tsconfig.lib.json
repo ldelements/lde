@@ -9,6 +9,8 @@
   },
   "include": ["src/**/*.ts"],
   "references": [
+    { "path": "../dataset/tsconfig.lib.json" },
+    { "path": "../pipeline/tsconfig.lib.json" },
     { "path": "../search/tsconfig.lib.json" },
     { "path": "../text-normalization/tsconfig.lib.json" }
   ],
