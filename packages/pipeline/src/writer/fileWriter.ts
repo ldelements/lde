@@ -5,7 +5,7 @@ import { mkdir, rename, rm } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import filenamifyUrl from 'filenamify-url';
 import { DataFactory, Writer as N3Writer } from 'n3';
-import { RunContext, RunWriter, Writer } from './writer.js';
+import { DatasetOutcome, RunContext, RunWriter, Writer } from './writer.js';
 
 export interface FileWriterOptions {
   /**
@@ -55,10 +55,12 @@ interface OpenFile {
 
 /**
  * The run writer a {@link FileWriter} opens: per-dataset `flush` and `reset`
- * are always available, so direct callers need no optional chaining.
+ * are always available, so direct callers need no optional chaining. The
+ * dataset outcome does not change what a flush does here – a failed dataset's
+ * partial output still materializes, matching the pre-transactional behaviour.
  */
 export interface FileRunWriter extends RunWriter {
-  flush(dataset: Dataset): Promise<void>;
+  flush(dataset: Dataset, outcome?: DatasetOutcome): Promise<void>;
   reset(dataset: Dataset): Promise<void>;
 }
 

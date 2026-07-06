@@ -48,6 +48,13 @@ export interface DatasetWriter<Item = Quad> {
 }
 
 /**
+ * How a dataset’s processing ended, handed to {@link RunWriter.flush}:
+ * `'success'` when every stage completed, `'failed'` when a stage hard-failed
+ * and the dataset’s output is incomplete.
+ */
+export type DatasetOutcome = 'success' | 'failed';
+
+/**
  * One open run transaction on a destination: per-dataset writes bracketed by
  * exactly one {@link commit} or {@link abort}. Obtained from
  * {@link Writer.openRun}; the pipeline drives
@@ -58,13 +65,16 @@ export interface DatasetWriter<Item = Quad> {
 export interface RunWriter<Item = Quad> extends DatasetWriter<Item> {
   /**
    * Finalize writing for a dataset. Called after all stages complete for that
-   * dataset.
+   * dataset – successful or not; `outcome` says which, so a writer can gate
+   * destructive finalization (an In-place writer’s stale-document sweep) on
+   * `'success'`: a failed dataset’s output is incomplete, and sweeping against
+   * it would delete data the run never got to rewrite.
    *
    * Writers that buffer output across multiple {@link write} calls (e.g. to
    * share Turtle prefix declarations) should implement this to flush remaining
    * data and release per-dataset resources.
    */
-  flush?(dataset: Dataset): Promise<void>;
+  flush?(dataset: Dataset, outcome: DatasetOutcome): Promise<void>;
 
   /**
    * Discard a dataset’s already-written output so a subsequent pass starts
