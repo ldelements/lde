@@ -99,7 +99,7 @@ The `@nx/js:library` generator’s output diverges from the conventions in this 
    - `name` → `@lde/<new-name>`
    - `description` — write something useful
    - `repository.directory` → `packages/<new-name>`
-   - `version` → `0.0.0` (do NOT keep the sibling’s version). nx release computes the first release by bumping from the manifest version, so `0.0.0` is the only start that cannot overshoot – a manifest pre-set to `0.1.0` whose introducing commits were breaking (`!`) shipped `0.2.0`. This must be in place before the PR merges – see [Releasing a new package](#releasing-a-new-package).
+   - `version` → `0.0.0` (do NOT keep the sibling’s version). The first CI release bumps from the manifest over the package’s full history, so `0.0.0` lands it at `0.1.0` (observed with `search-typesense` and `text-normalization`), while a manifest pre-set to `0.1.0` shipped `0.2.0` (`pipeline-shacl-sampler`). This must be in place before the PR merges – see [Releasing a new package](#releasing-a-new-package).
    - `dependencies` and `peerDependencies` — replace with what the new package actually needs
 4. **Replace the source.** Empty out `src/` and `test/`, write the new code.
 5. **Update `tsconfig.lib.json` `references`** to match the new package’s actual `@lde/*` peers.
@@ -127,11 +127,9 @@ For releasing the new package’s first version, see [Releasing a new package](#
 
 #### Releasing a new package
 
-`.github/workflows/release.yml` publishes existing packages on every push to main, but cannot bring up a brand-new `@lde/<name>` package: npm’s Trusted Publisher configuration can only be added to a package that already exists on the registry. The first version has to be published manually by a maintainer; CI takes over from the second version onwards. Until then, the release run’s publish step for the new package fails, while existing packages continue to publish normally.
+`.github/workflows/release.yml` publishes existing packages on every push to main, but cannot bring up a brand-new `@lde/<name>` package: npm’s Trusted Publisher configuration can only be added to a package that already exists on the registry. The first version has to be published manually by a maintainer; CI takes over from the second version onwards. Until then, the release run’s publish step for the new package fails, while existing packages continue to publish normally. Check `npm view @lde/<name>` before merging a PR that introduces a package, and bootstrap right after the merge.
 
-**The agent drives the bootstrap itself** via the global `npm-bootstrap-package` skill, which is the canonical procedure (steps, flags, and known failure modes). Run it anticipatorily, right after merging the PR that introduces the package – check `npm view @lde/<name>` before merging; the release run WILL fail on a package that does not exist yet. The maintainer is only asked for the npm login and 2FA one-time passwords.
-
-Without the skill, the essence is: `npx nx build <name>` first (manifests publish only `dist/`, so an unbuilt publish ships an empty package), then from `packages/<name>` run `npm publish --access public --otp=<code>` WITHOUT `--provenance` (it fails outside CI), then attach the Trusted Publisher and lock the package down:
+In short: `npx nx build <name>` first (manifests publish only `dist/`, so an unbuilt publish ships an empty package), then from `packages/<name>` run `npm publish --access public --otp=<code>` WITHOUT `--provenance` (it fails outside CI), then attach the Trusted Publisher and lock the package down:
 
 ```sh
 npm trust github --repo ldelements/lde --file release.yml --allow-publish
