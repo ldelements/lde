@@ -1,4 +1,4 @@
-import type { ExecutorContext, QuadTransform } from '@lde/pipeline';
+import type { ReaderContext, QuadTransform } from '@lde/pipeline';
 import type { Quad } from '@rdfjs/types';
 import prefixes from '@zazuko/prefixes';
 import { DataFactory } from 'n3';
@@ -12,20 +12,20 @@ export const defaultVocabularies: readonly string[] = [
 
 /**
  * Creates a {@link QuadTransform} that passes through all quads from a stage's
- * executor output and appends `void:vocabulary` triples for detected
+ * reader output and appends `void:vocabulary` triples for detected
  * vocabulary prefixes.
  *
  * Inspects quads with predicate `void:property` to detect known vocabulary
  * namespace prefixes, then yields the corresponding `void:vocabulary` quads
- * after the executor output has been consumed.
+ * after the reader output has been consumed.
  *
- * Attach it to the `entity-properties.rq` stage's executor – directly via
+ * Attach it to the `entity-properties.rq` stage's reader – directly via
  * {@link detectVocabularies} or through the `transforms` map of
  * {@link voidStages}.
  */
 export function withVocabularies(
   vocabularies: readonly string[] = defaultVocabularies,
-): QuadTransform<ExecutorContext> {
+): QuadTransform<ReaderContext> {
   return (quads, { dataset }) =>
     appendVocabularies(quads, dataset.iri.toString(), vocabularies);
 }

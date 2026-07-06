@@ -1,6 +1,6 @@
 import {
   deduplicateQuads,
-  SparqlConstructExecutor,
+  SparqlConstructReader,
   LineBufferTransform,
   readQueryFile,
 } from '../../src/sparql/index.js';
@@ -16,7 +16,7 @@ import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 
 const { namedNode } = DataFactory;
 
-describe('SparqlConstructExecutor', () => {
+describe('SparqlConstructReader', () => {
   const port = 3003;
 
   beforeAll(async () => {
@@ -31,7 +31,7 @@ describe('SparqlConstructExecutor', () => {
     it('throws on a non-CONSTRUCT query', () => {
       expect(
         () =>
-          new SparqlConstructExecutor({
+          new SparqlConstructReader({
             query: 'SELECT ?s WHERE { ?s ?p ?o }',
           }),
       ).toThrow('Query must be a CONSTRUCT query');
@@ -40,18 +40,18 @@ describe('SparqlConstructExecutor', () => {
     it('does not throw when query contains #subjectFilter# (deferred parsing)', () => {
       expect(
         () =>
-          new SparqlConstructExecutor({
+          new SparqlConstructReader({
             query: `CONSTRUCT { ?s ?p ?o } WHERE { #subjectFilter# ?s ?p ?o }`,
           }),
       ).not.toThrow();
     });
   });
 
-  describe('execute', () => {
+  describe('read', () => {
     it('executes query and returns stream', async () => {
       const datasetIri = 'http://foo.org/id/dataset/foo';
 
-      const executor = new SparqlConstructExecutor({
+      const reader = new SparqlConstructReader({
         query: `CONSTRUCT {
           ?dataset ?p ?o .
         }
@@ -70,7 +70,7 @@ describe('SparqlConstructExecutor', () => {
         distributions: [distribution],
       });
 
-      const result = await executor.execute(dataset, distribution);
+      const result = await reader.read(dataset, distribution);
 
       const quads = [];
       for await (const quad of result) {
@@ -83,7 +83,7 @@ describe('SparqlConstructExecutor', () => {
       const fetcher = new SparqlEndpointFetcher();
       const querySpy = vi.spyOn(fetcher, 'fetchTriples');
 
-      const executor = new SparqlConstructExecutor({
+      const reader = new SparqlConstructReader({
         query: `CONSTRUCT {
           ?dataset ?p ?o .
         }
@@ -104,7 +104,7 @@ describe('SparqlConstructExecutor', () => {
         distributions: [distribution],
       });
 
-      await executor.execute(dataset, distribution);
+      await reader.read(dataset, distribution);
 
       expect(querySpy).toHaveBeenCalledWith(
         `http://localhost:${port}/sparql`,
@@ -116,7 +116,7 @@ describe('SparqlConstructExecutor', () => {
       const fetcher = new SparqlEndpointFetcher();
       const querySpy = vi.spyOn(fetcher, 'fetchTriples');
 
-      const executor = new SparqlConstructExecutor({
+      const reader = new SparqlConstructReader({
         query: `CONSTRUCT { ?dataset ?p ?o } WHERE { ?dataset ?p ?o }`,
         fetcher,
       });
@@ -131,7 +131,7 @@ describe('SparqlConstructExecutor', () => {
         distributions: [distribution],
       });
 
-      await executor.execute(dataset, distribution);
+      await reader.read(dataset, distribution);
 
       expect(querySpy).toHaveBeenCalledWith(
         expect.any(String),
@@ -147,7 +147,7 @@ describe('SparqlConstructExecutor', () => {
       const fetcher = new SparqlEndpointFetcher();
       const querySpy = vi.spyOn(fetcher, 'fetchTriples');
 
-      const executor = new SparqlConstructExecutor({
+      const reader = new SparqlConstructReader({
         query: `CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o } LIMIT 1`,
         fetcher,
       });
@@ -161,7 +161,7 @@ describe('SparqlConstructExecutor', () => {
         distributions: [distribution],
       });
 
-      await executor.execute(dataset, distribution);
+      await reader.read(dataset, distribution);
 
       expect(querySpy).toHaveBeenCalledWith(
         `http://localhost:${port}/sparql`,
@@ -171,11 +171,11 @@ describe('SparqlConstructExecutor', () => {
   });
 
   describe('#subjectFilter# template', () => {
-    it('substitutes #subjectFilter# with distribution.subjectFilter at execute time', async () => {
+    it('substitutes #subjectFilter# with distribution.subjectFilter at read time', async () => {
       const fetcher = new SparqlEndpointFetcher();
       const querySpy = vi.spyOn(fetcher, 'fetchTriples');
 
-      const executor = new SparqlConstructExecutor({
+      const reader = new SparqlConstructReader({
         query: `CONSTRUCT { ?s ?p ?o } WHERE { #subjectFilter# ?s ?p ?o }`,
         fetcher,
       });
@@ -190,7 +190,7 @@ describe('SparqlConstructExecutor', () => {
         distributions: [distribution],
       });
 
-      await executor.execute(dataset, distribution);
+      await reader.read(dataset, distribution);
 
       expect(querySpy).toHaveBeenCalledWith(
         expect.any(String),
@@ -202,7 +202,7 @@ describe('SparqlConstructExecutor', () => {
       const fetcher = new SparqlEndpointFetcher();
       const querySpy = vi.spyOn(fetcher, 'fetchTriples');
 
-      const executor = new SparqlConstructExecutor({
+      const reader = new SparqlConstructReader({
         query: `CONSTRUCT { ?s ?p ?o } WHERE { { #subjectFilter# ?s ?p ?o } UNION { #subjectFilter# ?s ?p ?o } }`,
         fetcher,
       });
@@ -217,7 +217,7 @@ describe('SparqlConstructExecutor', () => {
         distributions: [distribution],
       });
 
-      await executor.execute(dataset, distribution);
+      await reader.read(dataset, distribution);
 
       const query = querySpy.mock.calls[0][1];
       const filterCount = (query.match(/FILTER/g) ?? []).length;
@@ -229,7 +229,7 @@ describe('SparqlConstructExecutor', () => {
       const fetcher = new SparqlEndpointFetcher();
       const querySpy = vi.spyOn(fetcher, 'fetchTriples');
 
-      const executor = new SparqlConstructExecutor({
+      const reader = new SparqlConstructReader({
         query: `CONSTRUCT { ?s ?p ?o } WHERE { #subjectFilter# ?s ?p ?o }`,
         fetcher,
       });
@@ -243,7 +243,7 @@ describe('SparqlConstructExecutor', () => {
         distributions: [distribution],
       });
 
-      await executor.execute(dataset, distribution);
+      await reader.read(dataset, distribution);
 
       expect(querySpy).toHaveBeenCalledWith(
         expect.any(String),
@@ -257,7 +257,7 @@ describe('SparqlConstructExecutor', () => {
       const fetcher = new SparqlEndpointFetcher();
       const querySpy = vi.spyOn(fetcher, 'fetchTriples');
 
-      const executor = new SparqlConstructExecutor({
+      const reader = new SparqlConstructReader({
         query: `CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }`,
         fetcher,
       });
@@ -271,7 +271,7 @@ describe('SparqlConstructExecutor', () => {
         distributions: [distribution],
       });
 
-      await executor.execute(dataset, distribution, {
+      await reader.read(dataset, distribution, {
         bindings: [{ s: namedNode('http://example.org/subject') }],
       });
 
@@ -289,7 +289,7 @@ describe('SparqlConstructExecutor', () => {
       const fetcher = new SparqlEndpointFetcher();
       const querySpy = vi.spyOn(fetcher, 'fetchTriples');
 
-      const executor = new SparqlConstructExecutor({
+      const reader = new SparqlConstructReader({
         query: `CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }`,
         fetcher,
       });
@@ -303,7 +303,7 @@ describe('SparqlConstructExecutor', () => {
         distributions: [distribution],
       });
 
-      await executor.execute(dataset, distribution);
+      await reader.read(dataset, distribution);
 
       expect(querySpy).toHaveBeenCalledWith(
         expect.any(String),
@@ -315,7 +315,7 @@ describe('SparqlConstructExecutor', () => {
       const fetcher = new SparqlEndpointFetcher();
       const querySpy = vi.spyOn(fetcher, 'fetchTriples');
 
-      const executor = new SparqlConstructExecutor({
+      const reader = new SparqlConstructReader({
         query: `CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }`,
         fetcher,
       });
@@ -329,7 +329,7 @@ describe('SparqlConstructExecutor', () => {
         distributions: [distribution],
       });
 
-      await executor.execute(dataset, distribution, { bindings: [] });
+      await reader.read(dataset, distribution, { bindings: [] });
 
       expect(querySpy).toHaveBeenCalledWith(
         expect.any(String),
@@ -353,7 +353,7 @@ describe('SparqlConstructExecutor', () => {
           [] as never,
         );
 
-      const executor = new SparqlConstructExecutor({
+      const reader = new SparqlConstructReader({
         query: 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }',
         fetcher,
       });
@@ -366,7 +366,7 @@ describe('SparqlConstructExecutor', () => {
         distributions: [distribution],
       });
 
-      await executor.execute(dataset, distribution);
+      await reader.read(dataset, distribution);
 
       expect(spy).toHaveBeenCalledTimes(2);
     });
@@ -379,7 +379,7 @@ describe('SparqlConstructExecutor', () => {
         ),
       );
 
-      const executor = new SparqlConstructExecutor({
+      const reader = new SparqlConstructReader({
         query: 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }',
         fetcher,
       });
@@ -392,7 +392,7 @@ describe('SparqlConstructExecutor', () => {
         distributions: [distribution],
       });
 
-      await expect(executor.execute(dataset, distribution)).rejects.toThrow(
+      await expect(reader.read(dataset, distribution)).rejects.toThrow(
         'HTTP status 400',
       );
       expect(fetcher.fetchTriples).toHaveBeenCalledTimes(1);
@@ -405,7 +405,7 @@ describe('SparqlConstructExecutor', () => {
         .mockRejectedValueOnce(new TypeError('fetch failed'))
         .mockResolvedValueOnce([] as never);
 
-      const executor = new SparqlConstructExecutor({
+      const reader = new SparqlConstructReader({
         query: 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }',
         fetcher,
       });
@@ -418,7 +418,7 @@ describe('SparqlConstructExecutor', () => {
         distributions: [distribution],
       });
 
-      await executor.execute(dataset, distribution);
+      await reader.read(dataset, distribution);
 
       expect(spy).toHaveBeenCalledTimes(2);
     });
@@ -434,7 +434,7 @@ describe('SparqlConstructExecutor', () => {
         .mockRejectedValueOnce(connectionError)
         .mockResolvedValueOnce([] as never);
 
-      const executor = new SparqlConstructExecutor({
+      const reader = new SparqlConstructReader({
         query: 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }',
         fetcher,
       });
@@ -447,7 +447,7 @@ describe('SparqlConstructExecutor', () => {
         distributions: [distribution],
       });
 
-      await executor.execute(dataset, distribution);
+      await reader.read(dataset, distribution);
 
       expect(spy).toHaveBeenCalledTimes(2);
     });
@@ -460,7 +460,7 @@ describe('SparqlConstructExecutor', () => {
         ),
       );
 
-      const executor = new SparqlConstructExecutor({
+      const reader = new SparqlConstructReader({
         query: 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }',
         retries: 2,
         fetcher,
@@ -474,7 +474,7 @@ describe('SparqlConstructExecutor', () => {
         distributions: [distribution],
       });
 
-      await expect(executor.execute(dataset, distribution)).rejects.toThrow(
+      await expect(reader.read(dataset, distribution)).rejects.toThrow(
         'HTTP status 502',
       );
       // 1 initial attempt + 2 retries = 3 calls.
@@ -486,7 +486,7 @@ describe('SparqlConstructExecutor', () => {
     it('returns quads when lineBuffer is enabled', async () => {
       const datasetIri = 'http://foo.org/id/dataset/foo';
 
-      const executor = new SparqlConstructExecutor({
+      const reader = new SparqlConstructReader({
         query: `CONSTRUCT {
           ?dataset ?p ?o .
         }
@@ -506,7 +506,7 @@ describe('SparqlConstructExecutor', () => {
         distributions: [distribution],
       });
 
-      const result = await executor.execute(dataset, distribution);
+      const result = await reader.read(dataset, distribution);
 
       const quads = [];
       for await (const quad of result) {
@@ -520,7 +520,7 @@ describe('SparqlConstructExecutor', () => {
       const triplesSpy = vi.spyOn(fetcher, 'fetchTriples');
       const rawSpy = vi.spyOn(fetcher, 'fetchRawStream');
 
-      const executor = new SparqlConstructExecutor({
+      const reader = new SparqlConstructReader({
         query: `CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o } LIMIT 1`,
         fetcher,
         lineBuffer: true,
@@ -535,7 +535,7 @@ describe('SparqlConstructExecutor', () => {
         distributions: [distribution],
       });
 
-      await executor.execute(dataset, distribution);
+      await reader.read(dataset, distribution);
 
       expect(triplesSpy).not.toHaveBeenCalled();
       expect(rawSpy).toHaveBeenCalled();
@@ -558,7 +558,7 @@ describe('SparqlConstructExecutor', () => {
         })() as never,
       );
 
-      const executor = new SparqlConstructExecutor({
+      const reader = new SparqlConstructReader({
         query: 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }',
         fetcher,
         deduplicate: true,
@@ -572,7 +572,7 @@ describe('SparqlConstructExecutor', () => {
         distributions: [distribution],
       });
 
-      const result = await executor.execute(dataset, distribution);
+      const result = await reader.read(dataset, distribution);
       const quads = [];
       for await (const quad of result) {
         quads.push(quad);
@@ -595,7 +595,7 @@ describe('SparqlConstructExecutor', () => {
         })() as never,
       );
 
-      const executor = new SparqlConstructExecutor({
+      const reader = new SparqlConstructReader({
         query: 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }',
         fetcher,
       });
@@ -608,7 +608,7 @@ describe('SparqlConstructExecutor', () => {
         distributions: [distribution],
       });
 
-      const result = await executor.execute(dataset, distribution);
+      const result = await reader.read(dataset, distribution);
       const quads = [];
       for await (const quad of result) {
         quads.push(quad);
@@ -619,12 +619,12 @@ describe('SparqlConstructExecutor', () => {
   });
 
   describe('fromFile', () => {
-    it('creates executor from a file', async () => {
-      const executor = await SparqlConstructExecutor.fromFile(
+    it('creates reader from a file', async () => {
+      const reader = await SparqlConstructReader.fromFile(
         'test/fixtures/query.rq',
       );
 
-      expect(executor).toBeInstanceOf(SparqlConstructExecutor);
+      expect(reader).toBeInstanceOf(SparqlConstructReader);
     });
   });
 
@@ -654,13 +654,13 @@ describe('SparqlConstructExecutor', () => {
       vi.spyOn(fetcher, 'fetchTriples').mockResolvedValue([] as never);
 
       const policy = recordingPolicy();
-      const executor = new SparqlConstructExecutor({
+      const reader = new SparqlConstructReader({
         query: 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }',
         fetcher,
       });
 
       const distribution = makeDistribution();
-      await executor.execute(makeDataset(distribution), distribution, {
+      await reader.read(makeDataset(distribution), distribution, {
         timeout: policy,
       });
 
@@ -686,7 +686,7 @@ describe('SparqlConstructExecutor', () => {
       );
 
       const policy = recordingPolicy();
-      const executor = new SparqlConstructExecutor({
+      const reader = new SparqlConstructReader({
         query: 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }',
         fetcher,
         retries: 0,
@@ -694,7 +694,7 @@ describe('SparqlConstructExecutor', () => {
       const distribution = makeDistribution();
 
       await expect(
-        executor.execute(makeDataset(distribution), distribution, {
+        reader.read(makeDataset(distribution), distribution, {
           timeout: policy,
         }),
       ).rejects.toThrow('504');
@@ -711,7 +711,7 @@ describe('SparqlConstructExecutor', () => {
       vi.spyOn(fetcher, 'fetchTriples').mockRejectedValue(abortError);
 
       const policy = recordingPolicy();
-      const executor = new SparqlConstructExecutor({
+      const reader = new SparqlConstructReader({
         query: 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }',
         fetcher,
         retries: 0,
@@ -719,7 +719,7 @@ describe('SparqlConstructExecutor', () => {
       const distribution = makeDistribution();
 
       await expect(
-        executor.execute(makeDataset(distribution), distribution, {
+        reader.read(makeDataset(distribution), distribution, {
           timeout: policy,
         }),
       ).rejects.toThrow();
@@ -736,7 +736,7 @@ describe('SparqlConstructExecutor', () => {
       vi.spyOn(fetcher, 'fetchTriples').mockRejectedValue(timeoutError);
 
       const policy = recordingPolicy();
-      const executor = new SparqlConstructExecutor({
+      const reader = new SparqlConstructReader({
         query: 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }',
         fetcher,
         retries: 0,
@@ -744,7 +744,7 @@ describe('SparqlConstructExecutor', () => {
       const distribution = makeDistribution();
 
       await expect(
-        executor.execute(makeDataset(distribution), distribution, {
+        reader.read(makeDataset(distribution), distribution, {
           timeout: policy,
         }),
       ).rejects.toThrow();
@@ -763,7 +763,7 @@ describe('SparqlConstructExecutor', () => {
       );
 
       const policy = recordingPolicy();
-      const executor = new SparqlConstructExecutor({
+      const reader = new SparqlConstructReader({
         query: 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }',
         fetcher,
         retries: 0,
@@ -771,7 +771,7 @@ describe('SparqlConstructExecutor', () => {
       const distribution = makeDistribution();
 
       await expect(
-        executor.execute(makeDataset(distribution), distribution, {
+        reader.read(makeDataset(distribution), distribution, {
           timeout: policy,
         }),
       ).rejects.toThrow();
@@ -792,13 +792,13 @@ describe('SparqlConstructExecutor', () => {
         .mockResolvedValueOnce([] as never);
 
       const policy = recordingPolicy();
-      const executor = new SparqlConstructExecutor({
+      const reader = new SparqlConstructReader({
         query: 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }',
         fetcher,
       });
       const distribution = makeDistribution();
 
-      await executor.execute(makeDataset(distribution), distribution, {
+      await reader.read(makeDataset(distribution), distribution, {
         timeout: policy,
       });
 
@@ -814,20 +814,20 @@ describe('SparqlConstructExecutor', () => {
       );
     });
 
-    it('uses a default policy when ExecuteOptions omits one', async () => {
+    it('uses a default policy when ReadOptions omits one', async () => {
       const fetcher = new SparqlEndpointFetcher();
       vi.spyOn(fetcher, 'fetchTriples').mockResolvedValue([] as never);
 
-      const executor = new SparqlConstructExecutor({
+      const reader = new SparqlConstructReader({
         query: 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }',
         fetcher,
       });
       const distribution = makeDistribution();
 
-      // No policy supplied at construction or per call — the executor falls
+      // No policy supplied at construction or per call — the reader falls
       // back to its module-level default and the request still completes.
       await expect(
-        executor.execute(makeDataset(distribution), distribution),
+        reader.read(makeDataset(distribution), distribution),
       ).resolves.toBeDefined();
     });
 
@@ -854,7 +854,7 @@ describe('SparqlConstructExecutor', () => {
         beforeRequest: vi.fn().mockReturnValue(10),
         afterRequest: vi.fn(),
       };
-      const executor = new SparqlConstructExecutor({
+      const reader = new SparqlConstructReader({
         query: 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }',
         fetcher,
         retries: 0,
@@ -862,7 +862,7 @@ describe('SparqlConstructExecutor', () => {
       const distribution = makeDistribution();
 
       await expect(
-        executor.execute(makeDataset(distribution), distribution, {
+        reader.read(makeDataset(distribution), distribution, {
           timeout: policy,
         }),
       ).rejects.toThrow();

@@ -1,7 +1,7 @@
 import { Dataset, Distribution } from '@lde/dataset';
 import type { Quad } from '@rdfjs/types';
-import type { Executor, VariableBindings } from './sparql/executor.js';
-import { NotSupported } from './sparql/executor.js';
+import type { Reader, VariableBindings } from './sparql/reader.js';
+import { NotSupported } from './sparql/reader.js';
 import type { TimeoutPolicy } from './sparql/timeoutPolicy.js';
 import { batch } from './batch.js';
 import type { Validator } from './validator.js';
@@ -22,54 +22,54 @@ export type QuadTransform<Ctx> = (
 ) => AsyncIterable<Quad>;
 
 /**
- * Context handed to a {@link QuadTransform} attached to an executor (extension
- * point 1: per-executor output, pre-merge).
+ * Context handed to a {@link QuadTransform} attached to a reader (extension
+ * point 1: per-reader output, pre-merge).
  *
  * `distribution` gives the transform endpoint reach – it may fire its own
  * SPARQL queries – and `stage` carries the stage identity.
  */
-export interface ExecutorContext {
+export interface ReaderContext {
   dataset: Dataset;
   distribution: Distribution;
   stage: string;
 }
 
 /**
- * An {@link Executor} with zero or more {@link QuadTransform}s attached as data.
+ * An {@link Reader} with zero or more {@link QuadTransform}s attached as data.
  *
- * The stage runner applies the transform(s) in order to **this executor's
- * output** before merging it with sibling executors. The window is one
- * `execute()` call:
+ * The stage runner applies the transform(s) in order to **this reader's
+ * output** before merging it with sibling readers. The window is one
+ * `read()` call:
  *
- * - for a global stage that is the executor's complete output;
+ * - for a global stage that is the reader's complete output;
  * - for a per-class stage that is one batch – one class at `batchSize: 1`.
  *
- * Decorating an executor is therefore construction-time data, not a wrapping
- * class: the runner is the only code that delegates to the inner executor.
+ * Decorating a reader is therefore construction-time data, not a wrapping
+ * class: the runner is the only code that delegates to the inner reader.
  */
-export interface AttachedExecutor {
-  executor: Executor;
-  transform?: QuadTransform<ExecutorContext> | QuadTransform<ExecutorContext>[];
+export interface AttachedReader {
+  reader: Reader;
+  transform?: QuadTransform<ReaderContext> | QuadTransform<ReaderContext>[];
 }
 
-/** One or more executors, each optionally carrying attached transforms. */
-export type StageExecutors =
-  | Executor
-  | AttachedExecutor
-  | (Executor | AttachedExecutor)[];
+/** One or more readers, each optionally carrying attached transforms. */
+export type StageReaders =
+  | Reader
+  | AttachedReader
+  | (Reader | AttachedReader)[];
 
-/** An executor paired with its attached transforms, normalised to an array. */
-interface NormalizedExecutor {
-  executor: Executor;
-  transforms: QuadTransform<ExecutorContext>[];
+/** A reader paired with its attached transforms, normalised to an array. */
+interface NormalizedReader {
+  reader: Reader;
+  transforms: QuadTransform<ReaderContext>[];
 }
 
 export interface StageOptions {
   name: string;
-  executors: StageExecutors;
+  readers: StageReaders;
   itemSelector?: ItemSelector;
   /**
-   * Maximum number of bindings per executor call.
+   * Maximum number of bindings per reader call.
    *
    * Also used as the selector's page size so that each paginated request
    * fills exactly one batch. A `LIMIT` clause in the selector query
@@ -80,8 +80,8 @@ export interface StageOptions {
   batchSize?: number;
   /**
    * Maximum concurrent in-flight SPARQL queries. Within each batch, all
-   * executors run in parallel; the number of concurrent batches is
-   * automatically reduced to `⌊maxConcurrency / executorCount⌋` so the
+   * readers run in parallel; the number of concurrent batches is
+   * automatically reduced to `⌊maxConcurrency / readerCount⌋` so the
    * total query pressure stays within this limit.
    *
    * @default 10
@@ -106,7 +106,7 @@ export interface StageOptions {
    * @default false
    */
   expectsOutput?: boolean;
-  /** Optional validation of the combined quads produced by all executors per batch. */
+  /** Optional validation of the combined quads produced by all readers per batch. */
   validation?: {
     validator: Validator;
     /** What to do when a batch fails validation. @default 'write' */
@@ -117,7 +117,7 @@ export interface StageOptions {
 export interface RunOptions {
   onProgress?: (itemsProcessed: number, quadsGenerated: number) => void;
   /**
-   * Per-dataset {@link TimeoutPolicy} threaded through to executors and
+   * Per-dataset {@link TimeoutPolicy} threaded through to readers and
    * item selectors. The Pipeline owns lifecycle (factory invocation per
    * dataset), so a single policy instance covers all stages and child
    * stages within one dataset.
@@ -136,7 +136,7 @@ export class Stage {
   readonly stages: readonly Stage[];
   /** Whether an empty result is treated as a hard failure. @see {@link StageOptions.expectsOutput} */
   readonly expectsOutput: boolean;
-  private readonly executors: NormalizedExecutor[];
+  private readonly readers: NormalizedReader[];
   private readonly itemSelector?: ItemSelector;
   private readonly batchSize: number;
   private readonly maxConcurrency: number;
@@ -145,7 +145,7 @@ export class Stage {
   constructor(options: StageOptions) {
     this.name = options.name;
     this.stages = options.stages ?? [];
-    this.executors = normalizeExecutors(options.executors);
+    this.readers = normalizeReaders(options.readers);
     this.itemSelector = options.itemSelector;
     this.batchSize = options.batchSize ?? 10;
     this.maxConcurrency = options.maxConcurrency ?? 10;
@@ -177,12 +177,12 @@ export class Stage {
       );
     }
 
-    const streams = await this.executeAll(dataset, distribution, timeout);
+    const streams = await this.readAll(dataset, distribution, timeout);
     if (streams instanceof NotSupported) {
       return streams;
     }
 
-    // Quads the executors produced (before any validation filtering); used to
+    // Quads the readers produced (before any validation filtering); used to
     // enforce `expectsOutput` below.
     let produced = 0;
 
@@ -282,12 +282,12 @@ export class Stage {
       const inFlight = new Set<Promise<void>>();
       let firstError: unknown;
 
-      // Divide maxConcurrency by executor count so the total concurrent
+      // Divide maxConcurrency by reader count so the total concurrent
       // SPARQL queries stays at maxConcurrency (each batch runs all
-      // executors in parallel).
+      // readers in parallel).
       const maxConcurrentBatches = Math.max(
         1,
-        Math.floor(this.maxConcurrency / this.executors.length),
+        Math.floor(this.maxConcurrency / this.readers.length),
       );
 
       const track = (promise: Promise<void>) => {
@@ -315,10 +315,10 @@ export class Stage {
 
           track(
             (async () => {
-              // Run all executors for this batch in parallel.
-              const executorOutputs = await Promise.all(
-                this.executors.map(async ({ executor, transforms }) => {
-                  const result = await executor.execute(dataset, distribution, {
+              // Run all readers for this batch in parallel.
+              const readerOutputs = await Promise.all(
+                this.readers.map(async ({ reader, transforms }) => {
+                  const result = await reader.read(dataset, distribution, {
                     bindings,
                     timeout: options?.timeout,
                   });
@@ -337,7 +337,7 @@ export class Stage {
                   return quads;
                 }),
               );
-              const batchQuads = executorOutputs.flat();
+              const batchQuads = readerOutputs.flat();
 
               if (
                 this.validation &&
@@ -397,7 +397,7 @@ export class Stage {
     await Promise.all([dispatchPromise, writePromise]);
 
     if (!hasResults) {
-      return new NotSupported('All executors returned NotSupported');
+      return new NotSupported('All readers returned NotSupported');
     }
 
     this.assertProduced(quadsGenerated);
@@ -428,14 +428,14 @@ export class Stage {
     return [];
   }
 
-  private async executeAll(
+  private async readAll(
     dataset: Dataset,
     distribution: Distribution,
     timeout: TimeoutPolicy | undefined,
   ): Promise<AsyncIterable<Quad>[] | NotSupported> {
     const results = await Promise.all(
-      this.executors.map(async ({ executor, transforms }) => {
-        const result = await executor.execute(dataset, distribution, {
+      this.readers.map(async ({ reader, transforms }) => {
+        const result = await reader.read(dataset, distribution, {
           timeout,
         });
         if (result instanceof NotSupported) return result;
@@ -451,26 +451,26 @@ export class Stage {
     }
 
     if (streams.length === 0) {
-      return new NotSupported('All executors returned NotSupported');
+      return new NotSupported('All readers returned NotSupported');
     }
 
     return streams;
   }
 
   /**
-   * Fold an executor's attached transforms over its output stream, in order,
-   * supplying the {@link ExecutorContext}. A transform sees one `execute()`
-   * call's output (see {@link AttachedExecutor}); `NotSupported` is handled by
+   * Fold a reader's attached transforms over its output stream, in order,
+   * supplying the {@link ReaderContext}. A transform sees one `read()`
+   * call's output (see {@link AttachedReader}); `NotSupported` is handled by
    * the caller and never reaches a transform.
    */
   private applyTransforms(
-    transforms: QuadTransform<ExecutorContext>[],
+    transforms: QuadTransform<ReaderContext>[],
     stream: AsyncIterable<Quad>,
     dataset: Dataset,
     distribution: Distribution,
   ): AsyncIterable<Quad> {
     if (transforms.length === 0) return stream;
-    const context: ExecutorContext = {
+    const context: ReaderContext = {
       dataset,
       distribution,
       stage: this.name,
@@ -482,21 +482,21 @@ export class Stage {
   }
 }
 
-/** Normalise the {@link StageExecutors} union to executor + transforms pairs. */
-function normalizeExecutors(executors: StageExecutors): NormalizedExecutor[] {
-  const list = Array.isArray(executors) ? executors : [executors];
+/** Normalise the {@link StageReaders} union to reader + transforms pairs. */
+function normalizeReaders(readers: StageReaders): NormalizedReader[] {
+  const list = Array.isArray(readers) ? readers : [readers];
   return list.map((entry) => {
-    if ('execute' in entry) {
-      return { executor: entry, transforms: [] };
+    if ('read' in entry) {
+      return { reader: entry, transforms: [] };
     }
-    const { executor, transform } = entry;
+    const { reader, transform } = entry;
     const transforms =
       transform === undefined
         ? []
         : Array.isArray(transform)
           ? [...transform]
           : [transform];
-    return { executor, transforms };
+    return { reader, transforms };
   });
 }
 
@@ -529,7 +529,7 @@ async function* countQuads(
   onCount(count);
 }
 
-/** Selects items (as variable bindings) for executors to process. Pagination is an implementation detail. */
+/** Selects items (as variable bindings) for readers to process. Pagination is an implementation detail. */
 export interface ItemSelector {
   select(
     distribution: Distribution,

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Pipeline, type PipelinePlugin } from '../src/pipeline.js';
 import { Dataset, Distribution } from '@lde/dataset';
 import { Stage } from '../src/stage.js';
-import { NotSupported } from '../src/sparql/executor.js';
+import { NotSupported } from '../src/sparql/reader.js';
 import { ImportFailed } from '@lde/sparql-importer';
 import {
   ResolvedDistribution,
@@ -137,7 +137,7 @@ function makeStage(
   result: NotSupported | void = undefined,
   subStages: Stage[] = [],
 ): Stage {
-  const stage = new Stage({ name, executors: [], stages: subStages });
+  const stage = new Stage({ name, readers: [], stages: subStages });
   vi.spyOn(stage, 'run').mockResolvedValue(result);
   return stage;
 }
@@ -240,7 +240,7 @@ describe('Pipeline', () => {
         ),
       ];
 
-      const stage = new Stage({ name: 'stage1', executors: [] });
+      const stage = new Stage({ name: 'stage1', readers: [] });
       vi.spyOn(stage, 'run').mockImplementation(
         async (_dataset, _distribution, stageWriter) => {
           await stageWriter.write(
@@ -1472,8 +1472,8 @@ describe('Pipeline', () => {
         DataFactory.namedNode('http://example.org/p'),
         DataFactory.namedNode('http://example.org/o'),
       );
-      const executor = {
-        execute: async (_dataset: Dataset, distribution: Distribution) =>
+      const reader = {
+        read: async (_dataset: Dataset, distribution: Distribution) =>
           distribution === endpointDistribution
             ? // endpoint truncated: no rows
               (async function* (): AsyncIterable<Quad> {
@@ -1485,7 +1485,7 @@ describe('Pipeline', () => {
       };
       const stage = new Stage({
         name: 'triples-count',
-        executors: executor,
+        readers: reader,
         expectsOutput: true,
       });
 
@@ -1528,7 +1528,7 @@ describe('Pipeline', () => {
 
     function realExecutor(quads: Quad[]) {
       return {
-        async execute(): Promise<AsyncIterable<Quad> | NotSupported> {
+        async read(): Promise<AsyncIterable<Quad> | NotSupported> {
           return (async function* () {
             yield* quads;
           })();
@@ -1566,7 +1566,7 @@ describe('Pipeline', () => {
 
       const pipeline = new Pipeline({
         datasetSelector: makeDatasetSelector(makeDataset()),
-        stages: [new Stage({ name: 'stage1', executors: realExecutor([q1]) })],
+        stages: [new Stage({ name: 'stage1', readers: realExecutor([q1]) })],
         writers: cw,
         plugins: [plugin],
         distributionResolver: makeResolver(makeResolvedDistribution()),
@@ -1608,7 +1608,7 @@ describe('Pipeline', () => {
 
       const pipeline = new Pipeline({
         datasetSelector: makeDatasetSelector(makeDataset()),
-        stages: [new Stage({ name: 'stage1', executors: realExecutor([q1]) })],
+        stages: [new Stage({ name: 'stage1', readers: realExecutor([q1]) })],
         writers: cw,
         plugins: [plugin1, plugin2],
         distributionResolver: makeResolver(makeResolvedDistribution()),
@@ -1657,7 +1657,7 @@ describe('Pipeline', () => {
 
       const pipeline = new Pipeline({
         datasetSelector: makeDatasetSelector(ds),
-        stages: [new Stage({ name: 'stage1', executors: realExecutor([]) })],
+        stages: [new Stage({ name: 'stage1', readers: realExecutor([]) })],
         writers: cw,
         plugins: [plugin],
         distributionResolver: makeResolver(makeResolvedDistribution()),
@@ -1683,8 +1683,8 @@ describe('Pipeline', () => {
       const pipeline = new Pipeline({
         datasetSelector: makeDatasetSelector(makeDataset()),
         stages: [
-          new Stage({ name: 'first', executors: realExecutor([]) }),
-          new Stage({ name: 'second', executors: realExecutor([]) }),
+          new Stage({ name: 'first', readers: realExecutor([]) }),
+          new Stage({ name: 'second', readers: realExecutor([]) }),
         ],
         writers: collectingWriter(),
         plugins: [plugin],

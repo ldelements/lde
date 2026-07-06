@@ -7,7 +7,7 @@ import {
   type QuerySelect,
   type ValuePatternRow,
 } from '@traqula/rules-sparql-1-1';
-import type { VariableBindings } from './executor.js';
+import type { VariableBindings } from './reader.js';
 
 const F = new AstFactory();
 

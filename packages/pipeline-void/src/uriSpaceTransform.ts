@@ -1,4 +1,4 @@
-import type { ExecutorContext, QuadTransform } from '@lde/pipeline';
+import type { ReaderContext, QuadTransform } from '@lde/pipeline';
 import { hashSuffix, skolemIri } from '@lde/dataset';
 import type { Quad } from '@rdfjs/types';
 import { DataFactory } from 'n3';
@@ -8,7 +8,7 @@ const { namedNode, quad, literal } = DataFactory;
 
 /**
  * Creates a {@link QuadTransform} that consumes `void:Linkset` quads from a
- * stage's executor output, matches each `void:objectsTarget` against the
+ * stage's reader output, matches each `void:objectsTarget` against the
  * configured URI space prefixes using `startsWith`, and aggregates triple
  * counts per matched space.
  *
@@ -16,12 +16,12 @@ const { namedNode, quad, literal } = DataFactory;
  * from the metadata quad subjects), not the raw URI space prefix. Unmatched
  * linksets are discarded.
  *
- * Attach it to the `object-uri-space.rq` stage's executor – directly via
+ * Attach it to the `object-uri-space.rq` stage's reader – directly via
  * {@link uriSpaces} or through the `transforms` map of {@link voidStages}.
  */
 export function withUriSpaces(
   uriSpaces: ReadonlyMap<string, readonly Quad[]>,
-): QuadTransform<ExecutorContext> {
+): QuadTransform<ReaderContext> {
   return (quads, { dataset }) =>
     aggregateUriSpaces(quads, dataset.iri.toString(), uriSpaces);
 }

@@ -1,7 +1,7 @@
 export { Stage, NotSupported } from '@lde/pipeline';
 export type {
-  AttachedExecutor,
-  ExecutorContext,
+  AttachedReader,
+  ReaderContext,
   QuadTransform,
 } from '@lde/pipeline';
 export * from './stage.js';

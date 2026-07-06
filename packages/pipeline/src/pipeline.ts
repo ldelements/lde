@@ -28,7 +28,7 @@ import {
   importOutcomeToVerdict,
   probeResultToVerdict,
 } from '@lde/distribution-health';
-import { NotSupported } from './sparql/executor.js';
+import { NotSupported } from './sparql/reader.js';
 import type { StageOutputResolver } from './stageOutputResolver.js';
 import type {
   DistributionAnalysisResult,
@@ -61,7 +61,7 @@ export interface PipelinePlugin {
    * Transform the merged, post-stage quad stream before writing (extension
    * point 2: pipeline-wide, post-merge). The home of cross-cutting concerns
    * – provenance, namespace normalisation – that apply regardless of which
-   * executor produced a quad.
+   * reader produced a quad.
    */
   beforeStageWrite?: QuadTransform<BeforeStageWriteContext>;
 }

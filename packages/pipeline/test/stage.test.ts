@@ -3,13 +3,13 @@ import { DataFactory } from 'n3';
 import type { Quad } from '@rdfjs/types';
 import { Stage } from '../src/stage.js';
 import type {
-  ExecutorContext,
+  ReaderContext,
   ItemSelector,
   QuadTransform,
   RunOptions,
 } from '../src/stage.js';
-import type { Executor, ExecuteOptions } from '../src/sparql/executor.js';
-import { NotSupported } from '../src/sparql/executor.js';
+import type { Reader, ReadOptions } from '../src/sparql/reader.js';
+import { NotSupported } from '../src/sparql/reader.js';
 import { Dataset, Distribution } from '@lde/dataset';
 import type { Writer } from '../src/writer/writer.js';
 import type {
@@ -36,12 +36,12 @@ const q3 = quad(
   namedNode('http://example.org/o3'),
 );
 
-function mockExecutor(quads: Quad[]): Executor {
+function mockExecutor(quads: Quad[]): Reader {
   return {
-    async execute(
+    async read(
       _dataset: Dataset,
       _distribution: Distribution,
-      _options?: ExecuteOptions,
+      _options?: ReadOptions,
     ): Promise<AsyncIterable<Quad> | NotSupported> {
       return (async function* () {
         yield* quads;
@@ -50,15 +50,15 @@ function mockExecutor(quads: Quad[]): Executor {
   };
 }
 
-function capturingExecutor(quads: Quad[]): Executor & {
-  execute: ReturnType<typeof vi.fn>;
+function capturingExecutor(quads: Quad[]): Reader & {
+  read: ReturnType<typeof vi.fn>;
 } {
-  const executor = {
-    execute: vi.fn(
+  const reader = {
+    read: vi.fn(
       async (
         _dataset: Dataset,
         _distribution: Distribution,
-        _options?: ExecuteOptions,
+        _options?: ReadOptions,
       ): Promise<AsyncIterable<Quad> | NotSupported> => {
         return (async function* () {
           yield* quads;
@@ -66,12 +66,12 @@ function capturingExecutor(quads: Quad[]): Executor & {
       },
     ),
   };
-  return executor;
+  return reader;
 }
 
-function notSupportedExecutor(message = 'not supported'): Executor {
+function notSupportedExecutor(message = 'not supported'): Reader {
   return {
-    async execute(): Promise<AsyncIterable<Quad> | NotSupported> {
+    async read(): Promise<AsyncIterable<Quad> | NotSupported> {
       return new NotSupported(message);
     },
   };
@@ -107,10 +107,10 @@ const dataset = new Dataset({
 const distribution = Distribution.sparql(new URL('http://example.org/sparql'));
 
 describe('Stage', () => {
-  it('writes quads from a single executor', async () => {
+  it('writes quads from a single reader', async () => {
     const stage = new Stage({
       name: 'test',
-      executors: mockExecutor([q1, q2]),
+      readers: mockExecutor([q1, q2]),
     });
 
     const writer = collectingWriter();
@@ -119,25 +119,25 @@ describe('Stage', () => {
     expect(writer.quads).toEqual([q1, q2]);
   });
 
-  it('returns NotSupported when single executor returns NotSupported', async () => {
+  it('returns NotSupported when single reader returns NotSupported', async () => {
     const stage = new Stage({
       name: 'test',
-      executors: notSupportedExecutor(),
+      readers: notSupportedExecutor(),
     });
 
     const writer = collectingWriter();
     const result = await stage.run(dataset, distribution, writer);
     expect(result).toBeInstanceOf(NotSupported);
     expect((result as NotSupported).message).toBe(
-      'All executors returned NotSupported',
+      'All readers returned NotSupported',
     );
     expect(writer.quads).toEqual([]);
   });
 
-  it('writes all quads merged from multiple executors', async () => {
+  it('writes all quads merged from multiple readers', async () => {
     const stage = new Stage({
       name: 'test',
-      executors: [mockExecutor([q1]), mockExecutor([q2, q3])],
+      readers: [mockExecutor([q1]), mockExecutor([q2, q3])],
     });
 
     const writer = collectingWriter();
@@ -146,10 +146,10 @@ describe('Stage', () => {
     expect(writer.quads).toEqual([q1, q2, q3]);
   });
 
-  it('writes quads only from successful executors when some return NotSupported', async () => {
+  it('writes quads only from successful readers when some return NotSupported', async () => {
     const stage = new Stage({
       name: 'test',
-      executors: [
+      readers: [
         notSupportedExecutor(),
         mockExecutor([q1, q2]),
         notSupportedExecutor(),
@@ -162,23 +162,23 @@ describe('Stage', () => {
     expect(writer.quads).toEqual([q1, q2]);
   });
 
-  it('returns NotSupported when all executors return NotSupported', async () => {
+  it('returns NotSupported when all readers return NotSupported', async () => {
     const stage = new Stage({
       name: 'test',
-      executors: [notSupportedExecutor('a'), notSupportedExecutor('b')],
+      readers: [notSupportedExecutor('a'), notSupportedExecutor('b')],
     });
 
     const writer = collectingWriter();
     const result = await stage.run(dataset, distribution, writer);
     expect(result).toBeInstanceOf(NotSupported);
     expect((result as NotSupported).message).toBe(
-      'All executors returned NotSupported',
+      'All readers returned NotSupported',
     );
     expect(writer.quads).toEqual([]);
   });
 
-  it('passes item selector bindings to executors in a single batch', async () => {
-    const executor = capturingExecutor([q1]);
+  it('passes item selector bindings to readers in a single batch', async () => {
+    const reader = capturingExecutor([q1]);
     const bindings = [
       { class: namedNode('http://example.org/Person') },
       { class: namedNode('http://example.org/Book') },
@@ -186,7 +186,7 @@ describe('Stage', () => {
 
     const stage = new Stage({
       name: 'test',
-      executors: executor,
+      readers: reader,
       itemSelector: mockItemSelector(bindings),
     });
 
@@ -194,16 +194,16 @@ describe('Stage', () => {
     const result = await stage.run(dataset, distribution, writer);
     expect(result).not.toBeInstanceOf(NotSupported);
 
-    expect(executor.execute).toHaveBeenCalledOnce();
-    expect(executor.execute).toHaveBeenCalledWith(
+    expect(reader.read).toHaveBeenCalledOnce();
+    expect(reader.read).toHaveBeenCalledWith(
       dataset,
       distribution,
       expect.objectContaining({ bindings }),
     );
   });
 
-  it('batches bindings across multiple executor calls', async () => {
-    const executor = capturingExecutor([q1]);
+  it('batches bindings across multiple reader calls', async () => {
+    const reader = capturingExecutor([q1]);
     const bindings = [
       { class: namedNode('http://example.org/A') },
       { class: namedNode('http://example.org/B') },
@@ -212,7 +212,7 @@ describe('Stage', () => {
 
     const stage = new Stage({
       name: 'test',
-      executors: executor,
+      readers: reader,
       itemSelector: mockItemSelector(bindings),
       batchSize: 2,
     });
@@ -221,14 +221,14 @@ describe('Stage', () => {
     const result = await stage.run(dataset, distribution, writer);
     expect(result).not.toBeInstanceOf(NotSupported);
 
-    expect(executor.execute).toHaveBeenCalledTimes(2);
-    expect(executor.execute).toHaveBeenNthCalledWith(
+    expect(reader.read).toHaveBeenCalledTimes(2);
+    expect(reader.read).toHaveBeenNthCalledWith(
       1,
       dataset,
       distribution,
       expect.objectContaining({ bindings: [bindings[0], bindings[1]] }),
     );
-    expect(executor.execute).toHaveBeenNthCalledWith(
+    expect(reader.read).toHaveBeenNthCalledWith(
       2,
       dataset,
       distribution,
@@ -237,7 +237,7 @@ describe('Stage', () => {
   });
 
   it('uses custom batchSize', async () => {
-    const executor = capturingExecutor([q1]);
+    const reader = capturingExecutor([q1]);
     const bindings = [
       { class: namedNode('http://example.org/A') },
       { class: namedNode('http://example.org/B') },
@@ -246,7 +246,7 @@ describe('Stage', () => {
 
     const stage = new Stage({
       name: 'test',
-      executors: executor,
+      readers: reader,
       itemSelector: mockItemSelector(bindings),
       batchSize: 1,
     });
@@ -254,45 +254,45 @@ describe('Stage', () => {
     const writer = collectingWriter();
     await stage.run(dataset, distribution, writer);
 
-    expect(executor.execute).toHaveBeenCalledTimes(3);
+    expect(reader.read).toHaveBeenCalledTimes(3);
   });
 
   it('returns NotSupported when item selector yields nothing', async () => {
-    const executor = capturingExecutor([q1]);
+    const reader = capturingExecutor([q1]);
 
     const stage = new Stage({
       name: 'test',
-      executors: executor,
+      readers: reader,
       itemSelector: mockItemSelector([]),
     });
 
     const writer = collectingWriter();
     const result = await stage.run(dataset, distribution, writer);
     expect(result).toBeInstanceOf(NotSupported);
-    expect(executor.execute).not.toHaveBeenCalled();
+    expect(reader.read).not.toHaveBeenCalled();
   });
 
   it('works without an item selector', async () => {
-    const executor = capturingExecutor([q1, q2]);
+    const reader = capturingExecutor([q1, q2]);
 
     const stage = new Stage({
       name: 'test',
-      executors: executor,
+      readers: reader,
     });
 
     const writer = collectingWriter();
     const result = await stage.run(dataset, distribution, writer);
     expect(result).not.toBeInstanceOf(NotSupported);
     expect(writer.quads).toEqual([q1, q2]);
-    expect(executor.execute).toHaveBeenCalledWith(
+    expect(reader.read).toHaveBeenCalledWith(
       dataset,
       distribution,
       expect.objectContaining({}),
     );
   });
 
-  it('forwards distribution to executors', async () => {
-    const executor = capturingExecutor([q1]);
+  it('forwards distribution to readers', async () => {
+    const reader = capturingExecutor([q1]);
     const namedGraphDistribution = Distribution.sparql(
       new URL('http://example.org/sparql'),
       'http://example.org/graph',
@@ -300,13 +300,13 @@ describe('Stage', () => {
 
     const stage = new Stage({
       name: 'test',
-      executors: executor,
+      readers: reader,
     });
 
     const writer = collectingWriter();
     await stage.run(dataset, namedGraphDistribution, writer);
 
-    expect(executor.execute).toHaveBeenCalledWith(
+    expect(reader.read).toHaveBeenCalledWith(
       dataset,
       namedGraphDistribution,
       expect.objectContaining({}),
@@ -314,7 +314,7 @@ describe('Stage', () => {
   });
 
   it('passes the distribution to the item selector', async () => {
-    const executor = capturingExecutor([q1]);
+    const reader = capturingExecutor([q1]);
     const bindings = [{ class: namedNode('http://example.org/Person') }];
     const selectFn = vi.fn(async function* () {
       yield* bindings;
@@ -322,7 +322,7 @@ describe('Stage', () => {
 
     const stage = new Stage({
       name: 'test',
-      executors: executor,
+      readers: reader,
       itemSelector: { select: selectFn },
     });
 
@@ -335,7 +335,7 @@ describe('Stage', () => {
       10,
       expect.objectContaining({}),
     );
-    expect(executor.execute).toHaveBeenCalledWith(
+    expect(reader.read).toHaveBeenCalledWith(
       dataset,
       distribution,
       expect.objectContaining({ bindings }),
@@ -343,14 +343,14 @@ describe('Stage', () => {
   });
 
   it('passes batchSize to item selector', async () => {
-    const executor = capturingExecutor([q1]);
+    const reader = capturingExecutor([q1]);
     const selectFn = vi.fn(async function* () {
       yield { class: namedNode('http://example.org/Person') };
     });
 
     const stage = new Stage({
       name: 'test',
-      executors: executor,
+      readers: reader,
       itemSelector: { select: selectFn },
       batchSize: 500,
     });
@@ -367,11 +367,11 @@ describe('Stage', () => {
 
   describe('sub-stages', () => {
     it('stores sub-stages', () => {
-      const child1 = new Stage({ name: 'child1', executors: mockExecutor([]) });
-      const child2 = new Stage({ name: 'child2', executors: mockExecutor([]) });
+      const child1 = new Stage({ name: 'child1', readers: mockExecutor([]) });
+      const child2 = new Stage({ name: 'child2', readers: mockExecutor([]) });
       const parent = new Stage({
         name: 'parent',
-        executors: mockExecutor([]),
+        readers: mockExecutor([]),
         stages: [child1, child2],
       });
 
@@ -379,7 +379,7 @@ describe('Stage', () => {
     });
 
     it('defaults to empty stages', () => {
-      const stage = new Stage({ name: 'test', executors: mockExecutor([]) });
+      const stage = new Stage({ name: 'test', readers: mockExecutor([]) });
       expect(stage.stages).toEqual([]);
     });
   });
@@ -389,12 +389,12 @@ describe('Stage', () => {
       quads: Quad[],
       delayMs: number,
       tracker: { current: number; max: number },
-    ): Executor {
+    ): Reader {
       return {
-        async execute(
+        async read(
           _dataset: Dataset,
           _distribution: Distribution,
-          _options?: ExecuteOptions,
+          _options?: ReadOptions,
         ): Promise<AsyncIterable<Quad> | NotSupported> {
           tracker.current++;
           tracker.max = Math.max(tracker.max, tracker.current);
@@ -407,13 +407,13 @@ describe('Stage', () => {
       };
     }
 
-    function failingExecutor(failOnCall: number): Executor {
+    function failingExecutor(failOnCall: number): Reader {
       let callCount = 0;
       return {
-        async execute(): Promise<AsyncIterable<Quad> | NotSupported> {
+        async read(): Promise<AsyncIterable<Quad> | NotSupported> {
           callCount++;
           if (callCount === failOnCall) {
-            throw new Error('executor failure');
+            throw new Error('reader failure');
           }
           return (async function* () {
             yield q1;
@@ -422,11 +422,11 @@ describe('Stage', () => {
       };
     }
 
-    it('runs multiple executors in parallel within a batch', async () => {
+    it('runs multiple readers in parallel within a batch', async () => {
       const tracker = { current: 0, max: 0 };
       const stage = new Stage({
         name: 'test',
-        executors: [
+        readers: [
           delayExecutor([q1], 30, tracker),
           delayExecutor([q2], 30, tracker),
         ],
@@ -440,16 +440,16 @@ describe('Stage', () => {
       const writer = collectingWriter();
       await stage.run(dataset, distribution, writer);
 
-      // Both executors should have run concurrently within the single batch.
+      // Both readers should have run concurrently within the single batch.
       expect(tracker.max).toBe(2);
       expect(writer.quads).toEqual([q1, q2]);
     });
 
-    it('runs executor batches concurrently', async () => {
+    it('runs reader batches concurrently', async () => {
       const tracker = { current: 0, max: 0 };
       const stage = new Stage({
         name: 'test',
-        executors: delayExecutor([q1], 20, tracker),
+        readers: delayExecutor([q1], 20, tracker),
         itemSelector: mockItemSelector([
           { class: namedNode('http://example.org/A') },
           { class: namedNode('http://example.org/B') },
@@ -467,12 +467,12 @@ describe('Stage', () => {
       expect(writer.quads).toHaveLength(4);
     });
 
-    it('shares maxConcurrency across parallel executors', async () => {
+    it('shares maxConcurrency across parallel readers', async () => {
       const tracker = { current: 0, max: 0 };
-      // 2 executors with maxConcurrency=4 → 2 concurrent batches × 2 executors = 4 queries.
+      // 2 readers with maxConcurrency=4 → 2 concurrent batches × 2 readers = 4 queries.
       const stage = new Stage({
         name: 'test',
-        executors: [
+        readers: [
           delayExecutor([q1], 30, tracker),
           delayExecutor([q2], 30, tracker),
         ],
@@ -489,7 +489,7 @@ describe('Stage', () => {
       const writer = collectingWriter();
       await stage.run(dataset, distribution, writer);
 
-      // 2 batches × 2 executors = 4 concurrent queries, within maxConcurrency.
+      // 2 batches × 2 readers = 4 concurrent queries, within maxConcurrency.
       expect(tracker.max).toBeLessThanOrEqual(4);
       expect(writer.quads).toHaveLength(8);
     });
@@ -498,7 +498,7 @@ describe('Stage', () => {
       const tracker = { current: 0, max: 0 };
       const stage = new Stage({
         name: 'test',
-        executors: delayExecutor([q1], 10, tracker),
+        readers: delayExecutor([q1], 10, tracker),
         itemSelector: mockItemSelector([
           { class: namedNode('http://example.org/A') },
           { class: namedNode('http://example.org/B') },
@@ -518,10 +518,10 @@ describe('Stage', () => {
       expect(writer.quads).toHaveLength(6);
     });
 
-    it('propagates executor errors', async () => {
+    it('propagates reader errors', async () => {
       const stage = new Stage({
         name: 'test',
-        executors: failingExecutor(2),
+        readers: failingExecutor(2),
         itemSelector: mockItemSelector([
           { class: namedNode('http://example.org/A') },
           { class: namedNode('http://example.org/B') },
@@ -533,18 +533,18 @@ describe('Stage', () => {
 
       const writer = collectingWriter();
       await expect(stage.run(dataset, distribution, writer)).rejects.toThrow(
-        'executor failure',
+        'reader failure',
       );
     });
 
-    it('propagates error when one of multiple parallel executors fails', async () => {
+    it('propagates error when one of multiple parallel readers fails', async () => {
       const stage = new Stage({
         name: 'test',
-        executors: [
+        readers: [
           mockExecutor([q1]),
           {
-            async execute(): Promise<AsyncIterable<Quad> | NotSupported> {
-              throw new Error('second executor failed');
+            async read(): Promise<AsyncIterable<Quad> | NotSupported> {
+              throw new Error('second reader failed');
             },
           },
         ],
@@ -556,7 +556,7 @@ describe('Stage', () => {
 
       const writer = collectingWriter();
       await expect(stage.run(dataset, distribution, writer)).rejects.toThrow(
-        'second executor failed',
+        'second reader failed',
       );
     });
 
@@ -564,7 +564,7 @@ describe('Stage', () => {
       const tracker = { current: 0, max: 0 };
       const stage = new Stage({
         name: 'test',
-        executors: delayExecutor([q1, q2], 10, tracker),
+        readers: delayExecutor([q1, q2], 10, tracker),
         itemSelector: mockItemSelector([
           { class: namedNode('http://example.org/A') },
           { class: namedNode('http://example.org/B') },
@@ -599,7 +599,7 @@ describe('Stage', () => {
 
       const stage = new Stage({
         name: 'test',
-        executors: mockExecutor([q1]),
+        readers: mockExecutor([q1]),
         itemSelector: mockItemSelector([
           { class: namedNode('http://example.org/A') },
           { class: namedNode('http://example.org/B') },
@@ -625,10 +625,10 @@ describe('Stage', () => {
       expect(progressCalls[2].items).toBe(3);
     });
 
-    it('returns NotSupported when all executors return NotSupported with item selector', async () => {
+    it('returns NotSupported when all readers return NotSupported with item selector', async () => {
       const stage = new Stage({
         name: 'test',
-        executors: notSupportedExecutor(),
+        readers: notSupportedExecutor(),
         itemSelector: mockItemSelector([
           { class: namedNode('http://example.org/A') },
           { class: namedNode('http://example.org/B') },
@@ -670,7 +670,7 @@ describe('Stage', () => {
       const validator = mockValidator({ conforms: true });
       const stage = new Stage({
         name: 'test',
-        executors: mockExecutor([q1, q2]),
+        readers: mockExecutor([q1, q2]),
         validation: { validator },
       });
 
@@ -684,7 +684,7 @@ describe('Stage', () => {
       const validator = mockValidator({ conforms: true });
       const stage = new Stage({
         name: 'test',
-        executors: mockExecutor([q1]),
+        readers: mockExecutor([q1]),
         itemSelector: mockItemSelector([
           { class: namedNode('http://example.org/A') },
         ]),
@@ -701,7 +701,7 @@ describe('Stage', () => {
       const validator = mockValidator({ conforms: false });
       const stage = new Stage({
         name: 'test',
-        executors: mockExecutor([q1, q2]),
+        readers: mockExecutor([q1, q2]),
         validation: { validator },
       });
 
@@ -714,7 +714,7 @@ describe('Stage', () => {
       const validator = mockValidator({ conforms: false });
       const stage = new Stage({
         name: 'test',
-        executors: mockExecutor([q1, q2]),
+        readers: mockExecutor([q1, q2]),
         validation: { validator, onInvalid: 'skip' },
       });
 
@@ -727,7 +727,7 @@ describe('Stage', () => {
       const validator = mockValidator({ conforms: false });
       const stage = new Stage({
         name: 'test',
-        executors: mockExecutor([q1]),
+        readers: mockExecutor([q1]),
         itemSelector: mockItemSelector([
           { class: namedNode('http://example.org/A') },
         ]),
@@ -743,7 +743,7 @@ describe('Stage', () => {
       const validator = mockValidator({ conforms: false, violations: 3 });
       const stage = new Stage({
         name: 'test',
-        executors: mockExecutor([q1]),
+        readers: mockExecutor([q1]),
         validation: { validator, onInvalid: 'halt' },
       });
 
@@ -757,7 +757,7 @@ describe('Stage', () => {
       const validator = mockValidator({ conforms: false, violations: 2 });
       const stage = new Stage({
         name: 'test',
-        executors: mockExecutor([q1]),
+        readers: mockExecutor([q1]),
         itemSelector: mockItemSelector([
           { class: namedNode('http://example.org/A') },
         ]),
@@ -770,11 +770,11 @@ describe('Stage', () => {
       );
     });
 
-    it('validates combined output of multiple executors', async () => {
+    it('validates combined output of multiple readers', async () => {
       const validator = mockValidator({ conforms: true });
       const stage = new Stage({
         name: 'test',
-        executors: [mockExecutor([q1]), mockExecutor([q2])],
+        readers: [mockExecutor([q1]), mockExecutor([q2])],
         validation: { validator },
       });
 
@@ -813,7 +813,7 @@ describe('Stage', () => {
 
       const stage = new Stage({
         name: 'test',
-        executors: mockExecutor([q1, q2]),
+        readers: mockExecutor([q1, q2]),
         validation: { validator },
       });
 
@@ -853,7 +853,7 @@ describe('Stage', () => {
 
       const stage = new Stage({
         name: 'test',
-        executors: mockExecutor([q1]),
+        readers: mockExecutor([q1]),
         itemSelector: mockItemSelector([
           { class: namedNode('http://example.org/A') },
         ]),
@@ -869,11 +869,11 @@ describe('Stage', () => {
       expect(validator.validate).toHaveBeenCalledOnce();
     });
 
-    it('validates combined output of multiple executors (with selector)', async () => {
+    it('validates combined output of multiple readers (with selector)', async () => {
       const validator = mockValidator({ conforms: true });
       const stage = new Stage({
         name: 'test',
-        executors: [mockExecutor([q1]), mockExecutor([q2])],
+        readers: [mockExecutor([q1]), mockExecutor([q2])],
         itemSelector: mockItemSelector([
           { class: namedNode('http://example.org/A') },
         ]),
@@ -896,18 +896,18 @@ describe('Stage', () => {
       namedNode('http://example.org/o'),
     );
 
-    function appendTransform(toAppend: Quad): QuadTransform<ExecutorContext> {
+    function appendTransform(toAppend: Quad): QuadTransform<ReaderContext> {
       return async function* (quads) {
         yield* quads;
         yield toAppend;
       };
     }
 
-    it('applies an attached transform to the executor output', async () => {
+    it('applies an attached transform to the reader output', async () => {
       const stage = new Stage({
         name: 'test',
-        executors: {
-          executor: mockExecutor([q1]),
+        readers: {
+          reader: mockExecutor([q1]),
           transform: appendTransform(extra),
         },
       });
@@ -917,9 +917,9 @@ describe('Stage', () => {
       expect(writer.quads).toEqual([q1, extra]);
     });
 
-    it('supplies the ExecutorContext to the transform', async () => {
-      let seen: ExecutorContext | undefined;
-      const transform: QuadTransform<ExecutorContext> = async function* (
+    it('supplies the ReaderContext to the transform', async () => {
+      let seen: ReaderContext | undefined;
+      const transform: QuadTransform<ReaderContext> = async function* (
         quads,
         context,
       ) {
@@ -929,7 +929,7 @@ describe('Stage', () => {
 
       const stage = new Stage({
         name: 'my-stage',
-        executors: { executor: mockExecutor([q1]), transform },
+        readers: { reader: mockExecutor([q1]), transform },
       });
 
       await stage.run(dataset, distribution, collectingWriter());
@@ -939,8 +939,8 @@ describe('Stage', () => {
     it('applies multiple attached transforms in order', async () => {
       const stage = new Stage({
         name: 'test',
-        executors: {
-          executor: mockExecutor([q1]),
+        readers: {
+          reader: mockExecutor([q1]),
           transform: [appendTransform(q2), appendTransform(q3)],
         },
       });
@@ -950,11 +950,11 @@ describe('Stage', () => {
       expect(writer.quads).toEqual([q1, q2, q3]);
     });
 
-    it('transforms only the attached executor, not its siblings', async () => {
+    it('transforms only the attached reader, not its siblings', async () => {
       const stage = new Stage({
         name: 'test',
-        executors: [
-          { executor: mockExecutor([q1]), transform: appendTransform(extra) },
+        readers: [
+          { reader: mockExecutor([q1]), transform: appendTransform(extra) },
           mockExecutor([q2]),
         ],
       });
@@ -964,11 +964,9 @@ describe('Stage', () => {
       expect(writer.quads).toEqual([q1, extra, q2]);
     });
 
-    it('does not apply the transform when the executor returns NotSupported', async () => {
+    it('does not apply the transform when the reader returns NotSupported', async () => {
       let called = false;
-      const transform: QuadTransform<ExecutorContext> = async function* (
-        quads,
-      ) {
+      const transform: QuadTransform<ReaderContext> = async function* (quads) {
         called = true;
         yield* quads;
         yield extra;
@@ -976,7 +974,7 @@ describe('Stage', () => {
 
       const stage = new Stage({
         name: 'test',
-        executors: { executor: notSupportedExecutor(), transform },
+        readers: { reader: notSupportedExecutor(), transform },
       });
 
       const result = await stage.run(dataset, distribution, collectingWriter());
@@ -984,12 +982,12 @@ describe('Stage', () => {
       expect(called).toBe(false);
     });
 
-    it('applies the transform per execute() call on a per-class stage', async () => {
-      // batchSize 1 → one execute() per class → the transform runs per class.
+    it('applies the transform per read() call on a per-class stage', async () => {
+      // batchSize 1 → one read() per class → the transform runs per class.
       const stage = new Stage({
         name: 'test',
-        executors: {
-          executor: mockExecutor([q1]),
+        readers: {
+          reader: mockExecutor([q1]),
           transform: appendTransform(extra),
         },
         itemSelector: mockItemSelector([
@@ -1012,7 +1010,7 @@ describe('Stage', () => {
       // the endpoint truncated the response — a hard failure, not an empty result.
       const stage = new Stage({
         name: 'triples-count',
-        executors: mockExecutor([]),
+        readers: mockExecutor([]),
         expectsOutput: true,
       });
 
@@ -1025,7 +1023,7 @@ describe('Stage', () => {
     it('does not throw when the stage produces quads', async () => {
       const stage = new Stage({
         name: 'triples-count',
-        executors: mockExecutor([q1]),
+        readers: mockExecutor([q1]),
         expectsOutput: true,
       });
 
@@ -1038,7 +1036,7 @@ describe('Stage', () => {
     it('tolerates an empty result by default', async () => {
       const stage = new Stage({
         name: 'class-partition',
-        executors: mockExecutor([]),
+        readers: mockExecutor([]),
       });
 
       const writer = collectingWriter();
@@ -1047,12 +1045,12 @@ describe('Stage', () => {
       expect(writer.quads).toEqual([]);
     });
 
-    it('returns NotSupported (not a failure) when the executor is unsupported', async () => {
+    it('returns NotSupported (not a failure) when the reader is unsupported', async () => {
       // expectsOutput concerns a supported-but-empty response; an unsupported
-      // executor is a skip, never a hard failure.
+      // reader is a skip, never a hard failure.
       const stage = new Stage({
         name: 'triples-count',
-        executors: notSupportedExecutor(),
+        readers: notSupportedExecutor(),
         expectsOutput: true,
       });
 
@@ -1065,7 +1063,7 @@ describe('Stage', () => {
       const stage = new Stage({
         name: 'per-class-count',
         itemSelector: mockItemSelector([{ class: namedNode('http://x') }]),
-        executors: mockExecutor([]),
+        readers: mockExecutor([]),
         expectsOutput: true,
       });
 
