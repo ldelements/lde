@@ -149,7 +149,7 @@ describe('typed schema-bound engine', () => {
     const result = await engine.search(dataset, query);
 
     expect(result.facets.format).toEqual([{ value: 'text/turtle', count: 2 }]);
-    // @ts-expect-error — a facet key outside the declaration is a compile error
+    // @ts-expect-error – a facet key outside the declaration is a compile error
     void result.facets.formaat;
     expect(result.hits[0].document.title).toEqual({ nl: ['Titel'] });
 
@@ -162,12 +162,12 @@ describe('typed schema-bound engine', () => {
     expect(batchedOutcome.facets.format).toEqual([
       { value: 'text/turtle', count: 2 },
     ]);
-    // @ts-expect-error — a facet key outside the declaration is a compile error
+    // @ts-expect-error – a facet key outside the declaration is a compile error
     void batchedOutcome.facets.formaat;
 
-    // @ts-expect-error — a type outside the engine’s schema is a compile error
+    // @ts-expect-error – a type outside the engine’s schema is a compile error
     void engine.search(organization, query);
-    // @ts-expect-error — a type outside the engine’s schema is a compile error
+    // @ts-expect-error – a type outside the engine’s schema is a compile error
     void engine.searchFacets(organization, [query]);
   });
 });

@@ -19,7 +19,7 @@ import {
  * prose. Covers schema binding (a type outside the bound schema is rejected),
  * the always-on query validation (a structurally invalid query is rejected
  * before it reaches the engine) and the result shape of a browse query and a
- * `searchFacets` batch — for every type in the schema.
+ * `searchFacets` batch – for every type in the schema.
  *
  * ```ts
  * describeSearchEngineContract('TypesenseSearchEngine', () => engine);

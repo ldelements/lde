@@ -211,7 +211,7 @@ export function createTypesenseSearchEngine<
       const cachedLabelsPromise = startCachedLabels();
       // The whole batch travels as ONE multi_search round-trip. Each query
       // compiles as facet-only regardless of what it carries: no hits
-      // (per_page 0) and no ordering — nothing is transferred or sorted that
+      // (per_page 0) and no ordering – nothing is transferred or sorted that
       // this method cannot return.
       const { results } = (await client.multiSearch.perform({
         searches: queries.map((query) => ({
@@ -235,8 +235,8 @@ export function createTypesenseSearchEngine<
         ),
       ]);
       // multi_search reports a failed entry inline instead of rejecting the
-      // call; pass that through as a per-query outcome — naming the facets,
-      // not the position, since the batch order is the caller's internal —
+      // call; pass that through as a per-query outcome – naming the facets,
+      // not the position, since the batch order is the caller's internal –
       // so one failed query never discards its siblings' facets.
       return results.map((result, index) =>
         'error' in result

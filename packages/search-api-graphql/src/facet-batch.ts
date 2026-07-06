@@ -15,11 +15,11 @@ export type FacetLoader = (field: string) => Promise<readonly FacetBucket[]>;
  * fields synchronously, so the loads land in the same tick, where the
  * DataLoader collects them into one batch, which is grouped into the fewest
  * equivalent queries ({@link groupFacetQueries}) and dispatched as ONE
- * `engine.searchFacets` call — one engine round-trip for the whole sidebar
+ * `engine.searchFacets` call – one engine round-trip for the whole sidebar
  * instead of one search per facet.
  *
  * A facet is supplementary: a failed facet query degrades exactly its own
- * facets to empty lists — reported per field via `onFacetError` — while its
+ * facets to empty lists – reported per field via `onFacetError` – while its
  * siblings keep their buckets; only a batch-level failure (the dispatch
  * itself rejecting) degrades every facet. Neither fails the whole GraphQL
  * query, which would null the non-null result and discard the items.
@@ -44,7 +44,7 @@ export function createFacetLoader(
             }
             return;
           }
-          // A failed (or missing — a port-contract breach) outcome degrades
+          // A failed (or missing – a port-contract breach) outcome degrades
           // exactly this query's facets; its siblings keep theirs.
           const error =
             outcome === undefined
@@ -72,8 +72,8 @@ export function createFacetLoader(
  * unchanged skip-own-filter semantics. Each facet counts with its OWN
  * `where`-filter removed, so removal only matters for a facet whose field is
  * actively filtered: every facet whose field carries no filter shares the
- * untouched `where` — one query faceting all of them (the unfiltered browse
- * collapses to a single query) — while each own-filtered facet gets its own
+ * untouched `where` – one query faceting all of them (the unfiltered browse
+ * collapses to a single query) – while each own-filtered facet gets its own
  * query with its own effective `where`. (Dropping a facet’s filter also drops
  * a policy default on that field, e.g. valid-only `status`, so the facet
  * counts across every value.) The queries are facet-only: no hits (`limit:

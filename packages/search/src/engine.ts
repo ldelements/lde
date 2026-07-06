@@ -46,7 +46,7 @@ export interface SearchEngine<
    * in a single engine round-trip (where the engine supports one, e.g.
    * Typesense `multi_search`), returning one {@link FacetsOutcome} per query,
    * positionally aligned with `queries`. This is what keeps a faceted
-   * sidebar — one skip-own-filter query variant per filtered facet — from
+   * sidebar – one skip-own-filter query variant per filtered facet – from
    * fanning out into per-facet engine calls. Only facet buckets come back: an
    * engine answers every query in the batch facet-only (as if `limit: 0` and
    * without ordering, whatever the query carries), so hits are never
@@ -65,7 +65,7 @@ export interface SearchEngine<
 }
 
 /**
- * One query’s outcome in a {@link SearchEngine.searchFacets} batch — its
+ * One query’s outcome in a {@link SearchEngine.searchFacets} batch – its
  * facet buckets, or the error that failed it. The `allSettled`-style shape
  * keeps one failed query (e.g. one failed `multi_search` entry) from
  * discarding its siblings’ results: a caller degrades exactly the facets of

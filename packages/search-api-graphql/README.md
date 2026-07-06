@@ -85,12 +85,12 @@ const gqlSchema = buildGraphQLSchema(searchSchema(DATASET, PERSON));
   filterable fields.
 - **`orderBy`**: `RELEVANCE` plus every `sortable` field, as an enum.
 - **Facets**: a keyed object with one field per `facetable` field; a bucket
-  carries `value` + `count` + a nullable `label` — the resolved data label for
+  carries `value` + `count` + a nullable `label` – the resolved data label for
   **reference** facets, `null` for token/free-string facets whose display the
   consumer owns (its own i18n, or the value itself). Selecting facet fields IS
   the request: each selected facet is computed with its own `where`-filter
   removed (skip-own-filter), and the whole selection is **batched per
-  request** — facets whose field carries no active filter share one query
+  request** – facets whose field carries no active filter share one query
   (the unfiltered browse collapses to a single query) and everything is
   dispatched as one `engine.searchFacets` call, so a typical page costs the
   listing search plus one batched facet round-trip.

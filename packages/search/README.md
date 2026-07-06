@@ -286,9 +286,9 @@ await engine.search(OTHER_TYPE, query); // compile error: not in this schema
 ```
 
 `searchFacets(type, queries)` is the port’s **batch entry point**: several
-facet-only queries — e.g. a faceted sidebar’s skip-own-filter variants —
+facet-only queries – e.g. a faceted sidebar’s skip-own-filter variants –
 answered in one engine round-trip (Typesense: a single `multi_search`), one
-outcome per query, positionally aligned — its facet map, or an in-place error,
+outcome per query, positionally aligned – its facet map, or an in-place error,
 so one failed query never discards its siblings’ facets. The same schema
 binding, per-query validation and typed facet keys apply to every query in
 the batch.
