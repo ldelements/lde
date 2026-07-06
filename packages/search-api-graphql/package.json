@@ -1,6 +1,6 @@
 {
   "name": "@lde/search-api-graphql",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Engine- and domain-agnostic GraphQL surface for @lde/search: builds an executable GraphQLSchema from a whole SearchSchema at runtime (no codegen) — one root query field per SearchType — served by generic resolvers over any SearchEngine. You supply the schema and per-type typeNames; it names neither your domain nor your engine.",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",

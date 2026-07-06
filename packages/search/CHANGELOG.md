@@ -1,3 +1,59 @@
+## 0.3.0 (2026-07-06)
+
+### 🚀 Features
+
+- ⚠️  **search:** batch facet searches into a single multi_search ([#554](https://github.com/ldelements/lde/pull/554))
+
+### 🩹 Fixes
+
+- **release:** unblock the search 0.3.0 release version bumps ([#557](https://github.com/ldelements/lde/pull/557))
+
+### ⚠️  Breaking Changes
+
+- **search:** batch facet searches into a single multi_search  ([#554](https://github.com/ldelements/lde/pull/554))
+  SearchEngine implementations must add the searchFacets method.
+  * feat(search)!: report per-query outcomes from searchFacets
+  - searchFacets returns one FacetsOutcome ({ facets } or { error }) per query,
+    so one failed query no longer discards its siblings' facets: the surface
+    degrades exactly the failed query's facets and reports each via onFacetError
+  - the Typesense adapter passes a failed multi_search entry through as an
+    in-place error naming the query's facet fields, and normalizes orderBy
+    away alongside limit/offset (facet-only compiles carry no sort)
+  - fetchLabels now throws on an inline multi_search error entry, engaging the
+    label degradation path instead of silently missing every label
+  - a missing outcome (port-contract breach) is reported, not read as empty
+  - restore the lazy iris thunk so the cached-label path skips collecting them
+  - record the decision as ADR 5 and amend the port snippet in ADR 3
+  BREAKING CHANGE: searchFacets returns FacetsOutcome[] instead of FacetMap[].
+  * style: use EN dashes in prose added by the facet batching
+  * test(search-typesense): extract a shared fake Typesense client
+  - one configurable fake (search, export, multi_search; recorded performs and
+    export calls) replaces the five bespoke fakes in parse-response.test.ts
+  - labelLookup() shares the filter_by id-list answering between the fetchLabels
+    and bundled-label-lookup tests
+  - re-anchor coverage thresholds: the helper's defensive guards are uncovered"
+  M	docs/decisions/0003-search-api-core-query-model.md
+  A	docs/decisions/0005-batch-facet-queries-through-the-engine-port.md
+  M	package-lock.json
+  M	packages/search-api-graphql/README.md
+  M	packages/search-api-graphql/package.json
+  M	packages/search-api-graphql/src/build-schema.ts
+  A	packages/search-api-graphql/src/facet-batch.ts
+  M	packages/search-api-graphql/test/build-schema.test.ts
+  A	packages/search-api-graphql/test/facet-batch.test.ts
+  M	packages/search-api-graphql/vite.config.ts
+  M	packages/search-typesense/README.md
+  M	packages/search-typesense/src/search.ts
+  A	packages/search-typesense/test/fake-typesense-client.ts
+  M	packages/search-typesense/test/parse-response.test.ts
+  M	packages/search-typesense/test/search-engine.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/README.md
+  M	packages/search/src/engine.ts
+  M	packages/search/src/index.ts
+  M	packages/search/src/testing.ts
+  M	packages/search/test/engine.test.ts
+
 ## 0.2.0 (2026-07-05)
 
 ### 🚀 Features
