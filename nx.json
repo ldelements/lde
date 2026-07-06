@@ -75,6 +75,7 @@
       "conventionalCommits": true,
       "updateDependents": "auto",
       "versionPrefix": "^",
+      "preserveMatchingDependencyRanges": false,
       "fallbackCurrentVersionResolver": "disk",
       "adjustSemverBumpsForZeroMajorVersion": true,
       "versionActionsOptions": {
