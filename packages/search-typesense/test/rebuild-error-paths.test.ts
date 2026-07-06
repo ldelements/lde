@@ -1,10 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Client } from 'typesense';
 import type { SearchType } from '@lde/search';
-import type { RunContext } from '@lde/pipeline';
-import { Dataset } from '@lde/dataset';
 import { BlueGreenRebuild } from '../src/blue-green-rebuild.js';
 import { InPlaceRebuild } from '../src/in-place-rebuild.js';
+import { makeRunContext, typesenseError } from './helpers.js';
 
 // Error-path specs that would need fault injection against a real server:
 // the writers must release the cross-pod lock when opening the run fails
@@ -15,23 +14,6 @@ const searchType: SearchType = {
   type: 'https://example.org/Object',
   fields: [{ name: 'title', kind: 'keyword' }],
 };
-
-const dataset = new Dataset({
-  iri: new URL('http://example.org/dataset/a'),
-  distributions: [],
-});
-
-function makeRunContext(): RunContext {
-  return {
-    runId: 'run-1',
-    startedAt: '2026-07-06T12:00:00.000Z',
-    selectedSources: () => [dataset.iri.toString()],
-  };
-}
-
-function typesenseError(status: number): Error & { httpStatus: number } {
-  return Object.assign(new Error(`HTTP ${status}`), { httpStatus: status });
-}
 
 /**
  * A fake of the client surface the writers use. The lock always acquires;

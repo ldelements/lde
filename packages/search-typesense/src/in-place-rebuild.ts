@@ -12,23 +12,20 @@ import {
   buildCollectionSchema,
   type CollectionSchemaOptions,
 } from './collection-schema.js';
-import { BatchImporter } from './import.js';
+import { BatchImporter, DEFAULT_BATCH_SIZE } from './import.js';
 import {
   DEFAULT_LOCK_TTL_MS,
-  RebuildAlreadyRunning,
-  acquireLock,
-  httpStatus,
+  ensureCollectionExists,
+  openLockedRun,
   releaseLock,
 } from './lock.js';
 import {
+  LAST_SEEN_FIELD,
+  SOURCE_FIELD,
   departedSources,
-  sourceDocumentsFilter,
+  membershipSweepFilters,
   staleDocumentsFilter,
 } from './sweep.js';
-
-/** Bookkeeping fields the writer stamps on every document. */
-const SOURCE_FIELD = 'source';
-const LAST_SEEN_FIELD = 'last_seen';
 
 /**
  * The most distinct sources the membership sweep can see (Typesense facet
@@ -63,7 +60,7 @@ export interface InPlaceRebuildOptions extends CollectionSchemaOptions {
  *   landed stays until the next run reconciles.
  *
  * `openRun` takes the single-flight cross-pod lock (throwing
- * {@link RebuildAlreadyRunning} when another rebuild holds it) and creates
+ * `RebuildAlreadyRunning` when another rebuild holds it) and creates
  * the collection on demand from the {@link SearchType} plus the two
  * bookkeeping fields.
  *
@@ -92,100 +89,83 @@ export class InPlaceRebuild<
 
   async openRun(context: RunContext): Promise<RunWriter<TDocument>> {
     const {
-      batchSize = 1000,
+      batchSize = DEFAULT_BATCH_SIZE,
       lockTtlMs = DEFAULT_LOCK_TTL_MS,
       ...schemaOptions
     } = this.options;
     const name = schemaOptions.name;
 
-    if (!(await acquireLock(this.client, name, lockTtlMs))) {
-      throw new RebuildAlreadyRunning(name);
-    }
-    try {
-      await this.ensureCollection(name, schemaOptions);
-    } catch (error) {
-      await releaseLock(this.client, name);
-      throw error;
-    }
+    return openLockedRun(this.client, name, lockTtlMs, async () => {
+      // Create the collection on demand: SearchType schema + the bookkeeping
+      // fields, `source` faceted so the membership sweep can enumerate the
+      // distinct sources.
+      await ensureCollectionExists(this.client, name, () => {
+        const schema = buildCollectionSchema(this.searchType, schemaOptions);
+        const bookkeeping: CollectionFieldSchema[] = [
+          { name: SOURCE_FIELD, type: 'string', facet: true },
+          { name: LAST_SEEN_FIELD, type: 'string' },
+        ];
+        return {
+          ...schema,
+          fields: [...(schema.fields ?? []), ...bookkeeping],
+        };
+      });
 
-    const importer = new BatchImporter<TDocument & StampedFields>(
-      this.client,
-      name,
-      batchSize,
-    );
+      const importer = new BatchImporter<TDocument & StampedFields>(
+        this.client,
+        name,
+        batchSize,
+      );
 
-    const stamp = (
-      dataset: Dataset,
-      documents: AsyncIterable<TDocument>,
-    ): AsyncIterable<TDocument & StampedFields> => {
-      const source = dataset.iri.toString();
-      const runId = context.runId;
-      return (async function* () {
-        for await (const document of documents) {
-          yield { ...document, source, last_seen: runId };
-        }
-      })();
-    };
+      const stamp = (
+        dataset: Dataset,
+        documents: AsyncIterable<TDocument>,
+      ): AsyncIterable<TDocument & StampedFields> => {
+        const source = dataset.iri.toString();
+        const runId = context.runId;
+        return (async function* () {
+          for await (const document of documents) {
+            yield { ...document, source, last_seen: runId };
+          }
+        })();
+      };
 
-    return {
-      write: async (dataset, documents) =>
-        importer.add(stamp(dataset, documents)),
+      return {
+        write: async (dataset, documents) =>
+          importer.add(stamp(dataset, documents)),
 
-      flush: async (dataset: Dataset, outcome?: DatasetOutcome) => {
-        // Land the buffered documents first, so the sweep below never
-        // deletes what this run just rewrote.
-        await importer.flush();
-        if (outcome !== 'success') {
-          // A failed dataset’s output is incomplete: sweeping against it
-          // would delete documents the run never got to rewrite. Leave the
-          // stale ones for the next successful run to reconcile.
-          return;
-        }
-        await this.deleteByFilter(
-          name,
-          staleDocumentsFilter(dataset.iri.toString(), context.runId),
-        );
-      },
+        flush: async (dataset: Dataset, outcome?: DatasetOutcome) => {
+          // Land the buffered documents first, so the sweep below never
+          // deletes what this run just rewrote.
+          await importer.flush();
+          if (outcome !== 'success') {
+            // A failed dataset’s output is incomplete: sweeping against it
+            // would delete documents the run never got to rewrite. Leave the
+            // stale ones for the next successful run to reconcile.
+            return;
+          }
+          await this.deleteByFilter(
+            name,
+            staleDocumentsFilter(dataset.iri.toString(), context.runId),
+          );
+        },
 
-      commit: async () => {
-        await importer.flush();
-        for (const source of departedSources(
-          await this.indexedSources(name),
-          context.selectedSources(),
-        )) {
-          await this.deleteByFilter(name, sourceDocumentsFilter(source));
-        }
-        await releaseLock(this.client, name);
-      },
+        commit: async () => {
+          await importer.flush();
+          const departed = departedSources(
+            await this.indexedSources(name),
+            context.selectedSources(),
+          );
+          for (const filter of membershipSweepFilters(departed)) {
+            await this.deleteByFilter(name, filter);
+          }
+          await releaseLock(this.client, name);
+        },
 
-      abort: async () => {
-        await releaseLock(this.client, name);
-      },
-    };
-  }
-
-  /** Create the collection on demand: SearchType schema + bookkeeping fields. */
-  private async ensureCollection(
-    name: string,
-    schemaOptions: CollectionSchemaOptions,
-  ): Promise<void> {
-    try {
-      await this.client.collections(name).retrieve();
-      return;
-    } catch (error) {
-      if (httpStatus(error) !== 404) {
-        throw error;
-      }
-    }
-    const schema = buildCollectionSchema(this.searchType, schemaOptions);
-    const bookkeeping: CollectionFieldSchema[] = [
-      // Faceted so the membership sweep can enumerate distinct sources.
-      { name: SOURCE_FIELD, type: 'string', facet: true },
-      { name: LAST_SEEN_FIELD, type: 'string' },
-    ];
-    await this.client.collections().create({
-      ...schema,
-      fields: [...(schema.fields ?? []), ...bookkeeping],
+        abort: async () => {
+          await releaseLock(this.client, name);
+        },
+      };
     });
   }
 
@@ -215,7 +195,9 @@ export class InPlaceRebuild<
   }
 }
 
-/** The bookkeeping fields stamped on every document. */
+/** The bookkeeping fields stamped on every document – the literal keys of
+ *  {@link SOURCE_FIELD} and {@link LAST_SEEN_FIELD}, spelled out because an
+ *  interface cannot derive its keys from constants. */
 interface StampedFields {
   source: string;
   last_seen: string;

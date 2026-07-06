@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   departedSources,
+  membershipSweepFilters,
   sourceDocumentsFilter,
   staleDocumentsFilter,
 } from '../src/sweep.js';
@@ -37,12 +38,9 @@ describe('staleDocumentsFilter', () => {
     );
   });
 
-  it('rejects values that would break out of the filter quoting', () => {
-    expect(() => staleDocumentsFilter('http://example.org/`', 'run-1')).toThrow(
-      /backtick/i,
-    );
-    expect(() => staleDocumentsFilter('http://example.org/a', '`')).toThrow(
-      /backtick/i,
+  it('escapes values that would break out of the filter quoting', () => {
+    expect(staleDocumentsFilter('http://example.org/`', 'run-1')).toBe(
+      'source:=`http://example.org/\\`` && last_seen:!=`run-1`',
     );
   });
 });
@@ -53,10 +51,35 @@ describe('sourceDocumentsFilter', () => {
       'source:=`http://example.org/a`',
     );
   });
+});
 
-  it('rejects values that would break out of the filter quoting', () => {
-    expect(() => sourceDocumentsFilter('http://example.org/`')).toThrow(
-      /backtick/i,
+describe('membershipSweepFilters', () => {
+  it('combines departed sources into one membership filter', () => {
+    expect(
+      membershipSweepFilters(['http://example.org/a', 'http://example.org/b']),
+    ).toEqual(['source:=[`http://example.org/a`,`http://example.org/b`]']);
+  });
+
+  it('returns no filters when nothing departed', () => {
+    expect(membershipSweepFilters([])).toEqual([]);
+  });
+
+  it('splits very long source lists over several filters', () => {
+    // Deletes travel in the URL query string; each filter must stay under a
+    // conservative length budget rather than listing every source in one.
+    const departed = Array.from(
+      { length: 100 },
+      (_, index) => `http://example.org/dataset/with/a/long/path/${index}`,
     );
+
+    const filters = membershipSweepFilters(departed);
+
+    expect(filters.length).toBeGreaterThan(1);
+    expect(filters.every((filter) => filter.length < 3200)).toBe(true);
+    // Every departed source appears in exactly one filter.
+    const listed = filters.flatMap(
+      (filter) => filter.match(/`([^`]+)`/g)?.length ?? 0,
+    );
+    expect(listed.reduce((sum, count) => sum + count, 0)).toBe(100);
   });
 });

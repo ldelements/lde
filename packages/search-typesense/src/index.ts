@@ -5,6 +5,7 @@ export type { InPlaceRebuildOptions } from './in-place-rebuild.js';
 export { RebuildAlreadyRunning } from './lock.js';
 export {
   departedSources,
+  membershipSweepFilters,
   sourceDocumentsFilter,
   staleDocumentsFilter,
 } from './sweep.js';

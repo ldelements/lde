@@ -1,5 +1,8 @@
 import type { Client, ImportResponse } from 'typesense';
 
+/** Documents imported per Typesense request unless a writer is told otherwise. */
+export const DEFAULT_BATCH_SIZE = 1000;
+
 /**
  * Accumulates documents across writes and upserts them into a collection in
  * fixed-size batches, so many small writes (one dataset at a time) still land
