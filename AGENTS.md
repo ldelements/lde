@@ -130,7 +130,8 @@ For releasing the new package’s first version, see [Releasing a new package](#
 `.github/workflows/release.yml` publishes existing packages on every push to main, but the CI workflow alone cannot bring up a brand-new `@lde/<name>` package: npm’s Trusted Publisher configuration can only be added to a package that already exists on the registry. The first version has to be published manually by a maintainer; CI takes over from the second version onwards.
 
 One-time bootstrap for a new package (once it has been merged to main): **the
-agent drives this itself** via the global `npm-bootstrap-package` skill —
+agent drives this itself** via the `npm-bootstrap-package` skill (committed in
+`.claude/skills`, so every contributor’s agent has it) —
 ideally anticipatorily, right after merging the PR that introduces the package
 (check `npm view @lde/<name>` before merging; the release run WILL fail on a
 package that does not exist yet). The maintainer is only asked for the browser
