@@ -12,9 +12,9 @@ export default mergeConfig(
         thresholds: {
           functions: 100,
           lines: 100,
-          // Branches dipped when the monolingual-text output branch was
-          // deleted in favour of the single und-locale text model.
-          branches: 92.38,
+          // Full-suite baseline, re-anchored when covered branches are
+          // deleted (autoUpdate only ever raises; see AGENTS.md).
+          branches: 92.66,
           statements: 100,
         },
       },

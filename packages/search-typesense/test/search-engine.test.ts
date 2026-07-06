@@ -228,6 +228,55 @@ describe('createTypesenseSearchEngine (integration)', () => {
     ]);
   });
 
+  it('answers a whole facet batch in one searchFacets call, positionally, with labelled reference buckets', async () => {
+    const facetMaps = await engine.searchFacets(datasetSchema, [
+      // Unfiltered: counts across all documents, faceting two fields at once.
+      { ...baseQuery, limit: 0, facets: ['keyword', 'publisher'] },
+      // Filtered (as a skip-own-filter variant would be): valid only.
+      {
+        ...baseQuery,
+        limit: 0,
+        where: [{ field: 'status', in: ['valid'] }],
+        facets: ['keyword'],
+      },
+    ]);
+
+    expect(facetMaps).toHaveLength(2);
+
+    const keyword = [...(facetMaps[0].keyword ?? [])].sort(
+      (a, b) => b.count - a.count,
+    );
+    expect(keyword).toEqual([
+      { value: 'kaarten', count: 2 },
+      { value: 'atlas', count: 1 },
+    ]);
+    // Reference facets carry resolved labels, exactly as in search().
+    const publisher = [...(facetMaps[0].publisher ?? [])].sort(
+      (a, b) => b.count - a.count,
+    );
+    expect(publisher).toEqual([
+      {
+        value: 'https://org/1',
+        count: 2,
+        label: { nl: ['Het Utrechts Archief'] },
+      },
+      {
+        value: 'https://org/2',
+        count: 1,
+        label: { nl: ['Rijksmuseum'], en: ['Rijksmuseum'] },
+      },
+    ]);
+
+    // The filtered query counts only the valid documents (d1, d2).
+    const filteredKeyword = [...(facetMaps[1].keyword ?? [])].sort((a, b) =>
+      a.value.localeCompare(b.value),
+    );
+    expect(filteredKeyword).toEqual([
+      { value: 'atlas', count: 1 },
+      { value: 'kaarten', count: 1 },
+    ]);
+  });
+
   it('always rejects a structurally invalid query, before reaching the engine', async () => {
     await expect(
       engine.search(datasetSchema, {

@@ -420,6 +420,239 @@ describe('createTypesenseSearchEngine label cache (labelCacheTtlMs)', () => {
   });
 });
 
+/** The backtick-escaped ids of a `filter_by: id:[…]` clause — the wire form
+ *  `escapeFilterValue` produces; shared by the label-lookup fakes. */
+function filterByIds(filterBy: string): string[] {
+  return [...filterBy.matchAll(/`([^`]+)`/g)].map((match) => match[1]);
+}
+
+describe('createTypesenseSearchEngine searchFacets (multi_search batching)', () => {
+  const facetBrowse: SearchQuery = {
+    where: [],
+    orderBy: [],
+    limit: 0,
+    offset: 0,
+    facets: [],
+    locale: 'nl',
+  };
+
+  // A fake client whose multi_search answers each entry via `perEntry`,
+  // recording every POST so the batching is observable.
+  function fakeClient(
+    perEntry: (
+      search: Record<string, unknown>,
+      index: number,
+    ) => Record<string, unknown>,
+  ) {
+    const performs: Record<string, unknown>[][] = [];
+    const client = {
+      multiSearch: {
+        perform: (request: { searches: Record<string, unknown>[] }) => {
+          performs.push(request.searches);
+          return Promise.resolve({
+            results: request.searches.map(perEntry),
+          });
+        },
+      },
+    };
+    return { client: client as unknown as Client, performs };
+  }
+
+  it('sends the whole batch as ONE multi_search and maps the results positionally', async () => {
+    const { client, performs } = fakeClient((search) => ({
+      found: 0,
+      hits: [],
+      facet_counts: [
+        {
+          field_name: search.facet_by,
+          counts: [{ value: `${search.facet_by}-value`, count: 1 }],
+        },
+      ],
+    }));
+    const engine = createTypesenseSearchEngine(client, searchSchema(schema), {
+      collections: { Dataset: 'datasets' },
+    });
+
+    const facetMaps = await engine.searchFacets(schema, [
+      { ...facetBrowse, facets: ['keyword'] },
+      // A non-zero limit still compiles facet-only: the port never returns
+      // hits, so the adapter normalizes rather than transferring a page.
+      { ...facetBrowse, limit: 10, facets: ['status'] },
+    ]);
+
+    expect(performs).toHaveLength(1);
+    expect(performs[0]).toHaveLength(2);
+    expect(performs[0][0]).toMatchObject({
+      collection: 'datasets',
+      facet_by: 'keyword',
+      per_page: 0,
+    });
+    expect(performs[0][1]).toMatchObject({
+      collection: 'datasets',
+      facet_by: 'status',
+      per_page: 0,
+    });
+    expect(facetMaps[0].keyword).toEqual([
+      { value: 'keyword-value', count: 1 },
+    ]);
+    expect(facetMaps[1].status).toEqual([{ value: 'status-value', count: 1 }]);
+  });
+
+  it('makes no request for an empty batch', async () => {
+    const { client, performs } = fakeClient(() => ({ found: 0, hits: [] }));
+    const engine = createTypesenseSearchEngine(client, searchSchema(schema), {
+      collections: { Dataset: 'datasets' },
+    });
+    await expect(engine.searchFacets(schema, [])).resolves.toEqual([]);
+    expect(performs).toHaveLength(0);
+  });
+
+  it('surfaces a failed multi_search entry as a rejection, not as empty facets', async () => {
+    const { client } = fakeClient((_search, index) =>
+      index === 1
+        ? { code: 404, error: 'collection not found' }
+        : { found: 0, hits: [], facet_counts: [] },
+    );
+    const engine = createTypesenseSearchEngine(client, searchSchema(schema), {
+      collections: { Dataset: 'datasets' },
+    });
+    await expect(
+      engine.searchFacets(schema, [
+        { ...facetBrowse, facets: ['keyword'] },
+        { ...facetBrowse, facets: ['status'] },
+      ]),
+    ).rejects.toThrow(/facet search 2\/2 failed \(404\): collection not found/);
+  });
+
+  it('reports a failed entry that carries no status code', async () => {
+    const { client } = fakeClient(() => ({ error: 'malformed query' }));
+    const engine = createTypesenseSearchEngine(client, searchSchema(schema), {
+      collections: { Dataset: 'datasets' },
+    });
+    await expect(
+      engine.searchFacets(schema, [{ ...facetBrowse, facets: ['keyword'] }]),
+    ).rejects.toThrow(/facet search 1\/1 failed: malformed query/);
+  });
+
+  it('serves batch labels from the in-memory cache without a per-batch lookup', async () => {
+    let exportCalls = 0;
+    const performs: Record<string, unknown>[][] = [];
+    const client = {
+      collections: () => ({
+        documents: () => ({
+          export: () => {
+            exportCalls += 1;
+            return Promise.resolve(
+              JSON.stringify({
+                id: 'https://org/1',
+                label_nl: 'Het Utrechts Archief',
+              }),
+            );
+          },
+        }),
+      }),
+      multiSearch: {
+        perform: (request: { searches: Record<string, unknown>[] }) => {
+          performs.push(request.searches);
+          return Promise.resolve({
+            results: request.searches.map(() => ({
+              found: 0,
+              hits: [],
+              facet_counts: [
+                {
+                  field_name: 'publisher',
+                  counts: [{ value: 'https://org/1', count: 1 }],
+                },
+              ],
+            })),
+          });
+        },
+      },
+    } as unknown as Client;
+    const engine = createTypesenseSearchEngine(client, searchSchema(schema), {
+      collections: { Dataset: 'datasets' },
+      labelsCollection: 'labels',
+      labelCacheTtlMs: 60_000,
+    });
+
+    const facetMaps = await engine.searchFacets(schema, [
+      { ...facetBrowse, facets: ['publisher'] },
+    ]);
+
+    // ONE export populated the cache; the only multi_search is the facet
+    // batch itself — no per-batch label lookup.
+    expect(exportCalls).toBe(1);
+    expect(performs).toHaveLength(1);
+    expect(facetMaps[0].publisher).toEqual([
+      {
+        value: 'https://org/1',
+        count: 1,
+        label: { nl: ['Het Utrechts Archief'] },
+      },
+    ]);
+  });
+
+  it('resolves reference-facet labels for the whole batch in one bundled lookup', async () => {
+    const labelDocs: Record<string, Record<string, unknown>> = {
+      'https://org/1': { label_nl: 'Het Utrechts Archief' },
+      'https://org/2': { label_nl: 'Rijksmuseum' },
+    };
+    const { client, performs } = fakeClient((search, index) => {
+      if (search.query_by === 'label') {
+        const ids = filterByIds(String(search.filter_by));
+        return {
+          found: ids.length,
+          hits: ids
+            .filter((id) => labelDocs[id] !== undefined)
+            .map((id) => ({ document: { id, ...labelDocs[id] } })),
+        };
+      }
+      return {
+        found: 0,
+        hits: [],
+        facet_counts: [
+          {
+            field_name: 'publisher',
+            counts: [
+              {
+                value: index === 0 ? 'https://org/1' : 'https://org/2',
+                count: 1,
+              },
+            ],
+          },
+        ],
+      };
+    });
+    const engine = createTypesenseSearchEngine(client, searchSchema(schema), {
+      collections: { Dataset: 'datasets' },
+      labelsCollection: 'labels',
+    });
+
+    const facetMaps = await engine.searchFacets(schema, [
+      { ...facetBrowse, facets: ['publisher'] },
+      {
+        ...facetBrowse,
+        where: [{ field: 'status', in: ['valid'] }],
+        facets: ['publisher'],
+      },
+    ]);
+
+    // One facet multi_search + ONE label lookup shared by the whole batch.
+    expect(performs).toHaveLength(2);
+    expect(performs[1]).toHaveLength(1);
+    expect(facetMaps[0].publisher).toEqual([
+      {
+        value: 'https://org/1',
+        count: 1,
+        label: { nl: ['Het Utrechts Archief'] },
+      },
+    ]);
+    expect(facetMaps[1].publisher).toEqual([
+      { value: 'https://org/2', count: 1, label: { nl: ['Rijksmuseum'] } },
+    ]);
+  });
+});
+
 describe('fetchLabels', () => {
   // A fake Typesense client whose multi_search returns the requested ids that
   // exist in `docsById`, recording each POST's per-search id-lists so batching
@@ -431,9 +664,7 @@ describe('fetchLabels', () => {
       multiSearch: {
         perform: (request: { searches: { readonly filter_by: string }[] }) => {
           const batches = request.searches.map((search) =>
-            [...search.filter_by.matchAll(/`([^`]+)`/g)].map(
-              (match) => match[1],
-            ),
+            filterByIds(search.filter_by),
           );
           posts.push(batches);
           const results = batches.map((ids) => {

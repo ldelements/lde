@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { SearchEngine, SearchResult } from '../src/engine.js';
+import type { FacetMap, SearchEngine, SearchResult } from '../src/engine.js';
 import type { SearchQuery } from '../src/query.js';
 import { defineSearchType, searchSchema } from '../src/schema.js';
 import type { SearchType } from '../src/schema.js';
@@ -36,6 +36,16 @@ const fake: SearchEngine = {
       ],
       facets: { keyword: [{ value: 'kaarten', count: 3 }] },
     };
+  },
+  async searchFacets(
+    _searchType: SearchType,
+    queries: readonly SearchQuery[],
+  ): Promise<readonly FacetMap[]> {
+    return queries.map((query) =>
+      query.facets.includes('keyword')
+        ? { keyword: [{ value: 'kaarten', count: 3 }] }
+        : {},
+    );
   },
 };
 
@@ -111,6 +121,11 @@ describe('typed schema-bound engine', () => {
           facets: { format: [{ value: 'text/turtle', count: 2 }] },
         };
       },
+      async searchFacets(_searchType, queries): Promise<readonly FacetMap[]> {
+        return queries.map(() => ({
+          format: [{ value: 'text/turtle', count: 2 }],
+        }));
+      },
     };
     const engine = untyped as SearchEngine<
       readonly [typeof dataset, typeof person]
@@ -131,7 +146,16 @@ describe('typed schema-bound engine', () => {
     void result.facets.formaat;
     expect(result.hits[0].document.title).toEqual({ nl: ['Titel'] });
 
+    // The batch entry point is typed the same way: per-query facet maps keyed
+    // by the type passed.
+    const [batchedFacets] = await engine.searchFacets(dataset, [query]);
+    expect(batchedFacets.format).toEqual([{ value: 'text/turtle', count: 2 }]);
+    // @ts-expect-error — a facet key outside the declaration is a compile error
+    void batchedFacets.formaat;
+
     // @ts-expect-error — a type outside the engine's schema is a compile error
     void engine.search(organization, query);
+    // @ts-expect-error — a type outside the engine's schema is a compile error
+    void engine.searchFacets(organization, [query]);
   });
 });

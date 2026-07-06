@@ -1,6 +1,7 @@
 import type { Client } from 'typesense';
 import {
   type FacetBucket,
+  type FacetMap,
   type LocalizedValue,
   type Reference,
   type ReferenceField,
@@ -67,8 +68,10 @@ export interface TypesenseSearchEngineOptions<
  * ({@link buildSearchParams}), runs it against the type’s collection,
  * resolves the reference labels for the page of hits from the sidecar
  * `labels` collection in one lookup, and reconstructs the engine-neutral
- * {@link SearchResult} ({@link parseSearchResponse}). Every engine specific
- * stays here; consumers see only logical documents.
+ * {@link SearchResult} ({@link parseSearchResponse}). `searchFacets` answers
+ * a whole facet batch (e.g. a sidebar’s skip-own-filter query variants) as a
+ * single `multi_search` round-trip with one shared label lookup. Every engine
+ * specific stays here; consumers see only logical documents.
  *
  * With a schema built by `searchSchema` over `defineSearchType` literals,
  * `search()` accepts only the deployment’s own types and returns typo-safe
@@ -130,6 +133,44 @@ export function createTypesenseSearchEngine<
     return inFlightLoad;
   }
 
+  // Cached path: the once-loaded full collection serves labels by in-memory
+  // lookup (no per-search round-trip). The load does not depend on the
+  // response, so it is started BEFORE awaiting the search and runs alongside
+  // it; it never rejects (a failed load degrades to an empty map), so it
+  // cannot leave an unhandled rejection behind if the search itself fails.
+  // `undefined` when the cache (or the sidecar) is not configured.
+  function startCachedLabels():
+    | Promise<ReadonlyMap<string, LocalizedValue>>
+    | undefined {
+    return options.labelsCollection !== undefined &&
+      options.labelCacheTtlMs !== undefined
+      ? cachedAllLabels(options.labelsCollection, options.labelCacheTtlMs)
+      : undefined;
+  }
+
+  // Labels are supplementary: a failed lookup (e.g. the sidecar collection
+  // mid-rebuild) degrades to id-only references rather than failing the whole
+  // search, so the listing still renders with bare IRIs.
+  async function resolveLabels(
+    cachedLabelsPromise:
+      | Promise<ReadonlyMap<string, LocalizedValue>>
+      | undefined,
+    iris: readonly string[],
+  ): Promise<ReadonlyMap<string, LocalizedValue>> {
+    if (cachedLabelsPromise !== undefined) {
+      return cachedLabelsPromise;
+    }
+    if (options.labelsCollection === undefined) {
+      return new Map();
+    }
+    try {
+      return await fetchLabels(client, options.labelsCollection, iris);
+    } catch (error) {
+      options.onLabelError?.(error);
+      return new Map();
+    }
+  }
+
   const engine: SearchEngine = {
     schema,
     async search(
@@ -142,38 +183,67 @@ export function createTypesenseSearchEngine<
       assertTypeInSchema(schema, searchType);
       assertValidQuery(query, searchType);
       const params = buildSearchParams(query, searchType, options);
-      // Cached path: the once-loaded full collection serves labels by in-memory
-      // lookup (no per-search round-trip). The load does not depend on the
-      // response, so it runs alongside the search; it never rejects (a failed
-      // load degrades to an empty map), so it cannot leave an unhandled
-      // rejection behind if the search itself fails.
-      const cachedLabelsPromise =
-        options.labelsCollection !== undefined &&
-        options.labelCacheTtlMs !== undefined
-          ? cachedAllLabels(options.labelsCollection, options.labelCacheTtlMs)
-          : undefined;
+      const cachedLabelsPromise = startCachedLabels();
       const response = (await client
         .collections(collections.get(searchType.type) as string)
         .documents()
         .search(params)) as TypesenseSearchResponse;
-      // Labels are supplementary: a failed lookup (e.g. the sidecar collection
-      // mid-rebuild) degrades to id-only references rather than failing the whole
-      // search, so the listing still renders with bare IRIs.
-      let labels: ReadonlyMap<string, LocalizedValue> = new Map();
-      if (cachedLabelsPromise !== undefined) {
-        labels = await cachedLabelsPromise;
-      } else if (options.labelsCollection !== undefined) {
-        try {
-          labels = await fetchLabels(
-            client,
-            options.labelsCollection,
-            referenceIris(response, searchType),
-          );
-        } catch (error) {
-          options.onLabelError?.(error);
-        }
-      }
+      const labels = await resolveLabels(
+        cachedLabelsPromise,
+        referenceIris(response, searchType),
+      );
       return parseSearchResponse(response, searchType, labels);
+    },
+    async searchFacets(
+      searchType: SearchType,
+      queries: readonly SearchQuery[],
+    ): Promise<readonly FacetMap[]> {
+      assertTypeInSchema(schema, searchType);
+      for (const query of queries) {
+        assertValidQuery(query, searchType);
+      }
+      if (queries.length === 0) {
+        return [];
+      }
+      const collection = collections.get(searchType.type) as string;
+      const cachedLabelsPromise = startCachedLabels();
+      // The whole batch travels as ONE multi_search round-trip. Each query
+      // compiles as facet-only regardless of the limit it carries: hits are
+      // never returned across this method, so none are transferred.
+      const { results } = (await client.multiSearch.perform({
+        searches: queries.map((query) => ({
+          collection,
+          ...buildSearchParams(
+            { ...query, limit: 0, offset: 0 },
+            searchType,
+            options,
+          ),
+        })),
+      })) as {
+        results: readonly (TypesenseSearchResponse | TypesenseErrorEntry)[];
+      };
+      // multi_search reports a failed entry inline instead of rejecting the
+      // call; surface it as a rejection so a caller never mistakes a failed
+      // batch for empty facets.
+      const responses = results.map((result, index) => {
+        if ('error' in result) {
+          throw new Error(
+            `Typesense facet search ${index + 1}/${results.length} failed${
+              result.code !== undefined ? ` (${result.code})` : ''
+            }: ${result.error}`,
+          );
+        }
+        return result;
+      });
+      // One label lookup serves every facet result in the batch.
+      const labels = await resolveLabels(cachedLabelsPromise, [
+        ...new Set(
+          responses.flatMap((response) => referenceIris(response, searchType)),
+        ),
+      ]);
+      return responses.map(
+        (response) => parseSearchResponse(response, searchType, labels).facets,
+      );
     },
   };
   // The runtime object is string-keyed; the literal-schema typing narrows it.
@@ -303,6 +373,13 @@ function labelToLocalizedValue(
     map.und = [document.label];
   }
   return map;
+}
+
+/** A failed entry in a `multi_search` response: Typesense reports a
+ *  per-search failure inline (the call itself still resolves). */
+interface TypesenseErrorEntry {
+  readonly error: string;
+  readonly code?: number;
 }
 
 /** The subset of a Typesense search response this adapter reads. */

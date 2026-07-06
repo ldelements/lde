@@ -41,6 +41,24 @@ export interface SearchEngine<
     searchType: T,
     query: SearchQuery,
   ): Promise<SearchResult<FacetFieldsOf<T>, OutputFieldsOf<T>>>;
+  /**
+   * The batch entry point: answer several facet-only queries against one type
+   * in a single engine round-trip (where the engine supports one, e.g.
+   * Typesense `multi_search`), returning one {@link FacetMap} per query,
+   * positionally aligned with `queries`. This is what keeps a faceted
+   * sidebar — one skip-own-filter query variant per filtered facet — from
+   * fanning out into per-facet engine calls. Only the facet buckets come
+   * back: an engine answers every query in the batch facet-only (as if
+   * `limit: 0`, whatever the query carries), so hits are never transferred.
+   * Reference-facet buckets carry resolved labels exactly as in
+   * {@link search}. The port contract holds for every query in the batch
+   * (foreign `searchType` rejected, each query validated); an empty `queries`
+   * resolves to `[]` without touching the engine.
+   */
+  searchFacets<T extends Types[number]>(
+    searchType: T,
+    queries: readonly SearchQuery[],
+  ): Promise<readonly FacetMap<FacetFieldsOf<T>>[]>;
 }
 
 /** What an engine returns: logical hits, a total, and the requested facets. */
