@@ -6,7 +6,11 @@ import {
   type FilterOperator,
   type SearchQuery,
 } from './query.js';
-import { filterableFields, type SearchType } from './schema.js';
+import {
+  facetableFields,
+  filterableFields,
+  type SearchType,
+} from './schema.js';
 
 /**
  * The executable {@link SearchEngine} port contract (import from
@@ -14,8 +18,8 @@ import { filterableFields, type SearchType } from './schema.js';
  * live instance of itself, so the port rules hold by test rather than by
  * prose. Covers schema binding (a type outside the bound schema is rejected),
  * the always-on query validation (a structurally invalid query is rejected
- * before it reaches the engine) and the result shape of a browse query — for
- * every type in the schema.
+ * before it reaches the engine) and the result shape of a browse query and a
+ * `searchFacets` batch – for every type in the schema.
  *
  * ```ts
  * describeSearchEngineContract('TypesenseSearchEngine', () => engine);
@@ -95,6 +99,71 @@ export function describeSearchEngineContract(
         };
         await expect(engine().search(searchType, query)).rejects.toThrow(
           /operator-mismatch/,
+        );
+      }
+    });
+
+    it('rejects a searchFacets batch for a type outside its schema', async () => {
+      const foreign: SearchType = {
+        name: 'NotInSchema',
+        type: 'urn:test:not-in-schema',
+        fields: [],
+      };
+      await expect(
+        engine().searchFacets(foreign, [browse(foreign)]),
+      ).rejects.toThrow(/not in this engine/);
+    });
+
+    it('rejects a structurally invalid query anywhere in a searchFacets batch', async () => {
+      for (const searchType of types()) {
+        const queries: SearchQuery[] = [
+          { ...browse(searchType), limit: 0 },
+          {
+            ...browse(searchType),
+            limit: 0,
+            facets: ['fieldThatDoesNotExist'],
+          },
+        ];
+        await expect(
+          engine().searchFacets(searchType, queries),
+        ).rejects.toThrow(/unknown-field/);
+      }
+    });
+
+    it('answers a searchFacets batch with one facets outcome per query, positionally', async () => {
+      for (const searchType of types()) {
+        const facets = facetableFields(searchType).map((field) => field.name);
+        const queries: SearchQuery[] = [
+          { ...browse(searchType), limit: 0, facets },
+          // Facet-only regardless of the limit the query carries: this one
+          // keeps its non-zero browse limit and must be answered the same.
+          { ...browse(searchType), facets: [] },
+        ];
+        const outcomes = await engine().searchFacets(searchType, queries);
+        expect(outcomes).toHaveLength(queries.length);
+        for (const outcome of outcomes) {
+          // A valid query in a healthy engine yields facets, not an error.
+          expect('error' in outcome ? outcome.error : undefined).toBe(
+            undefined,
+          );
+          if ('error' in outcome) {
+            continue;
+          }
+          expect(outcome.facets).toBeTypeOf('object');
+          for (const buckets of Object.values(outcome.facets)) {
+            for (const bucket of buckets ?? []) {
+              expect(typeof bucket.value).toBe('string');
+              expect(typeof bucket.count).toBe('number');
+            }
+          }
+        }
+      }
+    });
+
+    it('resolves an empty searchFacets batch to an empty list', async () => {
+      for (const searchType of types()) {
+        await expect(engine().searchFacets(searchType, [])).resolves.toEqual(
+          [],
         );
       }
     });

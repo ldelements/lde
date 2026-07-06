@@ -40,6 +40,7 @@ import {
   toLanguageStrings,
   type LanguageOrder,
 } from './language.js';
+import { createFacetLoader, type FacetLoader } from './facet-batch.js';
 
 /** Populated per request by the transport; no framework type appears here. */
 export interface SearchContext {
@@ -50,9 +51,11 @@ export interface SearchContext {
   /** Parsed, ordered `Accept-Language`; drives locale selection and output order. */
   readonly acceptLanguage: readonly string[];
   /**
-   * Called when a single facet's computation fails. The facet degrades to an
-   * empty list (a supplementary facet must not fail the whole query); supply
-   * this to log the cause. Optional — omit to swallow silently.
+   * Called once per affected facet field when its computation fails – for a
+   * failed facet query only that query's fields, for a failed batch dispatch
+   * every selected field. The affected facets degrade to empty lists (a
+   * supplementary facet must not fail the whole query); supply this to log
+   * the cause. Optional – omit to swallow silently.
    */
   readonly onFacetError?: (field: string, error: unknown) => void;
 }
@@ -354,17 +357,15 @@ export function buildGraphQLSchema(
     });
 
     // Keyed facets object: one field per facetable field, typed by its kind
-    // (range fields → [RangeBucket!], else [ValueBucket!]). Each field's resolver
-    // computes that facet with its OWN where-filter removed (skip-own-filter), so a
-    // multi-select facet still lists its other options; only the selected fields
-    // are resolved (GraphQL prunes the rest), so the selection IS the request.
+    // (range fields → [RangeBucket!], else [ValueBucket!]). Only the selected
+    // fields are resolved (GraphQL prunes the rest), so the selection IS the
+    // request; how they are computed – skip-own-filter, batched into one
+    // engine dispatch – lives in facet-batch.ts.
     // Like `where`, omitted entirely for a type with no facetable fields (a
     // GraphQL object type must have at least one field).
     const facetable = facetableFields(searchType);
     const facetsType =
-      facetable.length === 0
-        ? undefined
-        : facetsTypeFor(searchType, typeName, facetable);
+      facetable.length === 0 ? undefined : facetsTypeFor(typeName, facetable);
 
     const resultType = new GraphQLObjectType({
       name: `${typeName}SearchResult`,
@@ -374,7 +375,7 @@ export function buildGraphQLSchema(
         page: { type: new GraphQLNonNull(GraphQLInt) },
         perPage: { type: new GraphQLNonNull(GraphQLInt) },
         // Resolved lazily, per selected key (skip-own-filter); the result object
-        // (which carries the resolved `query`) is the facets source.
+        // (which carries the per-request facet loader) is the facets source.
         ...(facetsType && {
           facets: {
             type: new GraphQLNonNull(facetsType),
@@ -413,8 +414,13 @@ export function buildGraphQLSchema(
           total: result.total,
           page: pageForOffset(finalQuery.offset, finalQuery.limit),
           perPage: finalQuery.limit,
-          // Carried for the facets resolver (skip-own-filter per key).
-          query: finalQuery,
+          // Carried for the facet field resolvers (see facet-batch.ts).
+          loadFacet: createFacetLoader(
+            context.engine,
+            searchType,
+            finalQuery,
+            context.onFacetError,
+          ),
         };
       },
     };
@@ -422,7 +428,6 @@ export function buildGraphQLSchema(
 
   /** The keyed facets object for one type (only called with ≥ 1 facetable field). */
   function facetsTypeFor(
-    searchType: SearchType,
     typeName: string,
     facetable: readonly SearchField[],
   ): GraphQLObjectType {
@@ -438,38 +443,11 @@ export function buildGraphQLSchema(
             type: nonNullListOf(
               isRangeFacet(field) ? rangeBucket : valueBucket,
             ),
-            resolve: async (
-              source: Source,
-              _args: unknown,
-              context: SearchContext,
-            ) => {
-              const query = source.query as SearchQuery;
-              // Drop this facet's own filter so its other options still count
-              // (a removed `status` filter also drops the valid-only default, so
-              // the status facet counts across every status).
-              const facetQuery: SearchQuery = {
-                ...query,
-                where: query.where.filter(
-                  (filter) => filter.field !== field.name,
-                ),
-                facets: [field.name],
-                limit: 0,
-                offset: 0,
-              };
-              // A facet is supplementary: degrade a failed facet to an empty list
-              // rather than failing the whole query (which would null the non-null
-              // result and discard the items + every other facet).
-              try {
-                const result = await context.engine.search(
-                  searchType,
-                  facetQuery,
-                );
-                return result.facets[field.name] ?? [];
-              } catch (error) {
-                context.onFacetError?.(field.name, error);
-                return [];
-              }
-            },
+            // The skip-own-filter query building, the batching into one
+            // engine dispatch and the degrade-to-[] error handling all live
+            // in the loader (facet-batch.ts).
+            resolve: (source: Source) =>
+              (source.loadFacet as FacetLoader)(field.name),
           };
         }
         return fields;

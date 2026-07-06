@@ -11,6 +11,21 @@ import {
   fetchLabels,
   parseSearchResponse,
 } from '../src/search.js';
+import {
+  fakeTypesenseClient,
+  filterByIds,
+  labelLookup,
+} from './fake-typesense-client.js';
+
+// Document-search hits referencing labelled organizations; the second stores
+// a scalar (non-array) reference value. Shared by the label fakes.
+const referenceHits = {
+  found: 2,
+  hits: [
+    { document: { id: 'https://d/1', publisher: ['https://org/1'] } },
+    { document: { id: 'https://d/2', publisher: 'https://org/2' } },
+  ],
+};
 
 const schema: SearchType = {
   name: 'Dataset',
@@ -210,47 +225,23 @@ describe('createTypesenseSearchEngine label degradation', () => {
     locale: 'nl',
   };
 
-  // A fake client whose document search succeeds but whose label lookup
-  // (multi_search) rejects, so the engine must degrade to id-only references.
-  function fakeClient(): Client {
-    return {
-      collections: () => ({
-        documents: () => ({
-          search: () =>
-            Promise.resolve({
-              found: 1,
-              hits: [
-                {
-                  document: { id: 'https://d/1', publisher: ['https://org/1'] },
-                },
-                // A scalar (non-array) stored reference value.
-                {
-                  document: { id: 'https://d/2', publisher: 'https://org/2' },
-                },
-              ],
-            }),
-        }),
-      }),
-      multiSearch: {
-        perform: () =>
-          Promise.reject(new Error('labels collection unavailable')),
-      },
-    } as unknown as Client;
-  }
-
   it('degrades to id-only references when the label lookup fails, reporting the cause', async () => {
     let capturedError: unknown;
-    const engine = createTypesenseSearchEngine(
-      fakeClient(),
-      searchSchema(schema),
-      {
-        collections: { Dataset: 'datasets' },
-        labelsCollection: 'labels',
-        onLabelError: (error) => {
-          capturedError = error;
-        },
+    // The document search succeeds but the label lookup (multi_search)
+    // rejects, so the engine must degrade to id-only references.
+    const { client } = fakeTypesenseClient({
+      searchResponse: referenceHits,
+      multiSearch: () => {
+        throw new Error('labels collection unavailable');
       },
-    );
+    });
+    const engine = createTypesenseSearchEngine(client, searchSchema(schema), {
+      collections: { Dataset: 'datasets' },
+      labelsCollection: 'labels',
+      onLabelError: (error) => {
+        capturedError = error;
+      },
+    });
     const result = await engine.search(schema, baseQuery);
     // The reference is present but unlabelled: the failed lookup degraded
     // rather than failing the whole search.
@@ -281,38 +272,13 @@ describe('createTypesenseSearchEngine label cache (labelCacheTtlMs)', () => {
     label_nl: 'Het Utrechts Archief',
   });
 
-  // A fake client whose document search always returns one hit referencing
-  // `https://org/1`, and whose `labels` collection export is driven by
-  // `exportImpl`. Counters make the export-call count observable.
+  // Document search always answers `referenceHits`; the `labels` collection
+  // export is driven per test, its call count observable via `exportCalls`.
   function fakeClient(exportImpl: () => Promise<string>) {
-    let exportCalls = 0;
-    const client = {
-      collections: () => ({
-        documents: () => ({
-          search: () =>
-            Promise.resolve({
-              found: 1,
-              hits: [
-                {
-                  document: { id: 'https://d/1', publisher: ['https://org/1'] },
-                },
-                // A scalar (non-array) stored reference value.
-                {
-                  document: { id: 'https://d/2', publisher: 'https://org/2' },
-                },
-              ],
-            }),
-          export: () => {
-            exportCalls += 1;
-            return exportImpl();
-          },
-        }),
-      }),
-    };
-    return {
-      client: client as unknown as Client,
-      exportCalls: () => exportCalls,
-    };
+    return fakeTypesenseClient({
+      searchResponse: referenceHits,
+      exportJsonl: exportImpl,
+    });
   }
 
   afterEach(() => {
@@ -420,40 +386,238 @@ describe('createTypesenseSearchEngine label cache (labelCacheTtlMs)', () => {
   });
 });
 
-describe('fetchLabels', () => {
-  // A fake Typesense client whose multi_search returns the requested ids that
-  // exist in `docsById`, recording each POST's per-search id-lists so batching
-  // is observable. (Resolving via multi_search/POST avoids the GET query-string
-  // limit that a large id-list would otherwise overflow.)
-  function fakeClient(docsById: Record<string, Record<string, unknown>>) {
-    const posts: string[][][] = [];
-    const client = {
-      multiSearch: {
-        perform: (request: { searches: { readonly filter_by: string }[] }) => {
-          const batches = request.searches.map((search) =>
-            [...search.filter_by.matchAll(/`([^`]+)`/g)].map(
-              (match) => match[1],
-            ),
-          );
-          posts.push(batches);
-          const results = batches.map((ids) => {
-            const hits = ids
-              .filter((id) => docsById[id] !== undefined)
-              .map((id) => ({ document: { id, ...docsById[id] } }));
-            return { found: hits.length, hits };
-          });
-          return Promise.resolve({ results });
-        },
-      },
-    };
-    return { client: client as unknown as Pick<Client, 'multiSearch'>, posts };
-  }
+describe('createTypesenseSearchEngine searchFacets (multi_search batching)', () => {
+  const facetBrowse: SearchQuery = {
+    where: [],
+    orderBy: [],
+    limit: 0,
+    offset: 0,
+    facets: [],
+    locale: 'nl',
+  };
 
+  it('sends the whole batch as ONE multi_search and maps the results positionally', async () => {
+    const { client, performs } = fakeTypesenseClient({
+      multiSearch: (search) => ({
+        found: 0,
+        hits: [],
+        facet_counts: [
+          {
+            field_name: search.facet_by,
+            counts: [{ value: `${search.facet_by}-value`, count: 1 }],
+          },
+        ],
+      }),
+    });
+    const engine = createTypesenseSearchEngine(client, searchSchema(schema), {
+      collections: { Dataset: 'datasets' },
+    });
+
+    const outcomes = await engine.searchFacets(schema, [
+      { ...facetBrowse, facets: ['keyword'] },
+      // A non-zero limit still compiles facet-only: the port never returns
+      // hits, so the adapter normalizes rather than transferring a page.
+      { ...facetBrowse, limit: 10, facets: ['status'] },
+    ]);
+
+    expect(performs).toHaveLength(1);
+    expect(performs[0]).toHaveLength(2);
+    expect(performs[0][0]).toMatchObject({
+      collection: 'datasets',
+      facet_by: 'keyword',
+      per_page: 0,
+    });
+    expect(performs[0][1]).toMatchObject({
+      collection: 'datasets',
+      facet_by: 'status',
+      per_page: 0,
+    });
+    expect(outcomes[0]).toEqual({
+      facets: { keyword: [{ value: 'keyword-value', count: 1 }] },
+    });
+    expect(outcomes[1]).toEqual({
+      facets: { status: [{ value: 'status-value', count: 1 }] },
+    });
+  });
+
+  it('makes no request for an empty batch', async () => {
+    const { client, performs } = fakeTypesenseClient({
+      multiSearch: () => ({ found: 0, hits: [] }),
+    });
+    const engine = createTypesenseSearchEngine(client, searchSchema(schema), {
+      collections: { Dataset: 'datasets' },
+    });
+    await expect(engine.searchFacets(schema, [])).resolves.toEqual([]);
+    expect(performs).toHaveLength(0);
+  });
+
+  it('reports a failed entry as an in-place error outcome, keeping its siblings', async () => {
+    const { client } = fakeTypesenseClient({
+      multiSearch: (_search, index) =>
+        index === 1
+          ? { code: 404, error: 'collection not found' }
+          : { found: 0, hits: [], facet_counts: [] },
+    });
+    const engine = createTypesenseSearchEngine(client, searchSchema(schema), {
+      collections: { Dataset: 'datasets' },
+    });
+
+    const outcomes = await engine.searchFacets(schema, [
+      { ...facetBrowse, facets: ['keyword'] },
+      { ...facetBrowse, facets: ['status'] },
+    ]);
+
+    // The sibling entry's facets survive the failed one.
+    expect(outcomes[0]).toEqual({ facets: {} });
+    const failed = outcomes[1];
+    if (!('error' in failed)) {
+      throw new Error('Expected an error outcome.');
+    }
+    // The error names the failed query's facets, not its batch position.
+    expect(String(failed.error)).toMatch(
+      /facet search for “status” failed \(404\): collection not found/,
+    );
+  });
+
+  it('reports a failed entry that carries no status code', async () => {
+    const { client } = fakeTypesenseClient({
+      multiSearch: () => ({ error: 'malformed query' }),
+    });
+    const engine = createTypesenseSearchEngine(client, searchSchema(schema), {
+      collections: { Dataset: 'datasets' },
+    });
+    const [outcome] = await engine.searchFacets(schema, [
+      { ...facetBrowse, facets: ['keyword'] },
+    ]);
+    if (!('error' in outcome)) {
+      throw new Error('Expected an error outcome.');
+    }
+    expect(String(outcome.error)).toMatch(
+      /facet search for “keyword” failed: malformed query/,
+    );
+  });
+
+  it('serves batch labels from the in-memory cache without a per-batch lookup', async () => {
+    const { client, performs, exportCalls } = fakeTypesenseClient({
+      exportJsonl: () =>
+        Promise.resolve(
+          JSON.stringify({
+            id: 'https://org/1',
+            label_nl: 'Het Utrechts Archief',
+          }),
+        ),
+      multiSearch: () => ({
+        found: 0,
+        hits: [],
+        facet_counts: [
+          {
+            field_name: 'publisher',
+            counts: [{ value: 'https://org/1', count: 1 }],
+          },
+        ],
+      }),
+    });
+    const engine = createTypesenseSearchEngine(client, searchSchema(schema), {
+      collections: { Dataset: 'datasets' },
+      labelsCollection: 'labels',
+      labelCacheTtlMs: 60_000,
+    });
+
+    const outcomes = await engine.searchFacets(schema, [
+      { ...facetBrowse, facets: ['publisher'] },
+    ]);
+
+    // ONE export populated the cache; the only multi_search is the facet
+    // batch itself – no per-batch label lookup.
+    expect(exportCalls()).toBe(1);
+    expect(performs).toHaveLength(1);
+    expect(outcomes[0]).toEqual({
+      facets: {
+        publisher: [
+          {
+            value: 'https://org/1',
+            count: 1,
+            label: { nl: ['Het Utrechts Archief'] },
+          },
+        ],
+      },
+    });
+  });
+
+  it('resolves reference-facet labels for the whole batch in one bundled lookup', async () => {
+    const labelDocs: Record<string, Record<string, unknown>> = {
+      'https://org/1': { label_nl: 'Het Utrechts Archief' },
+      'https://org/2': { label_nl: 'Rijksmuseum' },
+    };
+    const { client, performs } = fakeTypesenseClient({
+      multiSearch: (search, index) =>
+        search.query_by === 'label'
+          ? labelLookup(labelDocs)(search)
+          : {
+              found: 0,
+              hits: [],
+              facet_counts: [
+                {
+                  field_name: 'publisher',
+                  counts: [
+                    {
+                      value: index === 0 ? 'https://org/1' : 'https://org/2',
+                      count: 1,
+                    },
+                  ],
+                },
+              ],
+            },
+    });
+    const engine = createTypesenseSearchEngine(client, searchSchema(schema), {
+      collections: { Dataset: 'datasets' },
+      labelsCollection: 'labels',
+    });
+
+    const outcomes = await engine.searchFacets(schema, [
+      { ...facetBrowse, facets: ['publisher'] },
+      {
+        ...facetBrowse,
+        where: [{ field: 'status', in: ['valid'] }],
+        facets: ['publisher'],
+      },
+    ]);
+
+    // One facet multi_search + ONE label lookup shared by the whole batch.
+    expect(performs).toHaveLength(2);
+    expect(performs[1]).toHaveLength(1);
+    expect(outcomes[0]).toEqual({
+      facets: {
+        publisher: [
+          {
+            value: 'https://org/1',
+            count: 1,
+            label: { nl: ['Het Utrechts Archief'] },
+          },
+        ],
+      },
+    });
+    expect(outcomes[1]).toEqual({
+      facets: {
+        publisher: [
+          { value: 'https://org/2', count: 1, label: { nl: ['Rijksmuseum'] } },
+        ],
+      },
+    });
+  });
+});
+
+describe('fetchLabels', () => {
+  // Resolving via multi_search/POST avoids the GET query-string limit that a
+  // large id-list would otherwise overflow; each POST's per-search id-lists
+  // are recoverable from `performs` so batching is observable.
   it('resolves labels via multi_search, merging per-locale variants', async () => {
-    const { client, posts } = fakeClient({
-      'https://org/1': { label: 'KB', label_nl: 'KB' },
-      // Only a default label (no locale variant) → untagged (`und`) fallback.
-      'https://org/3': { label: 'Untagged' },
+    const { client, performs } = fakeTypesenseClient({
+      multiSearch: labelLookup({
+        'https://org/1': { label: 'KB', label_nl: 'KB' },
+        // Only a default label (no locale variant) → untagged (`und`) fallback.
+        'https://org/3': { label: 'Untagged' },
+      }),
     });
     const labels = await fetchLabels(client, 'labels', [
       'https://org/1',
@@ -464,7 +628,7 @@ describe('fetchLabels', () => {
     expect(labels.get('https://org/3')).toEqual({ und: ['Untagged'] });
     // An IRI absent from the collection yields no entry.
     expect(labels.has('https://org/2')).toBe(false);
-    expect(posts).toHaveLength(1);
+    expect(performs).toHaveLength(1);
   });
 
   it('batches a large id-list under the per_page cap, in a single POST', async () => {
@@ -475,19 +639,45 @@ describe('fetchLabels', () => {
     const docsById = Object.fromEntries(
       ids.map((id) => [id, { label_nl: id }]),
     );
-    const { client, posts } = fakeClient(docsById);
+    const { client, performs } = fakeTypesenseClient({
+      multiSearch: labelLookup(docsById),
+    });
     const labels = await fetchLabels(client, 'labels', ids);
     // 450 ids → batches of 200, 200, 50, bundled into one round-trip.
-    expect(posts).toHaveLength(1);
-    expect(posts[0].map((batch) => batch.length)).toEqual([200, 200, 50]);
+    expect(performs).toHaveLength(1);
+    expect(
+      performs[0].map((search) => filterByIds(String(search.filter_by)).length),
+    ).toEqual([200, 200, 50]);
     expect(labels.size).toBe(450);
   });
 
   it('makes no request for an empty id-list', async () => {
-    const { client, posts } = fakeClient({});
+    const { client, performs } = fakeTypesenseClient({
+      multiSearch: labelLookup({}),
+    });
     const labels = await fetchLabels(client, 'labels', []);
     expect(labels.size).toBe(0);
-    expect(posts).toHaveLength(0);
+    expect(performs).toHaveLength(0);
+  });
+
+  it('throws on an inline multi_search error entry instead of returning no labels', async () => {
+    // multi_search reports a failed entry inline (the call still resolves);
+    // fetchLabels must throw so the engine's degradation path (onLabelError,
+    // id-only references) engages instead of silently missing every label.
+    const { client } = fakeTypesenseClient({
+      multiSearch: () => ({ code: 503, error: 'lookup failed' }),
+    });
+    await expect(
+      fetchLabels(client, 'labels', ['https://org/1']),
+    ).rejects.toThrow(/label lookup failed \(503\): lookup failed/);
+
+    // An error entry without a status code still throws.
+    const { client: clientWithoutCode } = fakeTypesenseClient({
+      multiSearch: () => ({ error: 'lookup failed' }),
+    });
+    await expect(
+      fetchLabels(clientWithoutCode, 'labels', ['https://org/1']),
+    ).rejects.toThrow(/label lookup failed: lookup failed/);
   });
 });
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { graphql, printSchema } from 'graphql';
 import {
   searchSchema,
+  type FacetsOutcome,
   type SearchEngine,
   type SearchQuery,
   type SearchResult,
@@ -77,12 +78,16 @@ const schema: SearchType = {
   ],
 };
 
-/** A fake engine that records the query it received and returns a canned result. */
+/** A fake engine that records the queries it received and returns a canned
+ *  result; each query in a `searchFacets` batch answers with the canned
+ *  facets. */
 function fakeEngine(result: SearchResult): {
   engine: SearchEngine;
   received: () => SearchQuery;
+  facetBatches: () => readonly (readonly SearchQuery[])[];
 } {
   let captured: SearchQuery;
+  const batches: (readonly SearchQuery[])[] = [];
   return {
     engine: {
       schema: searchSchema(schema),
@@ -90,10 +95,21 @@ function fakeEngine(result: SearchResult): {
         captured = query;
         return result;
       },
+      async searchFacets(_searchType, queries) {
+        batches.push(queries);
+        return queries.map(() => ({ facets: result.facets }));
+      },
     },
     received: () => captured,
+    facetBatches: () => batches,
   };
 }
+
+/** A `searchFacets` stub for bespoke engines whose test selects no facets. */
+const noFacets = async (
+  _searchType: SearchType,
+  queries: readonly SearchQuery[],
+): Promise<readonly FacetsOutcome[]> => queries.map(() => ({ facets: {} }));
 
 const canned: SearchResult = {
   total: 1,
@@ -326,8 +342,8 @@ describe('buildGraphQLSchema', () => {
     expect(facets.keyword).toEqual([{ value: 'kaarten', count: 3 }]);
   });
 
-  it('resolves every selected facet key, returning [] where the engine has none', async () => {
-    const { engine } = fakeEngine({
+  it('resolves every selected facet key through ONE batched engine dispatch, returning [] where the engine has none', async () => {
+    const { engine, facetBatches } = fakeEngine({
       total: 0,
       hits: [],
       facets: { keyword: [{ value: 'kaarten', count: 1 }] },
@@ -356,10 +372,24 @@ describe('buildGraphQLSchema', () => {
     ]) {
       expect(facets[key]).toEqual([]);
     }
+    // Unfiltered browse: the whole selection collapses to a single facet-only
+    // query inside a single searchFacets dispatch.
+    expect(facetBatches()).toHaveLength(1);
+    const [batch] = facetBatches();
+    expect(batch).toHaveLength(1);
+    expect(batch[0].facets).toEqual([
+      'keyword',
+      'publisher',
+      'terminologySource',
+      'status',
+      'iiif',
+      'size',
+    ]);
+    expect(batch[0].limit).toBe(0);
   });
 
   it('computes a facet with its own where-filter removed (skip-own-filter)', async () => {
-    const { engine, received } = fakeEngine({
+    const { engine, facetBatches } = fakeEngine({
       total: 0,
       hits: [],
       facets: { keyword: [{ value: 'kaarten', count: 1 }] },
@@ -372,7 +402,9 @@ describe('buildGraphQLSchema', () => {
     );
     // The keyword facet query is run with the keyword filter dropped (so its
     // other options still count), but other filters (status) retained.
-    const facetQuery = received();
+    const [batch] = facetBatches();
+    expect(batch).toHaveLength(1);
+    const facetQuery = batch[0];
     expect(facetQuery.facets).toEqual(['keyword']);
     expect(
       facetQuery.where.find((filter) => filter.field === 'keyword'),
@@ -380,24 +412,52 @@ describe('buildGraphQLSchema', () => {
     expect(facetQuery.where).toContainEqual({ field: 'status', in: ['valid'] });
   });
 
-  it('degrades a failed facet to an empty list without failing the whole query', async () => {
-    // A facet is supplementary: its computation runs a separate search (with
-    // `facets` set). Fail only that, leaving the listing search untouched.
+  it('groups the selected facets by effective where: unfiltered facets share one query, each own-filtered facet gets its own', async () => {
+    const { engine, facetBatches } = fakeEngine({
+      total: 0,
+      hits: [],
+      facets: {},
+    });
+    await run(
+      `{ datasets(where: { status: { in: ["valid"] } }) {
+        facets {
+          keyword { value count }
+          publisher { value count }
+          status { value count }
+        }
+      } }`,
+      { engine, acceptLanguage: ['nl'] },
+    );
+    // One dispatch: keyword + publisher (no own filter) share the untouched
+    // where; status (own-filtered) needs its own query with that filter dropped.
+    expect(facetBatches()).toHaveLength(1);
+    const [batch] = facetBatches();
+    expect(batch).toHaveLength(2);
+    expect(batch[0].facets).toEqual(['keyword', 'publisher']);
+    expect(batch[0].where).toEqual([{ field: 'status', in: ['valid'] }]);
+    expect(batch[1].facets).toEqual(['status']);
+    expect(batch[1].where).toEqual([]);
+  });
+
+  it('degrades a failed facet batch to empty lists without failing the whole query', async () => {
+    // A facet is supplementary: its computation runs through the batched
+    // searchFacets dispatch. Fail only that, leaving the listing search
+    // untouched.
     const failedFacets: string[] = [];
     const engine: SearchEngine = {
       schema: searchSchema(schema),
-      async search(_searchType, query) {
-        if (query.facets.length > 0) {
-          throw new Error('facet backend unavailable');
-        }
+      async search() {
         return canned;
+      },
+      async searchFacets() {
+        throw new Error('facet backend unavailable');
       },
     };
     const result = await run(
       `{ datasets {
         total
         items { id }
-        facets { keyword { value count } }
+        facets { keyword { value count } status { value count } }
       } }`,
       {
         engine,
@@ -406,15 +466,17 @@ describe('buildGraphQLSchema', () => {
       },
     );
 
-    // No top-level error: the failed facet degraded rather than nulling the
+    // No top-level error: the failed facets degraded rather than nulling the
     // non-null result and discarding the items.
     expect(result.errors).toBeUndefined();
     const data = result.data?.datasets as Record<string, unknown>;
     expect(data.total).toBe(1);
     expect((data.items as Record<string, unknown>[])[0].id).toBe('https://d/1');
-    // The failed facet degraded to an empty list, and the cause was reported.
+    // Every facet in the failed batch degraded to an empty list, and the
+    // cause was reported once per selected field.
     expect((data.facets as Record<string, unknown[]>).keyword).toEqual([]);
-    expect(failedFacets).toEqual(['keyword']);
+    expect((data.facets as Record<string, unknown[]>).status).toEqual([]);
+    expect(failedFacets.sort()).toEqual(['keyword', 'status']);
   });
 
   it('guards perPage: 0, resolving page to 1 rather than failing on NaN', async () => {
@@ -473,6 +535,7 @@ describe('buildGraphQLSchema', () => {
         captured = query;
         return canned;
       },
+      searchFacets: noFacets,
     };
     const gqlSchema = buildGraphQLSchema(searchSchema(schema), {
       types: {
@@ -599,6 +662,7 @@ describe('buildGraphQLSchema', () => {
           searchedTypes.push(searchType.type);
           return { total: 0, hits: [], facets: {} };
         },
+        searchFacets: noFacets,
       };
       const result = await graphql({
         schema: twoTypeSchema,
@@ -698,6 +762,7 @@ describe('und-locale text output', () => {
           ],
         };
       },
+      searchFacets: noFacets,
     };
     const result = await graphql({
       schema: gqlSchema,

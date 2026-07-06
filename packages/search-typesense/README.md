@@ -28,6 +28,12 @@ search/sort keys) matches what the projection writes, via
 - reconstructs the logical `SearchResult` (`parseSearchResponse`) — language
   maps, labelled references, labelled facet buckets.
 
+`searchFacets` – the port’s batch entry point – answers a whole batch of
+facet-only queries (e.g. a faceted sidebar’s skip-own-filter variants) as a
+**single `multi_search` round-trip**, with one bundled label lookup shared by
+every facet result in the batch. A failed entry is reported in place as a
+per-query outcome, so its siblings’ facets survive.
+
 The pure halves `buildSearchParams` and `parseSearchResponse` are exported for
 direct use and testing.
 

@@ -285,6 +285,14 @@ result.hits[0].document.title; // typed: only DATASET’s output fields are keys
 await engine.search(OTHER_TYPE, query); // compile error: not in this schema
 ```
 
+`searchFacets(type, queries)` is the port’s **batch entry point**: several
+facet-only queries – e.g. a faceted sidebar’s skip-own-filter variants –
+answered in one engine round-trip (Typesense: a single `multi_search`), one
+outcome per query, positionally aligned – its facet map, or an in-place error,
+so one failed query never discards its siblings’ facets. The same schema
+binding, per-query validation and typed facet keys apply to every query in
+the batch.
+
 This only works when the types were declared with `defineSearchType` (or
 captured `as const satisfies SearchType`) and composed with `searchSchema()`;
 a plain `: SearchSchema` annotation widens gracefully to string keys.
