@@ -6,7 +6,8 @@ domain-agnostic** – you supply a `SearchType`; this package never names your
 domain. It is the Typesense implementation of the `SearchEngine` port: it derives
 a collection schema from the field model, compiles the neutral `SearchQuery` into
 Typesense search params, runs it, reconstructs the engine-neutral `SearchResult`,
-and manages the search index lifecycle (blue/green rebuild).
+and manages the search index lifecycle as transactional `@lde/pipeline`
+writers (Blue/green Rebuild and In-place Rebuild).
 
 ## Collection schema and engine
 
@@ -39,56 +40,89 @@ direct use and testing.
 
 ## Indexing
 
-`rebuild` blue/green-rebuilds a search index in one call, straight from the
-declaration: it derives the collection schema from your `SearchType` (via
-`buildCollectionSchema`), creates a fresh versioned collection
-(`${name}_<timestamp>`), streams the documents into it in batches, atomically
-repoints the `name` alias to it, then drops the collection it superseded. The
-caller passes the `SearchType`, the logical index `name` and a stream of
-documents; the versioned collection and the alias are managed for them.
+Indexing runs through two transactional writers, one per update mode. Both
+implement `@lde/pipeline`’s `Writer` – each run is `openRun(context)` →
+`write` per dataset → `commit()` or `abort(error)` – so an `@lde/pipeline`
+`Pipeline` drives them without branching on the mode. Both derive the
+collection schema from your `SearchType` (via `buildCollectionSchema`), and
+their options accept everything `buildCollectionSchema` does (`defaultLocale`,
+`defaultSortingField`, `synonymSets`) plus the tuning knobs (`batchSize`,
+`lockTtlMs`).
+
+### Blue/green Rebuild
+
+`BlueGreenRebuild` rebuilds the index from zero and goes live atomically:
+`openRun` creates a fresh versioned collection (`${name}_<timestamp>`),
+`write` streams documents into it in batches, and `commit` atomically
+repoints the `name` alias and drops the collection it superseded. Until
+commit, the live alias never points at a partial build; `abort` drops the
+half-built collection. Deletion is implicit – whatever a run does not write
+does not exist in the new collection. Right-sized for small collections
+(e.g. one document per dataset description).
 
 ```ts
 import { Client } from 'typesense';
-import { rebuild } from '@lde/search-typesense';
+import { BlueGreenRebuild } from '@lde/search-typesense';
 
 const client = new Client({
   nodes: [{ host, port, protocol: 'https' }],
   apiKey,
 });
 
-// `documents` is an async iterable (e.g. a streaming projection); only one
-// batch is held in memory at a time. `rebuild` returns the live collection name
-// and the imported count (or `null` if another rebuild was already running).
-const result = await rebuild(client, documents, DATASET, { name: 'datasets' });
+const writer = new BlueGreenRebuild(client, DATASET, { name: 'datasets' });
+// Standalone use; under @lde/pipeline the Pipeline drives this lifecycle.
+const run = await writer.openRun(context);
+await run.write(dataset, documents);
+await run.commit();
 ```
 
-The options accept everything `buildCollectionSchema` does (`defaultLocale`,
-`defaultSortingField`, `synonymSets`) plus the rebuild knobs (`batchSize`,
-`lockTtlMs`).
+### In-place Rebuild
 
-`rebuild` takes a `Client` the caller owns (and reuses for queries), so this
+`InPlaceRebuild` maintains one long-lived collection with per-source
+atomicity – no swap, no staging – for large, mostly-static corpora (e.g.
+millions of objects across many datasets, where a daily run touches only the
+changed ones). Every document is stamped with its `source` (the dataset IRI)
+and `last_seen` (the run id); deletion is a sweep, never special-cased:
+
+- a successful dataset flush deletes the source’s documents the run did not
+  rewrite (`source = dataset && last_seen != runId`); a failed dataset is not
+  swept – its output is incomplete – and the next successful run reconciles;
+- `commit` deletes every document whose source left the run’s selection (the
+  registry-membership sweep over `RunContext.selectedSources()`, which
+  includes datasets skipped as unchanged);
+- `abort` only releases the lock: upserts are idempotent, so whatever landed
+  stays until the next run reconciles.
+
+Document ids must be unique per (source, entity) – the caller keys them.
+
+Both writers take a `Client` the caller owns (and reuses for queries), so this
 package adds no connection or document type of its own – any object with an `id`
 is a valid document, including the `SearchDocument`s `@lde/search` produces.
 
 ## Concurrency
 
-`rebuild` is **single-flight per index**: it first takes a lock (a marker
+Rebuilds are **single-flight per index**: `openRun` takes a lock (a marker
 document in a `rebuild_locks` collection, created on demand) via Typesense’s
-atomic create, so concurrent callers across pods never rebuild the same index at
-once. A call made while another rebuild for that index is in flight returns
-`null` instead of a count. This keeps blue/green safe under replication: without
-it, two same-millisecond rebuilds would collide on the versioned collection name
-and one would delete the other’s in-flight build.
+atomic create, so concurrent runs across pods never rebuild the same index at
+once – a run opened while another holds the lock throws
+`RebuildAlreadyRunning` (catch it to treat a concurrent rebuild as a graceful
+skip). This keeps blue/green safe under replication: without it, two
+same-millisecond rebuilds would collide on the versioned collection name and
+one would delete the other’s in-flight build.
 
 Limitations to design around:
 
 - **Advisory, not a strict mutex.** The lock is built on Typesense, not a
   consensus store. Under a TTL-reclaim race two rebuilds can briefly run at
   once; this is safe because blue/green is idempotent (worst case: redundant
-  work and a transient orphaned collection).
-- **Single-flight, not coalescing.** A call skipped with `null` is _not_ queued.
-  If you must capture state that changed mid-build, re-trigger after the running
-  rebuild finishes.
+  work and a transient orphaned collection) and in-place upserts are
+  idempotent.
+- **Single-flight, not coalescing.** A run refused with `RebuildAlreadyRunning`
+  is _not_ queued. If you must capture state that changed mid-build,
+  re-trigger after the running rebuild finishes.
 - **Lock TTL.** A rebuild running longer than `lockTtlMs` (default 10 minutes)
   can be reclaimed by another caller and run concurrently; size the TTL above
   your longest rebuild.
+- **Membership-sweep cap.** The in-place membership sweep enumerates distinct
+  sources via a facet capped at 10 000 values; beyond that the commit throws
+  rather than sweeping blind.
