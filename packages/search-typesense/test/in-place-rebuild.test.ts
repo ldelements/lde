@@ -1,14 +1,13 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Client } from 'typesense';
 import type { SearchType } from '@lde/search';
-import type { RunContext } from '@lde/pipeline';
 import { Dataset } from '@lde/dataset';
 import { InPlaceRebuild } from '../src/in-place-rebuild.js';
 import { RebuildAlreadyRunning } from '../src/lock.js';
 import { TypesenseContainer } from './typesense-container.js';
+import { currentRunId, makeRunContext, seedLock, stream } from './helpers.js';
 
 const NAME = 'objects';
-const LOCK_COLLECTION = 'rebuild_locks';
 
 const objectType: SearchType = {
   name: 'Object',
@@ -24,27 +23,6 @@ const datasetB = new Dataset({
   iri: new URL('http://example.org/dataset/b'),
   distributions: [],
 });
-
-let runSequence = 0;
-
-function makeRunContext(selectedSources: string[]): RunContext {
-  runSequence += 1;
-  return {
-    runId: `run-${runSequence}`,
-    startedAt: new Date(
-      Date.parse('2026-07-06T12:00:00.000Z') + runSequence * 1000,
-    ).toISOString(),
-    selectedSources: () => selectedSources,
-  };
-}
-
-async function* stream<Document>(
-  documents: readonly Document[],
-): AsyncIterable<Document> {
-  for (const document of documents) {
-    yield document;
-  }
-}
 
 async function documentIds(client: Client): Promise<string[]> {
   const response = await client
@@ -113,7 +91,7 @@ describe('InPlaceRebuild', () => {
       .retrieve()) as Record<string, unknown>;
     expect(stored.title).toBe('One');
     expect(stored.source).toBe('http://example.org/dataset/a');
-    expect(stored.last_seen).toBe(`run-${runSequence}`);
+    expect(stored.last_seen).toBe(currentRunId());
 
     await run.commit();
   });
@@ -235,14 +213,7 @@ describe('InPlaceRebuild', () => {
   });
 
   it('refuses to open a run while another rebuild holds the index lock', async () => {
-    await client.collections().create({
-      name: LOCK_COLLECTION,
-      fields: [{ name: 'acquired_at', type: 'int64' }],
-    });
-    await client
-      .collections(LOCK_COLLECTION)
-      .documents()
-      .create({ id: NAME, acquired_at: Date.now() });
+    await seedLock(client, NAME, Date.now());
     const writer = new InPlaceRebuild<{ id: string; title: string }>(
       client,
       objectType,

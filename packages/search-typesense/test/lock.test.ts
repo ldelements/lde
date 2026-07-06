@@ -1,11 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Client } from 'typesense';
 import { acquireLock, releaseLock } from '../src/lock.js';
-
-/** An HTTP error the way the Typesense client raises one. */
-function typesenseError(status: number): Error & { httpStatus: number } {
-  return Object.assign(new Error(`HTTP ${status}`), { httpStatus: status });
-}
+import { typesenseError } from './helpers.js';
 
 /**
  * A minimal fake of the collections/documents client surface the lock uses.
@@ -41,25 +37,50 @@ function fakeClient(behaviour: {
 }
 
 describe('acquireLock', () => {
-  it('creates the lock collection on demand, tolerating a concurrent creator', async () => {
+  it('takes the lock in a single request when the collection exists', async () => {
+    const createCollection = vi.fn().mockResolvedValue({});
+    const createDocument = vi.fn().mockResolvedValue({});
+
+    const acquired = await acquireLock(
+      fakeClient({ createCollection, createDocument }),
+      'datasets',
+      1000,
+    );
+
+    expect(acquired).toBe(true);
+    expect(createDocument).toHaveBeenCalledOnce();
+    expect(createCollection).not.toHaveBeenCalled();
+  });
+
+  it('creates the lock collection on first use, tolerating a concurrent creator', async () => {
+    // The first take 404s (no collection yet); the concurrent-creator 409 is
+    // tolerated and the lock is retaken from the top.
     const createCollection = vi.fn().mockRejectedValue(typesenseError(409));
+    const createDocument = vi
+      .fn()
+      .mockRejectedValueOnce(typesenseError(404))
+      .mockResolvedValueOnce({});
+
     const acquired = await acquireLock(
       fakeClient({
         retrieveCollection: () => Promise.reject(typesenseError(404)),
         createCollection,
+        createDocument,
       }),
       'datasets',
       1000,
     );
 
-    expect(createCollection).toHaveBeenCalledOnce();
     expect(acquired).toBe(true);
+    expect(createCollection).toHaveBeenCalledOnce();
+    expect(createDocument).toHaveBeenCalledTimes(2);
   });
 
-  it('rethrows an unexpected error from the lock collection lookup', async () => {
+  it('rethrows an unexpected error from creating the lock collection', async () => {
     await expect(
       acquireLock(
         fakeClient({
+          createDocument: () => Promise.reject(typesenseError(404)),
           retrieveCollection: () => Promise.reject(typesenseError(500)),
         }),
         'datasets',

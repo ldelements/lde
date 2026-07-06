@@ -1,4 +1,4 @@
-import type { Client } from 'typesense';
+import type { Client, CollectionCreateSchema } from 'typesense';
 
 const LOCK_COLLECTION = 'rebuild_locks';
 
@@ -18,9 +18,34 @@ export class RebuildAlreadyRunning extends Error {
 }
 
 /**
+ * Open a run under the index’s single-flight lock: acquire it (throwing
+ * {@link RebuildAlreadyRunning} when another rebuild holds it), run the
+ * writer-specific `setup`, and release the lock again if the setup fails –
+ * so a failed opening never leaves the index locked. The lock choreography
+ * lives here once, shared by every rebuild writer.
+ */
+export async function openLockedRun<Run>(
+  client: Client,
+  name: string,
+  ttlMs: number,
+  setup: () => Promise<Run>,
+): Promise<Run> {
+  if (!(await acquireLock(client, name, ttlMs))) {
+    throw new RebuildAlreadyRunning(name);
+  }
+  try {
+    return await setup();
+  } catch (error) {
+    await releaseLock(client, name);
+    throw error;
+  }
+}
+
+/**
  * Take the per-index rebuild lock via an atomic create, reclaiming it if the
  * current holder is older than `ttlMs`. Returns `false` if another caller
- * holds a fresh lock.
+ * holds a fresh lock. The lock collection is created on demand, so the happy
+ * path costs a single request.
  *
  * Advisory, not a strict mutex: the lock is built on Typesense, not a
  * consensus store. Under a TTL-reclaim race two rebuilds can briefly run at
@@ -33,7 +58,6 @@ export async function acquireLock(
   name: string,
   ttlMs: number,
 ): Promise<boolean> {
-  await ensureLockCollection(client);
   try {
     await client
       .collections(LOCK_COLLECTION)
@@ -41,8 +65,19 @@ export async function acquireLock(
       .create({ id: name, acquired_at: Date.now() });
     return true;
   } catch (error) {
-    if (httpStatus(error) === 409) {
+    const status = httpStatus(error);
+    if (status === 409) {
       return reclaimIfStale(client, name, ttlMs);
+    }
+    if (status === 404) {
+      // First lock ever: the collection does not exist yet. Create it, then
+      // retake from the top – the atomic create still guards a concurrent
+      // taker, and the collection cannot 404 again.
+      await ensureCollectionExists(client, LOCK_COLLECTION, () => ({
+        name: LOCK_COLLECTION,
+        fields: [{ name: 'acquired_at', type: 'int64' }],
+      }));
+      return acquireLock(client, name, ttlMs);
     }
     throw error;
   }
@@ -54,6 +89,32 @@ export async function releaseLock(client: Client, name: string): Promise<void> {
     await client.collections(LOCK_COLLECTION).documents(name).delete();
   } catch (error) {
     if (httpStatus(error) !== 404) {
+      throw error;
+    }
+  }
+}
+
+/**
+ * Create a collection on demand: retrieve it, and only on a 404 create it
+ * from the lazily built `schema`, tolerating a concurrent creator (409).
+ */
+export async function ensureCollectionExists(
+  client: Client,
+  name: string,
+  schema: () => CollectionCreateSchema,
+): Promise<void> {
+  try {
+    await client.collections(name).retrieve();
+    return;
+  } catch (error) {
+    if (httpStatus(error) !== 404) {
+      throw error;
+    }
+  }
+  try {
+    await client.collections().create(schema());
+  } catch (error) {
+    if (httpStatus(error) !== 409) {
       throw error;
     }
   }
@@ -86,28 +147,6 @@ async function reclaimIfStale(
     .documents()
     .upsert({ id: name, acquired_at: Date.now() });
   return true;
-}
-
-/** Create the lock collection on demand, tolerating a concurrent creator. */
-async function ensureLockCollection(client: Client): Promise<void> {
-  try {
-    await client.collections(LOCK_COLLECTION).retrieve();
-    return;
-  } catch (error) {
-    if (httpStatus(error) !== 404) {
-      throw error;
-    }
-  }
-  try {
-    await client.collections().create({
-      name: LOCK_COLLECTION,
-      fields: [{ name: 'acquired_at', type: 'int64' }],
-    });
-  } catch (error) {
-    if (httpStatus(error) !== 409) {
-      throw error;
-    }
-  }
 }
 
 /** The HTTP status a Typesense client error carries, if any. */

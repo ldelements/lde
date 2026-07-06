@@ -6,12 +6,11 @@ import {
   buildCollectionSchema,
   type CollectionSchemaOptions,
 } from './collection-schema.js';
-import { BatchImporter } from './import.js';
+import { BatchImporter, DEFAULT_BATCH_SIZE } from './import.js';
 import {
   DEFAULT_LOCK_TTL_MS,
-  RebuildAlreadyRunning,
-  acquireLock,
   httpStatus,
+  openLockedRun,
   releaseLock,
 } from './lock.js';
 
@@ -30,10 +29,10 @@ export interface BlueGreenRebuildOptions extends CollectionSchemaOptions {
  * live atomically on commit. Deletion is implicit – whatever the run does not
  * write does not exist in the new collection.
  *
- * - `openRun` takes the single-flight cross-pod lock (throwing
- *   {@link RebuildAlreadyRunning} when another rebuild holds it) and creates
- *   the versioned collection (`${name}_<timestamp>`) with the schema derived
- *   from the {@link SearchType}.
+ * - `openRun` takes the single-flight cross-pod lock ({@link openLockedRun},
+ *   throwing `RebuildAlreadyRunning` when another rebuild holds it) and
+ *   creates the versioned collection (`${name}_<timestamp>`) with the schema
+ *   derived from the {@link SearchType}.
  * - `write` streams documents into it, batched across write calls.
  * - `commit` imports the remainder, atomically repoints the `name` alias to
  *   the new collection, drops the collection it superseded, and releases the
@@ -55,64 +54,56 @@ export class BlueGreenRebuild<
 
   async openRun(context: RunContext): Promise<RunWriter<TDocument>> {
     const {
-      batchSize = 1000,
+      batchSize = DEFAULT_BATCH_SIZE,
       lockTtlMs = DEFAULT_LOCK_TTL_MS,
       ...schemaOptions
     } = this.options;
     const name = schemaOptions.name;
 
-    if (!(await acquireLock(this.client, name, lockTtlMs))) {
-      throw new RebuildAlreadyRunning(name);
-    }
-
-    // Create the fresh (blue) collection up front, so a failure surfaces
-    // before any dataset is processed. startedAt orders the versioned names;
-    // concurrent same-name runs are excluded by the lock.
-    const collection = `${name}_${Date.parse(context.startedAt)}`;
-    let previous: string | undefined;
-    try {
-      previous = await this.aliasTarget(name);
+    return openLockedRun(this.client, name, lockTtlMs, async () => {
+      // Create the fresh (blue) collection up front, so a failure surfaces
+      // before any dataset is processed. startedAt orders the versioned names;
+      // concurrent same-name runs are excluded by the lock.
+      const collection = `${name}_${Date.parse(context.startedAt)}`;
+      const previous = await this.aliasTarget(name);
       const schema = buildCollectionSchema(this.searchType, schemaOptions);
       await this.client.collections().create({ ...schema, name: collection });
-    } catch (error) {
-      await releaseLock(this.client, name);
-      throw error;
-    }
 
-    const importer = new BatchImporter<TDocument>(
-      this.client,
-      collection,
-      batchSize,
-    );
+      const importer = new BatchImporter<TDocument>(
+        this.client,
+        collection,
+        batchSize,
+      );
 
-    return {
-      write: async (_dataset: Dataset, documents: AsyncIterable<TDocument>) =>
-        importer.add(documents),
+      return {
+        write: async (_dataset: Dataset, documents: AsyncIterable<TDocument>) =>
+          importer.add(documents),
 
-      commit: async () => {
-        await importer.flush();
-        await this.client
-          .aliases()
-          .upsert(name, { collection_name: collection });
-        if (previous !== undefined && previous !== collection) {
+        commit: async () => {
+          await importer.flush();
           await this.client
-            .collections(previous)
+            .aliases()
+            .upsert(name, { collection_name: collection });
+          if (previous !== undefined && previous !== collection) {
+            await this.client
+              .collections(previous)
+              .delete()
+              .catch(() => undefined);
+          }
+          await releaseLock(this.client, name);
+        },
+
+        abort: async () => {
+          // The live alias is untouched; just drop the orphaned half-built
+          // collection rather than let it accumulate.
+          await this.client
+            .collections(collection)
             .delete()
             .catch(() => undefined);
-        }
-        await releaseLock(this.client, name);
-      },
-
-      abort: async () => {
-        // The live alias is untouched; just drop the orphaned half-built
-        // collection rather than let it accumulate.
-        await this.client
-          .collections(collection)
-          .delete()
-          .catch(() => undefined);
-        await releaseLock(this.client, name);
-      },
-    };
+          await releaseLock(this.client, name);
+        },
+      };
+    });
   }
 
   /** The collection an alias currently points at, or `undefined` if unset. */
