@@ -5,7 +5,7 @@ import { NotSupported } from './sparql/reader.js';
 import type { TimeoutPolicy } from './sparql/timeoutPolicy.js';
 import { batch } from './batch.js';
 import type { Validator } from './validator.js';
-import type { Writer } from './writer/writer.js';
+import type { DatasetWriter } from './writer/writer.js';
 import { AsyncQueue } from './asyncQueue.js';
 
 /**
@@ -161,7 +161,7 @@ export class Stage {
   async run(
     dataset: Dataset,
     distribution: Distribution,
-    writer: Writer,
+    writer: DatasetWriter,
     options?: RunOptions,
   ): Promise<NotSupported | void> {
     const timeout = options?.timeout;
@@ -247,7 +247,7 @@ export class Stage {
     selector: AsyncIterable<VariableBindings>,
     dataset: Dataset,
     distribution: Distribution,
-    writer: Writer,
+    writer: DatasetWriter,
     options?: RunOptions,
   ): Promise<NotSupported | void> {
     // Peek the first batch to detect an empty selector before starting the

@@ -11,7 +11,7 @@ import type {
 import type { Reader, ReadOptions } from '../src/sparql/reader.js';
 import { NotSupported } from '../src/sparql/reader.js';
 import { Dataset, Distribution } from '@lde/dataset';
-import type { Writer } from '../src/writer/writer.js';
+import type { DatasetWriter } from '../src/writer/writer.js';
 import type {
   Validator,
   ValidationResult,
@@ -87,7 +87,7 @@ function mockItemSelector(
   };
 }
 
-function collectingWriter(): Writer & { quads: Quad[] } {
+function collectingWriter(): DatasetWriter & { quads: Quad[] } {
   const quads: Quad[] = [];
   return {
     quads,
@@ -575,7 +575,7 @@ describe('Stage', () => {
       });
 
       let quadsSeen = 0;
-      const failingWriter: Writer = {
+      const failingWriter: DatasetWriter = {
         async write(_dataset, quads) {
           for await (const _quad of quads) {
             quadsSeen++;
@@ -803,7 +803,7 @@ describe('Stage', () => {
         ),
       };
 
-      const writer: Writer = {
+      const writer: DatasetWriter = {
         async write(_dataset, data) {
           for await (const _quad of data) {
             writeOrder.push('write');
@@ -843,7 +843,7 @@ describe('Stage', () => {
         ),
       };
 
-      const writer: Writer = {
+      const writer: DatasetWriter = {
         async write(_dataset, data) {
           for await (const _quad of data) {
             writeOrder.push('write');

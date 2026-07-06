@@ -17,7 +17,7 @@ import {
   NetworkError,
   type ProbeResultType,
 } from '@lde/distribution-probe';
-import type { Writer } from '../src/writer/writer.js';
+import type { RunContext, RunWriter, Writer } from '../src/writer/writer.js';
 import type { ProgressReporter } from '../src/progressReporter.js';
 import type { StageOutputResolver } from '../src/stageOutputResolver.js';
 import type { DatasetSelector } from '../src/selector.js';
@@ -69,15 +69,30 @@ function makeResolvedDistribution(): ResolvedDistribution {
   return new ResolvedDistribution(sparqlDistribution, []);
 }
 
+/**
+ * A transactional fake writer exposing its single {@link RunWriter} so tests
+ * can assert on per-dataset writes and the run lifecycle alike.
+ */
 function makeWriter(): Writer & {
-  write: ReturnType<typeof vi.fn>;
-  flush: ReturnType<typeof vi.fn>;
-  reset: ReturnType<typeof vi.fn>;
+  openRun: ReturnType<typeof vi.fn>;
+  runWriter: {
+    write: ReturnType<typeof vi.fn>;
+    flush: ReturnType<typeof vi.fn>;
+    reset: ReturnType<typeof vi.fn>;
+    commit: ReturnType<typeof vi.fn>;
+    abort: ReturnType<typeof vi.fn>;
+  };
 } {
-  return {
+  const runWriter = {
     write: vi.fn().mockResolvedValue(undefined),
     flush: vi.fn().mockResolvedValue(undefined),
     reset: vi.fn().mockResolvedValue(undefined),
+    commit: vi.fn().mockResolvedValue(undefined),
+    abort: vi.fn().mockResolvedValue(undefined),
+  };
+  return {
+    openRun: vi.fn().mockResolvedValue(runWriter),
+    runWriter,
   };
 }
 
@@ -151,6 +166,247 @@ describe('Pipeline', () => {
     writer = makeWriter();
   });
 
+  describe('run transaction', () => {
+    it('opens one run, writes through it, and commits after all datasets', async () => {
+      const datasetA = makeDataset('http://example.org/dataset/a');
+      const datasetB = makeDataset('http://example.org/dataset/b');
+      const events: string[] = [];
+      const runWriter: RunWriter = {
+        write: vi.fn(async (written: Dataset) => {
+          events.push(`write ${written.iri}`);
+        }),
+        commit: vi.fn(async () => {
+          events.push('commit');
+        }),
+        abort: vi.fn(async () => {
+          events.push('abort');
+        }),
+      };
+      const transactionalWriter: Writer = {
+        openRun: vi.fn(async () => {
+          events.push('open');
+          return runWriter;
+        }),
+      };
+
+      const stage = new Stage({ name: 'stage1', readers: [] });
+      vi.spyOn(stage, 'run').mockImplementation(
+        async (staged, _distribution, stageWriter) => {
+          await stageWriter.write(
+            staged,
+            (async function* () {
+              yield DataFactory.quad(
+                DataFactory.namedNode('http://s'),
+                DataFactory.namedNode('http://p'),
+                DataFactory.namedNode('http://o'),
+              );
+            })(),
+          );
+        },
+      );
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(datasetA, datasetB),
+        stages: [stage],
+        writers: transactionalWriter,
+        distributionResolver: makeResolver(makeResolvedDistribution()),
+      });
+
+      await pipeline.run();
+
+      expect(transactionalWriter.openRun).toHaveBeenCalledOnce();
+      expect(events).toEqual([
+        'open',
+        'write http://example.org/dataset/a',
+        'write http://example.org/dataset/b',
+        'commit',
+      ]);
+      expect(runWriter.abort).not.toHaveBeenCalled();
+    });
+
+    it('aborts the run and rethrows when dataset selection fails mid-run', async () => {
+      const selectionFailure = new Error('registry went away');
+      const failingSelector: DatasetSelector = {
+        select: async () =>
+          new Paginator<Dataset>(async () => {
+            throw selectionFailure;
+          }, 1),
+      };
+
+      const pipeline = new Pipeline({
+        datasetSelector: failingSelector,
+        stages: [makeStage('stage1')],
+        writers: writer,
+        distributionResolver: makeResolver(makeResolvedDistribution()),
+      });
+
+      await expect(pipeline.run()).rejects.toThrow('registry went away');
+
+      expect(writer.runWriter.abort).toHaveBeenCalledExactlyOnceWith(
+        selectionFailure,
+      );
+      expect(writer.runWriter.commit).not.toHaveBeenCalled();
+    });
+
+    it('hands the writer a run context with identity, clock and provenance', async () => {
+      const store: ProvenanceStore = {
+        get: vi.fn().mockResolvedValue(null),
+        set: vi.fn().mockResolvedValue(undefined),
+      };
+      const contexts: RunContext[] = [];
+      const capturingWriter: Writer = {
+        openRun: async (context) => {
+          contexts.push(context);
+          return {
+            write: () => Promise.resolve(),
+            commit: () => Promise.resolve(),
+            abort: () => Promise.resolve(),
+          };
+        },
+      };
+
+      const makePipeline = () =>
+        new Pipeline({
+          datasetSelector: makeDatasetSelector(dataset),
+          stages: [makeStage('stage1')],
+          writers: capturingWriter,
+          distributionResolver: makeResolver(makeResolvedDistribution()),
+          provenanceStore: store,
+          pipelineVersion: 'v1',
+        });
+      await makePipeline().run();
+      await makePipeline().run();
+
+      const [first, second] = contexts;
+      // Each run gets its own identity.
+      expect(first.runId).toBeTruthy();
+      expect(first.runId).not.toBe(second.runId);
+      // startedAt is a valid ISO 8601 timestamp.
+      expect(new Date(first.startedAt).toISOString()).toBe(first.startedAt);
+      // The pipeline's provenance store is shared with the writer.
+      expect(first.provenance).toBe(store);
+      // The full selection set is available by commit time.
+      expect([...first.selectedSources()]).toEqual([
+        'http://example.org/dataset',
+      ]);
+    });
+
+    it('commits – not aborts – when a stage fails for one dataset', async () => {
+      // A stage failure is a per-dataset outcome: the pipeline records the
+      // dataset as failed and moves on, so the run as a whole still commits.
+      const failingStage = new Stage({ name: 'stage1', readers: [] });
+      vi.spyOn(failingStage, 'run').mockRejectedValue(
+        new Error('query timed out'),
+      );
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [failingStage],
+        writers: writer,
+        distributionResolver: makeResolver(makeResolvedDistribution()),
+      });
+
+      await pipeline.run();
+
+      expect(writer.runWriter.commit).toHaveBeenCalledOnce();
+      expect(writer.runWriter.abort).not.toHaveBeenCalled();
+    });
+
+    it('tolerates fanned-out writers without flush and reset', async () => {
+      // A lifecycle-free branch (e.g. built with perDatasetWriter and no
+      // flush/reset) must not break the fan-out's per-dataset lifecycle.
+      const minimalWriter: Writer = {
+        openRun: async () => ({
+          write: () => Promise.resolve(),
+          commit: () => Promise.resolve(),
+          abort: () => Promise.resolve(),
+        }),
+      };
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [makeStage('stage1')],
+        writers: [minimalWriter, writer],
+        distributionResolver: makeResolver(makeResolvedDistribution()),
+      });
+
+      await pipeline.run();
+
+      expect(writer.runWriter.flush).toHaveBeenCalledWith(dataset);
+      expect(writer.runWriter.commit).toHaveBeenCalledOnce();
+    });
+
+    it('opens, commits and aborts every writer when fanning out', async () => {
+      const writerA = makeWriter();
+      const writerB = makeWriter();
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [makeStage('stage1')],
+        writers: [writerA, writerB],
+        distributionResolver: makeResolver(makeResolvedDistribution()),
+      });
+
+      await pipeline.run();
+
+      expect(writerA.openRun).toHaveBeenCalledOnce();
+      expect(writerB.openRun).toHaveBeenCalledOnce();
+      expect(writerA.runWriter.commit).toHaveBeenCalledOnce();
+      expect(writerB.runWriter.commit).toHaveBeenCalledOnce();
+    });
+
+    it('rethrows the run failure when all fanned-out aborts succeed', async () => {
+      const writerA = makeWriter();
+      const writerB = makeWriter();
+
+      const failingSelector: DatasetSelector = {
+        select: async () =>
+          new Paginator<Dataset>(async () => {
+            throw new Error('registry went away');
+          }, 1),
+      };
+
+      const pipeline = new Pipeline({
+        datasetSelector: failingSelector,
+        stages: [makeStage('stage1')],
+        writers: [writerA, writerB],
+        distributionResolver: makeResolver(makeResolvedDistribution()),
+      });
+
+      await expect(pipeline.run()).rejects.toThrow('registry went away');
+
+      expect(writerA.runWriter.abort).toHaveBeenCalledOnce();
+      expect(writerB.runWriter.abort).toHaveBeenCalledOnce();
+    });
+
+    it('aborts every fanned-out writer even when one abort fails', async () => {
+      const writerA = makeWriter();
+      writerA.runWriter.abort.mockRejectedValue(new Error('abort failed'));
+      const writerB = makeWriter();
+
+      const failingSelector: DatasetSelector = {
+        select: async () =>
+          new Paginator<Dataset>(async () => {
+            throw new Error('registry went away');
+          }, 1),
+      };
+
+      const pipeline = new Pipeline({
+        datasetSelector: failingSelector,
+        stages: [makeStage('stage1')],
+        writers: [writerA, writerB],
+        distributionResolver: makeResolver(makeResolvedDistribution()),
+      });
+
+      // The first abort failure is rethrown – but only after every branch got
+      // its chance to clean up.
+      await expect(pipeline.run()).rejects.toThrow('abort failed');
+
+      expect(writerA.runWriter.abort).toHaveBeenCalledOnce();
+      expect(writerB.runWriter.abort).toHaveBeenCalledOnce();
+    });
+  });
+
   describe('flat stages', () => {
     it('runs stages with the same distribution and user writer', async () => {
       const stage1 = makeStage('stage1');
@@ -168,13 +424,13 @@ describe('Pipeline', () => {
       expect(stage1.run).toHaveBeenCalledWith(
         dataset,
         sparqlDistribution,
-        writer,
+        writer.runWriter,
         expect.objectContaining({ onProgress: expect.any(Function) }),
       );
       expect(stage2.run).toHaveBeenCalledWith(
         dataset,
         sparqlDistribution,
-        writer,
+        writer.runWriter,
         expect.objectContaining({ onProgress: expect.any(Function) }),
       );
     });
@@ -206,20 +462,30 @@ describe('Pipeline', () => {
       const quadsA: Quad[] = [];
       const quadsB: Quad[] = [];
       const writerA: Writer = {
-        async write(_dataset, quads) {
-          for await (const quad of quads) quadsA.push(quad);
+        async openRun(): Promise<RunWriter> {
+          return {
+            async write(_dataset, quads) {
+              for await (const quad of quads) quadsA.push(quad);
+            },
+            commit: () => Promise.resolve(),
+            abort: () => Promise.resolve(),
+          };
         },
-        flush: vi.fn().mockResolvedValue(undefined),
       };
       const writerB: Writer = {
-        async write(_dataset, quads) {
-          for await (const quad of quads) {
-            // Simulate a slow consumer (e.g. HTTP-based SparqlUpdateWriter).
-            await new Promise((resolve) => setTimeout(resolve, 50));
-            quadsB.push(quad);
-          }
+        async openRun(): Promise<RunWriter> {
+          return {
+            async write(_dataset, quads) {
+              for await (const quad of quads) {
+                // Simulate a slow consumer (e.g. HTTP-based SparqlUpdateWriter).
+                await new Promise((resolve) => setTimeout(resolve, 50));
+                quadsB.push(quad);
+              }
+            },
+            commit: () => Promise.resolve(),
+            abort: () => Promise.resolve(),
+          };
         },
-        flush: vi.fn().mockResolvedValue(undefined),
       };
 
       const testQuads = [
@@ -278,8 +544,8 @@ describe('Pipeline', () => {
 
       await pipeline.run();
 
-      expect(writer.flush).toHaveBeenCalledWith(dataset);
-      expect(writer.flush).toHaveBeenCalledTimes(1);
+      expect(writer.runWriter.flush).toHaveBeenCalledWith(dataset);
+      expect(writer.runWriter.flush).toHaveBeenCalledTimes(1);
     });
 
     it('calls flush once per dataset', async () => {
@@ -296,9 +562,9 @@ describe('Pipeline', () => {
 
       await pipeline.run();
 
-      expect(writer.flush).toHaveBeenCalledTimes(2);
-      expect(writer.flush).toHaveBeenCalledWith(dataset1);
-      expect(writer.flush).toHaveBeenCalledWith(dataset2);
+      expect(writer.runWriter.flush).toHaveBeenCalledTimes(2);
+      expect(writer.runWriter.flush).toHaveBeenCalledWith(dataset1);
+      expect(writer.runWriter.flush).toHaveBeenCalledWith(dataset2);
     });
 
     it('skips stage returning NotSupported', async () => {
@@ -351,19 +617,20 @@ describe('Pipeline', () => {
 
       await pipeline.run();
 
-      // Parent should get a FileWriter, not the user writer.
+      // Parent should get a scratch file writer, not the user writer.
       const parentWriter = (parent.run as ReturnType<typeof vi.fn>).mock
         .calls[0][2];
-      expect(parentWriter).not.toBe(writer);
-      expect(parentWriter.constructor.name).toBe('FileWriter');
+      expect(parentWriter).not.toBe(writer.runWriter);
 
       // Child should receive the resolved distribution.
       const childDistribution = (child.run as ReturnType<typeof vi.fn>).mock
         .calls[0][1];
       expect(childDistribution).toBe(resolvedDistribution);
 
-      // Resolver should be called with the parent's output path.
-      expect(stageOutputResolver.resolve).toHaveBeenCalled();
+      // Resolver should be called with the parent's scratch output path.
+      expect(stageOutputResolver.resolve).toHaveBeenCalledWith(
+        expect.stringContaining('/tmp/test/parent/'),
+      );
     });
 
     it('calls stageOutputResolver between chained stages', async () => {
@@ -426,8 +693,11 @@ describe('Pipeline', () => {
 
       await pipeline.run();
 
-      // writer.write() should have been called with the dataset and an async iterable.
-      expect(writer.write).toHaveBeenCalledWith(dataset, expect.anything());
+      // writer.runWriter.write() should have been called with the dataset and an async iterable.
+      expect(writer.runWriter.write).toHaveBeenCalledWith(
+        dataset,
+        expect.anything(),
+      );
     });
 
     it('cleans up on success', async () => {
@@ -499,7 +769,7 @@ describe('Pipeline', () => {
       await pipeline.run();
 
       // The concat to the user writer never runs, and resources are cleaned up.
-      expect(writer.write).not.toHaveBeenCalled();
+      expect(writer.runWriter.write).not.toHaveBeenCalled();
       expect(stageOutputResolver.cleanup).toHaveBeenCalledTimes(1);
     });
 
@@ -543,13 +813,15 @@ describe('Pipeline', () => {
       // Flat stage gets user writer.
       const flatWriter = (flatStage.run as ReturnType<typeof vi.fn>).mock
         .calls[0][2];
-      expect(flatWriter).toBe(writer);
+      expect(flatWriter).toBe(writer.runWriter);
 
-      // Chained parent gets FileWriter.
+      // Chained parent gets a scratch file writer, not the user writer.
       const chainedWriter = (chainedParent.run as ReturnType<typeof vi.fn>).mock
         .calls[0][2];
-      expect(chainedWriter).not.toBe(writer);
-      expect(chainedWriter.constructor.name).toBe('FileWriter');
+      expect(chainedWriter).not.toBe(writer.runWriter);
+      expect(stageOutputResolver.resolve).toHaveBeenCalledWith(
+        expect.stringContaining('/tmp/test/chained/'),
+      );
     });
   });
 
@@ -594,6 +866,38 @@ describe('Pipeline', () => {
       expect(reporter.pipelineComplete).toHaveBeenCalledWith(
         expect.objectContaining({ duration: expect.any(Number) }),
       );
+    });
+
+    it('reports stage progress with counts and memory usage', async () => {
+      const reporter = makeReporter();
+      const stage = new Stage({ name: 'stage1', readers: [] });
+      vi.spyOn(stage, 'run').mockImplementation(
+        async (_dataset, _distribution, _writer, options) => {
+          options?.onProgress?.(3, 12);
+        },
+      );
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [stage],
+        writers: writer,
+        distributionResolver: makeResolver(makeResolvedDistribution()),
+        reporter,
+      });
+
+      await pipeline.run();
+
+      expect(reporter.stageProgress).toHaveBeenCalledWith({
+        itemsProcessed: 3,
+        quadsGenerated: 12,
+        memoryUsageBytes: expect.any(Number),
+        heapUsedBytes: expect.any(Number),
+      });
+      expect(reporter.stageComplete).toHaveBeenCalledWith('stage1', {
+        itemsProcessed: 3,
+        quadsGenerated: 12,
+        duration: expect.any(Number),
+      });
     });
 
     it('calls reporter hooks for parent and child stages in chain', async () => {
@@ -1065,7 +1369,7 @@ describe('Pipeline', () => {
       expect(stage.run).toHaveBeenLastCalledWith(
         dataset,
         importedDistribution,
-        writer,
+        writer.runWriter,
         expect.objectContaining({ onProgress: expect.any(Function) }),
       );
     });
@@ -1090,11 +1394,11 @@ describe('Pipeline', () => {
 
       await pipeline.run();
 
-      expect(writer.reset).toHaveBeenCalledTimes(1);
-      expect(writer.reset).toHaveBeenCalledWith(dataset);
+      expect(writer.runWriter.reset).toHaveBeenCalledTimes(1);
+      expect(writer.runWriter.reset).toHaveBeenCalledWith(dataset);
       // The reset must precede the dump re-run, or its output would append to
       // the discarded endpoint-sourced quads.
-      const resetOrder = writer.reset.mock.invocationCallOrder[0];
+      const resetOrder = writer.runWriter.reset.mock.invocationCallOrder[0];
       const reRunOrder = (stage.run as ReturnType<typeof vi.fn>).mock
         .invocationCallOrder[1];
       expect(resetOrder).toBeLessThan(reRunOrder);
@@ -1125,7 +1429,7 @@ describe('Pipeline', () => {
       expect(resolver.resolveFallback).toHaveBeenCalledTimes(1);
       // No re-run: the stage ran once and nothing was reset.
       expect(stage.run).toHaveBeenCalledTimes(1);
-      expect(writer.reset).not.toHaveBeenCalled();
+      expect(writer.runWriter.reset).not.toHaveBeenCalled();
       expect(reporter.stageFailed).toHaveBeenCalledWith(
         'aggregate',
         expect.any(Error),
@@ -1157,7 +1461,7 @@ describe('Pipeline', () => {
       // An imported dump has no further fallback; resolveFallback is never tried.
       expect(resolver.resolveFallback).not.toHaveBeenCalled();
       expect(stage.run).toHaveBeenCalledTimes(1);
-      expect(writer.reset).not.toHaveBeenCalled();
+      expect(writer.runWriter.reset).not.toHaveBeenCalled();
     });
 
     it('reports the import lifecycle of a successful fallback to the reporter', async () => {
@@ -1228,7 +1532,7 @@ describe('Pipeline', () => {
       );
       // Import failed → no re-run, endpoint output is kept.
       expect(stage.run).toHaveBeenCalledTimes(1);
-      expect(writer.reset).not.toHaveBeenCalled();
+      expect(writer.runWriter.reset).not.toHaveBeenCalled();
     });
 
     it('resets every writer when fanning out to multiple writers', async () => {
@@ -1253,8 +1557,8 @@ describe('Pipeline', () => {
 
       await pipeline.run();
 
-      expect(writerA.reset).toHaveBeenCalledWith(dataset);
-      expect(writerB.reset).toHaveBeenCalledWith(dataset);
+      expect(writerA.runWriter.reset).toHaveBeenCalledWith(dataset);
+      expect(writerB.runWriter.reset).toHaveBeenCalledWith(dataset);
     });
 
     it('reports the imported dump as the selected and validated distribution', async () => {
@@ -1363,7 +1667,7 @@ describe('Pipeline', () => {
       expect(stage.run).toHaveBeenLastCalledWith(
         dataset,
         secondaryEndpoint,
-        writer,
+        writer.runWriter,
         expect.objectContaining({ onProgress: expect.any(Function) }),
       );
       expect(reporter.distributionSelected).toHaveBeenLastCalledWith(
@@ -1410,7 +1714,7 @@ describe('Pipeline', () => {
       );
       // The failed import means no re-run; endpoint output is kept.
       expect(stage.run).toHaveBeenCalledTimes(1);
-      expect(writer.reset).not.toHaveBeenCalled();
+      expect(writer.runWriter.reset).not.toHaveBeenCalled();
     });
 
     it("adopts the imported dump's change fingerprint so the next run can skip it", async () => {
@@ -1493,13 +1797,18 @@ describe('Pipeline', () => {
       // the produced-quad count would never advance).
       const collected: Quad[] = [];
       const consumingWriter: Writer = {
-        write: async (_dataset, quads) => {
-          for await (const quad of quads) collected.push(quad);
+        async openRun(): Promise<RunWriter> {
+          return {
+            write: async (_dataset, quads) => {
+              for await (const quad of quads) collected.push(quad);
+            },
+            reset: async () => {
+              collected.length = 0;
+            },
+            commit: () => Promise.resolve(),
+            abort: () => Promise.resolve(),
+          };
         },
-        flush: vi.fn().mockResolvedValue(undefined),
-        reset: vi.fn(async () => {
-          collected.length = 0;
-        }),
       };
       const resolver = makeFallbackResolver();
 
@@ -1540,10 +1849,16 @@ describe('Pipeline', () => {
       const quads: Quad[] = [];
       return {
         quads,
-        async write(_dataset: Dataset, data: AsyncIterable<Quad>) {
-          for await (const quad of data) {
-            quads.push(quad);
-          }
+        async openRun(): Promise<RunWriter> {
+          return {
+            async write(_dataset: Dataset, data: AsyncIterable<Quad>) {
+              for await (const quad of data) {
+                quads.push(quad);
+              }
+            },
+            commit: () => Promise.resolve(),
+            abort: () => Promise.resolve(),
+          };
         },
       };
     }
@@ -1636,7 +1951,7 @@ describe('Pipeline', () => {
       // Stage receives the original writer (no TransformWriter wrapping).
       const usedWriter = (stage.run as ReturnType<typeof vi.fn>).mock
         .calls[0][2];
-      expect(usedWriter).toBe(writer);
+      expect(usedWriter).toBe(writer.runWriter);
     });
 
     it('passes dataset to beforeStageWrite transform', async () => {
@@ -1991,6 +2306,41 @@ describe('Pipeline', () => {
         dataset,
         'Unchanged since last run',
       );
+    });
+
+    it('includes skipped-unchanged datasets in the run’s selected sources', async () => {
+      // A dataset skipped as unchanged is still a member of the selection: a
+      // writer’s registry-membership sweep must not delete its documents.
+      const resolver = makeDumpResolver();
+      const store = makeStore({
+        sourceFingerprint: currentFingerprint,
+        pipelineVersion: 'v1',
+        generatedAt: '2026-06-01T00:00:00.000Z',
+        status: 'success',
+      });
+      let sourcesAtCommit: string[] = [];
+      const capturingWriter: Writer = {
+        openRun: async (context) => ({
+          write: () => Promise.resolve(),
+          commit: async () => {
+            sourcesAtCommit = [...context.selectedSources()];
+          },
+          abort: () => Promise.resolve(),
+        }),
+      };
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [makeStage('stage1')],
+        writers: capturingWriter,
+        distributionResolver: resolver,
+        provenanceStore: store,
+        pipelineVersion: 'v1',
+      });
+
+      await pipeline.run();
+
+      expect(sourcesAtCommit).toEqual([dataset.iri.toString()]);
     });
 
     it('reprocesses and records a dataset with no prior record', async () => {

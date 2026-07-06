@@ -295,10 +295,22 @@ After all stages for a dataset have run, the pipeline calls `validator.report(da
 
 ### Writer
 
-Writes generated quads to a destination:
+Writes generated quads to a destination. A `Writer` is transactional: each pipeline run opens one run on it (`openRun(context)`), writes every dataset through the resulting `RunWriter`, and ends with exactly one `commit()` (on success) or `abort(error)` (on failure). The run lifecycle is the home of destination-level concerns such as atomic swaps, deletion sweeps and cross-pod locks; the pipeline drives `openRun → write* → commit/abort` uniformly and never branches on the writer’s update mode.
 
-- `SparqlUpdateWriter` — writes to a SPARQL endpoint via UPDATE queries
-- `FileWriter` — writes to local files
+- `SparqlUpdateWriter` — writes to a SPARQL endpoint via UPDATE queries; writes are visible as they land, so `commit`/`abort` are no-ops
+- `FileWriter` — writes to local files; each file is streamed to a sibling temp file and atomically renamed on flush, `commit` finalizes any files still open, and `abort` discards temp output
+
+The `RunContext` handed to `openRun` carries the run’s identity (`runId`, `startedAt`), the full selection (`selectedSources()`, complete by commit time – including datasets skipped as unchanged) and the pipeline’s provenance store, when configured.
+
+Destinations without run-level state don’t need to hand-write no-op lifecycle methods – wrap the per-dataset write with `perDatasetWriter`:
+
+```typescript
+const writer = perDatasetWriter({
+  async write(dataset, quads) {
+    // send quads somewhere
+  },
+});
+```
 
 ### Reporter
 

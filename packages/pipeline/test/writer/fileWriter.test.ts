@@ -44,7 +44,7 @@ describe('FileWriter', () => {
 
   describe('write', () => {
     it('writes quads to N-Triples file by default', async () => {
-      const writer = new FileWriter({ outputDir: tempDir });
+      const writer = await new FileWriter({ outputDir: tempDir }).openRun();
 
       const dataset = createDataset('http://example.com/dataset/1');
 
@@ -70,10 +70,10 @@ describe('FileWriter', () => {
     });
 
     it('writes N-Triples format', async () => {
-      const writer = new FileWriter({
+      const writer = await new FileWriter({
         outputDir: tempDir,
         format: 'n-triples',
-      });
+      }).openRun();
 
       const dataset = createDataset('http://example.com/dataset/1');
 
@@ -97,7 +97,7 @@ describe('FileWriter', () => {
     });
 
     it('does not write empty data', async () => {
-      const writer = new FileWriter({ outputDir: tempDir });
+      const writer = await new FileWriter({ outputDir: tempDir }).openRun();
 
       const dataset = createDataset('http://example.com/dataset/1');
 
@@ -110,10 +110,10 @@ describe('FileWriter', () => {
     });
 
     it('combines quads from multiple write calls into a single file', async () => {
-      const writer = new FileWriter({
+      const writer = await new FileWriter({
         outputDir: tempDir,
         format: 'n-triples',
-      });
+      }).openRun();
 
       const dataset = createDataset('http://example.com/dataset/1');
 
@@ -152,10 +152,10 @@ describe('FileWriter', () => {
     });
 
     it('uses custom replacement character in filenames', async () => {
-      const writer = new FileWriter({
+      const writer = await new FileWriter({
         outputDir: tempDir,
         replacementCharacter: '_',
-      });
+      }).openRun();
 
       const dataset = createDataset('http://example.com/dataset/1');
 
@@ -180,7 +180,7 @@ describe('FileWriter', () => {
 
     it('creates nested output directories', async () => {
       const nestedDir = join(tempDir, 'nested', 'output');
-      const writer = new FileWriter({ outputDir: nestedDir });
+      const writer = await new FileWriter({ outputDir: nestedDir }).openRun();
 
       const dataset = createDataset('http://example.com/dataset/1');
 
@@ -206,11 +206,11 @@ describe('FileWriter', () => {
 
   describe('named graphs (n-quads)', () => {
     it('writes each quad into the graph derived from graphIri', async () => {
-      const writer = new FileWriter({
+      const writer = await new FileWriter({
         outputDir: tempDir,
         format: 'n-quads',
         graphIri: (dataset) => dataset.iri,
-      });
+      }).openRun();
 
       const dataset = createDataset('http://example.com/dataset/1');
 
@@ -237,14 +237,14 @@ describe('FileWriter', () => {
     });
 
     it('supports a graphIri unrelated to the dataset IRI (e.g. validation report)', async () => {
-      const writer = new FileWriter({
+      const writer = await new FileWriter({
         outputDir: tempDir,
         format: 'n-quads',
         graphIri: (dataset) =>
           new URL(
             `https://reports.example/${encodeURIComponent(dataset.iri.toString())}`,
           ),
-      });
+      }).openRun();
 
       const dataset = createDataset('http://example.com/dataset/1');
 
@@ -270,7 +270,10 @@ describe('FileWriter', () => {
     });
 
     it('writes the default graph when graphIri is omitted', async () => {
-      const writer = new FileWriter({ outputDir: tempDir, format: 'n-quads' });
+      const writer = await new FileWriter({
+        outputDir: tempDir,
+        format: 'n-quads',
+      }).openRun();
 
       const dataset = createDataset('http://example.com/dataset/1');
 
@@ -297,11 +300,11 @@ describe('FileWriter', () => {
     });
 
     it('ignores graphIri for turtle output', async () => {
-      const writer = new FileWriter({
+      const writer = await new FileWriter({
         outputDir: tempDir,
         format: 'turtle',
         graphIri: (dataset) => dataset.iri,
-      });
+      }).openRun();
 
       const dataset = createDataset('http://example.com/dataset/1');
 
@@ -327,7 +330,10 @@ describe('FileWriter', () => {
 
   describe('atomic flush', () => {
     it('only materializes the final file on flush, never a truncated one', async () => {
-      const writer = new FileWriter({ outputDir: tempDir, format: 'n-quads' });
+      const writer = await new FileWriter({
+        outputDir: tempDir,
+        format: 'n-quads',
+      }).openRun();
       const dataset = createDataset('http://example.com/dataset/1');
       const finalPath = join(tempDir, 'example.com-dataset-1.nq');
 
@@ -354,7 +360,10 @@ describe('FileWriter', () => {
     });
 
     it('cleans up the temp file and rejects when the stream fails', async () => {
-      const writer = new FileWriter({ outputDir: tempDir, format: 'n-quads' });
+      const writer = await new FileWriter({
+        outputDir: tempDir,
+        format: 'n-quads',
+      }).openRun();
       const dataset = createDataset('http://example.com/dataset/1');
       const finalPath = join(tempDir, 'example.com-dataset-1.nq');
       const tempPath = `${finalPath}.tmp`;
@@ -389,7 +398,7 @@ describe('FileWriter', () => {
 
   describe('flush', () => {
     it('is a no-op when no write was made for the dataset', async () => {
-      const writer = new FileWriter({ outputDir: tempDir });
+      const writer = await new FileWriter({ outputDir: tempDir }).openRun();
       const dataset = createDataset('http://example.com/dataset/1');
 
       // Should not throw.
@@ -397,15 +406,95 @@ describe('FileWriter', () => {
     });
   });
 
+  describe('run lifecycle', () => {
+    it('commit finalizes files that were never flushed per dataset', async () => {
+      const run = await new FileWriter({ outputDir: tempDir }).openRun();
+      const dataset = createDataset('http://example.com/dataset/1');
+      const finalPath = join(tempDir, 'example.com-dataset-1.nt');
+
+      await run.write(
+        dataset,
+        quadsOf(
+          quad(
+            namedNode('http://example.com/s'),
+            namedNode('http://example.com/p'),
+            literal('o'),
+          ),
+        ),
+      );
+      await run.commit();
+
+      expect(await exists(finalPath)).toBe(true);
+      expect(await exists(`${finalPath}.tmp`)).toBe(false);
+    });
+
+    it('abort discards temp output and produces no final file', async () => {
+      const run = await new FileWriter({ outputDir: tempDir }).openRun();
+      const dataset = createDataset('http://example.com/dataset/1');
+      const finalPath = join(tempDir, 'example.com-dataset-1.nt');
+
+      await run.write(
+        dataset,
+        quadsOf(
+          quad(
+            namedNode('http://example.com/s'),
+            namedNode('http://example.com/p'),
+            literal('o'),
+          ),
+        ),
+      );
+      await run.abort(new Error('failure elsewhere in the run'));
+
+      expect(await exists(finalPath)).toBe(false);
+      expect(await exists(`${finalPath}.tmp`)).toBe(false);
+    });
+
+    it('keeps runs isolated: files flushed in one run are untouched by another run’s abort', async () => {
+      const writer = new FileWriter({ outputDir: tempDir });
+      const dataset = createDataset('http://example.com/dataset/1');
+      const finalPath = join(tempDir, 'example.com-dataset-1.nt');
+
+      const firstRun = await writer.openRun();
+      await firstRun.write(
+        dataset,
+        quadsOf(
+          quad(
+            namedNode('http://example.com/kept'),
+            namedNode('http://example.com/p'),
+            literal('first run'),
+          ),
+        ),
+      );
+      await firstRun.commit();
+
+      const secondRun = await writer.openRun();
+      await secondRun.write(
+        dataset,
+        quadsOf(
+          quad(
+            namedNode('http://example.com/discarded'),
+            namedNode('http://example.com/p'),
+            literal('second run'),
+          ),
+        ),
+      );
+      await secondRun.abort(new Error('second run failed'));
+
+      const content = await readFile(finalPath, 'utf-8');
+      expect(content).toContain('<http://example.com/kept>');
+      expect(content).not.toContain('<http://example.com/discarded>');
+    });
+  });
+
   describe('Turtle prefixes', () => {
     it('writes prefix declarations and compacts IRIs', async () => {
-      const writer = new FileWriter({
+      const writer = await new FileWriter({
         outputDir: tempDir,
         format: 'turtle',
         prefixes: {
           ex: 'http://example.com/',
         },
-      });
+      }).openRun();
 
       const dataset = createDataset('http://example.com/dataset/1');
 
@@ -431,13 +520,13 @@ describe('FileWriter', () => {
     });
 
     it('writes a single prefix block across multiple write calls', async () => {
-      const writer = new FileWriter({
+      const writer = await new FileWriter({
         outputDir: tempDir,
         format: 'turtle',
         prefixes: {
           ex: 'http://example.com/',
         },
-      });
+      }).openRun();
 
       const dataset = createDataset('http://example.com/dataset/1');
 
@@ -480,10 +569,10 @@ describe('FileWriter', () => {
     });
 
     it('writes full IRIs when no prefixes are provided', async () => {
-      const writer = new FileWriter({
+      const writer = await new FileWriter({
         outputDir: tempDir,
         format: 'turtle',
-      });
+      }).openRun();
 
       const dataset = createDataset('http://example.com/dataset/1');
 
@@ -510,7 +599,7 @@ describe('FileWriter', () => {
 
   describe('reset', () => {
     it('discards quads written before the reset', async () => {
-      const writer = new FileWriter({ outputDir: tempDir });
+      const writer = await new FileWriter({ outputDir: tempDir }).openRun();
       const dataset = createDataset('http://example.com/dataset/1');
 
       // First pass (e.g. endpoint-sourced) writes a quad, then is discarded.
@@ -548,7 +637,7 @@ describe('FileWriter', () => {
     });
 
     it('removes the dataset’s temp file so a discarded pass leaves nothing behind', async () => {
-      const writer = new FileWriter({ outputDir: tempDir });
+      const writer = await new FileWriter({ outputDir: tempDir }).openRun();
       const dataset = createDataset('http://example.com/dataset/1');
 
       await writer.write(

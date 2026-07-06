@@ -110,8 +110,11 @@ export class FileLoadedSparqlProvenanceStore implements ProvenanceStore {
 
   async set(datasetUri: URL, record: ProcessingRecord): Promise<void> {
     const dataset = new Dataset({ iri: datasetUri, distributions: [] });
-    await this.writer.write(dataset, this.toQuads(datasetUri, record));
-    await this.writer.flush(dataset);
+    // Each record is complete in itself, so it gets its own mini run:
+    // write + flush materializes the record file atomically.
+    const run = await this.writer.openRun();
+    await run.write(dataset, this.toQuads(datasetUri, record));
+    await run.flush(dataset);
   }
 
   private async *toQuads(

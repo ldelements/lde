@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { Quad } from '@rdfjs/types';
 import type { Dataset } from '@lde/dataset';
 
@@ -5,6 +6,7 @@ import type {
   Validator,
   ValidationResult,
   ValidationReport,
+  RunWriter,
   Writer,
 } from '@lde/pipeline';
 // @ts-expect-error -- shacl-engine has no type declarations.
@@ -19,9 +21,10 @@ export interface ShaclValidatorOptions {
   /** Path to an RDF file containing SHACL shapes (any format supported by rdf-dereference). */
   shapesFile: string;
   /**
-   * Writers that receive the per-dataset SHACL validation report quads. Each
-   * batch with violations is streamed to every writer via {@link Writer.write};
-   * each writer's {@link Writer.flush} is called from {@link ShaclValidator.report}.
+   * Writers that receive the per-dataset SHACL validation report quads. The
+   * validator opens one run per writer (lazily, on the first violation) and
+   * streams each batch with violations to it; each run is flushed per dataset
+   * from {@link ShaclValidator.report}.
    *
    * Pass a {@link FileWriter} to mirror the previous on-disk behaviour, a
    * {@link SparqlUpdateWriter} to land reports in a named graph, or any custom
@@ -46,6 +49,7 @@ interface DatasetAccumulator {
 export class ShaclValidator implements Validator {
   private readonly shapesFile: string;
   private readonly reportWriters: Writer[];
+  private reportRuns: RunWriter[] | undefined;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private shapesDataset: any | undefined;
   private readonly accumulators = new Map<string, DatasetAccumulator>();
@@ -91,8 +95,8 @@ export class ShaclValidator implements Validator {
         report.dataset,
         dataset.iri.toString(),
       );
-      for (const writer of this.reportWriters) {
-        await writer.write(dataset, asyncIterableOf(reportQuads));
+      for (const run of await this.runs()) {
+        await run.write(dataset, asyncIterableOf(reportQuads));
       }
     }
 
@@ -107,8 +111,10 @@ export class ShaclValidator implements Validator {
   }
 
   async report(dataset: Dataset): Promise<ValidationReport> {
-    for (const writer of this.reportWriters) {
-      await writer.flush?.(dataset);
+    // Flush is the per-dataset completion hook regardless of whether the
+    // dataset produced violations, so open the runs here if no write did.
+    for (const run of await this.runs()) {
+      await run.flush?.(dataset);
     }
 
     const key = dataset.iri.toString();
@@ -121,6 +127,26 @@ export class ShaclValidator implements Validator {
       violations: acc.violations,
       quadsValidated: acc.quadsValidated,
     };
+  }
+
+  /**
+   * The report writers' runs, opened lazily on first use. The report stream is
+   * the validator's own long-lived run: each dataset's report is finalized by
+   * the per-dataset flush in {@link report}, so the run needs no commit, and
+   * the fabricated context's selection stays empty (report writers do not
+   * sweep by membership).
+   */
+  private async runs(): Promise<RunWriter[]> {
+    this.reportRuns ??= await Promise.all(
+      this.reportWriters.map((writer) =>
+        writer.openRun({
+          runId: randomUUID(),
+          startedAt: new Date().toISOString(),
+          selectedSources: () => [],
+        }),
+      ),
+    );
+    return this.reportRuns;
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
