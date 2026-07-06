@@ -130,18 +130,27 @@ export function describeSearchEngineContract(
       }
     });
 
-    it('answers a searchFacets batch with one facet map per query, positionally', async () => {
+    it('answers a searchFacets batch with one facets outcome per query, positionally', async () => {
       for (const searchType of types()) {
         const facets = facetableFields(searchType).map((field) => field.name);
         const queries: SearchQuery[] = [
           { ...browse(searchType), limit: 0, facets },
-          { ...browse(searchType), limit: 0, facets: [] },
+          // Facet-only regardless of the limit the query carries: this one
+          // keeps its non-zero browse limit and must be answered the same.
+          { ...browse(searchType), facets: [] },
         ];
-        const results = await engine().searchFacets(searchType, queries);
-        expect(results).toHaveLength(queries.length);
-        for (const facetMap of results) {
-          expect(facetMap).toBeTypeOf('object');
-          for (const buckets of Object.values(facetMap)) {
+        const outcomes = await engine().searchFacets(searchType, queries);
+        expect(outcomes).toHaveLength(queries.length);
+        for (const outcome of outcomes) {
+          // A valid query in a healthy engine yields facets, not an error.
+          expect('error' in outcome ? outcome.error : undefined).toBe(
+            undefined,
+          );
+          if ('error' in outcome) {
+            continue;
+          }
+          expect(outcome.facets).toBeTypeOf('object');
+          for (const buckets of Object.values(outcome.facets)) {
             for (const bucket of buckets ?? []) {
               expect(typeof bucket.value).toBe('string');
               expect(typeof bucket.count).toBe('number');

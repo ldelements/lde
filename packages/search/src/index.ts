@@ -50,6 +50,7 @@ export type {
   Reference,
   FacetBucket,
   FacetMap,
+  FacetsOutcome,
   FacetFieldsOf,
   OutputFieldsOf,
 } from './engine.js';

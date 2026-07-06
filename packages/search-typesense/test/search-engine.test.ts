@@ -229,7 +229,7 @@ describe('createTypesenseSearchEngine (integration)', () => {
   });
 
   it('answers a whole facet batch in one searchFacets call, positionally, with labelled reference buckets', async () => {
-    const facetMaps = await engine.searchFacets(datasetSchema, [
+    const outcomes = await engine.searchFacets(datasetSchema, [
       // Unfiltered: counts across all documents, faceting two fields at once.
       { ...baseQuery, limit: 0, facets: ['keyword', 'publisher'] },
       // Filtered (as a skip-own-filter variant would be): valid only.
@@ -241,18 +241,22 @@ describe('createTypesenseSearchEngine (integration)', () => {
       },
     ]);
 
-    expect(facetMaps).toHaveLength(2);
+    expect(outcomes).toHaveLength(2);
+    const [unfiltered, filtered] = outcomes;
+    if ('error' in unfiltered || 'error' in filtered) {
+      throw new Error('Expected facets outcomes.');
+    }
 
-    const keyword = [...(facetMaps[0].keyword ?? [])].sort(
-      (a, b) => b.count - a.count,
+    const keyword = [...(unfiltered.facets.keyword ?? [])].sort(
+      (first, second) => second.count - first.count,
     );
     expect(keyword).toEqual([
       { value: 'kaarten', count: 2 },
       { value: 'atlas', count: 1 },
     ]);
     // Reference facets carry resolved labels, exactly as in search().
-    const publisher = [...(facetMaps[0].publisher ?? [])].sort(
-      (a, b) => b.count - a.count,
+    const publisher = [...(unfiltered.facets.publisher ?? [])].sort(
+      (first, second) => second.count - first.count,
     );
     expect(publisher).toEqual([
       {
@@ -268,8 +272,8 @@ describe('createTypesenseSearchEngine (integration)', () => {
     ]);
 
     // The filtered query counts only the valid documents (d1, d2).
-    const filteredKeyword = [...(facetMaps[1].keyword ?? [])].sort((a, b) =>
-      a.value.localeCompare(b.value),
+    const filteredKeyword = [...(filtered.facets.keyword ?? [])].sort(
+      (first, second) => first.value.localeCompare(second.value),
     );
     expect(filteredKeyword).toEqual([
       { value: 'atlas', count: 1 },

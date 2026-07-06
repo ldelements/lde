@@ -233,6 +233,12 @@ interface SearchEngine<
     searchType: T,
     query: SearchQuery,
   ): Promise<SearchResult<FacetFieldsOf<T>, OutputFieldsOf<T>>>;
+  // Amended by ADR 5: the batch entry point for facet-only queries
+  // (one multi_search round-trip; per-query outcomes).
+  searchFacets<T extends Types[number]>(
+    searchType: T,
+    queries: readonly SearchQuery[],
+  ): Promise<readonly FacetsOutcome<FacetFieldsOf<T>>[]>;
 }
 
 interface SearchResult<

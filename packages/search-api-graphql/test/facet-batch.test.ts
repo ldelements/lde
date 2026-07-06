@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   searchSchema,
-  type FacetMap,
+  type FacetsOutcome,
   type SearchEngine,
   type SearchQuery,
 } from '@lde/search';
@@ -39,16 +39,19 @@ function recordingEngine(): {
       async search() {
         throw new Error('not under test');
       },
-      async searchFacets(_searchType, queries): Promise<readonly FacetMap[]> {
+      async searchFacets(
+        _searchType,
+        queries,
+      ): Promise<readonly FacetsOutcome[]> {
         batches.push(queries);
-        return queries.map((query) =>
-          Object.fromEntries(
+        return queries.map((query) => ({
+          facets: Object.fromEntries(
             query.facets.map((field) => [
               field,
               [{ value: `${field}-value`, count: 1 }],
             ]),
           ),
-        );
+        }));
       },
     },
     batches,
@@ -161,6 +164,75 @@ describe('createFacetLoader', () => {
     expect(batches).toHaveLength(2);
     expect(batches[0][0].facets).toEqual(['keyword']);
     expect(batches[1][0].facets).toEqual(['status']);
+  });
+
+  it('degrades only the facets of a failed query outcome, keeping its siblings', async () => {
+    const failed: string[] = [];
+    const engine: SearchEngine = {
+      schema: searchSchema(dataset),
+      async search() {
+        throw new Error('not under test');
+      },
+      async searchFacets(
+        _searchType,
+        queries,
+      ): Promise<readonly FacetsOutcome[]> {
+        // Fail exactly the own-filtered status query; answer the rest.
+        return queries.map((query) =>
+          query.facets.includes('status')
+            ? { error: new Error('status query failed') }
+            : {
+                facets: Object.fromEntries(
+                  query.facets.map((field) => [
+                    field,
+                    [{ value: `${field}-value`, count: 1 }],
+                  ]),
+                ),
+              },
+        );
+      },
+    };
+    const filtered: SearchQuery = {
+      ...baseQuery,
+      where: [{ field: 'status', in: ['valid'] }],
+    };
+    const load = createFacetLoader(engine, dataset, filtered, (field) =>
+      failed.push(field),
+    );
+
+    const [keyword, status] = await Promise.all([
+      load('keyword'),
+      load('status'),
+    ]);
+
+    // The shared keyword query keeps its buckets; only status degraded.
+    expect(keyword).toEqual([{ value: 'keyword-value', count: 1 }]);
+    expect(status).toEqual([]);
+    expect(failed).toEqual(['status']);
+  });
+
+  it('treats a missing outcome (a port-contract breach) as a failed query', async () => {
+    const failed: [string, unknown][] = [];
+    const engine: SearchEngine = {
+      schema: searchSchema(dataset),
+      async search() {
+        throw new Error('not under test');
+      },
+      // Shorter than the queries list: a broken engine, not empty facets.
+      async searchFacets(): Promise<readonly FacetsOutcome[]> {
+        return [];
+      },
+    };
+    const load = createFacetLoader(engine, dataset, baseQuery, (field, error) =>
+      failed.push([field, error]),
+    );
+
+    const keyword = await load('keyword');
+
+    expect(keyword).toEqual([]);
+    expect(failed).toHaveLength(1);
+    expect(failed[0][0]).toBe('keyword');
+    expect(String(failed[0][1])).toMatch(/no outcome/);
   });
 
   it('degrades every field of a failed dispatch to [], reporting each', async () => {

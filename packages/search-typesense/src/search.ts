@@ -1,7 +1,7 @@
 import type { Client } from 'typesense';
 import {
   type FacetBucket,
-  type FacetMap,
+  type FacetsOutcome,
   type LocalizedValue,
   type Reference,
   type ReferenceField,
@@ -70,8 +70,10 @@ export interface TypesenseSearchEngineOptions<
  * `labels` collection in one lookup, and reconstructs the engine-neutral
  * {@link SearchResult} ({@link parseSearchResponse}). `searchFacets` answers
  * a whole facet batch (e.g. a sidebar’s skip-own-filter query variants) as a
- * single `multi_search` round-trip with one shared label lookup. Every engine
- * specific stays here; consumers see only logical documents.
+ * single `multi_search` round-trip with one shared label lookup; a failed
+ * entry is reported in place as a per-query outcome, so it never discards
+ * its siblings’ facets. Every engine specific stays here; consumers see only
+ * logical documents.
  *
  * With a schema built by `searchSchema` over `defineSearchType` literals,
  * `search()` accepts only the deployment’s own types and returns typo-safe
@@ -150,12 +152,13 @@ export function createTypesenseSearchEngine<
 
   // Labels are supplementary: a failed lookup (e.g. the sidecar collection
   // mid-rebuild) degrades to id-only references rather than failing the whole
-  // search, so the listing still renders with bare IRIs.
+  // search, so the listing still renders with bare IRIs. `iris` is a thunk so
+  // the cached and no-sidecar paths never pay for collecting them.
   async function resolveLabels(
     cachedLabelsPromise:
       | Promise<ReadonlyMap<string, LocalizedValue>>
       | undefined,
-    iris: readonly string[],
+    iris: () => readonly string[],
   ): Promise<ReadonlyMap<string, LocalizedValue>> {
     if (cachedLabelsPromise !== undefined) {
       return cachedLabelsPromise;
@@ -164,7 +167,7 @@ export function createTypesenseSearchEngine<
       return new Map();
     }
     try {
-      return await fetchLabels(client, options.labelsCollection, iris);
+      return await fetchLabels(client, options.labelsCollection, iris());
     } catch (error) {
       options.onLabelError?.(error);
       return new Map();
@@ -188,8 +191,7 @@ export function createTypesenseSearchEngine<
         .collections(collections.get(searchType.type) as string)
         .documents()
         .search(params)) as TypesenseSearchResponse;
-      const labels = await resolveLabels(
-        cachedLabelsPromise,
+      const labels = await resolveLabels(cachedLabelsPromise, () =>
         referenceIris(response, searchType),
       );
       return parseSearchResponse(response, searchType, labels);
@@ -197,7 +199,7 @@ export function createTypesenseSearchEngine<
     async searchFacets(
       searchType: SearchType,
       queries: readonly SearchQuery[],
-    ): Promise<readonly FacetMap[]> {
+    ): Promise<readonly FacetsOutcome[]> {
       assertTypeInSchema(schema, searchType);
       for (const query of queries) {
         assertValidQuery(query, searchType);
@@ -208,13 +210,14 @@ export function createTypesenseSearchEngine<
       const collection = collections.get(searchType.type) as string;
       const cachedLabelsPromise = startCachedLabels();
       // The whole batch travels as ONE multi_search round-trip. Each query
-      // compiles as facet-only regardless of the limit it carries: hits are
-      // never returned across this method, so none are transferred.
+      // compiles as facet-only regardless of what it carries: no hits
+      // (per_page 0) and no ordering — nothing is transferred or sorted that
+      // this method cannot return.
       const { results } = (await client.multiSearch.perform({
         searches: queries.map((query) => ({
           collection,
           ...buildSearchParams(
-            { ...query, limit: 0, offset: 0 },
+            { ...query, orderBy: [], limit: 0, offset: 0 },
             searchType,
             options,
           ),
@@ -222,27 +225,29 @@ export function createTypesenseSearchEngine<
       })) as {
         results: readonly (TypesenseSearchResponse | TypesenseErrorEntry)[];
       };
-      // multi_search reports a failed entry inline instead of rejecting the
-      // call; surface it as a rejection so a caller never mistakes a failed
-      // batch for empty facets.
-      const responses = results.map((result, index) => {
-        if ('error' in result) {
-          throw new Error(
-            `Typesense facet search ${index + 1}/${results.length} failed${
-              result.code !== undefined ? ` (${result.code})` : ''
-            }: ${result.error}`,
-          );
-        }
-        return result;
-      });
-      // One label lookup serves every facet result in the batch.
-      const labels = await resolveLabels(cachedLabelsPromise, [
+      // One label lookup serves every successful facet result in the batch.
+      const responses = results.filter(
+        (result): result is TypesenseSearchResponse => !('error' in result),
+      );
+      const labels = await resolveLabels(cachedLabelsPromise, () => [
         ...new Set(
           responses.flatMap((response) => referenceIris(response, searchType)),
         ),
       ]);
-      return responses.map(
-        (response) => parseSearchResponse(response, searchType, labels).facets,
+      // multi_search reports a failed entry inline instead of rejecting the
+      // call; pass that through as a per-query outcome — naming the facets,
+      // not the position, since the batch order is the caller's internal —
+      // so one failed query never discards its siblings' facets.
+      return results.map((result, index) =>
+        'error' in result
+          ? {
+              error: new Error(
+                `Typesense facet search for “${queries[index].facets.join('”, “')}” failed${
+                  result.code !== undefined ? ` (${result.code})` : ''
+                }: ${result.error}`,
+              ),
+            }
+          : { facets: parseSearchResponse(result, searchType, labels).facets },
       );
     },
   };
@@ -345,9 +350,19 @@ export async function fetchLabels(
     });
   }
   const { results } = (await client.multiSearch.perform({ searches })) as {
-    results: readonly TypesenseSearchResponse[];
+    results: readonly (TypesenseSearchResponse | TypesenseErrorEntry)[];
   };
   for (const result of results) {
+    // multi_search reports a failed entry inline instead of rejecting; throw
+    // so the caller's degradation path (onLabelError, id-only references)
+    // engages rather than mistaking the failure for absent labels.
+    if ('error' in result) {
+      throw new Error(
+        `Typesense label lookup failed${
+          result.code !== undefined ? ` (${result.code})` : ''
+        }: ${result.error}`,
+      );
+    }
     for (const hit of result.hits ?? []) {
       labels.set(String(hit.document.id), labelToLocalizedValue(hit.document));
     }

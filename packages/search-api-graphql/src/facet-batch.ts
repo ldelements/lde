@@ -18,10 +18,11 @@ export type FacetLoader = (field: string) => Promise<readonly FacetBucket[]>;
  * `engine.searchFacets` call — one engine round-trip for the whole sidebar
  * instead of one search per facet.
  *
- * A facet is supplementary: a failed batch degrades every facet in it to an
- * empty list — reported per field via `onFacetError` — rather than failing
- * the whole query (which would null the non-null result and discard the
- * items).
+ * A facet is supplementary: a failed facet query degrades exactly its own
+ * facets to empty lists — reported per field via `onFacetError` — while its
+ * siblings keep their buckets; only a batch-level failure (the dispatch
+ * itself rejecting) degrades every facet. Neither fails the whole GraphQL
+ * query, which would null the non-null result and discard the items.
  */
 export function createFacetLoader(
   engine: SearchEngine,
@@ -34,14 +35,28 @@ export function createFacetLoader(
       const queries = groupFacetQueries(query, fields);
       const buckets = new Map<string, readonly FacetBucket[]>();
       try {
-        const results = await engine.searchFacets(searchType, queries);
+        const outcomes = await engine.searchFacets(searchType, queries);
         queries.forEach((facetQuery, index) => {
+          const outcome = outcomes[index];
+          if (outcome !== undefined && !('error' in outcome)) {
+            for (const field of facetQuery.facets) {
+              buckets.set(field, outcome.facets[field] ?? []);
+            }
+            return;
+          }
+          // A failed (or missing — a port-contract breach) outcome degrades
+          // exactly this query's facets; its siblings keep theirs.
+          const error =
+            outcome === undefined
+              ? new Error('The engine returned no outcome for this query.')
+              : outcome.error;
           for (const field of facetQuery.facets) {
-            buckets.set(field, results[index]?.[field] ?? []);
+            onFacetError?.(field, error);
           }
         });
       } catch (error) {
-        // Leave `buckets` empty: every facet in the batch degrades to [].
+        // A batch-level failure leaves `buckets` empty: every facet in the
+        // batch degrades to [].
         for (const field of fields) {
           onFacetError?.(field, error);
         }

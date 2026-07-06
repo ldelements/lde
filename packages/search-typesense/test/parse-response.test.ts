@@ -473,7 +473,7 @@ describe('createTypesenseSearchEngine searchFacets (multi_search batching)', () 
       collections: { Dataset: 'datasets' },
     });
 
-    const facetMaps = await engine.searchFacets(schema, [
+    const outcomes = await engine.searchFacets(schema, [
       { ...facetBrowse, facets: ['keyword'] },
       // A non-zero limit still compiles facet-only: the port never returns
       // hits, so the adapter normalizes rather than transferring a page.
@@ -492,10 +492,12 @@ describe('createTypesenseSearchEngine searchFacets (multi_search batching)', () 
       facet_by: 'status',
       per_page: 0,
     });
-    expect(facetMaps[0].keyword).toEqual([
-      { value: 'keyword-value', count: 1 },
-    ]);
-    expect(facetMaps[1].status).toEqual([{ value: 'status-value', count: 1 }]);
+    expect(outcomes[0]).toEqual({
+      facets: { keyword: [{ value: 'keyword-value', count: 1 }] },
+    });
+    expect(outcomes[1]).toEqual({
+      facets: { status: [{ value: 'status-value', count: 1 }] },
+    });
   });
 
   it('makes no request for an empty batch', async () => {
@@ -507,7 +509,7 @@ describe('createTypesenseSearchEngine searchFacets (multi_search batching)', () 
     expect(performs).toHaveLength(0);
   });
 
-  it('surfaces a failed multi_search entry as a rejection, not as empty facets', async () => {
+  it('reports a failed entry as an in-place error outcome, keeping its siblings', async () => {
     const { client } = fakeClient((_search, index) =>
       index === 1
         ? { code: 404, error: 'collection not found' }
@@ -516,12 +518,22 @@ describe('createTypesenseSearchEngine searchFacets (multi_search batching)', () 
     const engine = createTypesenseSearchEngine(client, searchSchema(schema), {
       collections: { Dataset: 'datasets' },
     });
-    await expect(
-      engine.searchFacets(schema, [
-        { ...facetBrowse, facets: ['keyword'] },
-        { ...facetBrowse, facets: ['status'] },
-      ]),
-    ).rejects.toThrow(/facet search 2\/2 failed \(404\): collection not found/);
+
+    const outcomes = await engine.searchFacets(schema, [
+      { ...facetBrowse, facets: ['keyword'] },
+      { ...facetBrowse, facets: ['status'] },
+    ]);
+
+    // The sibling entry's facets survive the failed one.
+    expect(outcomes[0]).toEqual({ facets: {} });
+    const failed = outcomes[1];
+    if (!('error' in failed)) {
+      throw new Error('Expected an error outcome.');
+    }
+    // The error names the failed query's facets, not its batch position.
+    expect(String(failed.error)).toMatch(
+      /facet search for “status” failed \(404\): collection not found/,
+    );
   });
 
   it('reports a failed entry that carries no status code', async () => {
@@ -529,9 +541,15 @@ describe('createTypesenseSearchEngine searchFacets (multi_search batching)', () 
     const engine = createTypesenseSearchEngine(client, searchSchema(schema), {
       collections: { Dataset: 'datasets' },
     });
-    await expect(
-      engine.searchFacets(schema, [{ ...facetBrowse, facets: ['keyword'] }]),
-    ).rejects.toThrow(/facet search 1\/1 failed: malformed query/);
+    const [outcome] = await engine.searchFacets(schema, [
+      { ...facetBrowse, facets: ['keyword'] },
+    ]);
+    if (!('error' in outcome)) {
+      throw new Error('Expected an error outcome.');
+    }
+    expect(String(outcome.error)).toMatch(
+      /facet search for “keyword” failed: malformed query/,
+    );
   });
 
   it('serves batch labels from the in-memory cache without a per-batch lookup', async () => {
@@ -575,7 +593,7 @@ describe('createTypesenseSearchEngine searchFacets (multi_search batching)', () 
       labelCacheTtlMs: 60_000,
     });
 
-    const facetMaps = await engine.searchFacets(schema, [
+    const outcomes = await engine.searchFacets(schema, [
       { ...facetBrowse, facets: ['publisher'] },
     ]);
 
@@ -583,13 +601,17 @@ describe('createTypesenseSearchEngine searchFacets (multi_search batching)', () 
     // batch itself — no per-batch label lookup.
     expect(exportCalls).toBe(1);
     expect(performs).toHaveLength(1);
-    expect(facetMaps[0].publisher).toEqual([
-      {
-        value: 'https://org/1',
-        count: 1,
-        label: { nl: ['Het Utrechts Archief'] },
+    expect(outcomes[0]).toEqual({
+      facets: {
+        publisher: [
+          {
+            value: 'https://org/1',
+            count: 1,
+            label: { nl: ['Het Utrechts Archief'] },
+          },
+        ],
       },
-    ]);
+    });
   });
 
   it('resolves reference-facet labels for the whole batch in one bundled lookup', async () => {
@@ -628,7 +650,7 @@ describe('createTypesenseSearchEngine searchFacets (multi_search batching)', () 
       labelsCollection: 'labels',
     });
 
-    const facetMaps = await engine.searchFacets(schema, [
+    const outcomes = await engine.searchFacets(schema, [
       { ...facetBrowse, facets: ['publisher'] },
       {
         ...facetBrowse,
@@ -640,16 +662,24 @@ describe('createTypesenseSearchEngine searchFacets (multi_search batching)', () 
     // One facet multi_search + ONE label lookup shared by the whole batch.
     expect(performs).toHaveLength(2);
     expect(performs[1]).toHaveLength(1);
-    expect(facetMaps[0].publisher).toEqual([
-      {
-        value: 'https://org/1',
-        count: 1,
-        label: { nl: ['Het Utrechts Archief'] },
+    expect(outcomes[0]).toEqual({
+      facets: {
+        publisher: [
+          {
+            value: 'https://org/1',
+            count: 1,
+            label: { nl: ['Het Utrechts Archief'] },
+          },
+        ],
       },
-    ]);
-    expect(facetMaps[1].publisher).toEqual([
-      { value: 'https://org/2', count: 1, label: { nl: ['Rijksmuseum'] } },
-    ]);
+    });
+    expect(outcomes[1]).toEqual({
+      facets: {
+        publisher: [
+          { value: 'https://org/2', count: 1, label: { nl: ['Rijksmuseum'] } },
+        ],
+      },
+    });
   });
 });
 
@@ -719,6 +749,34 @@ describe('fetchLabels', () => {
     const labels = await fetchLabels(client, 'labels', []);
     expect(labels.size).toBe(0);
     expect(posts).toHaveLength(0);
+  });
+
+  it('throws on an inline multi_search error entry instead of returning no labels', async () => {
+    // multi_search reports a failed entry inline (the call still resolves);
+    // fetchLabels must throw so the engine's degradation path (onLabelError,
+    // id-only references) engages instead of silently missing every label.
+    const client = {
+      multiSearch: {
+        perform: () =>
+          Promise.resolve({
+            results: [{ code: 503, error: 'lookup failed' }],
+          }),
+      },
+    } as unknown as Pick<Client, 'multiSearch'>;
+    await expect(
+      fetchLabels(client, 'labels', ['https://org/1']),
+    ).rejects.toThrow(/label lookup failed \(503\): lookup failed/);
+
+    // An error entry without a status code still throws.
+    const clientWithoutCode = {
+      multiSearch: {
+        perform: () =>
+          Promise.resolve({ results: [{ error: 'lookup failed' }] }),
+      },
+    } as unknown as Pick<Client, 'multiSearch'>;
+    await expect(
+      fetchLabels(clientWithoutCode, 'labels', ['https://org/1']),
+    ).rejects.toThrow(/label lookup failed: lookup failed/);
   });
 });
 

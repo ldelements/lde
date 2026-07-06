@@ -44,22 +44,36 @@ export interface SearchEngine<
   /**
    * The batch entry point: answer several facet-only queries against one type
    * in a single engine round-trip (where the engine supports one, e.g.
-   * Typesense `multi_search`), returning one {@link FacetMap} per query,
+   * Typesense `multi_search`), returning one {@link FacetsOutcome} per query,
    * positionally aligned with `queries`. This is what keeps a faceted
    * sidebar — one skip-own-filter query variant per filtered facet — from
-   * fanning out into per-facet engine calls. Only the facet buckets come
-   * back: an engine answers every query in the batch facet-only (as if
-   * `limit: 0`, whatever the query carries), so hits are never transferred.
-   * Reference-facet buckets carry resolved labels exactly as in
-   * {@link search}. The port contract holds for every query in the batch
-   * (foreign `searchType` rejected, each query validated); an empty `queries`
-   * resolves to `[]` without touching the engine.
+   * fanning out into per-facet engine calls. Only facet buckets come back: an
+   * engine answers every query in the batch facet-only (as if `limit: 0` and
+   * without ordering, whatever the query carries), so hits are never
+   * transferred. Reference-facet buckets carry resolved labels exactly as in
+   * {@link search}. A failure of one query is reported in place
+   * (`{ error }`) rather than by rejecting, so it never discards its
+   * siblings’ facets; the returned promise rejects only for batch-level
+   * failures (a foreign `searchType`, a structurally invalid query, the
+   * transport itself). The port contract holds for every query in the batch;
+   * an empty `queries` resolves to `[]` without touching the engine.
    */
   searchFacets<T extends Types[number]>(
     searchType: T,
     queries: readonly SearchQuery[],
-  ): Promise<readonly FacetMap<FacetFieldsOf<T>>[]>;
+  ): Promise<readonly FacetsOutcome<FacetFieldsOf<T>>[]>;
 }
+
+/**
+ * One query’s outcome in a {@link SearchEngine.searchFacets} batch — its
+ * facet buckets, or the error that failed it. The `allSettled`-style shape
+ * keeps one failed query (e.g. one failed `multi_search` entry) from
+ * discarding its siblings’ results: a caller degrades exactly the facets of
+ * the failed query. Discriminate with `'error' in outcome`.
+ */
+export type FacetsOutcome<FacetField extends string = string> =
+  | { readonly facets: FacetMap<FacetField> }
+  | { readonly error: unknown };
 
 /** What an engine returns: logical hits, a total, and the requested facets. */
 export interface SearchResult<

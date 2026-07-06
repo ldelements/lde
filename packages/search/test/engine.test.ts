@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import type { FacetMap, SearchEngine, SearchResult } from '../src/engine.js';
+import type {
+  FacetsOutcome,
+  SearchEngine,
+  SearchResult,
+} from '../src/engine.js';
 import type { SearchQuery } from '../src/query.js';
 import { defineSearchType, searchSchema } from '../src/schema.js';
 import type { SearchType } from '../src/schema.js';
@@ -40,11 +44,11 @@ const fake: SearchEngine = {
   async searchFacets(
     _searchType: SearchType,
     queries: readonly SearchQuery[],
-  ): Promise<readonly FacetMap[]> {
+  ): Promise<readonly FacetsOutcome[]> {
     return queries.map((query) =>
       query.facets.includes('keyword')
-        ? { keyword: [{ value: 'kaarten', count: 3 }] }
-        : {},
+        ? { facets: { keyword: [{ value: 'kaarten', count: 3 }] } }
+        : { facets: {} },
     );
   },
 };
@@ -121,9 +125,12 @@ describe('typed schema-bound engine', () => {
           facets: { format: [{ value: 'text/turtle', count: 2 }] },
         };
       },
-      async searchFacets(_searchType, queries): Promise<readonly FacetMap[]> {
+      async searchFacets(
+        _searchType,
+        queries,
+      ): Promise<readonly FacetsOutcome[]> {
         return queries.map(() => ({
-          format: [{ value: 'text/turtle', count: 2 }],
+          facets: { format: [{ value: 'text/turtle', count: 2 }] },
         }));
       },
     };
@@ -146,16 +153,21 @@ describe('typed schema-bound engine', () => {
     void result.facets.formaat;
     expect(result.hits[0].document.title).toEqual({ nl: ['Titel'] });
 
-    // The batch entry point is typed the same way: per-query facet maps keyed
-    // by the type passed.
-    const [batchedFacets] = await engine.searchFacets(dataset, [query]);
-    expect(batchedFacets.format).toEqual([{ value: 'text/turtle', count: 2 }]);
+    // The batch entry point is typed the same way: per-query outcomes whose
+    // facet maps are keyed by the type passed.
+    const [batchedOutcome] = await engine.searchFacets(dataset, [query]);
+    if ('error' in batchedOutcome) {
+      throw new Error('Expected a facets outcome.');
+    }
+    expect(batchedOutcome.facets.format).toEqual([
+      { value: 'text/turtle', count: 2 },
+    ]);
     // @ts-expect-error — a facet key outside the declaration is a compile error
-    void batchedFacets.formaat;
+    void batchedOutcome.facets.formaat;
 
-    // @ts-expect-error — a type outside the engine's schema is a compile error
+    // @ts-expect-error — a type outside the engine’s schema is a compile error
     void engine.search(organization, query);
-    // @ts-expect-error — a type outside the engine's schema is a compile error
+    // @ts-expect-error — a type outside the engine’s schema is a compile error
     void engine.searchFacets(organization, [query]);
   });
 });

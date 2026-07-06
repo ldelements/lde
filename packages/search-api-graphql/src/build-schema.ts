@@ -51,10 +51,11 @@ export interface SearchContext {
   /** Parsed, ordered `Accept-Language`; drives locale selection and output order. */
   readonly acceptLanguage: readonly string[];
   /**
-   * Called, once per selected facet field, when facet computation fails. The
-   * affected facets degrade to empty lists (a supplementary facet must not
-   * fail the whole query); supply this to log the cause. Optional — omit to
-   * swallow silently.
+   * Called once per affected facet field when its computation fails — for a
+   * failed facet query only that query's fields, for a failed batch dispatch
+   * every selected field. The affected facets degrade to empty lists (a
+   * supplementary facet must not fail the whole query); supply this to log
+   * the cause. Optional — omit to swallow silently.
    */
   readonly onFacetError?: (field: string, error: unknown) => void;
 }
@@ -356,13 +357,10 @@ export function buildGraphQLSchema(
     });
 
     // Keyed facets object: one field per facetable field, typed by its kind
-    // (range fields → [RangeBucket!], else [ValueBucket!]). Each field is
-    // computed with its OWN where-filter removed (skip-own-filter), so a
-    // multi-select facet still lists its other options; only the selected fields
-    // are resolved (GraphQL prunes the rest), so the selection IS the request.
-    // The selected fields load through a per-request batcher (createFacetLoader)
-    // that groups them by effective where and dispatches ONE engine.searchFacets
-    // call, instead of one engine search per facet.
+    // (range fields → [RangeBucket!], else [ValueBucket!]). Only the selected
+    // fields are resolved (GraphQL prunes the rest), so the selection IS the
+    // request; how they are computed — skip-own-filter, batched into one
+    // engine dispatch — lives in facet-batch.ts.
     // Like `where`, omitted entirely for a type with no facetable fields (a
     // GraphQL object type must have at least one field).
     const facetable = facetableFields(searchType);
@@ -416,9 +414,7 @@ export function buildGraphQLSchema(
           total: result.total,
           page: pageForOffset(finalQuery.offset, finalQuery.limit),
           perPage: finalQuery.limit,
-          // Carried for the facet field resolvers: the selected keys load
-          // through this per-request batcher (skip-own-filter, grouped by
-          // effective where, one engine dispatch).
+          // Carried for the facet field resolvers (see facet-batch.ts).
           loadFacet: createFacetLoader(
             context.engine,
             searchType,

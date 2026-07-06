@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { graphql, printSchema } from 'graphql';
 import {
   searchSchema,
-  type FacetMap,
+  type FacetsOutcome,
   type SearchEngine,
   type SearchQuery,
   type SearchResult,
@@ -97,7 +97,7 @@ function fakeEngine(result: SearchResult): {
       },
       async searchFacets(_searchType, queries) {
         batches.push(queries);
-        return queries.map(() => result.facets);
+        return queries.map(() => ({ facets: result.facets }));
       },
     },
     received: () => captured,
@@ -109,7 +109,7 @@ function fakeEngine(result: SearchResult): {
 const noFacets = async (
   _searchType: SearchType,
   queries: readonly SearchQuery[],
-): Promise<readonly FacetMap[]> => queries.map(() => ({}));
+): Promise<readonly FacetsOutcome[]> => queries.map(() => ({ facets: {} }));
 
 const canned: SearchResult = {
   total: 1,
