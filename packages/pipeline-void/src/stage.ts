@@ -6,6 +6,7 @@ import {
   type AttachedReader,
   type ReaderContext,
   type ItemSelector,
+  type NamespaceAlias,
   type QuadTransform,
 } from '@lde/pipeline';
 import { assertSafeIri } from '@lde/dataset';
@@ -17,6 +18,12 @@ import {
   defaultVocabularies,
 } from './vocabularyTransform.js';
 import { withUriSpaces } from './uriSpaceTransform.js';
+import {
+  canonicalizeClassBindings,
+  substituteNormalizationMarkers,
+  withAliasVariantBindings,
+} from './namespaceAliases.js';
+import { mergeNamespaceVariants } from './partitionMerge.js';
 
 const queriesDir = resolve(
   dirname(fileURLToPath(import.meta.url)),
@@ -76,6 +83,27 @@ export interface VoidStageOptions {
    * with these, built-in first.
    */
   transform?: VoidStageTransform;
+  /**
+   * Namespace pairs to treat as equivalent when partitioning by class and
+   * property, so alias variants (e.g. `http://schema.org/CreativeWork` and
+   * `https://schema.org/CreativeWork`) merge into a single partition instead
+   * of two that both claim the canonical `void:class`.
+   *
+   * Merging happens after aggregation, in the {@link mergeNamespaceVariants}
+   * transform, which sums `void:entities` / `void:triples`; only
+   * `class-properties-objects.rq` normalizes at query time (its
+   * `void:distinctObjects` cannot be recovered by summing). Correct under the
+   * subject/class- and predicate-namespace-disjointness assumptions documented
+   * on {@link mergeNamespaceVariants}. The top-level property partitions
+   * ({@link detectVocabularies}’s `entity-properties.rq`) and `void:vocabulary`
+   * detection keep the source namespaces, so consumers can still see which
+   * namespace the dataset actually uses.
+   *
+   * Defaults to no aliases. To cover schema.org datasets that publish under
+   * both `http://schema.org/` and `https://schema.org/`, pass
+   * `[{ canonical: 'https://schema.org/', alias: 'http://schema.org/' }]`.
+   */
+  namespaceAliases?: readonly NamespaceAlias[];
 }
 
 /**
@@ -123,22 +151,42 @@ async function createVoidStage(
   filename: VoidStageName,
   options?: {
     transform?: VoidStageTransform;
+    namespaceAliases?: readonly NamespaceAlias[];
+    mergePartitions?: boolean;
     perClass?: boolean;
     batchSize?: number;
     maxConcurrency?: number;
     expectsOutput?: boolean;
   },
 ): Promise<Stage> {
-  const query = await readQueryFile(resolve(queriesDir, filename));
+  const namespaceAliases = options?.namespaceAliases ?? [];
+  const query = substituteNormalizationMarkers(
+    await readQueryFile(resolve(queriesDir, filename)),
+    namespaceAliases,
+  );
+  const constructReader = new SparqlConstructReader({ query });
+  // Partition stages merge their namespace-alias variants (e.g. http:// and
+  // https://schema.org/) into one partition per canonical class/property.
+  // Runs first, so any consumer transform sees the already-merged output.
+  const mergeTransform =
+    options?.mergePartitions && namespaceAliases.length > 0
+      ? [mergeNamespaceVariants(namespaceAliases)]
+      : [];
   const reader: AttachedReader = {
-    reader: new SparqlConstructReader({ query }),
-    transform: options?.transform,
+    // Per-class stages receive canonical `?class` bindings from the
+    // selector; expand each to its alias variants as `?rawClass` bindings.
+    reader: options?.perClass
+      ? withAliasVariantBindings(constructReader, namespaceAliases)
+      : constructReader,
+    transform: [...mergeTransform, ...asTransforms(options?.transform)],
   };
 
   return new Stage({
     name: filename,
     readers: reader,
-    itemSelector: options?.perClass ? classSelector() : undefined,
+    itemSelector: options?.perClass
+      ? classSelector(namespaceAliases)
+      : undefined,
     batchSize: options?.batchSize,
     maxConcurrency: options?.maxConcurrency,
     expectsOutput: options?.expectsOutput,
@@ -153,7 +201,9 @@ function asTransforms(
   return Array.isArray(transform) ? [...transform] : [transform];
 }
 
-function classSelector(): ItemSelector {
+function classSelector(
+  namespaceAliases: readonly NamespaceAlias[],
+): ItemSelector {
   return {
     // Forward `options` so the Pipeline’s per-dataset TimeoutPolicy
     // reaches the inner SparqlItemSelector — without this the adaptive
@@ -172,9 +222,10 @@ function classSelector(): ItemSelector {
         'LIMIT 1000',
       ].join('\n');
 
-      return new SparqlItemSelector({
+      const rows = new SparqlItemSelector({
         query: selectorQuery,
       }).select(distribution, batchSize, options);
+      return canonicalizeClassBindings(rows, namespaceAliases);
     },
   };
 }
@@ -186,7 +237,10 @@ export function subjectUriSpaces(options?: VoidStageOptions): Promise<Stage> {
 }
 
 export function classPartitions(options?: VoidStageOptions): Promise<Stage> {
-  return createVoidStage(VOID_STAGE_NAMES.classPartitions, options);
+  return createVoidStage(VOID_STAGE_NAMES.classPartitions, {
+    ...options,
+    mergePartitions: true,
+  });
 }
 
 // Scalar-aggregate counts: each query is a single COUNT with no GROUP BY/HAVING,
@@ -237,6 +291,7 @@ export function classPropertySubjects(
   return createVoidStage(VOID_STAGE_NAMES.classPropertySubjects, {
     ...options,
     perClass: options?.perClass ?? true,
+    mergePartitions: true,
   });
 }
 
@@ -268,6 +323,7 @@ export function perClassObjectClasses(
   return createVoidStage(VOID_STAGE_NAMES.perClassObjectClasses, {
     ...options,
     perClass: options?.perClass ?? true,
+    mergePartitions: true,
   });
 }
 
@@ -277,6 +333,7 @@ export function perClassDatatypes(
   return createVoidStage(VOID_STAGE_NAMES.perClassDatatypes, {
     ...options,
     perClass: options?.perClass ?? true,
+    mergePartitions: true,
   });
 }
 
@@ -286,6 +343,7 @@ export function perClassLanguages(
   return createVoidStage(VOID_STAGE_NAMES.perClassLanguages, {
     ...options,
     perClass: options?.perClass ?? true,
+    mergePartitions: true,
   });
 }
 

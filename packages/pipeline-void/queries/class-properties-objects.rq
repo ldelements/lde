@@ -5,17 +5,27 @@ CONSTRUCT {
 }
 WHERE {
     # Object counts only. Subject counts in class-properties-subjects.rq.
+    #
+    # Unlike the other per-class queries, this one normalizes the class and
+    # property to their canonical namespace *before* the COUNT(DISTINCT ?o):
+    # merging distinct-object counts by summing would over-count objects shared
+    # between namespace variants (e.g. the same name under http:name and
+    # https:name), so the dedup must happen here rather than in the
+    # partition-merge transform. `?class` is bound per namespace variant by the
+    # injected VALUES clause; `?property` is discovered.
     {
-        SELECT ?class ?p (COUNT(DISTINCT ?o) AS ?objects) {
+        SELECT ?canonicalClass ?canonicalProperty (COUNT(DISTINCT ?o) AS ?objects) {
             {
-                SELECT ?class ?p ?o {
+                SELECT ?canonicalClass ?canonicalProperty ?o {
                     #subjectFilter#
-                    ?s a ?class ; ?p ?o .
+                    ?s a ?class ; ?property ?o .
+                    BIND(#normalized:class# AS ?canonicalClass)
+                    BIND(#normalized:property# AS ?canonicalProperty)
                 }
             }
         }
-        GROUP BY ?class ?p
+        GROUP BY ?canonicalClass ?canonicalProperty
     }
-    BIND(URI(CONCAT(STR(?dataset), "/.well-known/void#class-property-", MD5(CONCAT(STR(?class), STR(?p))))) AS ?propertyPartition)
+    BIND(URI(CONCAT(STR(?dataset), "/.well-known/void#class-property-", MD5(CONCAT(STR(?canonicalClass), STR(?canonicalProperty))))) AS ?propertyPartition)
 }
 LIMIT 100000
