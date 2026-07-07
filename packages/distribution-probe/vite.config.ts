@@ -10,11 +10,17 @@ export default mergeConfig(
     test: {
       coverage: {
         thresholds: {
-          autoUpdate: true,
-          lines: 100,
-          functions: 100,
-          branches: 96.72,
-          statements: 99.64,
+          // autoUpdate off: coverage of probe.ts is timing-dependent (small
+          // arrow callbacks in content-type matching run only under certain
+          // response orderings), so a lucky run must not ratchet the
+          // thresholds above the deterministic floor – that made CI fail
+          // nondeterministically on unrelated PRs (observed floor: functions
+          // 98.36, statements 99.28 on unlucky runs).
+          autoUpdate: false,
+          lines: 99,
+          functions: 98.3,
+          branches: 96.5,
+          statements: 99.2,
         },
       },
     },
