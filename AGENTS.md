@@ -99,7 +99,7 @@ The `@nx/js:library` generator’s output diverges from the conventions in this 
    - `name` → `@lde/<new-name>`
    - `description` — write something useful
    - `repository.directory` → `packages/<new-name>`
-   - `version` → `0.1.0` from the get-go (do NOT keep the sibling’s version). nx release bumps from there via conventional commits, so the introducing `feat:` commit lands the first release at `0.1.0`; any higher starting version overshoots it. This must be in place before the PR merges — see [Releasing a new package](#releasing-a-new-package).
+   - `version` → `0.0.0` (do NOT keep the sibling’s version). The first CI release bumps from the manifest over the package’s full history, so `0.0.0` lands it at `0.1.0` (observed with `search-typesense` and `text-normalization`), while a manifest pre-set to `0.1.0` shipped `0.2.0` (`pipeline-shacl-sampler`). This must be in place before the PR merges – see [Releasing a new package](#releasing-a-new-package).
    - `dependencies` and `peerDependencies` — replace with what the new package actually needs
 4. **Replace the source.** Empty out `src/` and `test/`, write the new code.
 5. **Update `tsconfig.lib.json` `references`** to match the new package’s actual `@lde/*` peers.
@@ -127,42 +127,16 @@ For releasing the new package’s first version, see [Releasing a new package](#
 
 #### Releasing a new package
 
-`.github/workflows/release.yml` publishes existing packages on every push to main, but the CI workflow alone cannot bring up a brand-new `@lde/<name>` package: npm’s Trusted Publisher configuration can only be added to a package that already exists on the registry. The first version has to be published manually by a maintainer; CI takes over from the second version onwards.
+`.github/workflows/release.yml` publishes existing packages on every push to main, but cannot bring up a brand-new `@lde/<name>` package: npm’s Trusted Publisher configuration can only be added to a package that already exists on the registry. The first version has to be published manually by a maintainer; CI takes over from the second version onwards. Until then, the release run’s publish step for the new package fails, while existing packages continue to publish normally. Check `npm view @lde/<name>` before merging a PR that introduces a package, and bootstrap right after the merge.
 
-One-time bootstrap for a new package (once it has been merged to main): **the
-agent drives this itself** via the global `npm-bootstrap-package` skill —
-ideally anticipatorily, right after merging the PR that introduces the package
-(check `npm view @lde/<name>` before merging; the release run WILL fail on a
-package that does not exist yet). The maintainer is only asked for the browser
-login and a 2FA one-time password. In short (the skill has the full flow and
-gotchas):
+In short: `npx nx build <name>` first (manifests publish only `dist/`, so an unbuilt publish ships an empty package), then from `packages/<name>` run `npm publish --access public --otp=<code>` WITHOUT `--provenance` (it fails outside CI), then attach the Trusted Publisher and lock the package down:
 
-1. **Publish the first version.** Preflight the registry (no local Verdaccio
-   shadowing `registry.npmjs.org` in `~/.npmrc`), `npm whoami` (browser login
-   via the maintainer on 401), `git pull` main (the release commit sets the
-   version), `npx nx build <name>` — see warning below — then from
-   `packages/<name>`:
+```sh
+npm trust github --repo ldelements/lde --file release.yml --allow-publish
+npm access set mfa=publish
+```
 
-   ```sh
-   npm publish --access public --otp=<code>   # OTP asked from the maintainer
-   ```
-
-   Do NOT pass `--provenance`: it requires a CI runner’s OIDC identity and
-   fails locally (“not supported for provider: null”); CI adds provenance
-   from the next version onwards. Verify with `npm view @lde/<name> version`.
-
-   > **Build first, or you ship an empty package.** Package manifests use `"files": ["dist"]`, so `npm publish` packs only `package.json` and `README.md` unless `dist/` exists on disk. CI releases get `dist/` for free via `release.version.preVersionCommand` (`nx run-many -t build`) in `nx.json`, but this manual bootstrap is the one publish path that bypasses it — always run `npx nx build <name>` immediately before `npm publish`.
-
-2. **Add a Trusted Publisher to the now-existing package.** On npmjs.com, open the new package → ‘Settings’ → ‘Trusted Publishers’ → ‘Add trusted publisher’. Fill in:
-   - Publisher: GitHub Actions
-   - Organization or user: `ldelements`
-   - Repository: `lde`
-   - Workflow filename: `release.yml`
-   - Environment name: leave blank (the workflow does not use a deployment environment)
-3. **Lock the package down.** On the same package settings page, enable ‘Require two-factor authentication and disallow tokens (recommended)’. From now on, only the Trusted Publisher (i.e. the `release.yml` workflow) can publish further versions; classic NPM tokens are rejected.
-4. **Verify CI takes over.** Push a follow-up conventional commit that bumps the package; the next `release.yml` run on main should publish via OIDC + provenance with no token involvement. (Do not re-run the failed release action: nothing remains for it to do, and nx skips already-published versions on the next run.)
-
-Until step 1 is done, the CI release run’s publish step for the new package will fail (the token cannot create new packages once the org-wide policy is in place); existing packages continue to publish normally.
+Do not re-run the failed release action afterwards – the next push to main releases normally (nx skips already-published versions).
 
 <!-- nx configuration start-->
 <!-- Leave the start & end comments to automatically receive updates. -->
