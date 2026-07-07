@@ -105,8 +105,9 @@ export interface RunWriter<Item = Quad> extends DatasetWriter<Item> {
  *
  * Each pipeline run opens one {@link RunWriter} via {@link openRun} – the
  * home of run-level lifecycle such as alias swaps, deletion sweeps and
- * cross-pod locks. Writers without run-level lifecycle can be built with
- * {@link perDatasetWriter} instead of hand-writing no-op `commit`/`abort`.
+ * cross-pod locks. A destination without run-level state simply returns its
+ * per-dataset writes with no-op `commit`/`abort` (see
+ * {@link SparqlUpdateWriter} for the pattern).
  */
 export interface Writer<Item = Quad> {
   /**
@@ -115,31 +116,4 @@ export interface Writer<Item = Quad> {
    * @param context The run’s identity and selection scope
    */
   openRun(context: RunContext): Promise<RunWriter<Item>>;
-}
-
-/**
- * Wrap a lifecycle-free per-dataset writer into a {@link Writer} whose run
- * lifecycle is a no-op: every run writes through the same underlying writer,
- * and `commit`/`abort` do nothing.
- *
- * Use this for destinations without run-level state (no swap, no sweep, no
- * lock) instead of implementing `openRun` by hand.
- */
-export function perDatasetWriter<Item = Quad>(
-  writer: DatasetWriter<Item> & {
-    flush?(dataset: Dataset): Promise<void>;
-    reset?(dataset: Dataset): Promise<void>;
-  },
-): Writer<Item> {
-  return {
-    async openRun(): Promise<RunWriter<Item>> {
-      return {
-        write: (dataset, items) => writer.write(dataset, items),
-        flush: writer.flush?.bind(writer),
-        reset: writer.reset?.bind(writer),
-        commit: () => Promise.resolve(),
-        abort: () => Promise.resolve(),
-      };
-    },
-  };
 }

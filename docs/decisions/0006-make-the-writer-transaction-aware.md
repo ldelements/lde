@@ -72,18 +72,22 @@ selected dataset IRI **including ones skipped as unchanged**, complete by
 commit time – the input to a registry-membership sweep), and the
 pipeline’s `provenance` store when skip-unchanged is enabled.
 
-### One interface, a helper for the lifecycle-free case
+### One interface, no second path
 
-A destination without run-level state wraps its per-dataset write with
-`perDatasetWriter(...)`, which supplies no-op `commit`/`abort` – there is
-deliberately **no** second `TransactionalWriter` interface, which would
-reintroduce the dual code path the single contract exists to remove.
+A destination without run-level state implements the same contract with
+no-op `commit`/`abort` (a five-line `openRun`; `SparqlUpdateWriter` shows
+the pattern). There is deliberately **no** second `TransactionalWriter`
+interface – it would reintroduce the dual code path the single contract
+exists to remove – and no wrapper helper either: every in-repo destination
+turned out to want real lifecycle behaviour, so a helper had no consumers
+and was dropped for a minimal API surface.
 
 ## Consequences
 
 - Breaking for `@lde/pipeline` consumers: `Executor` call sites rename, and
-  custom writers implement `openRun` (or wrap with `perDatasetWriter`).
-  The Dataset Knowledge Graph pipeline adapts on its next upgrade.
+  custom writers implement `openRun` (with no-op `commit`/`abort` when they
+  have no run-level state). The Dataset Knowledge Graph pipeline adapts on
+  its next upgrade.
 - `FileWriter` and `SparqlUpdateWriter` are transactional: per-run state
   (open files, cleared graphs) lives in the run, so re-running a pipeline
   on the same writer instance replaces output instead of appending –

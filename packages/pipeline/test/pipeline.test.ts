@@ -316,7 +316,7 @@ describe('Pipeline', () => {
     });
 
     it('tolerates fanned-out writers without flush and reset', async () => {
-      // A lifecycle-free branch (e.g. built with perDatasetWriter and no
+      // A lifecycle-free branch (e.g. a hand-rolled writer with no
       // flush/reset) must not break the fan-out's per-dataset lifecycle.
       const minimalWriter: Writer = {
         openRun: async () => ({

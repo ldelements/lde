@@ -302,14 +302,18 @@ Writes generated quads to a destination. A `Writer` is transactional: each pipel
 
 The `RunContext` handed to `openRun` carries the run’s identity (`runId`, `startedAt`), the full selection (`selectedSources()`, complete by commit time – including datasets skipped as unchanged) and the pipeline’s provenance store, when configured.
 
-Destinations without run-level state don’t need to hand-write no-op lifecycle methods – wrap the per-dataset write with `perDatasetWriter`:
+A destination without run-level state implements the same contract with no-op `commit`/`abort` – `SparqlUpdateWriter` shows the pattern:
 
 ```typescript
-const writer = perDatasetWriter({
-  async write(dataset, quads) {
-    // send quads somewhere
-  },
-});
+async openRun(): Promise<RunWriter> {
+  return {
+    write: async (dataset, quads) => {
+      // send quads somewhere
+    },
+    commit: () => Promise.resolve(),
+    abort: () => Promise.resolve(),
+  };
+}
 ```
 
 ### Reporter
