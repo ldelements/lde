@@ -1,3 +1,9 @@
+## 0.23.0 (2026-07-07)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.32.0
+
 ## 0.22.5 (2026-06-26)
 
 ### 🧱 Updated Dependencies

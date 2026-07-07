@@ -1,3 +1,101 @@
+## 0.30.0 (2026-07-07)
+
+### 🚀 Features
+
+- ⚠️  **pipeline:** transaction-aware Writer and the Executor→Reader rename ([#559](https://github.com/ldelements/lde/pull/559))
+
+### ⚠️  Breaking Changes
+
+- **pipeline:** transaction-aware Writer and the Executor→Reader rename  ([#559](https://github.com/ldelements/lde/pull/559))
+  ‘Executor’ is now ‘Reader’ and its ‘execute()’ method
+  is ‘read()’. Renamed accordingly: SparqlConstructExecutor →
+  SparqlConstructReader, SparqlConstructExecutorOptions →
+  SparqlConstructReaderOptions, ExecuteOptions → ReadOptions,
+  ExecutorContext → ReaderContext, AttachedExecutor → AttachedReader (its
+  ‘executor’ property → ‘reader’), StageExecutors → StageReaders, and
+  StageOptions.executors → StageOptions.readers. @lde/pipeline-void
+  re-exports the renamed types.
+  * feat(pipeline)!: make the Writer transaction-aware
+  A Writer is now a factory of per-run transactions: Pipeline.run opens
+  one run (openRun(context) → RunWriter), writes every dataset through it,
+  and ends it with exactly one commit() or abort(error) – the home of
+  run-level lifecycle such as alias swaps, deletion sweeps and cross-pod
+  locks. The pipeline never branches on the writer’s update mode. Stages
+  write through the narrower DatasetWriter, so a stage can never commit or
+  abort the run. RunContext carries runId, startedAt, selectedSources()
+  (complete by commit time, including datasets skipped as unchanged) and
+  the provenance store. Lifecycle-free destinations wrap a per-dataset
+  write with the new perDatasetWriter() helper.
+  FileWriter and SparqlUpdateWriter keep per-run state (open files,
+  cleared graphs) in the run, so re-running a pipeline on the same writer
+  instance replaces output instead of appending – previously a latent bug.
+  FileWriter.commit finalizes files still open; abort discards temp
+  output. Chained (sub-stage) scratch FileWriters are now flushed before
+  their output is resolved. ShaclValidator opens one long-lived run per
+  report writer. See docs/decisions/0006.
+  BREAKING CHANGE: Writer’s per-dataset write/flush/reset moved to the
+  RunWriter returned by the new openRun(context); custom writers implement
+  openRun or wrap their per-dataset write with perDatasetWriter(). Generic
+  payload: Writer<Item = Quad>. Stage.run now takes a DatasetWriter.
+  * refactor(pipeline): tighten the run-transaction internals
+  Review cleanups on the transactional Writer:
+  - Fan-out commits run concurrently (mirroring abort): destinations are
+    independent, so their alias swaps and sweeps – the slowest part of a
+    run – no longer queue behind each other. Both share one
+    settleBranches helper that rethrows the first failure after every
+    branch had its chance.
+  - A chained stage’s scratch run is now bracketed like any other run:
+    committed on success, aborted on failure – so a failing chained stage
+    no longer leaves a stale temp file behind.
+  - RunWriter.commit documents the driver contract: every written dataset
+    is flushed before commit, so commit-time unflushed writes only occur
+    under direct use and should be finalized non-destructively.
+  - perDatasetWriter forwards flush/reset with bind instead of manual
+    wrapper closures.
+  * refactor(pipeline)!: drop the unused perDatasetWriter helper
+  No production caller existed – every in-repo destination turned out to
+  want real run lifecycle behaviour – so the helper was pure API surface.
+  A destination without run-level state implements the same contract with
+  a five-line openRun returning no-op commit/abort, as SparqlUpdateWriter
+  shows. Coverage thresholds re-baselined after removing fully covered
+  code. See docs/decisions/0006."
+  M	README.md
+  A	docs/decisions/0006-make-the-writer-transaction-aware.md
+  M	packages/pipeline-shacl-sampler/src/sampleStages.ts
+  M	packages/pipeline-shacl-validator/README.md
+  M	packages/pipeline-shacl-validator/src/shacl-validator.ts
+  M	packages/pipeline-shacl-validator/test/shacl-validator.test.ts
+  M	packages/pipeline-void/README.md
+  M	packages/pipeline-void/src/index.ts
+  M	packages/pipeline-void/src/stage.ts
+  M	packages/pipeline-void/src/uriSpaceTransform.ts
+  M	packages/pipeline-void/src/vocabularyTransform.ts
+  M	packages/pipeline-void/test/uriSpaceTransform.test.ts
+  M	packages/pipeline-void/test/vocabularyTransform.test.ts
+  M	packages/pipeline-void/test/voidStages.test.ts
+  M	packages/pipeline/README.md
+  M	packages/pipeline/src/pipeline.ts
+  M	packages/pipeline/src/provenance/fileLoadedSparqlProvenanceStore.ts
+  M	packages/pipeline/src/sparql/index.ts
+  R088	packages/pipeline/src/sparql/executor.ts	packages/pipeline/src/sparql/reader.ts
+  M	packages/pipeline/src/sparql/selector.ts
+  M	packages/pipeline/src/sparql/values.ts
+  M	packages/pipeline/src/stage.ts
+  M	packages/pipeline/src/writer/fileWriter.ts
+  M	packages/pipeline/src/writer/sparqlUpdateWriter.ts
+  M	packages/pipeline/src/writer/writer.ts
+  M	packages/pipeline/test/pipeline.test.ts
+  R088	packages/pipeline/test/sparql/executor.test.ts	packages/pipeline/test/sparql/reader.test.ts
+  M	packages/pipeline/test/sparql/selector.test.ts
+  M	packages/pipeline/test/stage.test.ts
+  M	packages/pipeline/test/writer/fileWriter.test.ts
+  M	packages/pipeline/test/writer/sparqlUpdateWriter.test.ts
+  M	packages/pipeline/vite.config.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.32.0
+
 ## 0.29.5 (2026-06-26)
 
 ### 🧱 Updated Dependencies
