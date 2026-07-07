@@ -1,6 +1,6 @@
 import {
   Stage,
-  SparqlConstructExecutor,
+  SparqlConstructReader,
   SparqlItemSelector,
   type ItemSelector,
   type StageOptions,
@@ -51,13 +51,13 @@ export interface ShaclSampleStagesOptions {
    */
   samplesPerClass?: number;
   /**
-   * Maximum number of sampled subjects per executor call. Defaults to
+   * Maximum number of sampled subjects per reader call. Defaults to
    * {@link samplesPerClass} so the whole sample fits in one CONSTRUCT
    * round-trip; lower to spread work across multiple parallel queries.
    */
   batchSize?: number;
   /**
-   * Maximum concurrent in-flight executor batches per stage. @default 10
+   * Maximum concurrent in-flight reader batches per stage. @default 10
    */
   maxConcurrency?: number;
   /**
@@ -105,7 +105,7 @@ export interface ShaclSampleStagesOptions {
 /**
  * Build one sampling {@link Stage} per `sh:targetClass` declared in the SHACL
  * shapes file. Each stage pairs a SELECT-based {@link ItemSelector} that picks
- * N instances of its target class with a CONSTRUCT executor that, for every
+ * N instances of its target class with a CONSTRUCT reader that, for every
  * path chain the SHACL declares (recursively, stopping at leaf constraints
  * or cycles), pulls in the triples reachable along that chain’s terminal
  * node.
@@ -145,7 +145,7 @@ export async function shaclSampleStages(
           namespaceAliases,
           options.excludeResources?.(shape.targetClass),
         ),
-        executors: new SparqlConstructExecutor({
+        readers: new SparqlConstructReader({
           query: buildSampleQuery(shape),
         }),
         batchSize,

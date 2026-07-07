@@ -1,11 +1,17 @@
 import { createReadStream } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { Dataset, Distribution } from '@lde/dataset';
 import type { Quad } from '@rdfjs/types';
 import { StreamParser } from 'n3';
 import type { DatasetSelector } from './selector.js';
 import { Stage } from './stage.js';
 import type { QuadTransform } from './stage.js';
-import type { Writer } from './writer/writer.js';
+import type {
+  DatasetWriter,
+  RunContext,
+  RunWriter,
+  Writer,
+} from './writer/writer.js';
 import { FileWriter } from './writer/fileWriter.js';
 import {
   type DistributionResolver,
@@ -28,7 +34,7 @@ import {
   importOutcomeToVerdict,
   probeResultToVerdict,
 } from '@lde/distribution-health';
-import { NotSupported } from './sparql/executor.js';
+import { NotSupported } from './sparql/reader.js';
 import type { StageOutputResolver } from './stageOutputResolver.js';
 import type {
   DistributionAnalysisResult,
@@ -61,7 +67,7 @@ export interface PipelinePlugin {
    * Transform the merged, post-stage quad stream before writing (extension
    * point 2: pipeline-wide, post-merge). The home of cross-cutting concerns
    * – provenance, namespace normalisation – that apply regardless of which
-   * executor produced a quad.
+   * reader produced a quad.
    */
   beforeStageWrite?: QuadTransform<BeforeStageWriteContext>;
 }
@@ -162,27 +168,59 @@ function tee<T>(source: AsyncIterable<T>, count: number): AsyncIterable<T>[] {
 class FanOutWriter implements Writer {
   constructor(private readonly writers: Writer[]) {}
 
+  async openRun(context: RunContext): Promise<RunWriter> {
+    return new FanOutRunWriter(
+      await Promise.all(this.writers.map((writer) => writer.openRun(context))),
+    );
+  }
+}
+
+/**
+ * Run independent branch operations concurrently, giving every branch its
+ * chance even when one fails; the first failure is rethrown afterwards.
+ */
+async function settleBranches(tasks: readonly Promise<void>[]): Promise<void> {
+  const results = await Promise.allSettled(tasks);
+  const failed = results.find(
+    (result): result is PromiseRejectedResult => result.status === 'rejected',
+  );
+  if (failed) throw failed.reason;
+}
+
+class FanOutRunWriter implements RunWriter {
+  constructor(private readonly runs: RunWriter[]) {}
+
   async write(dataset: Dataset, quads: AsyncIterable<Quad>): Promise<void> {
-    const branches = tee(quads, this.writers.length);
+    const branches = tee(quads, this.runs.length);
     await Promise.all(
-      this.writers.map((writer, index) =>
-        writer.write(dataset, branches[index]),
-      ),
+      this.runs.map((run, index) => run.write(dataset, branches[index])),
     );
   }
 
   async flush(dataset: Dataset): Promise<void> {
-    for (const w of this.writers) await w.flush?.(dataset);
+    for (const run of this.runs) await run.flush?.(dataset);
   }
 
   async reset(dataset: Dataset): Promise<void> {
-    for (const w of this.writers) await w.reset?.(dataset);
+    for (const run of this.runs) await run.reset?.(dataset);
+  }
+
+  async commit(): Promise<void> {
+    // Destinations are independent, so their commits (alias swaps, sweeps –
+    // the slowest part of a run) need not queue behind each other.
+    await settleBranches(this.runs.map((run) => run.commit()));
+  }
+
+  async abort(error: unknown): Promise<void> {
+    // Abort every branch even when one abort fails: each destination must get
+    // its chance to clean up.
+    await settleBranches(this.runs.map((run) => run.abort(error)));
   }
 }
 
-class TransformWriter implements Writer {
+class TransformWriter implements DatasetWriter {
   constructor(
-    private readonly inner: Writer,
+    private readonly inner: DatasetWriter,
     private readonly transform: QuadTransform<BeforeStageWriteContext>,
     private readonly stage: string,
   ) {}
@@ -193,7 +231,7 @@ class TransformWriter implements Writer {
       this.transform(quads, { dataset, stage: this.stage }),
     );
   }
-  // No flush(): the Pipeline flushes the underlying user writer directly, once
+  // Only write(): the Pipeline flushes the underlying run writer directly, once
   // per dataset after all stages — a TransformWriter only wraps a single write.
 }
 
@@ -265,8 +303,29 @@ export class Pipeline {
     const selectStart = Date.now();
     const datasets = await this.datasetSelector.select();
     this.reporter?.datasetsSelected?.(datasets.total, Date.now() - selectStart);
-    for await (const dataset of datasets) {
-      await this.processDataset(dataset);
+
+    // The run transaction: one openRun → write* → commit/abort per pipeline
+    // run. `selectedSources` accumulates every selected dataset – including
+    // ones skipped as unchanged – so a writer's commit can sweep by registry
+    // membership.
+    const selectedSources: string[] = [];
+    const context: RunContext = {
+      runId: randomUUID(),
+      startedAt: new Date().toISOString(),
+      selectedSources: () => selectedSources,
+      provenance: this.provenanceStore,
+    };
+    const runWriter = await this.writer.openRun(context);
+
+    try {
+      for await (const dataset of datasets) {
+        selectedSources.push(dataset.iri.toString());
+        await this.processDataset(dataset, runWriter, context);
+      }
+      await runWriter.commit();
+    } catch (error) {
+      await runWriter.abort(error);
+      throw error;
     }
 
     const finalMemory = process.memoryUsage();
@@ -277,7 +336,11 @@ export class Pipeline {
     });
   }
 
-  private async processDataset(dataset: Dataset): Promise<void> {
+  private async processDataset(
+    dataset: Dataset,
+    runWriter: RunWriter,
+    context: RunContext,
+  ): Promise<void> {
     this.reporter?.datasetStart?.(dataset);
 
     // Probe phase: gather probe results and the source-to-be, without importing.
@@ -393,6 +456,8 @@ export class Pipeline {
         dataset,
         resolved.distribution,
         timeout,
+        runWriter,
+        context,
       );
 
       // Reactive fallback: an endpoint that passed probing but could not serve
@@ -439,11 +504,13 @@ export class Pipeline {
             this.reportSelectedDistribution(dataset, fallback, fingerprint);
             // Discard the endpoint-sourced partial output before the re-run so
             // the dump-sourced stats replace it rather than appending to it.
-            await this.writer.reset?.(dataset);
+            await runWriter.reset?.(dataset);
             stageFailed = await this.runStages(
               dataset,
               fallback.distribution,
               timeout,
+              runWriter,
+              context,
             );
           } else if (fallback.importFailed) {
             // A failed dump import is a deep validity verdict on that dump –
@@ -466,7 +533,7 @@ export class Pipeline {
       unsubscribe?.();
     }
 
-    await this.writer.flush?.(dataset);
+    await runWriter.flush?.(dataset);
     await this.reportValidators(dataset);
     // A dataset whose stages threw produced incomplete output; record it as
     // ‘failed’ rather than freezing a broken result under a ‘success’ record.
@@ -521,15 +588,15 @@ export class Pipeline {
   }
 
   /**
-   * The writer a stage's merged output is written through: the user writer
+   * The writer a stage's merged output is written through: the open run
    * wrapped with the plugins' {@link PipelinePlugin.beforeStageWrite}
    * transforms, carrying this `stage`'s identity so a transform can mint stable
    * per-`(dataset, stage)` IRIs rather than blank nodes.
    */
-  private stageWriter(stage: string): Writer {
+  private stageWriter(runWriter: RunWriter, stage: string): DatasetWriter {
     return this.beforeStageWrite
-      ? new TransformWriter(this.writer, this.beforeStageWrite, stage)
-      : this.writer;
+      ? new TransformWriter(runWriter, this.beforeStageWrite, stage)
+      : runWriter;
   }
 
   /**
@@ -579,18 +646,27 @@ export class Pipeline {
     dataset: Dataset,
     distribution: Distribution,
     timeout: TimeoutPolicy,
+    runWriter: RunWriter,
+    context: RunContext,
   ): Promise<boolean> {
     let stageFailed = false;
     for (const stage of this.stages) {
       try {
         if (stage.stages.length > 0) {
-          await this.runChain(dataset, distribution, stage, timeout);
+          await this.runChain(
+            dataset,
+            distribution,
+            stage,
+            runWriter,
+            context,
+            timeout,
+          );
         } else {
           await this.runStage(
             dataset,
             distribution,
             stage,
-            this.stageWriter(stage.name),
+            this.stageWriter(runWriter, stage.name),
             timeout,
           );
         }
@@ -613,7 +689,7 @@ export class Pipeline {
     dataset: Dataset,
     distribution: Distribution,
     stage: Stage,
-    writer: Writer = this.writer,
+    writer: DatasetWriter,
     timeout?: TimeoutPolicy,
   ): Promise<boolean> {
     this.reporter?.stageStart?.(stage.name);
@@ -656,7 +732,7 @@ export class Pipeline {
     dataset: Dataset,
     distribution: Distribution,
     stage: Stage,
-    writer: Writer,
+    writer: DatasetWriter,
     timeout?: TimeoutPolicy,
   ): Promise<void> {
     const supported = await this.runStage(
@@ -677,57 +753,65 @@ export class Pipeline {
     dataset: Dataset,
     distribution: Distribution,
     stage: Stage,
+    runWriter: RunWriter,
+    context: RunContext,
     timeout?: TimeoutPolicy,
   ): Promise<void> {
     const { stageOutputResolver, outputDir } = this.chaining!;
     const outputFiles: string[] = [];
 
-    try {
-      // 1. Run parent stage → FileWriter.
-      const parentWriter = new FileWriter({
-        outputDir: `${outputDir}/${stage.name}`,
+    // Run one chained stage into its scratch FileWriter and flush it, so the
+    // output file exists on its final path before the resolver reads it. The
+    // scratch run is bracketed like any other: committed on success, aborted
+    // on failure so no half-written temp file is left behind.
+    const runScratchStage = async (
+      chainedStage: Stage,
+      stageDistribution: Distribution,
+    ): Promise<string> => {
+      const scratchWriter = new FileWriter({
+        outputDir: `${outputDir}/${chainedStage.name}`,
         format: 'n-triples',
       });
-
-      await this.runChainedStage(
-        dataset,
-        distribution,
-        stage,
-        parentWriter,
-        timeout,
-      );
-      outputFiles.push(parentWriter.getOutputPath(dataset));
-
-      // 2. Chain through children.
-      let currentDistribution = await stageOutputResolver.resolve(
-        parentWriter.getOutputPath(dataset),
-      );
-      for (let i = 0; i < stage.stages.length; i++) {
-        const child = stage.stages[i];
-        const childWriter = new FileWriter({
-          outputDir: `${outputDir}/${child.name}`,
-          format: 'n-triples',
-        });
-
+      const scratchRun = await scratchWriter.openRun(context);
+      try {
         await this.runChainedStage(
           dataset,
-          currentDistribution,
-          child,
-          childWriter,
+          stageDistribution,
+          chainedStage,
+          scratchRun,
           timeout,
         );
-        outputFiles.push(childWriter.getOutputPath(dataset));
+        await scratchRun.flush(dataset);
+        await scratchRun.commit();
+      } catch (error) {
+        await scratchRun.abort(error);
+        throw error;
+      }
+      return scratchWriter.getOutputPath(dataset);
+    };
+
+    try {
+      // 1. Run parent stage → scratch FileWriter.
+      const parentOutput = await runScratchStage(stage, distribution);
+      outputFiles.push(parentOutput);
+
+      // 2. Chain through children.
+      let currentDistribution = await stageOutputResolver.resolve(parentOutput);
+      for (let i = 0; i < stage.stages.length; i++) {
+        const childOutput = await runScratchStage(
+          stage.stages[i],
+          currentDistribution,
+        );
+        outputFiles.push(childOutput);
 
         if (i < stage.stages.length - 1) {
-          currentDistribution = await stageOutputResolver.resolve(
-            childWriter.getOutputPath(dataset),
-          );
+          currentDistribution = await stageOutputResolver.resolve(childOutput);
         }
       }
 
-      // 3. Concatenate all output files → user writer, applying the plugins'
+      // 3. Concatenate all output files → the open run, applying the plugins'
       // beforeStageWrite transforms once for the chain under the parent stage.
-      await this.stageWriter(stage.name).write(
+      await this.stageWriter(runWriter, stage.name).write(
         dataset,
         this.readFiles(outputFiles),
       );

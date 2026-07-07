@@ -9,7 +9,7 @@ import {
   type TermVariable,
 } from '@traqula/rules-sparql-1-1';
 import type { ItemSelector, SelectOptions } from '../stage.js';
-import type { VariableBindings } from './executor.js';
+import type { VariableBindings } from './reader.js';
 import {
   ConstantTimeoutPolicy,
   type TimeoutOutcome,

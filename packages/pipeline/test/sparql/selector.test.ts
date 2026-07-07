@@ -1,6 +1,6 @@
 import { SparqlItemSelector } from '../../src/sparql/selector.js';
 import type { ItemSelector } from '../../src/stage.js';
-import type { VariableBindings } from '../../src/sparql/executor.js';
+import type { VariableBindings } from '../../src/sparql/reader.js';
 import { Distribution } from '@lde/dataset';
 import { describe, it, expect, vi } from 'vitest';
 import { Readable } from 'node:stream';

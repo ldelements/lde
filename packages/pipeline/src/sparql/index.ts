@@ -1,14 +1,14 @@
 export {
   deduplicateQuads,
-  SparqlConstructExecutor,
+  SparqlConstructReader,
   LineBufferTransform,
   NotSupported,
   readQueryFile,
-  type ExecuteOptions,
-  type Executor,
-  type SparqlConstructExecutorOptions,
+  type ReadOptions,
+  type Reader,
+  type SparqlConstructReaderOptions,
   type VariableBindings,
-} from './executor.js';
+} from './reader.js';
 export {
   SparqlItemSelector,
   type SparqlItemSelectorOptions,

@@ -12,8 +12,8 @@ Accepts an optional `VoidStagesOptions` object:
 
 | Option           | Default | Description                                                                                                     |
 | ---------------- | ------- | --------------------------------------------------------------------------------------------------------------- |
-| `batchSize`      | 10      | Maximum class bindings per executor call (per-class stages only)                                                |
-| `maxConcurrency` | 10      | Maximum concurrent in-flight executor batches (per-class stages only)                                           |
+| `batchSize`      | 10      | Maximum class bindings per reader call (per-class stages only)                                                  |
+| `maxConcurrency` | 10      | Maximum concurrent in-flight reader batches (per-class stages only)                                             |
 | `perClass`       | —       | Override per-class iteration for all five per-class stages                                                      |
 | `uriSpaces`      | —       | When provided, includes the object URI space stage                                                              |
 | `vocabularies`   | —       | Additional vocabulary namespace URIs to detect beyond the built-in defaults                                     |
@@ -74,7 +74,7 @@ Global and domain-specific factories accept `VoidStageOptions` (`transform`) and
 
 ## Stage transforms
 
-A VoID stage decorates its executor’s output with a `QuadTransform<ExecutorContext>` attached as data (see [@lde/pipeline](../pipeline)’s extension model and [ADR 2](../../docs/decisions/0002-unify-pipeline-extension-on-quad-transforms.md)). It runs once per executor call and may fire its own SPARQL queries against the `distribution` in scope — so write it to accept being called more than once: a global stage calls it once over the complete output, a per-class stage with batching enabled once per batch (one class at `batchSize: 1`).
+A VoID stage decorates its reader’s output with a `QuadTransform<ReaderContext>` attached as data (see [@lde/pipeline](../pipeline)’s extension model and [ADR 2](../../docs/decisions/0002-unify-pipeline-extension-on-quad-transforms.md)). It runs once per reader call and may fire its own SPARQL queries against the `distribution` in scope — so write it to accept being called more than once: a global stage calls it once over the complete output, a per-class stage with batching enabled once per batch (one class at `batchSize: 1`).
 
 Two transform factories are built in:
 
@@ -87,9 +87,9 @@ Pass a `transform` to an individual factory, or route transforms through `voidSt
 
 ```typescript
 import { voidStages, VOID_STAGE_NAMES } from '@lde/pipeline-void';
-import type { ExecutorContext, QuadTransform } from '@lde/pipeline-void';
+import type { ReaderContext, QuadTransform } from '@lde/pipeline-void';
 
-const sampleSubjects: QuadTransform<ExecutorContext> = async function* (
+const sampleSubjects: QuadTransform<ReaderContext> = async function* (
   quads,
   { dataset, distribution },
 ) {

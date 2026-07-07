@@ -1,6 +1,6 @@
 import { withVocabularies } from '../src/index.js';
 import { Dataset, Distribution } from '@lde/dataset';
-import type { ExecutorContext } from '@lde/pipeline';
+import type { ReaderContext } from '@lde/pipeline';
 import { describe, it, expect } from 'vitest';
 import { DataFactory } from 'n3';
 import type { Quad } from '@rdfjs/types';
@@ -15,7 +15,7 @@ const dataset = new Dataset({
 });
 const distribution = new Distribution(new URL('http://example.com/sparql'));
 
-const context: ExecutorContext = {
+const context: ReaderContext = {
   dataset,
   distribution,
   stage: 'entity-properties.rq',

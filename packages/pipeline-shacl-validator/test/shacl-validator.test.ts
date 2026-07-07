@@ -6,21 +6,47 @@ import { tmpdir } from 'node:os';
 import { Parser } from 'n3';
 import type { Quad } from '@rdfjs/types';
 import { Dataset } from '@lde/dataset';
-import { FileWriter, assertNoBlankNodes, type Writer } from '@lde/pipeline';
+import {
+  FileWriter,
+  assertNoBlankNodes,
+  type RunContext,
+  type Writer,
+} from '@lde/pipeline';
 import { ShaclValidator } from '../src/shacl-validator.js';
 
 const SH_RESULT = 'http://www.w3.org/ns/shacl#result';
+
+/**
+ * A transactional fake report writer exposing its run's `write` and `flush`
+ * mocks directly, so tests can stub and assert per-dataset behaviour.
+ */
+function makeReportWriter(): Writer & {
+  write: ReturnType<typeof vi.fn>;
+  flush: ReturnType<typeof vi.fn>;
+} {
+  const write = vi.fn().mockResolvedValue(undefined);
+  const flush = vi.fn().mockResolvedValue(undefined);
+  return {
+    write,
+    flush,
+    openRun: async () => ({
+      write,
+      flush,
+      commit: () => Promise.resolve(),
+      abort: () => Promise.resolve(),
+    }),
+  };
+}
 
 async function reportQuadsFor(
   filename: string,
   forDataset: Dataset = dataset,
 ): Promise<Quad[]> {
   let received: Quad[] = [];
-  const writer: Writer = {
-    write: async (_dataset, quads) => {
-      received = await collectQuads(quads);
-    },
-  };
+  const writer = makeReportWriter();
+  writer.write.mockImplementation(async (_dataset: Dataset, quads) => {
+    received = await collectQuads(quads);
+  });
   const validator = new ShaclValidator({ shapesFile, reportWriters: [writer] });
   await validator.validate(parseFixture(filename), forDataset);
   return received;
@@ -69,7 +95,7 @@ describe('ShaclValidator', () => {
   it('sets a message on the result when reportWriters consumed violations', async () => {
     // The pipeline's halt-mode error reads ValidationResult.message to point
     // operators at the report; without writers there is nowhere to point.
-    const writer: Writer = { write: vi.fn() };
+    const writer = makeReportWriter();
     const validator = new ShaclValidator({
       shapesFile,
       reportWriters: [writer],
@@ -89,16 +115,14 @@ describe('ShaclValidator', () => {
   });
 
   it('streams report quads to every configured writer on violations', async () => {
-    const writer1: Writer = {
-      write: vi.fn(async (_dataset, quads) => {
-        await collectQuads(quads);
-      }),
-    };
-    const writer2: Writer = {
-      write: vi.fn(async (_dataset, quads) => {
-        await collectQuads(quads);
-      }),
-    };
+    const writer1 = makeReportWriter();
+    writer1.write.mockImplementation(async (_dataset: Dataset, quads) => {
+      await collectQuads(quads);
+    });
+    const writer2 = makeReportWriter();
+    writer2.write.mockImplementation(async (_dataset: Dataset, quads) => {
+      await collectQuads(quads);
+    });
     const validator = new ShaclValidator({
       shapesFile,
       reportWriters: [writer1, writer2],
@@ -108,13 +132,39 @@ describe('ShaclValidator', () => {
 
     expect(writer1.write).toHaveBeenCalledOnce();
     expect(writer2.write).toHaveBeenCalledOnce();
-    const [received1] = (writer1.write as ReturnType<typeof vi.fn>).mock
-      .calls[0];
+    const [received1] = writer1.write.mock.calls[0];
     expect(received1.iri.toString()).toBe(dataset.iri.toString());
   });
 
+  it('opens one report run per writer with a context of its own', async () => {
+    const contexts: RunContext[] = [];
+    const writer: Writer = {
+      openRun: async (context) => {
+        contexts.push(context);
+        return {
+          write: () => Promise.resolve(),
+          commit: () => Promise.resolve(),
+          abort: () => Promise.resolve(),
+        };
+      },
+    };
+    const validator = new ShaclValidator({
+      shapesFile,
+      reportWriters: [writer],
+    });
+
+    await validator.validate(parseFixture('invalid.ttl'), dataset);
+    await validator.validate(parseFixture('invalid.ttl'), dataset);
+
+    // One long-lived run across all validate calls, with an identity of its
+    // own and an empty selection (report writers do not sweep by membership).
+    expect(contexts).toHaveLength(1);
+    expect(contexts[0].runId).toBeTruthy();
+    expect([...contexts[0].selectedSources()]).toEqual([]);
+  });
+
   it('does not call writers when there are no violations', async () => {
-    const writer: Writer = { write: vi.fn() };
+    const writer = makeReportWriter();
     const validator = new ShaclValidator({
       shapesFile,
       reportWriters: [writer],
@@ -127,11 +177,10 @@ describe('ShaclValidator', () => {
 
   it('passes report quads (sh:ValidationResult triples) to writers', async () => {
     let received: Quad[] = [];
-    const writer: Writer = {
-      write: async (_dataset, quads) => {
-        received = await collectQuads(quads);
-      },
-    };
+    const writer = makeReportWriter();
+    writer.write.mockImplementation(async (_dataset: Dataset, quads) => {
+      received = await collectQuads(quads);
+    });
     const validator = new ShaclValidator({
       shapesFile,
       reportWriters: [writer],
@@ -197,10 +246,7 @@ describe('ShaclValidator', () => {
   });
 
   it('flushes each writer when report() is called', async () => {
-    const writer: Writer = {
-      write: vi.fn(),
-      flush: vi.fn(),
-    };
+    const writer = makeReportWriter();
     const validator = new ShaclValidator({
       shapesFile,
       reportWriters: [writer],
@@ -216,10 +262,7 @@ describe('ShaclValidator', () => {
   it('flushes writers even when no violations were emitted for the dataset', async () => {
     // Reports a still-conformant dataset: flush is the lifecycle hook for
     // "this dataset is done", independent of whether violations occurred.
-    const writer: Writer = {
-      write: vi.fn(),
-      flush: vi.fn(),
-    };
+    const writer = makeReportWriter();
     const validator = new ShaclValidator({
       shapesFile,
       reportWriters: [writer],

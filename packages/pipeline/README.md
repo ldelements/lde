@@ -3,7 +3,7 @@
 A framework for transforming large RDF datasets, primarily using [SPARQL](https://www.w3.org/TR/sparql11-query/) queries with TypeScript for the parts that are hard to express in SPARQL alone.
 
 - **SPARQL-native.** Data transformations are plain SPARQL query files — portable, transparent, testable and version-controlled.
-- **Composable.** Executors are an interface: wrap a SPARQL executor with custom TypeScript to handle edge cases like date parsing or string normalisation (see [Executor](#executor)).
+- **Composable.** Executors are an interface: wrap a SPARQL reader with custom TypeScript to handle edge cases like date parsing or string normalisation (see [Reader](#reader)).
 - **Extensible.** A plugin system lets packages like [@lde/pipeline-void](../pipeline-void) (or your own plugins) hook into the pipeline lifecycle.
 
 ## Components
@@ -50,7 +50,7 @@ const resolver = new ImportResolver(new SparqlDistributionResolver(), {
 
 ### Stage
 
-A stage groups an item selector, one or more executors, and configuration:
+A stage groups an item selector, one or more readers, and configuration:
 
 ```typescript
 new Stage({
@@ -58,7 +58,7 @@ new Stage({
   itemSelector: new SparqlItemSelector({
     query: 'SELECT DISTINCT ?class WHERE { ?s a ?class }',
   }),
-  executors: executor,
+  readers: reader,
   batchSize: 100,
   maxConcurrency: 5,
 });
@@ -66,9 +66,9 @@ new Stage({
 
 #### Batch size
 
-`batchSize` (default: 10) controls how many variable bindings are passed to each executor call as a `VALUES` clause. It also sets the page size for the item selector's SPARQL requests, so that each paginated request fills exactly one executor batch.
+`batchSize` (default: 10) controls how many variable bindings are passed to each reader call as a `VALUES` clause. It also sets the page size for the item selector's SPARQL requests, so that each paginated request fills exactly one reader batch.
 
-Some SPARQL endpoints enforce different result limits for SELECT and CONSTRUCT queries. Since the selector uses SELECT and the executor uses CONSTRUCT, a `LIMIT` clause in the selector query overrides `batchSize` as the page size. Use this when the endpoint caps SELECT results below your desired batch size:
+Some SPARQL endpoints enforce different result limits for SELECT and CONSTRUCT queries. Since the selector uses SELECT and the reader uses CONSTRUCT, a `LIMIT` clause in the selector query overrides `batchSize` as the page size. Use this when the endpoint caps SELECT results below your desired batch size:
 
 ```typescript
 // Endpoint caps SELECT results at 500, but each CONSTRUCT can handle 1000 bindings.
@@ -77,14 +77,14 @@ new Stage({
   itemSelector: new SparqlItemSelector({
     query: 'SELECT DISTINCT ?class WHERE { ?s a ?class } LIMIT 500',
   }),
-  executors: executor,
+  readers: reader,
   batchSize: 1000, // Two SELECT pages fill one CONSTRUCT batch.
 });
 ```
 
 #### Concurrency
 
-`maxConcurrency` (default: 10) limits the total number of concurrent SPARQL queries. Within each batch, all executors run in parallel; the number of concurrent batches is automatically reduced to `⌊maxConcurrency / executorCount⌋` so the total query pressure stays within the limit. For example, with `maxConcurrency: 10` and two executors per stage, up to 5 batches run concurrently (10 SPARQL queries total).
+`maxConcurrency` (default: 10) limits the total number of concurrent SPARQL queries. Within each batch, all readers run in parallel; the number of concurrent batches is automatically reduced to `⌊maxConcurrency / executorCount⌋` so the total query pressure stays within the limit. For example, with `maxConcurrency: 10` and two readers per stage, up to 5 batches run concurrently (10 SPARQL queries total).
 
 #### Expecting output
 
@@ -94,7 +94,7 @@ Set it for scalar aggregates such as `SELECT (COUNT(*) AS ?n)`, which always ret
 
 ### Item Selector
 
-Selects resources from the distribution and fans out executor calls per batch of results. Implements the `ItemSelector` interface:
+Selects resources from the distribution and fans out reader calls per batch of results. Implements the `ItemSelector` interface:
 
 ```typescript
 interface ItemSelector {
@@ -143,12 +143,12 @@ const itemSelector: ItemSelector = {
 };
 ```
 
-### Executor
+### Reader
 
-Generates RDF triples. The built-in `SparqlConstructExecutor` runs a SPARQL CONSTRUCT query with template substitution and variable bindings:
+Generates RDF triples. The built-in `SparqlConstructReader` runs a SPARQL CONSTRUCT query with template substitution and variable bindings:
 
 ```typescript
-const executor = new SparqlConstructExecutor({
+const reader = new SparqlConstructReader({
   query: 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }',
 });
 ```
@@ -156,7 +156,7 @@ const executor = new SparqlConstructExecutor({
 When querying endpoints that return line-oriented formats like N-Triples (e.g. QLever), enable `lineBuffer` to work around an [N3.js chunk-splitting bug](https://github.com/rdfjs/N3.js/issues/578) that causes intermittent parse errors on large responses:
 
 ```typescript
-const executor = new SparqlConstructExecutor({
+const reader = new SparqlConstructReader({
   query: 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }',
   lineBuffer: true,
 });
@@ -165,30 +165,30 @@ const executor = new SparqlConstructExecutor({
 SPARQL CONSTRUCT queries can produce duplicate triples — for example, constant triples (like `?dataset a edm:ProvidedCHO`) are emitted for every solution row. Enable `deduplicate` to remove duplicates inline on the stream using a string-based identity set (inspired by [Comunica's `distinctConstruct`](https://comunica.dev/docs/query/advanced/context/#14--distinct-construct)):
 
 ```typescript
-const executor = new SparqlConstructExecutor({
+const reader = new SparqlConstructReader({
   query: 'CONSTRUCT { ?s a edm:ProvidedCHO . ?s ?p ?o } WHERE { ?s ?p ?o }',
   deduplicate: true,
 });
 ```
 
-The dedup set is scoped to each `execute()` call, so memory stays bounded to the number of unique quads per batch. A standalone `deduplicateQuads()` function is also exported for use outside the executor.
+The dedup set is scoped to each `read()` call, so memory stays bounded to the number of unique quads per batch. A standalone `deduplicateQuads()` function is also exported for use outside the reader.
 
 ### Extending a stage with a quad transform
 
-Some logic is hard to express in pure SPARQL — cleaning up messy date notations, converting locale-specific dates to ISO 8601, or sampling an executor’s output and firing follow-up queries. Rather than subclass `Executor`, attach a `QuadTransform` to it as data: a plain function `(quads, context) => quads` that post-processes one executor’s output before the stage merges it with its siblings. This is extension point 1 of [ADR 2](../../docs/decisions/0002-unify-pipeline-extension-on-quad-transforms.md).
+Some logic is hard to express in pure SPARQL — cleaning up messy date notations, converting locale-specific dates to ISO 8601, or sampling a reader’s output and firing follow-up queries. Rather than subclass `Reader`, attach a `QuadTransform` to it as data: a plain function `(quads, context) => quads` that post-processes one reader’s output before the stage merges it with its siblings. This is extension point 1 of [ADR 2](../../docs/decisions/0002-unify-pipeline-extension-on-quad-transforms.md).
 
-A transform receives an `ExecutorContext` — the `dataset`, the `distribution` (so it can fire its own SPARQL queries), and the `stage` name. It runs once per executor call, so **write it to accept being called more than once**: a global stage calls it once over the executor’s complete output, but a per-class stage with batching enabled calls it once per batch (one class at `batchSize: 1`). Accumulate within an invocation, not across invocations — or keep the transform per-quad, where the number of calls makes no difference.
+A transform receives an `ReaderContext` — the `dataset`, the `distribution` (so it can fire its own SPARQL queries), and the `stage` name. It runs once per reader call, so **write it to accept being called more than once**: a global stage calls it once over the reader’s complete output, but a per-class stage with batching enabled calls it once per batch (one class at `batchSize: 1`). Accumulate within an invocation, not across invocations — or keep the transform per-quad, where the number of calls makes no difference.
 
 ```typescript
 import { DataFactory } from 'n3';
 import {
   Stage,
-  SparqlConstructExecutor,
+  SparqlConstructReader,
   type QuadTransform,
-  type ExecutorContext,
+  type ReaderContext,
 } from '@lde/pipeline';
 
-const cleanDates: QuadTransform<ExecutorContext> = async function* (quads) {
+const cleanDates: QuadTransform<ReaderContext> = async function* (quads) {
   for await (const quad of quads) {
     if (quad.object.termType === 'Literal' && isMessyDate(quad.object)) {
       yield DataFactory.quad(
@@ -207,8 +207,8 @@ const cleanDates: QuadTransform<ExecutorContext> = async function* (quads) {
 
 new Stage({
   name: 'dates',
-  executors: {
-    executor: await SparqlConstructExecutor.fromFile('dates.rq'),
+  readers: {
+    reader: await SparqlConstructReader.fromFile('dates.rq'),
     transform: cleanDates,
   },
 });
@@ -252,11 +252,11 @@ Transitions are forwarded to the `ProgressReporter` via `timeoutTightened` / `ti
 
 Implement `TimeoutPolicy` directly for custom strategies (closing over shared state in the factory if you want it to span datasets).
 
-Timeouts live at the pipeline level — neither `SparqlConstructExecutor` nor `SparqlItemSelector` accept their own `timeout` option. Per-endpoint state belongs in the adaptive policy, and per-stage budgets aren’t supported. Reusable stage facades (`@lde/pipeline-void`, `@lde/pipeline-shacl-sampler`) follow the same convention.
+Timeouts live at the pipeline level — neither `SparqlConstructReader` nor `SparqlItemSelector` accept their own `timeout` option. Per-endpoint state belongs in the adaptive policy, and per-stage budgets aren’t supported. Reusable stage facades (`@lde/pipeline-void`, `@lde/pipeline-shacl-sampler`) follow the same convention.
 
 ### Validation
 
-Stages can optionally validate their output quads against a `Validator`. Validation operates on the **combined output of all executors per batch**, not on individual quads or per-executor output. A batch produces a complete result set — a self-contained cluster of linked resources — that can be meaningfully matched against SHACL shapes. Even with a single executor, each batch is a complete unit; with multiple executors, shapes that reference triples from different executors are validated correctly.
+Stages can optionally validate their output quads against a `Validator`. Validation operates on the **combined output of all readers per batch**, not on individual quads or per-reader output. A batch produces a complete result set — a self-contained cluster of linked resources — that can be meaningfully matched against SHACL shapes. Even with a single reader, each batch is a complete unit; with multiple readers, shapes that reference triples from different readers are validated correctly.
 
 Validating individual quads would be meaningless, since a single quad carries no structural context for shape matching. Validating the full pipeline output would also be problematic: because the pipeline streams results in batches, it doesn’t know where resource cluster boundaries fall. Batching the output could split a valid cluster across two batches, causing partial resources to fail validation even though the complete cluster is valid.
 
@@ -268,7 +268,7 @@ import { FileWriter } from '@lde/pipeline';
 
 new Stage({
   name: 'transform',
-  executors: await SparqlConstructExecutor.fromFile('transform.rq'),
+  readers: await SparqlConstructReader.fromFile('transform.rq'),
   validation: {
     validator: new ShaclValidator({
       shapesFile: './shapes.ttl',
@@ -295,10 +295,26 @@ After all stages for a dataset have run, the pipeline calls `validator.report(da
 
 ### Writer
 
-Writes generated quads to a destination:
+Writes generated quads to a destination. A `Writer` is transactional: each pipeline run opens one run on it (`openRun(context)`), writes every dataset through the resulting `RunWriter`, and ends with exactly one `commit()` (on success) or `abort(error)` (on failure). The run lifecycle is the home of destination-level concerns such as atomic swaps, deletion sweeps and cross-pod locks; the pipeline drives `openRun → write* → commit/abort` uniformly and never branches on the writer’s update mode.
 
-- `SparqlUpdateWriter` — writes to a SPARQL endpoint via UPDATE queries
-- `FileWriter` — writes to local files
+- `SparqlUpdateWriter` — writes to a SPARQL endpoint via UPDATE queries; writes are visible as they land, so `commit`/`abort` are no-ops
+- `FileWriter` — writes to local files; each file is streamed to a sibling temp file and atomically renamed on flush, `commit` finalizes any files still open, and `abort` discards temp output
+
+The `RunContext` handed to `openRun` carries the run’s identity (`runId`, `startedAt`), the full selection (`selectedSources()`, complete by commit time – including datasets skipped as unchanged) and the pipeline’s provenance store, when configured.
+
+A destination without run-level state implements the same contract with no-op `commit`/`abort` – `SparqlUpdateWriter` shows the pattern:
+
+```typescript
+async openRun(): Promise<RunWriter> {
+  return {
+    write: async (dataset, quads) => {
+      // send quads somewhere
+    },
+    commit: () => Promise.resolve(),
+    abort: () => Promise.resolve(),
+  };
+}
+```
 
 ### Reporter
 
@@ -425,7 +441,7 @@ new Pipeline({
 import {
   Pipeline,
   Stage,
-  SparqlConstructExecutor,
+  SparqlConstructReader,
   SparqlItemSelector,
   SparqlUpdateWriter,
   ManualDatasetSelection,
@@ -439,7 +455,7 @@ const pipeline = new Pipeline({
       itemSelector: new SparqlItemSelector({
         query: 'SELECT DISTINCT ?class WHERE { ?s a ?class }',
       }),
-      executors: new SparqlConstructExecutor({
+      readers: new SparqlConstructReader({
         query:
           'CONSTRUCT { ?class a <http://example.org/Class> } WHERE { ?s a ?class }',
       }),

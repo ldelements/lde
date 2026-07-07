@@ -1,10 +1,10 @@
 import {
   Stage,
-  SparqlConstructExecutor,
+  SparqlConstructReader,
   SparqlItemSelector,
   readQueryFile,
-  type AttachedExecutor,
-  type ExecutorContext,
+  type AttachedReader,
+  type ReaderContext,
   type ItemSelector,
   type QuadTransform,
 } from '@lde/pipeline';
@@ -54,10 +54,10 @@ export const VOID_STAGE_NAMES = {
 export type VoidStageName =
   (typeof VOID_STAGE_NAMES)[keyof typeof VOID_STAGE_NAMES];
 
-/** A transform, or transforms, decorating a VoID stage's executor output. */
+/** A transform, or transforms, decorating a VoID stage's reader output. */
 export type VoidStageTransform =
-  | QuadTransform<ExecutorContext>
-  | QuadTransform<ExecutorContext>[];
+  | QuadTransform<ReaderContext>
+  | QuadTransform<ReaderContext>[];
 
 /**
  * Options for configuring VoID stage execution.
@@ -69,8 +69,8 @@ export type VoidStageTransform =
  */
 export interface VoidStageOptions {
   /**
-   * Transform(s) decorating this stage's executor output before the stage
-   * merges executors. For a global stage the transform sees the executor's
+   * Transform(s) decorating this stage's reader output before the stage
+   * merges readers. For a global stage the transform sees the reader's
    * complete output; for a per-class stage it sees one batch – one class at
    * `batchSize: 1`. Built-in transforms (e.g. {@link uriSpaces}) compose
    * with these, built-in first.
@@ -85,9 +85,9 @@ export interface VoidStageOptions {
  * and processed concurrently — they have no effect on global (non-per-class) stages.
  */
 export interface PerClassVoidStageOptions extends VoidStageOptions {
-  /** Maximum number of class bindings per executor call. @default 10 */
+  /** Maximum number of class bindings per reader call. @default 10 */
   batchSize?: number;
-  /** Maximum concurrent in-flight executor batches. @default 10 */
+  /** Maximum concurrent in-flight reader batches. @default 10 */
   maxConcurrency?: number;
   /** When true, iterate queries per class using a class selector. @default true */
   perClass?: boolean;
@@ -111,7 +111,7 @@ export interface VoidStagesOptions extends Omit<
   /**
    * Transforms to attach to bundled stages, keyed by {@link VOID_STAGE_NAMES}.
    *
-   * Each transform decorates the executor of the named stage – so a consumer
+   * Each transform decorates the reader of the named stage – so a consumer
    * can wrap a stage it never constructs. Where a stage already carries a
    * built-in transform ({@link uriSpaces}, {@link detectVocabularies}), the
    * consumer transform composes after it. An invalid key is a compile error.
@@ -130,14 +130,14 @@ async function createVoidStage(
   },
 ): Promise<Stage> {
   const query = await readQueryFile(resolve(queriesDir, filename));
-  const executor: AttachedExecutor = {
-    executor: new SparqlConstructExecutor({ query }),
+  const reader: AttachedReader = {
+    reader: new SparqlConstructReader({ query }),
     transform: options?.transform,
   };
 
   return new Stage({
     name: filename,
-    executors: executor,
+    readers: reader,
     itemSelector: options?.perClass ? classSelector() : undefined,
     batchSize: options?.batchSize,
     maxConcurrency: options?.maxConcurrency,
@@ -148,7 +148,7 @@ async function createVoidStage(
 /** Normalise a {@link VoidStageTransform} to an array. */
 function asTransforms(
   transform?: VoidStageTransform,
-): QuadTransform<ExecutorContext>[] {
+): QuadTransform<ReaderContext>[] {
   if (transform === undefined) return [];
   return Array.isArray(transform) ? [...transform] : [transform];
 }

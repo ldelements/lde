@@ -39,7 +39,7 @@ Data transformations are expressed as plain SPARQL queries: portable, transparen
 import {
   Pipeline,
   Stage,
-  SparqlConstructExecutor,
+  SparqlConstructReader,
   SparqlItemSelector,
   SparqlUpdateWriter,
   ManualDatasetSelection,
@@ -53,7 +53,7 @@ const pipeline = new Pipeline({
       itemSelector: new SparqlItemSelector({
         query: 'SELECT DISTINCT ?class WHERE { ?s a ?class }',
       }),
-      executors: new SparqlConstructExecutor({
+      readers: new SparqlConstructReader({
         query:
           'CONSTRUCT { ?class a <http://example.org/Class> } WHERE { ?s a ?class }',
       }),

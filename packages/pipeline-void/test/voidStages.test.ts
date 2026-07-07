@@ -6,14 +6,14 @@ import {
   voidStages,
   Stage,
 } from '../src/index.js';
-import type { ExecutorContext, QuadTransform } from '../src/index.js';
+import type { ReaderContext, QuadTransform } from '../src/index.js';
 import { describe, it, expect } from 'vitest';
 import { DataFactory } from 'n3';
 import type { Quad } from '@rdfjs/types';
 
 const { namedNode, quad, literal } = DataFactory;
 
-const noopTransform: QuadTransform<ExecutorContext> = (quads) => quads;
+const noopTransform: QuadTransform<ReaderContext> = (quads) => quads;
 
 /** Names produced by {@link voidStages} without the optional URI space stage. */
 const baseStageNames = [

@@ -5,7 +5,7 @@ import { mkdir, rename, rm } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import filenamifyUrl from 'filenamify-url';
 import { DataFactory, Writer as N3Writer } from 'n3';
-import { Writer } from './writer.js';
+import { RunContext, RunWriter, Writer } from './writer.js';
 
 export interface FileWriterOptions {
   /**
@@ -39,31 +39,46 @@ export interface FileWriterOptions {
   graphIri?: (dataset: Dataset) => URL;
 }
 
-/**
- * Streams RDF quads to files on disk using N3 Writer.
- *
- * Files are named based on the dataset IRI using filenamify-url.
- *
- * A single N3Writer is kept open per dataset across all {@link write} calls,
- * so Turtle prefix declarations are written once and triples can be grouped
- * by subject. Call {@link flush} after all stages complete to finalize the file.
- */
 const formatMap: Record<string, string> = {
   turtle: 'Turtle',
   'n-triples': 'N-Triples',
   'n-quads': 'N-Quads',
 };
 
+/** An open per-dataset output file within one run. */
+interface OpenFile {
+  n3Writer: N3Writer;
+  stream: WriteStream;
+  tempPath: string;
+  finalPath: string;
+}
+
+/**
+ * The run writer a {@link FileWriter} opens: per-dataset `flush` and `reset`
+ * are always available, so direct callers need no optional chaining.
+ */
+export interface FileRunWriter extends RunWriter {
+  flush(dataset: Dataset): Promise<void>;
+  reset(dataset: Dataset): Promise<void>;
+}
+
+/**
+ * Streams RDF quads to files on disk using N3 Writer.
+ *
+ * Files are named based on the dataset IRI using filenamify-url.
+ *
+ * Within a run ({@link openRun}), a single N3Writer is kept open per dataset
+ * across all `write` calls, so Turtle prefix declarations are written once and
+ * triples can be grouped by subject. `flush` finalizes a dataset's file;
+ * `commit` finalizes any files still open, and `abort` discards their
+ * temporary output, leaving no half-written final file behind.
+ */
 export class FileWriter implements Writer {
   private readonly outputDir: string;
   readonly format: 'turtle' | 'n-triples' | 'n-quads';
   private readonly replacementCharacter: string;
   private readonly prefixes?: Record<string, string>;
   private readonly graphIri?: (dataset: Dataset) => URL;
-  private readonly activeWriters = new Map<
-    string,
-    { n3Writer: N3Writer; stream: WriteStream; tempPath: string }
-  >();
 
   constructor(options: FileWriterOptions) {
     this.outputDir = options.outputDir;
@@ -73,13 +88,41 @@ export class FileWriter implements Writer {
     this.graphIri = options.graphIri;
   }
 
-  async write(dataset: Dataset, quads: AsyncIterable<Quad>): Promise<void> {
+  async openRun(_context?: RunContext): Promise<FileRunWriter> {
+    const openFiles = new Map<string, OpenFile>();
+    return {
+      write: (dataset, quads) => this.writeQuads(openFiles, dataset, quads),
+      flush: (dataset) => this.flushFile(openFiles, dataset),
+      reset: (dataset) => this.discardFile(openFiles, dataset),
+      commit: async () => {
+        // Finalize files not yet flushed per dataset – a safety net so a
+        // committed run never leaves a complete output stuck in a temp file.
+        for (const { finalPath } of openFiles.values()) {
+          await this.flushPath(openFiles, finalPath);
+        }
+      },
+      abort: async () => {
+        // Discard all temp output: a crash or abort leaves at most a stale
+        // `*.tmp`, never a truncated final file.
+        for (const openFile of openFiles.values()) {
+          await this.closeAndRemove(openFile);
+        }
+        openFiles.clear();
+      },
+    };
+  }
+
+  private async writeQuads(
+    openFiles: Map<string, OpenFile>,
+    dataset: Dataset,
+    quads: AsyncIterable<Quad>,
+  ): Promise<void> {
     // Peek at the first quad to avoid creating empty files.
     const iterator = quads[Symbol.asyncIterator]();
     const first = await iterator.next();
     if (first.done) return;
 
-    const { n3Writer } = await this.getOrCreateWriter(dataset);
+    const { n3Writer } = await this.getOrCreateFile(openFiles, dataset);
 
     // Re-emit each quad into the configured named graph (n-quads only). The
     // pipeline's quads carry no graph context, so the graph is supplied here
@@ -106,12 +149,21 @@ export class FileWriter implements Writer {
     }
   }
 
-  async flush(dataset: Dataset): Promise<void> {
-    const key = this.getFilePath(dataset);
-    const entry = this.activeWriters.get(key);
-    if (!entry) return;
+  private async flushFile(
+    openFiles: Map<string, OpenFile>,
+    dataset: Dataset,
+  ): Promise<void> {
+    await this.flushPath(openFiles, this.getFilePath(dataset));
+  }
 
-    this.activeWriters.delete(key);
+  private async flushPath(
+    openFiles: Map<string, OpenFile>,
+    finalPath: string,
+  ): Promise<void> {
+    const openFile = openFiles.get(finalPath);
+    if (!openFile) return;
+
+    openFiles.delete(finalPath);
 
     // Quads are streamed to a sibling temp file; only on a clean flush is it
     // atomically renamed onto the final path. A crash therefore leaves at most
@@ -119,38 +171,48 @@ export class FileWriter implements Writer {
     // rebuild that globs the final extension never reads a half-written file.
     try {
       await new Promise<void>((resolve, reject) => {
-        if (entry.stream.errored) {
-          reject(entry.stream.errored);
+        if (openFile.stream.errored) {
+          reject(openFile.stream.errored);
           return;
         }
-        entry.n3Writer.end((error) => {
+        openFile.n3Writer.end((error) => {
           if (error) reject(error);
           else resolve();
         });
       });
     } catch (error) {
-      await rm(entry.tempPath, { force: true, recursive: true });
+      await rm(openFile.tempPath, { force: true, recursive: true });
       throw error;
     }
 
-    await rename(entry.tempPath, key);
+    await rename(openFile.tempPath, finalPath);
   }
 
-  async reset(dataset: Dataset): Promise<void> {
+  private async discardFile(
+    openFiles: Map<string, OpenFile>,
+    dataset: Dataset,
+  ): Promise<void> {
     const key = this.getFilePath(dataset);
-    const entry = this.activeWriters.get(key);
-    if (!entry) return;
+    const openFile = openFiles.get(key);
+    if (!openFile) return;
 
     // Drop the open writer and remove its temp file so the next write starts a
-    // fresh file, discarding everything streamed during the previous pass. Await
-    // the stream closing before removing: the write stream opens its fd lazily,
-    // so a pending open could otherwise recreate the file after rm() ran.
-    this.activeWriters.delete(key);
+    // fresh file, discarding everything streamed during the previous pass.
+    openFiles.delete(key);
+    await this.closeAndRemove(openFile);
+  }
+
+  /**
+   * Close an open file's stream and remove its temp file. Await the stream
+   * closing before removing: the write stream opens its fd lazily, so a
+   * pending open could otherwise recreate the file after rm() ran.
+   */
+  private async closeAndRemove(openFile: OpenFile): Promise<void> {
     await new Promise<void>((resolve) => {
-      entry.stream.once('close', resolve);
-      entry.stream.destroy();
+      openFile.stream.once('close', resolve);
+      openFile.stream.destroy();
     });
-    await rm(entry.tempPath, { force: true, recursive: true });
+    await rm(openFile.tempPath, { force: true, recursive: true });
   }
 
   getOutputPath(dataset: Dataset): string {
@@ -169,19 +231,20 @@ export class FileWriter implements Writer {
     return join(this.outputDir, this.getFilename(dataset));
   }
 
-  private async getOrCreateWriter(
+  private async getOrCreateFile(
+    openFiles: Map<string, OpenFile>,
     dataset: Dataset,
-  ): Promise<{ n3Writer: N3Writer; stream: WriteStream; tempPath: string }> {
-    const key = this.getFilePath(dataset);
-    const existing = this.activeWriters.get(key);
+  ): Promise<OpenFile> {
+    const finalPath = this.getFilePath(dataset);
+    const existing = openFiles.get(finalPath);
     if (existing) return existing;
 
-    await mkdir(dirname(key), { recursive: true });
+    await mkdir(dirname(finalPath), { recursive: true });
 
     // Write to a sibling temp file (same directory, so the flush rename stays on
     // one filesystem and is atomic). The `.tmp` suffix keeps it out of any glob
     // on the final extension.
-    const tempPath = `${key}.tmp`;
+    const tempPath = `${finalPath}.tmp`;
     const stream = createWriteStream(tempPath, { flags: 'w' });
     stream.on('error', (error) => {
       // Surface stream errors when flushing; prevents 'unhandled error' crashes.
@@ -192,9 +255,9 @@ export class FileWriter implements Writer {
       prefixes: this.prefixes,
     });
 
-    const entry = { n3Writer, stream, tempPath };
-    this.activeWriters.set(key, entry);
-    return entry;
+    const openFile = { n3Writer, stream, tempPath, finalPath };
+    openFiles.set(finalPath, openFile);
+    return openFile;
   }
 
   private getExtension(): string {

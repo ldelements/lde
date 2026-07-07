@@ -13,7 +13,7 @@ RDF serialization (Turtle, JSON-LD, N-Triples etc.).
 import {
   Pipeline,
   Stage,
-  SparqlConstructExecutor,
+  SparqlConstructReader,
   FileWriter,
   SparqlUpdateWriter,
 } from '@lde/pipeline';
@@ -32,7 +32,7 @@ const pipeline = new Pipeline({
   stages: [
     new Stage({
       name: 'transform',
-      executors: new SparqlConstructExecutor({ query: '...' }),
+      readers: new SparqlConstructReader({ query: '...' }),
       validation: {
         validator,
         onInvalid: 'write', // 'write' | 'skip' | 'halt'

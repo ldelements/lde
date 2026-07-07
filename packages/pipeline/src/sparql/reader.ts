@@ -21,13 +21,13 @@ import {
 
 /**
  * Fallback policy when no per-call `TimeoutPolicy` is supplied via
- * {@link ExecuteOptions.timeout}. Pipeline always supplies one, so this only
- * matters when the executor is driven directly (without a Pipeline).
+ * {@link ReadOptions.timeout}. Pipeline always supplies one, so this only
+ * matters when the reader is driven directly (without a Pipeline).
  */
 const defaultTimeoutPolicy: TimeoutPolicy = new ConstantTimeoutPolicy(300_000);
 
 /**
- * An executor could not run because the dataset lacks a supported distribution.
+ * A reader could not run because the dataset lacks a supported distribution.
  */
 export class NotSupported {
   constructor(public readonly message: string) {}
@@ -36,7 +36,7 @@ export class NotSupported {
 /** A single row of variable bindings (variable name → NamedNode). */
 export type VariableBindings = Record<string, NamedNode>;
 
-export interface ExecuteOptions {
+export interface ReadOptions {
   /**
    * Variable bindings to inject as a VALUES clause into the query.
    * When non-empty, a VALUES block is prepended to the WHERE clause.
@@ -44,29 +44,29 @@ export interface ExecuteOptions {
   bindings?: VariableBindings[];
 
   /**
-   * Per-call {@link TimeoutPolicy}. When supplied, the executor calls
+   * Per-call {@link TimeoutPolicy}. When supplied, the reader calls
    * {@link TimeoutPolicy.beforeRequest} once per attempt (including
    * retries), installs an {@link AbortSignal} with the returned budget,
    * and reports the outcome via {@link TimeoutPolicy.afterRequest}.
    *
-   * Overrides the executor-level policy passed at construction time.
+   * Overrides the reader-level policy passed at construction time.
    * Pipeline runners use this to thread the per-dataset policy through.
    */
   timeout?: TimeoutPolicy;
 }
 
-export interface Executor {
-  execute(
+export interface Reader {
+  read(
     dataset: Dataset,
     distribution: Distribution,
-    options?: ExecuteOptions,
+    options?: ReadOptions,
   ): Promise<AsyncIterable<Quad> | NotSupported>;
 }
 
 /**
- * Options for SparqlConstructExecutor.
+ * Options for SparqlConstructReader.
  */
-export interface SparqlConstructExecutorOptions {
+export interface SparqlConstructReaderOptions {
   /**
    * SPARQL CONSTRUCT query to execute.
    */
@@ -81,13 +81,13 @@ export interface SparqlConstructExecutorOptions {
   /**
    * Optional custom SparqlEndpointFetcher instance.
    *
-   * When supplied, the executor uses this fetcher as-is for every attempt
+   * When supplied, the reader uses this fetcher as-is for every attempt
    * — the per-attempt timeout from the {@link TimeoutPolicy} is **not**
    * enforced (the supplied fetcher’s own `timeout` governs). Policy
    * `beforeRequest`/`afterRequest` hooks still fire so outcome
    * classification works, but adaptive tightening cannot apply.
    *
-   * When omitted, the executor builds a fresh
+   * When omitted, the reader builds a fresh
    * {@link SparqlEndpointFetcher} per attempt with the per-attempt timeout
    * baked in.
    *
@@ -117,7 +117,7 @@ export interface SparqlConstructExecutorOptions {
    * every solution row. When enabled, a streaming identity filter removes
    * duplicates inline without buffering.
    *
-   * The dedup set is scoped to each {@link execute} call, so memory stays
+   * The dedup set is scoped to each {@link read} call, so memory stays
    * bounded to the number of unique quads per call (typically one batch).
    *
    * Inspired by Comunica's `distinctConstruct` context option.
@@ -128,23 +128,23 @@ export interface SparqlConstructExecutorOptions {
 }
 
 /**
- * A streaming SPARQL CONSTRUCT executor.
+ * A streaming SPARQL CONSTRUCT reader.
  *
  * Queries **without** `#subjectFilter#` are parsed once in the constructor
  * (fast path). Queries that contain the template are stored as raw strings
- * and parsed at {@link execute} time after substitution.
+ * and parsed at {@link read} time after substitution.
  *
  * Template substitution (applied in order):
- * 1. `#subjectFilter#` — replaced with `distribution.subjectFilter` (deferred to execute)
+ * 1. `#subjectFilter#` — replaced with `distribution.subjectFilter` (deferred to read)
  * 2. `FROM <graph>` — set via `withDefaultGraph` if the distribution has a named graph
  * 3. `?dataset` — replaced with the dataset IRI (string substitution on the serialised query)
  *
  * @example
  * ```typescript
- * const executor = new SparqlConstructExecutor({
+ * const reader = new SparqlConstructReader({
  *   query: 'CONSTRUCT { ?dataset ?p ?o } WHERE { ?s ?p ?o }',
  * });
- * const result = await executor.execute(dataset, distribution);
+ * const result = await reader.read(dataset, distribution);
  * if (result instanceof NotSupported) {
  *   console.log(result.message);
  * } else {
@@ -154,7 +154,7 @@ export interface SparqlConstructExecutorOptions {
  * }
  * ```
  */
-export class SparqlConstructExecutor implements Executor {
+export class SparqlConstructReader implements Reader {
   private readonly rawQuery: string;
   private readonly preParsed?: QueryConstruct;
   private readonly userFetcher?: SparqlEndpointFetcher;
@@ -163,7 +163,7 @@ export class SparqlConstructExecutor implements Executor {
   private readonly deduplicate: boolean;
   private readonly generator = new Generator();
 
-  constructor(options: SparqlConstructExecutorOptions) {
+  constructor(options: SparqlConstructReaderOptions) {
     this.rawQuery = options.query;
     this.retries = options.retries ?? 3;
     this.lineBuffer = options.lineBuffer ?? false;
@@ -181,17 +181,18 @@ export class SparqlConstructExecutor implements Executor {
   }
 
   /**
-   * Execute the SPARQL CONSTRUCT query against the distribution's endpoint.
+   * Read quads by executing the SPARQL CONSTRUCT query against the
+   * distribution's endpoint.
    *
-   * @param dataset The dataset to execute against.
+   * @param dataset The dataset to read from.
    * @param distribution The distribution providing the SPARQL endpoint.
-   * @param options Optional execution options (bindings).
+   * @param options Optional read options (bindings).
    * @returns AsyncIterable<Quad> stream of results.
    */
-  async execute(
+  async read(
     dataset: Dataset,
     distribution: Distribution,
-    options?: ExecuteOptions,
+    options?: ReadOptions,
   ): Promise<AsyncIterable<Quad>> {
     const endpoint = distribution.accessUrl;
 
@@ -277,7 +278,7 @@ export class SparqlConstructExecutor implements Executor {
    * Pick the fetcher to use for a single attempt. A user-supplied fetcher
    * is used as-is and its own timeout governs the request; the per-attempt
    * policy budget is bypassed in that case (see the JSDoc on
-   * {@link SparqlConstructExecutorOptions.fetcher}). Otherwise a fresh
+   * {@link SparqlConstructReaderOptions.fetcher}). Otherwise a fresh
    * {@link SparqlEndpointFetcher} is constructed per attempt with the
    * policy-supplied timeout baked in.
    */
@@ -311,17 +312,17 @@ export class SparqlConstructExecutor implements Executor {
   }
 
   /**
-   * Create an executor from a query file.
+   * Create a reader from a query file.
    *
    * @param filename Path to the query file.
-   * @param options Optional executor options (timeout, fetcher).
+   * @param options Optional reader options (timeout, fetcher).
    */
   public static async fromFile(
     filename: string,
-    options?: Omit<SparqlConstructExecutorOptions, 'query'>,
-  ): Promise<SparqlConstructExecutor> {
+    options?: Omit<SparqlConstructReaderOptions, 'query'>,
+  ): Promise<SparqlConstructReader> {
     const query = await readQueryFile(filename);
-    return new SparqlConstructExecutor({ ...options, query });
+    return new SparqlConstructReader({ ...options, query });
   }
 }
 
