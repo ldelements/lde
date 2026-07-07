@@ -12,9 +12,12 @@ import {
   type RunContext,
   type Writer,
 } from '@lde/pipeline';
-import { ShaclValidator } from '../src/shacl-validator.js';
+import { ShaclValidator, severity } from '../src/shacl-validator.js';
 
 const SH_RESULT = 'http://www.w3.org/ns/shacl#result';
+const SH_CONFORMS = 'http://www.w3.org/ns/shacl#conforms';
+const SH_CONFORMANCE_DISALLOWS =
+  'http://www.w3.org/ns/shacl#conformanceDisallows';
 
 /**
  * A transactional fake report writer exposing its run's `write` and `flush`
@@ -320,6 +323,149 @@ describe('ShaclValidator', () => {
     const report = await validator.report(dataset);
     expect(report.conforms).toBe(true);
     expect(report.quadsValidated).toBe(quads.length * 2);
+  });
+
+  describe('conformanceDisallows', () => {
+    const severitiesShapesFile = join(
+      __dirname,
+      'fixtures',
+      'shapes-severities.ttl',
+    );
+
+    it('fails on warning-only results by default, per the SHACL 1.2 default set', async () => {
+      const validator = new ShaclValidator({
+        shapesFile: severitiesShapesFile,
+      });
+
+      const result = await validator.validate(
+        parseFixture('warning-only.ttl'),
+        dataset,
+      );
+
+      expect(result.conforms).toBe(false);
+      expect(result.violations).toBe(1);
+    });
+
+    it('lets warning-only results conform when only sh:Violation disallows conformance', async () => {
+      const validator = new ShaclValidator({
+        shapesFile: severitiesShapesFile,
+        conformanceDisallows: [severity.violation],
+      });
+
+      const result = await validator.validate(
+        parseFixture('warning-only.ttl'),
+        dataset,
+      );
+
+      expect(result.conforms).toBe(true);
+      expect(result.violations).toBe(0);
+    });
+
+    it('still fails on violations when only sh:Violation disallows conformance', async () => {
+      const validator = new ShaclValidator({
+        shapesFile: severitiesShapesFile,
+        conformanceDisallows: [severity.violation],
+      });
+
+      // Triggers all three property shapes: one Violation, one Warning, one
+      // custom severity — only the Violation counts.
+      const result = await validator.validate(
+        parseFixture('invalid.ttl'),
+        dataset,
+      );
+
+      expect(result.conforms).toBe(false);
+      expect(result.violations).toBe(1);
+    });
+
+    it('supports custom severity IRIs in the disallow set', async () => {
+      const validator = new ShaclValidator({
+        shapesFile: severitiesShapesFile,
+        conformanceDisallows: ['http://example.org/Critical'],
+      });
+
+      const result = await validator.validate(
+        parseFixture('custom-severity-only.ttl'),
+        dataset,
+      );
+
+      expect(result.conforms).toBe(false);
+      expect(result.violations).toBe(1);
+    });
+
+    it('streams below-threshold results to writers even when the dataset conforms', async () => {
+      let received: Quad[] = [];
+      const writer = makeReportWriter();
+      writer.write.mockImplementation(async (_dataset: Dataset, quads) => {
+        received = await collectQuads(quads);
+      });
+      const validator = new ShaclValidator({
+        shapesFile: severitiesShapesFile,
+        conformanceDisallows: [severity.violation],
+        reportWriters: [writer],
+      });
+
+      const result = await validator.validate(
+        parseFixture('warning-only.ttl'),
+        dataset,
+      );
+
+      expect(result.conforms).toBe(true);
+      expect(
+        received.filter((quad) => quad.predicate.value === SH_RESULT),
+      ).toHaveLength(1);
+    });
+
+    it('writes a report whose sh:conforms and sh:conformanceDisallows reflect the configured set', async () => {
+      let received: Quad[] = [];
+      const writer = makeReportWriter();
+      writer.write.mockImplementation(async (_dataset: Dataset, quads) => {
+        received = await collectQuads(quads);
+      });
+      const validator = new ShaclValidator({
+        shapesFile: severitiesShapesFile,
+        conformanceDisallows: [severity.violation],
+        reportWriters: [writer],
+      });
+
+      await validator.validate(parseFixture('warning-only.ttl'), dataset);
+
+      const conformsQuads = received.filter(
+        (quad) => quad.predicate.value === SH_CONFORMS,
+      );
+      expect(conformsQuads).toHaveLength(1);
+      expect(conformsQuads[0].object.value).toBe('true');
+      const disallowsQuads = received.filter(
+        (quad) => quad.predicate.value === SH_CONFORMANCE_DISALLOWS,
+      );
+      expect(disallowsQuads.map((quad) => quad.object.value)).toEqual([
+        severity.violation,
+      ]);
+    });
+
+    it('does not add sh:conformanceDisallows to reports when the option is absent', async () => {
+      const received = await reportQuadsFor('invalid.ttl');
+
+      expect(
+        received.some(
+          (quad) => quad.predicate.value === SH_CONFORMANCE_DISALLOWS,
+        ),
+      ).toBe(false);
+    });
+
+    it('accumulates conformance against the configured set across validate calls', async () => {
+      const validator = new ShaclValidator({
+        shapesFile: severitiesShapesFile,
+        conformanceDisallows: [severity.violation],
+      });
+
+      await validator.validate(parseFixture('warning-only.ttl'), dataset);
+      await validator.validate(parseFixture('valid.ttl'), dataset);
+
+      const report = await validator.report(dataset);
+      expect(report.conforms).toBe(true);
+      expect(report.violations).toBe(0);
+    });
   });
 
   describe('with FileWriter', () => {

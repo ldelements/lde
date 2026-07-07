@@ -44,6 +44,33 @@ const pipeline = new Pipeline({
 await pipeline.run();
 ```
 
+### Severity and conformance (`conformanceDisallows`)
+
+By default, a result of _any_ severity (`sh:Violation`, `sh:Warning` or
+`sh:Info`) makes validation fail. This matches the
+[SHACL 1.2 default conformance-disallow set](https://www.w3.org/TR/shacl12-core/#conformanceDisallows).
+
+To fail on selected severities only (e.g. treat warnings and info as advisory,
+as SHOULD-level findings usually are) pass the set of severity IRIs that
+disallow conformance:
+
+```typescript
+import { ShaclValidator, severity } from '@lde/pipeline-shacl-validator';
+
+const validator = new ShaclValidator({
+  shapesFile: './shapes.ttl',
+  conformanceDisallows: [severity.violation],
+});
+```
+
+Results outside the set are still reported; they just no longer flip `conforms`
+to `false` or count towards `violations`. Custom severity IRIs (allowed by SHACL
+1.2) work too.
+
+When the option is set, the written report stays self-describing per SHACL 1.2:
+its `sh:conforms` reflects the configured set, and the set itself is declared on
+the report via `sh:conformanceDisallows`.
+
 ### `onInvalid` options
 
 | Value     | Behaviour                                                        |
@@ -54,7 +81,8 @@ await pipeline.run();
 
 ### Report writers
 
-Each `validate()` call that produces violations fans the SHACL report quads
+Each `validate()` call that produces validation results (of any severity,
+whether or not they fail conformance) fans the SHACL report quads
 (`sh:ValidationResult` triples, etc.) out to every configured `reportWriter`
 via `Writer.write(dataset, quads)`. Each writer's `Writer.flush(dataset)` is
 invoked from `ShaclValidator.report(dataset)` — i.e. once the pipeline
