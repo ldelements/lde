@@ -65,6 +65,7 @@ const dataset: SearchType = {
       name: 'license',
       kind: 'reference',
       array: true,
+      facetable: true,
       output: true,
       ref: { typeName: 'License', strategy: 'labelOnly' },
     },
@@ -261,6 +262,12 @@ describe('per-reference label sources', () => {
             field_name: 'subject',
             counts: [{ value: 'https://term/1', count: 5 }],
           },
+          // A reference facet with no labelSource stays id-only and triggers
+          // no lookup: labelLookupGroups skips it in one check.
+          {
+            field_name: 'license',
+            counts: [{ value: 'https://license/1', count: 3 }],
+          },
         ],
       },
       multiSearch: labelSourcesLookup({
@@ -278,7 +285,7 @@ describe('per-reference label sources', () => {
 
     const result = await engine.search(dataset, {
       ...baseQuery,
-      facets: ['publisher', 'subject'],
+      facets: ['publisher', 'subject', 'license'],
     });
 
     expect(result.facets.publisher).toEqual([
@@ -286,6 +293,10 @@ describe('per-reference label sources', () => {
     ]);
     expect(result.facets.subject).toEqual([
       { value: 'https://term/1', count: 5, label: { und: ['Cartography'] } },
+    ]);
+    // license has no labelSource: buckets stay id-only, no label attached.
+    expect(result.facets.license).toEqual([
+      { value: 'https://license/1', count: 3 },
     ]);
   });
 

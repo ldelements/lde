@@ -154,6 +154,26 @@ export function createTypesenseSearchEngine<
       ],
     ]),
   );
+  // The output reference fields that carry hit labels, each paired with its
+  // resolved label source – fixed at construction, so labelLookupGroups need
+  // not re-derive or re-resolve them on every search.
+  const outputReferenceSources = new Map<
+    string,
+    readonly { name: string; source: LabelSource }[]
+  >(
+    [...schema.values()].map((searchType) => {
+      const sources = labelSources.get(searchType.type);
+      return [
+        searchType.type,
+        referenceFields(searchType)
+          .filter((field) => field.output === true && sources?.has(field.name))
+          .map((field) => ({
+            name: field.name,
+            source: sources!.get(field.name)!,
+          })),
+      ];
+    }),
+  );
 
   // Process-lifetime cache per label-source collection, held in the engine
   // closure. Populated lazily on the first cached search; `inFlightLoads` is
@@ -291,8 +311,8 @@ export function createTypesenseSearchEngine<
       const labels = await resolveLabels(cachedLabelsPromise, () =>
         labelLookupGroups(
           [response],
-          searchType,
           labelSources.get(searchType.type),
+          outputReferenceSources.get(searchType.type) ?? [],
         ),
       );
       return parseSearchResponse(response, searchType, labels);
@@ -333,8 +353,8 @@ export function createTypesenseSearchEngine<
       const labels = await resolveLabels(cachedLabelsPromise, () =>
         labelLookupGroups(
           responses,
-          searchType,
           labelSources.get(searchType.type),
+          outputReferenceSources.get(searchType.type) ?? [],
         ),
       );
       // multi_search reports a failed entry inline instead of rejecting the
@@ -399,27 +419,17 @@ async function loadAllLabels(
  */
 function labelLookupGroups(
   responses: readonly TypesenseSearchResponse[],
-  searchType: SearchType,
   sources: ReadonlyMap<string, LabelSource> | undefined,
+  outputSources: readonly { name: string; source: LabelSource }[],
 ): LabelLookupGroup[] {
   if (sources === undefined || sources.size === 0) {
     return [];
   }
-  // Hits only carry labels for OUTPUT reference fields: reconstructDocument skips
-  // non-output fields, so resolving a non-output reference's hit labels (e.g. a
-  // facet-only `class` with dozens of IRIs per hit) is pure waste.
-  const outputReferenceFields = referenceFields(searchType)
-    .filter((field) => field.output === true && sources.has(field.name))
-    .map((field) => field.name);
   const irisByCollection = new Map<
     string,
     { source: LabelSource; iris: Set<string> }
   >();
-  const add = (fieldName: string, iri: string): void => {
-    const source = sources.get(fieldName);
-    if (source === undefined) {
-      return;
-    }
+  const add = (source: LabelSource, iri: string): void => {
     let group = irisByCollection.get(source.collection);
     if (group === undefined) {
       group = { source, iris: new Set() };
@@ -428,23 +438,31 @@ function labelLookupGroups(
     group.iris.add(iri);
   };
   for (const response of responses) {
+    // Hits only carry labels for OUTPUT reference fields (reconstructDocument
+    // skips non-output fields); `outputSources` pairs each with its resolved
+    // source, precomputed per type.
     for (const hit of response.hits ?? []) {
-      for (const name of outputReferenceFields) {
+      for (const { name, source } of outputSources) {
         const raw = hit.document[name];
         if (Array.isArray(raw)) {
           for (const value of raw) {
-            add(name, String(value));
+            add(source, String(value));
           }
         } else if (typeof raw === 'string') {
-          add(name, raw);
+          add(source, raw);
         }
       }
     }
     // Reference-facet bucket values are IRIs too (incl. facet-only references
-    // like `class`); resolve them in the same lookup.
+    // like `class`); resolve them in the same lookup. Skip a non-source facet
+    // (e.g. a keyword facet) in one check instead of probing every bucket.
     for (const facet of response.facet_counts ?? []) {
+      const source = sources.get(facet.field_name);
+      if (source === undefined) {
+        continue;
+      }
       for (const bucket of facet.counts) {
-        add(facet.field_name, bucket.value);
+        add(source, bucket.value);
       }
     }
   }
