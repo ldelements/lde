@@ -1,8 +1,12 @@
-import { mergeNamespaceVariants } from '../src/index.js';
+import {
+  mergeNamespaceVariants,
+  schemaOrgNormalizationPlugin,
+} from '../src/index.js';
 import type { NamespaceAlias } from '../src/index.js';
 import { Dataset, Distribution } from '@lde/dataset';
 import type { Quad } from '@rdfjs/types';
 import { DataFactory } from 'n3';
+import { createHash } from 'node:crypto';
 import { describe, it, expect } from 'vitest';
 
 const { namedNode, literal, quad } = DataFactory;
@@ -287,9 +291,11 @@ describe('mergeNamespaceVariants', () => {
     expect(objectsOf(out, orphanProperty.value, `${VOID}entities`)).toEqual([
       '1',
     ]);
-    // The void:property *object* is still canonicalized (that is unconditional).
+    // A node that is not re-keyed keeps its source void:property — canonicalizing
+    // it would leave the object https:// while the IRI stays hashed on http://,
+    // and would mangle the (unmergeable) top-level entity-properties partitions.
     expect(objectsOf(out, orphanProperty.value, `${VOID}property`)).toEqual([
-      'https://schema.org/name',
+      'http://schema.org/name',
     ]);
   });
 
@@ -319,5 +325,273 @@ describe('mergeNamespaceVariants', () => {
     );
     const out = await run([unrelated]);
     expect(out).toEqual([unrelated]);
+  });
+});
+
+describe('schemaOrgNormalizationPlugin', () => {
+  it('exposes the merge as a beforeDatasetWrite hook, not per-stage', () => {
+    const plugin = schemaOrgNormalizationPlugin();
+    expect(plugin.name).toBe('void-namespace-normalization');
+    expect(plugin.beforeDatasetWrite).toBeTypeOf('function');
+    expect(plugin.beforeStageWrite).toBeUndefined();
+  });
+
+  it('merges http/https CreativeWork partitions across the whole dataset', async () => {
+    const input = [
+      quad(
+        namedNode(DATASET),
+        v('classPartition'),
+        namedNode(cp(HTTP_CW_HASH)),
+      ),
+      quad(
+        namedNode(cp(HTTP_CW_HASH)),
+        v('class'),
+        namedNode('http://schema.org/CreativeWork'),
+      ),
+      quad(namedNode(cp(HTTP_CW_HASH)), v('entities'), integer(3278)),
+      quad(
+        namedNode(DATASET),
+        v('classPartition'),
+        namedNode(cp(HTTPS_CW_HASH)),
+      ),
+      quad(
+        namedNode(cp(HTTPS_CW_HASH)),
+        v('class'),
+        namedNode('https://schema.org/CreativeWork'),
+      ),
+      quad(namedNode(cp(HTTPS_CW_HASH)), v('entities'), integer(511)),
+    ];
+    const transform = schemaOrgNormalizationPlugin().beforeDatasetWrite!;
+    const out: Quad[] = [];
+    for await (const q of transform(
+      (async function* () {
+        yield* input;
+      })(),
+      context,
+    )) {
+      out.push(q);
+    }
+    expect(objectsOf(out, DATASET, `${VOID}classPartition`)).toEqual([
+      cp(HTTPS_CW_HASH),
+    ]);
+    expect(objectsOf(out, cp(HTTPS_CW_HASH), `${VOID}entities`)).toEqual([
+      '3789',
+    ]);
+  });
+});
+
+describe('distinctObjects merging', () => {
+  const pp = (cls: string, prop: string) =>
+    `${DATASET}/.well-known/void#class-property-` +
+    createHash('md5')
+      .update(cls + prop)
+      .digest('hex');
+
+  it('is exact for a single-namespace dataset (nothing to combine)', async () => {
+    // Only https variants: one property partition, distinctObjects unchanged.
+    const input = [
+      quad(
+        namedNode(DATASET),
+        v('classPartition'),
+        namedNode(cp(HTTPS_CW_HASH)),
+      ),
+      quad(
+        namedNode(cp(HTTPS_CW_HASH)),
+        v('class'),
+        namedNode('https://schema.org/CreativeWork'),
+      ),
+      quad(
+        namedNode(cp(HTTPS_CW_HASH)),
+        v('propertyPartition'),
+        namedNode(
+          pp('https://schema.org/CreativeWork', 'https://schema.org/name'),
+        ),
+      ),
+      quad(
+        namedNode(
+          pp('https://schema.org/CreativeWork', 'https://schema.org/name'),
+        ),
+        v('property'),
+        namedNode('https://schema.org/name'),
+      ),
+      quad(
+        namedNode(
+          pp('https://schema.org/CreativeWork', 'https://schema.org/name'),
+        ),
+        v('distinctObjects'),
+        integer(7),
+      ),
+    ];
+    const out = await run(input);
+    const nameP = pp(
+      'https://schema.org/CreativeWork',
+      'https://schema.org/name',
+    );
+    expect(objectsOf(out, nameP, `${VOID}distinctObjects`)).toEqual(['7']);
+  });
+
+  it('sums (over-counts) when a dataset mixes both namespaces on one property', async () => {
+    // http:name and https:name on the same class collapse; distinctObjects is
+    // summed — the documented over-count we do not optimize for.
+    const chain = (cls: string, prop: string, objects: number) => [
+      quad(
+        namedNode(DATASET),
+        v('classPartition'),
+        namedNode(
+          cp(
+            cls === 'http://schema.org/CreativeWork'
+              ? HTTP_CW_HASH
+              : HTTPS_CW_HASH,
+          ),
+        ),
+      ),
+      quad(
+        namedNode(
+          cp(
+            cls === 'http://schema.org/CreativeWork'
+              ? HTTP_CW_HASH
+              : HTTPS_CW_HASH,
+          ),
+        ),
+        v('class'),
+        namedNode(cls),
+      ),
+      quad(
+        namedNode(
+          cp(
+            cls === 'http://schema.org/CreativeWork'
+              ? HTTP_CW_HASH
+              : HTTPS_CW_HASH,
+          ),
+        ),
+        v('propertyPartition'),
+        namedNode(pp(cls, prop)),
+      ),
+      quad(namedNode(pp(cls, prop)), v('property'), namedNode(prop)),
+      quad(namedNode(pp(cls, prop)), v('distinctObjects'), integer(objects)),
+    ];
+    const input = [
+      ...chain('http://schema.org/CreativeWork', 'http://schema.org/name', 2),
+      ...chain('https://schema.org/CreativeWork', 'https://schema.org/name', 3),
+    ];
+    const out = await run(input);
+    const nameP = pp(
+      'https://schema.org/CreativeWork',
+      'https://schema.org/name',
+    );
+    expect(objectsOf(out, nameP, `${VOID}distinctObjects`)).toEqual(['5']);
+  });
+});
+
+describe('top-level property partitions (entity-properties)', () => {
+  const topPp = (prop: string) =>
+    `${DATASET}/.well-known/void#property-partition-` +
+    createHash('md5').update(prop).digest('hex');
+
+  it('keeps the source namespace on dataset-level property partitions', async () => {
+    // entity-properties.rq emits `?dataset void:propertyPartition ?pp` — the
+    // parent is the dataset, not a class, so the merge cannot re-key it. Its
+    // void:property must NOT be canonicalized (source namespace preserved).
+    const httpName = 'http://schema.org/name';
+    const input = [
+      quad(
+        namedNode(DATASET),
+        v('propertyPartition'),
+        namedNode(topPp(httpName)),
+      ),
+      quad(namedNode(topPp(httpName)), v('property'), namedNode(httpName)),
+      quad(namedNode(topPp(httpName)), v('entities'), integer(5)),
+      quad(namedNode(topPp(httpName)), v('distinctObjects'), integer(3)),
+    ];
+    const out = await run(input);
+    expect(objectsOf(out, topPp(httpName), `${VOID}property`)).toEqual([
+      httpName,
+    ]);
+    expect(objectsOf(out, topPp(httpName), `${VOID}entities`)).toEqual(['5']);
+  });
+
+  it('leaves both namespace variants of a top-level property distinct', async () => {
+    const httpName = 'http://schema.org/name';
+    const httpsName = 'https://schema.org/name';
+    const input = [
+      quad(
+        namedNode(DATASET),
+        v('propertyPartition'),
+        namedNode(topPp(httpName)),
+      ),
+      quad(namedNode(topPp(httpName)), v('property'), namedNode(httpName)),
+      quad(
+        namedNode(DATASET),
+        v('propertyPartition'),
+        namedNode(topPp(httpsName)),
+      ),
+      quad(namedNode(topPp(httpsName)), v('property'), namedNode(httpsName)),
+    ];
+    const out = await run(input);
+    const props = new Set(
+      out
+        .filter((q) => q.predicate.value === `${VOID}property`)
+        .map((q) => q.object.value),
+    );
+    expect(props).toEqual(new Set([httpName, httpsName]));
+  });
+});
+
+describe('incomplete chains from a failed stage', () => {
+  it('merges what it can and passes the rest through without crashing', async () => {
+    // classPartitions succeeded; classPropertySubjects FAILED (so the property
+    // partition has no void:property and no cp->pp link); the datatypes stage
+    // still emitted a datatype partition hanging off that undescribed pp.
+    const ppRaw = namedNode(
+      `${DATASET}/.well-known/void#class-property-orphan`,
+    );
+    const dpRaw = namedNode(`${DATASET}/.well-known/void#datatype-orphan`);
+    const input = [
+      // classPartitions — complete, both variants
+      quad(
+        namedNode(DATASET),
+        v('classPartition'),
+        namedNode(cp(HTTP_CW_HASH)),
+      ),
+      quad(
+        namedNode(cp(HTTP_CW_HASH)),
+        v('class'),
+        namedNode('http://schema.org/CreativeWork'),
+      ),
+      quad(namedNode(cp(HTTP_CW_HASH)), v('entities'), integer(3278)),
+      quad(
+        namedNode(DATASET),
+        v('classPartition'),
+        namedNode(cp(HTTPS_CW_HASH)),
+      ),
+      quad(
+        namedNode(cp(HTTPS_CW_HASH)),
+        v('class'),
+        namedNode('https://schema.org/CreativeWork'),
+      ),
+      quad(namedNode(cp(HTTPS_CW_HASH)), v('entities'), integer(511)),
+      // datatypes stage output whose parent property partition was never described
+      quad(ppRaw, ve('datatypePartition'), dpRaw),
+      quad(dpRaw, ve('datatype'), namedNode(`${XSD}string`)),
+      quad(dpRaw, v('triples'), integer(2)),
+    ];
+    const out = await run(input);
+
+    // Class partitions still merge correctly (independent of the failed stage).
+    const creativeWork = new Set(
+      out
+        .filter(
+          (q) =>
+            q.predicate.value === `${VOID}class` &&
+            q.object.value === 'https://schema.org/CreativeWork',
+        )
+        .map((q) => q.subject.value),
+    );
+    expect(creativeWork.size).toBe(1);
+    expect(objectsOf(out, cp(HTTPS_CW_HASH), `${VOID}entities`)).toEqual([
+      '3789',
+    ]);
+    // The datatype partition with the broken chain passes through unmerged.
+    expect(objectsOf(out, dpRaw.value, `${VOID}triples`)).toEqual(['2']);
   });
 });

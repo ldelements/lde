@@ -6,6 +6,7 @@ import { StreamParser } from 'n3';
 import type { DatasetSelector } from './selector.js';
 import { Stage } from './stage.js';
 import type { QuadTransform } from './stage.js';
+import { AsyncQueue } from './asyncQueue.js';
 import type {
   DatasetOutcome,
   DatasetWriter,
@@ -61,16 +62,41 @@ export interface BeforeStageWriteContext {
   stage: string;
 }
 
+/**
+ * Context handed to a {@link PipelinePlugin.beforeDatasetWrite} transform: the
+ * `dataset` whose complete, cross-stage output is being written. Unlike
+ * {@link BeforeStageWriteContext} there is no `stage` — the transform sees one
+ * dataset's quads from every stage as a single stream.
+ */
+export interface BeforeDatasetWriteContext {
+  dataset: Dataset;
+}
+
 /** Plugin that hooks into pipeline lifecycle events. */
 export interface PipelinePlugin {
   name: string;
   /**
-   * Transform the merged, post-stage quad stream before writing (extension
-   * point 2: pipeline-wide, post-merge). The home of cross-cutting concerns
-   * – provenance, namespace normalisation – that apply regardless of which
-   * reader produced a quad.
+   * Transform a single stage's merged output before writing (extension point
+   * 2: per stage, post-merge). Runs once per stage per dataset, carrying the
+   * stage identity so it can mint stable per-`(dataset, stage)` IRIs. The home
+   * of stage-scoped concerns — provenance stamping, namespace rewriting of a
+   * stage's own quads.
    */
   beforeStageWrite?: QuadTransform<BeforeStageWriteContext>;
+  /**
+   * Transform a whole dataset's output before writing (extension point 3: per
+   * dataset, cross-stage). Runs once over the concatenation of every stage's
+   * output for one dataset, after all stages complete and before the write is
+   * flushed. The home of concerns that need to reconcile quads *across* stages
+   * — deduplication, cross-stage roll-ups, or merging partition nodes that
+   * different stages contribute to.
+   *
+   * The transform is a streaming {@link QuadTransform}: the pipeline pipes each
+   * stage's output through it via a bounded queue and never materializes the
+   * dataset, so a pass-through or streaming transform stays O(1). A transform
+   * that genuinely needs cross-stage state buffers only its own working set.
+   */
+  beforeDatasetWrite?: QuadTransform<BeforeDatasetWriteContext>;
 }
 
 export interface PipelineOptions {
@@ -251,12 +277,114 @@ class TransformWriter implements DatasetWriter {
   // per dataset after all stages — a TransformWriter only wraps a single write.
 }
 
+/** Discards a dataset's queued output; used to unblock the transform on reset. */
+class DatasetReset extends Error {}
+
+/**
+ * A {@link RunWriter} decorator that applies a {@link PipelinePlugin.beforeDatasetWrite}
+ * transform once over a dataset's complete, cross-stage output.
+ *
+ * Every stage's {@link write} for a dataset feeds a single {@link AsyncQueue};
+ * the transform consumes that queue as one stream and its output goes to the
+ * inner writer. The queue is created on the first write and closed on
+ * {@link flush}, so stage output streams through the transform (bounded by the
+ * queue's backpressure) rather than being materialized. Datasets are processed
+ * one at a time, so a single in-flight queue suffices.
+ */
+class DatasetTransformWriter implements RunWriter {
+  private current?: {
+    iri: string;
+    queue: AsyncQueue<Quad>;
+    innerWrite: Promise<void>;
+  };
+
+  constructor(
+    private readonly inner: RunWriter,
+    private readonly transform: QuadTransform<BeforeDatasetWriteContext>,
+  ) {}
+
+  async write(dataset: Dataset, quads: AsyncIterable<Quad>): Promise<void> {
+    const { queue } = this.open(dataset);
+    for await (const quad of quads) {
+      await queue.push(quad);
+    }
+  }
+
+  async flush(dataset: Dataset, outcome: DatasetOutcome): Promise<void> {
+    let writeError: unknown;
+    if (this.current?.iri === dataset.iri.toString()) {
+      const { queue, innerWrite } = this.current;
+      this.current = undefined;
+      queue.close();
+      // Capture rather than propagate immediately, so the inner writer still
+      // gets its flush (as 'failed') to finalize/clean up this dataset.
+      try {
+        await innerWrite;
+      } catch (error) {
+        writeError = error;
+      }
+    }
+    await this.inner.flush?.(dataset, writeError ? 'failed' : outcome);
+    if (writeError) throw writeError;
+  }
+
+  async reset(dataset: Dataset): Promise<void> {
+    await this.discardCurrent(dataset, new DatasetReset());
+    await this.inner.reset?.(dataset);
+  }
+
+  async commit(): Promise<void> {
+    await this.inner.commit();
+  }
+
+  async abort(error: unknown): Promise<void> {
+    await this.discardCurrent(undefined, error);
+    await this.inner.abort(error);
+  }
+
+  private open(dataset: Dataset): NonNullable<typeof this.current> {
+    const iri = dataset.iri.toString();
+    if (this.current?.iri === iri) return this.current;
+    const queue = new AsyncQueue<Quad>();
+    const innerWrite = this.inner.write(
+      dataset,
+      this.transform(queue, { dataset }),
+    );
+    // If the inner write (or the transform) fails, abort the queue so a
+    // producer blocked on push() is released and surfaces the error, instead
+    // of hanging forever waiting for a consumer that has stopped pulling. The
+    // rejection is re-observed (and re-thrown) by flush()/discardCurrent via
+    // `innerWrite`, so attaching this handler does not swallow it.
+    void innerWrite.catch((error) => queue.abort(error));
+    this.current = { iri, queue, innerWrite };
+    return this.current;
+  }
+
+  /**
+   * Abandon the in-flight dataset (the given one, or any when `dataset` is
+   * undefined): abort the queue so the transform and inner write terminate,
+   * then await them, swallowing the abort so it does not mask the caller's flow.
+   */
+  private async discardCurrent(
+    dataset: Dataset | undefined,
+    error: unknown,
+  ): Promise<void> {
+    if (!this.current) return;
+    if (dataset && this.current.iri !== dataset.iri.toString()) return;
+    const { queue, innerWrite } = this.current;
+    this.current = undefined;
+    queue.abort(error);
+    await innerWrite.catch(() => undefined);
+  }
+}
+
 export class Pipeline {
   private readonly name: string;
   private readonly datasetSelector: DatasetSelector;
   private readonly stages: Stage[];
   private readonly writer: Writer;
   private readonly beforeStageWrite?: QuadTransform<BeforeStageWriteContext>;
+  private readonly beforeDatasetWrite?: QuadTransform<BeforeDatasetWriteContext>;
   private readonly distributionResolver: DistributionResolver;
   private readonly chaining?: PipelineOptions['chaining'];
   private readonly reporter?: ProgressReporter;
@@ -297,6 +425,16 @@ export class Pipeline {
     this.beforeStageWrite = transforms?.length
       ? (quads, context) => transforms.reduce((q, fn) => fn(q, context), quads)
       : undefined;
+
+    const datasetTransforms = options.plugins
+      ?.map((p) => p.beforeDatasetWrite)
+      .filter(
+        (t): t is QuadTransform<BeforeDatasetWriteContext> => t !== undefined,
+      );
+    this.beforeDatasetWrite = datasetTransforms?.length
+      ? (quads, context) =>
+          datasetTransforms.reduce((q, fn) => fn(q, context), quads)
+      : undefined;
     this.distributionResolver =
       options.distributionResolver ?? new SparqlDistributionResolver();
     this.chaining = options.chaining;
@@ -331,7 +469,12 @@ export class Pipeline {
       selectedSources: () => selectedSources,
       provenance: this.provenanceStore,
     };
-    const runWriter = await this.writer.openRun(context);
+    const openedWriter = await this.writer.openRun(context);
+    // Wrap the run writer so a whole-dataset transform sees every stage's
+    // output for a dataset as one stream before it is written.
+    const runWriter = this.beforeDatasetWrite
+      ? new DatasetTransformWriter(openedWriter, this.beforeDatasetWrite)
+      : openedWriter;
 
     try {
       for await (const dataset of datasets) {
@@ -549,7 +692,18 @@ export class Pipeline {
       unsubscribe?.();
     }
 
-    await runWriter.flush?.(dataset, stageFailed ? 'failed' : 'success');
+    try {
+      await runWriter.flush?.(dataset, stageFailed ? 'failed' : 'success');
+    } catch (error) {
+      // A per-dataset writer failure must not abort the whole run: isolate it
+      // like a stage failure so the remaining datasets still process. The
+      // dataset is recorded 'failed' below and retried on the next run.
+      this.reporter?.stageFailed?.(
+        'write',
+        error instanceof Error ? error : new Error(String(error)),
+      );
+      stageFailed = true;
+    }
     await this.reportValidators(dataset);
     // A dataset whose stages threw produced incomplete output; record it as
     // ‘failed’ rather than freezing a broken result under a ‘success’ record.

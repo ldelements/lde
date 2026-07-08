@@ -6,7 +6,7 @@ export type {
   QuadTransform,
 } from '@lde/pipeline';
 export * from './stage.js';
-export * from './namespaceAliases.js';
 export * from './partitionMerge.js';
+export * from './partitionIri.js';
 export * from './vocabularyTransform.js';
 export * from './uriSpaceTransform.js';
