@@ -1,3 +1,9 @@
+## 0.2.4 (2026-07-08)
+
+### 🩹 Fixes
+
+- **distribution-probe:** make RDF-validation coverage deterministic ([#570](https://github.com/ldelements/lde/pull/570))
+
 ## 0.2.3 (2026-06-26)
 
 ### 🧱 Updated Dependencies
