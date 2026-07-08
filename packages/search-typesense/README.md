@@ -26,20 +26,28 @@ they cost no RAM; only the folded `*_search_${locale}`, facet/reference and
 `*_sort_${locale}` companions are indexed. Keeping retrieval-only fields
 un-indexed is the lever for holding a large index’s RAM down.
 
-`createTypesenseSearchEngine(client, { collection, labelsCollection })` is the
+`createTypesenseSearchEngine(client, schema, { collections })` is the
 `SearchEngine` implementation. Each search:
 
 - validates the query against the search type (the port contract — a
   structurally invalid query is rejected, never sent);
 - compiles it into Typesense search params (`buildSearchParams`);
 - runs the search;
-- resolves reference (and reference-facet) labels from the sidecar `labels`
-  collection in a single lookup;
+- resolves reference (and reference-facet) labels **per reference field**
+  from the collection of the `SearchType` its `labelSource` names – all
+  sources bundled into a single lookup. A reference without a `labelSource`
+  stays id-only. With `labelCacheTtlMs` set, each label-source collection is
+  instead loaded once into an in-memory cache;
 - reconstructs the logical `SearchResult` (`parseSearchResponse`) — language
   maps, labelled references, labelled facet buckets.
 
+A label source is just another `SearchType` in the schema (with an `output`,
+`searchable` text field called `label`) whose collection appears in
+`collections` – a typed entity collection and a ‘labels collection’ are the
+same kind of thing.
+
 `searchFacets` – the port’s batch entry point – answers a whole batch of
-facet-only queries (e.g. a faceted sidebar’s skip-own-filter variants) as a
+facet-only queries (e.g. a faceted listing’s skip-own-filter variants) as a
 **single `multi_search` round-trip**, with one bundled label lookup shared by
 every facet result in the batch. A failed entry is reported in place as a
 per-query outcome, so its siblings’ facets survive.

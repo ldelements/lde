@@ -21,6 +21,7 @@ import {
   assertValidQuery,
   fieldNamed,
   isRangeFacet,
+  labelFieldOf,
   outputFields,
   physicalFields,
   referenceFields,
@@ -31,45 +32,57 @@ import {
   type BuildSearchParamsOptions,
 } from './query-compiler.js';
 
-/** Where the engine reads documents and (optionally) reference labels — plus
- *  every query-compiler knob ({@link BuildSearchParamsOptions}), declared once
- *  there and forwarded wholesale into each search. `TypeName` is the union of
- *  the schema’s type names, so a literal schema makes the `collections` map
- *  exhaustive at compile time. */
+/** Where the engine reads documents — plus every query-compiler knob
+ *  ({@link BuildSearchParamsOptions}), declared once there and forwarded
+ *  wholesale into each search. `TypeName` is the union of the schema’s type
+ *  names, so a literal schema makes the `collections` map exhaustive at
+ *  compile time. Reference labels resolve per field from the collection of
+ *  the SearchType its `labelSource` names — a label source is just another
+ *  entry in `collections`. */
 export interface TypesenseSearchEngineOptions<
   TypeName extends string = string,
 > extends BuildSearchParamsOptions {
   /** The collection (or alias) per search type, keyed by the type’s `name` —
    *  with a literal schema, omitting a type is a compile error. */
   readonly collections: Readonly<Record<TypeName, string>>;
-  /** The sidecar `labels` collection (IRI → label); omit for id-only references. */
-  readonly labelsCollection?: string;
   /**
    * Called when reference-label resolution fails; the search then degrades to
    * id-only references rather than failing. Optional — omit to swallow silently.
    */
   readonly onLabelError?: (error: unknown) => void;
   /**
-   * Opt-in in-memory label cache. When set (and {@link labelsCollection} is
-   * set), the FULL sidecar `labels` collection is loaded once via the documents
-   * export endpoint and held in a process-lifetime cache for this many
-   * milliseconds; each `search` then resolves its reference labels by in-memory
-   * lookup instead of a per-search `multi_search` round-trip. Omit to keep the
-   * per-search {@link fetchLabels} behaviour unchanged.
+   * Opt-in in-memory label cache. When set, each label-source collection is
+   * loaded in FULL once via the documents export endpoint and held in a
+   * process-lifetime cache for this many milliseconds; each `search` then
+   * resolves its reference labels by in-memory lookup instead of a per-search
+   * `multi_search` round-trip. Omit to keep the per-search
+   * {@link fetchLabels} behaviour unchanged.
    */
   readonly labelCacheTtlMs?: number;
 }
 
 /**
+ * One reference field’s resolved label source: the collection it reads, the
+ * source type’s `label` declaration (for reconstructing localized labels) and
+ * the comma-joined physical search fields (one per locale) a label search
+ * queries.
+ */
+export interface LabelSource {
+  readonly collection: string;
+  readonly labelField: TextField;
+  readonly queryBy: string;
+}
+
+/**
  * A Typesense-backed {@link SearchEngine}, bound to the whole
  * {@link SearchSchema} at construction — like every other schema consumer.
- * Each type’s collection comes from `options.collections`; the label sidecar
- * and its cache are shared across all types. `search` compiles the query
- * ({@link buildSearchParams}), runs it against the type’s collection,
- * resolves the reference labels for the page of hits from the sidecar
- * `labels` collection in one lookup, and reconstructs the engine-neutral
+ * Each type’s collection comes from `options.collections`. `search` compiles
+ * the query ({@link buildSearchParams}), runs it against the type’s
+ * collection, resolves the reference labels for the page of hits — each
+ * reference field from its own label source’s collection, all sources bundled
+ * into one lookup — and reconstructs the engine-neutral
  * {@link SearchResult} ({@link parseSearchResponse}). `searchFacets` answers
- * a whole facet batch (e.g. a sidebar’s skip-own-filter query variants) as a
+ * a whole facet batch (e.g. a faceted listing’s skip-own-filter query variants) as a
  * single `multi_search` round-trip with one shared label lookup; a failed
  * entry is reported in place as a per-query outcome, so it never discards
  * its siblings’ facets. Every engine specific stays here; consumers see only
@@ -102,25 +115,95 @@ export function createTypesenseSearchEngine<
       return [searchType.type, collection];
     }),
   );
-  // Process-lifetime cache for the FULL `labels` collection, held in the engine
-  // closure. Populated lazily on the first cached search; `loadAll` is the
-  // single-flight in-flight promise so concurrent first-loads share one export.
-  let cachedLabels: ReadonlyMap<string, LocalizedValue> | undefined;
-  let cacheExpiresAt = 0;
-  let inFlightLoad: Promise<ReadonlyMap<string, LocalizedValue>> | undefined;
+  // Resolve every reference field's label source ONCE at construction. The
+  // schema already guarantees the named type exists and serves labels
+  // (`searchSchema`/`labelFieldOf`), and `collections` is exhaustive per type.
+  const typesByName = new Map(
+    [...schema.values()].map((searchType) => [searchType.name, searchType]),
+  );
+  const labelSources = new Map<string, ReadonlyMap<string, LabelSource>>(
+    [...schema.values()].map((searchType) => [
+      searchType.type,
+      new Map(
+        referenceFields(searchType)
+          .filter((field) => field.labelSource !== undefined)
+          .map((field) => {
+            const source = typesByName.get(field.labelSource!) as SearchType;
+            const labelField = labelFieldOf(source) as TextField;
+            return [
+              field.name,
+              {
+                collection: collections.get(source.type) as string,
+                labelField,
+                queryBy: physicalFields(labelField).search.join(','),
+              },
+            ];
+          }),
+      ),
+    ]),
+  );
+  // The distinct source collections per type, for the cached path – fixed at
+  // construction, so no per-search dedup dance.
+  const distinctLabelSources = new Map<string, readonly LabelSource[]>(
+    [...labelSources].map(([type, sources]) => [
+      type,
+      [
+        ...new Map(
+          [...sources.values()].map((source) => [source.collection, source]),
+        ).values(),
+      ],
+    ]),
+  );
+  // The output reference fields that carry hit labels, each paired with its
+  // resolved label source – fixed at construction, so labelLookupGroups need
+  // not re-derive or re-resolve them on every search.
+  const outputReferenceSources = new Map<
+    string,
+    readonly { name: string; source: LabelSource }[]
+  >(
+    [...schema.values()].map((searchType) => {
+      const sources = labelSources.get(searchType.type);
+      return [
+        searchType.type,
+        referenceFields(searchType)
+          .filter((field) => field.output === true && sources?.has(field.name))
+          .map((field) => ({
+            name: field.name,
+            source: sources!.get(field.name)!,
+          })),
+      ];
+    }),
+  );
+
+  // Process-lifetime cache per label-source collection, held in the engine
+  // closure. Populated lazily on the first cached search; `inFlightLoads` is
+  // the single-flight promise per collection so concurrent first-loads share
+  // one export each.
+  const cachedLabels = new Map<
+    string,
+    { labels: ReadonlyMap<string, LocalizedValue>; expiresAt: number }
+  >();
+  const inFlightLoads = new Map<
+    string,
+    Promise<ReadonlyMap<string, LocalizedValue>>
+  >();
 
   function cachedAllLabels(
-    labelsCollection: string,
+    source: LabelSource,
     ttlMs: number,
   ): Promise<ReadonlyMap<string, LocalizedValue>> {
-    if (cachedLabels !== undefined && Date.now() < cacheExpiresAt) {
-      return Promise.resolve(cachedLabels);
+    const cached = cachedLabels.get(source.collection);
+    if (cached !== undefined && Date.now() < cached.expiresAt) {
+      return Promise.resolve(cached.labels);
     }
     // Single-flight: a load already running serves every concurrent caller.
-    inFlightLoad ??= loadAllLabels(client, labelsCollection)
+    let load = inFlightLoads.get(source.collection);
+    load ??= loadAllLabels(client, source)
       .then((loaded) => {
-        cachedLabels = loaded;
-        cacheExpiresAt = Date.now() + ttlMs;
+        cachedLabels.set(source.collection, {
+          labels: loaded,
+          expiresAt: Date.now() + ttlMs,
+        });
         return loaded;
       })
       // A failed load degrades to id-only references and is NOT cached, so the
@@ -130,44 +213,78 @@ export function createTypesenseSearchEngine<
         return new Map<string, LocalizedValue>();
       })
       .finally(() => {
-        inFlightLoad = undefined;
+        inFlightLoads.delete(source.collection);
       });
-    return inFlightLoad;
+    inFlightLoads.set(source.collection, load);
+    return load;
   }
 
-  // Cached path: the once-loaded full collection serves labels by in-memory
+  // The merged per-type view over the cached per-collection maps, reused
+  // until any constituent map reloads (same instances = still valid), so a
+  // multi-source type does not pay an O(all labels) merge per search.
+  const mergedCache = new Map<
+    string,
+    {
+      parts: readonly ReadonlyMap<string, LocalizedValue>[];
+      merged: ReadonlyMap<string, LocalizedValue>;
+    }
+  >();
+
+  function mergeCachedLabels(
+    typeIri: string,
+    parts: readonly ReadonlyMap<string, LocalizedValue>[],
+  ): ReadonlyMap<string, LocalizedValue> {
+    const cached = mergedCache.get(typeIri);
+    if (
+      cached !== undefined &&
+      cached.parts.length === parts.length &&
+      cached.parts.every((part, index) => part === parts[index])
+    ) {
+      return cached.merged;
+    }
+    const merged = mergeLabels(parts);
+    mergedCache.set(typeIri, { parts, merged });
+    return merged;
+  }
+
+  // Cached path: the once-loaded full collections serve labels by in-memory
   // lookup (no per-search round-trip). The load does not depend on the
   // response, so it is started BEFORE awaiting the search and runs alongside
   // it; it never rejects (a failed load degrades to an empty map), so it
   // cannot leave an unhandled rejection behind if the search itself fails.
-  // `undefined` when the cache (or the sidecar) is not configured.
-  function startCachedLabels():
-    | Promise<ReadonlyMap<string, LocalizedValue>>
-    | undefined {
-    return options.labelsCollection !== undefined &&
-      options.labelCacheTtlMs !== undefined
-      ? cachedAllLabels(options.labelsCollection, options.labelCacheTtlMs)
-      : undefined;
+  // `undefined` when the cache is off or the type has no label sources.
+  function startCachedLabels(
+    searchType: SearchType,
+  ): Promise<ReadonlyMap<string, LocalizedValue>> | undefined {
+    const sources = distinctLabelSources.get(searchType.type);
+    if (
+      options.labelCacheTtlMs === undefined ||
+      sources === undefined ||
+      sources.length === 0
+    ) {
+      return undefined;
+    }
+    const ttlMs = options.labelCacheTtlMs;
+    return Promise.all(
+      sources.map((source) => cachedAllLabels(source, ttlMs)),
+    ).then((maps) => mergeCachedLabels(searchType.type, maps));
   }
 
-  // Labels are supplementary: a failed lookup (e.g. the sidecar collection
+  // Labels are supplementary: a failed lookup (e.g. a label-source collection
   // mid-rebuild) degrades to id-only references rather than failing the whole
-  // search, so the listing still renders with bare IRIs. `iris` is a thunk so
-  // the cached and no-sidecar paths never pay for collecting them.
+  // search, so the listing still renders with bare IRIs. `groups` is a thunk
+  // so the cached and source-less paths never pay for collecting the IRIs.
   async function resolveLabels(
     cachedLabelsPromise:
       | Promise<ReadonlyMap<string, LocalizedValue>>
       | undefined,
-    iris: () => readonly string[],
+    groups: () => readonly LabelLookupGroup[],
   ): Promise<ReadonlyMap<string, LocalizedValue>> {
     if (cachedLabelsPromise !== undefined) {
       return cachedLabelsPromise;
     }
-    if (options.labelsCollection === undefined) {
-      return new Map();
-    }
     try {
-      return await fetchLabels(client, options.labelsCollection, iris());
+      return await fetchLabels(client, groups(), options.onLabelError);
     } catch (error) {
       options.onLabelError?.(error);
       return new Map();
@@ -186,13 +303,17 @@ export function createTypesenseSearchEngine<
       assertTypeInSchema(schema, searchType);
       assertValidQuery(query, searchType);
       const params = buildSearchParams(query, searchType, options);
-      const cachedLabelsPromise = startCachedLabels();
+      const cachedLabelsPromise = startCachedLabels(searchType);
       const response = (await client
         .collections(collections.get(searchType.type) as string)
         .documents()
         .search(params)) as TypesenseSearchResponse;
       const labels = await resolveLabels(cachedLabelsPromise, () =>
-        referenceIris(response, searchType),
+        labelLookupGroups(
+          [response],
+          labelSources.get(searchType.type),
+          outputReferenceSources.get(searchType.type) ?? [],
+        ),
       );
       return parseSearchResponse(response, searchType, labels);
     },
@@ -208,7 +329,7 @@ export function createTypesenseSearchEngine<
         return [];
       }
       const collection = collections.get(searchType.type) as string;
-      const cachedLabelsPromise = startCachedLabels();
+      const cachedLabelsPromise = startCachedLabels(searchType);
       // The whole batch travels as ONE multi_search round-trip. Each query
       // compiles as facet-only regardless of what it carries: no hits
       // (per_page 0) and no ordering – nothing is transferred or sorted that
@@ -229,11 +350,13 @@ export function createTypesenseSearchEngine<
       const responses = results.filter(
         (result): result is TypesenseSearchResponse => !('error' in result),
       );
-      const labels = await resolveLabels(cachedLabelsPromise, () => [
-        ...new Set(
-          responses.flatMap((response) => referenceIris(response, searchType)),
+      const labels = await resolveLabels(cachedLabelsPromise, () =>
+        labelLookupGroups(
+          responses,
+          labelSources.get(searchType.type),
+          outputReferenceSources.get(searchType.type) ?? [],
         ),
-      ]);
+      );
       // multi_search reports a failed entry inline instead of rejecting the
       // call; pass that through as a per-query outcome – naming the facets,
       // not the position, since the batch order is the caller's internal –
@@ -255,118 +378,165 @@ export function createTypesenseSearchEngine<
   return engine as SearchEngine<Types>;
 }
 
+/** One label lookup: a source and the distinct IRIs to resolve against it. */
+export interface LabelLookupGroup {
+  readonly source: LabelSource;
+  readonly iris: readonly string[];
+}
+
 /**
- * Load the FULL `labels` collection into a label map via the documents export
- * endpoint, which streams every document as JSONL (one JSON object per line).
- * Each line is reconstructed by {@link labelToLocalizedValue}, exactly as the
+ * Load a FULL label-source collection into a label map via the documents
+ * export endpoint, which streams every document as JSONL (one JSON object per
+ * line). Each line is reconstructed by {@link labelValue}, exactly as the
  * per-search {@link fetchLabels} path does for its `multi_search` hits.
  */
 async function loadAllLabels(
   client: Pick<Client, 'collections'>,
-  collection: string,
+  source: LabelSource,
 ): Promise<ReadonlyMap<string, LocalizedValue>> {
-  const jsonl = await client.collections(collection).documents().export();
+  const jsonl = await client
+    .collections(source.collection)
+    .documents()
+    .export();
   const labels = new Map<string, LocalizedValue>();
   for (const line of jsonl.split('\n')) {
     if (line.length === 0) {
       continue;
     }
     const document = JSON.parse(line) as Record<string, unknown>;
-    labels.set(String(document.id), labelToLocalizedValue(document));
+    const label = labelValue(document, source.labelField);
+    if (label !== undefined) {
+      labels.set(String(document.id), label);
+    }
   }
   return labels;
 }
 
-/** Every distinct reference IRI whose label the result will actually use. */
-function referenceIris(
-  response: TypesenseSearchResponse,
-  searchType: SearchType,
-): string[] {
-  const referenceFieldSet = new Set(
-    referenceFields(searchType).map((field) => field.name),
-  );
-  // Hits only carry labels for OUTPUT reference fields: reconstructDocument skips
-  // non-output fields, so resolving a non-output reference's hit labels (e.g. a
-  // facet-only `class` with dozens of IRIs per hit) is pure waste.
-  const outputReferenceFields = referenceFields(searchType)
-    .filter((field) => field.output === true)
-    .map((field) => field.name);
-  const iris = new Set<string>();
-  for (const hit of response.hits ?? []) {
-    for (const name of outputReferenceFields) {
-      const raw = hit.document[name];
-      if (Array.isArray(raw)) {
-        for (const value of raw) {
-          iris.add(String(value));
+/**
+ * Group every reference IRI the result will actually use by its field’s label
+ * source, one group per source collection. Fields without a `labelSource`
+ * stay id-only, so their IRIs never travel.
+ */
+function labelLookupGroups(
+  responses: readonly TypesenseSearchResponse[],
+  sources: ReadonlyMap<string, LabelSource> | undefined,
+  outputSources: readonly { name: string; source: LabelSource }[],
+): LabelLookupGroup[] {
+  if (sources === undefined || sources.size === 0) {
+    return [];
+  }
+  const irisByCollection = new Map<
+    string,
+    { source: LabelSource; iris: Set<string> }
+  >();
+  const add = (source: LabelSource, iri: string): void => {
+    let group = irisByCollection.get(source.collection);
+    if (group === undefined) {
+      group = { source, iris: new Set() };
+      irisByCollection.set(source.collection, group);
+    }
+    group.iris.add(iri);
+  };
+  for (const response of responses) {
+    // Hits only carry labels for OUTPUT reference fields (reconstructDocument
+    // skips non-output fields); `outputSources` pairs each with its resolved
+    // source, precomputed per type.
+    for (const hit of response.hits ?? []) {
+      for (const { name, source } of outputSources) {
+        const raw = hit.document[name];
+        if (Array.isArray(raw)) {
+          for (const value of raw) {
+            add(source, String(value));
+          }
+        } else if (typeof raw === 'string') {
+          add(source, raw);
         }
-      } else if (typeof raw === 'string') {
-        iris.add(raw);
       }
     }
-  }
-  // Reference-facet bucket values are IRIs too (incl. facet-only references like
-  // `class`); resolve them in the same lookup.
-  for (const facet of response.facet_counts ?? []) {
-    if (referenceFieldSet.has(facet.field_name)) {
+    // Reference-facet bucket values are IRIs too (incl. facet-only references
+    // like `class`); resolve them in the same lookup. Skip a non-source facet
+    // (e.g. a keyword facet) in one check instead of probing every bucket.
+    for (const facet of response.facet_counts ?? []) {
+      const source = sources.get(facet.field_name);
+      if (source === undefined) {
+        continue;
+      }
       for (const bucket of facet.counts) {
-        iris.add(bucket.value);
+        add(source, bucket.value);
       }
     }
   }
-  return [...iris];
+  return [...irisByCollection.values()].map(({ source, iris }) => ({
+    source,
+    iris: [...iris],
+  }));
 }
 
 /**
- * Resolve labels for `iris` from the sidecar `labels` collection. Each
- * `label_${locale}` becomes a language-map entry; the default `label` is the
- * untagged (`und`) fallback when no locale variant exists.
+ * Resolve labels from each group’s label-source collection. Localized labels
+ * are reconstructed from the source type’s `label` declaration; a bare
+ * untagged `label` value is the `und` fallback when no locale variant exists.
  *
- * Sent as one `multi_search` (POST) call, the id-list split over per-search
- * batches: the id-list of a page or facet carrying many references — e.g. a
- * dataset with dozens of classes — would overflow Typesense’s GET query-string
- * limit (4000 chars, and IRIs URL-encode to several times their length) if it
- * travelled in the URL. POST puts it in the body; each batch stays under
- * Typesense’s `per_page` cap, and bundling the batches keeps it one round-trip
- * regardless of IRI count. Exported for unit testing against a fake client.
+ * All groups travel as ONE `multi_search` (POST) call, each group’s id-list
+ * split over per-search batches: the id-list of a page or facet carrying many
+ * references — e.g. a dataset with dozens of classes — would overflow
+ * Typesense’s GET query-string limit (4000 chars, and IRIs URL-encode to
+ * several times their length) if it travelled in the URL. POST puts it in the
+ * body; each batch stays under Typesense’s `per_page` cap, and bundling the
+ * batches keeps it one round-trip regardless of IRI or source count. Exported
+ * for unit testing against a fake client.
  */
 export async function fetchLabels(
   client: Pick<Client, 'multiSearch'>,
-  collection: string,
-  iris: readonly string[],
+  groups: readonly LabelLookupGroup[],
+  onError?: (error: Error) => void,
 ): Promise<Map<string, LocalizedValue>> {
   const labels = new Map<string, LocalizedValue>();
-  if (iris.length === 0) {
-    return labels;
-  }
   const searches = [];
-  for (let start = 0; start < iris.length; start += LABEL_BATCH_SIZE) {
-    const batch = iris.slice(start, start + LABEL_BATCH_SIZE);
-    searches.push({
-      collection,
-      q: '*',
-      query_by: 'label',
-      filter_by: `id:[${batch.map(escapeFilterValue).join(',')}]`,
-      per_page: batch.length,
-    });
+  const groupPerSearch: LabelLookupGroup[] = [];
+  for (const group of groups) {
+    for (let start = 0; start < group.iris.length; start += LABEL_BATCH_SIZE) {
+      const batch = group.iris.slice(start, start + LABEL_BATCH_SIZE);
+      searches.push({
+        collection: group.source.collection,
+        q: '*',
+        query_by: group.source.queryBy,
+        filter_by: `id:[${batch.map(escapeFilterValue).join(',')}]`,
+        per_page: batch.length,
+      });
+      groupPerSearch.push(group);
+    }
+  }
+  if (searches.length === 0) {
+    return labels;
   }
   const { results } = (await client.multiSearch.perform({ searches })) as {
     results: readonly (TypesenseSearchResponse | TypesenseErrorEntry)[];
   };
-  for (const result of results) {
-    // multi_search reports a failed entry inline instead of rejecting; throw
-    // so the caller's degradation path (onLabelError, id-only references)
-    // engages rather than mistaking the failure for absent labels.
+  results.forEach((result, index) => {
+    // multi_search reports a failed entry inline instead of rejecting. Isolate
+    // it: report the failed source and skip its entry so the other sources'
+    // labels still land, instead of blanking the whole page to id-only – its
+    // own references fall back to id-only as their IRIs stay absent.
     if ('error' in result) {
-      throw new Error(
-        `Typesense label lookup failed${
+      const failure = new Error(
+        `Typesense label lookup in “${groupPerSearch[index].source.collection}” failed${
           result.code !== undefined ? ` (${result.code})` : ''
         }: ${result.error}`,
       );
+      onError?.(failure);
+      return;
     }
     for (const hit of result.hits ?? []) {
-      labels.set(String(hit.document.id), labelToLocalizedValue(hit.document));
+      const label = labelValue(
+        hit.document,
+        groupPerSearch[index].source.labelField,
+      );
+      if (label !== undefined) {
+        labels.set(String(hit.document.id), label);
+      }
     }
-  }
+  });
   return labels;
 }
 
@@ -374,20 +544,39 @@ export async function fetchLabels(
  *  id-list comfortably, so resolve references in batches of this size. */
 const LABEL_BATCH_SIZE = 200;
 
-/** Turn a `labels` document into a language map (`label_${locale}` → locale). */
-function labelToLocalizedValue(
+/**
+ * Reconstruct a label document into a language map via the source type’s
+ * `label` declaration (its per-locale display fields), with a bare untagged
+ * `label` value as the `und` fallback when no locale variant exists, or
+ * `undefined` when the document carries no usable label – so the reference
+ * stays id-only rather than gaining an empty label.
+ */
+function labelValue(
   document: Record<string, unknown>,
-): LocalizedValue {
-  const map: Record<string, readonly string[]> = {};
-  for (const [key, value] of Object.entries(document)) {
-    if (key.startsWith('label_') && typeof value === 'string') {
-      map[key.slice('label_'.length)] = [value];
+  labelField: TextField,
+): LocalizedValue | undefined {
+  const localized = localizedValue(document, labelField);
+  if (localized !== undefined) {
+    return localized;
+  }
+  const untagged = document[labelField.name];
+  return typeof untagged === 'string' ? { und: [untagged] } : undefined;
+}
+
+/** Merge per-collection label maps into one IRI-keyed map (URI identity). */
+function mergeLabels(
+  maps: readonly ReadonlyMap<string, LocalizedValue>[],
+): ReadonlyMap<string, LocalizedValue> {
+  if (maps.length === 1) {
+    return maps[0];
+  }
+  const merged = new Map<string, LocalizedValue>();
+  for (const map of maps) {
+    for (const [iri, label] of map) {
+      merged.set(iri, label);
     }
   }
-  if (Object.keys(map).length === 0 && typeof document.label === 'string') {
-    map.und = [document.label];
-  }
-  return map;
+  return merged;
 }
 
 /** A failed entry in a `multi_search` response: Typesense reports a
@@ -414,7 +603,7 @@ export interface TypesenseSearchResponse {
  * Reconstruct a Typesense response into the engine-neutral {@link SearchResult}:
  * the flat, fanned-out document is turned back into a logical one (per-locale
  * display fields → a language map, reference IRIs → labelled references via the
- * sidecar `labels` lookup, scalars passed through). `labels` maps a reference IRI
+ * label-source lookup, scalars passed through). `labels` maps a reference IRI
  * to its resolved label; an IRI absent from it yields an id-only reference.
  */
 export function parseSearchResponse(
@@ -428,8 +617,13 @@ export function parseSearchResponse(
   }));
   // Reference facets are IRI-keyed; their buckets carry a resolved data label.
   // Plain facets (tokens, free strings) carry no label — the consumer owns display.
+  // Only reference facets with a label source get bucket labels; an id-only
+  // reference facet stays id-only even when a cached full-collection map holds
+  // its IRIs.
   const referenceFacets = new Set(
-    referenceFields(searchType).map((field) => field.name),
+    referenceFields(searchType)
+      .filter((field) => field.labelSource !== undefined)
+      .map((field) => field.name),
   );
   const facets: Record<string, FacetBucket[]> = {};
   for (const facet of response.facet_counts ?? []) {
@@ -528,7 +722,10 @@ function referenceValue(
   }
   const iris = Array.isArray(raw) ? (raw as string[]) : [String(raw)];
   const references: Reference[] = iris.map((iri) => {
-    const label = labels.get(iri);
+    // A reference without a label source is id-only by declaration; never
+    // attach a label, even if the (cached, full-collection) map happens to
+    // hold this IRI from another source.
+    const label = field.labelSource === undefined ? undefined : labels.get(iri);
     return label === undefined ? { id: iri } : { id: iri, label };
   });
   return field.array === true ? references : references[0];

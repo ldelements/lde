@@ -11,6 +11,22 @@ import { buildCollectionSchema } from '../src/collection-schema.js';
 import { createTypesenseSearchEngine } from '../src/search.js';
 import { TypesenseContainer } from './typesense-container.js';
 
+// The label source `publisher` resolves against: a first-class search type
+// whose collection is built from the same declaration.
+const organizationSchema: SearchType = {
+  name: 'Organization',
+  type: 'https://example.org/Organization',
+  fields: [
+    {
+      name: 'label',
+      kind: 'text',
+      locales: ['nl', 'en'],
+      output: true,
+      searchable: { weight: 1 },
+    },
+  ],
+};
+
 const datasetSchema: SearchType = {
   name: 'Dataset',
   type: 'http://www.w3.org/ns/dcat#Dataset',
@@ -39,6 +55,7 @@ const datasetSchema: SearchType = {
       facetable: true,
       output: true,
       ref: { typeName: 'Agent', strategy: 'labelOnly' },
+      labelSource: 'Organization',
     },
     { name: 'status', kind: 'keyword', facetable: true, filterable: true },
     { name: 'statusRank', kind: 'integer', sortable: true },
@@ -85,19 +102,20 @@ const documents = [
   },
 ];
 
+// Organization documents in projected shape (per-locale display + folded
+// search fields), as @lde/search's projection would emit them.
 const labelDocuments = [
   {
     id: 'https://org/1',
-    label: 'Het Utrechts Archief',
     label_nl: 'Het Utrechts Archief',
-    type: 'organization',
+    label_search_nl: 'het utrechts archief',
   },
   {
     id: 'https://org/2',
-    label: 'Rijksmuseum',
     label_nl: 'Rijksmuseum',
     label_en: 'Rijksmuseum',
-    type: 'organization',
+    label_search_nl: 'rijksmuseum',
+    label_search_en: 'rijksmuseum',
   },
 ];
 
@@ -125,15 +143,10 @@ describe('createTypesenseSearchEngine (integration)', () => {
         defaultLocale: 'nl',
       }),
     );
-    await client.collections().create({
-      name: 'labels',
-      fields: [
-        { name: 'label', type: 'string' },
-        { name: 'label_nl', type: 'string', optional: true, index: false },
-        { name: 'label_en', type: 'string', optional: true, index: false },
-        { name: 'type', type: 'string', facet: true },
-      ],
-    });
+    // The label source's collection comes from the same declarative source.
+    await client
+      .collections()
+      .create(buildCollectionSchema(organizationSchema, { name: 'labels' }));
     await client
       .collections('datasets')
       .documents()
@@ -143,10 +156,13 @@ describe('createTypesenseSearchEngine (integration)', () => {
       .documents()
       .import(labelDocuments, { action: 'create' });
 
-    engine = createTypesenseSearchEngine(client, searchSchema(datasetSchema), {
-      collections: { Dataset: 'datasets' },
-      labelsCollection: 'labels',
-    });
+    engine = createTypesenseSearchEngine(
+      client,
+      searchSchema(organizationSchema, datasetSchema),
+      {
+        collections: { Dataset: 'datasets', Organization: 'labels' },
+      },
+    );
   }, 120_000);
 
   afterAll(async () => {
@@ -297,9 +313,9 @@ describe('createTypesenseSearchEngine (integration)', () => {
     const ignored: unknown[] = [];
     const reporting = createTypesenseSearchEngine(
       client,
-      searchSchema(datasetSchema),
+      searchSchema(organizationSchema, datasetSchema),
       {
-        collections: { Dataset: 'datasets' },
+        collections: { Dataset: 'datasets', Organization: 'labels' },
         onIgnoredFilter: (filter) => ignored.push(filter),
       },
     );
