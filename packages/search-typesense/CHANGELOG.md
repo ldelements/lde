@@ -1,3 +1,86 @@
+## 0.5.0 (2026-07-08)
+
+### 🚀 Features
+
+- ⚠️  **search:** per-reference label sources ([#566](https://github.com/ldelements/lde/pull/566), [#568](https://github.com/ldelements/lde/issues/568))
+
+### ⚠️  Breaking Changes
+
+- **search:** per-reference label sources  ([#566](https://github.com/ldelements/lde/pull/566), [#568](https://github.com/ldelements/lde/issues/568))
+  TypesenseSearchEngineOptions.labelsCollection is
+  removed. Declare each label source as a SearchType (with an output,
+  searchable text field ‘label’), add its collection to
+  options.collections, set labelSource on each reference field, and
+  rebuild label collections via buildCollectionSchema so the physical
+  label fields exist. fetchLabels now takes label-lookup groups instead
+  of (collection, iris).
+  * refactor(search): single-source the label-field convention
+  Review cleanups on the label sources:
+  - labelFieldOf (exported via @lde/search/adapter) is the one place that
+    knows what makes a type a label source; the schema validation and the
+    Typesense engine both consult it instead of re-deriving the ‘label’
+    convention per package.
+  - labelValue reuses the existing localizedValue reconstruction and reads
+    the untagged fallback from the label field’s own name instead of a
+    literal.
+  - The engine precomputes each type’s distinct label-source collections
+    at construction and reuses the merged cached label map until any
+    constituent collection reloads, instead of re-deduplicating and
+    re-merging the full maps on every search.
+  * fix(search): reject a labelSource declared on a non-reference field
+  assertResolvableLabelSources validated labelSource only on reference fields, so
+  a labelSource on a keyword or text field – reachable from a generated or
+  hand-written schema, the untyped path this validator guards – passed searchSchema
+  silently and then resolved nothing. Throw at startup so the misconfiguration
+  fails fast instead of surfacing as unlabelled buckets in production.
+  * fix(search-typesense): query all label locales and keep empty labels id-only
+  Two per-reference label-resolution fixes found in review:
+  - LabelSource.queryBy used only the first locale’s folded search field
+    (physicalFields(labelField).search[0]); join all per-locale search fields so a
+    label search matches every locale, not just the first.
+  - a label document with no usable locale column and no bare label produced
+    label: {}, which referenceValue treats as a present label; labelValue now
+    returns undefined and the write skips it, so the reference stays id-only.
+  * fix(search-typesense): isolate label-source failures and honor id-only references
+  From the #566 review:
+  - a single label collection erroring inline (e.g. mid-rebuild) made fetchLabels
+    throw, blanking every reference on the page to id-only; report the failed
+    source via onLabelError and skip only its entry, so healthy sources still
+    resolve.
+  - a reference or facet with no labelSource could still gain a label in cached
+    mode, where the whole collection is preloaded into the shared map; skip the
+    lookup for id-only fields and facets so they stay id-only by declaration.
+  * perf(search-typesense): precompute label-lookup sources, skip non-source facets
+  From the #566 review: labelLookupGroups re-derived the output reference fields
+  and re-resolved their label sources on every search/searchFacets call, and
+  probed `sources` per facet bucket. Precompute the { field, source } pairs once
+  at construction, and skip a non-source facet in one check instead of per bucket.
+  Behaviour-preserving; adds a facet test covering an id-only reference facet.
+  * docs(search): renumber the label-sources ADR to 0008
+  ADR 0007 is now taken by 0007-merge-namespace-alias-partitions on main (#568),
+  so renumber the per-reference-label-sources ADR from 0007 to 0008 to avoid the
+  collision when this branch merges.
+  * docs(search): mark the label-sources ADR (0008) Accepted"
+  M	docs/decisions/0005-batch-facet-queries-through-the-engine-port.md
+  A	docs/decisions/0008-resolve-reference-labels-from-per-reference-label-sources.md
+  M	packages/search-typesense/README.md
+  M	packages/search-typesense/src/search.ts
+  M	packages/search-typesense/test/fake-typesense-client.ts
+  A	packages/search-typesense/test/label-sources.test.ts
+  M	packages/search-typesense/test/parse-response.test.ts
+  M	packages/search-typesense/test/search-engine.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/README.md
+  M	packages/search/src/adapter.ts
+  M	packages/search/src/engine.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/test/schema.test.ts
+  M	packages/search/vite.config.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.4.0
+
 ## 0.4.4 (2026-07-08)
 
 ### 🧱 Updated Dependencies
