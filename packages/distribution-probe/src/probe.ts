@@ -828,7 +828,7 @@ async function validateDumpBody(
           text,
           getResponse.headers.get('Content-Type'),
           url,
-          budgetMs,
+          budgetController.signal,
           truncated,
         );
   })().catch(() => null);
@@ -1004,7 +1004,7 @@ async function validateBody(
   body: string,
   contentType: string | null,
   baseIRI: string,
-  timeoutMs: number,
+  budgetSignal: AbortSignal,
   truncated: boolean,
 ): Promise<string | null> {
   if (body.length === 0) {
@@ -1033,7 +1033,7 @@ async function validateBody(
     body,
     serialization,
     baseIRI,
-    timeoutMs,
+    budgetSignal,
     truncated,
   );
   switch (outcome.type) {
@@ -1059,11 +1059,15 @@ type RdfBodyOutcome =
  * Parse an RDF body just far enough to tell whether it carries any triples:
  * resolve on the first triple (presence is all we need, not a full count), on a
  * clean end with none ('empty'), or on a parse error. The parse is bounded by
- * `timeoutMs` because a JSON-LD `@context` is fetched from its origin, and a
- * slow or hanging context host would otherwise stall the probe past its budget;
- * on expiry — and likewise when a remote `@context` is unreachable — the outcome
- * is 'inconclusive', so a valid distribution is never flagged faulty for a
- * context host's failure. `baseIRI` resolves any relative IRIs in the document.
+ * `budgetSignal` – the caller's validation-budget {@link AbortController} –
+ * because a JSON-LD `@context` is fetched from its origin, and a slow or hanging
+ * context host would otherwise stall the probe past its budget; on abort – and
+ * likewise when a remote `@context` is unreachable – the outcome is
+ * 'inconclusive', so a valid distribution is never flagged faulty for a context
+ * host's failure. Sharing the caller's single budget (rather than starting a
+ * second, identical timer) keeps that timeout deterministic: it fires once, when
+ * the budget elapses, instead of leaving an orphan timer to settle on its own
+ * schedule. `baseIRI` resolves any relative IRIs in the document.
  *
  * When `truncated` is true the body is only a bounded prefix of a larger one, so
  * only finding a triple ('hasTriples') is conclusive: a parse error at the cut
@@ -1074,7 +1078,7 @@ function classifyRdfBody(
   body: string,
   contentType: string,
   baseIRI: string,
-  timeoutMs: number,
+  budgetSignal: AbortSignal,
   truncated: boolean,
 ): Promise<RdfBodyOutcome> {
   return new Promise<RdfBodyOutcome>((resolve) => {
@@ -1082,15 +1086,23 @@ function classifyRdfBody(
       contentType,
       baseIRI,
     });
-    const timer = setTimeout(() => settle({ type: 'inconclusive' }), timeoutMs);
+    const onBudgetElapsed = (): void => settle({ type: 'inconclusive' });
     let settled = false;
     function settle(outcome: RdfBodyOutcome): void {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      budgetSignal.removeEventListener('abort', onBudgetElapsed);
       quads.destroy();
       resolve(outcome);
     }
+    // The budget may already have elapsed while the body was being read; treat an
+    // already-aborted signal as an immediate expiry rather than waiting for an
+    // 'abort' event that will never come.
+    if (budgetSignal.aborted) {
+      onBudgetElapsed();
+      return;
+    }
+    budgetSignal.addEventListener('abort', onBudgetElapsed, { once: true });
     quads
       .on('data', () => settle({ type: 'hasTriples' }))
       .on('error', (error: Error) =>
