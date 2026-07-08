@@ -1049,6 +1049,51 @@ describe('probe', () => {
       expect((result as DataDumpProbeResult).isSuccess()).toBe(true);
       expect((result as DataDumpProbeResult).failureReason).toBeNull();
     });
+
+    it('does not crash when the budget aborts before a malformed body is parsed', async () => {
+      // The budget can elapse after the body has been read but before parsing
+      // starts, so the parser is torn down straight away. A malformed body then
+      // emits a late ‘error’ on the destroyed parser; that error must be handled,
+      // never left to surface as an uncaught exception – probe() never throws.
+      const malformed = 'this is not valid turtle <<<';
+      const slowBody = new ReadableStream<Uint8Array>({
+        start(controller) {
+          // Deliver the body well after the 5 ms budget, so classifyRdfBody is
+          // reached with an already-aborted signal.
+          setTimeout(() => {
+            controller.enqueue(new TextEncoder().encode(malformed));
+            controller.close();
+          }, 80);
+        },
+      });
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(new Response('', { status: 200 })) // HEAD
+        .mockResolvedValueOnce(
+          new Response(slowBody, {
+            status: 200,
+            headers: { 'Content-Type': 'text/turtle' },
+          }),
+        ); // GET
+
+      const distribution = new Distribution(
+        new URL('http://example.org/data.ttl'),
+        'text/turtle',
+      );
+
+      const result = await probe(distribution, {
+        validateRdfContent: true,
+        rdfValidationBudgetMs: 5,
+      });
+
+      expect((result as DataDumpProbeResult).isSuccess()).toBe(true);
+      expect((result as DataDumpProbeResult).failureReason).toBeNull();
+
+      // probe() has already resolved via the budget; wait past the body delivery
+      // so the torn-down parser emits its error within this test. A regression
+      // (error sink attached too late) surfaces here as an uncaught exception
+      // instead of crashing an unrelated later test.
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    });
   });
 
   describe('JSON-LD remote @context', () => {
