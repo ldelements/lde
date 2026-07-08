@@ -1,3 +1,13 @@
+## 0.31.4 (2026-07-08)
+
+### 🚀 Features
+
+- **pipeline-void:** merge namespace-alias variants into one VoID partition ([#568](https://github.com/ldelements/lde/pull/568), [#334](https://github.com/ldelements/lde/issues/334))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.33.4
+
 ## 0.31.3 (2026-07-08)
 
 ### 🧱 Updated Dependencies
