@@ -1,3 +1,11 @@
+## 0.33.3 (2026-07-08)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset-registry-client to 0.8.6
+- Updated @lde/distribution-health to 0.2.6
+- Updated @lde/distribution-probe to 0.2.6
+
 ## 0.33.2 (2026-07-08)
 
 ### 🧱 Updated Dependencies

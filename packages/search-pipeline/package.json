@@ -1,6 +1,6 @@
 {
   "name": "@lde/search-pipeline",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Search indexing as an @lde/pipeline Configurable Pipeline: projects extracted RDF into engine-agnostic search documents and feeds them to a transactional search-engine writer",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
@@ -25,7 +25,7 @@
     "!**/*.tsbuildinfo"
   ],
   "dependencies": {
-    "@lde/search": "^0.3.0",
+    "@lde/search": "^0.3.1",
     "@rdfjs/types": "^2.0.1",
     "tslib": "^2.3.0"
   },
@@ -34,6 +34,6 @@
   },
   "peerDependencies": {
     "@lde/dataset": "^0.7.8",
-    "@lde/pipeline": "^0.33.0"
+    "@lde/pipeline": "^0.33.3"
   }
 }
