@@ -1,27 +1,27 @@
 import type { Client } from 'typesense';
 import type { SearchType } from '@lde/search';
-import type { RunContext, RunWriter, Writer } from '@lde/pipeline';
+import type {
+  DatasetOutcome,
+  RunContext,
+  RunWriter,
+  Writer,
+} from '@lde/pipeline';
 import type { Dataset } from '@lde/dataset';
+import { buildCollectionSchema } from './collection-schema.js';
+import { BatchImporter } from './import.js';
+import { httpStatus, openLockedRun, releaseLock } from './lock.js';
+import { SOURCE_FIELD, sourceDocumentsFilter } from './sweep.js';
 import {
-  buildCollectionSchema,
-  type CollectionSchemaOptions,
-} from './collection-schema.js';
-import { BatchImporter, DEFAULT_BATCH_SIZE } from './import.js';
-import {
-  DEFAULT_LOCK_TTL_MS,
-  httpStatus,
-  openLockedRun,
-  releaseLock,
-} from './lock.js';
+  assertNoReservedFields,
+  deleteByFilter,
+  resolveRebuildOptions,
+  stampDocuments,
+  type RebuildOptions,
+} from './rebuild-support.js';
 
 /** {@link BlueGreenRebuild} options: the collection-schema options (`name` is
  *  the logical index name the alias is kept on) plus the rebuild tuning knobs. */
-export interface BlueGreenRebuildOptions extends CollectionSchemaOptions {
-  /** Documents imported per Typesense request (default 1000). */
-  readonly batchSize?: number;
-  /** A held lock older than this (ms) is reclaimed (default 10 minutes). */
-  readonly lockTtlMs?: number;
-}
+export type BlueGreenRebuildOptions = RebuildOptions;
 
 /**
  * Blue/green Rebuild (build a fresh index alongside the live one, then swap to
@@ -35,7 +35,12 @@ export interface BlueGreenRebuildOptions extends CollectionSchemaOptions {
  *   throwing `RebuildAlreadyRunning` when another rebuild holds it) and
  *   creates the versioned collection (`${name}_<timestamp>`) with the schema
  *   derived from the {@link SearchType}.
- * - `write` streams documents into it, batched across write calls.
+ * - `write` streams documents into the fresh collection, batched across write
+ *   calls, each stamped with its `source` (the dataset IRI).
+ * - `flush` on a **failed** dataset, and `reset` (the pipeline’s dump-fallback
+ *   discard), roll that dataset’s documents back out of the not-yet-live
+ *   collection by `source`, so a swap never ships a half-processed dataset;
+ *   a successful flush leaves the streamed documents in place.
  * - `commit` imports the remainder, atomically repoints the `name` alias to
  *   the new collection, drops the collection it superseded, and releases the
  *   lock. Until commit, the live alias never points at a partial build.
@@ -52,15 +57,15 @@ export class BlueGreenRebuild<
     private readonly client: Client,
     private readonly searchType: SearchType,
     private readonly options: BlueGreenRebuildOptions,
-  ) {}
+  ) {
+    // `source` is stamped on every document for per-dataset rollback.
+    assertNoReservedFields(searchType, [SOURCE_FIELD]);
+  }
 
   async openRun(context: RunContext): Promise<RunWriter<TDocument>> {
-    const {
-      batchSize = DEFAULT_BATCH_SIZE,
-      lockTtlMs = DEFAULT_LOCK_TTL_MS,
-      ...schemaOptions
-    } = this.options;
-    const name = schemaOptions.name;
+    const { name, batchSize, lockTtlMs, schemaOptions } = resolveRebuildOptions(
+      this.options,
+    );
 
     return openLockedRun(this.client, name, lockTtlMs, async () => {
       // Create the fresh (blue) collection up front, so a failure surfaces
@@ -69,17 +74,50 @@ export class BlueGreenRebuild<
       const collection = `${name}_${Date.parse(context.startedAt)}`;
       const previous = await this.aliasTarget(name);
       const schema = buildCollectionSchema(this.searchType, schemaOptions);
-      await this.client.collections().create({ ...schema, name: collection });
+      await this.client.collections().create({
+        ...schema,
+        name: collection,
+        fields: [
+          ...(schema.fields ?? []),
+          { name: SOURCE_FIELD, type: 'string' },
+        ],
+      });
 
-      const importer = new BatchImporter<TDocument>(
+      const importer = new BatchImporter<TDocument & Record<string, string>>(
         this.client,
         collection,
         batchSize,
       );
 
+      // Drop a dataset’s streamed documents back out of the not-yet-live
+      // collection (a failed dataset, or a reset before the dump re-run). Any
+      // still buffered must land first, so the delete filter sees them.
+      const rollback = async (dataset: Dataset): Promise<void> => {
+        await importer.flush();
+        await deleteByFilter(
+          this.client,
+          collection,
+          sourceDocumentsFilter(dataset.iri.toString()),
+        );
+      };
+
       return {
-        write: async (_dataset: Dataset, documents: AsyncIterable<TDocument>) =>
-          importer.add(documents),
+        write: async (dataset: Dataset, documents: AsyncIterable<TDocument>) =>
+          importer.add(
+            stampDocuments(documents, {
+              [SOURCE_FIELD]: dataset.iri.toString(),
+            }),
+          ),
+
+        flush: async (dataset: Dataset, outcome: DatasetOutcome) => {
+          // A successful dataset keeps its streamed documents (they go live at
+          // the swap); a failed one is rolled back so the swap never ships it.
+          if (outcome !== 'success') {
+            await rollback(dataset);
+          }
+        },
+
+        reset: async (dataset: Dataset) => rollback(dataset),
 
         commit: async () => {
           await importer.flush();

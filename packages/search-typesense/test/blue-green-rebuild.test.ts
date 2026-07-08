@@ -23,6 +23,16 @@ const dataset = new Dataset({
   distributions: [],
 });
 
+async function liveIds(client: Client): Promise<string[]> {
+  const response = await client
+    .collections(NAME)
+    .documents()
+    .search({ q: '*', query_by: 'title', per_page: 250 });
+  return (response.hits ?? [])
+    .map((hit) => (hit.document as { id: string }).id)
+    .sort();
+}
+
 async function aliasTarget(client: Client): Promise<string | undefined> {
   try {
     return (await client.aliases(NAME).retrieve()).collection_name;
@@ -207,5 +217,75 @@ describe('BlueGreenRebuild', () => {
     await run.commit();
 
     expect((await client.collections(NAME).retrieve()).num_documents).toBe(0);
+  });
+
+  it('rolls a failed dataset out of the collection so the swap never ships it', async () => {
+    const writer = new BlueGreenRebuild(client, datasetType, { name: NAME });
+    const datasetB = new Dataset({
+      iri: new URL('http://example.org/dataset/2'),
+      distributions: [],
+    });
+
+    const run = await writer.openRun(makeRunContext());
+    await run.write(
+      dataset,
+      stream([
+        { id: 'a1', title: 'A one', year: 2024 },
+        { id: 'a2', title: 'A two', year: 2024 },
+      ]),
+    );
+    await run.flush?.(dataset, 'failed');
+    await run.write(
+      datasetB,
+      stream([{ id: 'b1', title: 'B one', year: 2024 }]),
+    );
+    await run.flush?.(datasetB, 'success');
+    await run.commit();
+
+    // The failed dataset contributes nothing to the swapped collection.
+    expect(await liveIds(client)).toEqual(['b1']);
+  });
+
+  it('reset discards a dataset’s documents before a re-run', async () => {
+    const writer = new BlueGreenRebuild(client, datasetType, { name: NAME });
+
+    const run = await writer.openRun(makeRunContext());
+    // First pass (e.g. endpoint-sourced) writes a3 that the re-run will drop.
+    await run.write(
+      dataset,
+      stream([
+        { id: 'a1', title: 'One', year: 2024 },
+        { id: 'a2', title: 'Two', year: 2024 },
+        { id: 'a3', title: 'Gone', year: 2024 },
+      ]),
+    );
+    await run.reset?.(dataset);
+    // Second pass (e.g. dump-sourced) rebuilds the dataset without a3.
+    await run.write(
+      dataset,
+      stream([
+        { id: 'a1', title: 'One', year: 2024 },
+        { id: 'a2', title: 'Two', year: 2024 },
+      ]),
+    );
+    await run.flush?.(dataset, 'success');
+    await run.commit();
+
+    expect(await liveIds(client)).toEqual(['a1', 'a2']);
+  });
+
+  it('rejects a SearchType that declares the reserved source field', () => {
+    expect(
+      () =>
+        new BlueGreenRebuild(
+          client,
+          {
+            name: 'Dataset',
+            type: 'https://example.org/Dataset',
+            fields: [{ name: 'source', kind: 'keyword' }],
+          },
+          { name: NAME },
+        ),
+    ).toThrow(/source/);
   });
 });

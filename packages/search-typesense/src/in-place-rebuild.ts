@@ -8,24 +8,24 @@ import type {
   RunWriter,
   Writer,
 } from '@lde/pipeline';
-import {
-  buildCollectionSchema,
-  type CollectionSchemaOptions,
-} from './collection-schema.js';
-import { BatchImporter, DEFAULT_BATCH_SIZE } from './import.js';
-import {
-  DEFAULT_LOCK_TTL_MS,
-  ensureCollectionExists,
-  openLockedRun,
-  releaseLock,
-} from './lock.js';
+import { buildCollectionSchema } from './collection-schema.js';
+import { BatchImporter } from './import.js';
+import { ensureCollectionExists, openLockedRun, releaseLock } from './lock.js';
 import {
   LAST_SEEN_FIELD,
   SOURCE_FIELD,
   departedSources,
   membershipSweepFilters,
   staleDocumentsFilter,
+  thisRunDocumentsFilter,
 } from './sweep.js';
+import {
+  assertNoReservedFields,
+  deleteByFilter,
+  resolveRebuildOptions,
+  stampDocuments,
+  type RebuildOptions,
+} from './rebuild-support.js';
 
 /**
  * Default ceiling on the distinct sources the membership sweep enumerates via
@@ -38,13 +38,9 @@ import {
  */
 const DEFAULT_MAX_SWEEPABLE_SOURCES = 10_000;
 
-/** {@link InPlaceRebuild} options: the collection-schema options (`name` is
- *  the collection the writer maintains in place) plus tuning knobs. */
-export interface InPlaceRebuildOptions extends CollectionSchemaOptions {
-  /** Documents imported per Typesense request (default 1000). */
-  readonly batchSize?: number;
-  /** A held lock older than this (ms) is reclaimed (default 10 minutes). */
-  readonly lockTtlMs?: number;
+/** {@link InPlaceRebuild} options: the shared rebuild options plus the
+ *  membership-sweep ceiling. */
+export interface InPlaceRebuildOptions extends RebuildOptions {
   /** Most distinct sources the membership sweep may enumerate before it throws
    *  rather than risk missing departed sources (default 10 000). */
   readonly maxSweepableSources?: number;
@@ -62,6 +58,10 @@ export interface InPlaceRebuildOptions extends CollectionSchemaOptions {
  *   not rewrite (`source = dataset && last_seen != runId`). A failed dataset
  *   is not swept – its output is incomplete, and the next successful run
  *   reconciles;
+ * - **reset** (the pipeline’s dump-fallback discard) deletes only *this run’s*
+ *   writes for the dataset (`source = dataset && last_seen = runId`), so the
+ *   dump re-run rebuilds it cleanly while the source’s prior-run documents are
+ *   left for the success sweep to reconcile;
  * - **commit** deletes every document whose source left the run’s selection
  *   (registry-membership sweep over {@link RunContext.selectedSources}, which
  *   includes datasets skipped as unchanged) and releases the lock;
@@ -87,26 +87,16 @@ export class InPlaceRebuild<
     private readonly searchType: SearchType,
     private readonly options: InPlaceRebuildOptions,
   ) {
-    const reserved = searchType.fields.filter(
-      (field) => field.name === SOURCE_FIELD || field.name === LAST_SEEN_FIELD,
-    );
-    if (reserved.length > 0) {
-      throw new Error(
-        `SearchType “${searchType.name}” declares reserved bookkeeping field(s) ${reserved
-          .map((field) => `“${field.name}”`)
-          .join(', ')}`,
-      );
-    }
+    assertNoReservedFields(searchType, [SOURCE_FIELD, LAST_SEEN_FIELD]);
   }
 
   async openRun(context: RunContext): Promise<RunWriter<TDocument>> {
     const {
-      batchSize = DEFAULT_BATCH_SIZE,
-      lockTtlMs = DEFAULT_LOCK_TTL_MS,
       maxSweepableSources = DEFAULT_MAX_SWEEPABLE_SOURCES,
-      ...schemaOptions
+      ...rebuildOptions
     } = this.options;
-    const name = schemaOptions.name;
+    const { name, batchSize, lockTtlMs, schemaOptions } =
+      resolveRebuildOptions(rebuildOptions);
 
     return openLockedRun(this.client, name, lockTtlMs, async () => {
       // Create the collection on demand: SearchType schema + the bookkeeping
@@ -124,30 +114,22 @@ export class InPlaceRebuild<
         };
       });
 
-      const importer = new BatchImporter<TDocument & StampedFields>(
+      const importer = new BatchImporter<TDocument & Record<string, string>>(
         this.client,
         name,
         batchSize,
       );
 
-      const stamp = (
-        dataset: Dataset,
-        documents: AsyncIterable<TDocument>,
-      ): AsyncIterable<TDocument & StampedFields> => {
-        const source = dataset.iri.toString();
-        const runId = context.runId;
-        return (async function* () {
-          for await (const document of documents) {
-            yield { ...document, source, last_seen: runId };
-          }
-        })();
-      };
-
       return {
-        write: async (dataset, documents) =>
-          importer.add(stamp(dataset, documents)),
+        write: async (dataset: Dataset, documents: AsyncIterable<TDocument>) =>
+          importer.add(
+            stampDocuments(documents, {
+              [SOURCE_FIELD]: dataset.iri.toString(),
+              [LAST_SEEN_FIELD]: context.runId,
+            }),
+          ),
 
-        flush: async (dataset: Dataset, outcome?: DatasetOutcome) => {
+        flush: async (dataset: Dataset, outcome: DatasetOutcome) => {
           // Land the buffered documents first, so the sweep below never
           // deletes what this run just rewrote.
           await importer.flush();
@@ -157,9 +139,22 @@ export class InPlaceRebuild<
             // stale ones for the next successful run to reconcile.
             return;
           }
-          await this.deleteByFilter(
+          await deleteByFilter(
+            this.client,
             name,
             staleDocumentsFilter(dataset.iri.toString(), context.runId),
+          );
+        },
+
+        reset: async (dataset: Dataset) => {
+          // Discard only this run’s partial writes for the source (the failed
+          // endpoint attempt) so the dump re-run rebuilds it cleanly; the
+          // source’s prior-run documents stay for the success sweep.
+          await importer.flush();
+          await deleteByFilter(
+            this.client,
+            name,
+            thisRunDocumentsFilter(dataset.iri.toString(), context.runId),
           );
         },
 
@@ -170,7 +165,7 @@ export class InPlaceRebuild<
             context.selectedSources(),
           );
           for (const filter of membershipSweepFilters(departed)) {
-            await this.deleteByFilter(name, filter);
+            await deleteByFilter(this.client, name, filter);
           }
           await releaseLock(this.client, name);
         },
@@ -211,19 +206,4 @@ export class InPlaceRebuild<
     }
     return counts.map((count) => count.value);
   }
-
-  private async deleteByFilter(name: string, filterBy: string): Promise<void> {
-    await this.client
-      .collections(name)
-      .documents()
-      .delete({ filter_by: filterBy });
-  }
-}
-
-/** The bookkeeping fields stamped on every document – the literal keys of
- *  {@link SOURCE_FIELD} and {@link LAST_SEEN_FIELD}, spelled out because an
- *  interface cannot derive its keys from constants. */
-interface StampedFields {
-  source: string;
-  last_seen: string;
 }

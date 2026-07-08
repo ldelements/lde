@@ -59,12 +59,15 @@ derive the collection schema from your `SearchType` (via
 
 `BlueGreenRebuild` rebuilds the index from zero and goes live atomically:
 `openRun` creates a fresh versioned collection (`${name}_<timestamp>`),
-`write` streams documents into it in batches, and `commit` atomically
-repoints the `name` alias and drops the collection it superseded. Until
-commit, the live alias never points at a partial build; `abort` drops the
-half-built collection. Deletion is implicit – whatever a run does not write
-does not exist in the new collection. Right-sized for small collections
-(e.g. one document per dataset description).
+`write` streams documents into it in batches (each stamped with its `source`
+dataset IRI), and `commit` atomically repoints the `name` alias and drops the
+collection it superseded. Until commit, the live alias never points at a
+partial build; `abort` drops the half-built collection. Deletion is implicit –
+whatever a run does not write does not exist in the new collection. A dataset
+that fails (or is reset before a dump re-run) is rolled back out of the
+not-yet-live collection by `source`, so the swap never ships a half-processed
+dataset. Right-sized for small collections (e.g. one document per dataset
+description).
 
 ```ts
 import { Client } from 'typesense';

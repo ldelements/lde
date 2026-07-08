@@ -4,6 +4,7 @@ import {
   membershipSweepFilters,
   sourceDocumentsFilter,
   staleDocumentsFilter,
+  thisRunDocumentsFilter,
 } from '../src/sweep.js';
 
 describe('departedSources', () => {
@@ -49,6 +50,14 @@ describe('sourceDocumentsFilter', () => {
   it('matches all of a source’s documents', () => {
     expect(sourceDocumentsFilter('http://example.org/a')).toBe(
       'source:=`http://example.org/a`',
+    );
+  });
+});
+
+describe('thisRunDocumentsFilter', () => {
+  it('matches only the documents this run wrote for a source (the inverse of stale)', () => {
+    expect(thisRunDocumentsFilter('http://example.org/a', 'run-1')).toBe(
+      'source:=`http://example.org/a` && last_seen:=`run-1`',
     );
   });
 });

@@ -258,6 +258,53 @@ describe('InPlaceRebuild', () => {
     expect(await documentIds(client)).toEqual(['a1']);
   });
 
+  it('reset discards only this run’s writes for a source, keeping prior-run documents', async () => {
+    const writer = new InPlaceRebuild<{ id: string; title: string }>(
+      client,
+      objectType,
+      { name: NAME, batchSize: 1 },
+    );
+    await seed(
+      writer,
+      new Map([
+        [
+          datasetA,
+          [
+            { id: 'a1', title: 'One' },
+            { id: 'a2', title: 'Two' },
+          ],
+        ],
+        [datasetB, [{ id: 'b1', title: 'Bee' }]],
+      ]),
+    );
+
+    // Next run: a partial endpoint attempt adds a3 to A, then the stage fails.
+    const run = await writer.openRun(
+      makeRunContext([datasetA.iri.toString(), datasetB.iri.toString()]),
+    );
+    await run.write(
+      datasetA,
+      stream([{ id: 'a3', title: 'Endpoint straggler' }]),
+    );
+    await run.reset?.(datasetA);
+
+    // reset removed only this run’s a3; A’s prior-run docs and B are untouched.
+    expect(await documentIds(client)).toEqual(['a1', 'a2', 'b1']);
+
+    // The dump re-run rebuilds A; the success sweep drops nothing extra.
+    await run.write(
+      datasetA,
+      stream([
+        { id: 'a1', title: 'One' },
+        { id: 'a2', title: 'Two' },
+      ]),
+    );
+    await run.flush?.(datasetA, 'success');
+    await run.commit();
+
+    expect(await documentIds(client)).toEqual(['a1', 'a2', 'b1']);
+  });
+
   it('rejects a SearchType that declares the reserved bookkeeping fields', () => {
     const clashing: SearchType = {
       name: 'Object',

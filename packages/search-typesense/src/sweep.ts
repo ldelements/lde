@@ -1,8 +1,8 @@
-// Pure sweep planning for the In-place Rebuild writer: which documents leave
-// the index, expressed as source sets and Typesense filter strings. Kept free
-// of the Typesense client so deletion logic is unit-testable. This module
-// owns the bookkeeping field names, so stamping (in-place-rebuild) and
-// sweeping can never disagree on them.
+// Pure deletion planning shared by the rebuild writers: which documents leave
+// a collection, expressed as source sets and Typesense filter strings. Kept
+// free of the Typesense client so the logic is unit-testable. This module owns
+// the bookkeeping field names, so stamping and every filter that reads them
+// can never disagree.
 
 import { escapeFilterValue } from './query-compiler.js';
 
@@ -40,13 +40,31 @@ export function staleDocumentsFilter(sourceIri: string, runId: string): string {
 }
 
 /**
- * Typesense filter matching all of a source’s documents, ready for a
- * membership sweep of a departed source.
+ * Typesense filter matching all of a source’s documents, ready to drop a whole
+ * source (a departed source’s membership sweep, or a Blue/green writer rolling
+ * a failed dataset out of its not-yet-live collection).
  *
  * @param sourceIri The dataset IRI stamped on the documents as `source`
  */
 export function sourceDocumentsFilter(sourceIri: string): string {
   return `${SOURCE_FIELD}:=${escapeFilterValue(sourceIri)}`;
+}
+
+/**
+ * Typesense filter matching the documents **this run** wrote for a source: the
+ * inverse of {@link staleDocumentsFilter}. An In-place writer deletes these to
+ * discard a source’s in-progress writes (the dump-fallback reset) without
+ * touching its prior-run documents, which the success sweep or a failed run
+ * still owns.
+ *
+ * @param sourceIri The dataset IRI stamped on the documents as `source`
+ * @param runId The current run, stamped on its documents as `last_seen`
+ */
+export function thisRunDocumentsFilter(
+  sourceIri: string,
+  runId: string,
+): string {
+  return `${sourceDocumentsFilter(sourceIri)} && ${LAST_SEEN_FIELD}:=${escapeFilterValue(runId)}`;
 }
 
 /**
