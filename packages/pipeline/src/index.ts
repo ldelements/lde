@@ -1,4 +1,5 @@
 export * from './validator.js';
+export * from './namespaceAlias.js';
 export * from './asyncQueue.js';
 export * from './batch.js';
 export * from './pipeline.js';

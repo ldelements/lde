@@ -1,0 +1,8 @@
+@prefix schema: <https://schema.org/> .
+@prefix schemahttp: <http://schema.org/> .
+
+# A single resource typed under BOTH namespace variants of the same class —
+# violating the merge transform’s subject/class-disjointness assumption. Used
+# to pin the documented consequence: its class-partition entities over-count
+# (summed as 1 + 1 = 2 rather than the exact distinct count of 1).
+<http://example.org/thing> a schemahttp:CreativeWork, schema:CreativeWork .

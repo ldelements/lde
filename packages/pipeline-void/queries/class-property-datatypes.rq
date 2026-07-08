@@ -2,7 +2,17 @@ PREFIX void: <http://rdfs.org/ns/void#>
 PREFIX void-ext: <http://ldf.fi/void-ext#>
 
 CONSTRUCT {
-  ?propertyPartition void-ext:datatypePartition ?datatypePartition .
+  # Self-describing parent chain so the namespace-merge transform can re-key
+  # this partition from its (class, property) components. The
+  # `?dataset void:classPartition ?classPartition` link is what gives the class
+  # partition an incoming edge, so the transform re-keys it too (without it, the
+  # alias-variant class partition leaks unmerged).
+  ?dataset a void:Dataset ;
+      void:classPartition ?classPartition .
+  ?classPartition void:class ?class ;
+      void:propertyPartition ?propertyPartition .
+  ?propertyPartition void:property ?p ;
+      void-ext:datatypePartition ?datatypePartition .
   ?datatypePartition
       void-ext:datatype ?dt ;
       void:triples ?count .
@@ -22,6 +32,7 @@ WHERE {
     }
     GROUP BY ?class ?p ?dt
   }
+  BIND(URI(CONCAT(STR(?dataset), "/.well-known/void#class-", MD5(STR(?class)))) AS ?classPartition)
   BIND(URI(CONCAT(STR(?dataset), "/.well-known/void#class-property-", MD5(CONCAT(STR(?class), STR(?p))))) AS ?propertyPartition)
   BIND(URI(CONCAT(STR(?dataset), "/.well-known/void#datatype-", MD5(CONCAT(STR(?class), STR(?p), STR(?dt))))) AS ?datatypePartition)
 }
