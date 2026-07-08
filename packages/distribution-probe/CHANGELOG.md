@@ -1,3 +1,9 @@
+## 0.2.5 (2026-07-08)
+
+### 🩹 Fixes
+
+- **distribution-probe:** attach parser error sink before tearing down on budget abort ([#571](https://github.com/ldelements/lde/pull/571), [#570](https://github.com/ldelements/lde/issues/570))
+
 ## 0.2.4 (2026-07-08)
 
 ### 🩹 Fixes
