@@ -388,6 +388,33 @@ describe('Pipeline', () => {
       expect(writerB.runWriter.commit).toHaveBeenCalledOnce();
     });
 
+    it('rolls back an already-opened writer when a sibling’s openRun fails', async () => {
+      // Writer A opens (acquiring its lock / creating its collection); writer
+      // B's openRun then rejects. The pipeline never receives a run to abort,
+      // so the fan-out must abort A itself or A's lock and collection leak.
+      const writerA = makeWriter();
+      const openFailure = new Error('another rebuild already running');
+      const writerB: Writer = {
+        openRun: vi.fn().mockRejectedValue(openFailure),
+      };
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [makeStage('stage1')],
+        writers: [writerA, writerB],
+        distributionResolver: makeResolver(makeResolvedDistribution()),
+      });
+
+      await expect(pipeline.run()).rejects.toThrow(
+        'another rebuild already running',
+      );
+
+      expect(writerA.runWriter.abort).toHaveBeenCalledExactlyOnceWith(
+        openFailure,
+      );
+      expect(writerA.runWriter.commit).not.toHaveBeenCalled();
+    });
+
     it('rethrows the run failure when all fanned-out aborts succeed', async () => {
       const writerA = makeWriter();
       const writerB = makeWriter();

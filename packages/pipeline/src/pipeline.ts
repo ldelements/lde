@@ -170,9 +170,24 @@ class FanOutWriter implements Writer {
   constructor(private readonly writers: Writer[]) {}
 
   async openRun(context: RunContext): Promise<RunWriter> {
-    return new FanOutRunWriter(
-      await Promise.all(this.writers.map((writer) => writer.openRun(context))),
+    // Opening a writer's run can have side effects (a cross-pod lock, a fresh
+    // collection). If one writer opens but a sibling then fails, the pipeline
+    // never gets a RunWriter to abort, so roll the opened ones back here
+    // before rethrowing — otherwise their locks and collections leak.
+    const results = await Promise.allSettled(
+      this.writers.map((writer) => writer.openRun(context)),
     );
+    const opened = results.flatMap((result) =>
+      result.status === 'fulfilled' ? [result.value] : [],
+    );
+    const failure = results.find(
+      (result): result is PromiseRejectedResult => result.status === 'rejected',
+    );
+    if (failure) {
+      await Promise.allSettled(opened.map((run) => run.abort(failure.reason)));
+      throw failure.reason;
+    }
+    return new FanOutRunWriter(opened);
   }
 }
 
