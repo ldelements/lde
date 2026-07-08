@@ -515,6 +515,22 @@ describe('searchSchema validation', () => {
         ),
       ).toThrow(/label source/);
     });
+
+    it('rejects a labelSource on a non-reference field', () => {
+      expect(() =>
+        searchSchema(organization, {
+          name: 'Dataset',
+          type: DATASET,
+          fields: [
+            {
+              name: 'theme',
+              kind: 'keyword',
+              labelSource: 'Organization',
+            } as never,
+          ],
+        }),
+      ).toThrow(/declares a label source but is a keyword field/);
+    });
   });
 });
 

@@ -346,10 +346,17 @@ function assertResolvableLabelSources(types: readonly SearchType[]): void {
   );
   for (const searchType of types) {
     for (const field of searchType.fields) {
-      if (field.kind !== 'reference' || field.labelSource === undefined) {
+      const labelSource = (field as { readonly labelSource?: string })
+        .labelSource;
+      if (labelSource === undefined) {
         continue;
       }
-      const source = byName.get(field.labelSource);
+      if (field.kind !== 'reference') {
+        throw new Error(
+          `Field “${searchType.name}.${field.name}” declares a label source but is a ${field.kind} field; only reference fields resolve labels from a source.`,
+        );
+      }
+      const source = byName.get(labelSource);
       if (source === undefined) {
         throw new Error(
           `Reference “${searchType.name}.${field.name}” names unknown label source “${field.labelSource}”; declare a SearchType with that name.`,
