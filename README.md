@@ -149,9 +149,14 @@ await pipeline.run();
   <td>Engine- and domain-agnostic GraphQL surface for search: builds an executable GraphQL schema from a SearchSchema at runtime, one root query field per type</td>
 </tr>
 <tr>
+  <td><a href="packages/search-pipeline">@lde/search-pipeline</a></td>
+  <td><a href="https://www.npmjs.com/package/@lde/search-pipeline"><img src="https://img.shields.io/npm/v/@lde/search-pipeline" alt="npm"></a></td>
+  <td>Search indexing as an @lde/pipeline instance: projects extracted RDF into search documents and feeds them to a transactional engine writer</td>
+</tr>
+<tr>
   <td><a href="packages/search-typesense">@lde/search-typesense</a></td>
   <td><a href="https://www.npmjs.com/package/@lde/search-typesense"><img src="https://img.shields.io/npm/v/@lde/search-typesense" alt="npm"></a></td>
-  <td>Typesense engine adapter: a single-flight, streaming blue/green index rebuild</td>
+  <td>Typesense engine adapter: transactional Blue/green (build fresh, swap atomically) and In-place (update the live index) rebuild writers</td>
 </tr>
 <tr>
   <td><a href="packages/text-normalization">@lde/text-normalization</a></td>
@@ -238,6 +243,9 @@ graph TD
     search-api-graphql --> search
     search-typesense --> search
     search-typesense --> text-normalization
+    search-typesense --> pipeline
+    search-pipeline --> search
+    search-pipeline --> pipeline
   end
 
   subgraph Monitoring
