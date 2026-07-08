@@ -24,10 +24,12 @@ export interface BlueGreenRebuildOptions extends CollectionSchemaOptions {
 }
 
 /**
- * Blue/green Rebuild as a transactional `Writer`: each run builds the search
+ * Blue/green Rebuild (build a fresh index alongside the live one, then swap to
+ * it atomically) as a transactional `Writer`: each run builds the search
  * index `options.name` from zero in a fresh versioned collection and goes
  * live atomically on commit. Deletion is implicit – whatever the run does not
- * write does not exist in the new collection.
+ * write does not exist in the new collection. The name is the NDE Stack’s
+ * pattern ({@link https://docs.nde.nl/stack/patterns | Stack patterns}).
  *
  * - `openRun` takes the single-flight cross-pod lock ({@link openLockedRun},
  *   throwing `RebuildAlreadyRunning` when another rebuild holds it) and

@@ -44,10 +44,12 @@ export interface InPlaceRebuildOptions extends CollectionSchemaOptions {
 }
 
 /**
- * In-place Rebuild as a transactional `Writer`: documents are upserted into
- * one long-lived collection with per-source atomicity – no swap, no staging.
- * Every document is stamped with its `source` (the dataset IRI) and
- * `last_seen` (the run id); deletion is a sweep, never special-cased:
+ * In-place Rebuild (update the live index directly – upsert changed sources,
+ * sweep the rest – rather than swap in a fresh one) as a transactional
+ * `Writer`: documents are upserted into one long-lived collection with
+ * per-source atomicity – no swap, no staging. Every document is stamped with
+ * its `source` (the dataset IRI) and `last_seen` (the run id); deletion is a
+ * sweep, never special-cased:
  *
  * - a **successful dataset flush** deletes the source’s documents the run did
  *   not rewrite (`source = dataset && last_seen != runId`). A failed dataset
@@ -66,6 +68,9 @@ export interface InPlaceRebuildOptions extends CollectionSchemaOptions {
  *
  * Document ids must be unique per (source, entity) – the caller keys them –
  * or documents from different sources overwrite each other.
+ *
+ * The name is the NDE Stack’s pattern
+ * ({@link https://docs.nde.nl/stack/patterns | Stack patterns}).
  */
 export class InPlaceRebuild<
   TDocument extends { id: string },

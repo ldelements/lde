@@ -40,14 +40,17 @@ direct use and testing.
 
 ## Indexing
 
-Indexing runs through two transactional writers, one per update mode. Both
-implement `@lde/pipeline`’s `Writer` – each run is `openRun(context)` →
-`write` per dataset → `commit()` or `abort(error)` – so an `@lde/pipeline`
-`Pipeline` drives them without branching on the mode. Both derive the
-collection schema from your `SearchType` (via `buildCollectionSchema`), and
-their options accept everything `buildCollectionSchema` does (`defaultLocale`,
-`defaultSortingField`, `synonymSets`) plus the tuning knobs (`batchSize`,
-`lockTtlMs`).
+Indexing runs through two transactional writers, one per update mode – the
+[NDE Stack](https://docs.nde.nl/stack/patterns) patterns of the same names:
+**Blue/green Rebuild** (build a fresh index, then swap to it atomically) and
+**In-place Rebuild** (update the live index directly – upsert changed sources,
+sweep the rest). Both implement `@lde/pipeline`’s `Writer` – each run is
+`openRun(context)` → `write` per dataset → `commit()` or `abort(error)` – so
+an `@lde/pipeline` `Pipeline` drives them without branching on the mode. Both
+derive the collection schema from your `SearchType` (via
+`buildCollectionSchema`), and their options accept everything
+`buildCollectionSchema` does (`defaultLocale`, `defaultSortingField`,
+`synonymSets`) plus the tuning knobs (`batchSize`, `lockTtlMs`).
 
 ### Blue/green Rebuild
 
