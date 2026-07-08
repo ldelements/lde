@@ -1,8 +1,10 @@
 import {
+  aliasVariants,
   Stage,
   SparqlConstructReader,
   SparqlItemSelector,
   type ItemSelector,
+  type NamespaceAlias,
   type StageOptions,
   type ValidationReport,
   type ValidationResult,
@@ -17,29 +19,7 @@ const { namedNode, quad } = DataFactory;
 
 type OnInvalid = NonNullable<StageOptions['validation']>['onInvalid'];
 
-/**
- * Declares that two namespaces should be treated as equivalent when
- * sampling and validating, working around vocabularies that publish under
- * both HTTP and HTTPS variants of the same IRI (notably schema.org).
- *
- * The sampler accepts subjects typed under the {@link alias} namespace in
- * addition to the SHACL `sh:targetClass` IRI under {@link canonical}, and
- * rewrites alias-namespace IRIs to canonical ones in the sampled quads
- * before validation so SHACL `sh:targetClass` and `sh:path` patterns
- * match.
- */
-export interface NamespaceAlias {
-  /**
-   * The namespace declared in the SHACL shapes file (e.g.
-   * `https://schema.org/`).
-   */
-  canonical: string;
-  /**
-   * The equivalent namespace that may appear in source data (e.g.
-   * `http://schema.org/`).
-   */
-  alias: string;
-}
+export type { NamespaceAlias } from '@lde/pipeline';
 
 /** Options for {@link shaclSampleStages}. */
 export interface ShaclSampleStagesOptions {
@@ -237,16 +217,7 @@ function expandTargetClass(
   targetClass: NamedNode,
   namespaceAliases: NamespaceAlias[],
 ): string[] {
-  const iri = targetClass.value;
-  for (const { canonical, alias } of namespaceAliases) {
-    if (iri.startsWith(canonical)) {
-      return [iri, alias + iri.slice(canonical.length)];
-    }
-    if (iri.startsWith(alias)) {
-      return [iri, canonical + iri.slice(alias.length)];
-    }
-  }
-  return [iri];
+  return aliasVariants(targetClass.value, namespaceAliases);
 }
 
 export function buildSampleQuery(shape: TargetShape): string {
