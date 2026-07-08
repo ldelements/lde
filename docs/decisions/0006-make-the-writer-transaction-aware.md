@@ -4,7 +4,7 @@ Date: 2026-07-06
 
 ## Status
 
-Proposed
+Accepted
 
 Amends the pipeline model of
 [ADR 1 (Merge pipeline approaches)](./0001-merge-pipeline-approaches.md) and

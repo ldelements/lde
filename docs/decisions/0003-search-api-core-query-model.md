@@ -4,7 +4,7 @@ Date: 2026-06-25
 
 ## Status
 
-Proposed
+Accepted
 
 Aligned with the NDE [stack platform docs](https://docs.nde.nl/stack/layers/platform); the
 decisions below are reflected there.

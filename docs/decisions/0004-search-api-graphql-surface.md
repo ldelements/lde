@@ -4,7 +4,7 @@ Date: 2026-06-25
 
 ## Status
 
-Proposed
+Accepted
 
 Builds on [ADR 3 (Search API core query model)](./0003-search-api-core-query-model.md).
 
