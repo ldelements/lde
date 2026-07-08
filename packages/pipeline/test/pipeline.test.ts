@@ -335,8 +335,38 @@ describe('Pipeline', () => {
 
       await pipeline.run();
 
-      expect(writer.runWriter.flush).toHaveBeenCalledWith(dataset);
+      expect(writer.runWriter.flush).toHaveBeenCalledWith(dataset, 'success');
       expect(writer.runWriter.commit).toHaveBeenCalledOnce();
+    });
+
+    it('flushes a dataset with its outcome so writers can gate sweeps on success', async () => {
+      // An In-place writer deletes documents the run did not rewrite when a
+      // dataset flushes – but only a successful dataset may sweep, or a failed
+      // run would delete documents it never got to rewrite.
+      const failingStage = new Stage({ name: 'stage1', readers: [] });
+      vi.spyOn(failingStage, 'run').mockRejectedValue(new Error('boom'));
+
+      const failed = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [failingStage],
+        writers: writer,
+        distributionResolver: makeResolver(makeResolvedDistribution()),
+      });
+      await failed.run();
+      expect(writer.runWriter.flush).toHaveBeenCalledWith(dataset, 'failed');
+
+      const succeedingWriter = makeWriter();
+      const succeeded = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [makeStage('stage1')],
+        writers: succeedingWriter,
+        distributionResolver: makeResolver(makeResolvedDistribution()),
+      });
+      await succeeded.run();
+      expect(succeedingWriter.runWriter.flush).toHaveBeenCalledWith(
+        dataset,
+        'success',
+      );
     });
 
     it('opens, commits and aborts every writer when fanning out', async () => {
@@ -356,6 +386,33 @@ describe('Pipeline', () => {
       expect(writerB.openRun).toHaveBeenCalledOnce();
       expect(writerA.runWriter.commit).toHaveBeenCalledOnce();
       expect(writerB.runWriter.commit).toHaveBeenCalledOnce();
+    });
+
+    it('rolls back an already-opened writer when a sibling’s openRun fails', async () => {
+      // Writer A opens (acquiring its lock / creating its collection); writer
+      // B's openRun then rejects. The pipeline never receives a run to abort,
+      // so the fan-out must abort A itself or A's lock and collection leak.
+      const writerA = makeWriter();
+      const openFailure = new Error('another rebuild already running');
+      const writerB: Writer = {
+        openRun: vi.fn().mockRejectedValue(openFailure),
+      };
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [makeStage('stage1')],
+        writers: [writerA, writerB],
+        distributionResolver: makeResolver(makeResolvedDistribution()),
+      });
+
+      await expect(pipeline.run()).rejects.toThrow(
+        'another rebuild already running',
+      );
+
+      expect(writerA.runWriter.abort).toHaveBeenCalledExactlyOnceWith(
+        openFailure,
+      );
+      expect(writerA.runWriter.commit).not.toHaveBeenCalled();
     });
 
     it('rethrows the run failure when all fanned-out aborts succeed', async () => {
@@ -547,7 +604,7 @@ describe('Pipeline', () => {
 
       await pipeline.run();
 
-      expect(writer.runWriter.flush).toHaveBeenCalledWith(dataset);
+      expect(writer.runWriter.flush).toHaveBeenCalledWith(dataset, 'success');
       expect(writer.runWriter.flush).toHaveBeenCalledTimes(1);
     });
 
@@ -566,8 +623,8 @@ describe('Pipeline', () => {
       await pipeline.run();
 
       expect(writer.runWriter.flush).toHaveBeenCalledTimes(2);
-      expect(writer.runWriter.flush).toHaveBeenCalledWith(dataset1);
-      expect(writer.runWriter.flush).toHaveBeenCalledWith(dataset2);
+      expect(writer.runWriter.flush).toHaveBeenCalledWith(dataset1, 'success');
+      expect(writer.runWriter.flush).toHaveBeenCalledWith(dataset2, 'success');
     });
 
     it('skips stage returning NotSupported', async () => {

@@ -259,7 +259,7 @@ describe('ShaclValidator', () => {
     await validator.report(dataset);
 
     expect(writer.flush).toHaveBeenCalledOnce();
-    expect(writer.flush).toHaveBeenCalledWith(dataset);
+    expect(writer.flush).toHaveBeenCalledWith(dataset, 'success');
   });
 
   it('flushes writers even when no violations were emitted for the dataset', async () => {

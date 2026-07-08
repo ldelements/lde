@@ -158,8 +158,10 @@ export class ShaclValidator implements Validator {
   async report(dataset: Dataset): Promise<ValidationReport> {
     // Flush is the per-dataset completion hook regardless of whether the
     // dataset produced violations, so open the runs here if no write did.
+    // The report stream itself completed, whatever the dataset's own data
+    // looked like – hence 'success'.
     for (const run of await this.runs()) {
-      await run.flush?.(dataset);
+      await run.flush?.(dataset, 'success');
     }
 
     const key = dataset.iri.toString();

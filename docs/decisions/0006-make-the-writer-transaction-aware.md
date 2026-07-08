@@ -50,7 +50,9 @@ interface Writer<Item = Quad> {
   openRun(context: RunContext): Promise<RunWriter<Item>>;
 }
 interface RunWriter<Item = Quad> extends DatasetWriter<Item> {
-  flush?(dataset: Dataset): Promise<void>; // per-dataset finalize
+  // per-dataset finalize; outcome lets a writer gate destructive
+  // finalization (an In-place stale-document sweep) on 'success'
+  flush?(dataset: Dataset, outcome: DatasetOutcome): Promise<void>;
   reset?(dataset: Dataset): Promise<void>; // discard a dataset’s pass
   commit(): Promise<void>; // swap / sweep / release lock
   abort(error: unknown): Promise<void>; // leave the live destination as-was
