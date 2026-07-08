@@ -1,4 +1,4 @@
-# 7. Resolve reference labels from per-reference label sources
+# 8. Resolve reference labels from per-reference label sources
 
 Date: 2026-07-06
 
