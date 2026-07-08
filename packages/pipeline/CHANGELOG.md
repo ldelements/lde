@@ -1,3 +1,137 @@
+## 0.33.0 (2026-07-08)
+
+### 🚀 Features
+
+- ⚠️  **search-typesense:** BlueGreenRebuild and InPlaceRebuild writers ([#560](https://github.com/ldelements/lde/pull/560))
+
+### ⚠️  Breaking Changes
+
+- **search-typesense:** BlueGreenRebuild and InPlaceRebuild writers  ([#560](https://github.com/ldelements/lde/pull/560))
+  RunWriter.flush takes a second DatasetOutcome argument.
+  Implementations that ignore it are unaffected; direct callers pass one.
+  * feat(search-typesense)!: replace rebuild() with transactional writers
+  The one-shot rebuild() becomes two @lde/pipeline Writer implementations,
+  one per update mode, so a Pipeline drives indexing without branching on
+  the mode (see docs/decisions/0006):
+  - BlueGreenRebuild: openRun takes the single-flight cross-pod lock and
+    creates a fresh versioned collection; write streams documents into it,
+    batched across write calls; commit atomically repoints the alias,
+    drops the superseded collection and releases the lock; abort drops the
+    half-built collection. Deletion is implicit.
+  - InPlaceRebuild (new): per-source upsert into one long-lived collection,
+    each document stamped with source and last_seen. A successful dataset
+    flush sweeps the source’s documents the run did not rewrite (a failed
+    dataset is not swept – the next successful run reconciles); commit
+    sweeps sources that left the run’s selection and releases the lock;
+    abort only releases the lock.
+  The pure sweep planning (departed sources, stale/source filters) is
+  exported for reuse; the membership sweep throws beyond the 10 000-source
+  facet cap rather than sweeping blind. A run opened while another holds
+  the lock throws RebuildAlreadyRunning instead of returning null.
+  BREAKING CHANGE: rebuild() and RebuildOptions are gone; construct a
+  BlueGreenRebuild (options unchanged) and drive it via openRun →
+  write → commit, or let an @lde/pipeline Pipeline do so. @lde/pipeline
+  and @lde/dataset are now peerDependencies.
+  * refactor(search-typesense): deduplicate the rebuild writers’ plumbing
+  Review cleanups on the rebuild writers:
+  - The lock choreography lives once: openLockedRun acquires the
+    single-flight lock, runs the writer-specific setup, and releases the
+    lock again when the setup fails – both writers now contain only their
+    genuinely different bodies. The shared import batch default moves next
+    to BatchImporter.
+  - acquireLock takes the lock in a single request on the happy path,
+    creating the lock collection only on the first-ever 404, via a shared
+    ensureCollectionExists that both the lock and the In-place collection
+    use (giving the latter concurrent-creator tolerance for free).
+  - sweep.ts owns the source/last_seen bookkeeping names, so stamping and
+    sweeping can never disagree, and quotes filter values with the
+    query compiler’s escapeFilterValue instead of a second quoting policy
+    that threw on backticks.
+  - The membership sweep deletes departed sources in combined, length-
+    budgeted filters (membershipSweepFilters) instead of one round-trip
+    per source.
+  - The rebuild specs share one test/helpers.ts (run contexts, document
+    streams, Typesense errors, lock seeding) instead of four copies.
+  * build(search-typesense): align peer range and lockfile with the release
+  main released @lde/pipeline 0.32.0 (and rewrote dependent peer ranges)
+  after this branch declared its ^0.31.4 peer, so npm ci failed with
+  ERESOLVE. The peer range now tracks the released major-equivalent and
+  the lockfile is regenerated from main’s.
+  * docs(search-typesense): gloss the Blue/green and In-place rebuild patterns
+  Keep the shared ubiquitous language (the NDE Stack pattern names, matched
+  1:1 in code and docs) but expand each term inline the first time it
+  appears, so a reader without deployment background gets the mechanism
+  without a rename: Blue/green = build fresh then swap atomically, In-place
+  = update the live index directly. Links to the Stack patterns page.
+  * fix(search-typesense): correct the membership-sweep source-cap boundary
+  The cap check requested max_facet_values equal to the ceiling and threw
+  on counts.length >= ceiling, so exactly N distinct sources (Typesense
+  returns at most max_facet_values) tripped a false truncation error, and
+  an index that genuinely grew past the ceiling threw on every commit –
+  the sweep never ran, the source count never dropped, and the index
+  wedged permanently.
+  Now request ceiling + 1 and throw only on > ceiling, so a full-but-not-
+  truncated facet proceeds and only a real overflow refuses. The ceiling
+  is exposed as InPlaceRebuildOptions.maxSweepableSources (default 10 000)
+  so an operator can raise it ahead of the wall instead of redeploying.
+  * fix(pipeline): roll back opened writers when a fan-out sibling’s openRun fails
+  FanOutWriter.openRun awaited all writers with Promise.all and the
+  pipeline opens the run outside its try, so if one writer opened (taking
+  a cross-pod lock, creating a collection) and a sibling’s openRun then
+  rejected, the pipeline threw before it had a run to abort – leaking the
+  opened writer’s lock and collection. openRun now settles all writers,
+  aborts the ones that opened, and rethrows the first failure.
+  * fix(search-typesense): roll back a failed dataset from both rebuild writers
+  The rebuild writers implemented no reset and Blue/green consulted no
+  per-dataset outcome, so the pipeline's dump-fallback discard was a
+  no-op and a dataset that failed after streaming documents left them in
+  the index: Blue/green shipped them at the swap, In-place kept them
+  stamped with the current runId where the success sweep could not reach.
+  Both writers now stamp each document with its source (dataset IRI) and
+  roll a dataset out on reset / a failed flush, streaming — no buffering,
+  so it scales to object volumes:
+  - Blue/green deletes the dataset's documents from the not-yet-live
+    collection (source = dataset); a failed dataset contributes nothing to
+    the swap.
+  - In-place deletes only this run's writes for the source
+    (source = dataset && last_seen = runId) on reset, leaving prior-run
+    documents for the success sweep to reconcile; a failed flush still
+    leaves them for the next run.
+  The shared bookkeeping (SOURCE_FIELD stamping, deleteByFilter, options
+  resolution, reserved-field guard) moves to rebuild-support.ts so both
+  writers single-source it.
+  * test(pipeline): lower coverage floor for the fan-out openRun rollback branch"
+  M	docs/decisions/0006-make-the-writer-transaction-aware.md
+  M	package-lock.json
+  M	packages/pipeline-shacl-validator/src/shacl-validator.ts
+  M	packages/pipeline-shacl-validator/test/shacl-validator.test.ts
+  M	packages/pipeline/README.md
+  M	packages/pipeline/src/pipeline.ts
+  M	packages/pipeline/src/writer/fileWriter.ts
+  M	packages/pipeline/src/writer/writer.ts
+  M	packages/pipeline/test/pipeline.test.ts
+  M	packages/pipeline/vite.config.ts
+  M	packages/search-typesense/README.md
+  M	packages/search-typesense/package.json
+  D	packages/search-typesense/src/adapter.ts
+  A	packages/search-typesense/src/blue-green-rebuild.ts
+  A	packages/search-typesense/src/import.ts
+  A	packages/search-typesense/src/in-place-rebuild.ts
+  M	packages/search-typesense/src/index.ts
+  A	packages/search-typesense/src/lock.ts
+  A	packages/search-typesense/src/rebuild-support.ts
+  A	packages/search-typesense/src/sweep.ts
+  D	packages/search-typesense/test/adapter.test.ts
+  A	packages/search-typesense/test/blue-green-rebuild.test.ts
+  A	packages/search-typesense/test/helpers.ts
+  A	packages/search-typesense/test/in-place-rebuild.test.ts
+  A	packages/search-typesense/test/lock.test.ts
+  A	packages/search-typesense/test/rebuild-error-paths.test.ts
+  A	packages/search-typesense/test/rebuild-support.test.ts
+  A	packages/search-typesense/test/sweep.test.ts
+  M	packages/search-typesense/tsconfig.lib.json
+  M	packages/search-typesense/vite.config.ts
+
 ## 0.32.0 (2026-07-07)
 
 ### 🚀 Features
