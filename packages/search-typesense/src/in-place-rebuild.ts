@@ -28,11 +28,15 @@ import {
 } from './sweep.js';
 
 /**
- * The most distinct sources the membership sweep can see (Typesense facet
- * limit). {@link InPlaceRebuild} throws when the index reaches it rather than
- * silently missing departed sources.
+ * Default ceiling on the distinct sources the membership sweep enumerates via
+ * a single `source` facet. The sweep needs the complete source set to spot
+ * departed ones, so a truncated facet would silently miss deletions;
+ * {@link InPlaceRebuild} throws instead. Raise it (up to the engine’s
+ * `max_facet_values` limit) with {@link InPlaceRebuildOptions.maxSweepableSources}
+ * before an index approaches it, so the ceiling is a tunable guard rather than
+ * a hard wall.
  */
-const MAX_SWEEPABLE_SOURCES = 10_000;
+const DEFAULT_MAX_SWEEPABLE_SOURCES = 10_000;
 
 /** {@link InPlaceRebuild} options: the collection-schema options (`name` is
  *  the collection the writer maintains in place) plus tuning knobs. */
@@ -41,6 +45,9 @@ export interface InPlaceRebuildOptions extends CollectionSchemaOptions {
   readonly batchSize?: number;
   /** A held lock older than this (ms) is reclaimed (default 10 minutes). */
   readonly lockTtlMs?: number;
+  /** Most distinct sources the membership sweep may enumerate before it throws
+   *  rather than risk missing departed sources (default 10 000). */
+  readonly maxSweepableSources?: number;
 }
 
 /**
@@ -96,6 +103,7 @@ export class InPlaceRebuild<
     const {
       batchSize = DEFAULT_BATCH_SIZE,
       lockTtlMs = DEFAULT_LOCK_TTL_MS,
+      maxSweepableSources = DEFAULT_MAX_SWEEPABLE_SOURCES,
       ...schemaOptions
     } = this.options;
     const name = schemaOptions.name;
@@ -158,7 +166,7 @@ export class InPlaceRebuild<
         commit: async () => {
           await importer.flush();
           const departed = departedSources(
-            await this.indexedSources(name),
+            await this.indexedSources(name, maxSweepableSources),
             context.selectedSources(),
           );
           for (const filter of membershipSweepFilters(departed)) {
@@ -174,19 +182,31 @@ export class InPlaceRebuild<
     });
   }
 
-  /** The distinct sources present in the collection, via a facet query. */
-  private async indexedSources(name: string): Promise<string[]> {
-    const response = await this.client.collections(name).documents().search({
-      q: '*',
-      query_by: SOURCE_FIELD,
-      per_page: 0,
-      facet_by: SOURCE_FIELD,
-      max_facet_values: MAX_SWEEPABLE_SOURCES,
-    });
+  /**
+   * The distinct sources present in the collection, via a single `source`
+   * facet. Requests one bucket beyond `maxSources` so genuine truncation is
+   * distinguishable from an exactly-full result: `maxSources` buckets are
+   * returned intact, `maxSources + 1` proves more exist and the sweep would
+   * miss some, so it throws rather than delete blind.
+   */
+  private async indexedSources(
+    name: string,
+    maxSources: number,
+  ): Promise<string[]> {
+    const response = await this.client
+      .collections(name)
+      .documents()
+      .search({
+        q: '*',
+        query_by: SOURCE_FIELD,
+        per_page: 0,
+        facet_by: SOURCE_FIELD,
+        max_facet_values: maxSources + 1,
+      });
     const counts = response.facet_counts?.[0]?.counts ?? [];
-    if (counts.length >= MAX_SWEEPABLE_SOURCES) {
+    if (counts.length > maxSources) {
       throw new Error(
-        `Membership sweep cannot see beyond ${MAX_SWEEPABLE_SOURCES} distinct sources in “${name}”; departed sources might be missed`,
+        `Membership sweep cannot see beyond ${maxSources} distinct sources in “${name}”; raise maxSweepableSources or departed sources might be missed`,
       );
     }
     return counts.map((count) => count.value);

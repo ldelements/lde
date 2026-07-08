@@ -100,19 +100,38 @@ describe('InPlaceRebuild error paths', () => {
     expect(releasedLocks).toHaveBeenCalledOnce();
   });
 
-  it('refuses a membership sweep beyond the source facet cap', async () => {
-    // A truncated facet would silently miss departed sources; the writer
-    // throws instead of sweeping blind.
-    const { client, deletedFilters } = fakeClient({
-      facetCounts: Array.from({ length: 10_000 }, (_, index) => ({
-        value: `http://example.org/dataset/${index}`,
-        count: 1,
-      })),
+  // The writer requests `maxSweepableSources + 1` buckets, so the facet
+  // returning that many proves more sources exist than it can enumerate and
+  // the sweep would miss departed ones. Configured small here so the boundary
+  // is exact: a full-but-not-over result must proceed, one-over must throw.
+  const sources = (count: number) =>
+    Array.from({ length: count }, (_, index) => ({
+      value: `http://example.org/dataset/${index}`,
+      count: 1,
+    }));
+
+  it('sweeps when the source count is exactly the cap (not truncated)', async () => {
+    const { client, deletedFilters } = fakeClient({ facetCounts: sources(2) });
+    const writer = new InPlaceRebuild(client, searchType, {
+      name: 'objects',
+      maxSweepableSources: 2,
     });
-    const writer = new InPlaceRebuild(client, searchType, { name: 'objects' });
 
     const run = await writer.openRun(makeRunContext());
-    await expect(run.commit()).rejects.toThrow(/10000 distinct sources/);
+    // Selection is empty, so both indexed sources departed and are swept.
+    await expect(run.commit()).resolves.toBeUndefined();
+    expect(deletedFilters).toHaveBeenCalled();
+  });
+
+  it('refuses a membership sweep when the facet is truncated (one over the cap)', async () => {
+    const { client, deletedFilters } = fakeClient({ facetCounts: sources(3) });
+    const writer = new InPlaceRebuild(client, searchType, {
+      name: 'objects',
+      maxSweepableSources: 2,
+    });
+
+    const run = await writer.openRun(makeRunContext());
+    await expect(run.commit()).rejects.toThrow(/beyond 2 distinct sources/);
     expect(deletedFilters).not.toHaveBeenCalled();
   });
 });

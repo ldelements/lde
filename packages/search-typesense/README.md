@@ -42,9 +42,12 @@ direct use and testing.
 
 Indexing runs through two transactional writers, one per update mode – the
 [NDE Stack](https://docs.nde.nl/stack/patterns) patterns of the same names:
-**Blue/green Rebuild** (build a fresh index, then swap to it atomically) and
-**In-place Rebuild** (update the live index directly – upsert changed sources,
-sweep the rest). Both implement `@lde/pipeline`’s `Writer` – each run is
+
+- [**Blue/green Rebuild**](#bluegreen-rebuild: build a fresh index, then swap to it atomically;
+- [**In-place Rebuild**](#in-place-rebuild): update the live index directly by
+  upserting changed sources and sweeping the rest.
+
+Both implement `@lde/pipeline`’s `Writer` – each run is
 `openRun(context)` → `write` per dataset → `commit()` or `abort(error)` – so
 an `@lde/pipeline` `Pipeline` drives them without branching on the mode. Both
 derive the collection schema from your `SearchType` (via
@@ -127,5 +130,7 @@ Limitations to design around:
   can be reclaimed by another caller and run concurrently; size the TTL above
   your longest rebuild.
 - **Membership-sweep cap.** The in-place membership sweep enumerates distinct
-  sources via a facet capped at 10 000 values; beyond that the commit throws
-  rather than sweeping blind.
+  sources via a single facet, capped at `maxSweepableSources` (default
+  10 000); beyond that the commit throws rather than sweeping blind. Raise the
+  option (up to the engine’s `max_facet_values` limit) before an index nears
+  the cap so it stays a tunable guard rather than a hard wall.
