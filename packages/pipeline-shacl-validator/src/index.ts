@@ -6,5 +6,6 @@ export type {
 } from '@lde/pipeline';
 export {
   ShaclValidator,
+  severity,
   type ShaclValidatorOptions,
 } from './shacl-validator.js';

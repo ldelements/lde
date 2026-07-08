@@ -16,21 +16,50 @@ import rdf from 'rdf-ext';
 import { rdfDereferencer } from 'rdf-dereference';
 import { skolemizeReport } from './skolemize-report.js';
 
+const shacl = 'http://www.w3.org/ns/shacl#';
+
+/**
+ * The severity level IRIs defined by SHACL Core, for use in
+ * {@link ShaclValidatorOptions.conformanceDisallows}.
+ */
+export const severity = {
+  info: `${shacl}Info`,
+  warning: `${shacl}Warning`,
+  violation: `${shacl}Violation`,
+} as const;
+
 /** Options for {@link ShaclValidator}. */
 export interface ShaclValidatorOptions {
   /** Path to an RDF file containing SHACL shapes (any format supported by rdf-dereference). */
   shapesFile: string;
   /**
    * Writers that receive the per-dataset SHACL validation report quads. The
-   * validator opens one run per writer (lazily, on the first violation) and
-   * streams each batch with violations to it; each run is flushed per dataset
-   * from {@link ShaclValidator.report}.
+   * validator opens one run per writer (lazily, on the first validation
+   * result of any severity) and streams each batch with results to it; each
+   * run is flushed per dataset from {@link ShaclValidator.report}.
    *
    * Pass a {@link FileWriter} to mirror the previous on-disk behaviour, a
    * {@link SparqlUpdateWriter} to land reports in a named graph, or any custom
    * writer. Validators with no `reportWriters` only produce aggregate counts.
    */
   reportWriters?: Writer[];
+  /**
+   * Severity level IRIs that disallow conformance — the SHACL 1.2
+   * conformance-disallow set (`sh:conformanceDisallows`). A result whose
+   * `sh:resultSeverity` is in this set flips `conforms` to `false` and counts
+   * towards `violations`; results outside the set are still streamed to
+   * `reportWriters` but do not fail validation.
+   *
+   * Defaults to the SHACL 1.2 default set — `sh:Violation`, `sh:Warning` and
+   * `sh:Info` — so any result fails validation, matching `shacl-engine`’s own
+   * `report.conforms`. Pass `[severity.violation]` to fail on violations only;
+   * custom severity IRIs are supported.
+   *
+   * When set, the written report carries `sh:conformanceDisallows` triples and
+   * an `sh:conforms` value computed against this set, so stored reports stay
+   * self-describing per SHACL 1.2.
+   */
+  conformanceDisallows?: readonly string[];
 }
 
 interface DatasetAccumulator {
@@ -50,6 +79,8 @@ export class ShaclValidator implements Validator {
   private readonly shapesFile: string;
   private readonly reportWriters: Writer[];
   private reportRuns: RunWriter[] | undefined;
+  private readonly conformanceDisallows: readonly string[] | undefined;
+  private readonly disallowedSeverities: Set<string>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private shapesDataset: any | undefined;
   private readonly accumulators = new Map<string, DatasetAccumulator>();
@@ -57,6 +88,10 @@ export class ShaclValidator implements Validator {
   constructor(options: ShaclValidatorOptions) {
     this.shapesFile = options.shapesFile;
     this.reportWriters = options.reportWriters ?? [];
+    this.conformanceDisallows = options.conformanceDisallows;
+    this.disallowedSeverities = new Set(
+      options.conformanceDisallows ?? Object.values(severity),
+    );
   }
 
   async validate(quads: Quad[], dataset: Dataset): Promise<ValidationResult> {
@@ -70,8 +105,16 @@ export class ShaclValidator implements Validator {
     const validator = new ShaclEngine(shapes, { factory: rdf });
     const report = await validator.validate({ dataset: dataDataset });
 
-    const violations = report.results.length as number;
-    const conforms = report.conforms as boolean;
+    // Conformance checking per SHACL 1.2 (§6.6): a result fails validation
+    // only if its severity is in the conformance-disallow set. shacl-engine’s
+    // report.conforms hardcodes the default set, so compute conformance here.
+    // The engine sets a severity on every result (sh:Violation when the shape
+    // declares none).
+    const results = report.results as { severity: { value: string } }[];
+    const violations = results.filter((result) =>
+      this.disallowedSeverities.has(result.severity.value),
+    ).length;
+    const conforms = violations === 0;
 
     // Accumulate per dataset.
     const key = dataset.iri.toString();
@@ -85,15 +128,17 @@ export class ShaclValidator implements Validator {
     if (!conforms) acc.conforms = false;
     this.accumulators.set(key, acc);
 
-    if (violations > 0 && this.reportWriters.length > 0) {
+    // Reports are written whenever there are results, conforming or not, so
+    // below-threshold results (e.g. warnings) stay visible to consumers.
+    if (results.length > 0 && this.reportWriters.length > 0) {
       // Skolemise the report's blank nodes to dataset-scoped IRIs before writing.
       // shacl-engine emits the report and every result as blank nodes, whose
       // labels are not unique across the per-dataset n-quads files a file-based
       // store cats into one index — fusing one dataset's violations into
       // another's (see ldelements/lde#478).
-      const reportQuads = skolemizeReport(
-        report.dataset,
-        dataset.iri.toString(),
+      const reportQuads = this.amendReport(
+        skolemizeReport(report.dataset, dataset.iri.toString()),
+        conforms,
       );
       for (const run of await this.runs()) {
         await run.write(dataset, asyncIterableOf(reportQuads));
@@ -103,7 +148,7 @@ export class ShaclValidator implements Validator {
     // Surface where to look for the report in halt-mode error messages
     // (read by @lde/pipeline's Stage.validateBuffer when onInvalid:'halt').
     const message =
-      violations > 0 && this.reportWriters.length > 0
+      results.length > 0 && this.reportWriters.length > 0
         ? `Report sent to ${this.reportWriters.length} writer(s)`
         : undefined;
 
@@ -147,6 +192,52 @@ export class ShaclValidator implements Validator {
       ),
     );
     return this.reportRuns;
+  }
+
+  /**
+   * Rewrite the report’s `sh:conforms` to the value computed against the
+   * configured conformance-disallow set and declare that set on the report
+   * as `sh:conformanceDisallows` (SHACL 1.2 §6.7.1.2). Reports are left
+   * untouched when the option is absent: the engine’s own `sh:conforms`
+   * already reflects the default set.
+   */
+  private amendReport(reportQuads: Quad[], conforms: boolean): Quad[] {
+    if (!this.conformanceDisallows) return reportQuads;
+
+    // Anchor on the report's identity: the engine emits exactly one
+    // `a sh:ValidationReport`, on the report node (results are separate nodes
+    // typed sh:ValidationResult).
+    const reportNode = reportQuads.find(
+      (q) =>
+        q.predicate.value ===
+          'http://www.w3.org/1999/02/22-rdf-syntax-ns#type' &&
+        q.object.value === `${shacl}ValidationReport`,
+    )!.subject;
+
+    // Rewrite that node's sh:conforms to the value computed against the
+    // disallow set; the set itself is declared below.
+    const amended = reportQuads.map((q) =>
+      q.subject.equals(reportNode) && q.predicate.value === `${shacl}conforms`
+        ? (rdf.quad(
+            q.subject,
+            q.predicate,
+            rdf.literal(
+              String(conforms),
+              rdf.namedNode('http://www.w3.org/2001/XMLSchema#boolean'),
+            ),
+          ) as Quad)
+        : q,
+    );
+    for (const level of this.conformanceDisallows) {
+      amended.push(
+        rdf.quad(
+          reportNode!,
+          rdf.namedNode(`${shacl}conformanceDisallows`),
+          rdf.namedNode(level),
+        ),
+      );
+    }
+    return amended;
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
