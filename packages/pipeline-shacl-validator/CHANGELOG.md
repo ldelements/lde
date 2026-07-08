@@ -1,3 +1,9 @@
+## 0.14.1 (2026-07-08)
+
+### 🚀 Features
+
+- **pipeline-shacl-validator:** add conformanceDisallows severity set ([#564](https://github.com/ldelements/lde/pull/564))
+
 ## 0.14.0 (2026-07-07)
 
 ### 🚀 Features
