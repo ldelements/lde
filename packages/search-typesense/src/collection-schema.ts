@@ -29,6 +29,15 @@ export interface CollectionSchemaOptions {
  * untagged `und` locale (and any searchable keyword/reference companion)
  * stems in `defaultLocale` when one is set, and is left unstemmed (folded
  * only) otherwise.
+ *
+ * Memory lever: Typesense holds the index in RAM (with a raw copy of each
+ * document on disk), so RAM tracks the *indexed* surface – roughly 2–3× the
+ * size of the fields you search, facet or sort on – not the whole document.
+ * This builder keeps that surface minimal: the `output` display labels fan out
+ * to `index: false` fields, kept on disk and read back only for a hit, so they
+ * cost no RAM; only the folded `*_search_${locale}`, facet/reference and
+ * `*_sort_${locale}` companions are indexed. Keeping retrieval-only fields
+ * un-indexed is the lever for holding a large index’s RAM down.
  */
 export function buildCollectionSchema(
   searchType: SearchType,
@@ -60,8 +69,10 @@ function typesenseFields(
   if (field.kind === 'text') {
     const locales = field.locales;
     return [
-      // Display labels: stored, not indexed for search (search uses the folded
-      // companions), accents preserved.
+      // Display labels: stored but NOT indexed (`index: false`) – search hits
+      // the folded `*_search` companions, so the display copy stays on disk and
+      // off RAM (fetched only for a hit), accents preserved. This is the memory
+      // lever: RAM tracks the search surface, not the display text.
       ...names.display.map(
         (name): CollectionFieldSchema => ({
           name,

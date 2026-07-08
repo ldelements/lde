@@ -17,6 +17,15 @@ type comes from each field’s `kind`, and the physical fanout (per-locale
 search/sort keys) matches what the projection writes, via
 `@lde/search`’s `physicalFields`, so the index and the documents cannot drift.
 
+**Memory lever.** Typesense keeps the index in RAM (with a raw copy of each
+document on disk), so RAM tracks the _indexed_ surface – roughly 2–3× the size
+of the fields you search, facet or sort on – not the full document.
+`buildCollectionSchema` keeps that surface minimal: the `output` display labels
+fan out to `index: false` fields, stored on disk and fetched only for a hit, so
+they cost no RAM; only the folded `*_search_${locale}`, facet/reference and
+`*_sort_${locale}` companions are indexed. Keeping retrieval-only fields
+un-indexed is the lever for holding a large index’s RAM down.
+
 `createTypesenseSearchEngine(client, { collection, labelsCollection })` is the
 `SearchEngine` implementation. Each search:
 
