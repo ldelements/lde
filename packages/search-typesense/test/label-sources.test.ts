@@ -355,6 +355,81 @@ describe('per-reference label sources', () => {
     ]);
   });
 
+  it('isolates a failing label source and keeps the healthy ones', async () => {
+    const errors: unknown[] = [];
+    const fake = fakeTypesenseClient({
+      searchResponse: {
+        found: 1,
+        hits: [
+          {
+            document: {
+              id: 'https://d/1',
+              publisher: ['https://org/1'],
+              subject: ['https://term/1'],
+            },
+          },
+        ],
+      },
+      // The organizations lookup fails inline (e.g. mid-rebuild); terms answers.
+      multiSearch: (search) =>
+        String(search.collection) === 'organizations'
+          ? { error: 'Collection is being rebuilt', code: 503 }
+          : labelLookup({ 'https://term/1': { label: 'Cartography' } })(search),
+    });
+    const engine = createTypesenseSearchEngine(fake.client, schema, {
+      collections,
+      onLabelError: (error) => errors.push(error),
+    });
+
+    const result = await engine.search(dataset, baseQuery);
+
+    // The failed source degrades only its own references to id-only …
+    expect(result.hits[0].document.publisher).toEqual([
+      { id: 'https://org/1' },
+    ]);
+    // … while the healthy source still lands its labels.
+    expect(result.hits[0].document.subject).toEqual([
+      { id: 'https://term/1', label: { und: ['Cartography'] } },
+    ]);
+    expect(errors).toHaveLength(1);
+  });
+
+  it('keeps an id-only reference id-only even when a cached map holds its IRI', async () => {
+    const fake = fakeTypesenseClient({
+      searchResponse: {
+        found: 1,
+        hits: [
+          {
+            document: {
+              id: 'https://d/1',
+              // The same IRI is a labelled publisher and an id-only license.
+              publisher: ['https://org/1'],
+              license: ['https://org/1'],
+            },
+          },
+        ],
+      },
+      exportJsonl: (collection) =>
+        Promise.resolve(
+          collection === 'organizations'
+            ? `${JSON.stringify({ id: 'https://org/1', label_nl: 'Het Archief' })}\n`
+            : '',
+        ),
+    });
+    const engine = createTypesenseSearchEngine(fake.client, schema, {
+      collections,
+      labelCacheTtlMs: 60_000,
+    });
+
+    const result = await engine.search(dataset, baseQuery);
+
+    expect(result.hits[0].document.publisher).toEqual([
+      { id: 'https://org/1', label: { nl: ['Het Archief'] } },
+    ]);
+    // license has no labelSource: id-only, despite org/1 being in the cache.
+    expect(result.hits[0].document.license).toEqual([{ id: 'https://org/1' }]);
+  });
+
   it('issues no lookup at all for a schema without label sources', async () => {
     const bare = searchSchema({
       name: 'Dataset',

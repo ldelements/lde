@@ -264,7 +264,7 @@ export function createTypesenseSearchEngine<
       return cachedLabelsPromise;
     }
     try {
-      return await fetchLabels(client, groups());
+      return await fetchLabels(client, groups(), options.onLabelError);
     } catch (error) {
       options.onLabelError?.(error);
       return new Map();
@@ -471,6 +471,7 @@ function labelLookupGroups(
 export async function fetchLabels(
   client: Pick<Client, 'multiSearch'>,
   groups: readonly LabelLookupGroup[],
+  onError?: (error: Error) => void,
 ): Promise<Map<string, LocalizedValue>> {
   const labels = new Map<string, LocalizedValue>();
   const searches = [];
@@ -495,15 +496,18 @@ export async function fetchLabels(
     results: readonly (TypesenseSearchResponse | TypesenseErrorEntry)[];
   };
   results.forEach((result, index) => {
-    // multi_search reports a failed entry inline instead of rejecting; throw
-    // so the caller's degradation path (onLabelError, id-only references)
-    // engages rather than mistaking the failure for absent labels.
+    // multi_search reports a failed entry inline instead of rejecting. Isolate
+    // it: report the failed source and skip its entry so the other sources'
+    // labels still land, instead of blanking the whole page to id-only – its
+    // own references fall back to id-only as their IRIs stay absent.
     if ('error' in result) {
-      throw new Error(
+      const failure = new Error(
         `Typesense label lookup in “${groupPerSearch[index].source.collection}” failed${
           result.code !== undefined ? ` (${result.code})` : ''
         }: ${result.error}`,
       );
+      onError?.(failure);
+      return;
     }
     for (const hit of result.hits ?? []) {
       const label = labelValue(
@@ -595,8 +599,13 @@ export function parseSearchResponse(
   }));
   // Reference facets are IRI-keyed; their buckets carry a resolved data label.
   // Plain facets (tokens, free strings) carry no label — the consumer owns display.
+  // Only reference facets with a label source get bucket labels; an id-only
+  // reference facet stays id-only even when a cached full-collection map holds
+  // its IRIs.
   const referenceFacets = new Set(
-    referenceFields(searchType).map((field) => field.name),
+    referenceFields(searchType)
+      .filter((field) => field.labelSource !== undefined)
+      .map((field) => field.name),
   );
   const facets: Record<string, FacetBucket[]> = {};
   for (const facet of response.facet_counts ?? []) {
@@ -695,7 +704,10 @@ function referenceValue(
   }
   const iris = Array.isArray(raw) ? (raw as string[]) : [String(raw)];
   const references: Reference[] = iris.map((iri) => {
-    const label = labels.get(iri);
+    // A reference without a label source is id-only by declaration; never
+    // attach a label, even if the (cached, full-collection) map happens to
+    // hold this IRI from another source.
+    const label = field.labelSource === undefined ? undefined : labels.get(iri);
     return label === undefined ? { id: iri } : { id: iri, label };
   });
   return field.array === true ? references : references[0];

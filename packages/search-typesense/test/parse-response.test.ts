@@ -681,24 +681,51 @@ describe('fetchLabels', () => {
     expect(performs).toHaveLength(0);
   });
 
-  it('throws on an inline multi_search error entry instead of returning no labels', async () => {
-    // multi_search reports a failed entry inline (the call still resolves);
-    // fetchLabels must throw so the engine's degradation path (onLabelError,
-    // id-only references) engages instead of silently missing every label.
+  it('reports an inline multi_search error via onError, skipping only that source', async () => {
+    // multi_search reports a failed entry inline (the call still resolves).
+    // fetchLabels reports it via onError and skips that source, so healthy
+    // sources still resolve and the failed source falls back to id-only.
+    const termsSource = {
+      collection: 'terms',
+      labelField: organization.fields[0] as TextField,
+      queryBy: 'label_search_und',
+    };
+    const errors: Error[] = [];
     const { client } = fakeTypesenseClient({
-      multiSearch: () => ({ code: 503, error: 'lookup failed' }),
+      multiSearch: (search) =>
+        String(search.collection) === 'labels'
+          ? { code: 503, error: 'lookup failed' }
+          : labelLookup({ 'https://term/1': { label: 'Cartography' } })(search),
     });
-    await expect(fetchLabels(client, group(['https://org/1']))).rejects.toThrow(
-      /label lookup in “labels” failed \(503\): lookup failed/,
+
+    const labels = await fetchLabels(
+      client,
+      [
+        { source: labelsSource, iris: ['https://org/1'] },
+        { source: termsSource, iris: ['https://term/1'] },
+      ],
+      (error) => errors.push(error),
     );
 
-    // An error entry without a status code still throws.
+    // The failed source contributes nothing; the healthy one resolves.
+    expect(labels.has('https://org/1')).toBe(false);
+    expect(labels.get('https://term/1')).toEqual({ und: ['Cartography'] });
+    expect(errors).toHaveLength(1);
+    expect(errors[0].message).toMatch(
+      /label lookup in .labels. failed \(503\): lookup failed/,
+    );
+
+    // An error entry without a status code is reported without a code suffix.
+    const noCode: Error[] = [];
     const { client: clientWithoutCode } = fakeTypesenseClient({
       multiSearch: () => ({ error: 'lookup failed' }),
     });
-    await expect(
-      fetchLabels(clientWithoutCode, group(['https://org/1'])),
-    ).rejects.toThrow(/label lookup in “labels” failed: lookup failed/);
+    await fetchLabels(clientWithoutCode, group(['https://org/1']), (error) =>
+      noCode.push(error),
+    );
+    expect(noCode[0].message).toMatch(
+      /label lookup in .labels. failed: lookup failed/,
+    );
   });
 });
 
