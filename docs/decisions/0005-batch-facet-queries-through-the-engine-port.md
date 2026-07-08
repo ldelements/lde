@@ -4,7 +4,7 @@ Date: 2026-07-06
 
 ## Status
 
-Proposed
+Accepted
 
 Amends [ADR 3 (Search API core query model)](./0003-search-api-core-query-model.md);
 refines the faceting described in
