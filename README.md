@@ -156,7 +156,7 @@ await pipeline.run();
 <tr>
   <td><a href="packages/search-typesense">@lde/search-typesense</a></td>
   <td><a href="https://www.npmjs.com/package/@lde/search-typesense"><img src="https://img.shields.io/npm/v/@lde/search-typesense" alt="npm"></a></td>
-  <td>Typesense engine adapter: transactional Blue/green and In-place index rebuild writers</td>
+  <td>Typesense engine adapter: transactional Blue/green (build fresh, swap atomically) and In-place (update the live index) rebuild writers</td>
 </tr>
 <tr>
   <td><a href="packages/text-normalization">@lde/text-normalization</a></td>
