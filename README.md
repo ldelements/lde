@@ -141,7 +141,7 @@ await pipeline.run();
 <tr>
   <td><a href="packages/search">@lde/search</a></td>
   <td><a href="https://www.npmjs.com/package/@lde/search"><img src="https://img.shields.io/npm/v/@lde/search" alt="npm"></a></td>
-  <td>Project RDF into engine-agnostic search documents (framing + a declarative field spec)</td>
+  <td>The search core: projects RDF into engine-agnostic search documents (framing + a declarative field spec)</td>
 </tr>
 <tr>
   <td><a href="packages/search-api-graphql">@lde/search-api-graphql</a></td>
@@ -151,7 +151,7 @@ await pipeline.run();
 <tr>
   <td><a href="packages/search-pipeline">@lde/search-pipeline</a></td>
   <td><a href="https://www.npmjs.com/package/@lde/search-pipeline"><img src="https://img.shields.io/npm/v/@lde/search-pipeline" alt="npm"></a></td>
-  <td>Search indexing as an @lde/pipeline instance: projects extracted RDF into search documents and feeds them to a transactional engine writer</td>
+  <td>Applies the @lde/search projection inside an @lde/pipeline run, streaming the resulting documents to a transactional engine writer (owns no projection itself)</td>
 </tr>
 <tr>
   <td><a href="packages/search-typesense">@lde/search-typesense</a></td>

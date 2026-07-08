@@ -1,7 +1,7 @@
 {
   "name": "@lde/search-pipeline",
   "version": "0.1.1",
-  "description": "Search indexing as an @lde/pipeline Configurable Pipeline: projects extracted RDF into engine-agnostic search documents and feeds them to a transactional search-engine writer",
+  "description": "Search indexing as an @lde/pipeline instance: a Writer<Quad> that applies the @lde/search projection to extracted RDF and streams the documents to a transactional search-engine writer. Glue between the pipeline quad world and the search-engine document world; owns no projection or engine logic itself.",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
     "directory": "packages/search-pipeline"
