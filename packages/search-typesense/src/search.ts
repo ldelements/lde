@@ -64,7 +64,8 @@ export interface TypesenseSearchEngineOptions<
 /**
  * One reference field’s resolved label source: the collection it reads, the
  * source type’s `label` declaration (for reconstructing localized labels) and
- * the physical field a label search queries.
+ * the comma-joined physical search fields (one per locale) a label search
+ * queries.
  */
 export interface LabelSource {
   readonly collection: string;
@@ -134,7 +135,7 @@ export function createTypesenseSearchEngine<
               {
                 collection: collections.get(source.type) as string,
                 labelField,
-                queryBy: physicalFields(labelField).search[0],
+                queryBy: physicalFields(labelField).search.join(','),
               },
             ];
           }),
@@ -383,7 +384,10 @@ async function loadAllLabels(
       continue;
     }
     const document = JSON.parse(line) as Record<string, unknown>;
-    labels.set(String(document.id), labelValue(document, source.labelField));
+    const label = labelValue(document, source.labelField);
+    if (label !== undefined) {
+      labels.set(String(document.id), label);
+    }
   }
   return labels;
 }
@@ -502,10 +506,13 @@ export async function fetchLabels(
       );
     }
     for (const hit of result.hits ?? []) {
-      labels.set(
-        String(hit.document.id),
-        labelValue(hit.document, groupPerSearch[index].source.labelField),
+      const label = labelValue(
+        hit.document,
+        groupPerSearch[index].source.labelField,
       );
+      if (label !== undefined) {
+        labels.set(String(hit.document.id), label);
+      }
     }
   });
   return labels;
@@ -518,18 +525,20 @@ const LABEL_BATCH_SIZE = 200;
 /**
  * Reconstruct a label document into a language map via the source type’s
  * `label` declaration (its per-locale display fields), with a bare untagged
- * `label` value as the `und` fallback when no locale variant exists.
+ * `label` value as the `und` fallback when no locale variant exists, or
+ * `undefined` when the document carries no usable label – so the reference
+ * stays id-only rather than gaining an empty label.
  */
 function labelValue(
   document: Record<string, unknown>,
   labelField: TextField,
-): LocalizedValue {
+): LocalizedValue | undefined {
   const localized = localizedValue(document, labelField);
   if (localized !== undefined) {
     return localized;
   }
   const untagged = document[labelField.name];
-  return typeof untagged === 'string' ? { und: [untagged] } : {};
+  return typeof untagged === 'string' ? { und: [untagged] } : undefined;
 }
 
 /** Merge per-collection label maps into one IRI-keyed map (URI identity). */

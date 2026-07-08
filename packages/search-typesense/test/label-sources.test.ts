@@ -193,6 +193,60 @@ describe('per-reference label sources', () => {
     ]);
   });
 
+  it('keeps a reference id-only when its label document has no usable label', async () => {
+    const fake = fakeTypesenseClient({
+      searchResponse: {
+        found: 1,
+        hits: [
+          { document: { id: 'https://d/1', publisher: ['https://org/1'] } },
+        ],
+      },
+      // The label doc exists but carries no `label_*` display column and no
+      // bare `label`, so there is nothing to reconstruct – stay id-only rather
+      // than emit an empty `label: {}`.
+      multiSearch: labelSourcesLookup({
+        organizations: { 'https://org/1': {} },
+        terms: {},
+      }),
+    });
+    const engine = createTypesenseSearchEngine(fake.client, schema, {
+      collections,
+    });
+
+    const result = await engine.search(dataset, baseQuery);
+
+    expect(result.hits[0].document.publisher).toEqual([
+      { id: 'https://org/1' },
+    ]);
+  });
+
+  it('queries every locale of a label source, not just the first', async () => {
+    const fake = fakeTypesenseClient({
+      searchResponse: {
+        found: 1,
+        hits: [
+          { document: { id: 'https://d/1', publisher: ['https://org/1'] } },
+        ],
+      },
+      multiSearch: labelSourcesLookup({
+        organizations: { 'https://org/1': { label_und: 'Het Archief' } },
+        terms: {},
+      }),
+    });
+    const engine = createTypesenseSearchEngine(fake.client, schema, {
+      collections,
+    });
+
+    await engine.search(dataset, baseQuery);
+
+    const orgSearch = fake.performs
+      .flat()
+      .find((search) => String(search.collection) === 'organizations');
+    // Organization declares locales ['und', 'nl']; the lookup must query both
+    // folded search fields so typeahead can match a label in either locale.
+    expect(orgSearch?.query_by).toBe('label_search_und,label_search_nl');
+  });
+
   it('labels facet buckets from the facet field’s own source', async () => {
     const fake = fakeTypesenseClient({
       searchResponse: {
