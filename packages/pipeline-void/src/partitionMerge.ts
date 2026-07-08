@@ -18,7 +18,6 @@ const VOID_CLASS = `${VOID}class`;
 const VOID_PROPERTY = `${VOID}property`;
 const VOID_ENTITIES = `${VOID}entities`;
 const VOID_TRIPLES = `${VOID}triples`;
-const VOID_DISTINCT_OBJECTS = `${VOID}distinctObjects`;
 const VOID_CLASS_PARTITION = `${VOID}classPartition`;
 const VOID_PROPERTY_PARTITION = `${VOID}propertyPartition`;
 const VOIDEXT_DATATYPE = `${VOID_EXT}datatype`;
@@ -27,12 +26,11 @@ const VOIDEXT_DATATYPE_PARTITION = `${VOID_EXT}datatypePartition`;
 const VOIDEXT_OBJECTCLASS_PARTITION = `${VOID_EXT}objectClassPartition`;
 const VOIDEXT_LANGUAGE_PARTITION = `${VOID_EXT}languagePartition`;
 
-/** Predicates whose integer-literal objects are summed across merged partitions. */
-const NUMERIC_MEASURES = new Set([
-  VOID_ENTITIES,
-  VOID_TRIPLES,
-  VOID_DISTINCT_OBJECTS,
-]);
+// Predicates whose integer-literal objects are summed across merged partitions.
+// `void:distinctObjects` is deliberately excluded: distinct-object sets overlap
+// across namespace variants, so summing would over-count. It is normalized at
+// query time in `class-properties-objects.rq` and never reaches this transform.
+const NUMERIC_MEASURES = new Set([VOID_ENTITIES, VOID_TRIPLES]);
 
 /** Structural links whose object is a child partition node. */
 const CHILD_LINKS = new Set([
@@ -316,7 +314,7 @@ function canonicalizeObject<T extends Term>(
 }
 
 function accumulateMeasure(sums: Map<string, MeasureSum>, measure: Quad): void {
-  const key = `${measure.subject.value} ${measure.predicate.value}`;
+  const key = `${measure.subject.value} ${measure.predicate.value} ${measure.graph.value}`;
   const existing = sums.get(key);
   if (existing === undefined) {
     sums.set(key, {
@@ -365,5 +363,3 @@ function termKey(term: Term): string {
   }
   return term.value;
 }
-
-export { XSD_INTEGER };

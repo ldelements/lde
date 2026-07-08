@@ -175,6 +175,20 @@ describe('namespace-alias normalization (end to end)', () => {
       )
       .map((q) => q.object.value);
     expect(objectClasses).toEqual(['https://schema.org/Person']);
+
+    // The self-describe chain must not leak a duplicate class partition: the
+    // http- and https-variant class partitions these stages emit have to
+    // collapse to a single node, or the duplicate this feature removes returns.
+    const creativeWorkClassPartitions = new Set(
+      quads
+        .filter(
+          (q) =>
+            q.predicate.value === `${VOID}class` &&
+            q.object.value === CREATIVE_WORK,
+        )
+        .map((q) => q.subject.value),
+    );
+    expect(creativeWorkClassPartitions.size).toBe(1);
   }, 30_000);
 
   it('emits two class partitions when no aliases are configured', async () => {

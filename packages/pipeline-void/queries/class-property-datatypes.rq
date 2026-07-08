@@ -3,7 +3,12 @@ PREFIX void-ext: <http://ldf.fi/void-ext#>
 
 CONSTRUCT {
   # Self-describing parent chain so the namespace-merge transform can re-key
-  # this partition from its (class, property) components.
+  # this partition from its (class, property) components. The
+  # `?dataset void:classPartition ?classPartition` link is what gives the class
+  # partition an incoming edge, so the transform re-keys it too (without it, the
+  # alias-variant class partition leaks unmerged).
+  ?dataset a void:Dataset ;
+      void:classPartition ?classPartition .
   ?classPartition void:class ?class ;
       void:propertyPartition ?propertyPartition .
   ?propertyPartition void:property ?p ;

@@ -125,12 +125,15 @@ describe('mergeNamespaceVariants', () => {
   });
 
   it('merges a datatype-partition subtree via the cp→pp→dp chain', async () => {
-    // Two full chains, http and https, over the same canonical class+property+datatype.
+    // Two full chains, http and https, with DISTINCT class-partition IRIs (as
+    // the real per-class query mints them) and the `dataset void:classPartition`
+    // link that lets the transform re-key the class partition too.
     const chain = (classIri: string, propIri: string) => {
-      const cpNode = namedNode(`${DATASET}/#cp`); // placeholder IRIs; transform re-keys by components
+      const cpNode = namedNode(`${DATASET}/#cp-${classIri}`);
       const ppNode = namedNode(`${DATASET}/#pp-${classIri}-${propIri}`);
       const dpNode = namedNode(`${DATASET}/#dp-${classIri}-${propIri}`);
       return [
+        quad(namedNode(DATASET), v('classPartition'), cpNode),
         quad(cpNode, v('class'), namedNode(classIri)),
         quad(cpNode, v('propertyPartition'), ppNode),
         quad(ppNode, v('property'), namedNode(propIri)),
@@ -156,6 +159,13 @@ describe('mergeNamespaceVariants', () => {
       .filter((q) => q.predicate.value === `${VOID}property`)
       .map((q) => q.object.value);
     expect(new Set(properties)).toEqual(new Set(['https://schema.org/name']));
+    // The class partition collapses to a single node (no leaked alias variant).
+    const classPartitions = new Set(
+      out
+        .filter((q) => q.predicate.value === `${VOID}class`)
+        .map((q) => q.subject.value),
+    );
+    expect(classPartitions.size).toBe(1);
   });
 
   it('merges object-class partitions, canonicalizing the object class', async () => {

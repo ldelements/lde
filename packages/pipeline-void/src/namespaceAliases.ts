@@ -32,38 +32,6 @@ export function substituteNormalizationMarkers(
 }
 
 /**
- * SPARQL expression rewriting `?rawVariable` from any alias namespace to its
- * canonical namespace: nested `IF(STRSTARTS(...), IRI(CONCAT(...)), ...)`
- * per alias, or the bare variable when no aliases are configured.
- */
-function normalizedExpression(
-  rawVariable: string,
-  namespaceAliases: readonly NamespaceAlias[],
-): string {
-  let expression = `?${rawVariable}`;
-  // Build from the inside out so the first alias is the outermost check.
-  for (const { canonical, alias } of [...namespaceAliases].reverse()) {
-    assertSafeSparqlString(canonical);
-    assertSafeSparqlString(alias);
-    expression = `IF(STRSTARTS(STR(?${rawVariable}), "${alias}"), IRI(CONCAT("${canonical}", STRAFTER(STR(?${rawVariable}), "${alias}"))), ${expression})`;
-  }
-  return expression;
-}
-
-/**
- * Namespaces are interpolated into double-quoted SPARQL string literals, so
- * beyond {@link assertSafeIri} they must not contain quotes or backslashes.
- */
-function assertSafeSparqlString(namespace: string): void {
-  assertSafeIri(namespace);
-  if (namespace.includes('"') || namespace.includes('\\')) {
-    throw new Error(
-      `Namespace contains unsafe characters and cannot be interpolated into SPARQL: ${namespace}`,
-    );
-  }
-}
-
-/**
  * Canonicalize and deduplicate the `?class` bindings a class selector
  * yields, so every namespace-alias variant of a class becomes one item and
  * its variants are queried together in one batch (split across batches,
@@ -104,4 +72,36 @@ export function withAliasVariantBindings(
       return inner.read(dataset, distribution, { ...options, bindings });
     },
   };
+}
+
+/**
+ * SPARQL expression rewriting `?rawVariable` from any alias namespace to its
+ * canonical namespace: nested `IF(STRSTARTS(...), IRI(CONCAT(...)), ...)`
+ * per alias, or the bare variable when no aliases are configured.
+ */
+function normalizedExpression(
+  rawVariable: string,
+  namespaceAliases: readonly NamespaceAlias[],
+): string {
+  let expression = `?${rawVariable}`;
+  // Build from the inside out so the first alias is the outermost check.
+  for (const { canonical, alias } of [...namespaceAliases].reverse()) {
+    assertSafeSparqlString(canonical);
+    assertSafeSparqlString(alias);
+    expression = `IF(STRSTARTS(STR(?${rawVariable}), "${alias}"), IRI(CONCAT("${canonical}", STRAFTER(STR(?${rawVariable}), "${alias}"))), ${expression})`;
+  }
+  return expression;
+}
+
+/**
+ * Namespaces are interpolated into double-quoted SPARQL string literals, so
+ * beyond {@link assertSafeIri} they must not contain quotes or backslashes.
+ */
+function assertSafeSparqlString(namespace: string): void {
+  assertSafeIri(namespace);
+  if (namespace.includes('"') || namespace.includes('\\')) {
+    throw new Error(
+      `Namespace contains unsafe characters and cannot be interpolated into SPARQL: ${namespace}`,
+    );
+  }
 }

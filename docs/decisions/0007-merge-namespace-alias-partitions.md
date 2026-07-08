@@ -21,11 +21,15 @@ normalized, describe the same class. Downstream consumers that group by
 class URI do not expect two partitions for one class; the Dataset Register
 browser crashed on the duplicate.
 
-The consuming side cannot fix this from the published summary: merging two
-pre-aggregated `void:entities` counts is only correct if the underlying
-subject sets are disjoint, and merging two `void:distinctObjects` counts is
-never correct from the counts alone (the object sets can overlap). Only the
-analysis, which still has the raw data, can produce correct merged numbers.
+The consuming side cannot cleanly fix this from the published summary.
+Merging two `void:distinctObjects` counts is never correct from the counts
+alone — the object sets can overlap — so only the analysis, which still has
+the raw object values, can dedupe them. Merging two `void:entities` counts
+_can_ be done by summing, but only under a subject-disjointness assumption
+(see [Assumptions of record](#assumptions-of-record)); doing that sum in the
+analysis is no more correct than a consumer doing it, it just keeps the
+normalization in one place and stops the duplicate partition nodes — which
+crashed the browser — from being published at all.
 
 Two placements were considered:
 

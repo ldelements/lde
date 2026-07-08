@@ -173,8 +173,9 @@ async function createVoidStage(
       ? [mergeNamespaceVariants(namespaceAliases)]
       : [];
   const reader: AttachedReader = {
-    // Per-class stages receive canonical `?class` bindings from the
-    // selector; expand each to its alias variants as `?rawClass` bindings.
+    // Per-class stages receive canonical `?class` bindings from the selector;
+    // expand each into one `?class` binding per alias variant so the query
+    // (`?s a ?class`) matches instances under either namespace.
     reader: options?.perClass
       ? withAliasVariantBindings(constructReader, namespaceAliases)
       : constructReader,
