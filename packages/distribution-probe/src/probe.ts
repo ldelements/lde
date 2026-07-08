@@ -1059,12 +1059,12 @@ type RdfBodyOutcome =
  * Parse an RDF body just far enough to tell whether it carries any triples:
  * resolve on the first triple (presence is all we need, not a full count), on a
  * clean end with none ('empty'), or on a parse error. The parse is bounded by
- * `budgetSignal` – the caller's validation-budget {@link AbortController} –
+ * `budgetSignal` – the caller’s validation-budget {@link AbortController} –
  * because a JSON-LD `@context` is fetched from its origin, and a slow or hanging
  * context host would otherwise stall the probe past its budget; on abort – and
  * likewise when a remote `@context` is unreachable – the outcome is
  * 'inconclusive', so a valid distribution is never flagged faulty for a context
- * host's failure. Sharing the caller's single budget (rather than starting a
+ * host’s failure. Sharing the caller’s single budget (rather than starting a
  * second, identical timer) keeps that timeout deterministic: it fires once, when
  * the budget elapses, instead of leaving an orphan timer to settle on its own
  * schedule. `baseIRI` resolves any relative IRIs in the document.
@@ -1095,14 +1095,10 @@ function classifyRdfBody(
       quads.destroy();
       resolve(outcome);
     }
-    // The budget may already have elapsed while the body was being read; treat an
-    // already-aborted signal as an immediate expiry rather than waiting for an
-    // 'abort' event that will never come.
-    if (budgetSignal.aborted) {
-      onBudgetElapsed();
-      return;
-    }
-    budgetSignal.addEventListener('abort', onBudgetElapsed, { once: true });
+    // Attach the parser listeners before consulting the budget: settle() calls
+    // quads.destroy(), which can make the parser emit a late 'error', so the
+    // error sink must already be in place – including on the already-aborted
+    // path below – or that error goes unhandled and crashes the process.
     quads
       .on('data', () => settle({ type: 'hasTriples' }))
       .on('error', (error: Error) =>
@@ -1115,6 +1111,14 @@ function classifyRdfBody(
       .on('end', () =>
         settle(truncated ? { type: 'inconclusive' } : { type: 'empty' }),
       );
+    // The budget may already have elapsed while the body was being read; an
+    // already-aborted signal never emits another 'abort', so settle immediately
+    // rather than wait for an event that will not come.
+    if (budgetSignal.aborted) {
+      onBudgetElapsed();
+    } else {
+      budgetSignal.addEventListener('abort', onBudgetElapsed, { once: true });
+    }
   });
 }
 
