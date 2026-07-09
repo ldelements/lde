@@ -1,3 +1,73 @@
+## 0.32.0 (2026-07-09)
+
+### 🚀 Features
+
+- ⚠️  **pipeline:** add beforeDatasetWrite hook; split namespace normalization ([#577](https://github.com/ldelements/lde/pull/577), [#334](https://github.com/ldelements/lde/issues/334))
+
+### ⚠️  Breaking Changes
+
+- **pipeline:** add beforeDatasetWrite hook; split namespace normalization  ([#577](https://github.com/ldelements/lde/pull/577), [#334](https://github.com/ldelements/lde/issues/334))
+  @lde/pipeline no longer exports schemaOrgNormalizationPlugin
+  or namespaceNormalizationPlugin; use schemaOrgNormalizationPlugin from
+  @lde/pipeline-void. @lde/pipeline-void's voidStages no longer accepts
+  namespaceAliases; add schemaOrgNormalizationPlugin to the pipeline plugins
+  instead.
+  * refactor(pipeline)!: keep a generic namespace-rewrite plugin, merge stays in pipeline-void
+  Split schema.org namespace handling by generality instead of removing the
+  generic capability, so a non-VoID consumer (e.g. mapping instance data to an
+  application profile) can still normalize a namespace.
+  - @lde/pipeline keeps namespaceNormalizationPlugin / schemaOrgNormalizationPlugin,
+    now a blanket, vocabulary-agnostic beforeStageWrite rewrite of a namespace’s
+    IRIs in every term position (previously only void:class/void:property objects,
+    and only in this package before this PR removed them).
+  - @lde/pipeline-void renames its beforeDatasetWrite merge to
+    schemaOrgPartitionMergePlugin / namespacePartitionMergePlugin, so a VoID
+    consumer can’t pick the plain rewrite and leave the duplicate partition nodes
+    (#334) unmerged.
+  - Both share the canonicalizeIri primitive; the merge keeps its own selective
+    canonicalization (leaves void:vocabulary and entity-properties in the source
+    namespace), which the blanket rewrite deliberately does not.
+  Docs: renumber the ADR to 7 and make it self-contained; document the split in
+  the ADR and both package READMEs.
+  BREAKING CHANGE: @lde/pipeline’s namespaceNormalizationPlugin and
+  schemaOrgNormalizationPlugin now rewrite every matching IRI in any term position
+  via beforeStageWrite, not just void:class/void:property objects. The VoID
+  partition merge is now schemaOrgPartitionMergePlugin / namespacePartitionMergePlugin
+  in @lde/pipeline-void.
+  Claude-Session: https://claude.ai/code/session_01H8MVbsXSoNbYREYMFLy6Eg"
+  D	docs/decisions/0007-merge-namespace-alias-partitions.md
+  A	docs/decisions/0007-namespace-merge-as-a-dataset-plugin.md
+  M	packages/pipeline-void/README.md
+  M	packages/pipeline-void/queries/class-partition.rq
+  M	packages/pipeline-void/queries/class-properties-objects.rq
+  M	packages/pipeline-void/queries/class-properties-subjects.rq
+  M	packages/pipeline-void/queries/class-property-datatypes.rq
+  M	packages/pipeline-void/queries/class-property-languages.rq
+  M	packages/pipeline-void/queries/class-property-object-classes.rq
+  M	packages/pipeline-void/src/index.ts
+  D	packages/pipeline-void/src/namespaceAliases.ts
+  A	packages/pipeline-void/src/partitionIri.ts
+  M	packages/pipeline-void/src/partitionMerge.ts
+  M	packages/pipeline-void/src/stage.ts
+  D	packages/pipeline-void/test/namespaceAliases.test.ts
+  M	packages/pipeline-void/test/namespaceNormalization.integration.test.ts
+  A	packages/pipeline-void/test/partitionIri.test.ts
+  M	packages/pipeline-void/test/partitionMerge.test.ts
+  M	packages/pipeline-void/vite.config.ts
+  M	packages/pipeline/README.md
+  M	packages/pipeline/src/index.ts
+  M	packages/pipeline/src/pipeline.ts
+  M	packages/pipeline/src/plugin/namespaceNormalization.ts
+  M	packages/pipeline/src/plugin/schemaOrgNormalization.ts
+  M	packages/pipeline/test/pipeline.test.ts
+  M	packages/pipeline/test/plugin/namespaceNormalization.test.ts
+  M	packages/pipeline/test/plugin/schemaOrgNormalization.test.ts
+  M	packages/pipeline/vite.config.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.34.0
+
 ## 0.31.4 (2026-07-08)
 
 ### 🚀 Features
