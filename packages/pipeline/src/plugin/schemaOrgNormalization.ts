@@ -1,6 +1,5 @@
 import type { QuadTransform } from '../stage.js';
-import type { PipelinePlugin } from '../pipeline.js';
-import type { Dataset } from '@lde/dataset';
+import type { BeforeStageWriteContext, PipelinePlugin } from '../pipeline.js';
 import {
   namespaceNormalizationPlugin,
   namespaceNormalizationTransform,
@@ -14,23 +13,26 @@ export interface SchemaOrgNormalizationOptions {
   reverse?: boolean;
 }
 
-/** QuadTransform that normalizes `http://schema.org/` to `https://schema.org/` in `void:class` and `void:property` objects. */
-export const schemaOrgNormalizationTransform: QuadTransform<{
-  dataset: Dataset;
-}> = namespaceNormalizationTransform({
-  from: HTTP_SCHEMA_ORG,
-  to: HTTPS_SCHEMA_ORG,
-});
+/**
+ * A {@link QuadTransform} that normalizes `http://schema.org/` to
+ * `https://schema.org/` in every term position. See
+ * {@link namespaceNormalizationTransform}.
+ */
+export const schemaOrgNormalizationTransform: QuadTransform<BeforeStageWriteContext> =
+  namespaceNormalizationTransform({
+    from: HTTP_SCHEMA_ORG,
+    to: HTTPS_SCHEMA_ORG,
+  });
 
 /**
- * Pipeline plugin that normalizes Schema.org namespace prefixes in `void:class`
- * and `void:property` quad objects.
+ * A generic {@link PipelinePlugin} that normalizes the Schema.org namespace
+ * across a stage's output.
  *
- * By default, rewrites `http://schema.org/` to `https://schema.org/`. Pass
- * `{ reverse: true }` to normalize in the opposite direction.
- *
- * `void:vocabulary` quads are left unchanged so consumers can see which
- * namespace the source dataset actually uses.
+ * By default rewrites `http://schema.org/` to `https://schema.org/`; pass
+ * `{ reverse: true }` to normalize the other way. It is a blanket rewrite over
+ * every matching IRI and knows nothing about VoID — to merge the VoID partition
+ * nodes that mixed `http`/`https` variants produce, use
+ * `schemaOrgPartitionMergePlugin` from `@lde/pipeline-void` instead.
  */
 export function schemaOrgNormalizationPlugin(
   options?: SchemaOrgNormalizationOptions,

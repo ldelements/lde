@@ -390,50 +390,49 @@ Otherwise it imports (if needed), runs the stages, and writes an updated record.
 
 ### Plugins
 
-Plugins hook into the pipeline lifecycle via the `PipelinePlugin` interface. Register them in the `plugins` array when constructing a `Pipeline`.
+Plugins hook into the pipeline lifecycle via the `PipelinePlugin` interface. Register them in the `plugins` array when constructing a `Pipeline`. A plugin can implement either or both of two hooks, each a `QuadTransform`:
 
-#### `namespaceNormalizationPlugin(options)`
+- **`beforeStageWrite`** runs over each stage’s output as it is written – scoped to one stage’s quads for one dataset.
+- **`beforeDatasetWrite`** runs once over a dataset’s combined cross-stage output, just before it is written – scoped to the whole dataset, so it can reconcile quads that different stages produced. The output is streamed through a single queue rather than materialized, so memory stays bounded by whatever the transform itself buffers; it honors the writer’s run lifecycle (`flush`/`reset`/`commit`/`abort`), and a failure is isolated to the dataset being written.
 
-Generic plugin that rewrites namespace prefixes in `void:class` and `void:property` quad objects. Accepts `from` and `to` options specifying the source and target namespace URI prefixes. `void:vocabulary` quads are left unchanged so consumers can see which namespace the source dataset actually uses.
-
-```typescript
-import { namespaceNormalizationPlugin } from ‘@lde/pipeline’;
-
-new Pipeline({
-  // ...
-  plugins: [
-    namespaceNormalizationPlugin({
-      from: ‘http://example.org/’,
-      to: ‘https://example.org/’,
-    }),
-  ],
-});
-```
+Both hooks are domain-agnostic – dedup, roll-ups, provenance stamping, or namespace rewriting can use them. This package ships `provenancePlugin()`, `namespaceNormalizationPlugin()`, and `schemaOrgNormalizationPlugin()` (all `beforeStageWrite` plugins). Plugins that must understand a particular RDF shape live with that vocabulary: for example, [@lde/pipeline-void](../pipeline-void) ships `schemaOrgPartitionMergePlugin()`, a `beforeDatasetWrite` plugin that merges the VoID partition _nodes_ that Schema.org `http`/`https` variants produce.
 
 #### `provenancePlugin()`
 
 Appends [PROV-O](https://www.w3.org/TR/prov-o/) provenance quads (`prov:Entity`, `prov:Activity`, `prov:startedAtTime`, `prov:endedAtTime`) to every stage’s output. The `prov:Activity` is a stable IRI keyed on `(dataset, stage)`, not a blank node, so activities stay distinct – and a re-run stays idempotent – when per-dataset outputs are merged into one graph (blank-node labels are not unique across separately serialised documents and would fuse unrelated activities).
 
-#### `schemaOrgNormalizationPlugin(options?)`
+#### `namespaceNormalizationPlugin(options)`
 
-Normalizes Schema.org namespace prefixes in `void:class` and `void:property` quad objects. By default, rewrites `http://schema.org/` to `https://schema.org/`. Pass `{ reverse: true }` to normalize in the opposite direction (`https://` to `http://`). `void:vocabulary` quads are left unchanged so consumers can see which namespace the source dataset actually uses.
-
-This is a convenience wrapper around `namespaceNormalizationPlugin`.
+Rewrites every IRI in the `from` namespace to the `to` namespace, in subject, predicate and object position alike. A blanket, vocabulary-agnostic rewrite for standardizing a namespace across a dataset’s own quads – for example when mapping instance data to an application profile.
 
 ```typescript
-import { schemaOrgNormalizationPlugin, provenancePlugin } from ‘@lde/pipeline’;
+import { namespaceNormalizationPlugin } from '@lde/pipeline';
+
+new Pipeline({
+  // ...
+  plugins: [
+    namespaceNormalizationPlugin({
+      from: 'http://example.org/',
+      to: 'https://example.org/',
+    }),
+  ],
+});
+```
+
+#### `schemaOrgNormalizationPlugin(options?)`
+
+Convenience wrapper around `namespaceNormalizationPlugin` for the common case: rewrites `http://schema.org/` to `https://schema.org/` (pass `{ reverse: true }` for the opposite direction).
+
+```typescript
+import { schemaOrgNormalizationPlugin, provenancePlugin } from '@lde/pipeline';
 
 new Pipeline({
   // ...
   plugins: [schemaOrgNormalizationPlugin(), provenancePlugin()],
 });
-
-// Or reverse: normalize https to http
-new Pipeline({
-  // ...
-  plugins: [schemaOrgNormalizationPlugin({reverse: true})],
-});
 ```
+
+This is a plain rewrite and knows nothing about VoID. If your pipeline emits VoID partitions and a dataset mixes both schema.org namespaces, rewriting the `void:class` objects alone still leaves two `void:classPartition` nodes for one class – use [`schemaOrgPartitionMergePlugin`](../pipeline-void) from `@lde/pipeline-void`, which also merges those nodes.
 
 ## Usage
 

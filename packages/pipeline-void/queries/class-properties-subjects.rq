@@ -21,7 +21,7 @@ WHERE {
         }
         GROUP BY ?class ?p
     }
-    BIND(URI(CONCAT(STR(?dataset), "/.well-known/void#class-", MD5(STR(?class)))) AS ?classPartition)
-    BIND(URI(CONCAT(STR(?dataset), "/.well-known/void#class-property-", MD5(CONCAT(STR(?class), STR(?p))))) AS ?propertyPartition)
+    BIND(#mint:class# AS ?classPartition)
+    BIND(#mint:class-property# AS ?propertyPartition)
 }
 LIMIT 100000

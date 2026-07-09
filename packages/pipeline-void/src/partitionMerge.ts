@@ -1,23 +1,27 @@
 import {
   canonicalizeIri,
+  type BeforeDatasetWriteContext,
   type NamespaceAlias,
+  type PipelinePlugin,
   type QuadTransform,
-  type ReaderContext,
 } from '@lde/pipeline';
 import type { Quad, Term } from '@rdfjs/types';
 import { DataFactory } from 'n3';
-import { createHash } from 'node:crypto';
+import { mintPartitionIri } from './partitionIri.js';
 
 const { namedNode, literal, quad } = DataFactory;
 
 const VOID = 'http://rdfs.org/ns/void#';
 const VOID_EXT = 'http://ldf.fi/void-ext#';
 const XSD_INTEGER = 'http://www.w3.org/2001/XMLSchema#integer';
+const SCHEMA_HTTP = 'http://schema.org/';
+const SCHEMA_HTTPS = 'https://schema.org/';
 
 const VOID_CLASS = `${VOID}class`;
 const VOID_PROPERTY = `${VOID}property`;
 const VOID_ENTITIES = `${VOID}entities`;
 const VOID_TRIPLES = `${VOID}triples`;
+const VOID_DISTINCT_OBJECTS = `${VOID}distinctObjects`;
 const VOID_CLASS_PARTITION = `${VOID}classPartition`;
 const VOID_PROPERTY_PARTITION = `${VOID}propertyPartition`;
 const VOIDEXT_DATATYPE = `${VOID_EXT}datatype`;
@@ -26,11 +30,19 @@ const VOIDEXT_DATATYPE_PARTITION = `${VOID_EXT}datatypePartition`;
 const VOIDEXT_OBJECTCLASS_PARTITION = `${VOID_EXT}objectClassPartition`;
 const VOIDEXT_LANGUAGE_PARTITION = `${VOID_EXT}languagePartition`;
 
-// Predicates whose integer-literal objects are summed across merged partitions.
-// `void:distinctObjects` is deliberately excluded: distinct-object sets overlap
-// across namespace variants, so summing would over-count. It is normalized at
-// query time in `class-properties-objects.rq` and never reaches this transform.
-const NUMERIC_MEASURES = new Set([VOID_ENTITIES, VOID_TRIPLES]);
+/**
+ * Integer-literal measures summed when partitions collapse.
+ * `void:distinctObjects` is included: a dataset that uses a single schema.org
+ * namespace has one variant per class, so there is nothing to combine and the
+ * count is unchanged; only a dataset that mixes both namespaces on the same
+ * property (rare) sums two distinct-object counts — an over-count we accept
+ * rather than optimize for.
+ */
+const NUMERIC_MEASURES = new Set([
+  VOID_ENTITIES,
+  VOID_TRIPLES,
+  VOID_DISTINCT_OBJECTS,
+]);
 
 /** Structural links whose object is a child partition node. */
 const CHILD_LINKS = new Set([
@@ -41,67 +53,119 @@ const CHILD_LINKS = new Set([
   VOIDEXT_LANGUAGE_PARTITION,
 ]);
 
+/**
+ * Every predicate that describes a partition. A quad with one of these
+ * predicates is buffered for merging; every other quad streams through
+ * untouched, so the transform's memory is bounded by the VoID summary, not the
+ * dataset.
+ */
+const PARTITION_VOCABULARY = new Set([
+  VOID_CLASS,
+  VOID_PROPERTY,
+  VOIDEXT_DATATYPE,
+  VOIDEXT_LANGUAGE,
+  // Derived, not re-listed: a measure added to NUMERIC_MEASURES must also be
+  // buffered here, or it would stream through un-summed.
+  ...NUMERIC_MEASURES,
+  ...CHILD_LINKS,
+]);
+
 /** `void:class` / `void:property` objects are IRIs subject to canonicalization. */
 const CANONICALIZED_OBJECT_PREDICATES = new Set([VOID_CLASS, VOID_PROPERTY]);
 
 /**
- * A {@link QuadTransform} that merges the `void:classPartition` /
- * `void:propertyPartition` subtrees of namespace-alias variants (e.g.
- * `http://schema.org/CreativeWork` and `https://schema.org/CreativeWork`) into
- * a single partition per canonical class/property.
+ * A {@link QuadTransform} for the {@link PipelinePlugin.beforeDatasetWrite} hook
+ * that merges the `void:classPartition` / `void:propertyPartition` subtrees of
+ * namespace-alias variants (e.g. `http://schema.org/CreativeWork` and
+ * `https://schema.org/CreativeWork`) into one partition per canonical
+ * class/property.
  *
  * VoID partitions are keyed by an opaque `MD5(class[, property[, …]])` IRI, so
- * two namespace variants yield two partition nodes that both, after
- * canonicalization, describe the same class. This transform re-mints every
- * partition IRI from its **canonical** key components (replicating the queries’
- * SPARQL `MD5(CONCAT(STR(…)))`), collapses the duplicates, and **sums** their
- * numeric measures (`void:entities`, `void:triples`).
+ * two namespace variants produce two partition nodes that, once the class IRI is
+ * canonicalized, describe the same class. Seeing a whole dataset's output at
+ * once, this transform re-mints every partition IRI from its **canonical** key
+ * components via {@link mintPartitionIri} — the single source of truth the
+ * queries' SPARQL minting is also generated from — collapses the duplicates,
+ * and sums their numeric measures.
  *
- * ## Correctness assumptions
+ * It streams: only partition quads are buffered (bounded by the summary — a
+ * handful of classes × properties, not the dataset), and every other quad
+ * passes straight through.
  *
- * Summing pre-aggregated counts is exact only under these assumptions; the
- * queries whose measures cannot be safely summed keep their normalization at
- * query time instead (notably `class-properties-objects.rq`’s
- * `void:distinctObjects`, which this transform never sees):
- *
- * - **Subject/class disjointness** — no resource is typed under two namespace
- *   variants of the same class. Guards the `void:entities` sum on class
- *   partitions and every `void:triples` sum (a doubly-typed resource’s triples
- *   would otherwise count under both variants).
- * - **Predicate-namespace disjointness** — no subject uses two namespace
- *   variants of the same property (e.g. both `http://schema.org/name` and
- *   `https://schema.org/name`). Guards the `void:entities` sum on property
- *   partitions.
+ * Datasets typically use a single schema.org namespace, so within one dataset
+ * there is one variant per class and the transform merely renames and re-keys —
+ * `void:distinctObjects` and every count stay exact. A dataset that genuinely
+ * mixes both namespaces on the same property collapses the variants by summing,
+ * which over-counts shared distinct objects; this is not optimized for.
  *
  * With no aliases configured the transform is a no-op.
- *
- * @see substituteNormalizationMarkers for the query-time normalization used
- *   where summing is not safe.
  */
 export function mergeNamespaceVariants(
   namespaceAliases: readonly NamespaceAlias[],
-): QuadTransform<ReaderContext> {
+): QuadTransform<BeforeDatasetWriteContext> {
   if (namespaceAliases.length === 0) {
     return (quads) => quads;
   }
   return async function* (quads, { dataset }) {
     const datasetIri = dataset.iri.toString();
-    const buffered: Quad[] = [];
+    const partitionQuads: Quad[] = [];
     for await (const q of quads) {
-      buffered.push(q);
+      if (PARTITION_VOCABULARY.has(q.predicate.value)) {
+        partitionQuads.push(q);
+      } else {
+        yield q;
+      }
     }
-    yield* mergeBuffered(buffered, datasetIri, namespaceAliases);
+    yield* mergeBuffered(partitionQuads, datasetIri, namespaceAliases);
   };
 }
 
-/** One node’s describing quads, indexed for component lookup. */
+/**
+ * A {@link PipelinePlugin} that canonicalizes schema.org namespace variants in
+ * the VoID output — rewriting `http://schema.org/` to `https://schema.org/` —
+ * _and_ merges the duplicate partition nodes the two variants produced. Runs on
+ * the whole dataset's output via {@link PipelinePlugin.beforeDatasetWrite}, so
+ * the analysis queries stay unaware of namespace aliases.
+ *
+ * This does more than a plain namespace rewrite: rewriting the `void:class`
+ * objects alone would leave two `void:classPartition` nodes for the same class.
+ * For a non-VoID, blanket namespace rewrite (e.g. mapping instance data to an
+ * application profile), use `schemaOrgNormalizationPlugin` from `@lde/pipeline`.
+ */
+export function schemaOrgPartitionMergePlugin(): PipelinePlugin {
+  return namespacePartitionMergePlugin([
+    { canonical: SCHEMA_HTTPS, alias: SCHEMA_HTTP },
+  ]);
+}
+
+/**
+ * A {@link PipelinePlugin} that canonicalizes the given namespace aliases in the
+ * VoID output and merges the duplicate partition nodes their variants produced.
+ * Generic form of {@link schemaOrgPartitionMergePlugin}.
+ *
+ * Required stages: re-keying a datatype/language/object-class partition walks up
+ * its `cp → pp → dp` chain, reading `void:class` and `void:property` that
+ * `classPartitions` and `classPropertySubjects` emit. Use this plugin with a
+ * stage set that includes both (as {@link voidStages} does); without them a
+ * void-ext partition cannot be re-keyed and its alias variants ship unmerged.
+ */
+export function namespacePartitionMergePlugin(
+  namespaceAliases: readonly NamespaceAlias[],
+): PipelinePlugin {
+  return {
+    name: 'void-namespace-partition-merge',
+    beforeDatasetWrite: mergeNamespaceVariants(namespaceAliases),
+  };
+}
+
+/** One node's describing quads, indexed for component lookup. */
 interface NodeIndex {
   /** For a partition node: the structural predicate linking its parent to it. */
   incomingLink?: { predicate: string; parent: string };
   values: Map<string, Term>;
 }
 
-/** A running sum of one numeric measure, keyed by (subject, predicate). */
+/** A running sum of one numeric measure, keyed by (subject, predicate, graph). */
 interface MeasureSum {
   subject: Quad['subject'];
   predicate: Quad['predicate'];
@@ -120,15 +184,22 @@ function* mergeBuffered(
 
   const measureSums = new Map<string, MeasureSum>();
   const emitted = new Set<string>();
-  const structural: Quad[] = [];
 
   for (const original of buffered) {
     const subject = remapTerm(original.subject, remap);
-    const object = canonicalizeObject(
-      remapTerm(original.object, remap),
-      original.predicate.value,
-      namespaceAliases,
-    );
+    let object = remapTerm(original.object, remap);
+    // Canonicalize a void:class/void:property object only when its own
+    // partition node is being re-keyed. The top-level property partitions from
+    // entity-properties.rq are never merged (their parent is the dataset, not a
+    // class), so they keep the source namespace — consumers can still see which
+    // namespace the dataset actually uses (see ADR 7).
+    if (remap.has(original.subject.value)) {
+      object = canonicalizeObject(
+        object,
+        original.predicate.value,
+        namespaceAliases,
+      );
+    }
     const rewritten = quad(subject, original.predicate, object, original.graph);
 
     if (NUMERIC_MEASURES.has(original.predicate.value)) {
@@ -139,11 +210,10 @@ function* mergeBuffered(
     const key = quadKey(rewritten);
     if (!emitted.has(key)) {
       emitted.add(key);
-      structural.push(rewritten);
+      yield rewritten;
     }
   }
 
-  yield* structural;
   for (const sum of measureSums.values()) {
     yield reconstructMeasure(sum);
   }
@@ -202,7 +272,7 @@ function buildRemap(
 
 /**
  * The canonical partition IRI for a node, or `undefined` if the node is not a
- * partition (no incoming structural link). Replicates the queries’ minting:
+ * partition (no incoming structural link). Replicates the queries' minting:
  * `<dataset>/.well-known/void#<prefix>-<MD5(STR(component)…)>`.
  */
 function canonicalPartitionIri(
@@ -220,20 +290,25 @@ function canonicalPartitionIri(
   switch (link.predicate) {
     case VOID_CLASS_PARTITION: {
       const klass = node.values.get(VOID_CLASS)?.value;
-      return klass ? mint(datasetIri, 'class', [canon(klass)]) : undefined;
+      return klass
+        ? mintPartitionIri(datasetIri, 'class', [canon(klass)])
+        : undefined;
     }
     case VOID_PROPERTY_PARTITION: {
       const klass = classOf(link.parent);
       const property = node.values.get(VOID_PROPERTY)?.value;
       return klass && property
-        ? mint(datasetIri, 'class-property', [canon(klass), canon(property)])
+        ? mintPartitionIri(datasetIri, 'class-property', [
+            canon(klass),
+            canon(property),
+          ])
         : undefined;
     }
     case VOIDEXT_DATATYPE_PARTITION: {
       const [klass, property] = classProperty(link.parent, nodes);
       const datatype = node.values.get(VOIDEXT_DATATYPE)?.value;
       return klass && property && datatype
-        ? mint(datasetIri, 'datatype', [
+        ? mintPartitionIri(datasetIri, 'datatype', [
             canon(klass),
             canon(property),
             datatype,
@@ -244,7 +319,7 @@ function canonicalPartitionIri(
       const [klass, property] = classProperty(link.parent, nodes);
       const objectClass = node.values.get(VOID_CLASS)?.value;
       return klass && property && objectClass
-        ? mint(datasetIri, 'object-class', [
+        ? mintPartitionIri(datasetIri, 'object-class', [
             canon(klass),
             canon(property),
             canon(objectClass),
@@ -255,7 +330,7 @@ function canonicalPartitionIri(
       const [klass, property] = classProperty(link.parent, nodes);
       const language = node.values.get(VOIDEXT_LANGUAGE)?.value;
       return klass && property && language !== undefined
-        ? mint(datasetIri, 'language', [
+        ? mintPartitionIri(datasetIri, 'language', [
             canon(klass),
             canon(property),
             language,
@@ -279,15 +354,6 @@ function classProperty(
     ? nodes.get(classPartition)?.values.get(VOID_CLASS)?.value
     : undefined;
   return [klass, property];
-}
-
-function mint(
-  datasetIri: string,
-  prefix: string,
-  components: string[],
-): string {
-  const hash = createHash('md5').update(components.join('')).digest('hex');
-  return `${datasetIri}/.well-known/void#${prefix}-${hash}`;
 }
 
 function remapTerm<T extends Term>(term: T, remap: Map<string, string>): T {

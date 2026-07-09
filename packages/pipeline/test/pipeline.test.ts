@@ -2868,3 +2868,283 @@ describe('Pipeline', () => {
     });
   });
 });
+
+describe('beforeDatasetWrite hook', () => {
+  const { namedNode, quad } = DataFactory;
+  const q1 = quad(
+    namedNode('http://example.org/s1'),
+    namedNode('http://example.org/p'),
+    namedNode('http://example.org/o1'),
+  );
+  const q2 = quad(
+    namedNode('http://example.org/s2'),
+    namedNode('http://example.org/p'),
+    namedNode('http://example.org/o2'),
+  );
+  const marker = quad(
+    namedNode('http://example.org/dataset'),
+    namedNode('http://example.org/merged'),
+    namedNode('http://example.org/true'),
+  );
+
+  /** A run writer that drains and records every quad written per dataset. */
+  function collectingWriter(): Writer & { written: Quad[] } {
+    const written: Quad[] = [];
+    const runWriter: RunWriter = {
+      async write(_dataset, items) {
+        for await (const item of items) written.push(item);
+      },
+      flush: vi.fn().mockResolvedValue(undefined),
+      reset: vi.fn().mockResolvedValue(undefined),
+      commit: vi.fn().mockResolvedValue(undefined),
+      abort: vi.fn().mockResolvedValue(undefined),
+    };
+    return { written, openRun: async () => runWriter };
+  }
+
+  /** A stage that writes the given quads through the writer it is handed. */
+  function writingStage(name: string, quads: Quad[]): Stage {
+    const stage = new Stage({ name, readers: [] });
+    vi.spyOn(stage, 'run').mockImplementation(
+      async (dataset, _distribution, writer) => {
+        await writer.write(
+          dataset,
+          (async function* () {
+            yield* quads;
+          })(),
+        );
+      },
+    );
+    return stage;
+  }
+
+  it("runs once over every stage's output for a dataset", async () => {
+    const appendMarker: PipelinePlugin = {
+      name: 'append-marker',
+      async *beforeDatasetWrite(quads) {
+        let count = 0;
+        for await (const q of quads) {
+          count++;
+          yield q;
+        }
+        // The marker proves the transform saw both stages' quads as one stream.
+        if (count === 2) yield marker;
+      },
+    };
+    const writer = collectingWriter();
+    const pipeline = new Pipeline({
+      datasetSelector: makeDatasetSelector(makeDataset()),
+      stages: [writingStage('s1', [q1]), writingStage('s2', [q2])],
+      writers: writer,
+      distributionResolver: makeResolver(makeResolvedDistribution()),
+      plugins: [appendMarker],
+    });
+
+    await pipeline.run();
+
+    expect(writer.written).toEqual([q1, q2, marker]);
+  });
+
+  it('is absent when no plugin declares it (quads pass through unchanged)', async () => {
+    const writer = collectingWriter();
+    const pipeline = new Pipeline({
+      datasetSelector: makeDatasetSelector(makeDataset()),
+      stages: [writingStage('s1', [q1, q2])],
+      writers: writer,
+      distributionResolver: makeResolver(makeResolvedDistribution()),
+    });
+
+    await pipeline.run();
+
+    expect(writer.written).toEqual([q1, q2]);
+  });
+
+  it('discards the in-flight dataset on reset, keeping only the re-run output', async () => {
+    const endpoint = Distribution.sparql(
+      new URL('http://endpoint.example.org/sparql'),
+    );
+    const dump = Distribution.sparql(
+      new URL('http://localhost/imported/sparql'),
+    );
+    const resolver: DistributionResolver = {
+      probe: vi.fn(
+        async (ds: Dataset) => new ProbedDistributions(ds, [], null),
+      ),
+      resolve: vi.fn(async () => new ResolvedDistribution(endpoint, [])),
+      resolveFallback: vi.fn(
+        async () =>
+          new ResolvedDistribution(
+            dump,
+            [],
+            new Distribution(
+              new URL('http://example.org/dump.ttl'),
+              'application/n-triples',
+            ),
+          ),
+      ),
+    };
+    // Writes q1 on the endpoint then hard-fails; writes q2 on the dump re-run.
+    const stage = new Stage({ name: 's', readers: [] });
+    vi.spyOn(stage, 'run').mockImplementation(
+      async (dataset, distribution, writer) => {
+        if (distribution === endpoint) {
+          await writer.write(
+            dataset,
+            (async function* () {
+              yield q1;
+            })(),
+          );
+          throw new Error('endpoint died');
+        }
+        await writer.write(
+          dataset,
+          (async function* () {
+            yield q2;
+          })(),
+        );
+      },
+    );
+    const written: Quad[] = [];
+    const runWriter: RunWriter = {
+      async write(_d, items) {
+        for await (const item of items) written.push(item);
+      },
+      flush: vi.fn().mockResolvedValue(undefined),
+      reset: vi.fn(async () => {
+        written.length = 0;
+      }),
+      commit: vi.fn().mockResolvedValue(undefined),
+      abort: vi.fn().mockResolvedValue(undefined),
+    };
+    const passThrough: PipelinePlugin = {
+      name: 'pass-through',
+      async *beforeDatasetWrite(quads) {
+        yield* quads;
+      },
+    };
+    const pipeline = new Pipeline({
+      datasetSelector: makeDatasetSelector(makeDataset()),
+      stages: [stage],
+      writers: { openRun: async () => runWriter },
+      distributionResolver: resolver,
+      plugins: [passThrough],
+    });
+
+    await pipeline.run();
+
+    expect(runWriter.reset).toHaveBeenCalledTimes(1);
+    expect(written).toEqual([q2]);
+  });
+
+  it('delegates run abort to the inner writer', async () => {
+    const abort = vi.fn().mockResolvedValue(undefined);
+    const commitError = new Error('commit failed');
+    const runWriter: RunWriter = {
+      async write(_d, items) {
+        for await (const _ of items) {
+          /* drain */
+        }
+      },
+      flush: vi.fn().mockResolvedValue(undefined),
+      reset: vi.fn().mockResolvedValue(undefined),
+      commit: vi.fn().mockRejectedValue(commitError),
+      abort,
+    };
+    const passThrough: PipelinePlugin = {
+      name: 'pass-through',
+      async *beforeDatasetWrite(quads) {
+        yield* quads;
+      },
+    };
+    const pipeline = new Pipeline({
+      datasetSelector: makeDatasetSelector(makeDataset()),
+      stages: [writingStage('s', [q1])],
+      writers: { openRun: async () => runWriter },
+      distributionResolver: makeResolver(makeResolvedDistribution()),
+      plugins: [passThrough],
+    });
+
+    await expect(pipeline.run()).rejects.toThrow('commit failed');
+    expect(abort).toHaveBeenCalledWith(commitError);
+  });
+
+  it('surfaces an inner-write failure instead of hanging when the queue fills', async () => {
+    // 200 quads > the AsyncQueue capacity (128): if the inner write fails and
+    // its rejection is not linked back to the queue, the producer's push()
+    // blocks forever. The transform must abort the queue so this settles.
+    const many = Array.from({ length: 200 }, (_unused, index) =>
+      quad(
+        namedNode(`http://example.org/s${index}`),
+        namedNode('http://example.org/p'),
+        namedNode('http://example.org/o'),
+      ),
+    );
+    const runWriter: RunWriter = {
+      write: vi.fn().mockRejectedValue(new Error('destination down')),
+      flush: vi.fn().mockResolvedValue(undefined),
+      reset: vi.fn().mockResolvedValue(undefined),
+      commit: vi.fn().mockResolvedValue(undefined),
+      abort: vi.fn().mockResolvedValue(undefined),
+    };
+    const passThrough: PipelinePlugin = {
+      name: 'pass-through',
+      async *beforeDatasetWrite(quads) {
+        yield* quads;
+      },
+    };
+    const pipeline = new Pipeline({
+      datasetSelector: makeDatasetSelector(makeDataset()),
+      stages: [writingStage('s', many)],
+      writers: { openRun: async () => runWriter },
+      distributionResolver: makeResolver(makeResolvedDistribution()),
+      plugins: [passThrough],
+    });
+
+    // Settles (no hang) and the failure is isolated to the dataset: the run
+    // still commits rather than aborting.
+    await pipeline.run();
+    expect(runWriter.commit).toHaveBeenCalledOnce();
+    expect(runWriter.abort).not.toHaveBeenCalled();
+  }, 10_000);
+
+  it('isolates a per-dataset writer failure so the run continues', async () => {
+    const bad = makeDataset('http://example.org/bad');
+    const good = makeDataset('http://example.org/good');
+    const written: Quad[] = [];
+    const runWriter: RunWriter = {
+      async write(ds, items) {
+        if (ds.iri.toString() === bad.iri.toString()) {
+          // Drain then fail, as a real writer would when its destination rejects.
+          for await (const _item of items) void _item;
+          throw new Error('destination down');
+        }
+        for await (const item of items) written.push(item);
+      },
+      flush: vi.fn().mockResolvedValue(undefined),
+      reset: vi.fn().mockResolvedValue(undefined),
+      commit: vi.fn().mockResolvedValue(undefined),
+      abort: vi.fn().mockResolvedValue(undefined),
+    };
+    const passThrough: PipelinePlugin = {
+      name: 'pass-through',
+      async *beforeDatasetWrite(quads) {
+        yield* quads;
+      },
+    };
+    const pipeline = new Pipeline({
+      datasetSelector: makeDatasetSelector(bad, good),
+      stages: [writingStage('s', [q1])],
+      writers: { openRun: async () => runWriter },
+      distributionResolver: makeResolver(makeResolvedDistribution()),
+      plugins: [passThrough],
+    });
+
+    await pipeline.run();
+
+    // The good dataset still produced output and the run committed; the bad
+    // dataset's failure did not abort the run.
+    expect(written).toEqual([q1]);
+    expect(runWriter.commit).toHaveBeenCalledOnce();
+    expect(runWriter.abort).not.toHaveBeenCalled();
+  });
+});

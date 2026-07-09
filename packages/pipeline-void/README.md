@@ -10,15 +10,14 @@ Returns all VoID stages in their recommended execution order. The ordering is op
 
 Accepts an optional `VoidStagesOptions` object:
 
-| Option             | Default | Description                                                                                                     |
-| ------------------ | ------- | --------------------------------------------------------------------------------------------------------------- |
-| `batchSize`        | 10      | Maximum class bindings per reader call (per-class stages only)                                                  |
-| `maxConcurrency`   | 10      | Maximum concurrent in-flight reader batches (per-class stages only)                                             |
-| `perClass`         | —       | Override per-class iteration for all five per-class stages                                                      |
-| `uriSpaces`        | —       | When provided, includes the object URI space stage                                                              |
-| `vocabularies`     | —       | Additional vocabulary namespace URIs to detect beyond the built-in defaults                                     |
-| `transforms`       | —       | Transforms to attach to bundled stages, keyed by `VOID_STAGE_NAMES` (see [Stage transforms](#stage-transforms)) |
-| `namespaceAliases` | —       | Namespace pairs to treat as equivalent when partitioning (see [Namespace aliases](#namespace-aliases))          |
+| Option           | Default | Description                                                                                                     |
+| ---------------- | ------- | --------------------------------------------------------------------------------------------------------------- |
+| `batchSize`      | 10      | Maximum class bindings per reader call (per-class stages only)                                                  |
+| `maxConcurrency` | 10      | Maximum concurrent in-flight reader batches (per-class stages only)                                             |
+| `perClass`       | —       | Override per-class iteration for all five per-class stages                                                      |
+| `uriSpaces`      | —       | When provided, includes the object URI space stage                                                              |
+| `vocabularies`   | —       | Additional vocabulary namespace URIs to detect beyond the built-in defaults                                     |
+| `transforms`     | —       | Transforms to attach to bundled stages, keyed by `VOID_STAGE_NAMES` (see [Stage transforms](#stage-transforms)) |
 
 Per-request timeouts are configured at the `Pipeline` level via `PipelineOptions.timeout`, not per VoID stage.
 
@@ -73,28 +72,26 @@ Global and domain-specific factories accept `VoidStageOptions` (`transform`) and
 | `detectVocabularies()`   | [`entity-properties.rq`](queries/entity-properties.rq) — Entity properties with automatic `void:vocabulary` detection. Accepts `DetectVocabulariesOptions` with an optional `vocabularies` array to extend the built-in defaults. |
 | `uriSpaces(uriSpaceMap)` | [`object-uri-space.rq`](queries/object-uri-space.rq) — Object URI namespace linksets, aggregated against a provided URI space map                                                                                                 |
 
-## Namespace aliases
+## Namespace normalization
 
-Some vocabularies publish under both HTTP and HTTPS variants of the same namespace (notably schema.org), and datasets mix them. Without normalization, each variant gets its own `void:classPartition`/`void:propertyPartition`, so consumers see two partitions for what is semantically one class.
+Some vocabularies publish under both `http://` and `https://` variants of the same namespace (notably schema.org), and datasets mix them. Without normalization each variant gets its own `void:classPartition`/`void:propertyPartition`, so consumers see two partitions for one class — which crashed the Dataset Register browser (netwerk-digitaal-erfgoed/dataset-knowledge-graph#334).
 
-Pass `namespaceAliases` to merge the variants into one partition per canonical class/property:
+`schemaOrgPartitionMergePlugin` normalizes `http://schema.org/` to `https://schema.org/` **and** merges the duplicate partition nodes the two variants produced. It is a [`beforeDatasetWrite`](../pipeline) plugin — it runs once over a whole dataset’s output at the pipeline edge, so the analysis queries stay unaware of namespace aliases (see [ADR 7](../../docs/decisions/0007-namespace-merge-as-a-dataset-plugin.md)):
 
 ```typescript
-const stages = await voidStages({
-  namespaceAliases: [
-    { canonical: 'https://schema.org/', alias: 'http://schema.org/' },
-  ],
-});
+import { voidStages, schemaOrgPartitionMergePlugin } from '@lde/pipeline-void';
+import { Pipeline, provenancePlugin } from '@lde/pipeline';
+
+await new Pipeline({
+  stages: await voidStages(), // plain, no namespace options
+  plugins: [schemaOrgPartitionMergePlugin(), provenancePlugin()],
+  // …
+}).run();
 ```
 
-Merging happens **after** aggregation, in a single partition-merge transform (`mergeNamespaceVariants`) attached to the class and property partition stages: it re-mints each partition IRI from its canonical key components, collapses the duplicates, and sums `void:entities` / `void:triples`. The analysis queries stay plain — except `class-properties-objects.rq`, which normalizes at query time because its `void:distinctObjects` is a distinct-count over object values that overlap across variants and so cannot be recovered by summing. See [ADR 7](../../docs/decisions/0007-merge-namespace-alias-partitions.md).
+Use `namespacePartitionMergePlugin(aliases)` for namespaces other than schema.org. The transform streams — it buffers only partition quads (bounded by the summary), passing everything else straight through. Datasets typically use a single schema.org namespace, so within one dataset there is one variant per class and every count stays exact; a dataset that mixes both namespaces on one property has its `void:distinctObjects` summed (an over-count for shared objects) rather than deduped.
 
-Summing pre-aggregated counts is exact only under two assumptions, both of which hold for the schema.org datasets that motivate this (the variants appear as disjoint subsets):
-
-- **Subject/class disjointness** — no resource is typed under both namespace variants of a class (guards the class-partition and triple-count sums).
-- **Predicate-namespace disjointness** — no subject uses both variants of the same property (guards the property-partition entity sum).
-
-A resource typed under both variants over-counts its class entities. With no aliases configured the transform is a no-op. The top-level property partitions from `entity-properties.rq` and `void:vocabulary` detection keep the source namespaces, so consumers can still see which namespace the dataset actually uses.
+> This plugin does more than rename IRIs: rewriting the `void:class` objects alone would still leave two `void:classPartition` nodes for one class. If you only need a blanket namespace rewrite over a dataset’s own quads (not a VoID partition merge) — for example when mapping instance data to an application profile — use the generic [`schemaOrgNormalizationPlugin` / `namespaceNormalizationPlugin`](../pipeline) from `@lde/pipeline` instead.
 
 ## Stage transforms
 
