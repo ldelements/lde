@@ -1,13 +1,11 @@
-# 8. Normalize namespace variants in a per-dataset plugin
+# 7. Normalize namespace variants in a per-dataset plugin
 
 Date: 2026-07-08
 
 ## Status
 
-Proposed
+Accepted
 
-Supersedes the mechanism (not the goal) of
-[ADR 7 (Merge namespace-alias VoID partitions after aggregation)](./0007-merge-namespace-alias-partitions.md).
 Extends the plugin model of
 [ADR 2 (Unify pipeline extension on quad transforms)](./0002-unify-pipeline-extension-on-quad-transforms.md)
 and the writer run model of
@@ -15,17 +13,22 @@ and the writer run model of
 
 ## Context
 
-ADR 7 merged `http`/`https` schema.org VoID partitions, but did it _inside_
-the VoID core: a per-stage transform plus a class selector that
-canonicalized and co-located namespace variants per batch, plus query-level
-markers and self-describing `void-ext` chains. That threaded namespace-alias
-awareness through the analysis queries and the stage machinery — the core was
-no longer agnostic to a consumer-specific concern.
+A dataset that describes the same class under both `http://schema.org/` and
+`https://schema.org/` yields two VoID `void:classPartition` nodes for what is
+conceptually one class, double-counting it in every roll-up. We want a single,
+canonical partition per class.
+
+A first iteration solved this _inside_ the VoID core: a per-stage transform
+plus a class selector that canonicalized and co-located the namespace variants
+per batch, backed by query-level markers and self-describing `void-ext` chains.
+That worked, but it threaded namespace-alias awareness through the analysis
+queries and the stage machinery — the core was no longer agnostic to a
+consumer-specific concern.
 
 Two facts reframe the problem:
 
 - Merging per-class partitions needs the `http`/`https` variants of a class
-  seen _together_. Per-stage (`beforeStageWrite`) that only holds within one
+  seen _together_. A per-stage hook (`beforeStageWrite`) only holds within one
   batch, which is what forced the selector co-location into the core.
 - Datasets typically use a single schema.org namespace, so within one dataset
   there is one variant per class. The cross-variant merge — and the machinery
@@ -34,7 +37,7 @@ Two facts reframe the problem:
 ## Decision
 
 Add a generic **`beforeDatasetWrite`** plugin hook to `@lde/pipeline` and move
-namespace normalization into a plugin that uses it; revert the VoID core to
+namespace normalization into a plugin that uses it; keep the VoID core on
 plain, alias-free queries.
 
 - **`beforeDatasetWrite`** is a `QuadTransform` that runs once over a whole
@@ -50,10 +53,17 @@ plain, alias-free queries.
   A whole-dataset view resolves each partition's `cp → pp → dp` chain from the
   other stages' output, so the queries need no self-describe chains and no
   markers.
-- The six analysis queries revert to plain SPARQL; the selector, query
-  markers and `void-ext` self-describe chains added in ADR 7 are removed. The
-  superseded object-only `schemaOrgNormalizationPlugin`/`namespaceNormalizationPlugin`
-  in `@lde/pipeline` are removed.
+- The six analysis queries are plain SPARQL; no selector, query markers or
+  `void-ext` self-describe chains are needed in the core.
+- Namespace rewriting splits by generality. `@lde/pipeline` keeps a generic,
+  vocabulary-agnostic `namespaceNormalizationPlugin` (and its
+  `schemaOrgNormalizationPlugin` wrapper) — a `beforeStageWrite` transform that
+  rewrites a namespace's IRIs wherever they appear, for consumers that just need
+  to standardize a namespace (e.g. mapping instance data to an application
+  profile). `@lde/pipeline-void` owns the VoID-specific piece,
+  `schemaOrgPartitionMergePlugin`, which additionally re-keys and merges the
+  partition nodes — the part that needs VoID structure and the shared
+  partition-IRI minting.
 
 ### Assumptions
 
@@ -65,7 +75,7 @@ over-counts shared objects. This is documented and not optimized for.
 
 ## Consequences
 
-- The VoID core is agnostic to namespace aliases again — normalization is one
+- The VoID core is agnostic to namespace aliases — normalization is one
   opt-in plugin at the pipeline edge, which is where it belongs.
 - `@lde/pipeline` gains a reusable per-dataset extension point.
 - Memory stays bounded by the summary: the merge buffers only partition quads;

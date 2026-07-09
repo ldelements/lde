@@ -1,6 +1,6 @@
 import {
   mergeNamespaceVariants,
-  schemaOrgNormalizationPlugin,
+  schemaOrgPartitionMergePlugin,
 } from '../src/index.js';
 import type { NamespaceAlias } from '../src/index.js';
 import { Dataset, Distribution } from '@lde/dataset';
@@ -328,10 +328,10 @@ describe('mergeNamespaceVariants', () => {
   });
 });
 
-describe('schemaOrgNormalizationPlugin', () => {
+describe('schemaOrgPartitionMergePlugin', () => {
   it('exposes the merge as a beforeDatasetWrite hook, not per-stage', () => {
-    const plugin = schemaOrgNormalizationPlugin();
-    expect(plugin.name).toBe('void-namespace-normalization');
+    const plugin = schemaOrgPartitionMergePlugin();
+    expect(plugin.name).toBe('void-namespace-partition-merge');
     expect(plugin.beforeDatasetWrite).toBeTypeOf('function');
     expect(plugin.beforeStageWrite).toBeUndefined();
   });
@@ -361,7 +361,7 @@ describe('schemaOrgNormalizationPlugin', () => {
       ),
       quad(namedNode(cp(HTTPS_CW_HASH)), v('entities'), integer(511)),
     ];
-    const transform = schemaOrgNormalizationPlugin().beforeDatasetWrite!;
+    const transform = schemaOrgPartitionMergePlugin().beforeDatasetWrite!;
     const out: Quad[] = [];
     for await (const q of transform(
       (async function* () {

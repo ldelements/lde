@@ -76,20 +76,22 @@ Global and domain-specific factories accept `VoidStageOptions` (`transform`) and
 
 Some vocabularies publish under both `http://` and `https://` variants of the same namespace (notably schema.org), and datasets mix them. Without normalization each variant gets its own `void:classPartition`/`void:propertyPartition`, so consumers see two partitions for one class — which crashed the Dataset Register browser (netwerk-digitaal-erfgoed/dataset-knowledge-graph#334).
 
-`schemaOrgNormalizationPlugin` normalizes `http://schema.org/` to `https://schema.org/` and merges the partitions the two variants produced. It is a [`beforeDatasetWrite`](../pipeline) plugin — it runs once over a whole dataset’s output at the pipeline edge, so the analysis queries stay unaware of namespace aliases (see [ADR 8](../../docs/decisions/0008-namespace-merge-as-a-dataset-plugin.md)):
+`schemaOrgPartitionMergePlugin` normalizes `http://schema.org/` to `https://schema.org/` **and** merges the duplicate partition nodes the two variants produced. It is a [`beforeDatasetWrite`](../pipeline) plugin — it runs once over a whole dataset’s output at the pipeline edge, so the analysis queries stay unaware of namespace aliases (see [ADR 7](../../docs/decisions/0007-namespace-merge-as-a-dataset-plugin.md)):
 
 ```typescript
-import { voidStages, schemaOrgNormalizationPlugin } from '@lde/pipeline-void';
+import { voidStages, schemaOrgPartitionMergePlugin } from '@lde/pipeline-void';
 import { Pipeline, provenancePlugin } from '@lde/pipeline';
 
 await new Pipeline({
   stages: await voidStages(), // plain, no namespace options
-  plugins: [schemaOrgNormalizationPlugin(), provenancePlugin()],
+  plugins: [schemaOrgPartitionMergePlugin(), provenancePlugin()],
   // …
 }).run();
 ```
 
-Use `namespaceNormalizationPlugin(aliases)` for namespaces other than schema.org. The transform streams — it buffers only partition quads (bounded by the summary), passing everything else straight through. Datasets typically use a single schema.org namespace, so within one dataset there is one variant per class and every count stays exact; a dataset that mixes both namespaces on one property has its `void:distinctObjects` summed (an over-count for shared objects) rather than deduped.
+Use `namespacePartitionMergePlugin(aliases)` for namespaces other than schema.org. The transform streams — it buffers only partition quads (bounded by the summary), passing everything else straight through. Datasets typically use a single schema.org namespace, so within one dataset there is one variant per class and every count stays exact; a dataset that mixes both namespaces on one property has its `void:distinctObjects` summed (an over-count for shared objects) rather than deduped.
+
+> This plugin does more than rename IRIs: rewriting the `void:class` objects alone would still leave two `void:classPartition` nodes for one class. If you only need a blanket namespace rewrite over a dataset’s own quads (not a VoID partition merge) — for example when mapping instance data to an application profile — use the generic [`schemaOrgNormalizationPlugin` / `namespaceNormalizationPlugin`](../pipeline) from `@lde/pipeline` instead.
 
 ## Stage transforms
 

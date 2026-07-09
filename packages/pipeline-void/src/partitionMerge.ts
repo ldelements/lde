@@ -121,22 +121,27 @@ export function mergeNamespaceVariants(
 }
 
 /**
- * A {@link PipelinePlugin} that normalizes schema.org namespace variants in the
- * VoID output — canonicalizing `http://schema.org/` to `https://schema.org/` and
- * merging the partitions the two variants produced. Runs on the whole dataset's
- * output via {@link PipelinePlugin.beforeDatasetWrite}, so the analysis queries
- * stay unaware of namespace aliases.
+ * A {@link PipelinePlugin} that canonicalizes schema.org namespace variants in
+ * the VoID output — rewriting `http://schema.org/` to `https://schema.org/` —
+ * _and_ merges the duplicate partition nodes the two variants produced. Runs on
+ * the whole dataset's output via {@link PipelinePlugin.beforeDatasetWrite}, so
+ * the analysis queries stay unaware of namespace aliases.
+ *
+ * This does more than a plain namespace rewrite: rewriting the `void:class`
+ * objects alone would leave two `void:classPartition` nodes for the same class.
+ * For a non-VoID, blanket namespace rewrite (e.g. mapping instance data to an
+ * application profile), use `schemaOrgNormalizationPlugin` from `@lde/pipeline`.
  */
-export function schemaOrgNormalizationPlugin(): PipelinePlugin {
-  return namespaceNormalizationPlugin([
+export function schemaOrgPartitionMergePlugin(): PipelinePlugin {
+  return namespacePartitionMergePlugin([
     { canonical: SCHEMA_HTTPS, alias: SCHEMA_HTTP },
   ]);
 }
 
 /**
- * A {@link PipelinePlugin} that normalizes the given namespace aliases in the
- * VoID output and merges the partitions their variants produced. Generic form of
- * {@link schemaOrgNormalizationPlugin}.
+ * A {@link PipelinePlugin} that canonicalizes the given namespace aliases in the
+ * VoID output and merges the duplicate partition nodes their variants produced.
+ * Generic form of {@link schemaOrgPartitionMergePlugin}.
  *
  * Required stages: re-keying a datatype/language/object-class partition walks up
  * its `cp → pp → dp` chain, reading `void:class` and `void:property` that
@@ -144,11 +149,11 @@ export function schemaOrgNormalizationPlugin(): PipelinePlugin {
  * stage set that includes both (as {@link voidStages} does); without them a
  * void-ext partition cannot be re-keyed and its alias variants ship unmerged.
  */
-export function namespaceNormalizationPlugin(
+export function namespacePartitionMergePlugin(
   namespaceAliases: readonly NamespaceAlias[],
 ): PipelinePlugin {
   return {
-    name: 'void-namespace-normalization',
+    name: 'void-namespace-partition-merge',
     beforeDatasetWrite: mergeNamespaceVariants(namespaceAliases),
   };
 }
@@ -187,7 +192,7 @@ function* mergeBuffered(
     // partition node is being re-keyed. The top-level property partitions from
     // entity-properties.rq are never merged (their parent is the dataset, not a
     // class), so they keep the source namespace — consumers can still see which
-    // namespace the dataset actually uses (see ADR 8).
+    // namespace the dataset actually uses (see ADR 7).
     if (remap.has(original.subject.value)) {
       object = canonicalizeObject(
         object,

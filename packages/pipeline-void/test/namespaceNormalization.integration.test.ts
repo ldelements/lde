@@ -5,7 +5,7 @@ import {
   perClassDatatypes,
   perClassLanguages,
   perClassObjectClasses,
-  schemaOrgNormalizationPlugin,
+  schemaOrgPartitionMergePlugin,
   Stage,
 } from '../src/index.js';
 import { Dataset, Distribution } from '@lde/dataset';
@@ -74,7 +74,7 @@ async function analyzeAndNormalize(
   for (const stage of stages) {
     await stage.run(dataset, distribution, writer);
   }
-  const transform = schemaOrgNormalizationPlugin().beforeDatasetWrite!;
+  const transform = schemaOrgPartitionMergePlugin().beforeDatasetWrite!;
   const out: Quad[] = [];
   for await (const q of transform(
     (async function* () {
