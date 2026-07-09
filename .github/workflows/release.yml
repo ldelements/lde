@@ -45,7 +45,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.PAT }} # Needed for pushing release commits.
 
+      # Publishes via npm OIDC trusted publishing (see id-token: write above), which
+      # mints a short-lived credential per run — no long-lived npm token needed.
       - run: npx nx release publish --access public
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_CONFIG_PROVENANCE: true
