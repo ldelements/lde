@@ -1,3 +1,9 @@
+## 0.2.0 (2026-07-08)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.4.0
+
 ## 0.1.2 (2026-07-08)
 
 ### 🧱 Updated Dependencies
