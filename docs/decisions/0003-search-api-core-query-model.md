@@ -9,6 +9,11 @@ Accepted
 Aligned with the NDE [stack platform docs](https://docs.nde.nl/stack/layers/platform); the
 decisions below are reflected there.
 
+The reference label-resolution decision below is amended by
+[ADR 8](./0008-resolve-reference-labels-from-per-reference-label-sources.md): the global
+`labels` sidecar becomes a per-reference typed label-source collection. The
+resolve-don’t-inline choice itself is unchanged; only the collection it resolves against is.
+
 ## Context
 
 The Dataset Register is moving its browser search off direct Typesense queries onto a
@@ -337,9 +342,23 @@ not enabled for DR v1, more relevant for B/C.
   cursors. DR is a page-numbered faceted browser with totals; Typesense is natively
   page/per-page; the ~2,500-doc corpus never paginates deep enough for offset cost to bite;
   and the blue/green alias swap removes the mutation-drift that motivates cursors.
-- **Sidecar canonical labels**, not inline `labelOnly` as default. Facets need one
-  canonical label per entity, kept in a separate collection — DR’s `labels` collection. A
-  reference’s `strategy` is carried as metadata; `labelOnly` is the v1 default, not inline.
+- **Resolve reference labels, not inline them** (`labelOnly` is the v1 default). A reference
+  stores the referent IRI; its one canonical display label is resolved from a separate
+  collection at query time (facets need exactly one canonical label per entity), and the
+  reference’s `strategy` is carried as metadata (`idOnly`/`inline` stay forward-declared).
+  Originally one global `labels` sidecar; **[ADR 8](./0008-resolve-reference-labels-from-per-reference-label-sources.md)
+  replaces that with the referent’s own typed label-source collection** – same choice, better
+  collection. Inlining (`inline`: bake `publisher_label_*` into the citing document) is
+  tempting – it is **atomic** (one collection, one alias swap, no cross-collection window),
+  **cheap on a full rebuild** (framing already carries the one-hop referent, so no extra
+  query), and the inlined label is itself **searchable** and even covers facet-filter
+  typeahead. It is deferred, not rejected, because it cannot make the referent a
+  **first-class searchable entity** – an org/term exists only when some document cites it, so
+  there is no enumeration of unreferenced members and no ranking or pagination of the entities
+  themselves – and cannot resolve a **cross-source** label (one enriched from a different
+  graph than the citing document’s). Those two needs – standalone entity search
+  (object/terminology deployments) and cross-source enrichment – are what a resolved typed
+  collection buys; a deployment that needs neither can inline instead.
 - **Logical typed result document** at the query seam; framed JSON-LD kept index-side as the
   index/projection artifact (its payoff – vector/LDES/UI sinks – is object-search’s, not
   catalog-search’s), gated on the generic framing packages existing rather than on DR.
@@ -351,5 +370,6 @@ not enabled for DR v1, more relevant for B/C.
 - Folding (case/diacritics) happens at the adapter boundary and on the query side via
   `@lde/text-normalization`, so index and query normalize identically.
 - Deferred: REST surface; framed-JSON-LD materialised view (nested storage, index-time
-  label inlining, detail-page-on-index, terms-collection split); semantic/hybrid (vector)
-  search.
+  label inlining – the `inline` reference strategy, whose trade-off is spelled out under
+  “Resolve reference labels, not inline them” above; detail-page-on-index; terms-collection
+  split); semantic/hybrid (vector) search.
