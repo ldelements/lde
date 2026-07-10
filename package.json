@@ -33,7 +33,7 @@
     "@swc/core": "1.15.8",
     "@swc/helpers": "0.5.23",
     "@testcontainers/postgresql": "^12.0.4",
-    "@types/node": "^26.0.1",
+    "@types/node": "^26.1.1",
     "@vitest/coverage-v8": "4.1.0",
     "@vitest/ui": "4.1.0",
     "eslint": "^9.39.2",
