@@ -30,7 +30,7 @@
     "tslib": "^2.3.0"
   },
   "devDependencies": {
-    "n3": "^2.1.0"
+    "n3": "^2.1.1"
   },
   "peerDependencies": {
     "@lde/dataset": "^0.7.8",

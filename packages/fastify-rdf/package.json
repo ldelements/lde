@@ -28,7 +28,7 @@
     "@fastify/accepts": "^5.0.0",
     "@tpluscode/rdf-ns-builders": "^5.0.0",
     "fastify-plugin": "^6.0.0",
-    "n3": "^2.1.0",
+    "n3": "^2.1.1",
     "rdf-parse": "^5.0.0",
     "rdf-serialize": "^5.1.0",
     "tslib": "^2.3.0"

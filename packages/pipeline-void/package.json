@@ -29,7 +29,7 @@
     "@rdfjs/types": "^2.0.1",
     "@tpluscode/rdf-ns-builders": "^5.0.0",
     "@zazuko/prefixes": "^2.6.1",
-    "n3": "^2.1.0",
+    "n3": "^2.1.1",
     "tslib": "^2.3.0"
   },
   "peerDependencies": {

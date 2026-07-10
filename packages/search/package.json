@@ -45,7 +45,7 @@
   },
   "devDependencies": {
     "@types/jsonld": "^1.5.15",
-    "n3": "^2.1.0"
+    "n3": "^2.1.1"
   },
   "peerDependencies": {
     "vitest": "^4.0.0"
