@@ -121,6 +121,13 @@ export class BlueGreenRebuild<
 
         commit: async () => {
           await importer.flush();
+          // The alias swap is the commit point: once it lands the new
+          // collection is live. Everything after it is best-effort cleanup that
+          // must NOT fail the commit – a post-swap rejection would otherwise
+          // reject `commit`, and a caller that aborts on that (the pipeline
+          // does) would drop the collection the alias now points at. So both
+          // the superseded-collection delete and the lock release swallow
+          // their errors; a lock left held is reclaimed on its TTL.
           await this.client
             .aliases()
             .upsert(name, { collection_name: collection });
@@ -130,7 +137,7 @@ export class BlueGreenRebuild<
               .delete()
               .catch(() => undefined);
           }
-          await releaseLock(this.client, name);
+          await releaseLock(this.client, name).catch(() => undefined);
         },
 
         abort: async () => {
