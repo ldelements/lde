@@ -151,7 +151,7 @@ await pipeline.run();
 <tr>
   <td><a href="packages/search-pipeline">@lde/search-pipeline</a></td>
   <td><a href="https://www.npmjs.com/package/@lde/search-pipeline"><img src="https://img.shields.io/npm/v/@lde/search-pipeline" alt="npm"></a></td>
-  <td>Applies the @lde/search projection inside an @lde/pipeline run, streaming the resulting documents to a transactional engine writer (owns no projection itself)</td>
+  <td>Applies the @lde/search projection inside an @lde/pipeline run, fanning each document out to the transactional engine writer for its type’s collection (owns no projection itself)</td>
 </tr>
 <tr>
   <td><a href="packages/search-typesense">@lde/search-typesense</a></td>
