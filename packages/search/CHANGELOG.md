@@ -1,3 +1,9 @@
+## 0.4.1 (2026-07-10)
+
+### 🚀 Features
+
+- **search:** accept Iterable<Quad> in projectGraph ([#580](https://github.com/ldelements/lde/pull/580))
+
 ## 0.4.0 (2026-07-08)
 
 ### 🚀 Features
