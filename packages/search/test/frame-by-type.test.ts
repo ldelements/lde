@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { Parser } from 'n3';
 import { dcat, dcterms, foaf, rdf } from '@tpluscode/rdf-ns-builders';
-import { frameByType, type FramedNode } from '../src/frame-by-type.js';
+import {
+  buildSubjectIndex,
+  frameByType,
+  frameSubjects,
+  type FramedNode,
+} from '../src/frame-by-type.js';
 
 const DATASET = dcat.Dataset.value;
 
@@ -122,5 +127,36 @@ describe('frameByType', () => {
       ),
     );
     expect(nodes).toEqual([]);
+  });
+});
+
+describe('buildSubjectIndex / frameSubjects', () => {
+  it('scans a one-shot iterable once, indexing every requested root type', async () => {
+    const other = 'http://example.org/Other';
+    const source = quads(`
+      <https://ex/d/1> <${rdf.type.value}> <${DATASET}> .
+      <https://ex/d/1> <${dcterms.title.value}> "Titel"@nl .
+      <https://ex/x/1> <${rdf.type.value}> <${other}> .
+      <https://ex/x/1> <${dcterms.title.value}> "Ander"@nl .
+    `);
+    function* once(): Generator<(typeof source)[number]> {
+      yield* source;
+    }
+
+    // A single pass over the generator must still index both types.
+    const index = buildSubjectIndex(once(), [DATASET, other]);
+    const datasets = await collect(frameSubjects(index, DATASET));
+    const others = await collect(frameSubjects(index, other));
+
+    expect(datasets.map((node) => node['@id'])).toEqual(['https://ex/d/1']);
+    expect(others.map((node) => node['@id'])).toEqual(['https://ex/x/1']);
+  });
+
+  it('frames nothing for a type the index was not built for', async () => {
+    const index = buildSubjectIndex(
+      quads(`<https://ex/d/1> <${rdf.type.value}> <${DATASET}> .`),
+      [DATASET],
+    );
+    expect(await collect(frameSubjects(index, 'urn:unregistered'))).toEqual([]);
   });
 });

@@ -218,6 +218,21 @@ triples are collapsed first, because some SPARQL engines (e.g. QLever) do not
 deduplicate `CONSTRUCT` output. The IR carries no `@context`, so a `derive` function
 reading it sees full predicate IRIs with language tags preserved.
 
+`projectGraph` **consumes the quads once** – a single scan builds the subject
+index every type frames off – and so accepts any `Iterable<Quad>`, not just a
+materialized array. A caller merging several sources can pass a chained
+generator instead of building a third full array at the projection peak:
+
+```ts
+projectGraph(
+  (function* () {
+    yield* registerQuads;
+    yield* dkgQuads;
+  })(),
+  schema,
+);
+```
+
 ## Locales
 
 `locales` is the **single** list of locales a `text` field projects (`und` =

@@ -1,6 +1,10 @@
 import type { Quad } from '@rdfjs/types';
 import { fold } from '@lde/text-normalization';
-import { frameByType, type FramedNode } from './frame-by-type.js';
+import {
+  buildSubjectIndex,
+  frameSubjects,
+  type FramedNode,
+} from './frame-by-type.js';
 import {
   isoToUnixSeconds,
   physicalFields,
@@ -45,13 +49,23 @@ export function projectDocument(
  * type’s declaration — the multi-shape pipeline. Streams one document at a time
  * so memory stays flat. The IR maps to a declaration by type, so adding a shape
  * is adding a `SearchType` to the schema (no engine change).
+ *
+ * Consumes `quads` once (a single scan builds the shared subject index that
+ * every type frames off), so it accepts any `Iterable` – a materialized array or
+ * a chained generator merging several sources (`function* () { yield* a; yield* b; }`)
+ * with no intermediate copy at the projection peak.
  */
 export async function* projectGraph(
-  quads: readonly Quad[],
+  quads: Iterable<Quad>,
   schema: SearchSchema,
 ): AsyncIterable<SearchDocument> {
-  for (const searchType of schema.values()) {
-    for await (const node of frameByType(quads, searchType.type)) {
+  const types = [...schema.values()];
+  const index = buildSubjectIndex(
+    quads,
+    types.map((searchType) => searchType.type),
+  );
+  for (const searchType of types) {
+    for await (const node of frameSubjects(index, searchType.type)) {
       yield projectDocument(node, searchType);
     }
   }

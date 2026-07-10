@@ -499,4 +499,35 @@ describe('projectGraph', () => {
     expect(byId['https://ex/d/1'].title_search_nl).toBe('titel');
     expect(byId['https://ex/d/2'].title_nl).toBe('Andere');
   });
+
+  it('consumes a one-shot iterable once, framing every type off a single scan', async () => {
+    const other = 'http://example.org/Other';
+    const quads = new Parser({ format: 'N-Triples' }).parse(`
+      <https://ex/d/1> <${rdf.type.value}> <${DATASET}> .
+      <https://ex/d/1> <${dcterms.title.value}> "Titel"@nl .
+      <https://ex/x/1> <${rdf.type.value}> <${other}> .
+      <https://ex/x/1> <${dcterms.title.value}> "Ander"@nl .
+    `);
+    // A generator is exhausted after one pass, so a per-type re-scan would drop
+    // every type but the first – projecting both proves the single-scan index.
+    function* once(): Generator<(typeof quads)[number]> {
+      yield* quads;
+    }
+
+    const documents: SearchDocument[] = [];
+    for await (const document of projectGraph(
+      once(),
+      searchSchema(
+        { name: 'Dataset', type: DATASET, fields },
+        { name: 'Other', type: other, fields },
+      ),
+    )) {
+      documents.push(document);
+    }
+
+    expect(documents.map((document) => document.id).sort()).toEqual([
+      'https://ex/d/1',
+      'https://ex/x/1',
+    ]);
+  });
 });
