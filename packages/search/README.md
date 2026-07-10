@@ -150,8 +150,14 @@ const DATASET = defineSearchType({
   ],
 });
 
-for await (const document of projectGraph(quads, searchSchema(DATASET))) {
-  // one flat search document per matching subject, streamed
+for await (const { searchType, document } of projectGraph(
+  quads,
+  searchSchema(DATASET),
+)) {
+  // one flat search document per matching subject, streamed and tagged with the
+  // SearchType it was framed from — so a multi-collection writer can route each
+  // document to the collection for its type. A single-collection consumer just
+  // reads `document`.
 }
 ```
 
@@ -217,6 +223,12 @@ flat at scale (framing the whole graph at once is roughly O(N²)). Duplicate
 triples are collapsed first, because some SPARQL engines (e.g. QLever) do not
 deduplicate `CONSTRUCT` output. The IR carries no `@context`, so a `derive` function
 reading it sees full predicate IRIs with language tags preserved.
+
+Each yielded value is a `{ searchType, document }` pair: the whole schema
+projects into **one** mixed stream, and every document is tagged with the
+`SearchType` it was framed from. That tag is what lets the write side fan the
+stream out to per-type collections without re-deriving the type from the
+document — see `@lde/search-pipeline`’s multi-collection writer.
 
 `projectGraph` **consumes the quads once** – a single scan builds the subject
 index every type frames off – and so accepts any `Iterable<Quad>`, not just a

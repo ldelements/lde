@@ -484,10 +484,11 @@ describe('projectGraph', () => {
     `);
 
     const documents: SearchDocument[] = [];
-    for await (const document of projectGraph(
+    for await (const { searchType, document } of projectGraph(
       quads,
       searchSchema({ name: 'Dataset', type: DATASET, fields }),
     )) {
+      expect(searchType.name).toBe('Dataset');
       documents.push(document);
     }
 
@@ -514,20 +515,25 @@ describe('projectGraph', () => {
       yield* quads;
     }
 
-    const documents: SearchDocument[] = [];
-    for await (const document of projectGraph(
+    const tagged: { type: string; id: string }[] = [];
+    for await (const { searchType, document } of projectGraph(
       once(),
       searchSchema(
         { name: 'Dataset', type: DATASET, fields },
         { name: 'Other', type: other, fields },
       ),
     )) {
-      documents.push(document);
+      tagged.push({ type: searchType.type, id: document.id });
     }
 
-    expect(documents.map((document) => document.id).sort()).toEqual([
+    expect(tagged.map((entry) => entry.id).sort()).toEqual([
       'https://ex/d/1',
       'https://ex/x/1',
     ]);
+    // Each document carries the type it was framed from, so a writer can route
+    // it to that type’s collection.
+    expect(
+      Object.fromEntries(tagged.map((entry) => [entry.id, entry.type])),
+    ).toEqual({ 'https://ex/d/1': DATASET, 'https://ex/x/1': other });
   });
 });
