@@ -28,7 +28,7 @@
     "@rdfjs/types": "^2.0.1",
     "rdf-dereference": "^5.0.0",
     "rdf-ext": "^2.5.2",
-    "shacl-engine": "^1.1.0",
+    "shacl-engine": "^1.1.2",
     "tslib": "^2.3.0"
   },
   "devDependencies": {
