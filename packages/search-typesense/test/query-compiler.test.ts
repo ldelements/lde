@@ -4,7 +4,7 @@ import { buildSearchParams } from '../src/query-compiler.js';
 
 const schema: SearchType = {
   name: 'Dataset',
-  type: 'http://www.w3.org/ns/dcat#Dataset',
+  class: 'http://www.w3.org/ns/dcat#Dataset',
   fields: [
     {
       name: 'title',
@@ -274,7 +274,7 @@ describe('buildSearchParams', () => {
 describe('und locale', () => {
   const undSchema: SearchType = {
     name: 'Doc',
-    type: 'urn:example:Doc',
+    class: 'urn:example:Doc',
     fields: [
       {
         name: 'title',

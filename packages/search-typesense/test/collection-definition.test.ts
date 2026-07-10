@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { SearchType } from '@lde/search';
-import { buildCollectionSchema } from '../src/collection-schema.js';
+import { buildCollectionDefinition } from '../src/collection-definition.js';
 
 const schema: SearchType = {
   name: 'Dataset',
-  type: 'http://www.w3.org/ns/dcat#Dataset',
+  class: 'http://www.w3.org/ns/dcat#Dataset',
   fields: [
     {
       name: 'title',
@@ -63,8 +63,8 @@ const schema: SearchType = {
   ],
 };
 
-describe('buildCollectionSchema', () => {
-  const collection = buildCollectionSchema(schema, {
+describe('buildCollectionDefinition', () => {
+  const collection = buildCollectionDefinition(schema, {
     name: 'datasets',
     defaultLocale: 'nl',
     defaultSortingField: 'statusRank',
@@ -191,7 +191,9 @@ describe('buildCollectionSchema', () => {
   });
 
   it('assumes no language: without defaultLocale the companion is folded but unstemmed', () => {
-    const withoutLocale = buildCollectionSchema(schema, { name: 'datasets' });
+    const withoutLocale = buildCollectionDefinition(schema, {
+      name: 'datasets',
+    });
     expect(withoutLocale.fields).toContainEqual({
       name: 'keyword_search',
       type: 'string[]',
@@ -206,10 +208,10 @@ describe('buildCollectionSchema', () => {
 
 describe('und-locale text', () => {
   it('folds the und search field, stemming only via the default locale', () => {
-    const schema = buildCollectionSchema(
+    const schema = buildCollectionDefinition(
       {
         name: 'Doc',
-        type: 'urn:example:Doc',
+        class: 'urn:example:Doc',
         fields: [
           {
             name: 'summary',

@@ -10,7 +10,7 @@ import type { SearchType } from '../src/schema.js';
 
 const datasetType: SearchType = {
   name: 'Dataset',
-  type: 'http://www.w3.org/ns/dcat#Dataset',
+  class: 'http://www.w3.org/ns/dcat#Dataset',
   fields: [{ name: 'title', kind: 'text', locales: ['nl'] }],
 };
 
@@ -67,7 +67,7 @@ describe('SearchEngine port', () => {
 
     const result = await fake.search(datasetType, query);
 
-    expect(fake.schema.get(datasetType.type)).toBe(datasetType);
+    expect(fake.schema.get(datasetType.class)).toBe(datasetType);
     expect(result.total).toBe(1);
     expect(result.hits[0].id).toBe('https://example/dataset/1');
     expect(result.hits[0].document.title).toEqual({
@@ -86,7 +86,7 @@ describe('typed schema-bound engine', () => {
     // parameter performs for its callers.
     const dataset = defineSearchType({
       name: 'Dataset',
-      type: 'http://www.w3.org/ns/dcat#Dataset',
+      class: 'http://www.w3.org/ns/dcat#Dataset',
       fields: [
         {
           name: 'title',
@@ -99,12 +99,12 @@ describe('typed schema-bound engine', () => {
     });
     const person = defineSearchType({
       name: 'Person',
-      type: 'https://schema.org/Person',
+      class: 'https://schema.org/Person',
       fields: [{ name: 'status', kind: 'keyword', facetable: true }],
     });
     const organization = defineSearchType({
       name: 'Organization',
-      type: 'http://xmlns.com/foaf/0.1/Organization',
+      class: 'http://xmlns.com/foaf/0.1/Organization',
       fields: [{ name: 'sector', kind: 'keyword', facetable: true }],
     });
     const schema = searchSchema(dataset, person);

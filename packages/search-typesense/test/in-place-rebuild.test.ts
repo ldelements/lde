@@ -11,7 +11,7 @@ const NAME = 'objects';
 
 const objectType: SearchType = {
   name: 'Object',
-  type: 'https://example.org/Object',
+  class: 'https://example.org/Object',
   fields: [{ name: 'title', kind: 'keyword' }],
 };
 
@@ -308,7 +308,7 @@ describe('InPlaceRebuild', () => {
   it('rejects a SearchType that declares the reserved bookkeeping fields', () => {
     const clashing: SearchType = {
       name: 'Object',
-      type: 'https://example.org/Object',
+      class: 'https://example.org/Object',
       fields: [{ name: 'source', kind: 'keyword' }],
     };
 

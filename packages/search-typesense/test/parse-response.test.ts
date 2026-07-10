@@ -32,7 +32,7 @@ const referenceHits = {
 // is the `labels` entry in the engines' `collections` maps below.
 const organization: SearchType = {
   name: 'Organization',
-  type: 'https://example.org/Organization',
+  class: 'https://example.org/Organization',
   fields: [
     {
       name: 'label',
@@ -46,7 +46,7 @@ const organization: SearchType = {
 
 const schema: SearchType = {
   name: 'Dataset',
-  type: 'http://www.w3.org/ns/dcat#Dataset',
+  class: 'http://www.w3.org/ns/dcat#Dataset',
   fields: [
     {
       name: 'title',
@@ -194,7 +194,7 @@ describe('parseSearchResponse', () => {
 describe('parseSearchResponse range facets', () => {
   const rangeSchema: SearchType = {
     name: 'Dataset',
-    type: 'http://www.w3.org/ns/dcat#Dataset',
+    class: 'http://www.w3.org/ns/dcat#Dataset',
     fields: [
       {
         name: 'size',
@@ -747,7 +747,7 @@ describe('und-locale text reconstruction', () => {
       },
       {
         name: 'Doc',
-        type: 'urn:example:Doc',
+        class: 'urn:example:Doc',
         fields: [
           { name: 'summary', kind: 'text', locales: ['und'], output: true },
           // A non-string stored value for a text field is dropped.
@@ -784,7 +784,7 @@ describe('schema binding', () => {
   it('rejects a search type outside the bound schema', async () => {
     const foreign: SearchType = {
       name: 'Other',
-      type: 'urn:example:Other',
+      class: 'urn:example:Other',
       fields: [],
     };
     const engine = createTypesenseSearchEngine(noClient, labelledSchema(), {
@@ -798,7 +798,7 @@ describe('schema binding', () => {
   it('rejects a missing collection at construction, not on the first search', () => {
     const other: SearchType = {
       name: 'Other',
-      type: 'urn:example:Other',
+      class: 'urn:example:Other',
       fields: [],
     };
     expect(() =>

@@ -1,14 +1,14 @@
 import type { Client } from 'typesense';
 import type { SearchType } from '@lde/search';
-import type { CollectionSchemaOptions } from './collection-schema.js';
+import type { CollectionDefinitionOptions } from './collection-definition.js';
 import { DEFAULT_LOCK_TTL_MS } from './lock.js';
 import { DEFAULT_BATCH_SIZE } from './import.js';
 
 /**
- * The tuning knobs both rebuild writers share, on top of the collection-schema
+ * The tuning knobs both rebuild writers share, on top of the collection-definition
  * options. Each writer may add its own (In-place adds `maxSweepableSources`).
  */
-export interface RebuildOptions extends CollectionSchemaOptions {
+export interface RebuildOptions extends CollectionDefinitionOptions {
   /** Documents imported per Typesense request (default 1000). */
   readonly batchSize?: number;
   /** A held lock older than this (ms) is reclaimed (default 10 minutes). */
@@ -16,12 +16,12 @@ export interface RebuildOptions extends CollectionSchemaOptions {
 }
 
 /** The shared options resolved to concrete values plus the residual
- *  collection-schema options a writer passes to {@link buildCollectionSchema}. */
+ *  collection-definition options a writer passes to {@link buildCollectionDefinition}. */
 export interface ResolvedRebuildOptions {
   readonly name: string;
   readonly batchSize: number;
   readonly lockTtlMs: number;
-  readonly schemaOptions: CollectionSchemaOptions;
+  readonly definitionOptions: CollectionDefinitionOptions;
 }
 
 /** Apply the shared defaults, once, so neither writer restates them. */
@@ -31,9 +31,14 @@ export function resolveRebuildOptions(
   const {
     batchSize = DEFAULT_BATCH_SIZE,
     lockTtlMs = DEFAULT_LOCK_TTL_MS,
-    ...schemaOptions
+    ...definitionOptions
   } = options;
-  return { name: schemaOptions.name, batchSize, lockTtlMs, schemaOptions };
+  return {
+    name: definitionOptions.name,
+    batchSize,
+    lockTtlMs,
+    definitionOptions,
+  };
 }
 
 /**

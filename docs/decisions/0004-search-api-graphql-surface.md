@@ -43,7 +43,7 @@ filter inputs, reference types) are created once and reused across root types.
 
 ```ts
 function buildGraphQLSchema(
-  schema: SearchSchema, // every root type, keyed by type IRI
+  schema: SearchSchema, // every root type, keyed by class IRI
   options?: {
     types?: Record<
       string, // SearchType.name (the logical API name); entries are optional fine-tuning

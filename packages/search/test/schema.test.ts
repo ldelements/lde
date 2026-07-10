@@ -23,7 +23,7 @@ const DATASET = 'http://www.w3.org/ns/dcat#Dataset';
 
 const schema: SearchType = {
   name: 'Dataset',
-  type: DATASET,
+  class: DATASET,
   fields: [
     {
       name: 'title',
@@ -199,7 +199,7 @@ describe('schema selectors', () => {
     };
     const withReference: SearchType = {
       name: 'Dataset',
-      type: DATASET,
+      class: DATASET,
       fields: [...schema.fields, publisher],
     };
     expect(referenceFields(withReference)).toEqual([publisher]);
@@ -228,7 +228,7 @@ describe('validateSearchType', () => {
   // which the discriminated SearchField union would reject at compile time.
   const typeWith = (...fields: object[]): SearchType => ({
     name: 'Dataset',
-    type: DATASET,
+    class: DATASET,
     fields: fields as SearchField[],
   });
 
@@ -384,7 +384,7 @@ describe('searchSchema validation', () => {
     expect(() =>
       searchSchema({
         name: 'Dataset',
-        type: DATASET,
+        class: DATASET,
         fields: [
           {
             name: 'title',
@@ -401,8 +401,8 @@ describe('searchSchema validation', () => {
   it('rejects two types sharing a type IRI (the map key)', () => {
     expect(() =>
       searchSchema(
-        { name: 'Dataset', type: DATASET, fields: [] },
-        { name: 'Other', type: DATASET, fields: [] },
+        { name: 'Dataset', class: DATASET, fields: [] },
+        { name: 'Other', class: DATASET, fields: [] },
       ),
     ).toThrow(/Duplicate search type IRI/);
   });
@@ -410,8 +410,8 @@ describe('searchSchema validation', () => {
   it('rejects two types sharing a name (the API key)', () => {
     expect(() =>
       searchSchema(
-        { name: 'Dataset', type: DATASET, fields: [] },
-        { name: 'Dataset', type: 'urn:other', fields: [] },
+        { name: 'Dataset', class: DATASET, fields: [] },
+        { name: 'Dataset', class: 'urn:other', fields: [] },
       ),
     ).toThrow(/Duplicate search type name/);
   });
@@ -419,7 +419,7 @@ describe('searchSchema validation', () => {
   describe('reference label sources', () => {
     const organization = {
       name: 'Organization',
-      type: 'https://example.org/Organization',
+      class: 'https://example.org/Organization',
       fields: [
         {
           name: 'label',
@@ -435,7 +435,7 @@ describe('searchSchema validation', () => {
       expect(() =>
         searchSchema(organization, {
           name: 'Dataset',
-          type: DATASET,
+          class: DATASET,
           fields: [
             {
               name: 'publisher',
@@ -452,7 +452,7 @@ describe('searchSchema validation', () => {
       expect(() =>
         searchSchema({
           name: 'Dataset',
-          type: DATASET,
+          class: DATASET,
           fields: [
             {
               name: 'publisher',
@@ -469,12 +469,12 @@ describe('searchSchema validation', () => {
         searchSchema(
           {
             name: 'Organization',
-            type: 'https://example.org/Organization',
+            class: 'https://example.org/Organization',
             fields: [{ name: 'label', kind: 'text', ...label } as never],
           },
           {
             name: 'Dataset',
-            type: DATASET,
+            class: DATASET,
             fields: [
               {
                 name: 'publisher',
@@ -498,12 +498,12 @@ describe('searchSchema validation', () => {
         searchSchema(
           {
             name: 'Organization',
-            type: 'https://example.org/Organization',
+            class: 'https://example.org/Organization',
             fields: [],
           },
           {
             name: 'Dataset',
-            type: DATASET,
+            class: DATASET,
             fields: [
               {
                 name: 'publisher',
@@ -520,7 +520,7 @@ describe('searchSchema validation', () => {
       expect(() =>
         searchSchema(organization, {
           name: 'Dataset',
-          type: DATASET,
+          class: DATASET,
           fields: [
             {
               name: 'theme',

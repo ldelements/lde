@@ -32,7 +32,7 @@ describe('filterOperatorFor', () => {
 describe('validateQuery', () => {
   const searchType: SearchType = {
     name: 'Dataset',
-    type: 'http://www.w3.org/ns/dcat#Dataset',
+    class: 'http://www.w3.org/ns/dcat#Dataset',
     fields: [
       { name: 'status', kind: 'keyword', facetable: true, filterable: true },
       { name: 'size', kind: 'integer', filterable: true },

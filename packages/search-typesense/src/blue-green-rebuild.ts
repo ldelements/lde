@@ -7,7 +7,7 @@ import type {
   Writer,
 } from '@lde/pipeline';
 import type { Dataset } from '@lde/dataset';
-import { buildCollectionSchema } from './collection-schema.js';
+import { buildCollectionDefinition } from './collection-definition.js';
 import { BatchImporter } from './import.js';
 import { httpStatus, openLockedRun, releaseLock } from './lock.js';
 import { SOURCE_FIELD, sourceDocumentsFilter } from './sweep.js';
@@ -19,7 +19,7 @@ import {
   type RebuildOptions,
 } from './rebuild-support.js';
 
-/** {@link BlueGreenRebuild} options: the collection-schema options (`name` is
+/** {@link BlueGreenRebuild} options: the collection-definition options (`name` is
  *  the logical index name the alias is kept on) plus the rebuild tuning knobs. */
 export type BlueGreenRebuildOptions = RebuildOptions;
 
@@ -63,9 +63,8 @@ export class BlueGreenRebuild<
   }
 
   async openRun(context: RunContext): Promise<RunWriter<TDocument>> {
-    const { name, batchSize, lockTtlMs, schemaOptions } = resolveRebuildOptions(
-      this.options,
-    );
+    const { name, batchSize, lockTtlMs, definitionOptions } =
+      resolveRebuildOptions(this.options);
 
     return openLockedRun(this.client, name, lockTtlMs, async () => {
       // Create the fresh (blue) collection up front, so a failure surfaces
@@ -73,12 +72,15 @@ export class BlueGreenRebuild<
       // concurrent same-name runs are excluded by the lock.
       const collection = `${name}_${Date.parse(context.startedAt)}`;
       const previous = await this.aliasTarget(name);
-      const schema = buildCollectionSchema(this.searchType, schemaOptions);
+      const definition = buildCollectionDefinition(
+        this.searchType,
+        definitionOptions,
+      );
       await this.client.collections().create({
-        ...schema,
+        ...definition,
         name: collection,
         fields: [
-          ...(schema.fields ?? []),
+          ...(definition.fields ?? []),
           { name: SOURCE_FIELD, type: 'string' },
         ],
       });

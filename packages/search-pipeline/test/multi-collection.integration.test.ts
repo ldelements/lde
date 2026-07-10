@@ -27,12 +27,12 @@ const NAME = 'https://example.org/name';
 const schema = searchSchema(
   {
     name: 'Dataset',
-    type: DATASET,
+    class: DATASET,
     fields: [{ name: 'title', kind: 'keyword', path: TITLE, array: true }],
   },
   {
     name: 'Organization',
-    type: ORGANIZATION,
+    class: ORGANIZATION,
     fields: [{ name: 'name', kind: 'keyword', path: NAME, array: true }],
   },
 );
@@ -78,7 +78,7 @@ function blueGreenFor(
 ): (searchType: SearchType) => Writer<SearchDocument> {
   return (searchType) =>
     new BlueGreenRebuild(client, searchType, {
-      name: COLLECTION[searchType.type],
+      name: COLLECTION[searchType.class],
     });
 }
 
@@ -167,7 +167,7 @@ describe('searchIndexWriter over multiple Typesense collections', () => {
       searchType,
     ) => {
       const real = blueGreenFor(client)(searchType);
-      if (searchType.type !== ORGANIZATION) {
+      if (searchType.class !== ORGANIZATION) {
         return real;
       }
       return {

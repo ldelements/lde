@@ -36,7 +36,7 @@ export interface TypedSearchDocument {
  * its value from the node and the document as populated so far (so a derived
  * field may read fields declared before it). The physical field names a field
  * fans out to come from {@link physicalFields}, the single source shared with
- * the engine collection schema and the query compiler.
+ * the engine collection definition and the query compiler.
  */
 export function projectDocument(
   node: FramedNode,
@@ -45,7 +45,7 @@ export function projectDocument(
   const id = node['@id'];
   if (typeof id !== 'string') {
     throw new Error(
-      `Cannot project a ${searchType.type} node without an @id: every search document needs a stable key, and an empty one would collide with other keyless nodes.`,
+      `Cannot project a ${searchType.class} node without an @id: every search document needs a stable key, and an empty one would collide with other keyless nodes.`,
     );
   }
   const document: SearchDocument = { id };
@@ -76,10 +76,10 @@ export async function* projectGraph(
   const types = [...schema.values()];
   const index = buildSubjectIndex(
     quads,
-    types.map((searchType) => searchType.type),
+    types.map((searchType) => searchType.class),
   );
   for (const searchType of types) {
-    for await (const node of frameSubjects(index, searchType.type)) {
+    for await (const node of frameSubjects(index, searchType.class)) {
       yield { searchType, document: projectDocument(node, searchType) };
     }
   }

@@ -11,7 +11,7 @@ import { printGraphQLSchema } from '../src/build-schema.js';
  */
 const THING: SearchType = {
   name: 'Thing',
-  type: 'https://example.org/Thing',
+  class: 'https://example.org/Thing',
   fields: [
     {
       name: 'title',

@@ -47,14 +47,14 @@ export function describeSearchEngineContract(
       expect(types().length).toBeGreaterThan(0);
       for (const searchType of types()) {
         expect(typeof searchType.name).toBe('string');
-        expect(typeof searchType.type).toBe('string');
+        expect(typeof searchType.class).toBe('string');
       }
     });
 
     it('rejects a search type outside its schema', async () => {
       const foreign: SearchType = {
         name: 'NotInSchema',
-        type: 'urn:test:not-in-schema',
+        class: 'urn:test:not-in-schema',
         fields: [],
       };
       await expect(engine().search(foreign, browse(foreign))).rejects.toThrow(
@@ -106,7 +106,7 @@ export function describeSearchEngineContract(
     it('rejects a searchFacets batch for a type outside its schema', async () => {
       const foreign: SearchType = {
         name: 'NotInSchema',
-        type: 'urn:test:not-in-schema',
+        class: 'urn:test:not-in-schema',
         fields: [],
       };
       await expect(

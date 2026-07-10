@@ -8,7 +8,7 @@ import type {
   RunWriter,
   Writer,
 } from '@lde/pipeline';
-import { buildCollectionSchema } from './collection-schema.js';
+import { buildCollectionDefinition } from './collection-definition.js';
 import { BatchImporter } from './import.js';
 import { ensureCollectionExists, openLockedRun, releaseLock } from './lock.js';
 import {
@@ -95,7 +95,7 @@ export class InPlaceRebuild<
       maxSweepableSources = DEFAULT_MAX_SWEEPABLE_SOURCES,
       ...rebuildOptions
     } = this.options;
-    const { name, batchSize, lockTtlMs, schemaOptions } =
+    const { name, batchSize, lockTtlMs, definitionOptions } =
       resolveRebuildOptions(rebuildOptions);
 
     return openLockedRun(this.client, name, lockTtlMs, async () => {
@@ -103,14 +103,17 @@ export class InPlaceRebuild<
       // fields, `source` faceted so the membership sweep can enumerate the
       // distinct sources.
       await ensureCollectionExists(this.client, name, () => {
-        const schema = buildCollectionSchema(this.searchType, schemaOptions);
+        const definition = buildCollectionDefinition(
+          this.searchType,
+          definitionOptions,
+        );
         const bookkeeping: CollectionFieldSchema[] = [
           { name: SOURCE_FIELD, type: 'string', facet: true },
           { name: LAST_SEEN_FIELD, type: 'string' },
         ];
         return {
-          ...schema,
-          fields: [...(schema.fields ?? []), ...bookkeeping],
+          ...definition,
+          fields: [...(definition.fields ?? []), ...bookkeeping],
         };
       });
 

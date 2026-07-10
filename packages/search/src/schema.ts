@@ -4,7 +4,7 @@ import type { SearchDocument } from './project.js';
 /**
  * The engine-neutral kind of a queryable field. It drives every downstream
  * behavior: which physical fields the projection emits, the engine
- * collection-schema type, the `where`/facet/sort semantics, and the GraphQL
+ * collection-definition type, the `where`/facet/sort semantics, and the GraphQL
  * output/input type. The Typesense-vocabulary types (`string`, `int32`, …) are
  * *derived* from this by the engine adapter, never declared here.
  */
@@ -45,7 +45,7 @@ export function filterOperatorFor(kind: FieldKind): FilterOperator | undefined {
 
 /**
  * One queryable field — the single declarative source that drives all four
- * consumers (projection, engine collection schema, query semantics, and the
+ * consumers (projection, engine collection definition, query semantics, and the
  * GraphQL surface).
  *
  * A **discriminated union by `kind`**: each kind declares exactly the
@@ -63,7 +63,7 @@ export function filterOperatorFor(kind: FieldKind): FilterOperator | undefined {
  *
  * The physical field names a declaration fans out to (per-locale search/sort
  * keys) follow one convention, owned by
- * {@link physicalFields} so projection, collection-schema and query compiler
+ * {@link physicalFields} so projection, collection-definition and query compiler
  * cannot disagree.
  *
  * SHACL is one possible *source*, not a dependency: a generator can emit a
@@ -231,19 +231,22 @@ export interface FacetRange {
 
 /**
  * One root type’s complete search declaration: its logical API `name`, the
- * `type` IRI its documents are instances of, and the queryable `fields`
- * (including {@link SearchField.derive derived} ones). A SHACL generator can
- * emit one per NodeShape (`name`←`sh:name`/local name, `type`←`sh:targetClass`,
- * `fields`←its property shapes), but that is a source, not a requirement.
+ * `class` IRI its documents are instances of (the RDF class), and the queryable
+ * `fields` (including {@link SearchField.derive derived} ones). A SHACL
+ * generator can emit one per NodeShape (`name`←`sh:name`/local name,
+ * `class`←`sh:targetClass`, `fields`←its property shapes), but that is a source,
+ * not a requirement.
  */
 export interface SearchType {
   /** Logical API name (PascalCase, e.g. `Dataset`) — names the type in the API
    *  surfaces (GraphQL type names, a REST path), the way each field’s
    *  {@link SearchField.name} names that field. Deliberately declared rather
-   *  than derived from the `type` IRI, so re-modelling the vocabulary cannot
+   *  than derived from the `class` IRI, so re-modelling the vocabulary cannot
    *  silently rename the public contract. */
   readonly name: string;
-  readonly type: string;
+  /** The RDF class IRI its documents are instances of (`sh:targetClass`); the
+   *  key a {@link SearchSchema} maps this type under. */
+  readonly class: string;
   readonly fields: readonly SearchField[];
 }
 
@@ -263,7 +266,7 @@ export function defineSearchType<const Type extends SearchType>(
 
 /**
  * The complete search declaration of a deployment: every root {@link SearchType},
- * keyed by its `type` IRI. Build one with {@link searchSchema}, which captures
+ * keyed by its `class` IRI. Build one with {@link searchSchema}, which captures
  * the declared types as a literal tuple (`Types`), so schema-bound consumers
  * (the engine port) can type their per-type behaviour off it. A plain
  * `: SearchSchema` annotation widens gracefully to `SearchType`.
@@ -281,11 +284,11 @@ export interface SearchSchema<
 }
 
 /**
- * Build a {@link SearchSchema} from root-type declarations, keyed by `type`.
+ * Build a {@link SearchSchema} from root-type declarations, keyed by `class`.
  *
  * Every declaration is validated ({@link assertValidSearchType}) — the
  * declaration-time counterpart of the port’s `assertValidQuery` — and the
- * schema-wide invariants are enforced: no two types may share a `type` IRI
+ * schema-wide invariants are enforced: no two types may share a `class` IRI
  * (they would silently overwrite each other in the map) or a `name` (names
  * key the API surfaces). Throws on the first invalid declaration, so a bad
  * schema fails at startup, not per document at index time or per query.
@@ -297,9 +300,9 @@ export function searchSchema<const Types extends readonly SearchType[]>(
   const names = new Set<string>();
   for (const searchType of types) {
     assertValidSearchType(searchType);
-    if (typeIris.has(searchType.type)) {
+    if (typeIris.has(searchType.class)) {
       throw new Error(
-        `Duplicate search type IRI “${searchType.type}”; each SearchType must declare a distinct type.`,
+        `Duplicate search type IRI “${searchType.class}”; each SearchType must declare a distinct class.`,
       );
     }
     if (names.has(searchType.name)) {
@@ -307,13 +310,13 @@ export function searchSchema<const Types extends readonly SearchType[]>(
         `Duplicate search type name “${searchType.name}”; each SearchType must declare a distinct name.`,
       );
     }
-    typeIris.add(searchType.type);
+    typeIris.add(searchType.class);
     names.add(searchType.name);
   }
   assertResolvableLabelSources(types);
   // The one blessed cast: only this validated constructor mints the brand.
   return new Map(
-    types.map((searchType) => [searchType.type, searchType]),
+    types.map((searchType) => [searchType.class, searchType]),
   ) as unknown as SearchSchema<Types>;
 }
 
@@ -513,7 +516,7 @@ export function assertTypeInSchema(
   schema: SearchSchema,
   searchType: SearchType,
 ): void {
-  if (schema.get(searchType.type) !== searchType) {
+  if (schema.get(searchType.class) !== searchType) {
     throw new Error(
       `Search type “${searchType.name}” is not in this engine’s schema; it serves ${[
         ...schema.values(),
@@ -539,7 +542,7 @@ export function assertValidSearchType(searchType: SearchType): void {
 /**
  * The physical engine fields one {@link SearchField} fans out into, grouped by
  * the role each plays. The single source of truth for the naming convention, so
- * the projection (writes them), the collection schema (declares them) and the
+ * the projection (writes them), the collection definition (declares them) and the
  * query compiler (reads them) cannot disagree.
  */
 export interface PhysicalFields {

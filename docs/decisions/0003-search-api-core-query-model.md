@@ -35,7 +35,7 @@ Two tiers: `search-*` is backend you compose; `search-api-*` is the surface you 
 | Tier        | Package                   | Responsibility                                                                                                          |
 | ----------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | backend     | `@lde/search`             | field model · `SearchQuery` · filter semantics · engine port                                                            |
-| backend     | `@lde/search-typesense`   | engine adapter: collection schema · query/filter compiler · `search()`                                                  |
+| backend     | `@lde/search-typesense`   | engine adapter: collection definition · query/filter compiler · `search()`                                              |
 | API surface | `@lde/search-api-graphql` | field model + `SearchQuery` → GraphQL schema (runtime configuration; see [ADR 4](./0004-search-api-graphql-surface.md)) |
 | API surface | `@lde/search-api-rest`    | OpenAPI + route handlers (later, thin over the core)                                                                    |
 
@@ -50,7 +50,7 @@ behind the adapter and is swappable with no consumer impact. Nothing engine-spec
 ### Field model
 
 The engine-neutral description of a queryable field. **One `SearchField` declaration drives
-four consumers** – projection (RDF→flat document), the engine collection schema, the query
+four consumers** – projection (RDF→flat document), the engine collection definition, the query
 semantics, and the GraphQL surface – so they cannot drift. SHACL is one possible source
 (see the mapping below), not a dependency: a hand-written declaration is just as valid.
 
@@ -102,7 +102,7 @@ interface SearchField {
 }
 
 // One root type (one SHACL NodeShape); a whole deployment’s declaration is the
-// SearchSchema, a map of SearchTypes keyed by type IRI. searchSchema() validates every
+// SearchSchema, a map of SearchTypes keyed by class IRI. searchSchema() validates every
 // declaration (the declaration-time counterpart of the port’s assertValidQuery) and the
 // type is BRANDED (nominal): searchSchema() is the only constructor, so consumers never
 // re-validate hand-built maps.
@@ -110,7 +110,7 @@ interface SearchType {
   readonly name: string; // logical API name ('Dataset') – names the type in every surface,
   // declared (like each field's name), never derived from the IRI, so vocabulary
   // churn cannot silently rename the public contract
-  readonly type: string; // sh:targetClass
+  readonly class: string; // sh:targetClass
   readonly fields: readonly SearchField[];
 }
 ```
@@ -122,7 +122,7 @@ eventual generator emits it unchanged. A field with **no `path`** is a derived f
 computed by its `derive` function rather than projected from the IR – yet it still carries full
 query/schema/output behavior. The physical field names a declaration fans out to (`${name}_search_${locale}`,
 `${name}_sort_${locale}`, `${name}_search`) follow one convention owned by
-`@lde/search`, so projection, collection schema and query compiler agree. The `status_rank`
+`@lde/search`, so projection, collection definition and query compiler agree. The `status_rank`
 tie-break sort is a **deployment-specific delta**, never in `@lde/search`. Grouped facets need
 no field-model mechanism at all: a deployment `derive` function materializes group tokens (e.g.
 `group:rdf`) into the field’s own values – see Consequences. `relevance` is _not_ a delta:

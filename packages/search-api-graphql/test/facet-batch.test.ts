@@ -9,7 +9,7 @@ import { createFacetLoader, groupFacetQueries } from '../src/facet-batch.js';
 
 const dataset = {
   name: 'Dataset',
-  type: 'http://www.w3.org/ns/dcat#Dataset',
+  class: 'http://www.w3.org/ns/dcat#Dataset',
   fields: [
     { name: 'keyword', kind: 'keyword', facetable: true, filterable: true },
     { name: 'status', kind: 'keyword', facetable: true, filterable: true },
