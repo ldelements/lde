@@ -20,6 +20,17 @@ import {
 export type SearchDocument = { id: string } & Record<string, unknown>;
 
 /**
+ * A projected document tagged with the {@link SearchType} it was projected
+ * from — one element of {@link projectGraph}’s mixed, whole-schema stream. The
+ * tag is what lets a multi-collection writer route each document to the
+ * collection for its type without re-deriving the type from the document.
+ */
+export interface TypedSearchDocument {
+  readonly searchType: SearchType;
+  readonly document: SearchDocument;
+}
+
+/**
  * Project one framed JSON-LD node into a flat search document: apply each field
  * of the type in declaration order. A field with a `derive` function computes
  * its value from the node and the document as populated so far (so a derived
@@ -46,9 +57,12 @@ export function projectDocument(
 
 /**
  * Frame `quads` for every root type in the schema and project each node with its
- * type’s declaration — the multi-shape pipeline. Streams one document at a time
- * so memory stays flat. The IR maps to a declaration by type, so adding a shape
- * is adding a `SearchType` to the schema (no engine change).
+ * type’s declaration — the multi-shape pipeline. Yields each document tagged
+ * with its {@link SearchType} ({@link TypedSearchDocument}), so a downstream
+ * multi-collection writer can route it to that type’s collection; a
+ * single-collection consumer just reads `.document`. Streams one document at a
+ * time so memory stays flat. The IR maps to a declaration by type, so adding a
+ * shape is adding a `SearchType` to the schema (no engine change).
  *
  * Consumes `quads` once (a single scan builds the shared subject index that
  * every type frames off), so it accepts any `Iterable` – a materialized array or
@@ -58,7 +72,7 @@ export function projectDocument(
 export async function* projectGraph(
   quads: Iterable<Quad>,
   schema: SearchSchema,
-): AsyncIterable<SearchDocument> {
+): AsyncIterable<TypedSearchDocument> {
   const types = [...schema.values()];
   const index = buildSubjectIndex(
     quads,
@@ -66,7 +80,7 @@ export async function* projectGraph(
   );
   for (const searchType of types) {
     for await (const node of frameSubjects(index, searchType.type)) {
-      yield projectDocument(node, searchType);
+      yield { searchType, document: projectDocument(node, searchType) };
     }
   }
 }

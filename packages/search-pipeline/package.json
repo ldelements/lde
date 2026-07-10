@@ -1,7 +1,7 @@
 {
   "name": "@lde/search-pipeline",
   "version": "0.3.1",
-  "description": "Search indexing as an @lde/pipeline instance: a Writer<Quad> that applies the @lde/search projection to extracted RDF and streams the documents to a transactional search-engine writer. Glue between the pipeline quad world and the search-engine document world; owns no projection or engine logic itself.",
+  "description": "Search indexing as an @lde/pipeline instance: a Writer<Quad> that applies the @lde/search projection to extracted RDF and fans each document out to the transactional engine writer for its type's collection. Glue between the pipeline quad world and the search-engine document world; owns no projection or engine logic itself.",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
     "directory": "packages/search-pipeline"
@@ -30,7 +30,10 @@
     "tslib": "^2.3.0"
   },
   "devDependencies": {
-    "n3": "^2.1.1"
+    "@lde/search-typesense": "^0.6.1",
+    "n3": "^2.1.1",
+    "testcontainers": "^12.0.3",
+    "typesense": "^3.0.6"
   },
   "peerDependencies": {
     "@lde/dataset": "^0.7.8",

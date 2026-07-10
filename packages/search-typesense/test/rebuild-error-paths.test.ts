@@ -87,6 +87,23 @@ describe('BlueGreenRebuild error paths', () => {
     await expect(writer.openRun(makeRunContext())).rejects.toThrow('HTTP 500');
     expect(releasedLocks).toHaveBeenCalledOnce();
   });
+
+  it('stays committed when releasing the lock fails after the alias swap', async () => {
+    const { client, releasedLocks } = fakeClient({});
+    // The alias has already swapped (the new collection is live); only the
+    // post-swap lock release then fails.
+    releasedLocks.mockRejectedValue(typesenseError(500));
+    const writer = new BlueGreenRebuild(client, searchType, {
+      name: 'datasets',
+    });
+
+    const run = await writer.openRun(makeRunContext());
+    // commit must not reject: a caller that aborts on a rejected commit (the
+    // pipeline does) would otherwise drop the collection the alias now points
+    // at. The lock is left to its TTL reclaim instead.
+    await expect(run.commit()).resolves.toBeUndefined();
+    expect(releasedLocks).toHaveBeenCalledOnce();
+  });
 });
 
 describe('InPlaceRebuild error paths', () => {
