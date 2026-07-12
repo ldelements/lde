@@ -17,6 +17,7 @@ import { rdfDereferencer } from 'rdf-dereference';
 import { skolemizeReport } from './skolemize-report.js';
 
 const shacl = 'http://www.w3.org/ns/shacl#';
+const rdfType = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
 
 /**
  * The severity level IRIs defined by SHACL Core, for use in
@@ -34,12 +35,16 @@ export interface ShaclValidatorOptions {
   shapesFile: string;
   /**
    * Writers that receive the per-dataset SHACL validation report quads. The
-   * validator opens one run per writer (lazily, on the first validation
-   * result of any severity) and streams each batch with results to it; each
-   * run is flushed per dataset from {@link ShaclValidator.report}.
+   * validator opens one run per writer (lazily) and streams each batch that
+   * has results to it; a dataset validated with no results of any severity is
+   * still reported – a minimal conforming report is written when its run is
+   * flushed per dataset from {@link ShaclValidator.report}. So every validated
+   * dataset yields a report, and its absence means the dataset was not
+   * validated – which lets a now-conforming run overwrite a prior run's stale
+   * report rather than leave it in place.
    *
-   * Pass a {@link FileWriter} to mirror the previous on-disk behaviour, a
-   * {@link SparqlUpdateWriter} to land reports in a named graph, or any custom
+   * Pass a {@link FileWriter} to land reports on disk, a
+   * {@link SparqlUpdateWriter} to land them in a named graph, or any custom
    * writer. Validators with no `reportWriters` only produce aggregate counts.
    */
   reportWriters?: Writer[];
@@ -66,6 +71,7 @@ interface DatasetAccumulator {
   quadsValidated: number;
   violations: number;
   conforms: boolean;
+  reportWritten: boolean;
 }
 
 /**
@@ -122,6 +128,7 @@ export class ShaclValidator implements Validator {
       quadsValidated: 0,
       violations: 0,
       conforms: true,
+      reportWritten: false,
     };
     acc.quadsValidated += quads.length;
     acc.violations += violations;
@@ -129,7 +136,10 @@ export class ShaclValidator implements Validator {
     this.accumulators.set(key, acc);
 
     // Reports are written whenever there are results, conforming or not, so
-    // below-threshold results (e.g. warnings) stay visible to consumers.
+    // below-threshold results (e.g. warnings) stay visible to consumers. A
+    // dataset with no results of any severity is reported instead from
+    // {@link report} as a minimal conforming report, so every validated
+    // dataset yields a report.
     if (results.length > 0 && this.reportWriters.length > 0) {
       // Skolemise the report's blank nodes to dataset-scoped IRIs before writing.
       // shacl-engine emits the report and every result as blank nodes, whose
@@ -143,6 +153,7 @@ export class ShaclValidator implements Validator {
       for (const run of await this.runs()) {
         await run.write(dataset, asyncIterableOf(reportQuads));
       }
+      acc.reportWritten = true;
     }
 
     // Surface where to look for the report in halt-mode error messages
@@ -156,6 +167,32 @@ export class ShaclValidator implements Validator {
   }
 
   async report(dataset: Dataset): Promise<ValidationReport> {
+    const key = dataset.iri.toString();
+    const acc = this.accumulators.get(key);
+
+    // A dataset that was validated but produced no results of any severity
+    // still gets a report: a minimal conforming report, written here once
+    // before the flush. This makes report presence mean “validated” – its
+    // absence, “not validated” – and lets a now-conforming run overwrite a
+    // prior run's stale violation report rather than leave it in place.
+    // Datasets that already streamed a report (violations or warnings) keep
+    // it; unseen datasets (no accumulator) write nothing. The acc.conforms
+    // guard is belt-and-suspenders: a non-conforming dataset whose report
+    // write failed mid-batch (leaving reportWritten false) must not be
+    // relabelled conforming here.
+    if (
+      acc &&
+      acc.conforms &&
+      !acc.reportWritten &&
+      this.reportWriters.length > 0
+    ) {
+      const reportQuads = this.conformingReportQuads(key);
+      for (const run of await this.runs()) {
+        await run.write(dataset, asyncIterableOf(reportQuads));
+      }
+      acc.reportWritten = true;
+    }
+
     // Flush is the per-dataset completion hook regardless of whether the
     // dataset produced violations, so open the runs here if no write did.
     // The report stream itself completed, whatever the dataset's own data
@@ -164,8 +201,6 @@ export class ShaclValidator implements Validator {
       await run.flush?.(dataset, 'success');
     }
 
-    const key = dataset.iri.toString();
-    const acc = this.accumulators.get(key);
     if (!acc) {
       return { conforms: true, violations: 0, quadsValidated: 0 };
     }
@@ -211,8 +246,7 @@ export class ShaclValidator implements Validator {
     // typed sh:ValidationResult).
     const reportNode = reportQuads.find(
       (q) =>
-        q.predicate.value ===
-          'http://www.w3.org/1999/02/22-rdf-syntax-ns#type' &&
+        q.predicate.value === rdfType &&
         q.object.value === `${shacl}ValidationReport`,
     )!.subject;
 
@@ -240,6 +274,33 @@ export class ShaclValidator implements Validator {
       );
     }
     return amended;
+  }
+
+  /**
+   * The minimal conforming report written for a dataset validated with no
+   * results of any severity: a single `sh:ValidationReport` node with
+   * `sh:conforms true`. Skolemised and amended exactly like the engine's own
+   * reports, so it is self-describing (carrying `sh:conformanceDisallows` when
+   * configured) and dataset-scoped like every other report in the graph.
+   */
+  private conformingReportQuads(datasetIri: string): Quad[] {
+    const reportNode = rdf.blankNode();
+    const quads = [
+      rdf.quad(
+        reportNode,
+        rdf.namedNode(rdfType),
+        rdf.namedNode(`${shacl}ValidationReport`),
+      ),
+      rdf.quad(
+        reportNode,
+        rdf.namedNode(`${shacl}conforms`),
+        rdf.literal(
+          'true',
+          rdf.namedNode('http://www.w3.org/2001/XMLSchema#boolean'),
+        ),
+      ),
+    ] as Quad[];
+    return this.amendReport(skolemizeReport(quads, datasetIri), true);
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -166,7 +166,10 @@ describe('ShaclValidator', () => {
     expect([...contexts[0].selectedSources()]).toEqual([]);
   });
 
-  it('does not call writers when there are no violations', async () => {
+  it('defers the report to report() when validate() finds no results', async () => {
+    // A conforming batch streams nothing from validate(); the report – a
+    // minimal conforming one – is written once at report() time instead, so
+    // every validated dataset yields a report.
     const writer = makeReportWriter();
     const validator = new ShaclValidator({
       shapesFile,
@@ -174,8 +177,93 @@ describe('ShaclValidator', () => {
     });
 
     await validator.validate(parseFixture('valid.ttl'), dataset);
+    expect(writer.write).not.toHaveBeenCalled();
+
+    await validator.report(dataset);
+    expect(writer.write).toHaveBeenCalledOnce();
+  });
+
+  it('writes a minimal conforming report for a validated clean dataset', async () => {
+    let received: Quad[] = [];
+    const writer = makeReportWriter();
+    writer.write.mockImplementation(async (_dataset: Dataset, quads) => {
+      received = await collectQuads(quads);
+    });
+    const validator = new ShaclValidator({
+      shapesFile,
+      reportWriters: [writer],
+    });
+
+    await validator.validate(parseFixture('valid.ttl'), dataset);
+    await validator.report(dataset);
+
+    const conforms = received.filter(
+      (quad) => quad.predicate.value === SH_CONFORMS,
+    );
+    expect(conforms).toHaveLength(1);
+    expect(conforms[0].object.value).toBe('true');
+    // A conforming report has no results, and is skolemised like any other.
+    expect(received.some((quad) => quad.predicate.value === SH_RESULT)).toBe(
+      false,
+    );
+    assertNoBlankNodes(received);
+  });
+
+  it('writes no report for a dataset that was never validated', async () => {
+    // Report absence must mean "not validated" – so an unseen dataset (no
+    // accumulator) writes nothing, only flushes.
+    const writer = makeReportWriter();
+    const validator = new ShaclValidator({
+      shapesFile,
+      reportWriters: [writer],
+    });
+
+    await validator.report(dataset);
 
     expect(writer.write).not.toHaveBeenCalled();
+    expect(writer.flush).toHaveBeenCalledOnce();
+  });
+
+  it('does not synthesise a conforming report when a violation write failed', async () => {
+    // If a report write throws mid-batch for a non-conforming dataset (leaving
+    // reportWritten false), report() must not relabel it conforming by writing
+    // a minimal conforming report over the missing violations.
+    let synthesised = false;
+    const writer: Writer = {
+      openRun: async () => ({
+        write: async (_dataset: Dataset, quads: AsyncIterable<Quad>) => {
+          const collected = await collectQuads(quads);
+          // A synthesised conforming report is the only write carrying
+          // sh:conforms "true" (the violation write from validate() carries
+          // sh:conforms "false"); flag if report() ever emits one here.
+          if (
+            collected.some(
+              (quad) =>
+                quad.predicate.value === SH_CONFORMS &&
+                quad.object.value === 'true',
+            )
+          ) {
+            synthesised = true;
+          }
+          throw new Error('writer boom');
+        },
+        flush: () => Promise.resolve(),
+        commit: () => Promise.resolve(),
+        abort: () => Promise.resolve(),
+      }),
+    };
+    const validator = new ShaclValidator({
+      shapesFile,
+      reportWriters: [writer],
+    });
+
+    await expect(
+      validator.validate(parseFixture('invalid.ttl'), dataset),
+    ).rejects.toThrow('writer boom');
+
+    const report = await validator.report(dataset);
+    expect(report.conforms).toBe(false);
+    expect(synthesised).toBe(false);
   });
 
   it('passes report quads (sh:ValidationResult triples) to writers', async () => {
@@ -443,6 +531,35 @@ describe('ShaclValidator', () => {
       ]);
     });
 
+    it('declares sh:conformanceDisallows on the conforming report synthesised at report() time', async () => {
+      // valid.ttl produces no results, so report() writes the minimal
+      // conforming report – which must still be self-describing per SHACL 1.2.
+      let received: Quad[] = [];
+      const writer = makeReportWriter();
+      writer.write.mockImplementation(async (_dataset: Dataset, quads) => {
+        received = await collectQuads(quads);
+      });
+      const validator = new ShaclValidator({
+        shapesFile,
+        conformanceDisallows: [severity.violation],
+        reportWriters: [writer],
+      });
+
+      await validator.validate(parseFixture('valid.ttl'), dataset);
+      await validator.report(dataset);
+
+      expect(
+        received
+          .filter((quad) => quad.predicate.value === SH_CONFORMS)
+          .map((quad) => quad.object.value),
+      ).toEqual(['true']);
+      expect(
+        received
+          .filter((quad) => quad.predicate.value === SH_CONFORMANCE_DISALLOWS)
+          .map((quad) => quad.object.value),
+      ).toEqual([severity.violation]);
+    });
+
     it('does not add sh:conformanceDisallows to reports when the option is absent', async () => {
       const received = await reportQuadsFor('invalid.ttl');
 
@@ -495,7 +612,7 @@ describe('ShaclValidator', () => {
       expect(content).toContain('shacl');
     });
 
-    it('does not write a file when there are no violations', async () => {
+    it('writes a conforming report file when there are no violations', async () => {
       const fileWriter = new FileWriter({ outputDir, format: 'turtle' });
       const validator = new ShaclValidator({
         shapesFile,
@@ -506,7 +623,39 @@ describe('ShaclValidator', () => {
       await validator.report(dataset);
 
       const entries = await readdir(outputDir);
-      expect(entries).toHaveLength(0);
+      expect(entries).toHaveLength(1);
+      const content = await readFile(join(outputDir, entries[0]), 'utf-8');
+      expect(content).toContain('ValidationReport');
+      expect(content).not.toContain('ValidationResult');
+    });
+
+    it('overwrites a prior run’s violation report when the dataset becomes conforming', async () => {
+      // The #421 case: a first run leaves a report file full of violations; a
+      // later run in which the dataset conforms must replace it, not leave the
+      // stale violations behind for the served index to keep surfacing.
+      const firstRun = new ShaclValidator({
+        shapesFile,
+        reportWriters: [new FileWriter({ outputDir, format: 'turtle' })],
+      });
+      await firstRun.validate(parseFixture('invalid.ttl'), dataset);
+      await firstRun.report(dataset);
+      const [firstFile] = await readdir(outputDir);
+      expect(await readFile(join(outputDir, firstFile), 'utf-8')).toContain(
+        'ValidationResult',
+      );
+
+      const secondRun = new ShaclValidator({
+        shapesFile,
+        reportWriters: [new FileWriter({ outputDir, format: 'turtle' })],
+      });
+      await secondRun.validate(parseFixture('valid.ttl'), dataset);
+      await secondRun.report(dataset);
+
+      const entries = await readdir(outputDir);
+      expect(entries).toHaveLength(1);
+      const content = await readFile(join(outputDir, entries[0]), 'utf-8');
+      expect(content).not.toContain('ValidationResult');
+      expect(content).toContain('ValidationReport');
     });
   });
 });
