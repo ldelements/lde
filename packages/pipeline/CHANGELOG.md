@@ -1,3 +1,9 @@
+## 0.34.1 (2026-07-12)
+
+### 🩹 Fixes
+
+- **pipeline:** skolemise blank nodes in FileWriter n-quads output ([#598](https://github.com/ldelements/lde/pull/598))
+
 ## 0.34.0 (2026-07-09)
 
 ### 🚀 Features
