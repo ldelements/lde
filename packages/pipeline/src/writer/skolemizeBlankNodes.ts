@@ -26,7 +26,7 @@ const { namedNode, quad: makeQuad } = DataFactory;
  * Each blank node becomes `<dataset>/.well-known/skolem#<batch>-<label>`. The
  * dataset IRI rules out fusion across datasets; `<batch>`, a content hash of
  * this write's quads, rules out fusion across the separate writes that land in
- * one dataset's file — their labels both restart at `b0`, but writes carrying
+ * one dataset's file – their labels both restart at `b0`, but writes carrying
  * different content hash differently. Two byte-identical writes collapse onto
  * the same IRIs, which is correct: they carry the same nodes.
  *

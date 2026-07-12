@@ -150,7 +150,7 @@ export class FileWriter implements Writer {
     // blank-node labels from different datasets collapse into one node
     // (ldelements/lde#478, dataset-knowledge-graph#352/#420). Skolemise blank
     // nodes to dataset-scoped IRIs so they stay distinct. Hashing the write to
-    // scope the IRIs needs it buffered, so only n-quads pays that cost — Turtle
+    // scope the IRIs needs it buffered, so only n-quads pays that cost – Turtle
     // and N-Triples (single-document, offline) stream through unchanged.
     if (this.format === 'n-quads') {
       const batch: Quad[] = [first.value];
