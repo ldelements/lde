@@ -1,3 +1,28 @@
+## 0.17.0 (2026-07-12)
+
+### 🚀 Features
+
+- ⚠️  **pipeline-shacl-validator:** write a conforming report for every validated dataset ([#597](https://github.com/ldelements/lde/pull/597))
+
+### ⚠️  Breaking Changes
+
+- **pipeline-shacl-validator:** write a conforming report for every validated dataset  ([#597](https://github.com/ldelements/lde/pull/597))
+  reportWriters now receive a report for every validated dataset,
+  including conforming ones. Consumers that treated a missing report as conforming
+  must treat it as not validated instead.
+  * refactor(pipeline-shacl-validator): harden conforming-report synth from review
+  - Guard the report() conforming-report synth on acc.conforms, so a
+    non-conforming dataset whose report write failed mid-batch (leaving
+    reportWritten false) is never relabelled conforming.
+  - Add a test covering that path: a rejecting writer on a violating dataset,
+    then report(), asserts no sh:conforms true report is emitted.
+  - Extract the rdf:type IRI into a shared rdfType constant, so amendReport (the
+    matcher) and conformingReportQuads (the emitter) cannot drift.
+  - Use EN dashes instead of EM dashes in the added comments and README."
+  M	packages/pipeline-shacl-validator/README.md
+  M	packages/pipeline-shacl-validator/src/shacl-validator.ts
+  M	packages/pipeline-shacl-validator/test/shacl-validator.test.ts
+
 ## 0.16.0 (2026-07-09)
 
 ### 🧱 Updated Dependencies
