@@ -91,7 +91,7 @@ finishes a dataset.
 A dataset validated with no results of any severity still yields a report: a
 minimal conforming `sh:ValidationReport` (with `sh:conforms true` and no
 results) is written from `report(dataset)`. So **every validated dataset
-produces a report, and its absence means the dataset was not validated** — a
+produces a report, and its absence means the dataset was not validated** – a
 distinction consumers can rely on. It also means a re-run in which a dataset
 becomes conforming overwrites its prior report rather than leaving stale
 violations behind. Only a dataset that was never validated (no `validate()`

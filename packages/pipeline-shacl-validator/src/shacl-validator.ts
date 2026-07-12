@@ -17,6 +17,7 @@ import { rdfDereferencer } from 'rdf-dereference';
 import { skolemizeReport } from './skolemize-report.js';
 
 const shacl = 'http://www.w3.org/ns/shacl#';
+const rdfType = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
 
 /**
  * The severity level IRIs defined by SHACL Core, for use in
@@ -36,10 +37,10 @@ export interface ShaclValidatorOptions {
    * Writers that receive the per-dataset SHACL validation report quads. The
    * validator opens one run per writer (lazily) and streams each batch that
    * has results to it; a dataset validated with no results of any severity is
-   * still reported — a minimal conforming report is written when its run is
+   * still reported – a minimal conforming report is written when its run is
    * flushed per dataset from {@link ShaclValidator.report}. So every validated
    * dataset yields a report, and its absence means the dataset was not
-   * validated — which lets a now-conforming run overwrite a prior run's stale
+   * validated – which lets a now-conforming run overwrite a prior run's stale
    * report rather than leave it in place.
    *
    * Pass a {@link FileWriter} to land reports on disk, a
@@ -171,12 +172,20 @@ export class ShaclValidator implements Validator {
 
     // A dataset that was validated but produced no results of any severity
     // still gets a report: a minimal conforming report, written here once
-    // before the flush. This makes report presence mean “validated” — its
-    // absence, “not validated” — and lets a now-conforming run overwrite a
+    // before the flush. This makes report presence mean “validated” – its
+    // absence, “not validated” – and lets a now-conforming run overwrite a
     // prior run's stale violation report rather than leave it in place.
     // Datasets that already streamed a report (violations or warnings) keep
-    // it; unseen datasets (no accumulator) write nothing.
-    if (acc && !acc.reportWritten && this.reportWriters.length > 0) {
+    // it; unseen datasets (no accumulator) write nothing. The acc.conforms
+    // guard is belt-and-suspenders: a non-conforming dataset whose report
+    // write failed mid-batch (leaving reportWritten false) must not be
+    // relabelled conforming here.
+    if (
+      acc &&
+      acc.conforms &&
+      !acc.reportWritten &&
+      this.reportWriters.length > 0
+    ) {
       const reportQuads = this.conformingReportQuads(key);
       for (const run of await this.runs()) {
         await run.write(dataset, asyncIterableOf(reportQuads));
@@ -237,8 +246,7 @@ export class ShaclValidator implements Validator {
     // typed sh:ValidationResult).
     const reportNode = reportQuads.find(
       (q) =>
-        q.predicate.value ===
-          'http://www.w3.org/1999/02/22-rdf-syntax-ns#type' &&
+        q.predicate.value === rdfType &&
         q.object.value === `${shacl}ValidationReport`,
     )!.subject;
 
@@ -280,7 +288,7 @@ export class ShaclValidator implements Validator {
     const quads = [
       rdf.quad(
         reportNode,
-        rdf.namedNode('http://www.w3.org/1999/02/22-rdf-syntax-ns#type'),
+        rdf.namedNode(rdfType),
         rdf.namedNode(`${shacl}ValidationReport`),
       ),
       rdf.quad(

@@ -167,8 +167,8 @@ describe('ShaclValidator', () => {
   });
 
   it('defers the report to report() when validate() finds no results', async () => {
-    // A conforming batch streams nothing from validate(); the report — a
-    // minimal conforming one — is written once at report() time instead, so
+    // A conforming batch streams nothing from validate(); the report – a
+    // minimal conforming one – is written once at report() time instead, so
     // every validated dataset yields a report.
     const writer = makeReportWriter();
     const validator = new ShaclValidator({
@@ -210,7 +210,7 @@ describe('ShaclValidator', () => {
   });
 
   it('writes no report for a dataset that was never validated', async () => {
-    // Report absence must mean "not validated" — so an unseen dataset (no
+    // Report absence must mean "not validated" – so an unseen dataset (no
     // accumulator) writes nothing, only flushes.
     const writer = makeReportWriter();
     const validator = new ShaclValidator({
@@ -222,6 +222,48 @@ describe('ShaclValidator', () => {
 
     expect(writer.write).not.toHaveBeenCalled();
     expect(writer.flush).toHaveBeenCalledOnce();
+  });
+
+  it('does not synthesise a conforming report when a violation write failed', async () => {
+    // If a report write throws mid-batch for a non-conforming dataset (leaving
+    // reportWritten false), report() must not relabel it conforming by writing
+    // a minimal conforming report over the missing violations.
+    let synthesised = false;
+    const writer: Writer = {
+      openRun: async () => ({
+        write: async (_dataset: Dataset, quads: AsyncIterable<Quad>) => {
+          const collected = await collectQuads(quads);
+          // A synthesised conforming report is the only write carrying
+          // sh:conforms "true" (the violation write from validate() carries
+          // sh:conforms "false"); flag if report() ever emits one here.
+          if (
+            collected.some(
+              (quad) =>
+                quad.predicate.value === SH_CONFORMS &&
+                quad.object.value === 'true',
+            )
+          ) {
+            synthesised = true;
+          }
+          throw new Error('writer boom');
+        },
+        flush: () => Promise.resolve(),
+        commit: () => Promise.resolve(),
+        abort: () => Promise.resolve(),
+      }),
+    };
+    const validator = new ShaclValidator({
+      shapesFile,
+      reportWriters: [writer],
+    });
+
+    await expect(
+      validator.validate(parseFixture('invalid.ttl'), dataset),
+    ).rejects.toThrow('writer boom');
+
+    const report = await validator.report(dataset);
+    expect(report.conforms).toBe(false);
+    expect(synthesised).toBe(false);
   });
 
   it('passes report quads (sh:ValidationResult triples) to writers', async () => {
@@ -491,7 +533,7 @@ describe('ShaclValidator', () => {
 
     it('declares sh:conformanceDisallows on the conforming report synthesised at report() time', async () => {
       // valid.ttl produces no results, so report() writes the minimal
-      // conforming report — which must still be self-describing per SHACL 1.2.
+      // conforming report – which must still be self-describing per SHACL 1.2.
       let received: Quad[] = [];
       const writer = makeReportWriter();
       writer.write.mockImplementation(async (_dataset: Dataset, quads) => {
