@@ -16,7 +16,7 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
-const { namedNode, literal, quad } = DataFactory;
+const { namedNode, literal, quad, blankNode } = DataFactory;
 
 async function* quadsOf(...quads: Quad[]): AsyncIterable<Quad> {
   yield* quads;
@@ -325,6 +325,136 @@ describe('FileWriter', () => {
         'utf-8',
       );
       expect(content).not.toContain('http://example.com/dataset/1');
+    });
+  });
+
+  describe('blank-node skolemisation (n-quads)', () => {
+    const HAS_MEASUREMENT = 'http://www.w3.org/ns/dqv#hasQualityMeasurement';
+    const VALUE = 'http://www.w3.org/ns/dqv#value';
+    const measurement = (datasetIri: string) =>
+      quadsOf(
+        quad(
+          namedNode(datasetIri),
+          namedNode(HAS_MEASUREMENT),
+          blankNode('b0'),
+        ),
+        quad(blankNode('b0'), namedNode(VALUE), literal('true')),
+      );
+    const skolemIris = (content: string) =>
+      [...content.matchAll(/<[^>]*\/\.well-known\/skolem#[^>]*>/g)].map(
+        (match) => match[0],
+      );
+
+    it('rewrites blank nodes to dataset-scoped skolem IRIs', async () => {
+      const writer = await new FileWriter({
+        outputDir: tempDir,
+        format: 'n-quads',
+        graphIri: (dataset) => dataset.iri,
+      }).openRun();
+      const dataset = createDataset('http://example.com/dataset/1');
+
+      await writer.write(dataset, measurement('http://example.com/dataset/1'));
+      await writer.flush(dataset);
+
+      const content = await readFile(
+        join(tempDir, 'example.com-dataset-1.nq'),
+        'utf-8',
+      );
+      expect(content).not.toContain('_:');
+      expect(content).toContain(
+        'http://example.com/dataset/1/.well-known/skolem#',
+      );
+    });
+
+    it('keeps the same blank-node label distinct across datasets (no fusion)', async () => {
+      const writer = await new FileWriter({
+        outputDir: tempDir,
+        format: 'n-quads',
+        graphIri: (dataset) => dataset.iri,
+      }).openRun();
+      const a = createDataset('http://example.com/dataset/a');
+      const b = createDataset('http://example.com/dataset/b');
+
+      await writer.write(a, measurement('http://example.com/dataset/a'));
+      await writer.flush(a);
+      await writer.write(b, measurement('http://example.com/dataset/b'));
+      await writer.flush(b);
+
+      const [ia] = skolemIris(
+        await readFile(join(tempDir, 'example.com-dataset-a.nq'), 'utf-8'),
+      );
+      const [ib] = skolemIris(
+        await readFile(join(tempDir, 'example.com-dataset-b.nq'), 'utf-8'),
+      );
+      expect(ia).toContain('/dataset/a/');
+      expect(ib).toContain('/dataset/b/');
+      expect(ia).not.toBe(ib);
+    });
+
+    it('maps a coreferenced blank node to one IRI within a write', async () => {
+      const writer = await new FileWriter({
+        outputDir: tempDir,
+        format: 'n-quads',
+        graphIri: (dataset) => dataset.iri,
+      }).openRun();
+      const dataset = createDataset('http://example.com/dataset/1');
+
+      // b0 appears as object, then as subject: both must resolve to one IRI.
+      await writer.write(
+        dataset,
+        quadsOf(
+          quad(
+            namedNode('http://example.com/s'),
+            namedNode('http://example.com/p'),
+            blankNode('b0'),
+          ),
+          quad(
+            blankNode('b0'),
+            namedNode('http://example.com/q'),
+            literal('x'),
+          ),
+        ),
+      );
+      await writer.flush(dataset);
+
+      const iris = skolemIris(
+        await readFile(join(tempDir, 'example.com-dataset-1.nq'), 'utf-8'),
+      );
+      expect(iris).toHaveLength(2);
+      expect(new Set(iris).size).toBe(1);
+    });
+
+    it('does not skolemise blank nodes for turtle output', async () => {
+      const writer = await new FileWriter({
+        outputDir: tempDir,
+        format: 'turtle',
+      }).openRun();
+      const dataset = createDataset('http://example.com/dataset/1');
+
+      // Two quads so the (non-skolemising) streaming path writes past the first.
+      await writer.write(
+        dataset,
+        quadsOf(
+          quad(
+            namedNode('http://example.com/s'),
+            namedNode('http://example.com/p'),
+            blankNode('b0'),
+          ),
+          quad(
+            namedNode('http://example.com/s'),
+            namedNode('http://example.com/p2'),
+            literal('plain'),
+          ),
+        ),
+      );
+      await writer.flush(dataset);
+
+      const content = await readFile(
+        join(tempDir, 'example.com-dataset-1.ttl'),
+        'utf-8',
+      );
+      expect(content).not.toContain('/.well-known/skolem#');
+      expect(content).toContain('plain');
     });
   });
 
