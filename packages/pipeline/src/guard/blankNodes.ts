@@ -17,6 +17,13 @@ import type { QuadTransform } from '../stage.js';
  * NO blank nodes. Mint stable (skolem) IRIs instead — see `skolemIri` in
  * `@lde/dataset`. These helpers make that invariant testable and enforceable.
  *
+ * `FileWriter` skolemises blank nodes automatically for `n-quads` output as a
+ * safety net, so a producer that slips a blank node through cannot fuse it into
+ * another dataset there. These helpers still matter for producers that must hold
+ * the invariant regardless of writer – e.g. output bound for a `SparqlUpdateWriter`
+ * or a `cat`-indexed Turtle sink, which do not skolemise – and for turning a slip
+ * into a loud failure rather than a silently rewritten IRI.
+ *
  * See ldelements/lde#474 and netwerk-digitaal-erfgoed/dataset-knowledge-graph#352.
  */
 
