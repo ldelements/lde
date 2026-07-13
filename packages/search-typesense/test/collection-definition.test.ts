@@ -31,7 +31,7 @@ const schema: SearchType = {
       array: true,
       facetable: true,
     },
-    // Derived fields (no path) still get collection fields — populated at index
+    // Derived fields (no path) still get collection fields – populated at index
     // time by `derive` functions, not projected.
     { name: 'status', kind: 'keyword', facetable: true, required: true },
     { name: 'statusRank', kind: 'integer', sortable: true },
@@ -77,19 +77,18 @@ describe('buildCollectionDefinition', () => {
     expect(collection.synonym_sets).toEqual(['dataset-synonyms']);
   });
 
-  it('fans a localized text field into display, per-locale stemmed search and sort keys', () => {
+  it('fans a localized text field into a regex display field, per-locale stemmed search and sort keys', () => {
+    // Display: one un-indexed regex field capturing every present language
+    // (`title_<lang>`), not an enumerated per-locale pair.
     expect(collection.fields).toContainEqual({
-      name: 'title_nl',
+      name: 'title_[^_]+',
       type: 'string',
       index: false,
       optional: true,
     });
-    expect(collection.fields).toContainEqual({
-      name: 'title_en',
-      type: 'string',
-      index: false,
-      optional: true,
-    });
+    expect(collection.fields).not.toContainEqual(
+      expect.objectContaining({ name: 'title_nl' }),
+    );
     expect(collection.fields).toContainEqual({
       name: 'title_search_nl',
       type: 'string',
@@ -199,7 +198,7 @@ describe('buildCollectionDefinition', () => {
       type: 'string[]',
       optional: true,
     });
-    // Localized text still stems per locale — that never depended on the default.
+    // Localized text still stems per locale – that never depended on the default.
     expect(withoutLocale.fields).toContainEqual(
       expect.objectContaining({ name: 'title_search_nl', locale: 'nl' }),
     );
@@ -226,7 +225,7 @@ describe('und-locale text', () => {
       { name: 'docs', defaultLocale: 'en' },
     );
     expect(schema.fields).toEqual([
-      { name: 'summary_und', type: 'string', index: false, optional: true },
+      { name: 'summary_[^_]+', type: 'string', index: false, optional: true },
       {
         name: 'summary_search_und',
         type: 'string',
@@ -235,6 +234,35 @@ describe('und-locale text', () => {
         locale: 'en',
       },
       { name: 'summary_sort_und', type: 'string', sort: true, optional: true },
+    ]);
+  });
+
+  it('emits no display field for a search-only (non-output) text field', () => {
+    const schema = buildCollectionDefinition(
+      {
+        name: 'Doc',
+        class: 'urn:example:Doc',
+        fields: [
+          {
+            name: 'creator',
+            kind: 'text',
+            locales: ['nl'],
+            searchable: { weight: 1 },
+          },
+        ],
+      },
+      { name: 'docs' },
+    );
+    // Display is gated on `output`; a search-only field emits only its folded
+    // search companion, no `${name}_<lang>` regex field.
+    expect(schema.fields).toEqual([
+      {
+        name: 'creator_search_nl',
+        type: 'string',
+        optional: true,
+        stem: true,
+        locale: 'nl',
+      },
     ]);
   });
 });

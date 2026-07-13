@@ -289,7 +289,6 @@ describe('createTypesenseSearchEngine label cache (labelCacheTtlMs)', () => {
   // One labels document, as the export endpoint streams it (JSONL).
   const labelsJsonl = JSON.stringify({
     id: 'https://org/1',
-    label: 'Het Utrechts Archief',
     label_nl: 'Het Utrechts Archief',
   });
 
@@ -636,9 +635,9 @@ describe('fetchLabels', () => {
   it('resolves labels via multi_search, merging per-locale variants', async () => {
     const { client, performs } = fakeTypesenseClient({
       multiSearch: labelLookup({
-        'https://org/1': { label: 'KB', label_nl: 'KB' },
-        // Only a default label (no locale variant) → untagged (`und`) fallback.
-        'https://org/3': { label: 'Untagged' },
+        'https://org/1': { label_nl: 'KB' },
+        // Untagged value: projected under the `und` display bucket.
+        'https://org/3': { label_und: 'Untagged' },
       }),
     });
     const labels = await fetchLabels(
@@ -650,6 +649,21 @@ describe('fetchLabels', () => {
     // An IRI absent from the collection yields no entry.
     expect(labels.has('https://org/2')).toBe(false);
     expect(performs).toHaveLength(1);
+  });
+
+  it('reconstructs a language outside the declared locales (display is open)', async () => {
+    // The label source is searched only in its declared locales, but display
+    // preserves every present language – a French value still resolves.
+    const { client } = fakeTypesenseClient({
+      multiSearch: labelLookup({
+        'https://org/1': { label_nl: 'Bibliotheek', label_fr: 'Bibliothèque' },
+      }),
+    });
+    const labels = await fetchLabels(client, group(['https://org/1']));
+    expect(labels.get('https://org/1')).toEqual({
+      nl: ['Bibliotheek'],
+      fr: ['Bibliothèque'],
+    });
   });
 
   it('batches a large id-list under the per_page cap, in a single POST', async () => {
@@ -695,7 +709,9 @@ describe('fetchLabels', () => {
       multiSearch: (search) =>
         String(search.collection) === 'labels'
           ? { code: 503, error: 'lookup failed' }
-          : labelLookup({ 'https://term/1': { label: 'Cartography' } })(search),
+          : labelLookup({ 'https://term/1': { label_und: 'Cartography' } })(
+              search,
+            ),
     });
 
     const labels = await fetchLabels(

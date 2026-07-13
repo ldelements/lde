@@ -231,7 +231,7 @@ describe('projectDocument', () => {
     expect(document.title_sort_nl).toBeUndefined();
   });
 
-  it('does not index a value whose language is not in locales', () => {
+  it('displays a value whose language is outside locales, but does not index it', () => {
     const document = projectDocument(
       {
         '@id': 'https://ex/d/6',
@@ -239,15 +239,18 @@ describe('projectDocument', () => {
       },
       { name: 'Dataset', class: DATASET, fields },
     );
-    // locales is ['nl', 'en'], so the French title is invisible — no display,
-    // search or sort field is emitted for it.
+    // locales is ['nl', 'en']; the French title still renders (display keeps
+    // every language, `index: false`), but it is not searched or sorted – those
+    // stay on the declared locales.
+    expect(document.title_fr).toBe('Bonjour');
     expect(document.title_nl).toBeUndefined();
     expect(document.title_en).toBeUndefined();
     expect(document.title_search_nl).toBeUndefined();
+    expect(document.title_search_fr).toBeUndefined();
     expect(document.title_sort_nl).toBeUndefined();
   });
 
-  it('does not project an untagged literal (no matching locale)', () => {
+  it('displays an untagged literal under und, but does not index it when und is undeclared', () => {
     const document = projectDocument(
       {
         '@id': 'https://ex/d/7',
@@ -255,8 +258,11 @@ describe('projectDocument', () => {
       },
       { name: 'Dataset', class: DATASET, fields },
     );
+    // Untagged lands in the `und` display bucket; locales is ['nl', 'en'] (no
+    // `und`), so it is not searched.
+    expect(document.title_und).toBe('Naamloos');
     expect(document.title_nl).toBeUndefined();
-    expect(document.title_search_nl).toBeUndefined();
+    expect(document.title_search_und).toBeUndefined();
     expect(document.title_en).toBeUndefined();
   });
 
@@ -273,7 +279,7 @@ describe('projectDocument', () => {
           {
             name: 'title',
             path: dcterms.title.value,
-            // search only — display (output) and sort not opted into.
+            // search only – display (output) and sort not opted into.
             kind: 'text',
             locales: ['nl', 'en'],
             searchable: { weight: 1 },
@@ -285,6 +291,39 @@ describe('projectDocument', () => {
     expect(document.title_search_nl).toBe('verhalen');
     expect(document.title_nl).toBeUndefined();
     expect(document.title_sort_nl).toBeUndefined();
+  });
+
+  it('emits display and sort but no search for a sort-only output field', () => {
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/d/10b',
+        [dcterms.title.value]: [
+          { '@language': 'nl', '@value': 'Verhalen' },
+          { '@language': 'fr', '@value': 'Récits' },
+        ],
+      },
+      {
+        name: 'Dataset',
+        class: DATASET,
+        fields: [
+          {
+            name: 'title',
+            path: dcterms.title.value,
+            kind: 'text',
+            locales: ['nl', 'en'],
+            output: true,
+            // display + sort, but not searchable.
+            sortable: true,
+          },
+        ],
+      },
+    );
+    // Display keeps both languages (fr outside locales); sort stays on nl; no
+    // folded search field is emitted at all.
+    expect(document.title_nl).toBe('Verhalen');
+    expect(document.title_fr).toBe('Récits');
+    expect(document.title_sort_nl).toBe('verhalen');
+    expect(document.title_search_nl).toBeUndefined();
   });
 
   it('folds every value of a locale into its search field', () => {
@@ -320,7 +359,7 @@ describe('projectDocument', () => {
             locales: ['nl'],
             output: true,
           },
-          // No `path`: a derived field — computed by `derive`, never
+          // No `path`: a derived field – computed by `derive`, never
           // projected.
           {
             name: 'status',
@@ -338,7 +377,7 @@ describe('projectDocument', () => {
           // Returning undefined leaves the field absent.
           { name: 'absent', kind: 'keyword', derive: () => undefined },
           // Neither path nor derive: populated outside the projection, if at
-          // all — skipped here.
+          // all – skipped here.
           { name: 'external', kind: 'keyword' },
         ],
       },

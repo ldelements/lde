@@ -19,6 +19,7 @@ import {
 import {
   assertTypeInSchema,
   assertValidQuery,
+  displayLangOf,
   fieldNamed,
   isRangeFacet,
   labelFieldOf,
@@ -32,22 +33,22 @@ import {
   type BuildSearchParamsOptions,
 } from './query-compiler.js';
 
-/** Where the engine reads documents — plus every query-compiler knob
+/** Where the engine reads documents – plus every query-compiler knob
  *  ({@link BuildSearchParamsOptions}), declared once there and forwarded
  *  wholesale into each search. `TypeName` is the union of the schema’s type
  *  names, so a literal schema makes the `collections` map exhaustive at
  *  compile time. Reference labels resolve per field from the collection of
- *  the SearchType its `labelSource` names — a label source is just another
+ *  the SearchType its `labelSource` names – a label source is just another
  *  entry in `collections`. */
 export interface TypesenseSearchEngineOptions<
   TypeName extends string = string,
 > extends BuildSearchParamsOptions {
-  /** The collection (or alias) per search type, keyed by the type’s `name` —
+  /** The collection (or alias) per search type, keyed by the type’s `name` –
    *  with a literal schema, omitting a type is a compile error. */
   readonly collections: Readonly<Record<TypeName, string>>;
   /**
    * Called when reference-label resolution fails; the search then degrades to
-   * id-only references rather than failing. Optional — omit to swallow silently.
+   * id-only references rather than failing. Optional – omit to swallow silently.
    */
   readonly onLabelError?: (error: unknown) => void;
   /**
@@ -75,12 +76,12 @@ export interface LabelSource {
 
 /**
  * A Typesense-backed {@link SearchEngine}, bound to the whole
- * {@link SearchSchema} at construction — like every other schema consumer.
+ * {@link SearchSchema} at construction – like every other schema consumer.
  * Each type’s collection comes from `options.collections`. `search` compiles
  * the query ({@link buildSearchParams}), runs it against the type’s
- * collection, resolves the reference labels for the page of hits — each
+ * collection, resolves the reference labels for the page of hits – each
  * reference field from its own label source’s collection, all sources bundled
- * into one lookup — and reconstructs the engine-neutral
+ * into one lookup – and reconstructs the engine-neutral
  * {@link SearchResult} ({@link parseSearchResponse}). `searchFacets` answers
  * a whole facet batch (e.g. a faceted listing’s skip-own-filter query variants) as a
  * single `multi_search` round-trip with one shared label lookup; a failed
@@ -90,7 +91,7 @@ export interface LabelSource {
  *
  * With a schema built by `searchSchema` over `defineSearchType` literals,
  * `search()` accepts only the deployment’s own types and returns typo-safe
- * facet/document keys per call — no caller-side generics.
+ * facet/document keys per call – no caller-side generics.
  */
 export function createTypesenseSearchEngine<
   const Types extends readonly SearchType[],
@@ -100,7 +101,7 @@ export function createTypesenseSearchEngine<
   options: TypesenseSearchEngineOptions<Types[number]['name']>,
 ): SearchEngine<Types> {
   // Resolve every type's collection ONCE at construction, so a
-  // misconfiguration fails at startup — never on the first search that
+  // misconfiguration fails at startup – never on the first search that
   // happens to hit the unwired type.
   const collections = new Map<string, string>(
     [...schema.values()].map((searchType) => {
@@ -387,7 +388,7 @@ export interface LabelLookupGroup {
 /**
  * Load a FULL label-source collection into a label map via the documents
  * export endpoint, which streams every document as JSONL (one JSON object per
- * line). Each line is reconstructed by {@link labelValue}, exactly as the
+ * line). Each line is reconstructed by {@link localizedValue}, exactly as the
  * per-search {@link fetchLabels} path does for its `multi_search` hits.
  */
 async function loadAllLabels(
@@ -404,7 +405,7 @@ async function loadAllLabels(
       continue;
     }
     const document = JSON.parse(line) as Record<string, unknown>;
-    const label = labelValue(document, source.labelField);
+    const label = localizedValue(document, source.labelField);
     if (label !== undefined) {
       labels.set(String(document.id), label);
     }
@@ -473,13 +474,14 @@ function labelLookupGroups(
 }
 
 /**
- * Resolve labels from each group’s label-source collection. Localized labels
- * are reconstructed from the source type’s `label` declaration; a bare
- * untagged `label` value is the `und` fallback when no locale variant exists.
+ * Resolve labels from each group’s label-source collection. Labels are
+ * reconstructed from the source type’s `label` declaration ({@link
+ * localizedValue}), carrying every present language – including ones outside
+ * the declared `locales` and untagged (`und`) values.
  *
  * All groups travel as ONE `multi_search` (POST) call, each group’s id-list
  * split over per-search batches: the id-list of a page or facet carrying many
- * references — e.g. a dataset with dozens of classes — would overflow
+ * references – e.g. a dataset with dozens of classes – would overflow
  * Typesense’s GET query-string limit (4000 chars, and IRIs URL-encode to
  * several times their length) if it travelled in the URL. POST puts it in the
  * body; each batch stays under Typesense’s `per_page` cap, and bundling the
@@ -528,7 +530,7 @@ export async function fetchLabels(
       return;
     }
     for (const hit of result.hits ?? []) {
-      const label = labelValue(
+      const label = localizedValue(
         hit.document,
         groupPerSearch[index].source.labelField,
       );
@@ -543,25 +545,6 @@ export async function fetchLabels(
 /** Typesense caps `per_page` at 250; the multi_search POST body holds the
  *  id-list comfortably, so resolve references in batches of this size. */
 const LABEL_BATCH_SIZE = 200;
-
-/**
- * Reconstruct a label document into a language map via the source type’s
- * `label` declaration (its per-locale display fields), with a bare untagged
- * `label` value as the `und` fallback when no locale variant exists, or
- * `undefined` when the document carries no usable label – so the reference
- * stays id-only rather than gaining an empty label.
- */
-function labelValue(
-  document: Record<string, unknown>,
-  labelField: TextField,
-): LocalizedValue | undefined {
-  const localized = localizedValue(document, labelField);
-  if (localized !== undefined) {
-    return localized;
-  }
-  const untagged = document[labelField.name];
-  return typeof untagged === 'string' ? { und: [untagged] } : undefined;
-}
 
 /** Merge per-collection label maps into one IRI-keyed map (URI identity). */
 function mergeLabels(
@@ -616,7 +599,7 @@ export function parseSearchResponse(
     document: reconstructDocument(hit.document, searchType, labels),
   }));
   // Reference facets are IRI-keyed; their buckets carry a resolved data label.
-  // Plain facets (tokens, free strings) carry no label — the consumer owns display.
+  // Plain facets (tokens, free strings) carry no label – the consumer owns display.
   // Only reference facets with a label source get bucket labels; an id-only
   // reference facet stays id-only even when a cached full-collection map holds
   // its IRIs.
@@ -694,19 +677,27 @@ function logicalValue(
   }
 }
 
-/** Gather the per-locale display fields back into a language map. */
+/**
+ * Gather every present-language display field back into a language map. Display
+ * fields are pattern-based (`${name}_<lang>`, {@link displayLangOf}), so this
+ * recovers languages outside the declared `locales` too – a value tagged in an
+ * undeclared language, or untagged (`und`), still reconstructs rather than being
+ * dropped.
+ */
 function localizedValue(
   flat: Record<string, unknown>,
   field: TextField,
 ): LocalizedValue | undefined {
   const map: Record<string, readonly string[]> = {};
-  const display = physicalFields(field).display;
-  field.locales.forEach((locale, index) => {
-    const value = flat[display[index]];
-    if (typeof value === 'string') {
-      map[locale] = [value];
+  for (const [key, value] of Object.entries(flat)) {
+    if (typeof value !== 'string') {
+      continue;
     }
-  });
+    const lang = displayLangOf(field, key);
+    if (lang !== undefined) {
+      map[lang] = [value];
+    }
+  }
   return Object.keys(map).length > 0 ? map : undefined;
 }
 

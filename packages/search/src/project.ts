@@ -6,6 +6,7 @@ import {
   type FramedNode,
 } from './frame-by-type.js';
 import {
+  displayFieldName,
   isoToUnixSeconds,
   physicalFields,
   type KeywordField,
@@ -21,7 +22,7 @@ export type SearchDocument = { id: string } & Record<string, unknown>;
 
 /**
  * A projected document tagged with the {@link SearchType} it was projected
- * from — one element of {@link projectGraph}’s mixed, whole-schema stream. The
+ * from – one element of {@link projectGraph}’s mixed, whole-schema stream. The
  * tag is what lets a multi-collection writer route each document to the
  * collection for its type without re-deriving the type from the document.
  */
@@ -57,7 +58,7 @@ export function projectDocument(
 
 /**
  * Frame `quads` for every root type in the schema and project each node with its
- * type’s declaration — the multi-shape pipeline. Yields each document tagged
+ * type’s declaration – the multi-shape pipeline. Yields each document tagged
  * with its {@link SearchType} ({@link TypedSearchDocument}), so a downstream
  * multi-collection writer can route it to that type’s collection; a
  * single-collection consumer just reads `.document`. Streams one document at a
@@ -141,39 +142,56 @@ function applyField(
 }
 
 /**
- * Project a text field per locale (untagged literals land in the `und`
- * locale). Display shows one label (accents preserved) when the field is
- * `output`; sort keys off that same primary value (folded) when `sortable`;
- * search folds every value of the locale when `searchable`, so all are
- * matchable. Absent locales emit nothing.
+ * Project a text field. **Display** (when `output`) preserves *every* language
+ * present – one label per language (accents preserved, untagged under `und`),
+ * stored `index: false` so extra languages cost nothing – so a value in an
+ * undeclared language still renders rather than collapsing to a bare IRI.
+ * **Search** (folded, when `searchable`) and **sort** (folded primary, when
+ * `sortable`) stay on the declared `locales`, which drive the indexed, stemmed,
+ * weighted fanout; a value in an undeclared language is not indexed. Absent
+ * languages emit nothing.
  */
 function applyText(
   document: SearchDocument,
   values: readonly LangValue[],
   field: TextField,
 ): void {
+  if (field.output) {
+    // First value of each present language wins; a language absent from
+    // `locales` still lands as a display field (kept off the search index).
+    const primaryByLang = new Map<string, string>();
+    for (const { lang, value } of values) {
+      if (!primaryByLang.has(lang)) {
+        primaryByLang.set(lang, value);
+      }
+    }
+    for (const [lang, primary] of primaryByLang) {
+      setString(document, displayFieldName(field, lang), primary);
+    }
+  }
   // Empty `locales` is rejected at declaration time (`validateSearchType`);
-  // here it simply projects nothing.
-  const locales = field.locales;
-  const names = physicalFields(field);
-  locales.forEach((locale, index) => {
-    const localeValues = values
-      .filter((value) => value.lang === locale)
-      .map((value) => value.value);
-    if (localeValues.length === 0) {
-      return;
-    }
-    const [primary] = localeValues;
-    if (field.output) {
-      setString(document, names.display[index], primary);
-    }
-    if (field.searchable) {
-      setString(document, names.search[index], foldedSearchValue(localeValues));
-    }
-    if (field.sortable) {
-      setString(document, names.sort[index], fold(primary));
-    }
-  });
+  // here it simply indexes nothing.
+  if (field.searchable !== undefined || field.sortable === true) {
+    const names = physicalFields(field);
+    field.locales.forEach((locale, index) => {
+      const localeValues = values
+        .filter((value) => value.lang === locale)
+        .map((value) => value.value);
+      if (localeValues.length === 0) {
+        return;
+      }
+      if (field.searchable) {
+        setString(
+          document,
+          names.search[index],
+          foldedSearchValue(localeValues),
+        );
+      }
+      if (field.sortable) {
+        setString(document, names.sort[index], fold(localeValues[0]));
+      }
+    });
+  }
 }
 
 /** The projection’s definition of a folded free-text search value. */
@@ -183,7 +201,7 @@ function foldedSearchValue(values: readonly string[]): string {
 
 /**
  * Project a faceted multi-value field: dedupe (after the optional transform),
- * write the value field, and — when `searchable` — a folded `${name}_search`
+ * write the value field, and – when `searchable` – a folded `${name}_search`
  * array. `keyword` reads literals; `reference` reads IRIs (the caller passes the
  * already-read raw values).
  */

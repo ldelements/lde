@@ -114,6 +114,10 @@ const labelDocuments = [
     id: 'https://org/2',
     label_nl: 'Rijksmuseum',
     label_en: 'Rijksmuseum',
+    // A language OUTSIDE the declared ['nl', 'en'] locales: display-only, stored
+    // via the collection's regex `label_<lang>` field (no `label_search_fr`),
+    // so it must still round-trip back into the reconstructed language map.
+    label_fr: 'Rijksmusée',
     label_search_nl: 'rijksmuseum',
     label_search_en: 'rijksmuseum',
   },
@@ -194,7 +198,8 @@ describe('createTypesenseSearchEngine (integration)', () => {
     expect(result.hits[0].document.publisher).toEqual([
       {
         id: 'https://org/2',
-        label: { nl: ['Rijksmuseum'], en: ['Rijksmuseum'] },
+        // The undeclared French display value survives the round-trip.
+        label: { nl: ['Rijksmuseum'], en: ['Rijksmuseum'], fr: ['Rijksmusée'] },
       },
     ]);
     expect(result.hits[1].document.publisher).toEqual([
@@ -241,7 +246,7 @@ describe('createTypesenseSearchEngine (integration)', () => {
       {
         value: 'https://org/2',
         count: 1,
-        label: { nl: ['Rijksmuseum'], en: ['Rijksmuseum'] },
+        label: { nl: ['Rijksmuseum'], en: ['Rijksmuseum'], fr: ['Rijksmusée'] },
       },
     ]);
   });
@@ -285,7 +290,7 @@ describe('createTypesenseSearchEngine (integration)', () => {
       {
         value: 'https://org/2',
         count: 1,
-        label: { nl: ['Rijksmuseum'], en: ['Rijksmuseum'] },
+        label: { nl: ['Rijksmuseum'], en: ['Rijksmuseum'], fr: ['Rijksmusée'] },
       },
     ]);
 

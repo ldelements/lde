@@ -128,7 +128,7 @@ describe('per-reference label sources', () => {
         },
         terms: {
           // A bare untagged `label` is the `und` fallback.
-          'https://term/1': { label: 'Cartography' },
+          'https://term/1': { label_und: 'Cartography' },
         },
       }),
     });
@@ -275,7 +275,7 @@ describe('per-reference label sources', () => {
           'https://org/1': { label_nl: 'Het Archief' },
         },
         terms: {
-          'https://term/1': { label: 'Cartography' },
+          'https://term/1': { label_und: 'Cartography' },
         },
       }),
     });
@@ -385,7 +385,9 @@ describe('per-reference label sources', () => {
       multiSearch: (search) =>
         String(search.collection) === 'organizations'
           ? { error: 'Collection is being rebuilt', code: 503 }
-          : labelLookup({ 'https://term/1': { label: 'Cartography' } })(search),
+          : labelLookup({ 'https://term/1': { label_und: 'Cartography' } })(
+              search,
+            ),
     });
     const engine = createTypesenseSearchEngine(fake.client, schema, {
       collections,

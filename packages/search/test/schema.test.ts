@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   assertTypeInSchema,
   assertValidSearchType,
+  displayFieldName,
+  displayFieldPattern,
+  displayLangOf,
   facetableFields,
   fieldNamed,
   filterableFields,
@@ -17,6 +20,7 @@ import {
   validateSearchType,
   type SearchField,
   type SearchType,
+  type TextField,
 } from '../src/schema.js';
 
 const DATASET = 'http://www.w3.org/ns/dcat#Dataset';
@@ -73,7 +77,7 @@ const schema: SearchType = {
 };
 
 describe('physicalFields', () => {
-  it('fans a localized text field out into per-locale display, search and sort keys', () => {
+  it('fans a localized text field out into per-locale search and sort keys', () => {
     const title: SearchField = {
       name: 'title',
       kind: 'text',
@@ -83,8 +87,8 @@ describe('physicalFields', () => {
       sortable: true,
     };
 
+    // Display is pattern-based, not enumerated here (see displayFieldPattern).
     expect(physicalFields(title)).toEqual({
-      display: ['title_nl', 'title_en'],
       search: ['title_search_nl', 'title_search_en'],
       sort: ['title_sort_nl', 'title_sort_en'],
     });
@@ -101,13 +105,12 @@ describe('physicalFields', () => {
     };
 
     expect(physicalFields(keyword)).toEqual({
-      display: [],
       search: ['keyword_search'],
       sort: [],
     });
   });
 
-  it('emits only the search keys for a search-only localized field (no display, no sort)', () => {
+  it('emits only the search keys for a search-only localized field (no sort)', () => {
     const creator: SearchField = {
       name: 'creator',
       kind: 'text',
@@ -116,7 +119,6 @@ describe('physicalFields', () => {
     };
 
     expect(physicalFields(creator)).toEqual({
-      display: [],
       search: ['creator_search_nl', 'creator_search_en'],
       sort: [],
     });
@@ -133,7 +135,6 @@ describe('physicalFields', () => {
     };
 
     expect(physicalFields(title)).toEqual({
-      display: [],
       search: [],
       sort: [],
     });
@@ -150,10 +151,50 @@ describe('physicalFields', () => {
     };
 
     expect(physicalFields(publisher)).toEqual({
-      display: [],
       search: [],
       sort: [],
     });
+  });
+});
+
+describe('display field helpers', () => {
+  const label: TextField = {
+    name: 'label',
+    kind: 'text',
+    locales: ['nl', 'en'],
+    output: true,
+    searchable: { weight: 1 },
+  };
+
+  it('names a display field per language, tag preserved (untagged under und)', () => {
+    expect(displayFieldName(label, 'nl')).toBe('label_nl');
+    expect(displayFieldName(label, 'fr')).toBe('label_fr');
+    expect(displayFieldName(label, 'zh-hant')).toBe('label_zh-hant');
+    expect(displayFieldName(label, 'und')).toBe('label_und');
+  });
+
+  it('declares one regex display field for an output text field, none otherwise', () => {
+    expect(displayFieldPattern(label)).toBe('label_[^_]+');
+    const searchOnly: TextField = {
+      name: 'creator',
+      kind: 'text',
+      locales: ['nl'],
+      searchable: { weight: 1 },
+    };
+    expect(displayFieldPattern(searchOnly)).toBeUndefined();
+  });
+
+  it('recovers the language of a display key, rejecting search/sort companions', () => {
+    expect(displayLangOf(label, 'label_nl')).toBe('nl');
+    expect(displayLangOf(label, 'label_fr')).toBe('fr');
+    expect(displayLangOf(label, 'label_zh-hant')).toBe('zh-hant');
+    expect(displayLangOf(label, 'label_und')).toBe('und');
+    // The underscore-free rule excludes the indexed companions and the bare name.
+    expect(displayLangOf(label, 'label_search_nl')).toBeUndefined();
+    expect(displayLangOf(label, 'label_sort_nl')).toBeUndefined();
+    expect(displayLangOf(label, 'label')).toBeUndefined();
+    // A different field’s display key is not misattributed.
+    expect(displayLangOf(label, 'other_nl')).toBeUndefined();
   });
 });
 

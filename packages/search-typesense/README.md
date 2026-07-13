@@ -12,24 +12,27 @@ writers (Blue/green Rebuild and In-place Rebuild).
 ## Collection schema and engine
 
 `buildCollectionDefinition(searchType, { name, defaultSortingField, … })` derives a
-Typesense collection from the unified `SearchField` model — the Typesense field
+Typesense collection from the unified `SearchField` model – the Typesense field
 type comes from each field’s `kind`, and the physical fanout (per-locale
-search/sort keys) matches what the projection writes, via
-`@lde/search`’s `physicalFields`, so the index and the documents cannot drift.
+search/sort keys, plus one regex display field per output text field) matches
+what the projection writes, via `@lde/search`’s `physicalFields` and its display
+helpers, so the index and the documents cannot drift.
 
 **Memory lever.** Typesense keeps the index in RAM (with a raw copy of each
 document on disk), so RAM tracks the _indexed_ surface – roughly 2–3× the size
 of the fields you search, facet or sort on – not the full document.
-`buildCollectionDefinition` keeps that surface minimal: the `output` display labels
-fan out to `index: false` fields, stored on disk and fetched only for a hit, so
-they cost no RAM; only the folded `*_search_${locale}`, facet/reference and
-`*_sort_${locale}` companions are indexed. Keeping retrieval-only fields
-un-indexed is the lever for holding a large index’s RAM down.
+`buildCollectionDefinition` keeps that surface minimal: the `output` display
+labels land in one `index: false` regex field (`${name}_<lang>`, one value per
+present language), stored on disk and fetched only for a hit, so they cost no RAM
+and preserve every language; only the folded `*_search_${locale}`,
+facet/reference and `*_sort_${locale}` companions are indexed. Keeping
+retrieval-only fields un-indexed is the lever for holding a large index’s RAM
+down.
 
 `createTypesenseSearchEngine(client, schema, { collections })` is the
 `SearchEngine` implementation. Each search:
 
-- validates the query against the search type (the port contract — a
+- validates the query against the search type (the port contract – a
   structurally invalid query is rejected, never sent);
 - compiles it into Typesense search params (`buildSearchParams`);
 - runs the search;
@@ -38,7 +41,7 @@ un-indexed is the lever for holding a large index’s RAM down.
   sources bundled into a single lookup. A reference without a `labelSource`
   stays id-only. With `labelCacheTtlMs` set, each label-source collection is
   instead loaded once into an in-memory cache;
-- reconstructs the logical `SearchResult` (`parseSearchResponse`) — language
+- reconstructs the logical `SearchResult` (`parseSearchResponse`) – language
   maps, labelled references, labelled facet buckets.
 
 A label source is just another `SearchType` in the schema (with an `output`,
