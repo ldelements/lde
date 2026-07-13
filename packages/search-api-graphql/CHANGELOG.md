@@ -1,3 +1,59 @@
+## 0.5.0 (2026-07-13)
+
+### 🚀 Features
+
+- ⚠️  **search:** rename to de-overload “schema” in the search family ([#595](https://github.com/ldelements/lde/pull/595))
+
+### ⚠️  Breaking Changes
+
+- **search:** rename to de-overload “schema” in the search family  ([#595](https://github.com/ldelements/lde/pull/595))
+  @lde/search SearchType.type is renamed to .class, and
+  @lde/search-typesense buildCollectionSchema / CollectionSchemaOptions become
+  buildCollectionDefinition / CollectionDefinitionOptions. @lde/search-pipeline
+  and @lde/search-api-graphql adapt internally; their own public APIs are
+  unchanged."
+  M	docs/decisions/0003-search-api-core-query-model.md
+  M	docs/decisions/0004-search-api-graphql-surface.md
+  M	docs/decisions/0008-resolve-reference-labels-from-per-reference-label-sources.md
+  M	docs/decisions/0009-route-a-whole-schema-projection-to-per-type-collections.md
+  M	packages/search-api-graphql/test/build-schema.test.ts
+  M	packages/search-api-graphql/test/facet-batch.test.ts
+  M	packages/search-api-graphql/test/generator-stability.test.ts
+  M	packages/search-pipeline/README.md
+  M	packages/search-pipeline/src/search-index-writer.ts
+  M	packages/search-pipeline/test/multi-collection.integration.test.ts
+  M	packages/search-pipeline/test/search-index-writer.test.ts
+  M	packages/search-typesense/README.md
+  M	packages/search-typesense/src/blue-green-rebuild.ts
+  R096	packages/search-typesense/src/collection-schema.ts	packages/search-typesense/src/collection-definition.ts
+  M	packages/search-typesense/src/in-place-rebuild.ts
+  M	packages/search-typesense/src/index.ts
+  M	packages/search-typesense/src/rebuild-support.ts
+  M	packages/search-typesense/src/search.ts
+  M	packages/search-typesense/test/__snapshots__/generator-stability.test.ts.snap
+  M	packages/search-typesense/test/blue-green-rebuild.test.ts
+  R093	packages/search-typesense/test/collection-schema.test.ts	packages/search-typesense/test/collection-definition.test.ts
+  M	packages/search-typesense/test/generator-stability.test.ts
+  M	packages/search-typesense/test/in-place-rebuild.test.ts
+  M	packages/search-typesense/test/label-sources.test.ts
+  M	packages/search-typesense/test/parse-response.test.ts
+  M	packages/search-typesense/test/query-compiler.test.ts
+  M	packages/search-typesense/test/rebuild-error-paths.test.ts
+  M	packages/search-typesense/test/rebuild-support.test.ts
+  M	packages/search-typesense/test/search-engine.test.ts
+  M	packages/search/README.md
+  M	packages/search/src/project.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/src/testing.ts
+  M	packages/search/test/engine.test.ts
+  M	packages/search/test/project.test.ts
+  M	packages/search/test/query.test.ts
+  M	packages/search/test/schema.test.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.6.0
+
 ## 0.4.0 (2026-07-10)
 
 ### 🧱 Updated Dependencies

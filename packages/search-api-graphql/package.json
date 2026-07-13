@@ -1,6 +1,6 @@
 {
   "name": "@lde/search-api-graphql",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Engine- and domain-agnostic GraphQL surface for @lde/search: builds an executable GraphQLSchema from a whole SearchSchema at runtime (no codegen) — one root query field per SearchType — served by generic resolvers over any SearchEngine. You supply the schema and per-type typeNames; it names neither your domain nor your engine.",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
@@ -25,7 +25,7 @@
     "!**/*.tsbuildinfo"
   ],
   "dependencies": {
-    "@lde/search": "^0.5.0",
+    "@lde/search": "^0.6.0",
     "dataloader": "^2.2.3",
     "graphql": "^15.8.0",
     "tslib": "^2.3.0"
