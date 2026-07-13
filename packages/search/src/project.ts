@@ -159,14 +159,12 @@ function applyText(
   if (field.output) {
     // First value of each present language wins; a language absent from
     // `locales` still lands as a display field (kept off the search index).
-    const primaryByLang = new Map<string, string>();
+    const seenLangs = new Set<string>();
     for (const { lang, value } of values) {
-      if (!primaryByLang.has(lang)) {
-        primaryByLang.set(lang, value);
+      if (!seenLangs.has(lang)) {
+        seenLangs.add(lang);
+        setString(document, displayFieldName(field, lang), value);
       }
-    }
-    for (const [lang, primary] of primaryByLang) {
-      setString(document, displayFieldName(field, lang), primary);
     }
   }
   // Empty `locales` is rejected at declaration time (`validateSearchType`);
@@ -268,11 +266,15 @@ function toLangValue(value: unknown): LangValue | undefined {
     return undefined;
   }
   // Untagged literals (JSON-LD @none) land in the reserved `und` locale.
-  const lang =
+  // Normalise the tag to its BCP-47 shape: `_` is the reserved separator in the
+  // physical/display field naming, so a non-conformant `pt_BR` tag becomes
+  // `pt-BR`, which round-trips through display and matches a declared locale
+  // instead of being silently dropped.
+  const rawLang =
     isObject(value) && typeof value['@language'] === 'string'
       ? value['@language']
       : 'und';
-  return { value: literal, lang };
+  return { value: literal, lang: rawLang.replace(/_/g, '-') };
 }
 
 function literalString(value: unknown): string | undefined {

@@ -250,6 +250,22 @@ describe('projectDocument', () => {
     expect(document.title_sort_nl).toBeUndefined();
   });
 
+  it('normalises an underscore-style language tag to its BCP-47 shape', () => {
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/d/6b',
+        // Non-conformant `pt_BR` (underscore instead of hyphen) – dirty data.
+        [dcterms.title.value]: { '@language': 'pt_BR', '@value': 'Mapa' },
+      },
+      { name: 'Dataset', class: DATASET, fields },
+    );
+    // Normalised to `pt-BR`, so the display key is underscore-free and both the
+    // regex collection field and displayLangOf round-trip it (rather than the
+    // value being silently dropped).
+    expect(document['title_pt-BR']).toBe('Mapa');
+    expect(document.title_pt_BR).toBeUndefined();
+  });
+
   it('displays an untagged literal under und, but does not index it when und is undeclared', () => {
     const document = projectDocument(
       {

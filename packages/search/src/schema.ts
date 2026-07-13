@@ -384,6 +384,8 @@ export interface SearchTypeIssue {
   readonly field: string;
   readonly reason:
     | 'duplicate-field-name'
+    | 'invalid-field-name'
+    | 'invalid-locale'
     | 'missing-ref'
     | 'ref-not-allowed'
     | 'text-requires-locales'
@@ -403,11 +405,33 @@ const SEARCHABLE_KINDS: readonly FieldKind[] = ['text', 'keyword', 'reference'];
 const TRANSFORMABLE_KINDS: readonly FieldKind[] = ['keyword', 'reference'];
 
 /**
+ * A safe logical field name: a GraphQL-style identifier. The name is
+ * interpolated raw into physical field names AND, for a display text field,
+ * into the RE2 collection pattern `${name}_[^_]+` ({@link displayFieldPattern}),
+ * so it must contain no regex metacharacter – this charset (letters, digits,
+ * `_`) guarantees that, and is exactly what a GraphQL field name allows anyway.
+ */
+const FIELD_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
+ * A safe declared locale: BCP-47-shaped (letters/digits, `-` between subtags),
+ * never containing `_`. The `_` is the reserved separator between a text field’s
+ * name and its language subtag, so a locale carrying one would collide with the
+ * `${name}_search_${locale}` / display naming; incoming data tags are normalised
+ * to this shape at projection time.
+ */
+const LOCALE_PATTERN = /^[A-Za-z0-9]+(-[A-Za-z0-9]+)*$/;
+
+/**
  * Structurally validate one {@link SearchType} declaration – the
  * declaration-time counterpart of `validateQuery`. Rules:
  *
  * - field names are unique (a duplicate would silently shadow in every
- *   consumer, each picking a different winner);
+ *   consumer, each picking a different winner) and a metacharacter-free
+ *   identifier (the name is interpolated into physical field names and the
+ *   display RE2 pattern);
+ * - a `text` field’s declared locales are BCP-47-shaped (no `_`, which is the
+ *   reserved name↔locale separator);
  * - a `reference` field that is `output` declares `ref` (the API surfaces
  *   need the reference type name); `ref` on any other kind is meaningless;
  * - a `text` field declares at least one locale (`und` = untagged; projection and
@@ -443,6 +467,11 @@ export function validateSearchType(
       issue('duplicate-field-name');
     }
     seen.add(field.name);
+    // The name is interpolated into physical field names and the display RE2
+    // pattern, so it must be a metacharacter-free identifier.
+    if (!FIELD_NAME_PATTERN.test(field.name)) {
+      issue('invalid-field-name');
+    }
     if (field.kind === 'reference') {
       if (field.output === true && field.ref === undefined) {
         issue('missing-ref');
@@ -453,6 +482,14 @@ export function validateSearchType(
     if (field.kind === 'text') {
       if ((field.locales ?? []).length === 0) {
         issue('text-requires-locales');
+      }
+      // A locale carrying `_` would collide with the name/locale separator in
+      // the physical and display field naming, so declared locales are
+      // BCP-47-shaped (data tags are normalised to match at projection time).
+      if (
+        (field.locales ?? []).some((locale) => !LOCALE_PATTERN.test(locale))
+      ) {
+        issue('invalid-locale');
       }
     } else if (field.locales !== undefined) {
       issue('locales-not-allowed');

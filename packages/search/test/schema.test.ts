@@ -196,6 +196,19 @@ describe('display field helpers', () => {
     // A different field’s display key is not misattributed.
     expect(displayLangOf(label, 'other_nl')).toBeUndefined();
   });
+
+  it('round-trips displayFieldName through displayLangOf, and the pattern matches', () => {
+    // Binds the three builders to one convention so they cannot silently drift.
+    const pattern = new RegExp(`^${displayFieldPattern(label)}$`);
+    for (const lang of ['nl', 'en', 'fr', 'zh-hant', 'und']) {
+      const key = displayFieldName(label, lang);
+      expect(displayLangOf(label, key)).toBe(lang);
+      expect(pattern.test(key)).toBe(true);
+    }
+    // The search/sort companions fall outside the display pattern.
+    expect(pattern.test('label_search_nl')).toBe(false);
+    expect(pattern.test('label_sort_nl')).toBe(false);
+  });
 });
 
 describe('schema selectors', () => {
@@ -286,6 +299,34 @@ describe('validateSearchType', () => {
     expect(validateSearchType(type)).toEqual([
       { field: 'status', reason: 'duplicate-field-name' },
     ]);
+  });
+
+  it('rejects a field name carrying a regex metacharacter', () => {
+    // The name is interpolated raw into the display RE2 pattern, so a
+    // metacharacter would over-match or break the collection schema.
+    expect(
+      validateSearchType(typeWith({ name: 'v1.2', kind: 'keyword' })),
+    ).toEqual([{ field: 'v1.2', reason: 'invalid-field-name' }]);
+  });
+
+  it('rejects a declared locale containing an underscore', () => {
+    // `_` is the reserved name↔locale separator; a locale carrying one would
+    // collide with the physical/display field naming.
+    expect(
+      validateSearchType(
+        typeWith({ name: 'title', kind: 'text', locales: ['pt_BR'] }),
+      ),
+    ).toEqual([{ field: 'title', reason: 'invalid-locale' }]);
+    // A BCP-47 hyphenated subtag is accepted.
+    expect(
+      validateSearchType(
+        typeWith({
+          name: 'title',
+          kind: 'text',
+          locales: ['pt-BR', 'zh-Hant', 'und'],
+        }),
+      ),
+    ).toEqual([]);
   });
 
   it('requires ref on an output reference field, but not on a facet-only one', () => {
