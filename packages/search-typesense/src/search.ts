@@ -112,7 +112,7 @@ export function createTypesenseSearchEngine<
           `No collection configured for search type “${searchType.name}”; set options.collections.${searchType.name}.`,
         );
       }
-      return [searchType.type, collection];
+      return [searchType.class, collection];
     }),
   );
   // Resolve every reference field's label source ONCE at construction. The
@@ -123,7 +123,7 @@ export function createTypesenseSearchEngine<
   );
   const labelSources = new Map<string, ReadonlyMap<string, LabelSource>>(
     [...schema.values()].map((searchType) => [
-      searchType.type,
+      searchType.class,
       new Map(
         referenceFields(searchType)
           .filter((field) => field.labelSource !== undefined)
@@ -133,7 +133,7 @@ export function createTypesenseSearchEngine<
             return [
               field.name,
               {
-                collection: collections.get(source.type) as string,
+                collection: collections.get(source.class) as string,
                 labelField,
                 queryBy: physicalFields(labelField).search.join(','),
               },
@@ -162,9 +162,9 @@ export function createTypesenseSearchEngine<
     readonly { name: string; source: LabelSource }[]
   >(
     [...schema.values()].map((searchType) => {
-      const sources = labelSources.get(searchType.type);
+      const sources = labelSources.get(searchType.class);
       return [
-        searchType.type,
+        searchType.class,
         referenceFields(searchType)
           .filter((field) => field.output === true && sources?.has(field.name))
           .map((field) => ({
@@ -256,7 +256,7 @@ export function createTypesenseSearchEngine<
   function startCachedLabels(
     searchType: SearchType,
   ): Promise<ReadonlyMap<string, LocalizedValue>> | undefined {
-    const sources = distinctLabelSources.get(searchType.type);
+    const sources = distinctLabelSources.get(searchType.class);
     if (
       options.labelCacheTtlMs === undefined ||
       sources === undefined ||
@@ -267,7 +267,7 @@ export function createTypesenseSearchEngine<
     const ttlMs = options.labelCacheTtlMs;
     return Promise.all(
       sources.map((source) => cachedAllLabels(source, ttlMs)),
-    ).then((maps) => mergeCachedLabels(searchType.type, maps));
+    ).then((maps) => mergeCachedLabels(searchType.class, maps));
   }
 
   // Labels are supplementary: a failed lookup (e.g. a label-source collection
@@ -305,14 +305,14 @@ export function createTypesenseSearchEngine<
       const params = buildSearchParams(query, searchType, options);
       const cachedLabelsPromise = startCachedLabels(searchType);
       const response = (await client
-        .collections(collections.get(searchType.type) as string)
+        .collections(collections.get(searchType.class) as string)
         .documents()
         .search(params)) as TypesenseSearchResponse;
       const labels = await resolveLabels(cachedLabelsPromise, () =>
         labelLookupGroups(
           [response],
-          labelSources.get(searchType.type),
-          outputReferenceSources.get(searchType.type) ?? [],
+          labelSources.get(searchType.class),
+          outputReferenceSources.get(searchType.class) ?? [],
         ),
       );
       return parseSearchResponse(response, searchType, labels);
@@ -328,7 +328,7 @@ export function createTypesenseSearchEngine<
       if (queries.length === 0) {
         return [];
       }
-      const collection = collections.get(searchType.type) as string;
+      const collection = collections.get(searchType.class) as string;
       const cachedLabelsPromise = startCachedLabels(searchType);
       // The whole batch travels as ONE multi_search round-trip. Each query
       // compiles as facet-only regardless of what it carries: no hits
@@ -353,8 +353,8 @@ export function createTypesenseSearchEngine<
       const labels = await resolveLabels(cachedLabelsPromise, () =>
         labelLookupGroups(
           responses,
-          labelSources.get(searchType.type),
-          outputReferenceSources.get(searchType.type) ?? [],
+          labelSources.get(searchType.class),
+          outputReferenceSources.get(searchType.class) ?? [],
         ),
       );
       // multi_search reports a failed entry inline instead of rejecting the

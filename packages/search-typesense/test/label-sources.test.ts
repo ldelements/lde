@@ -12,7 +12,7 @@ import {
 
 const organization: SearchType = {
   name: 'Organization',
-  type: 'https://example.org/Organization',
+  class: 'https://example.org/Organization',
   fields: [
     {
       name: 'label',
@@ -26,7 +26,7 @@ const organization: SearchType = {
 
 const term: SearchType = {
   name: 'Term',
-  type: 'https://example.org/Term',
+  class: 'https://example.org/Term',
   fields: [
     {
       name: 'label',
@@ -40,7 +40,7 @@ const term: SearchType = {
 
 const dataset: SearchType = {
   name: 'Dataset',
-  type: 'http://www.w3.org/ns/dcat#Dataset',
+  class: 'http://www.w3.org/ns/dcat#Dataset',
   fields: [
     {
       name: 'publisher',
@@ -444,7 +444,7 @@ describe('per-reference label sources', () => {
   it('issues no lookup at all for a schema without label sources', async () => {
     const bare = searchSchema({
       name: 'Dataset',
-      type: 'http://www.w3.org/ns/dcat#Dataset',
+      class: 'http://www.w3.org/ns/dcat#Dataset',
       fields: [
         {
           name: 'license',
@@ -465,7 +465,7 @@ describe('per-reference label sources', () => {
       collections: { Dataset: 'datasets' },
     });
 
-    const result = await engine.search(bare.get(dataset.type)!, baseQuery);
+    const result = await engine.search(bare.get(dataset.class)!, baseQuery);
 
     expect(result.hits[0].document.license).toEqual([{ id: 'https://l/1' }]);
     expect(fake.performs).toHaveLength(0);

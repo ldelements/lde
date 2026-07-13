@@ -1,17 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import type { SearchType } from '@lde/search';
-import { buildCollectionSchema } from '../src/collection-schema.js';
+import { buildCollectionDefinition } from '../src/collection-definition.js';
 
 /**
  * A neutral fixture exercising every kind + capability — NOT a real domain. The
  * derived Typesense collection is snapshotted purely to pin the **generator**:
- * any change to how `buildCollectionSchema` maps the field model (Typesense field
+ * any change to how `buildCollectionDefinition` maps the field model (Typesense field
  * types, the physical fanout, stem/locale, optional/default-sorting-field)
  * surfaces as a snapshot diff before this library is published.
  */
 const THING: SearchType = {
   name: 'Thing',
-  type: 'https://example.org/Thing',
+  class: 'https://example.org/Thing',
   fields: [
     {
       name: 'title',
@@ -51,10 +51,10 @@ const THING: SearchType = {
   ],
 };
 
-describe('collection-schema generator stability', () => {
+describe('collection-definition generator stability', () => {
   it('derives a stable Typesense collection for a representative schema', () => {
     expect(
-      buildCollectionSchema(THING, {
+      buildCollectionDefinition(THING, {
         name: 'things',
         defaultSortingField: 'size',
         defaultLocale: 'nl',

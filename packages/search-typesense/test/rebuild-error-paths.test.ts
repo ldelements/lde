@@ -11,7 +11,7 @@ import { makeRunContext, typesenseError } from './helpers.js';
 
 const searchType: SearchType = {
   name: 'Object',
-  type: 'https://example.org/Object',
+  class: 'https://example.org/Object',
   fields: [{ name: 'title', kind: 'keyword' }],
 };
 

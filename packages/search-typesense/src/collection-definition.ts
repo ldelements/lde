@@ -4,7 +4,7 @@ import { type SearchField, type SearchType } from '@lde/search';
 import { physicalFields } from '@lde/search/adapter';
 
 /** Deployment-specific options the generic field model does not carry. */
-export interface CollectionSchemaOptions {
+export interface CollectionDefinitionOptions {
   /** The Typesense collection (or alias) name. */
   readonly name: string;
   /** Snowball stemming locale for non-localized searchable fields (e.g. `en`).
@@ -19,7 +19,7 @@ export interface CollectionSchemaOptions {
 }
 
 /**
- * Build a Typesense collection schema from the unified {@link SearchType}, so
+ * Build a Typesense collection definition from the unified {@link SearchType}, so
  * the index and the projection are driven by one declarative source and cannot
  * drift. Each field fans out into the same physical fields the projection writes
  * ({@link physicalFields}); the Typesense field type is derived from the field
@@ -39,9 +39,9 @@ export interface CollectionSchemaOptions {
  * `*_sort_${locale}` companions are indexed. Keeping retrieval-only fields
  * un-indexed is the lever for holding a large index’s RAM down.
  */
-export function buildCollectionSchema(
+export function buildCollectionDefinition(
   searchType: SearchType,
-  options: CollectionSchemaOptions,
+  options: CollectionDefinitionOptions,
 ): CollectionCreateSchema {
   const { defaultLocale } = options;
   const collection: CollectionCreateSchema = {

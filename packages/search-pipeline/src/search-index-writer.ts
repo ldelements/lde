@@ -76,7 +76,7 @@ export function searchIndexWriter(
   // by the type IRI, which is also how a projected document names its type.
   const writers = new Map<string, Writer<SearchDocument>>(
     [...schema.values()].map((searchType) => [
-      searchType.type,
+      searchType.class,
       writerFor(searchType),
     ]),
   );
@@ -121,9 +121,9 @@ export function searchIndexWriter(
           pass.quads,
           schema,
         )) {
-          const documents = byType.get(searchType.type);
+          const documents = byType.get(searchType.class);
           if (documents === undefined) {
-            byType.set(searchType.type, [document]);
+            byType.set(searchType.class, [document]);
           } else {
             documents.push(document);
           }

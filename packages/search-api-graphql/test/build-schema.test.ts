@@ -12,7 +12,7 @@ import { buildGraphQLSchema, type SearchContext } from '../src/build-schema.js';
 
 const schema: SearchType = {
   name: 'Dataset',
-  type: 'http://www.w3.org/ns/dcat#Dataset',
+  class: 'http://www.w3.org/ns/dcat#Dataset',
   fields: [
     {
       name: 'title',
@@ -590,7 +590,7 @@ describe('buildGraphQLSchema', () => {
   describe('multiple root types in one schema', () => {
     const PERSON: SearchType = {
       name: 'Person',
-      type: 'https://schema.org/Person',
+      class: 'https://schema.org/Person',
       fields: [
         {
           name: 'name',
@@ -611,7 +611,7 @@ describe('buildGraphQLSchema', () => {
     };
     const CREATIVE_WORK: SearchType = {
       name: 'CreativeWork',
-      type: 'https://schema.org/CreativeWork',
+      class: 'https://schema.org/CreativeWork',
       fields: [
         {
           name: 'title',
@@ -659,7 +659,7 @@ describe('buildGraphQLSchema', () => {
       const engine: SearchEngine = {
         schema: searchSchema(PERSON, CREATIVE_WORK),
         async search(searchType: SearchType): Promise<SearchResult> {
-          searchedTypes.push(searchType.type);
+          searchedTypes.push(searchType.class);
           return { total: 0, hits: [], facets: {} };
         },
         searchFacets: noFacets,
@@ -670,7 +670,7 @@ describe('buildGraphQLSchema', () => {
         contextValue: { engine, acceptLanguage: ['nl'] },
       });
       expect(result.errors).toBeUndefined();
-      expect(searchedTypes).toEqual([PERSON.type, CREATIVE_WORK.type]);
+      expect(searchedTypes).toEqual([PERSON.class, CREATIVE_WORK.class]);
     });
 
     it('builds without any options: names come from the search types', () => {
@@ -686,7 +686,7 @@ describe('buildGraphQLSchema', () => {
     it('throws when a reference type name collides with a root type name', () => {
       const withCollidingRef: SearchType = {
         name: 'CreativeWork',
-        type: 'https://schema.org/CreativeWork',
+        class: 'https://schema.org/CreativeWork',
         fields: [
           {
             name: 'author',
@@ -705,7 +705,7 @@ describe('buildGraphQLSchema', () => {
     it('rejects a duplicate root type name at declaration time', () => {
       const alsoPerson: SearchType = {
         name: 'Person',
-        type: 'https://example.org/OtherPerson',
+        class: 'https://example.org/OtherPerson',
         fields: [{ name: 'name', kind: 'keyword', output: true }],
       };
       // searchSchema() rejects the duplicate; SearchSchema is branded, so a
@@ -714,7 +714,7 @@ describe('buildGraphQLSchema', () => {
         /Duplicate search type name “Person”/,
       );
       // @ts-expect-error — a hand-built map is not a (branded) SearchSchema
-      void (() => buildGraphQLSchema(new Map([[PERSON.type, PERSON]])));
+      void (() => buildGraphQLSchema(new Map([[PERSON.class, PERSON]])));
     });
 
     it('throws on options for an unknown type and on a root-field clash', () => {
@@ -741,7 +741,7 @@ describe('und-locale text output', () => {
   it('serves untagged text as a LanguageString list with a null language', async () => {
     const doc: SearchType = {
       name: 'Doc',
-      type: 'urn:example:Doc',
+      class: 'urn:example:Doc',
       fields: [
         { name: 'summary', kind: 'text', locales: ['und'], output: true },
       ],

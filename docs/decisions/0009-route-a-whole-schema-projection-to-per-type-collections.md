@@ -19,7 +19,7 @@ several ([#590](https://github.com/ldelements/lde/issues/590)).
 One validated `SearchSchema` declares several root types. The Dataset Register
 indexes four: `datasets` plus the Organization / Class / TerminologySource label
 collections its references resolve against (ADR 8). Each type derives its own
-Typesense collection schema, so the types cannot share a collection – they are
+Typesense collection definition, so the types cannot share a collection – they are
 four independent blue/green rebuilds, each with its own versioned collection,
 alias and single-flight lock.
 

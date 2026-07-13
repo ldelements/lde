@@ -11,7 +11,7 @@ const NAME = 'datasets';
 
 const datasetType: SearchType = {
   name: 'Dataset',
-  type: 'https://example.org/Dataset',
+  class: 'https://example.org/Dataset',
   fields: [
     { name: 'title', kind: 'keyword' },
     { name: 'year', kind: 'integer' },
@@ -281,7 +281,7 @@ describe('BlueGreenRebuild', () => {
           client,
           {
             name: 'Dataset',
-            type: 'https://example.org/Dataset',
+            class: 'https://example.org/Dataset',
             fields: [{ name: 'source', kind: 'keyword' }],
           },
           { name: NAME },

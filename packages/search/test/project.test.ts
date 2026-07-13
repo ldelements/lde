@@ -78,7 +78,7 @@ const fields: SearchField[] = [
 
 const schema: SearchType = {
   name: 'Dataset',
-  type: DATASET,
+  class: DATASET,
   fields: [
     ...fields,
     {
@@ -126,7 +126,7 @@ describe('projectDocument', () => {
       },
       {
         name: 'Dataset',
-        type: DATASET,
+        class: DATASET,
         fields: [
           { name: 'size', path: `${DR}size`, kind: 'integer' },
           {
@@ -159,7 +159,7 @@ describe('projectDocument', () => {
       { '@id': 'https://ex/d/12', [`${DR}size`]: { '@value': '1234.5' } },
       {
         name: 'Dataset',
-        type: DATASET,
+        class: DATASET,
         fields: [{ name: 'size', path: `${DR}size`, kind: 'number' }],
       },
     );
@@ -169,7 +169,7 @@ describe('projectDocument', () => {
   it('projects a boolean field from a path (xsd:boolean lexical space)', () => {
     const withBoolean: SearchType = {
       name: 'Dataset',
-      type: DATASET,
+      class: DATASET,
       fields: [{ name: 'iiif', path: `${DR}iiif`, kind: 'boolean' }],
     };
     const project = (value: unknown): SearchDocument =>
@@ -192,7 +192,7 @@ describe('projectDocument', () => {
       { '@id': 'https://ex/d/4', [`${DR}format`]: [`${IANA}text/turtle`] },
       {
         name: 'Dataset',
-        type: DATASET,
+        class: DATASET,
         fields: [
           {
             name: 'format',
@@ -214,7 +214,7 @@ describe('projectDocument', () => {
         '@id': 'https://ex/d/2',
         [dcterms.title.value]: { '@language': 'nl', '@value': 'Solo' },
       },
-      { name: 'Dataset', type: DATASET, fields },
+      { name: 'Dataset', class: DATASET, fields },
     );
     expect(document.id).toBe('https://ex/d/2');
     expect(document.title_search_nl).toBe('solo');
@@ -225,7 +225,7 @@ describe('projectDocument', () => {
   it('omits the sort field when there is no value to sort on', () => {
     const document = projectDocument(
       { '@id': 'https://ex/d/5' },
-      { name: 'Dataset', type: DATASET, fields },
+      { name: 'Dataset', class: DATASET, fields },
     );
     expect(document.id).toBe('https://ex/d/5');
     expect(document.title_sort_nl).toBeUndefined();
@@ -237,7 +237,7 @@ describe('projectDocument', () => {
         '@id': 'https://ex/d/6',
         [dcterms.title.value]: { '@language': 'fr', '@value': 'Bonjour' },
       },
-      { name: 'Dataset', type: DATASET, fields },
+      { name: 'Dataset', class: DATASET, fields },
     );
     // locales is ['nl', 'en'], so the French title is invisible — no display,
     // search or sort field is emitted for it.
@@ -253,7 +253,7 @@ describe('projectDocument', () => {
         '@id': 'https://ex/d/7',
         [dcterms.title.value]: { '@value': 'Naamloos' },
       },
-      { name: 'Dataset', type: DATASET, fields },
+      { name: 'Dataset', class: DATASET, fields },
     );
     expect(document.title_nl).toBeUndefined();
     expect(document.title_search_nl).toBeUndefined();
@@ -268,7 +268,7 @@ describe('projectDocument', () => {
       },
       {
         name: 'Dataset',
-        type: DATASET,
+        class: DATASET,
         fields: [
           {
             name: 'title',
@@ -296,7 +296,7 @@ describe('projectDocument', () => {
           { '@language': 'nl', '@value': 'Ondertitel' },
         ],
       },
-      { name: 'Dataset', type: DATASET, fields },
+      { name: 'Dataset', class: DATASET, fields },
     );
     // Display takes the first value; search folds them all so both are matchable.
     expect(document.title_nl).toBe('Titel');
@@ -311,7 +311,7 @@ describe('projectDocument', () => {
       },
       {
         name: 'Dataset',
-        type: DATASET,
+        class: DATASET,
         fields: [
           {
             name: 'title',
@@ -361,7 +361,7 @@ describe('projectDocument', () => {
       },
       {
         name: 'Dataset',
-        type: DATASET,
+        class: DATASET,
         fields: [
           {
             name: 'title',
@@ -415,7 +415,7 @@ describe('projectDocument', () => {
       },
       {
         name: 'Dataset',
-        type: DATASET,
+        class: DATASET,
         fields: [
           {
             name: 'title',
@@ -442,7 +442,7 @@ describe('projectDocument', () => {
     expect(() =>
       projectDocument(
         { [dcterms.title.value]: { '@value': 'No id' } },
-        { name: 'Dataset', type: DATASET, fields },
+        { name: 'Dataset', class: DATASET, fields },
       ),
     ).toThrow(/without an @id/);
   });
@@ -457,7 +457,7 @@ describe('projectDocument', () => {
       },
       {
         name: 'Dataset',
-        type: DATASET,
+        class: DATASET,
         fields: [
           {
             name: 'title',
@@ -486,7 +486,7 @@ describe('projectGraph', () => {
     const documents: SearchDocument[] = [];
     for await (const { searchType, document } of projectGraph(
       quads,
-      searchSchema({ name: 'Dataset', type: DATASET, fields }),
+      searchSchema({ name: 'Dataset', class: DATASET, fields }),
     )) {
       expect(searchType.name).toBe('Dataset');
       documents.push(document);
@@ -519,11 +519,11 @@ describe('projectGraph', () => {
     for await (const { searchType, document } of projectGraph(
       once(),
       searchSchema(
-        { name: 'Dataset', type: DATASET, fields },
-        { name: 'Other', type: other, fields },
+        { name: 'Dataset', class: DATASET, fields },
+        { name: 'Other', class: other, fields },
       ),
     )) {
-      tagged.push({ type: searchType.type, id: document.id });
+      tagged.push({ type: searchType.class, id: document.id });
     }
 
     expect(tagged.map((entry) => entry.id).sort()).toEqual([

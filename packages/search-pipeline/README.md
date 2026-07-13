@@ -32,7 +32,7 @@ import { searchIndexWriter } from '@lde/search-pipeline';
 const schema = searchSchema(
   {
     name: 'Dataset',
-    type: 'http://www.w3.org/ns/dcat#Dataset',
+    class: 'http://www.w3.org/ns/dcat#Dataset',
     fields: [
       {
         name: 'title',
@@ -46,7 +46,7 @@ const schema = searchSchema(
   },
   {
     name: 'Organization',
-    type: 'http://xmlns.com/foaf/0.1/Organization',
+    class: 'http://xmlns.com/foaf/0.1/Organization',
     fields: [
       {
         name: 'label',

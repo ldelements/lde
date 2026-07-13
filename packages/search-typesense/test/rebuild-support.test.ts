@@ -28,7 +28,7 @@ describe('resolveRebuildOptions', () => {
     expect(resolved.name).toBe('objects');
     expect(resolved.batchSize).toBe(1000);
     expect(resolved.lockTtlMs).toBe(600_000);
-    expect(resolved.schemaOptions).toEqual({
+    expect(resolved.definitionOptions).toEqual({
       name: 'objects',
       defaultSortingField: 'rank',
     });
@@ -48,7 +48,7 @@ describe('resolveRebuildOptions', () => {
 describe('assertNoReservedFields', () => {
   const typeWith = (...names: string[]): SearchType => ({
     name: 'Object',
-    type: 'https://example.org/Object',
+    class: 'https://example.org/Object',
     fields: names.map((name) => ({ name, kind: 'keyword' })),
   });
 

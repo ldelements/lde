@@ -20,12 +20,12 @@ const NAME = 'https://example.org/name';
 const schema = searchSchema(
   {
     name: 'person',
-    type: PERSON,
+    class: PERSON,
     fields: [{ name: 'name', kind: 'keyword', path: NAME }],
   },
   {
     name: 'work',
-    type: WORK,
+    class: WORK,
     fields: [{ name: 'name', kind: 'keyword', path: NAME }],
   },
 );
@@ -94,7 +94,7 @@ function makeFleet(
       abort: vi.fn<(error: unknown) => Promise<void>>().mockResolvedValue(),
       openRunCalls: 0,
     };
-    collections.set(searchType.type, collection);
+    collections.set(searchType.class, collection);
 
     const runWriter: RunWriter<SearchDocument> = {
       write: async (written, documents) => {
@@ -276,7 +276,7 @@ describe('searchIndexWriter', () => {
     const failure = new Error('person rollback failed');
     const fleet = makeFleet({
       flush: (searchType) =>
-        searchType.type === PERSON
+        searchType.class === PERSON
           ? Promise.reject(failure)
           : Promise.resolve(),
     });
@@ -298,7 +298,7 @@ describe('searchIndexWriter', () => {
     const failure = new Error('person reset failed');
     const fleet = makeFleet({
       reset: (searchType) =>
-        searchType.type === PERSON
+        searchType.class === PERSON
           ? Promise.reject(failure)
           : Promise.resolve(),
     });
@@ -356,7 +356,7 @@ describe('searchIndexWriter', () => {
     const failure = new Error('work collection swap failed');
     const fleet = makeFleet({
       commit: (searchType) =>
-        searchType.type === WORK ? Promise.reject(failure) : Promise.resolve(),
+        searchType.class === WORK ? Promise.reject(failure) : Promise.resolve(),
     });
     const run = await openRun(fleet);
 
@@ -372,7 +372,7 @@ describe('searchIndexWriter', () => {
     const failure = new Error('work collection swap failed');
     const fleet = makeFleet({
       commit: (searchType) =>
-        searchType.type === WORK ? Promise.reject(failure) : Promise.resolve(),
+        searchType.class === WORK ? Promise.reject(failure) : Promise.resolve(),
     });
     const run = await openRun(fleet);
 

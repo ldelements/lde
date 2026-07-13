@@ -4,14 +4,14 @@
 domain-agnostic [`@lde/search`](../search) core. **Engine-specific (Typesense) but
 domain-agnostic** – you supply a `SearchType`; this package never names your
 domain. It is the Typesense implementation of the `SearchEngine` port: it derives
-a collection schema from the field model, compiles the neutral `SearchQuery` into
+a collection definition from the field model, compiles the neutral `SearchQuery` into
 Typesense search params, runs it, reconstructs the engine-neutral `SearchResult`,
 and manages the search index lifecycle as transactional `@lde/pipeline`
 writers (Blue/green Rebuild and In-place Rebuild).
 
 ## Collection schema and engine
 
-`buildCollectionSchema(searchType, { name, defaultSortingField, … })` derives a
+`buildCollectionDefinition(searchType, { name, defaultSortingField, … })` derives a
 Typesense collection from the unified `SearchField` model — the Typesense field
 type comes from each field’s `kind`, and the physical fanout (per-locale
 search/sort keys) matches what the projection writes, via
@@ -20,7 +20,7 @@ search/sort keys) matches what the projection writes, via
 **Memory lever.** Typesense keeps the index in RAM (with a raw copy of each
 document on disk), so RAM tracks the _indexed_ surface – roughly 2–3× the size
 of the fields you search, facet or sort on – not the full document.
-`buildCollectionSchema` keeps that surface minimal: the `output` display labels
+`buildCollectionDefinition` keeps that surface minimal: the `output` display labels
 fan out to `index: false` fields, stored on disk and fetched only for a hit, so
 they cost no RAM; only the folded `*_search_${locale}`, facet/reference and
 `*_sort_${locale}` companions are indexed. Keeping retrieval-only fields
@@ -67,9 +67,9 @@ Indexing runs through two transactional writers, one per update mode – the
 Both implement `@lde/pipeline`’s `Writer` – each run is
 `openRun(context)` → `write` per dataset → `commit()` or `abort(error)` – so
 an `@lde/pipeline` `Pipeline` drives them without branching on the mode. Both
-derive the collection schema from your `SearchType` (via
-`buildCollectionSchema`), and their options accept everything
-`buildCollectionSchema` does (`defaultLocale`, `defaultSortingField`,
+derive the collection definition from your `SearchType` (via
+`buildCollectionDefinition`), and their options accept everything
+`buildCollectionDefinition` does (`defaultLocale`, `defaultSortingField`,
 `synonymSets`) plus the tuning knobs (`batchSize`, `lockTtlMs`).
 
 ### Blue/green Rebuild

@@ -51,7 +51,7 @@ collection to search by label.
   The Dataset Register declares its labels data as a `SearchType` (e.g. per
   entity kind), adds its collection(s) to `collections`, and sets
   `labelSource` on each reference field. Label collections are rebuilt via
-  `buildCollectionSchema` so the physical label fields exist.
+  `buildCollectionDefinition` so the physical label fields exist.
 - Reference facet buckets are labelled from the facet field’s own source,
   exactly as hit references are.
 - The facet-by-name typeahead (issue #534, with #533’s value-query IR) gets

@@ -7,7 +7,7 @@ import {
   type SearchType,
 } from '@lde/search';
 import { describeSearchEngineContract } from '@lde/search/testing';
-import { buildCollectionSchema } from '../src/collection-schema.js';
+import { buildCollectionDefinition } from '../src/collection-definition.js';
 import { createTypesenseSearchEngine } from '../src/search.js';
 import { TypesenseContainer } from './typesense-container.js';
 
@@ -15,7 +15,7 @@ import { TypesenseContainer } from './typesense-container.js';
 // whose collection is built from the same declaration.
 const organizationSchema: SearchType = {
   name: 'Organization',
-  type: 'https://example.org/Organization',
+  class: 'https://example.org/Organization',
   fields: [
     {
       name: 'label',
@@ -29,7 +29,7 @@ const organizationSchema: SearchType = {
 
 const datasetSchema: SearchType = {
   name: 'Dataset',
-  type: 'http://www.w3.org/ns/dcat#Dataset',
+  class: 'http://www.w3.org/ns/dcat#Dataset',
   fields: [
     {
       name: 'title',
@@ -137,7 +137,7 @@ describe('createTypesenseSearchEngine (integration)', () => {
     client = await container.start();
     // Typesense accepts the generated schema (stemming, locales, int64, …).
     await client.collections().create(
-      buildCollectionSchema(datasetSchema, {
+      buildCollectionDefinition(datasetSchema, {
         name: 'datasets',
         defaultSortingField: 'statusRank',
         defaultLocale: 'nl',
@@ -146,7 +146,9 @@ describe('createTypesenseSearchEngine (integration)', () => {
     // The label source's collection comes from the same declarative source.
     await client
       .collections()
-      .create(buildCollectionSchema(organizationSchema, { name: 'labels' }));
+      .create(
+        buildCollectionDefinition(organizationSchema, { name: 'labels' }),
+      );
     await client
       .collections('datasets')
       .documents()
