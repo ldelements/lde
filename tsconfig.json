@@ -83,5 +83,8 @@
     {
       "path": "./packages/search-pipeline"
     }
-  ]
+  ],
+  "compilerOptions": {
+    "ignoreDeprecations": "6.0"
+  }
 }
