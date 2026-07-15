@@ -1,3 +1,47 @@
+## 0.9.0 (2026-07-15)
+
+### 🚀 Features
+
+- ⚠️  **search:** preserve all languages in text display ([#601](https://github.com/ldelements/lde/pull/601))
+
+### ⚠️  Breaking Changes
+
+- **search:** preserve all languages in text display  ([#601](https://github.com/ldelements/lde/pull/601))
+  PhysicalFields no longer carries the enumerated display array;
+  use displayFieldName/displayFieldPattern/displayLangOf. Label collections must
+  be rebuilt to gain the regex display field.
+  * fix(search): harden language-tag and field-name handling
+  - Normalise an underscore-style language tag (pt_BR -> pt-BR) at projection, so
+    a non-BCP-47 tag round-trips through the regex display field instead of being
+    silently dropped on read.
+  - Validate field names as metacharacter-free identifiers (the name is
+    interpolated into the display RE2 pattern) and text locales as BCP-47-shaped
+    (no underscore, the reserved name-locale separator).
+  - Collapse the display projection to a single pass, and add a round-trip test
+    binding displayFieldName/displayFieldPattern/displayLangOf so the convention
+    cannot silently drift."
+  A	docs/decisions/0010-preserve-all-languages-in-text-display.md
+  M	packages/search-typesense/README.md
+  M	packages/search-typesense/src/collection-definition.ts
+  M	packages/search-typesense/src/search.ts
+  M	packages/search-typesense/test/__snapshots__/generator-stability.test.ts.snap
+  M	packages/search-typesense/test/collection-definition.test.ts
+  M	packages/search-typesense/test/label-sources.test.ts
+  M	packages/search-typesense/test/parse-response.test.ts
+  M	packages/search-typesense/test/search-engine.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/README.md
+  M	packages/search/src/adapter.ts
+  M	packages/search/src/project.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/test/project.test.ts
+  M	packages/search/test/schema.test.ts
+  M	packages/search/vite.config.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.7.0
+
 ## 0.8.0 (2026-07-13)
 
 ### 🚀 Features
