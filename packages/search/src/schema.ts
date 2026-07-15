@@ -35,7 +35,7 @@ const OPERATOR_BY_KIND: Readonly<
 
 /**
  * The `where` operator a field of this kind accepts (per the ADR filter-semantics
- * table), or `undefined` for `text` — which feeds the free-text `query` rather
+ * table), or `undefined` for `text` – which feeds the free-text `query` rather
  * than `where`. The ONE source for the surface’s `where` input type, the
  * adapter’s filter compiler and declaration validation, so they cannot drift.
  */
@@ -44,7 +44,7 @@ export function filterOperatorFor(kind: FieldKind): FilterOperator | undefined {
 }
 
 /**
- * One queryable field — the single declarative source that drives all four
+ * One queryable field – the single declarative source that drives all four
  * consumers (projection, engine collection definition, query semantics, and the
  * GraphQL surface).
  *
@@ -57,8 +57,8 @@ export function filterOperatorFor(kind: FieldKind): FilterOperator | undefined {
  * Capability flags (`searchable`/`filterable`/`facetable`/`sortable`/`output`)
  * are independent opt-ins: a field exposes exactly the roles it declares. A
  * field with a {@link SearchFieldBase.derive `derive`} function instead of a
- * `path` is a **derived field** — computed from the framed node rather than
- * projected from the IR — yet it still carries full query/schema/output
+ * `path` is a **derived field** – computed from the framed node rather than
+ * projected from the IR – yet it still carries full query/schema/output
  * behavior (e.g. `status`, the compatibility booleans).
  *
  * The physical field names a declaration fans out to (per-locale search/sort
@@ -103,7 +103,7 @@ export interface SearchFieldBase {
   /** Publicly selectable in `orderBy`; localized text also emits a folded sort key. */
   readonly sortable?: boolean;
   /**
-   * Compute this field’s value instead of projecting it from a `path` — a
+   * Compute this field’s value instead of projecting it from a `path` – a
    * status token, a compatibility boolean, a count over the framed node.
    * Mutually exclusive with `path`. Runs in declaration order during
    * projection, receiving the framed node and the document as populated so
@@ -126,7 +126,7 @@ export interface Searchable {
  * locale into display/search/sort companions. `locales` lists the language
  * tags to emit; the reserved locale **`und`** (JSON-LD `@none`, RDF `und`)
  * buckets untagged literals, so a monolingual or untagged corpus declares
- * `locales: ['und']` and mixed data `['nl', 'und']` — one mechanism, and
+ * `locales: ['und']` and mixed data `['nl', 'und']` – one mechanism, and
  * adding a language later is additive (the API output shape never changes).
  * Declaring a real language is RECOMMENDED where the data has one: it drives
  * the engine’s per-locale stemming; `und` is folded but unstemmed (unless the
@@ -172,7 +172,7 @@ export interface ReferenceField extends SearchFieldBase, Searchable {
    *  optional for a facet- or filter-only reference. */
   readonly ref?: {
     /** Logical API type name of the referenced entity (PascalCase, e.g.
-     *  `Organization`) — names the reference’s type in the API surfaces, the
+     *  `Organization`) – names the reference’s type in the API surfaces, the
      *  way {@link SearchType.name} names a root type; fields sharing it share
      *  one emitted type. A name, not a key: it need not correspond to any
      *  indexed root type (and until cross-collection references exist, it must
@@ -190,7 +190,7 @@ export interface ReferenceField extends SearchFieldBase, Searchable {
 /**
  * Range-facet bins for a numeric (`integer`/`number`/`date`) facetable field.
  * When set, the field facets into these fixed half-open `[min, max)` ranges (a
- * histogram) rather than one bucket per distinct value — the per-bucket counts
+ * histogram) rather than one bucket per distinct value – the per-bucket counts
  * a UI slider needs. Bins are query-time only (no index impact) and
  * engine-neutral: the Typesense adapter emits a `facet_by` range, an
  * OpenSearch adapter a `range` aggregation. See {@link FacetRange}.
@@ -202,7 +202,7 @@ export interface RangeFacetable {
 /**
  * A numeric value: range-filtered, range- or value-faceted, sortable.
  * `integer` is a whole number, `number` a float, `date` a point in time
- * (ISO 8601 at the edges, Unix seconds in the index) — identical capabilities,
+ * (ISO 8601 at the edges, Unix seconds in the index) – identical capabilities,
  * so one interface serves all three kinds; `field.kind` still narrows.
  */
 export interface NumericField extends SearchFieldBase, RangeFacetable {
@@ -238,7 +238,7 @@ export interface FacetRange {
  * not a requirement.
  */
 export interface SearchType {
-  /** Logical API name (PascalCase, e.g. `Dataset`) — names the type in the API
+  /** Logical API name (PascalCase, e.g. `Dataset`) – names the type in the API
    *  surfaces (GraphQL type names, a REST path), the way each field’s
    *  {@link SearchField.name} names that field. Deliberately declared rather
    *  than derived from the `class` IRI, so re-modelling the vocabulary cannot
@@ -253,7 +253,7 @@ export interface SearchType {
 /**
  * Declare a {@link SearchType}, capturing it as a literal: the `const` type
  * parameter preserves the field names and capability flags that the type-level
- * helpers (`FacetFieldsOf`, `OutputFieldsOf`) read off the type —
+ * helpers (`FacetFieldsOf`, `OutputFieldsOf`) read off the type –
  * with none of the widening a plain `: SearchType` annotation causes and
  * without having to remember `as const satisfies SearchType`. Identity at
  * runtime.
@@ -272,7 +272,7 @@ export function defineSearchType<const Type extends SearchType>(
  * `: SearchSchema` annotation widens gracefully to `SearchType`.
  */
 /** Brand for {@link SearchSchema}: type-only, no runtime existence. Makes the
- *  schema NOMINAL — a hand-built `Map` is not assignable, so `searchSchema()`
+ *  schema NOMINAL – a hand-built `Map` is not assignable, so `searchSchema()`
  *  (which validates) is the only way to obtain one and downstream consumers
  *  need no defensive re-validation. */
 export declare const validSearchSchema: unique symbol;
@@ -286,8 +286,8 @@ export interface SearchSchema<
 /**
  * Build a {@link SearchSchema} from root-type declarations, keyed by `class`.
  *
- * Every declaration is validated ({@link assertValidSearchType}) — the
- * declaration-time counterpart of the port’s `assertValidQuery` — and the
+ * Every declaration is validated ({@link assertValidSearchType}) – the
+ * declaration-time counterpart of the port’s `assertValidQuery` – and the
  * schema-wide invariants are enforced: no two types may share a `class` IRI
  * (they would silently overwrite each other in the map) or a `name` (names
  * key the API surfaces). Throws on the first invalid declaration, so a bad
@@ -384,6 +384,8 @@ export interface SearchTypeIssue {
   readonly field: string;
   readonly reason:
     | 'duplicate-field-name'
+    | 'invalid-field-name'
+    | 'invalid-locale'
     | 'missing-ref'
     | 'ref-not-allowed'
     | 'text-requires-locales'
@@ -403,18 +405,40 @@ const SEARCHABLE_KINDS: readonly FieldKind[] = ['text', 'keyword', 'reference'];
 const TRANSFORMABLE_KINDS: readonly FieldKind[] = ['keyword', 'reference'];
 
 /**
- * Structurally validate one {@link SearchType} declaration — the
+ * A safe logical field name: a GraphQL-style identifier. The name is
+ * interpolated raw into physical field names AND, for a display text field,
+ * into the RE2 collection pattern `${name}_[^_]+` ({@link displayFieldPattern}),
+ * so it must contain no regex metacharacter – this charset (letters, digits,
+ * `_`) guarantees that, and is exactly what a GraphQL field name allows anyway.
+ */
+const FIELD_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
+ * A safe declared locale: BCP-47-shaped (letters/digits, `-` between subtags),
+ * never containing `_`. The `_` is the reserved separator between a text field’s
+ * name and its language subtag, so a locale carrying one would collide with the
+ * `${name}_search_${locale}` / display naming; incoming data tags are normalised
+ * to this shape at projection time.
+ */
+const LOCALE_PATTERN = /^[A-Za-z0-9]+(-[A-Za-z0-9]+)*$/;
+
+/**
+ * Structurally validate one {@link SearchType} declaration – the
  * declaration-time counterpart of `validateQuery`. Rules:
  *
  * - field names are unique (a duplicate would silently shadow in every
- *   consumer, each picking a different winner);
+ *   consumer, each picking a different winner) and a metacharacter-free
+ *   identifier (the name is interpolated into physical field names and the
+ *   display RE2 pattern);
+ * - a `text` field’s declared locales are BCP-47-shaped (no `_`, which is the
+ *   reserved name↔locale separator);
  * - a `reference` field that is `output` declares `ref` (the API surfaces
  *   need the reference type name); `ref` on any other kind is meaningless;
  * - a `text` field declares at least one locale (`und` = untagged; projection and
- *   result reconstruction have no representation for unlocalized text — use
+ *   result reconstruction have no representation for unlocalized text – use
  *   `keyword` for untagged strings); `locales` on any other kind is
  *   meaningless;
- * - a kind without a `where` operator (`text` — it feeds the free-text query)
+ * - a kind without a `where` operator (`text` – it feeds the free-text query)
  *   is neither `filterable` nor `facetable`;
  * - `facetRanges` only on the `range`-operator kinds (`integer`/`number`/`date`);
  * - `searchable` only on `text`/`keyword`/`reference` (projection emits no
@@ -443,6 +467,11 @@ export function validateSearchType(
       issue('duplicate-field-name');
     }
     seen.add(field.name);
+    // The name is interpolated into physical field names and the display RE2
+    // pattern, so it must be a metacharacter-free identifier.
+    if (!FIELD_NAME_PATTERN.test(field.name)) {
+      issue('invalid-field-name');
+    }
     if (field.kind === 'reference') {
       if (field.output === true && field.ref === undefined) {
         issue('missing-ref');
@@ -453,6 +482,14 @@ export function validateSearchType(
     if (field.kind === 'text') {
       if ((field.locales ?? []).length === 0) {
         issue('text-requires-locales');
+      }
+      // A locale carrying `_` would collide with the name/locale separator in
+      // the physical and display field naming, so declared locales are
+      // BCP-47-shaped (data tags are normalised to match at projection time).
+      if (
+        (field.locales ?? []).some((locale) => !LOCALE_PATTERN.test(locale))
+      ) {
+        issue('invalid-locale');
       }
     } else if (field.locales !== undefined) {
       issue('locales-not-allowed');
@@ -497,7 +534,7 @@ export function validateSearchType(
   return issues;
 }
 
-/** The union flattened to every possible member — the uniform shape runtime
+/** The union flattened to every possible member – the uniform shape runtime
  *  validation and generic iteration read; never a declaration type. */
 interface FlatField extends SearchFieldBase, Searchable, RangeFacetable {
   readonly kind: FieldKind;
@@ -507,7 +544,7 @@ interface FlatField extends SearchFieldBase, Searchable, RangeFacetable {
 }
 
 /**
- * Throw when `searchType` is not a member of `schema` — the port membership
+ * Throw when `searchType` is not a member of `schema` – the port membership
  * guard every engine adapter applies before searching, so a query can never
  * meet an index the deployment did not declare. Identity-based: the exact
  * declaration object must be in the schema, not a lookalike.
@@ -546,8 +583,6 @@ export function assertValidSearchType(searchType: SearchType): void {
  * query compiler (reads them) cannot disagree.
  */
 export interface PhysicalFields {
-  /** Per-locale output labels `${name}_${locale}` (localized text, `output`). */
-  readonly display: readonly string[];
   /** Folded match fields: `${name}_search_${locale}` per locale (localized) or a
    *  single `${name}_search` (non-localized), when `searchable`. */
   readonly search: readonly string[];
@@ -557,7 +592,61 @@ export interface PhysicalFields {
 }
 
 /**
- * Full-text searchable fields, highest `query_by` weight first — the order the
+ * The display fields of a localized `text` field are pattern-based, not
+ * enumerated per declared locale: projection stores `${name}_${lang}` for
+ * **every** language present in the data (not only those in `locales`), so a
+ * label in an undeclared language or an untagged one still renders rather than
+ * collapsing to a bare IRI. `locales` governs only the indexed search/sort
+ * fanout ({@link PhysicalFields}); display costs nothing per language (stored
+ * `index: false`), so it preserves them all. A deployment that wants fewer
+ * display languages restricts them upstream (e.g. in its CONSTRUCT).
+ *
+ * A language subtag never contains `_`, but the `search_`/`sort_` infixes do,
+ * so `${name}_${lang}` with `lang` matching `[^_]+` is unambiguously a display
+ * field: `label_nl`, `label_fr`, `label_zh-hant`, `label_und` are display;
+ * `label_search_nl` and `label_sort_nl` are not. This trio – the name a value
+ * is written under ({@link displayFieldName}), the collection pattern that
+ * accepts them all ({@link displayFieldPattern}), and the reader that recovers a
+ * key’s language ({@link displayLangOf}) – is the single home of that
+ * convention, so projection, collection-definition and result reconstruction
+ * cannot disagree.
+ */
+export function displayFieldName(field: TextField, lang: string): string {
+  return `${field.name}_${lang}`;
+}
+
+/**
+ * The RE2 pattern a collection declares to store every present language’s
+ * display value un-indexed, or `undefined` when the field is not `output` (no
+ * display at all). Matches `${name}_${lang}` for any underscore-free `lang`, so
+ * it never collides with the field’s `${name}_search_${locale}` /
+ * `${name}_sort_${locale}` companions.
+ */
+export function displayFieldPattern(field: TextField): string | undefined {
+  return field.output ? `${field.name}_[^_]+` : undefined;
+}
+
+/**
+ * The language a stored document key carries for `field`’s display, or
+ * `undefined` when the key is not one of `field`’s display fields – the inverse
+ * of {@link displayFieldName}. A key qualifies when it is `${name}_` followed by
+ * an underscore-free remainder, so the `${name}_search_…`/`${name}_sort_…`
+ * companions (and unrelated fields) are rejected.
+ */
+export function displayLangOf(
+  field: TextField,
+  key: string,
+): string | undefined {
+  const prefix = `${field.name}_`;
+  if (!key.startsWith(prefix)) {
+    return undefined;
+  }
+  const lang = key.slice(prefix.length);
+  return lang.length > 0 && !lang.includes('_') ? lang : undefined;
+}
+
+/**
+ * Full-text searchable fields, highest `query_by` weight first – the order the
  * engine adapter weights `query_by` in. A field is searchable iff it carries a
  * `searchable` weight.
  */
@@ -643,14 +732,16 @@ export function unixSecondsToIso(seconds: number): string {
   return new Date(seconds * 1000).toISOString();
 }
 
-/** Derive the physical engine field names a declaration produces. */
+/**
+ * Derive the **indexed** physical engine field names a declaration produces:
+ * the per-locale `search`/`sort` fanout. A localized `text` field’s display
+ * fields are pattern-based and not enumerated here – see {@link displayFieldName}
+ * and its siblings.
+ */
 export function physicalFields(field: SearchField): PhysicalFields {
   if (field.kind === 'text') {
     const locales = field.locales;
     return {
-      display: field.output
-        ? locales.map((locale) => `${field.name}_${locale}`)
-        : [],
       search: field.searchable
         ? locales.map((locale) => `${field.name}_search_${locale}`)
         : [],
@@ -660,7 +751,6 @@ export function physicalFields(field: SearchField): PhysicalFields {
     };
   }
   return {
-    display: [],
     search: field.searchable !== undefined ? [`${field.name}_search`] : [],
     sort: [],
   };

@@ -6,13 +6,7 @@ exports[`collection-definition generator stability > derives a stable Typesense 
   "fields": [
     {
       "index": false,
-      "name": "title_nl",
-      "optional": true,
-      "type": "string",
-    },
-    {
-      "index": false,
-      "name": "title_en",
+      "name": "title_[^_]+",
       "optional": true,
       "type": "string",
     },

@@ -1,14 +1,14 @@
 import type { CollectionCreateSchema } from 'typesense';
 import type { CollectionFieldSchema } from 'typesense/lib/Typesense/Collection.js';
 import { type SearchField, type SearchType } from '@lde/search';
-import { physicalFields } from '@lde/search/adapter';
+import { displayFieldPattern, physicalFields } from '@lde/search/adapter';
 
 /** Deployment-specific options the generic field model does not carry. */
 export interface CollectionDefinitionOptions {
   /** The Typesense collection (or alias) name. */
   readonly name: string;
   /** Snowball stemming locale for non-localized searchable fields (e.g. `en`).
-   *  Unset, those fields are not stemmed — folding still applies — so no
+   *  Unset, those fields are not stemmed – folding still applies – so no
    *  language is ever assumed. Localized text search fields always stem in
    *  their own locale. */
   readonly defaultLocale?: string;
@@ -33,11 +33,12 @@ export interface CollectionDefinitionOptions {
  * Memory lever: Typesense holds the index in RAM (with a raw copy of each
  * document on disk), so RAM tracks the *indexed* surface – roughly 2–3× the
  * size of the fields you search, facet or sort on – not the whole document.
- * This builder keeps that surface minimal: the `output` display labels fan out
- * to `index: false` fields, kept on disk and read back only for a hit, so they
- * cost no RAM; only the folded `*_search_${locale}`, facet/reference and
- * `*_sort_${locale}` companions are indexed. Keeping retrieval-only fields
- * un-indexed is the lever for holding a large index’s RAM down.
+ * This builder keeps that surface minimal: the `output` display labels land in
+ * a single `index: false` regex field (`${name}_<lang>`, one value per present
+ * language), kept on disk and read back only for a hit, so they cost no RAM;
+ * only the folded `*_search_${locale}`, facet/reference and `*_sort_${locale}`
+ * companions are indexed. Keeping retrieval-only fields un-indexed is the lever
+ * for holding a large index’s RAM down.
  */
 export function buildCollectionDefinition(
   searchType: SearchType,
@@ -68,19 +69,24 @@ function typesenseFields(
   const names = physicalFields(field);
   if (field.kind === 'text') {
     const locales = field.locales;
+    const displayPattern = displayFieldPattern(field);
     return [
-      // Display labels: stored but NOT indexed (`index: false`) – search hits
-      // the folded `*_search` companions, so the display copy stays on disk and
-      // off RAM (fetched only for a hit), accents preserved. This is the memory
-      // lever: RAM tracks the search surface, not the display text.
-      ...names.display.map(
-        (name): CollectionFieldSchema => ({
-          name,
-          type: 'string',
-          index: false,
-          optional: true,
-        }),
-      ),
+      // Display labels: ONE regex field (`${name}_<lang>`) storing every
+      // present language’s value, NOT indexed (`index: false`) – search hits
+      // the folded `*_search` companions, so the display copies stay on disk and
+      // off RAM (fetched only for a hit), accents preserved, and a language
+      // outside `locales` still renders. This is the memory lever: RAM tracks
+      // the search surface, not the display text. Absent for a non-output field.
+      ...(displayPattern !== undefined
+        ? [
+            {
+              name: displayPattern,
+              type: 'string',
+              index: false,
+              optional: true,
+            } satisfies CollectionFieldSchema,
+          ]
+        : []),
       // One folded search field per locale, each stemmed in its own
       // language; the untagged `und` locale is folded but unstemmed unless
       // the deployment opts in via `defaultLocale`.
@@ -118,7 +124,7 @@ function typesenseFields(
     },
   ];
   // `names.search` is non-empty exactly when the field projects a folded
-  // search companion — physicalFields owns that rule.
+  // search companion – physicalFields owns that rule.
   for (const name of names.search) {
     fields.push({
       name,
