@@ -1,3 +1,35 @@
+## 0.10.0 (2026-07-16)
+
+### 🚀 Features
+
+- ⚠️  **search:** refuse to name a search type whose name cannot be spelled ([#605](https://github.com/ldelements/lde/pull/605))
+
+### ⚠️  Breaking Changes
+
+- **search:** refuse to name a search type whose name cannot be spelled  ([#605](https://github.com/ldelements/lde/pull/605))
+  physicalNameTokens throws for a name it cannot spell, and for
+  one leaving no word to name a container after, where it previously returned
+  mangled tokens or an empty array. Adapters keep only their own engine's
+  legality rules - the Typesense adapter still rules on the formatted result.
+  - Drop the now-redundant top-level name from ResolvedRebuildOptions (internal),
+    leaving definitionOptions.name as the one place the resolved name lives.
+  - Fix the unclosed Blue/green Rebuild link in the search-typesense README."
+  M	packages/search-typesense/README.md
+  M	packages/search-typesense/src/blue-green-rebuild.ts
+  M	packages/search-typesense/src/collection-name.ts
+  M	packages/search-typesense/src/in-place-rebuild.ts
+  M	packages/search-typesense/src/rebuild-support.ts
+  M	packages/search-typesense/test/collection-name.test.ts
+  M	packages/search-typesense/test/rebuild-support.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/src/physical-name.ts
+  M	packages/search/test/physical-name.test.ts
+  M	packages/search/vite.config.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.8.0
+
 ## 0.9.1 (2026-07-16)
 
 ### 🚀 Features
