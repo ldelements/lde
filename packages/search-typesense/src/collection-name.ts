@@ -23,11 +23,9 @@ import { physicalNameTokens } from '@lde/search/adapter';
  * deployment’s business.
  */
 export function deriveCollectionName(searchType: SearchType): string {
-  if (!NAMEABLE_TYPE_NAME.test(searchType.name)) {
-    throw new Error(
-      `Cannot derive a Typesense collection name from search type “${searchType.name}”: it carries characters the convention would silently drop rather than name. Rename the type, or pass an explicit name.`,
-    );
-  }
+  // A name the split cannot spell at all throws in physicalNameTokens, which
+  // owns that engine-neutral rule; what is left to check here is whether the
+  // formatted result is legal for THIS engine.
   const name = physicalNameTokens(searchType).join('_');
   if (!DERIVED_COLLECTION_NAME.test(name)) {
     throw new Error(
@@ -38,26 +36,13 @@ export function deriveCollectionName(searchType: SearchType): string {
 }
 
 /**
- * A type name this convention can name a collection after without silently
- * losing part of it. {@link physicalNameTokens} matches ASCII words and drops
- * everything else, which is what lets a name already written `creative_work` or
- * `creative-work` tokenize like `CreativeWork` – but it would just as quietly
- * turn `Café` into `cafs` and `Musée` into `mus_es`: legal names for the wrong
- * collection, which is worse than no name at all. So a name is nameable only
- * when it is ASCII words and word separators; anything else is rejected rather
- * than mangled. An explicit name still overrides, since a deployment may
- * legitimately index a type whose name this cannot spell.
- */
-const NAMEABLE_TYPE_NAME = /^[A-Za-z0-9 _-]+$/;
-
-/**
  * What a *derived* name must look like. Typesense documents no collection-name
  * rules, but a name travels in the URL path of every collection call
  * (`/collections/:name`), so a character with URL meaning breaks that call
  * rather than being rejected at creation – `#` and `+` silently strand a
- * collection ({@link https://github.com/typesense/typesense/issues/548}). This
- * charset is the safe subset {@link physicalNameTokens} can produce anyway, so
- * the check is really a guard on the type name behind it: a `name` with no
- * alphanumerics at all (tokens `[]`, name `''`) is the case that reaches it.
+ * collection ({@link https://github.com/typesense/typesense/issues/548}).
+ * {@link physicalNameTokens} already guarantees lowercase ASCII words, so what
+ * this still rules on is the leading character: a type named `123` derives
+ * `123s`, and a name should open with a letter rather than read as a number.
  */
 const DERIVED_COLLECTION_NAME = /^[a-z][a-z0-9_]*$/;

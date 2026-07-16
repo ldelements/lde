@@ -19,18 +19,20 @@ export interface RebuildOptions extends CollectionDefinitionOptions {
 /** The shared options resolved to concrete values plus the residual
  *  collection-definition options a writer passes to {@link buildCollectionDefinition}. */
 export interface ResolvedRebuildOptions {
-  readonly name: string;
   readonly batchSize: number;
   readonly lockTtlMs: number;
-  readonly definitionOptions: CollectionDefinitionOptions;
+  /** The collection-definition options with the `name` resolved – the one place
+   *  the resolved name lives, so the collection a writer talks to and the
+   *  definition it creates cannot say different things. */
+  readonly definitionOptions: CollectionDefinitionOptions & {
+    readonly name: string;
+  };
 }
 
 /**
  * Apply the shared defaults, once, so neither writer restates them – including
  * the collection name, derived from the type ({@link deriveCollectionName})
- * when the deployment supplies none. The resolved name is put back into
- * `definitionOptions`, so the collection a writer talks to and the definition
- * it creates are the same one name, resolved once.
+ * when the deployment supplies none.
  *
  * Writers resolve at construction rather than per run, so an underivable name
  * throws when the writer is built, not on the first rebuild.
@@ -44,12 +46,13 @@ export function resolveRebuildOptions(
     lockTtlMs = DEFAULT_LOCK_TTL_MS,
     ...definitionOptions
   } = options;
-  const name = definitionOptions.name ?? deriveCollectionName(searchType);
   return {
-    name,
     batchSize,
     lockTtlMs,
-    definitionOptions: { ...definitionOptions, name },
+    definitionOptions: {
+      ...definitionOptions,
+      name: definitionOptions.name ?? deriveCollectionName(searchType),
+    },
   };
 }
 

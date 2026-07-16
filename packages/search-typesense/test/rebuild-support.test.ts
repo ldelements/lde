@@ -31,7 +31,6 @@ describe('resolveRebuildOptions', () => {
       defaultSortingField: 'rank',
     });
 
-    expect(resolved.name).toBe('objects');
     expect(resolved.batchSize).toBe(1000);
     expect(resolved.lockTtlMs).toBe(600_000);
     expect(resolved.definitionOptions).toEqual({
@@ -50,14 +49,13 @@ describe('resolveRebuildOptions', () => {
     expect(resolved.lockTtlMs).toBe(1_000);
   });
 
-  it('derives the name from the type when none is given, and passes the resolved one on to the definition', () => {
+  it('derives the name from the type when none is given', () => {
     const resolved = resolveRebuildOptions(OBJECT, {
       defaultSortingField: 'rank',
     });
 
-    expect(resolved.name).toBe('museum_objects');
     // The definition must be built for the very collection the writer talks
-    // to, so the derived name is put back rather than left undefined.
+    // to, so the derived name is resolved here rather than left undefined.
     expect(resolved.definitionOptions).toEqual({
       name: 'museum_objects',
       defaultSortingField: 'rank',

@@ -64,8 +64,29 @@ describe('physicalNameTokens', () => {
     expect(tokensOf('Rfc9110Header')).toEqual(['rfc9110', 'headers']);
   });
 
-  it('yields no tokens for a name carrying no alphanumerics, leaving the adapter to rule on it', () => {
-    expect(tokensOf('---')).toEqual([]);
-    expect(tokensOf('')).toEqual([]);
+  it.each(['Café', 'Musée', 'Straße', 'Creative@Work', 'Ω'])(
+    'refuses to name %s rather than silently drop what it cannot spell',
+    (name) => {
+      // Unmatched characters are skipped, so these would otherwise yield a
+      // legal name for the wrong container (`Café` gives `['cafs']`).
+      expect(() => tokensOf(name)).toThrow(
+        /carries characters outside ASCII words and word separators/,
+      );
+    },
+  );
+
+  it.each(['---', '', '   '])(
+    'refuses %s, which leaves no word to name anything after',
+    (name) => {
+      expect(() => tokensOf(name)).toThrow(
+        /carries no word to name a container/,
+      );
+    },
+  );
+
+  it('leaves engine legality to the adapter, naming what it can spell', () => {
+    // `123s` is spellable; whether a container may be named it is the
+    // adapter’s rule, not this one’s.
+    expect(tokensOf('123')).toEqual(['123s']);
   });
 });
