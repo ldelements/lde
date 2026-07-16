@@ -1,3 +1,9 @@
+## 0.7.1 (2026-07-16)
+
+### 🚀 Features
+
+- **search-typesense:** derive collection names from the search type ([#604](https://github.com/ldelements/lde/pull/604))
+
 ## 0.7.0 (2026-07-15)
 
 ### 🚀 Features
