@@ -82,6 +82,25 @@ const pipeline = new Pipeline({
 await pipeline.run();
 ```
 
+Collection names are the engine adapter’s to decide, not this package’s – see
+[Collection naming](../search-typesense#collection-naming). A deployment that
+needs other names passes one per type, and environment prefixing **composes
+with** the convention rather than replacing it, since the adapter exports the
+derivation:
+
+```ts
+import { BlueGreenRebuild, deriveCollectionName } from '@lde/search-typesense';
+
+writerFor: (searchType) =>
+  new BlueGreenRebuild(typesenseClient, searchType, {
+    name: `${process.env.INDEX_PREFIX}_${deriveCollectionName(searchType)}`,
+  });
+```
+
+Whatever the writers are named, the engine reading these collections must be
+given the same names (`collections`), or it reads the derived ones and finds an
+empty index.
+
 Each dataset’s extracted CONSTRUCT quads are buffered until the dataset
 completes, then projected once over the **whole** schema (`@lde/search`’s
 `projectGraph`) into one mixed, type-tagged stream, and each document is
