@@ -32,20 +32,26 @@ import {
   escapeFilterValue,
   type BuildSearchParamsOptions,
 } from './query-compiler.js';
+import { deriveCollectionName } from './collection-name.js';
 
 /** Where the engine reads documents – plus every query-compiler knob
  *  ({@link BuildSearchParamsOptions}), declared once there and forwarded
- *  wholesale into each search. `TypeName` is the union of the schema’s type
- *  names, so a literal schema makes the `collections` map exhaustive at
- *  compile time. Reference labels resolve per field from the collection of
- *  the SearchType its `labelSource` names – a label source is just another
- *  entry in `collections`. */
+ *  wholesale into each search. Reference labels resolve per field from the
+ *  collection of the SearchType its `labelSource` names – a label source is
+ *  just another type, so it is named the same way. */
 export interface TypesenseSearchEngineOptions<
   TypeName extends string = string,
 > extends BuildSearchParamsOptions {
-  /** The collection (or alias) per search type, keyed by the type’s `name` –
-   *  with a literal schema, omitting a type is a compile error. */
-  readonly collections: Readonly<Record<TypeName, string>>;
+  /**
+   * Overrides the collection (or alias) a search type reads, keyed by the
+   * type’s `name`. Every type not named here reads the collection derived from
+   * its own name ({@link deriveCollectionName}) – the same convention the
+   * writers create, so the read side and the write side cannot drift. Supply an
+   * entry only where a deployment needs another name (an env prefix, a
+   * multi-tenant name, an existing collection); `TypeName` is the union of the
+   * schema’s type names, so a typo is still a compile error.
+   */
+  readonly collections?: Partial<Readonly<Record<TypeName, string>>>;
   /**
    * Called when reference-label resolution fails; the search then degrades to
    * id-only references rather than failing. Optional – omit to swallow silently.
@@ -60,6 +66,24 @@ export interface TypesenseSearchEngineOptions<
    * {@link fetchLabels} behaviour unchanged.
    */
   readonly labelCacheTtlMs?: number;
+}
+
+/**
+ * A {@link SearchEngine} backed by Typesense: the port, plus the one engine
+ * specific worth exposing – which collection each type actually reads.
+ */
+export interface TypesenseSearchEngine<
+  Types extends readonly SearchType[] = readonly SearchType[],
+> extends SearchEngine<Types> {
+  /**
+   * The collection `searchType` reads: its {@link
+   * TypesenseSearchEngineOptions.collections} override, or the name derived
+   * from the type. Resolved at construction and read-only – for observability
+   * (logging a search’s target, a health check asserting the collection
+   * exists), never an input. Throws for a type outside this engine’s schema,
+   * like every other entry point.
+   */
+  collectionNameFor(searchType: Types[number]): string;
 }
 
 /**
@@ -98,23 +122,19 @@ export function createTypesenseSearchEngine<
 >(
   client: Client,
   schema: SearchSchema<Types>,
-  options: TypesenseSearchEngineOptions<Types[number]['name']>,
-): SearchEngine<Types> {
-  // Resolve every type's collection ONCE at construction, so a
-  // misconfiguration fails at startup – never on the first search that
-  // happens to hit the unwired type.
+  options: TypesenseSearchEngineOptions<Types[number]['name']> = {},
+): TypesenseSearchEngine<Types> {
+  // Resolve every type's collection ONCE at construction – the override when
+  // the deployment named one, the derived name otherwise – so an underivable
+  // name fails at startup, never on the first search that happens to hit that
+  // type.
   const collections = new Map<string, string>(
-    [...schema.values()].map((searchType) => {
-      const collection = (
-        options.collections as Readonly<Record<string, string>>
-      )[searchType.name];
-      if (collection === undefined) {
-        throw new Error(
-          `No collection configured for search type “${searchType.name}”; set options.collections.${searchType.name}.`,
-        );
-      }
-      return [searchType.class, collection];
-    }),
+    [...schema.values()].map((searchType) => [
+      searchType.class,
+      (options.collections as Readonly<Record<string, string>> | undefined)?.[
+        searchType.name
+      ] ?? deriveCollectionName(searchType),
+    ]),
   );
   // Resolve every reference field's label source ONCE at construction. The
   // schema already guarantees the named type exists and serves labels
@@ -292,8 +312,12 @@ export function createTypesenseSearchEngine<
     }
   }
 
-  const engine: SearchEngine = {
+  const engine: TypesenseSearchEngine = {
     schema,
+    collectionNameFor(searchType: SearchType): string {
+      assertTypeInSchema(schema, searchType);
+      return collections.get(searchType.class) as string;
+    },
     async search(
       searchType: SearchType,
       query: SearchQuery,
@@ -376,7 +400,7 @@ export function createTypesenseSearchEngine<
     },
   };
   // The runtime object is string-keyed; the literal-schema typing narrows it.
-  return engine as SearchEngine<Types>;
+  return engine as TypesenseSearchEngine<Types>;
 }
 
 /** One label lookup: a source and the distinct IRIs to resolve against it. */

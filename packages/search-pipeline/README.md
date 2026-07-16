@@ -60,9 +60,6 @@ const schema = searchSchema(
   },
 );
 
-// Each type maps to its own collection: an independent blue/green rebuild.
-const collectionName = { Dataset: 'datasets', Organization: 'organizations' };
-
 const pipeline = new Pipeline({
   datasetSelector,
   stages: [
@@ -71,12 +68,14 @@ const pipeline = new Pipeline({
       readers: new SparqlConstructReader({ query: '…' }),
     }),
   ],
+  // Each type gets its own collection – an independent blue/green rebuild –
+  // named by the adapter from the type itself (`Dataset` → `datasets`,
+  // `Organization` → `organizations`), so no naming map is passed here and the
+  // engine reading these collections cannot disagree about where they are.
   writers: searchIndexWriter({
     schema,
     writerFor: (searchType) =>
-      new BlueGreenRebuild(typesenseClient, searchType, {
-        name: collectionName[searchType.name],
-      }),
+      new BlueGreenRebuild(typesenseClient, searchType),
   }),
 });
 

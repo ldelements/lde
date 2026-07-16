@@ -811,20 +811,21 @@ describe('schema binding', () => {
     );
   });
 
-  it('rejects a missing collection at construction, not on the first search', () => {
+  it('derives the collection of a type the wiring does not name, rather than demanding one', () => {
     const other: SearchType = {
       name: 'Other',
       class: 'urn:example:Other',
       fields: [],
     };
-    expect(() =>
-      createTypesenseSearchEngine(
-        noClient,
-        searchSchema(organization, schema, other),
-        // The widened schema loses compile-time exhaustiveness; the
-        // constructor still rejects the missing entry at startup.
-        { collections: labelledCollections },
-      ),
-    ).toThrow(/No collection configured for search type “Other”/);
+    const engine = createTypesenseSearchEngine(
+      noClient,
+      searchSchema(organization, schema, other),
+      // `collections` is an override map, so a type absent from it is not a
+      // misconfiguration: it reads the collection derived from its own name.
+      { collections: labelledCollections },
+    );
+
+    expect(engine.collectionNameFor(other)).toBe('others');
+    expect(engine.collectionNameFor(schema)).toBe('datasets');
   });
 });

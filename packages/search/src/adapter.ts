@@ -25,6 +25,7 @@ export {
   unixSecondsToIso,
 } from './schema.js';
 export type { PhysicalFields } from './schema.js';
+export { physicalNameTokens } from './physical-name.js';
 export {
   filterOperatorFor,
   filterOperator,

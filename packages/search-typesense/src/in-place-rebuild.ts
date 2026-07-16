@@ -25,6 +25,7 @@ import {
   resolveRebuildOptions,
   stampDocuments,
   type RebuildOptions,
+  type ResolvedRebuildOptions,
 } from './rebuild-support.js';
 
 /**
@@ -82,21 +83,33 @@ export interface InPlaceRebuildOptions extends RebuildOptions {
 export class InPlaceRebuild<
   TDocument extends { id: string },
 > implements Writer<TDocument> {
+  /**
+   * The Typesense collection this writer maintains: the explicit
+   * `options.name`, or the name derived from the {@link SearchType}. Read-only
+   * and for observability (logging, health checks) – never an input, and the
+   * same name {@link createTypesenseSearchEngine} reads the type from.
+   */
+  public readonly collectionName: string;
+  private readonly maxSweepableSources: number;
+  private readonly resolved: ResolvedRebuildOptions;
+
   constructor(
     private readonly client: Client,
     private readonly searchType: SearchType,
-    private readonly options: InPlaceRebuildOptions,
+    options: InPlaceRebuildOptions = {},
   ) {
     assertNoReservedFields(searchType, [SOURCE_FIELD, LAST_SEEN_FIELD]);
-  }
-
-  async openRun(context: RunContext): Promise<RunWriter<TDocument>> {
     const {
       maxSweepableSources = DEFAULT_MAX_SWEEPABLE_SOURCES,
       ...rebuildOptions
-    } = this.options;
-    const { name, batchSize, lockTtlMs, definitionOptions } =
-      resolveRebuildOptions(rebuildOptions);
+    } = options;
+    this.maxSweepableSources = maxSweepableSources;
+    this.resolved = resolveRebuildOptions(searchType, rebuildOptions);
+    this.collectionName = this.resolved.name;
+  }
+
+  async openRun(context: RunContext): Promise<RunWriter<TDocument>> {
+    const { name, batchSize, lockTtlMs, definitionOptions } = this.resolved;
 
     return openLockedRun(this.client, name, lockTtlMs, async () => {
       // Create the collection on demand: SearchType schema + the bookkeeping
@@ -164,7 +177,7 @@ export class InPlaceRebuild<
         commit: async () => {
           await importer.flush();
           const departed = departedSources(
-            await this.indexedSources(name, maxSweepableSources),
+            await this.indexedSources(name, this.maxSweepableSources),
             context.selectedSources(),
           );
           for (const filter of membershipSweepFilters(departed)) {

@@ -9,9 +9,56 @@ Typesense search params, runs it, reconstructs the engine-neutral `SearchResult`
 and manages the search index lifecycle as transactional `@lde/pipeline`
 writers (Blue/green Rebuild and In-place Rebuild).
 
+## Collection naming
+
+You pass `SearchType`s; this package names the collections. `deriveCollectionName`
+turns a type’s logical `name` into a Typesense collection name by Typesense’s own
+convention – snake_case, named after the plural of what the collection holds, as
+its [collection guide](https://typesense.org/docs/guide/organizing-collections.html)
+writes them (`people`, `companies`, `blog_articles`):
+
+| `SearchType.name` | collection       |
+| ----------------- | ---------------- |
+| `Dataset`         | `datasets`       |
+| `CreativeWork`    | `creative_works` |
+| `Person`          | `people`         |
+| `TVSeries`        | `tv_series`      |
+| `DCATDataset`     | `dcat_datasets`  |
+
+The writers and the engine all fall back to this one convention, so documents
+cannot be written to `creative_works` and queried from `creativeWorks` – and a
+reference’s `labelSource` resolves to its label type’s collection the same way.
+Every naming input is therefore optional: `buildCollectionDefinition(type)`,
+`new BlueGreenRebuild(client, type)`, `createTypesenseSearchEngine(client, schema)`.
+
+Naming lives here rather than in `@lde/search` because it is engine-specific:
+Elasticsearch/OpenSearch index names are kebab-case and
+[constrained](https://www.elastic.co/guide/en/elasticsearch/reference/current/indices-create-index.html)
+(lowercase only, no `\ / * ? " < > | space , #`, no leading `-` `_` `+`, ≤ 255
+bytes), so a future `@lde/search-elasticsearch` formats the same neutral tokens
+(`@lde/search`’s `physicalNameTokens`) its own way. The core stays engine-neutral.
+
+Pass an explicit name to **override** the convention – an env prefix, a
+multi-tenant name, a collection that already exists, a migration:
+
+```ts
+const writer = new BlueGreenRebuild(client, CREATIVE_WORK, {
+  name: 'staging_creative_works',
+});
+const engine = createTypesenseSearchEngine(client, schema, {
+  collections: { CreativeWork: 'staging_creative_works' },
+});
+writer.collectionName; // 'staging_creative_works' – read-only, for logs/health checks
+engine.collectionNameFor(CREATIVE_WORK); // the same name, resolved once at construction
+```
+
+`collections` overrides only the types it names; the rest stay derived. A type
+name the convention cannot turn into a legal collection name throws when the
+writer or engine is constructed, not on the first rebuild or search.
+
 ## Collection schema and engine
 
-`buildCollectionDefinition(searchType, { name, defaultSortingField, … })` derives a
+`buildCollectionDefinition(searchType, { name?, defaultSortingField, … })` derives a
 Typesense collection from the unified `SearchField` model – the Typesense field
 type comes from each field’s `kind`, and the physical fanout (per-locale
 search/sort keys, plus one regex display field per output text field) matches
@@ -29,7 +76,7 @@ facet/reference and `*_sort_${locale}` companions are indexed. Keeping
 retrieval-only fields un-indexed is the lever for holding a large index’s RAM
 down.
 
-`createTypesenseSearchEngine(client, schema, { collections })` is the
+`createTypesenseSearchEngine(client, schema, { collections? })` is the
 `SearchEngine` implementation. Each search:
 
 - validates the query against the search type (the port contract – a
@@ -45,9 +92,9 @@ down.
   maps, labelled references, labelled facet buckets.
 
 A label source is just another `SearchType` in the schema (with an `output`,
-`searchable` text field called `label`) whose collection appears in
-`collections` – a typed entity collection and a ‘labels collection’ are the
-same kind of thing.
+`searchable` text field called `label`), so its collection is named by the same
+convention as any other type’s – a typed entity collection and a ‘labels
+collection’ are the same kind of thing.
 
 `searchFacets` – the port’s batch entry point – answers a whole batch of
 facet-only queries (e.g. a faceted listing’s skip-own-filter variants) as a
@@ -98,7 +145,8 @@ const client = new Client({
   apiKey,
 });
 
-const writer = new BlueGreenRebuild(client, DATASET, { name: 'datasets' });
+// The collection is named from the type: `Dataset` → `datasets`.
+const writer = new BlueGreenRebuild(client, DATASET);
 // Standalone use; under @lde/pipeline the Pipeline drives this lifecycle.
 const run = await writer.openRun(context);
 await run.write(dataset, documents);
