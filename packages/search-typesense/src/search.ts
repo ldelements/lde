@@ -101,8 +101,9 @@ export interface LabelSource {
 /**
  * A Typesense-backed {@link SearchEngine}, bound to the whole
  * {@link SearchSchema} at construction – like every other schema consumer.
- * Each type’s collection comes from `options.collections`. `search` compiles
- * the query ({@link buildSearchParams}), runs it against the type’s
+ * Each type’s collection is derived from the type ({@link
+ * deriveCollectionName}) unless `options.collections` overrides it. `search`
+ * compiles the query ({@link buildSearchParams}), runs it against the type’s
  * collection, resolves the reference labels for the page of hits – each
  * reference field from its own label source’s collection, all sources bundled
  * into one lookup – and reconstructs the engine-neutral
