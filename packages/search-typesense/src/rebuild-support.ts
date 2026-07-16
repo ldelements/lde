@@ -1,6 +1,7 @@
 import type { Client } from 'typesense';
 import type { SearchType } from '@lde/search';
 import type { CollectionDefinitionOptions } from './collection-definition.js';
+import { deriveCollectionName } from './collection-name.js';
 import { DEFAULT_LOCK_TTL_MS } from './lock.js';
 import { DEFAULT_BATCH_SIZE } from './import.js';
 
@@ -24,8 +25,18 @@ export interface ResolvedRebuildOptions {
   readonly definitionOptions: CollectionDefinitionOptions;
 }
 
-/** Apply the shared defaults, once, so neither writer restates them. */
+/**
+ * Apply the shared defaults, once, so neither writer restates them – including
+ * the collection name, derived from the type ({@link deriveCollectionName})
+ * when the deployment supplies none. The resolved name is put back into
+ * `definitionOptions`, so the collection a writer talks to and the definition
+ * it creates are the same one name, resolved once.
+ *
+ * Writers resolve at construction rather than per run, so an underivable name
+ * throws when the writer is built, not on the first rebuild.
+ */
 export function resolveRebuildOptions(
+  searchType: SearchType,
   options: RebuildOptions,
 ): ResolvedRebuildOptions {
   const {
@@ -33,11 +44,12 @@ export function resolveRebuildOptions(
     lockTtlMs = DEFAULT_LOCK_TTL_MS,
     ...definitionOptions
   } = options;
+  const name = definitionOptions.name ?? deriveCollectionName(searchType);
   return {
-    name: definitionOptions.name,
+    name,
     batchSize,
     lockTtlMs,
-    definitionOptions,
+    definitionOptions: { ...definitionOptions, name },
   };
 }
 

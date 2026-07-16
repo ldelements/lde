@@ -60,9 +60,6 @@ const schema = searchSchema(
   },
 );
 
-// Each type maps to its own collection: an independent blue/green rebuild.
-const collectionName = { Dataset: 'datasets', Organization: 'organizations' };
-
 const pipeline = new Pipeline({
   datasetSelector,
   stages: [
@@ -71,17 +68,38 @@ const pipeline = new Pipeline({
       readers: new SparqlConstructReader({ query: '…' }),
     }),
   ],
+  // Each type gets its own collection – an independent blue/green rebuild –
+  // named by the adapter from the type itself (`Dataset` → `datasets`,
+  // `Organization` → `organizations`), so no naming map is passed here and the
+  // engine reading these collections cannot disagree about where they are.
   writers: searchIndexWriter({
     schema,
     writerFor: (searchType) =>
-      new BlueGreenRebuild(typesenseClient, searchType, {
-        name: collectionName[searchType.name],
-      }),
+      new BlueGreenRebuild(typesenseClient, searchType),
   }),
 });
 
 await pipeline.run();
 ```
+
+Collection names are the engine adapter’s to decide, not this package’s – see
+[Collection naming](../search-typesense#collection-naming). A deployment that
+needs other names passes one per type, and environment prefixing **composes
+with** the convention rather than replacing it, since the adapter exports the
+derivation:
+
+```ts
+import { BlueGreenRebuild, deriveCollectionName } from '@lde/search-typesense';
+
+writerFor: (searchType) =>
+  new BlueGreenRebuild(typesenseClient, searchType, {
+    name: `${process.env.INDEX_PREFIX}_${deriveCollectionName(searchType)}`,
+  });
+```
+
+Whatever the writers are named, the engine reading these collections must be
+given the same names (`collections`), or it reads the derived ones and finds an
+empty index.
 
 Each dataset’s extracted CONSTRUCT quads are buffered until the dataset
 completes, then projected once over the **whole** schema (`@lde/search`’s

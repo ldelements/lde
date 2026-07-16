@@ -40,6 +40,7 @@
     "@lde/text-normalization": "^0.1.1",
     "@rdfjs/types": "^2.0.1",
     "@tpluscode/rdf-ns-builders": "^5.0.0",
+    "inflection": "^3.0.2",
     "jsonld": "^9.0.0",
     "tslib": "^2.3.0"
   },

@@ -1,0 +1,247 @@
+import { describe, expect, it } from 'vitest';
+import type { Client } from 'typesense';
+import { searchSchema, type SearchQuery, type SearchType } from '@lde/search';
+import { deriveCollectionName } from '../src/collection-name.js';
+import { buildCollectionDefinition } from '../src/collection-definition.js';
+import { createTypesenseSearchEngine } from '../src/search.js';
+import { BlueGreenRebuild } from '../src/blue-green-rebuild.js';
+import { InPlaceRebuild } from '../src/in-place-rebuild.js';
+import { fakeTypesenseClient, labelLookup } from './fake-typesense-client.js';
+
+const typeNamed = (name: string): SearchType => ({
+  name,
+  class: `https://example.org/${name}`,
+  fields: [{ name: 'title', kind: 'keyword' }],
+});
+
+/** Neither the writers nor the engine touch a client at construction, so the
+ *  naming can be asserted without one. */
+const noClient = {} as Client;
+
+describe('deriveCollectionName', () => {
+  it.each([
+    // The convention is Typesense’s own, as its docs write collection names:
+    // https://typesense.org/docs/guide/organizing-collections.html
+    ['CreativeWork', 'creative_works'],
+    ['BlogArticle', 'blog_articles'],
+    ['Company', 'companies'],
+    ['Person', 'people'],
+    ['Dataset', 'datasets'],
+    ['TVSeries', 'tv_series'],
+    ['DCATDataset', 'dcat_datasets'],
+  ])('names the collection for %s “%s”', (name, expected) => {
+    expect(deriveCollectionName(typeNamed(name))).toBe(expected);
+  });
+
+  it('rejects a type name it cannot derive a legal collection name from', () => {
+    expect(() => deriveCollectionName(typeNamed('---'))).toThrow(
+      /Cannot derive a Typesense collection name from search type “---”/,
+    );
+  });
+
+  it.each(['Café', 'Musée', 'Straße', 'Creative@Work'])(
+    'rejects %s rather than silently dropping what it cannot spell',
+    (name) => {
+      // Tokenizing drops non-ASCII, so these would otherwise yield a legal
+      // name for the wrong collection (`Café` → `cafs`) – worse than throwing.
+      expect(() => deriveCollectionName(typeNamed(name))).toThrow(
+        /carries characters the convention would silently drop/,
+      );
+    },
+  );
+
+  it('still accepts a name written with word separators', () => {
+    expect(deriveCollectionName(typeNamed('creative_work'))).toBe(
+      'creative_works',
+    );
+    expect(deriveCollectionName(typeNamed('Creative Work'))).toBe(
+      'creative_works',
+    );
+  });
+});
+
+describe('buildCollectionDefinition', () => {
+  it('derives the collection name from the type when none is given', () => {
+    expect(buildCollectionDefinition(typeNamed('CreativeWork')).name).toBe(
+      'creative_works',
+    );
+  });
+
+  it('lets an explicit name override the derived one', () => {
+    const definition = buildCollectionDefinition(typeNamed('CreativeWork'), {
+      name: 'staging_creative_works',
+    });
+    expect(definition.name).toBe('staging_creative_works');
+  });
+});
+
+describe('the writers and the engine agree on a type’s collection', () => {
+  const creativeWork = typeNamed('CreativeWork');
+  const schema = searchSchema(creativeWork);
+
+  it('derives the same name on the write side and the read side', () => {
+    // The point of the issue: an adapter owns both its writers and its engine,
+    // so documents cannot be written to one collection and queried from
+    // another.
+    const engine = createTypesenseSearchEngine(noClient, schema);
+
+    expect(new InPlaceRebuild(noClient, creativeWork).collectionName).toBe(
+      'creative_works',
+    );
+    expect(new BlueGreenRebuild(noClient, creativeWork).collectionName).toBe(
+      'creative_works',
+    );
+    expect(engine.collectionNameFor(creativeWork)).toBe('creative_works');
+  });
+
+  it('honours the explicit override on both sides', () => {
+    const engine = createTypesenseSearchEngine(noClient, schema, {
+      collections: { CreativeWork: 'staging_works' },
+    });
+    const options = { name: 'staging_works' };
+
+    expect(
+      new InPlaceRebuild(noClient, creativeWork, options).collectionName,
+    ).toBe('staging_works');
+    expect(
+      new BlueGreenRebuild(noClient, creativeWork, options).collectionName,
+    ).toBe('staging_works');
+    expect(engine.collectionNameFor(creativeWork)).toBe('staging_works');
+  });
+
+  it('overrides only the type named, leaving its siblings derived', () => {
+    const person = typeNamed('Person');
+    const mixed = searchSchema(creativeWork, person);
+    const engine = createTypesenseSearchEngine(noClient, mixed, {
+      collections: { CreativeWork: 'staging_works' },
+    });
+
+    expect(engine.collectionNameFor(creativeWork)).toBe('staging_works');
+    expect(engine.collectionNameFor(person)).toBe('people');
+  });
+
+  // English collapses these two distinct names onto one collection: both
+  // derive `media`. The schema itself is happy – the names differ.
+  const medium = typeNamed('Medium');
+  const media = typeNamed('Media');
+
+  it('rejects two types whose names derive to one collection, which nobody asked for', () => {
+    // Left alone, each type’s search would return the other’s documents.
+    expect(() =>
+      createTypesenseSearchEngine(noClient, searchSchema(medium, media)),
+    ).toThrow(
+      /Search types “Medium” and “Media” would share the Typesense collection “media”/,
+    );
+  });
+
+  it('accepts the collision once an override separates the two', () => {
+    const engine = createTypesenseSearchEngine(
+      noClient,
+      searchSchema(medium, media),
+      { collections: { Medium: 'mediums' } },
+    );
+
+    expect(engine.collectionNameFor(medium)).toBe('mediums');
+    expect(engine.collectionNameFor(media)).toBe('media');
+  });
+
+  it('still lets types deliberately share one collection, both named explicitly', () => {
+    // Several label sources served by one `labels` collection is a reasonable
+    // deployment, so an explicit pairing is the deployment’s to make.
+    expect(() =>
+      createTypesenseSearchEngine(noClient, searchSchema(medium, media), {
+        collections: { Medium: 'labels', Media: 'labels' },
+      }),
+    ).not.toThrow();
+  });
+
+  it('rejects a type outside the schema, like every other entry point', () => {
+    const engine = createTypesenseSearchEngine(noClient, schema);
+
+    expect(() => engine.collectionNameFor(typeNamed('Foreign'))).toThrow(
+      /is not in this engine’s schema/,
+    );
+  });
+});
+
+describe('label sources', () => {
+  const organization: SearchType = {
+    name: 'Organization',
+    class: 'http://xmlns.com/foaf/0.1/Organization',
+    fields: [
+      {
+        name: 'label',
+        kind: 'text',
+        locales: ['nl'],
+        output: true,
+        searchable: { weight: 1 },
+      },
+    ],
+  };
+  const dataset: SearchType = {
+    name: 'Dataset',
+    class: 'http://www.w3.org/ns/dcat#Dataset',
+    fields: [
+      {
+        name: 'publisher',
+        kind: 'reference',
+        output: true,
+        labelSource: 'Organization',
+        ref: { typeName: 'Organization', strategy: 'labelOnly' },
+      },
+    ],
+  };
+  const schema = searchSchema(organization, dataset);
+
+  const browse: SearchQuery = {
+    text: '',
+    where: [],
+    facets: [],
+    orderBy: [],
+    limit: 10,
+    offset: 0,
+    locale: 'nl',
+  };
+
+  it('resolves a reference’s labels from the label type’s derived collection', async () => {
+    const fake = fakeTypesenseClient({
+      searchResponse: {
+        found: 1,
+        hits: [{ document: { id: 'https://d/1', publisher: 'https://org/1' } }],
+      },
+      multiSearch: labelLookup({
+        'https://org/1': { label_nl: 'Het Archief' },
+      }),
+    });
+    const engine = createTypesenseSearchEngine(fake.client, schema);
+
+    const result = await engine.search(dataset, browse);
+
+    // The label lookup must target the collection the Organization writer
+    // would have built – the same convention, never a second naming map.
+    expect(fake.performs[0][0].collection).toBe('organizations');
+    expect(result.hits[0].document.publisher).toEqual({
+      id: 'https://org/1',
+      label: { nl: ['Het Archief'] },
+    });
+  });
+
+  it('resolves labels from the label type’s override when it has one', async () => {
+    const fake = fakeTypesenseClient({
+      searchResponse: {
+        found: 1,
+        hits: [{ document: { id: 'https://d/1', publisher: 'https://org/1' } }],
+      },
+      multiSearch: labelLookup({
+        'https://org/1': { label_nl: 'Het Archief' },
+      }),
+    });
+    const engine = createTypesenseSearchEngine(fake.client, schema, {
+      collections: { Organization: 'labels' },
+    });
+
+    await engine.search(dataset, browse);
+
+    expect(fake.performs[0][0].collection).toBe('labels');
+  });
+});

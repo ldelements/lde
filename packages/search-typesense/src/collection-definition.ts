@@ -2,11 +2,14 @@ import type { CollectionCreateSchema } from 'typesense';
 import type { CollectionFieldSchema } from 'typesense/lib/Typesense/Collection.js';
 import { type SearchField, type SearchType } from '@lde/search';
 import { displayFieldPattern, physicalFields } from '@lde/search/adapter';
+import { deriveCollectionName } from './collection-name.js';
 
 /** Deployment-specific options the generic field model does not carry. */
 export interface CollectionDefinitionOptions {
-  /** The Typesense collection (or alias) name. */
-  readonly name: string;
+  /** The Typesense collection (or alias) name. Omit to derive it from the
+   *  type’s `name` ({@link deriveCollectionName}); supply one to override that
+   *  (an env prefix, a multi-tenant name, an existing collection). */
+  readonly name?: string;
   /** Snowball stemming locale for non-localized searchable fields (e.g. `en`).
    *  Unset, those fields are not stemmed – folding still applies – so no
    *  language is ever assumed. Localized text search fields always stem in
@@ -30,6 +33,10 @@ export interface CollectionDefinitionOptions {
  * stems in `defaultLocale` when one is set, and is left unstemmed (folded
  * only) otherwise.
  *
+ * The collection `name` is optional: omitted, it is derived from the type’s own
+ * `name` ({@link deriveCollectionName}), so a caller that has no naming opinion
+ * states none.
+ *
  * Memory lever: Typesense holds the index in RAM (with a raw copy of each
  * document on disk), so RAM tracks the *indexed* surface – roughly 2–3× the
  * size of the fields you search, facet or sort on – not the whole document.
@@ -42,11 +49,11 @@ export interface CollectionDefinitionOptions {
  */
 export function buildCollectionDefinition(
   searchType: SearchType,
-  options: CollectionDefinitionOptions,
+  options: CollectionDefinitionOptions = {},
 ): CollectionCreateSchema {
   const { defaultLocale } = options;
   const collection: CollectionCreateSchema = {
-    name: options.name,
+    name: options.name ?? deriveCollectionName(searchType),
     fields: searchType.fields.flatMap((field) =>
       typesenseFields(field, defaultLocale, options.defaultSortingField),
     ),

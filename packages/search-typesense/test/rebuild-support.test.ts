@@ -19,8 +19,14 @@ async function* stream<T>(items: readonly T[]): AsyncIterable<T> {
 }
 
 describe('resolveRebuildOptions', () => {
+  const OBJECT: SearchType = {
+    name: 'MuseumObject',
+    class: 'https://example.org/Object',
+    fields: [],
+  };
+
   it('applies the shared defaults and keeps the residual schema options', () => {
-    const resolved = resolveRebuildOptions({
+    const resolved = resolveRebuildOptions(OBJECT, {
       name: 'objects',
       defaultSortingField: 'rank',
     });
@@ -35,13 +41,27 @@ describe('resolveRebuildOptions', () => {
   });
 
   it('honours explicit overrides', () => {
-    const resolved = resolveRebuildOptions({
+    const resolved = resolveRebuildOptions(OBJECT, {
       name: 'objects',
       batchSize: 50,
       lockTtlMs: 1_000,
     });
     expect(resolved.batchSize).toBe(50);
     expect(resolved.lockTtlMs).toBe(1_000);
+  });
+
+  it('derives the name from the type when none is given, and passes the resolved one on to the definition', () => {
+    const resolved = resolveRebuildOptions(OBJECT, {
+      defaultSortingField: 'rank',
+    });
+
+    expect(resolved.name).toBe('museum_objects');
+    // The definition must be built for the very collection the writer talks
+    // to, so the derived name is put back rather than left undefined.
+    expect(resolved.definitionOptions).toEqual({
+      name: 'museum_objects',
+      defaultSortingField: 'rank',
+    });
   });
 });
 

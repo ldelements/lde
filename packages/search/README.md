@@ -309,18 +309,20 @@ unrepresentable; the port enforces them for everyone else (deployment
 An engine is **bound to the whole `SearchSchema` at construction** – like
 every other schema consumer (`projectGraph(quads, schema)`,
 `buildGraphQLSchema(schema)`): the adapter factory takes the deployment’s
-declaration together with each type’s physical location, so a query can never
-meet the wrong index, and deployment-level concerns (the label cache,
-cross-type search, facet batching) have one home. A search names its type per
+declaration, so a query can never meet the wrong index, and deployment-level
+concerns (the label cache, cross-type search, facet batching) have one home.
+Where each type physically lives is the **adapter’s** to decide – it derives a
+collection/index name from the type, by its own engine’s naming conventions,
+and a deployment only overrides that where it must. A search names its type per
 call. Because `searchSchema()` captures the declared types as a literal
 tuple, `search()` accepts **only the deployment’s own types** (a foreign type
 is a compile error) and returns facet/document keys typed by the type passed
 – no caller-side generics:
 
 ```ts
-const engine = createTypesenseSearchEngine(client, schema, {
-  collections: { Dataset: 'datasets', Person: 'people' }, // omitting one = type error
-});
+// No `collections`: each type reads the collection the adapter names it,
+// which is the one its writer builds. Pass `collections` only to override.
+const engine = createTypesenseSearchEngine(client, schema);
 
 const result = await engine.search(DATASET, query);
 result.facets.publisher; // typed: only DATASET’s facetable fields are keys

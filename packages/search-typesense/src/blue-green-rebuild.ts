@@ -17,10 +17,12 @@ import {
   resolveRebuildOptions,
   stampDocuments,
   type RebuildOptions,
+  type ResolvedRebuildOptions,
 } from './rebuild-support.js';
 
 /** {@link BlueGreenRebuild} options: the collection-definition options (`name` is
- *  the logical index name the alias is kept on) plus the rebuild tuning knobs. */
+ *  the logical index name the alias is kept on – omit it to derive one from the
+ *  {@link SearchType}) plus the rebuild tuning knobs. */
 export type BlueGreenRebuildOptions = RebuildOptions;
 
 /**
@@ -47,24 +49,38 @@ export type BlueGreenRebuildOptions = RebuildOptions;
  * - `abort` drops the half-built collection and releases the lock; the live
  *   index is untouched.
  *
- * The caller passes only the logical index `name`; the versioned collection
- * name and the alias are managed here.
+ * The caller passes at most the logical index `name` – omitted, it is derived
+ * from the {@link SearchType} ({@link deriveCollectionName}), the same
+ * convention the engine reads by; the versioned collection name and the alias
+ * are managed here.
  */
 export class BlueGreenRebuild<
   TDocument extends { id: string },
 > implements Writer<TDocument> {
+  /**
+   * The live Typesense alias this writer keeps pointed at its newest build:
+   * the explicit `options.name`, or the name derived from the
+   * {@link SearchType}. Read-only and for observability (logging, health
+   * checks) – never an input, and the same name
+   * {@link createTypesenseSearchEngine} reads the type from. The versioned
+   * collections behind it (`${collectionName}_<timestamp>`) stay internal.
+   */
+  public readonly collectionName: string;
+  private readonly resolved: ResolvedRebuildOptions;
+
   constructor(
     private readonly client: Client,
     private readonly searchType: SearchType,
-    private readonly options: BlueGreenRebuildOptions,
+    options: BlueGreenRebuildOptions = {},
   ) {
     // `source` is stamped on every document for per-dataset rollback.
     assertNoReservedFields(searchType, [SOURCE_FIELD]);
+    this.resolved = resolveRebuildOptions(searchType, options);
+    this.collectionName = this.resolved.name;
   }
 
   async openRun(context: RunContext): Promise<RunWriter<TDocument>> {
-    const { name, batchSize, lockTtlMs, definitionOptions } =
-      resolveRebuildOptions(this.options);
+    const { name, batchSize, lockTtlMs, definitionOptions } = this.resolved;
 
     return openLockedRun(this.client, name, lockTtlMs, async () => {
       // Create the fresh (blue) collection up front, so a failure surfaces
