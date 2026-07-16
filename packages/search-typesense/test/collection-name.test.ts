@@ -38,6 +38,26 @@ describe('deriveCollectionName', () => {
       /Cannot derive a Typesense collection name from search type “---”/,
     );
   });
+
+  it.each(['Café', 'Musée', 'Straße', 'Creative@Work'])(
+    'rejects %s rather than silently dropping what it cannot spell',
+    (name) => {
+      // Tokenizing drops non-ASCII, so these would otherwise yield a legal
+      // name for the wrong collection (`Café` → `cafs`) – worse than throwing.
+      expect(() => deriveCollectionName(typeNamed(name))).toThrow(
+        /carries characters the convention would silently drop/,
+      );
+    },
+  );
+
+  it('still accepts a name written with word separators', () => {
+    expect(deriveCollectionName(typeNamed('creative_work'))).toBe(
+      'creative_works',
+    );
+    expect(deriveCollectionName(typeNamed('Creative Work'))).toBe(
+      'creative_works',
+    );
+  });
 });
 
 describe('buildCollectionDefinition', () => {
@@ -98,6 +118,41 @@ describe('the writers and the engine agree on a type’s collection', () => {
 
     expect(engine.collectionNameFor(creativeWork)).toBe('staging_works');
     expect(engine.collectionNameFor(person)).toBe('people');
+  });
+
+  // English collapses these two distinct names onto one collection: both
+  // derive `media`. The schema itself is happy – the names differ.
+  const medium = typeNamed('Medium');
+  const media = typeNamed('Media');
+
+  it('rejects two types whose names derive to one collection, which nobody asked for', () => {
+    // Left alone, each type’s search would return the other’s documents.
+    expect(() =>
+      createTypesenseSearchEngine(noClient, searchSchema(medium, media)),
+    ).toThrow(
+      /Search types “Medium” and “Media” would share the Typesense collection “media”/,
+    );
+  });
+
+  it('accepts the collision once an override separates the two', () => {
+    const engine = createTypesenseSearchEngine(
+      noClient,
+      searchSchema(medium, media),
+      { collections: { Medium: 'mediums' } },
+    );
+
+    expect(engine.collectionNameFor(medium)).toBe('mediums');
+    expect(engine.collectionNameFor(media)).toBe('media');
+  });
+
+  it('still lets types deliberately share one collection, both named explicitly', () => {
+    // Several label sources served by one `labels` collection is a reasonable
+    // deployment, so an explicit pairing is the deployment’s to make.
+    expect(() =>
+      createTypesenseSearchEngine(noClient, searchSchema(medium, media), {
+        collections: { Medium: 'labels', Media: 'labels' },
+      }),
+    ).not.toThrow();
   });
 
   it('rejects a type outside the schema, like every other entry point', () => {

@@ -52,9 +52,19 @@ writer.collectionName; // 'staging_creative_works' – read-only, for logs/healt
 engine.collectionNameFor(CREATIVE_WORK); // the same name, resolved once at construction
 ```
 
-`collections` overrides only the types it names; the rest stay derived. A type
-name the convention cannot turn into a legal collection name throws when the
-writer or engine is constructed, not on the first rebuild or search.
+`collections` overrides only the types it names; the rest stay derived.
+
+Everything the convention cannot do, it refuses to guess at, when the writer or
+engine is constructed rather than on the first rebuild or search:
+
+- a name it cannot spell (`Café` would quietly become `cafs`) or turn into a
+  legal collection name;
+- two types whose names **derive to the same collection** – English collapses
+  `Medium` and `Media` onto `media`, `Person` and `People` onto `people` – which
+  would land both types’ documents in one collection, each search returning the
+  other’s. Name either one explicitly to resolve it. Types that share a
+  collection _deliberately_ (say, several label sources in one `labels`
+  collection) are fine: name both, and it is your call, not an accident.
 
 ## Collection schema and engine
 

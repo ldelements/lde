@@ -128,17 +128,27 @@ export function createTypesenseSearchEngine<
   // the deployment named one, the derived name otherwise – so an underivable
   // name fails at startup, never on the first search that happens to hit that
   // type.
+  const resolved = [...schema.values()].map((searchType) => {
+    const override = (
+      options.collections as Readonly<Record<string, string>> | undefined
+    )?.[searchType.name];
+    return {
+      searchType,
+      collection: override ?? deriveCollectionName(searchType),
+      derived: override === undefined,
+    };
+  });
+  assertNoAccidentalSharing(resolved);
   const collections = new Map<string, string>(
-    [...schema.values()].map((searchType) => [
+    resolved.map(({ searchType, collection }) => [
       searchType.class,
-      (options.collections as Readonly<Record<string, string>> | undefined)?.[
-        searchType.name
-      ] ?? deriveCollectionName(searchType),
+      collection,
     ]),
   );
   // Resolve every reference field's label source ONCE at construction. The
   // schema already guarantees the named type exists and serves labels
-  // (`searchSchema`/`labelFieldOf`), and `collections` is exhaustive per type.
+  // (`searchSchema`/`labelFieldOf`), and every type resolved a collection
+  // above, so both lookups below always hit.
   const typesByName = new Map(
     [...schema.values()].map((searchType) => [searchType.name, searchType]),
   );
@@ -401,6 +411,45 @@ export function createTypesenseSearchEngine<
   };
   // The runtime object is string-keyed; the literal-schema typing narrows it.
   return engine as TypesenseSearchEngine<Types>;
+}
+
+/**
+ * Reject two types landing in one collection *by accident*.
+ *
+ * A schema keeps type names distinct, but distinct names can still derive the
+ * same collection – English collapses them (`Medium` and `Media` both give
+ * `media`, `Person` and `People` both give `people`). Nothing downstream would
+ * complain: both writers would build the one collection, each type’s search
+ * would return the other’s documents, and the membership sweep would delete
+ * across them. Exactly the drift deriving names is meant to end, so it fails at
+ * construction with the override that resolves it.
+ *
+ * Sharing a collection *deliberately* stays allowed – several label-source
+ * types served by one `labels` collection is a reasonable deployment – so this
+ * fires only when at least one side was derived, i.e. when nobody chose it.
+ */
+function assertNoAccidentalSharing(
+  resolved: readonly {
+    searchType: SearchType;
+    collection: string;
+    derived: boolean;
+  }[],
+): void {
+  const byCollection = new Map<string, typeof resolved>();
+  for (const entry of resolved) {
+    byCollection.set(entry.collection, [
+      ...(byCollection.get(entry.collection) ?? []),
+      entry,
+    ]);
+  }
+  for (const [collection, entries] of byCollection) {
+    if (entries.length > 1 && entries.some((entry) => entry.derived)) {
+      const names = entries.map((entry) => `“${entry.searchType.name}”`);
+      throw new Error(
+        `Search types ${names.join(' and ')} would share the Typesense collection “${collection}”, which no deployment asked for: their names derive to it. Give ${names.join(' or ')} an explicit collections entry.`,
+      );
+    }
+  }
 }
 
 /** One label lookup: a source and the distinct IRIs to resolve against it. */
