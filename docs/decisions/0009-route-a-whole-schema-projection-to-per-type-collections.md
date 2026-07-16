@@ -14,6 +14,31 @@ updates the catalog grain of search as a Configurable Pipeline instance
 ([#534](https://github.com/ldelements/lde/issues/534)) from one collection to
 several ([#590](https://github.com/ldelements/lde/issues/590)).
 
+**Partly superseded by
+[ADR 12 (Bound memory by the unit of work, not the input)](./0012-bound-memory-by-the-unit-of-work-not-the-input.md)**,
+which reverses this ADR by halves:
+
+- **Still current** – the fan-out’s _placement_: composed in
+  `@lde/search-pipeline` over N single-collection engine writers (option (a)
+  below), not a multi-collection writer inside an engine adapter; each collection
+  committing, sweeping and failing in isolation; `abort` finalizing only the
+  collections that did not go live. That is what this ADR set out to decide, and
+  it stands.
+- **Superseded** – the _projection mechanism_: the whole-schema single-scan
+  mixed stream, the per-document type tag (`TypedSearchDocument`), and the
+  buffer-until-flush. Each is a structure sized by the input rather than by a
+  configured unit. Bounding forces one stage per root type, so a batch belongs to
+  exactly one type – leaving no mixed stream to tag and nothing to route. What
+  survives of `searchIndexWriter` is run coordination, not projection.
+  Implemented by [#606](https://github.com/ldelements/lde/issues/606).
+
+For the record: the buffering was never this ADR’s subject. It arrived two PRs
+earlier, in `@lde/search-pipeline`’s first commit
+([#565](https://github.com/ldelements/lde/pull/565)), as a documented deferral
+of “bounded entity batches within one huge dataset”; this ADR inherited it as
+background and restated it while deciding the fan-out. Which is why the
+Consequences below never weigh memory – memory was not on the table.
+
 ## Context
 
 One validated `SearchSchema` declares several root types. The Dataset Register
