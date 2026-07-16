@@ -120,7 +120,8 @@ direct use and testing.
 Indexing runs through two transactional writers, one per update mode – the
 [NDE Stack](https://docs.nde.nl/stack/patterns) patterns of the same names:
 
-- [**Blue/green Rebuild**](#bluegreen-rebuild: build a fresh index, then swap to it atomically;
+- [**Blue/green Rebuild**](#bluegreen-rebuild): build a fresh index, then swap to
+  it atomically;
 - [**In-place Rebuild**](#in-place-rebuild): update the live index directly by
   upserting changed sources and sweeping the rest.
 

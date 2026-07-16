@@ -105,11 +105,12 @@ export class InPlaceRebuild<
     } = options;
     this.maxSweepableSources = maxSweepableSources;
     this.resolved = resolveRebuildOptions(searchType, rebuildOptions);
-    this.collectionName = this.resolved.name;
+    this.collectionName = this.resolved.definitionOptions.name;
   }
 
   async openRun(context: RunContext): Promise<RunWriter<TDocument>> {
-    const { name, batchSize, lockTtlMs, definitionOptions } = this.resolved;
+    const { batchSize, lockTtlMs, definitionOptions } = this.resolved;
+    const name = this.collectionName;
 
     return openLockedRun(this.client, name, lockTtlMs, async () => {
       // Create the collection on demand: SearchType schema + the bookkeeping

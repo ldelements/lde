@@ -33,19 +33,21 @@ describe('deriveCollectionName', () => {
     expect(deriveCollectionName(typeNamed(name))).toBe(expected);
   });
 
-  it('rejects a type name it cannot derive a legal collection name from', () => {
-    expect(() => deriveCollectionName(typeNamed('---'))).toThrow(
-      /Cannot derive a Typesense collection name from search type “---”/,
+  it('rejects a name that is legal to spell but not to call a collection', () => {
+    // `123` spells fine (`123s`); a collection name opening with a digit is
+    // this engine’s rule to make, so this is the check that stays here.
+    expect(() => deriveCollectionName(typeNamed('123'))).toThrow(
+      /it yields “123s”, which is not a legal collection name/,
     );
   });
 
-  it.each(['Café', 'Musée', 'Straße', 'Creative@Work'])(
-    'rejects %s rather than silently dropping what it cannot spell',
+  it.each(['Café', '---'])(
+    'passes %s through to the engine-neutral spelling rule',
     (name) => {
-      // Tokenizing drops non-ASCII, so these would otherwise yield a legal
-      // name for the wrong collection (`Café` → `cafs`) – worse than throwing.
+      // The rule that a name must be spellable at all lives in @lde/search, so
+      // no adapter can derive a name without it – this only proves it fires.
       expect(() => deriveCollectionName(typeNamed(name))).toThrow(
-        /carries characters the convention would silently drop/,
+        /Cannot name search type/,
       );
     },
   );

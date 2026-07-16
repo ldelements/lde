@@ -76,11 +76,12 @@ export class BlueGreenRebuild<
     // `source` is stamped on every document for per-dataset rollback.
     assertNoReservedFields(searchType, [SOURCE_FIELD]);
     this.resolved = resolveRebuildOptions(searchType, options);
-    this.collectionName = this.resolved.name;
+    this.collectionName = this.resolved.definitionOptions.name;
   }
 
   async openRun(context: RunContext): Promise<RunWriter<TDocument>> {
-    const { name, batchSize, lockTtlMs, definitionOptions } = this.resolved;
+    const { batchSize, lockTtlMs, definitionOptions } = this.resolved;
+    const name = this.collectionName;
 
     return openLockedRun(this.client, name, lockTtlMs, async () => {
       // Create the fresh (blue) collection up front, so a failure surfaces
