@@ -18,6 +18,7 @@ Uses TypeScript with ESNext modules and Vite for building/testing.
 - We’re pre-release, so be aggressive about removing dead code. Do not yet care about backward compatibility.
 - All exported/public APIs must have JSDoc comments for a good developer experience.
 - With all code changes, ensure all README.md files (including diagrams) are still accurate.
+- Memory must be bounded by a configured unit of work (`batchSize`, `capacity`, …), never by the size of the input – LDE processes data it cannot hold. A bound stated in the data’s own units (“one dataset”, “one graph”) is not a bound. See [ADR 12](docs/decisions/0012-bound-memory-by-the-unit-of-work-not-the-input.md).
 
 ## Development Commands
 
@@ -97,16 +98,16 @@ The `@nx/js:library` generator’s output diverges from the conventions in this 
 2. **Copy the package directory.** `cp -R packages/<sibling> packages/<new-name>`.
 3. **Update `package.json`:**
    - `name` → `@lde/<new-name>`
-   - `description` — write something useful
+   - `description` – write something useful
    - `repository.directory` → `packages/<new-name>`
    - `version` → `0.0.0` (do NOT keep the sibling’s version). The first CI release bumps from the manifest over the package’s full history, so `0.0.0` lands it at `0.1.0` (observed with `search-typesense` and `text-normalization`), while a manifest pre-set to `0.1.0` shipped `0.2.0` (`pipeline-shacl-sampler`). This must be in place before the PR merges – see [Releasing a new package](#releasing-a-new-package).
-   - `dependencies` and `peerDependencies` — replace with what the new package actually needs
+   - `dependencies` and `peerDependencies` – replace with what the new package actually needs
 4. **Replace the source.** Empty out `src/` and `test/`, write the new code.
 5. **Update `tsconfig.lib.json` `references`** to match the new package’s actual `@lde/*` peers.
 6. **Reset coverage thresholds.** In `vite.config.ts`, drop the explicit numbers to `0`; the first test run with `autoUpdate: true` will set the real baseline.
 7. **Update the root README.md** packages table with a row for the new package.
 8. **Run `npx nx sync`** to add the new package’s path to the workspace root `tsconfig.json` references array.
-9. **Configure Nx in `package.json`** (not `project.json`) — already enforced by copying a sibling.
+9. **Configure Nx in `package.json`** (not `project.json`) – already enforced by copying a sibling.
 10. **For CLIs**, expose the version from `package.json` (the existing CLI packages do this via Commander).
 
 For releasing the new package’s first version, see [Releasing a new package](#releasing-a-new-package) below.
