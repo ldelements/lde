@@ -32,6 +32,6 @@
     "tslib": "^2.3.0"
   },
   "devDependencies": {
-    "@comunica/query-sparql-file": "^5.2.4"
+    "@comunica/query-sparql-file": "^5.3.0"
   }
 }
