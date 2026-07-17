@@ -1007,7 +1007,7 @@ describe('Stage', () => {
   describe('expectsOutput', () => {
     it('throws when a supported stage produces no quads', async () => {
       // A scalar aggregate (e.g. COUNT) always returns a row; zero output means
-      // the endpoint truncated the response — a hard failure, not an empty result.
+      // the endpoint truncated the response – a hard failure, not an empty result.
       const stage = new Stage({
         name: 'triples-count',
         readers: mockExecutor([]),
@@ -1071,6 +1071,157 @@ describe('Stage', () => {
       await expect(stage.run(dataset, distribution, writer)).rejects.toThrow(
         /per-class-count/,
       );
+    });
+  });
+
+  describe('project seam', () => {
+    // A writer over an arbitrary item type, so a projecting stage can be driven
+    // without any search dependency.
+    function collectingItemWriter<Item>(): DatasetWriter<Item> & {
+      items: Item[];
+    } {
+      const items: Item[] = [];
+      return {
+        items,
+        async write(_dataset, data) {
+          for await (const item of data) {
+            items.push(item);
+          }
+        },
+      };
+    }
+
+    it('projects each batch of quads into output items', async () => {
+      const stage = new Stage<string>({
+        name: 'project',
+        itemSelector: mockItemSelector([{ s: namedNode('http://x') }]),
+        readers: mockExecutor([q1, q2]),
+        project: (quads) => quads.map((quad) => quad.subject.value),
+      });
+
+      const writer = collectingItemWriter<string>();
+      const result = await stage.run(dataset, distribution, writer);
+
+      expect(result).not.toBeInstanceOf(NotSupported);
+      expect(writer.items).toEqual([
+        'http://example.org/s1',
+        'http://example.org/s2',
+      ]);
+    });
+
+    it('hands the batch its selected roots (bindings) in the context', async () => {
+      const seen: string[] = [];
+      const stage = new Stage<string>({
+        name: 'project',
+        batchSize: 1,
+        itemSelector: mockItemSelector([
+          { s: namedNode('http://root/1') },
+          { s: namedNode('http://root/2') },
+        ]),
+        readers: mockExecutor([q1]),
+        project: (_quads, context) => {
+          for (const row of context.bindings) seen.push(row.s.value);
+          return [];
+        },
+      });
+
+      await stage.run(dataset, distribution, collectingItemWriter<string>());
+
+      expect(seen).toEqual(['http://root/1', 'http://root/2']);
+    });
+
+    it('invokes project once per batch (ceil(roots / batchSize))', async () => {
+      const project = vi.fn((quads: readonly Quad[]) =>
+        quads.map((quad) => quad.object.value),
+      );
+      const stage = new Stage<string>({
+        name: 'project',
+        batchSize: 2,
+        itemSelector: mockItemSelector([
+          { s: namedNode('http://root/1') },
+          { s: namedNode('http://root/2') },
+          { s: namedNode('http://root/3') },
+          { s: namedNode('http://root/4') },
+          { s: namedNode('http://root/5') },
+        ]),
+        readers: mockExecutor([q1]),
+        project,
+      });
+
+      await stage.run(dataset, distribution, collectingItemWriter<string>());
+
+      // 5 roots at batchSize 2 → 3 batches.
+      expect(project).toHaveBeenCalledTimes(3);
+    });
+
+    it('supports an async-iterable projection', async () => {
+      const stage = new Stage<string>({
+        name: 'project',
+        itemSelector: mockItemSelector([{ s: namedNode('http://x') }]),
+        readers: mockExecutor([q1, q2]),
+        project: async function* (quads) {
+          for (const quad of quads) yield quad.predicate.value;
+        },
+      });
+
+      const writer = collectingItemWriter<string>();
+      await stage.run(dataset, distribution, writer);
+
+      expect(writer.items).toEqual([
+        'http://example.org/p',
+        'http://example.org/p',
+      ]);
+    });
+
+    it('projects only quads that pass validation (skip mode)', async () => {
+      const nonConforming: ValidationResult = {
+        conforms: false,
+        violations: 1,
+      };
+      const stage = new Stage<string>({
+        name: 'project',
+        itemSelector: mockItemSelector([{ s: namedNode('http://x') }]),
+        readers: mockExecutor([q1]),
+        project: (quads) => quads.map((quad) => quad.subject.value),
+        validation: {
+          validator: {
+            validate: async (): Promise<ValidationResult> => nonConforming,
+            report: async (): Promise<ValidationReport> => ({}) as never,
+          },
+          onInvalid: 'skip',
+        },
+      });
+
+      const writer = collectingItemWriter<string>();
+      await stage.run(dataset, distribution, writer);
+
+      // The batch failed validation and was skipped, so nothing is projected.
+      expect(writer.items).toEqual([]);
+    });
+
+    it('rejects project without an itemSelector at construction', () => {
+      expect(
+        () =>
+          new Stage<string>({
+            name: 'no-selector',
+            readers: mockExecutor([q1]),
+            project: (quads) => quads.map((quad) => quad.subject.value),
+          }),
+      ).toThrow(/requires an 'itemSelector'/);
+    });
+
+    it('rejects project combined with chained stages at construction', () => {
+      const child = new Stage({ name: 'child', readers: mockExecutor([]) });
+      expect(
+        () =>
+          new Stage<string>({
+            name: 'chained',
+            itemSelector: mockItemSelector([{ s: namedNode('http://x') }]),
+            readers: mockExecutor([q1]),
+            project: (quads) => quads.map((quad) => quad.subject.value),
+            stages: [child],
+          }),
+      ).toThrow(/cannot combine with chained 'stages'/);
     });
   });
 });

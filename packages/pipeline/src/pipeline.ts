@@ -65,7 +65,7 @@ export interface BeforeStageWriteContext {
 /**
  * Context handed to a {@link PipelinePlugin.beforeDatasetWrite} transform: the
  * `dataset` whose complete, cross-stage output is being written. Unlike
- * {@link BeforeStageWriteContext} there is no `stage` — the transform sees one
+ * {@link BeforeStageWriteContext} there is no `stage` – the transform sees one
  * dataset's quads from every stage as a single stream.
  */
 export interface BeforeDatasetWriteContext {
@@ -79,7 +79,7 @@ export interface PipelinePlugin {
    * Transform a single stage's merged output before writing (extension point
    * 2: per stage, post-merge). Runs once per stage per dataset, carrying the
    * stage identity so it can mint stable per-`(dataset, stage)` IRIs. The home
-   * of stage-scoped concerns — provenance stamping, namespace rewriting of a
+   * of stage-scoped concerns – provenance stamping, namespace rewriting of a
    * stage's own quads.
    */
   beforeStageWrite?: QuadTransform<BeforeStageWriteContext>;
@@ -88,7 +88,7 @@ export interface PipelinePlugin {
    * dataset, cross-stage). Runs once over the concatenation of every stage's
    * output for one dataset, after all stages complete and before the write is
    * flushed. The home of concerns that need to reconcile quads *across* stages
-   * — deduplication, cross-stage roll-ups, or merging partition nodes that
+   * – deduplication, cross-stage roll-ups, or merging partition nodes that
    * different stages contribute to.
    *
    * The transform is a streaming {@link QuadTransform}: the pipeline pipes each
@@ -99,11 +99,19 @@ export interface PipelinePlugin {
   beforeDatasetWrite?: QuadTransform<BeforeDatasetWriteContext>;
 }
 
-export interface PipelineOptions {
+export interface PipelineOptions<Out = Quad> {
   datasetSelector: DatasetSelector;
-  stages: Stage[];
-  writers: Writer | Writer[];
-  plugins?: PipelinePlugin[];
+  stages: Stage<Out>[];
+  writers: Writer<Out> | Writer<Out>[];
+  /**
+   * Quad-level plugins ({@link PipelinePlugin}). Available only to a plain quad
+   * pipeline: a projecting pipeline's write-side data is already the projected
+   * item, and both plugin points are `QuadTransform`s with no quads to act on,
+   * so the type forbids them (`never`). Reader-attached quad transforms are
+   * unaffected – they run before the projection seam. See
+   * {@link https://github.com/ldelements/lde/blob/main/docs/decisions/0013-project-inside-the-batch-per-root-type.md | ADR 13}.
+   */
+  plugins?: [Out] extends [Quad] ? PipelinePlugin[] : never;
   name?: string;
   distributionResolver?: DistributionResolver;
   chaining?: {
@@ -192,14 +200,14 @@ function tee<T>(source: AsyncIterable<T>, count: number): AsyncIterable<T>[] {
   }));
 }
 
-class FanOutWriter implements Writer {
-  constructor(private readonly writers: Writer[]) {}
+class FanOutWriter<Item> implements Writer<Item> {
+  constructor(private readonly writers: Writer<Item>[]) {}
 
-  async openRun(context: RunContext): Promise<RunWriter> {
+  async openRun(context: RunContext): Promise<RunWriter<Item>> {
     // Opening a writer's run can have side effects (a cross-pod lock, a fresh
     // collection). If one writer opens but a sibling then fails, the pipeline
     // never gets a RunWriter to abort, so roll the opened ones back here
-    // before rethrowing — otherwise their locks and collections leak.
+    // before rethrowing – otherwise their locks and collections leak.
     const results = await Promise.allSettled(
       this.writers.map((writer) => writer.openRun(context)),
     );
@@ -213,7 +221,7 @@ class FanOutWriter implements Writer {
       await Promise.allSettled(opened.map((run) => run.abort(failure.reason)));
       throw failure.reason;
     }
-    return new FanOutRunWriter(opened);
+    return new FanOutRunWriter<Item>(opened);
   }
 }
 
@@ -229,11 +237,11 @@ async function settleBranches(tasks: readonly Promise<void>[]): Promise<void> {
   if (failed) throw failed.reason;
 }
 
-class FanOutRunWriter implements RunWriter {
-  constructor(private readonly runs: RunWriter[]) {}
+class FanOutRunWriter<Item> implements RunWriter<Item> {
+  constructor(private readonly runs: RunWriter<Item>[]) {}
 
-  async write(dataset: Dataset, quads: AsyncIterable<Quad>): Promise<void> {
-    const branches = tee(quads, this.runs.length);
+  async write(dataset: Dataset, items: AsyncIterable<Item>): Promise<void> {
+    const branches = tee(items, this.runs.length);
     await Promise.all(
       this.runs.map((run, index) => run.write(dataset, branches[index])),
     );
@@ -274,7 +282,7 @@ class TransformWriter implements DatasetWriter {
     );
   }
   // Only write(): the Pipeline flushes the underlying run writer directly, once
-  // per dataset after all stages — a TransformWriter only wraps a single write.
+  // per dataset after all stages – a TransformWriter only wraps a single write.
 }
 
 /** Discards a dataset's queued output; used to unblock the transform on reset. */
@@ -378,21 +386,21 @@ class DatasetTransformWriter implements RunWriter {
   }
 }
 
-export class Pipeline {
+export class Pipeline<Out = Quad> {
   private readonly name: string;
   private readonly datasetSelector: DatasetSelector;
-  private readonly stages: Stage[];
-  private readonly writer: Writer;
+  private readonly stages: Stage<Out>[];
+  private readonly writer: Writer<Out>;
   private readonly beforeStageWrite?: QuadTransform<BeforeStageWriteContext>;
   private readonly beforeDatasetWrite?: QuadTransform<BeforeDatasetWriteContext>;
   private readonly distributionResolver: DistributionResolver;
-  private readonly chaining?: PipelineOptions['chaining'];
+  private readonly chaining?: PipelineOptions<Out>['chaining'];
   private readonly reporter?: ProgressReporter;
   private readonly timeoutFactory: () => TimeoutPolicy;
   private readonly provenanceStore?: ProvenanceStore;
   private readonly pipelineVersion?: string;
 
-  constructor(options: PipelineOptions) {
+  constructor(options: PipelineOptions<Out>) {
     const hasSubStages = options.stages.some(
       (stage) => stage.stages.length > 0,
     );
@@ -414,10 +422,14 @@ export class Pipeline {
     // transforms wrap it per stage (see stageWriter) so each carries the stage
     // identity it needs to mint stable, non-fusing IRIs.
     this.writer = Array.isArray(options.writers)
-      ? new FanOutWriter(options.writers)
+      ? new FanOutWriter<Out>(options.writers)
       : options.writers;
 
-    const transforms = options.plugins
+    // Plugins are quad-typed and only reachable when `Out` is `Quad` (the
+    // `plugins` field is `never` otherwise), but inside the class body `Out` is
+    // opaque, so the conditional-typed field is read as a plain plugin array.
+    const plugins = options.plugins as PipelinePlugin[] | undefined;
+    const transforms = plugins
       ?.map((p) => p.beforeStageWrite)
       .filter(
         (t): t is QuadTransform<BeforeStageWriteContext> => t !== undefined,
@@ -426,7 +438,7 @@ export class Pipeline {
       ? (quads, context) => transforms.reduce((q, fn) => fn(q, context), quads)
       : undefined;
 
-    const datasetTransforms = options.plugins
+    const datasetTransforms = plugins
       ?.map((p) => p.beforeDatasetWrite)
       .filter(
         (t): t is QuadTransform<BeforeDatasetWriteContext> => t !== undefined,
@@ -471,9 +483,15 @@ export class Pipeline {
     };
     const openedWriter = await this.writer.openRun(context);
     // Wrap the run writer so a whole-dataset transform sees every stage's
-    // output for a dataset as one stream before it is written.
-    const runWriter = this.beforeDatasetWrite
-      ? new DatasetTransformWriter(openedWriter, this.beforeDatasetWrite)
+    // output for a dataset as one stream before it is written. The transform is
+    // quad-typed and only present when `Out` is `Quad` (a projecting pipeline
+    // has no plugins), so narrowing the run writer to `RunWriter<Quad>` here is
+    // sound – tsc cannot see that invariant.
+    const runWriter: RunWriter<Out> = this.beforeDatasetWrite
+      ? (new DatasetTransformWriter(
+          openedWriter as unknown as RunWriter<Quad>,
+          this.beforeDatasetWrite,
+        ) as unknown as RunWriter<Out>)
       : openedWriter;
 
     try {
@@ -497,7 +515,7 @@ export class Pipeline {
 
   private async processDataset(
     dataset: Dataset,
-    runWriter: RunWriter,
+    runWriter: RunWriter<Out>,
     context: RunContext,
   ): Promise<void> {
     this.reporter?.datasetStart?.(dataset);
@@ -750,7 +768,11 @@ export class Pipeline {
     }
   }
 
-  private *collectStages(stages: readonly Stage[]): Iterable<Stage> {
+  // Walks every stage and sub-stage to collect validators; it reads only
+  // `validator`/`stages`, never output, so it is agnostic to the item type.
+  private *collectStages(
+    stages: readonly Stage<unknown>[],
+  ): Iterable<Stage<unknown>> {
     for (const stage of stages) {
       yield stage;
       if (stage.stages.length > 0) yield* this.collectStages(stage.stages);
@@ -763,9 +785,19 @@ export class Pipeline {
    * transforms, carrying this `stage`'s identity so a transform can mint stable
    * per-`(dataset, stage)` IRIs rather than blank nodes.
    */
-  private stageWriter(runWriter: RunWriter, stage: string): DatasetWriter {
+  private stageWriter(
+    runWriter: RunWriter<Out>,
+    stage: string,
+  ): DatasetWriter<Out> {
+    // `beforeStageWrite` is quad-typed and only present when `Out` is `Quad` (a
+    // projecting pipeline has no plugins), so the `TransformWriter` wrap is
+    // reached only in that case; tsc cannot see the invariant, hence the casts.
     return this.beforeStageWrite
-      ? new TransformWriter(runWriter, this.beforeStageWrite, stage)
+      ? (new TransformWriter(
+          runWriter as unknown as DatasetWriter<Quad>,
+          this.beforeStageWrite,
+          stage,
+        ) as unknown as DatasetWriter<Out>)
       : runWriter;
   }
 
@@ -816,7 +848,7 @@ export class Pipeline {
     dataset: Dataset,
     distribution: Distribution,
     timeout: TimeoutPolicy,
-    runWriter: RunWriter,
+    runWriter: RunWriter<Out>,
     context: RunContext,
   ): Promise<boolean> {
     let stageFailed = false;
@@ -855,11 +887,11 @@ export class Pipeline {
    * Run a stage with reporting and return whether it was supported.
    * Returns `true` if the stage produced results, `false` if NotSupported.
    */
-  private async runStage(
+  private async runStage<Item>(
     dataset: Dataset,
     distribution: Distribution,
-    stage: Stage,
-    writer: DatasetWriter,
+    stage: Stage<Item>,
+    writer: DatasetWriter<Item>,
     timeout?: TimeoutPolicy,
   ): Promise<boolean> {
     this.reporter?.stageStart?.(stage.name);
@@ -898,11 +930,11 @@ export class Pipeline {
   }
 
   /** Run a stage in chained mode, throwing if the stage is not supported. */
-  private async runChainedStage(
+  private async runChainedStage<Item>(
     dataset: Dataset,
     distribution: Distribution,
-    stage: Stage,
-    writer: DatasetWriter,
+    stage: Stage<Item>,
+    writer: DatasetWriter<Item>,
     timeout?: TimeoutPolicy,
   ): Promise<void> {
     const supported = await this.runStage(
@@ -922,20 +954,22 @@ export class Pipeline {
   private async runChain(
     dataset: Dataset,
     distribution: Distribution,
-    stage: Stage,
-    runWriter: RunWriter,
+    stage: Stage<Out>,
+    runWriter: RunWriter<Out>,
     context: RunContext,
     timeout?: TimeoutPolicy,
   ): Promise<void> {
     const { stageOutputResolver, outputDir } = this.chaining!;
     const outputFiles: string[] = [];
 
-    // Run one chained stage into its scratch FileWriter and flush it, so the
-    // output file exists on its final path before the resolver reads it. The
-    // scratch run is bracketed like any other: committed on success, aborted
-    // on failure so no half-written temp file is left behind.
+    // Chaining is a quad-only concern: every stage in a chain writes N-Triples
+    // to a scratch FileWriter (a `Writer<Quad>`), and a chained parent cannot
+    // project (a stage with `stages` forbids `project`), so it emits quads. The
+    // requirement "sub-stages imply `Out` is `Quad`" is not expressible – `stages`
+    // and `chaining` are independent options – so it is a runtime contract, and
+    // the scratch machinery treats the parent stage as `Stage<Quad>`.
     const runScratchStage = async (
-      chainedStage: Stage,
+      chainedStage: Stage<Quad>,
       stageDistribution: Distribution,
     ): Promise<string> => {
       const scratchWriter = new FileWriter({
@@ -961,8 +995,11 @@ export class Pipeline {
     };
 
     try {
-      // 1. Run parent stage → scratch FileWriter.
-      const parentOutput = await runScratchStage(stage, distribution);
+      // 1. Run parent stage → scratch FileWriter (quad-only, per above).
+      const parentOutput = await runScratchStage(
+        stage as unknown as Stage<Quad>,
+        distribution,
+      );
       outputFiles.push(parentOutput);
 
       // 2. Chain through children.
@@ -981,9 +1018,11 @@ export class Pipeline {
 
       // 3. Concatenate all output files → the open run, applying the plugins'
       // beforeStageWrite transforms once for the chain under the parent stage.
+      // The concatenation is quads (per the quad-only contract above), written
+      // to the `Out`-typed run writer – sound because chaining implies `Quad`.
       await this.stageWriter(runWriter, stage.name).write(
         dataset,
-        this.readFiles(outputFiles),
+        this.readFiles(outputFiles) as unknown as AsyncIterable<Out>,
       );
     } finally {
       await stageOutputResolver.cleanup();
