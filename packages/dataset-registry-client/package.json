@@ -25,7 +25,7 @@
   ],
   "dependencies": {
     "@lde/dataset": "^0.7.8",
-    "@traqula/generator-sparql-1-1": "^1.1.6",
+    "@traqula/generator-sparql-1-1": "^1.1.8",
     "@traqula/parser-sparql-1-1": "^1.1.5",
     "@traqula/rules-sparql-1-1": "^1.1.0",
     "ldkit": "^2.7.1",
