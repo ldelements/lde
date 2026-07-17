@@ -1,3 +1,9 @@
+## 0.34.2 (2026-07-17)
+
+### 🚀 Features
+
+- **pipeline:** add Stage<Out> and the project seam ([#624](https://github.com/ldelements/lde/pull/624))
+
 ## 0.34.1 (2026-07-12)
 
 ### 🩹 Fixes
