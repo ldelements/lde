@@ -74,8 +74,8 @@ describe('frameByType', () => {
   it('keeps a root subject that references another root-typed subject', async () => {
     // A one-hop reference can itself be of the root type (e.g. a terminology
     // source that is also a separately registered dataset). The referencing
-    // subject must still be projected — and the referenced one must not be
-    // emitted twice — even though both match the frame’s `@type`.
+    // subject must still be projected – and the referenced one must not be
+    // emitted twice – even though both match the frame’s `@type`.
     const nodes = await collect(
       frameByType(
         quads(`
@@ -145,18 +145,38 @@ describe('buildSubjectIndex / frameSubjects', () => {
 
     // A single pass over the generator must still index both types.
     const index = buildSubjectIndex(once(), [DATASET, other]);
-    const datasets = await collect(frameSubjects(index, DATASET));
-    const others = await collect(frameSubjects(index, other));
+    const datasets = await collect(
+      frameSubjects(index, index.rootsByType.get(DATASET) ?? []),
+    );
+    const others = await collect(
+      frameSubjects(index, index.rootsByType.get(other) ?? []),
+    );
 
     expect(datasets.map((node) => node['@id'])).toEqual(['https://ex/d/1']);
     expect(others.map((node) => node['@id'])).toEqual(['https://ex/x/1']);
   });
 
-  it('frames nothing for a type the index was not built for', async () => {
+  it('frames each explicitly given root, ignoring rdf:type', async () => {
+    // No type triples at all: the roots are supplied directly, the way a
+    // pipeline selector supplies them.
+    const index = buildSubjectIndex(
+      quads(`
+        <https://ex/d/1> <${dcterms.title.value}> "Een"@nl .
+        <https://ex/d/2> <${dcterms.title.value}> "Twee"@nl .
+      `),
+      [],
+    );
+    const framed = await collect(frameSubjects(index, ['https://ex/d/1']));
+    expect(framed.map((node) => node['@id'])).toEqual(['https://ex/d/1']);
+  });
+
+  it('frames nothing for a root absent from the index', async () => {
     const index = buildSubjectIndex(
       quads(`<https://ex/d/1> <${rdf.type.value}> <${DATASET}> .`),
       [DATASET],
     );
-    expect(await collect(frameSubjects(index, 'urn:unregistered'))).toEqual([]);
+    expect(await collect(frameSubjects(index, ['urn:unregistered']))).toEqual(
+      [],
+    );
   });
 });

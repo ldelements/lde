@@ -6,6 +6,7 @@ import {
   type FramedNode,
 } from './frame-by-type.js';
 import {
+  assertTypeInSchema,
   displayFieldName,
   isoToUnixSeconds,
   physicalFields,
@@ -80,9 +81,42 @@ export async function* projectGraph(
     types.map((searchType) => searchType.class),
   );
   for (const searchType of types) {
-    for await (const node of frameSubjects(index, searchType.class)) {
+    const roots = index.rootsByType.get(searchType.class) ?? [];
+    for await (const node of frameSubjects(index, roots)) {
       yield { searchType, document: projectDocument(node, searchType) };
     }
+  }
+}
+
+/**
+ * Project a single type over a known set of `roots` – the per-type, roots-given
+ * projection. Unlike {@link projectGraph}, the roots are supplied by the caller
+ * (the pipeline selector) rather than discovered from `rdf:type`, so `quads`
+ * need carry no type triples and the projection frames each distinct subject
+ * once. {@link assertTypeInSchema} guards that `searchType` belongs to `schema`
+ * – the port’s own membership check – so no schema is ever forged to scope a
+ * projection to one type. Yields a bare {@link SearchDocument}: tagging a
+ * document with its type is a routing concern, owned by the pipeline glue, not
+ * the projection.
+ *
+ * Consumes `quads` once, so it accepts any `Iterable` – a batch’s materialized
+ * array or a chained generator merging several readers.
+ */
+export async function* projectRoots(
+  quads: Iterable<Quad>,
+  roots: readonly string[],
+  schema: SearchSchema,
+  searchType: SearchType,
+): AsyncIterable<SearchDocument> {
+  assertTypeInSchema(schema, searchType);
+  const index = buildSubjectIndex(quads, []);
+  // Distinct roots only. A selector may return an IRI more than once – a
+  // non-`DISTINCT` `SELECT` over a one-to-many join yields the same subject per
+  // matched row – and a repeated root would otherwise frame and emit a
+  // duplicate document under the same `id`. (`projectGraph`’s roots come from
+  // `rootsByType`, which is inherently unique, so it never needs this.)
+  for await (const node of frameSubjects(index, [...new Set(roots)])) {
+    yield projectDocument(node, searchType);
   }
 }
 
