@@ -12,9 +12,11 @@ this invariant without stating it.
 
 **Partly supersedes
 [ADR 9 (Route a whole-schema projection to per-type collections)](./0009-route-a-whole-schema-projection-to-per-type-collections.md)** –
-its projection mechanism (the whole-schema single-scan mixed stream, the
-per-document type tag, the buffer-until-flush), each of which is sized by the
-input. ADR 9’s fan-out placement is untouched and still current.
+its whole-schema single-scan mixed stream and its buffer-until-flush, both sized
+by the input. [ADR 9](./0009-route-a-whole-schema-projection-to-per-type-collections.md)’s fan-out placement and its per-document `searchType` are
+untouched and still current;
+[ADR 13](./0013-project-inside-the-batch-per-root-type.md) works out what
+replaces the mechanism.
 
 ## Context
 
@@ -57,14 +59,26 @@ code, and the bound evaporated when the _unit_ changed meaning underneath it.
 
 ## Decision
 
-**Memory is bounded by a configured unit of work, never by the size of the
-input.**
+**Memory is bounded by the unit of work, never by the size of the input.**
 
-- **A bound must name a unit the operator configures, not one the data defines.**
-  `batchSize`, `capacity`, `maxResults` are bounds. “One dataset”, “one
-  distribution”, “one graph”, “one run” are inputs wearing a bound’s clothes.
-  If the only way to shrink a structure is to be handed less data, it is not
+- **A bound must be independent of the input.** “One dataset”, “one
+  distribution”, “one graph”, “one run” are inputs wearing a bound’s clothes. If
+  the only way to shrink a structure is to be handed less data, it is not
   bounded.
+
+- **Tunability is a second property, not this one.** `batchSize` and
+  `maxResults` are configured by the operator; `AsyncQueue`’s `capacity` is a
+  fixed 128, never passed at either call site (`stage.ts:273`,
+  `pipeline.ts:348`) – **still a bound**, because a constant does not track the
+  input, but not one anyone can trade against throughput. Configure a bound where
+  the cost per item varies by deployment: 128 quads is tens of kilobytes, 128
+  documents is orders of magnitude more. A fixed constant satisfies this ADR; an
+  unconfigurable one may still be the wrong size.
+
+- **The atom is one root’s quads** – data-defined and irreducible, because a
+  document needs its root’s complete quads. Every bound here is expressed in
+  whole roots; a single pathological root is unbounded and nothing removes that
+  floor.
 
 - **Bounded is not the same as streaming.** A step may be _grouped_ – projection
   takes a batch and emits its documents – provided the group is the configured
@@ -74,10 +88,13 @@ input.**
   array of every document, no `jsonld.frame()` over a graph, no index built from
   a whole input. Whatever a unit allocates is released when the unit completes.
 
-- **Every read or write path states its bound and tests it.** A bound in a JSDoc
-  is not a bound – it is the thing this ADR exists because we tried. The test
-  asserts memory stays flat as input grows, which is the only form that fails
-  when the claim quietly stops being true.
+- **Every read or write path states its bound and tests it – by counting, not
+  measuring.** A bound in a JSDoc is not a bound: that is the thing this ADR
+  exists because we tried. Run the same path at two input sizes an order of
+  magnitude apart and assert the peak live item count is **identical at both**.
+  That is an assertion about a bound, and it fails deterministically the moment a
+  structure grows with input. A `process.memoryUsage()` assertion is both flakier
+  and _weaker_ – GC timing can hide a leak that a count cannot.
 
 ## Consequences
 
@@ -85,7 +102,7 @@ input.**
   per-type × per-batch queries instead of one scan. `batchSize` is the dial:
   high where the input is small (the catalog), low where it is not (objects).
 
-- **It forecloses whole-input optimizations, permanently.** ADR 9’s whole-schema
+- **It forecloses whole-input optimizations, permanently.** [ADR 9](./0009-route-a-whole-schema-projection-to-per-type-collections.md)’s whole-schema
   single-scan projection, whole-graph framing, and one-pass deduplication across
   a run are each cheaper than the bounded version and each unavailable. Proposals
   to reintroduce them should be read as proposals to reintroduce an unbounded
@@ -96,11 +113,21 @@ input.**
   fixed or small by construction. The rule targets structures that grow with the
   data, not every allocation.
 
-- **Cross-cutting bounds need an owner.** `deduplicateQuads` and
-  `buildSubjectIndex` independently keep a `Set<string>` over the same content –
-  each roughly a textual copy of the graph – for the same reason (QLever does not
-  deduplicate CONSTRUCT output). Two enforcements of one quirk cost two copies.
-  When a bound is everyone’s job it is paid for twice.
+- **Cross-cutting bounds need an owner _per path_.** `deduplicateQuads`
+  (`reader.ts:394`) and `buildSubjectIndex`’s `seen` (`frame-by-type.ts:45`) each
+  keep a `Set<string>` for the same reason – QLever does not deduplicate
+  CONSTRUCT output – but they are **not interchangeable**: `deduplicateQuads` is
+  scoped to one `read()` call, so one reader, one batch; `buildSubjectIndex` sees
+  `readerOutputs.flat()`, the merged batch, and is the only one that catches
+  cross-reader duplicates. So: `buildSubjectIndex` owns it on the projecting path
+  (readers set `deduplicate: false`); the reader owns it where no subject index
+  exists. “Each roughly a textual copy of the graph” is true of `deduplicateQuads`
+  only on an **unbounded** global stage – which is the catalog today, and what
+  #606 fixes.
 
-- **Known violation:** `searchIndexWriter` (#606), which is the forcing function
-  for writing this down.
+- **Known violations:** `searchIndexWriter` (#606) – the forcing function for
+  writing this down – and `RunContext.selectedSources()` (`pipeline.ts:464-471`),
+  which accumulates one IRI per selected dataset for the whole run.
+  `InPlaceRebuild.commit` needs it for the membership sweep, and #534 requires
+  it, so it is _arguably_ right at ~100 bytes × N datasets. But this ADR’s own
+  rule is that unbounded must be **argued**, and it has not been.

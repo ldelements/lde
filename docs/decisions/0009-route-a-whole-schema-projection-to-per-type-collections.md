@@ -15,8 +15,9 @@ updates the catalog grain of search as a Configurable Pipeline instance
 several ([#590](https://github.com/ldelements/lde/issues/590)).
 
 **Partly superseded by
-[ADR 12 (Bound memory by the unit of work, not the input)](./0012-bound-memory-by-the-unit-of-work-not-the-input.md)**,
-which reverses this ADR by halves:
+[ADR 12 (Bound memory by the unit of work, not the input)](./0012-bound-memory-by-the-unit-of-work-not-the-input.md)
+and [ADR 13 (Project inside the batch, per root type)](./0013-project-inside-the-batch-per-root-type.md)**,
+which reverse this ADR by halves:
 
 - **Still current** – the fan-out’s _placement_: composed in
   `@lde/search-pipeline` over N single-collection engine writers (option (a)
@@ -24,13 +25,21 @@ which reverses this ADR by halves:
   committing, sweeping and failing in isolation; `abort` finalizing only the
   collections that did not go live. That is what this ADR set out to decide, and
   it stands.
+
+- **Still current** – the per-document `searchType` (`TypedSearchDocument`). N
+  stages still write to **one** terminal (`source → transform → sink`), and
+  `write(dataset, items)` carries no stage identity, so the type must travel with
+  the item. What changes is that a stage _mints_ it – it was constructed for one
+  type – rather than `projectGraph` _discovering_ it from `rdf:type`.
+  `searchIndexWriter` remains the router this ADR made it; it loses projection
+  and buffering, nothing else.
+
 - **Superseded** – the _projection mechanism_: the whole-schema single-scan
-  mixed stream, the per-document type tag (`TypedSearchDocument`), and the
-  buffer-until-flush. Each is a structure sized by the input rather than by a
-  configured unit. Bounding forces one stage per root type, so a batch belongs to
-  exactly one type – leaving no mixed stream to tag and nothing to route. What
-  survives of `searchIndexWriter` is run coordination, not projection.
-  Implemented by [#606](https://github.com/ldelements/lde/issues/606).
+  mixed stream, and the buffer-until-flush. Both are structures sized by the
+  input rather than by a bounded unit. Projection happens per type, per batch,
+  over roots the selector supplied ([ADR 13](./0013-project-inside-the-batch-per-root-type.md)).
+
+Implemented by [#606](https://github.com/ldelements/lde/issues/606).
 
 For the record: the buffering was never this ADR’s subject. It arrived two PRs
 earlier, in `@lde/search-pipeline`’s first commit
@@ -43,12 +52,12 @@ Consequences below never weigh memory – memory was not on the table.
 
 One validated `SearchSchema` declares several root types. The Dataset Register
 indexes four: `datasets` plus the Organization / Class / TerminologySource label
-collections its references resolve against (ADR 8). Each type derives its own
+collections its references resolve against ([ADR 8](./0008-resolve-reference-labels-from-per-reference-label-sources.md)). Each type derives its own
 Typesense collection definition, so the types cannot share a collection – they are
 four independent blue/green rebuilds, each with its own versioned collection,
 alias and single-flight lock.
 
-ADR 6 made the engine `Writer` a transactional, **single-collection** rebuild
+[ADR 6](./0006-make-the-writer-transaction-aware.md) made the engine `Writer` a transactional, **single-collection** rebuild
 (`BlueGreenRebuild` / `InPlaceRebuild`), bound to one `SearchType`. `projectGraph`
 already projects the **whole** schema in one pass – a single scan of the quads
 builds the subject index every type frames off – yielding one mixed stream of
@@ -77,7 +86,7 @@ it unchanged), so the routing is a pipeline-glue concern, not an engine one.
   quads are buffered until its flush, projected once (whole schema), then split
   by type and dispatched to each type’s run. The pipeline still drives one
   uniform `openRun → write* → commit/abort` and never branches on the
-  multi-collection shape – consistent with ADR 6’s single lifecycle. A
+  multi-collection shape – consistent with [ADR 6](./0006-make-the-writer-transaction-aware.md)’s single lifecycle. A
   single-collection deployment is just the N = 1 case.
 
 - **Each collection commits, sweeps and fails in isolation.** A type whose
@@ -91,7 +100,7 @@ it unchanged), so the routing is a pipeline-glue concern, not an engine one.
   stale collection is never silent.
 
 - **`abort` finalizes only the collections that did not go live.** The pipeline
-  aborts a run whose `commit` throws (ADR 6), so a partial commit reaches
+  aborts a run whose `commit` throws ([ADR 6](./0006-make-the-writer-transaction-aware.md)), so a partial commit reaches
   `abort`. Because a committed blue/green rebuild’s `abort` would drop its
   now-live collection, `abort` skips the collections that already committed and
   drops only the half-built ones (and releases their locks). A failure while
