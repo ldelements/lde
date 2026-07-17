@@ -35,6 +35,28 @@ export interface ReaderContext {
 }
 
 /**
+ * The pipeline's one type-changing seam: turn a root-complete batch of quads
+ * into a stage's output items. The only extension point whose output is not
+ * `Quad` – a quad enrichment is a {@link QuadTransform} attached to a reader
+ * (extension point 1), which runs *before* this. See
+ * {@link https://github.com/ldelements/lde/blob/main/docs/decisions/0013-project-inside-the-batch-per-root-type.md | ADR 13}.
+ */
+export type BatchTransform<Out> = (
+  quads: readonly Quad[],
+  context: BatchContext,
+) => Iterable<Out> | AsyncIterable<Out>;
+
+/**
+ * Context handed to a {@link BatchTransform}: {@link ReaderContext} plus the
+ * batch's selected roots. `bindings` are the item-selector rows the readers were
+ * given as a `VALUES` block, so the batch is root-complete by construction – the
+ * projection frames exactly these roots rather than discovering them.
+ */
+export interface BatchContext extends ReaderContext {
+  bindings: readonly VariableBindings[];
+}
+
+/**
  * An {@link Reader} with zero or more {@link QuadTransform}s attached as data.
  *
  * The stage runner applies the transform(s) in order to **this reader's
@@ -64,10 +86,27 @@ interface NormalizedReader {
   transforms: QuadTransform<ReaderContext>[];
 }
 
-export interface StageOptions {
+export interface StageOptions<Out = Quad> {
   name: string;
   readers: StageReaders;
   itemSelector?: ItemSelector;
+  /**
+   * Turn each root-complete batch into this stage's output items – the one seam
+   * whose output type differs from `Quad` ({@link BatchTransform}). Requires
+   * {@link StageOptions.itemSelector} (a batch only exists under a selector) and
+   * forbids {@link StageOptions.stages} (a chained stage serializes to
+   * N-Triples, which a projected item cannot). Omit for a plain quad stage.
+   */
+  project?: BatchTransform<Out>;
+  /**
+   * Capacity of the bounded queue funnelling this stage's concurrent batches
+   * into the single write. The queue applies backpressure at this many items,
+   * so it bounds memory – set it where the cost per item is large (a projected
+   * document is far heavier than a quad). Only meaningful with an item selector.
+   *
+   * @default 128
+   */
+  queueCapacity?: number;
   /**
    * Maximum number of bindings per reader call.
    *
@@ -93,7 +132,7 @@ export interface StageOptions {
    * Treat a supported stage that produces no quads as a hard failure (throws),
    * rather than a legitimately empty result.
    *
-   * Set this for stages whose query must yield output — typically a scalar
+   * Set this for stages whose query must yield output – typically a scalar
    * aggregate such as `SELECT (COUNT(*) AS ?n)`, which always returns exactly
    * one row, so zero quads can only mean the endpoint truncated or aborted the
    * response (e.g. a timeout surfaced as an empty `HTTP 200`). The resulting
@@ -131,7 +170,7 @@ export interface SelectOptions {
   timeout?: TimeoutPolicy;
 }
 
-export class Stage {
+export class Stage<Out = Quad> {
   readonly name: string;
   readonly stages: readonly Stage[];
   /** Whether an empty result is treated as a hard failure. @see {@link StageOptions.expectsOutput} */
@@ -140,9 +179,21 @@ export class Stage {
   private readonly itemSelector?: ItemSelector;
   private readonly batchSize: number;
   private readonly maxConcurrency: number;
-  private readonly validation?: StageOptions['validation'];
+  private readonly validation?: StageOptions<Out>['validation'];
+  private readonly project?: BatchTransform<Out>;
+  private readonly queueCapacity?: number;
 
-  constructor(options: StageOptions) {
+  constructor(options: StageOptions<Out>) {
+    if (options.project && !options.itemSelector) {
+      throw new Error(
+        `Stage '${options.name}': 'project' requires an 'itemSelector' – without one there is no batch to project, only the readers' whole output.`,
+      );
+    }
+    if (options.project && (options.stages?.length ?? 0) > 0) {
+      throw new Error(
+        `Stage '${options.name}': 'project' cannot combine with chained 'stages' – a chained stage serializes to N-Triples, which a projected item cannot.`,
+      );
+    }
     this.name = options.name;
     this.stages = options.stages ?? [];
     this.readers = normalizeReaders(options.readers);
@@ -151,6 +202,8 @@ export class Stage {
     this.maxConcurrency = options.maxConcurrency ?? 10;
     this.validation = options.validation;
     this.expectsOutput = options.expectsOutput ?? false;
+    this.project = options.project;
+    this.queueCapacity = options.queueCapacity;
   }
 
   /** The validator for this stage, if configured. */
@@ -161,7 +214,7 @@ export class Stage {
   async run(
     dataset: Dataset,
     distribution: Distribution,
-    writer: DatasetWriter,
+    writer: DatasetWriter<Out>,
     options?: RunOptions,
   ): Promise<NotSupported | void> {
     const timeout = options?.timeout;
@@ -182,6 +235,12 @@ export class Stage {
       return streams;
     }
 
+    // The non-selector path has no batch, so `project` is forbidden here (the
+    // constructor rejects `project` without an `itemSelector`). It therefore
+    // only ever writes quads, and `Out` is `Quad` at runtime – tsc cannot see
+    // that invariant, so the writer is narrowed once.
+    const quadWriter = writer as unknown as DatasetWriter<Quad>;
+
     // Quads the readers produced (before any validation filtering); used to
     // enforce `expectsOutput` below.
     let produced = 0;
@@ -197,7 +256,7 @@ export class Stage {
       const onInvalid = this.validation.onInvalid ?? 'write';
       if (onInvalid === 'write') {
         await Promise.all([
-          writer.write(
+          quadWriter.write(
             dataset,
             (async function* () {
               yield* buffer;
@@ -208,7 +267,7 @@ export class Stage {
       } else {
         const accepted = await this.validateBuffer(buffer, dataset);
         if (accepted.length > 0) {
-          await writer.write(
+          await quadWriter.write(
             dataset,
             (async function* () {
               yield* accepted;
@@ -219,14 +278,14 @@ export class Stage {
     } else if (this.expectsOutput) {
       // Only thread the per-quad counter through when the count is actually
       // needed; the default path stays a plain streaming write with no overhead.
-      await writer.write(
+      await quadWriter.write(
         dataset,
         countQuads(mergeStreams(streams), (count) => {
           produced = count;
         }),
       );
     } else {
-      await writer.write(dataset, mergeStreams(streams));
+      await quadWriter.write(dataset, mergeStreams(streams));
     }
 
     this.assertProduced(produced);
@@ -234,7 +293,7 @@ export class Stage {
 
   /**
    * Throw when {@link StageOptions.expectsOutput} is set but the stage produced
-   * no quads — a supported-but-empty result that signals a truncated or aborted
+   * no quads – a supported-but-empty result that signals a truncated or aborted
    * endpoint response rather than a legitimately empty one.
    */
   private assertProduced(produced: number): void {
@@ -247,7 +306,7 @@ export class Stage {
     selector: AsyncIterable<VariableBindings>,
     dataset: Dataset,
     distribution: Distribution,
-    writer: DatasetWriter,
+    writer: DatasetWriter<Out>,
     options?: RunOptions,
   ): Promise<NotSupported | void> {
     // Peek the first batch to detect an empty selector before starting the
@@ -270,8 +329,11 @@ export class Stage {
       }
     })();
 
-    const queue = new AsyncQueue<Quad>();
+    const queue = new AsyncQueue<Out>(this.queueCapacity);
     let itemsProcessed = 0;
+    // Output items written this run. Equals quads written for a plain stage;
+    // for a projecting stage it counts projected items (documents), one or more
+    // – or fewer – per root, which is what `expectsOutput`/`onProgress` report.
     let quadsGenerated = 0;
     let hasResults = false;
 
@@ -339,28 +401,42 @@ export class Stage {
               );
               const batchQuads = readerOutputs.flat();
 
+              // Validation runs on the quads, before projection – validators are
+              // quad-typed. 'skip'/'halt' must resolve it before writing; 'write'
+              // validates concurrently, below, without blocking.
+              let acceptedQuads = batchQuads;
               if (
                 this.validation &&
                 batchQuads.length > 0 &&
                 onInvalid !== 'write'
               ) {
-                // 'skip' or 'halt': must await validation before deciding to write.
-                const accepted = await this.validateBuffer(batchQuads, dataset);
-                for (const quad of accepted) {
-                  await queue.push(quad);
-                  quadsGenerated++;
-                }
-              } else {
-                for (const quad of batchQuads) {
-                  await queue.push(quad);
-                  quadsGenerated++;
-                }
-                if (this.validation && batchQuads.length > 0) {
-                  // 'write' mode: validate concurrently without blocking the write path.
-                  pendingValidations.push(
-                    this.validation.validator.validate(batchQuads, dataset),
-                  );
-                }
+                acceptedQuads = await this.validateBuffer(batchQuads, dataset);
+              }
+
+              // The one type-changing seam: project the root-complete batch into
+              // output items, or pass the quads through for a plain stage (`Out`
+              // is `Quad` at runtime when there is no projection).
+              const items: Iterable<Out> | AsyncIterable<Out> = this.project
+                ? this.project(acceptedQuads, {
+                    dataset,
+                    distribution,
+                    stage: this.name,
+                    bindings,
+                  })
+                : (acceptedQuads as unknown as Out[]);
+              for await (const item of items) {
+                await queue.push(item);
+                quadsGenerated++;
+              }
+
+              if (
+                this.validation &&
+                batchQuads.length > 0 &&
+                onInvalid === 'write'
+              ) {
+                pendingValidations.push(
+                  this.validation.validator.validate(batchQuads, dataset),
+                );
               }
 
               itemsProcessed += bindings.length;
@@ -513,7 +589,7 @@ async function* mergeStreams(
  * via `onCount` once the stream is exhausted. Lets a streaming write enforce
  * {@link StageOptions.expectsOutput} without buffering.
  *
- * `onCount` fires only when the consumer drains the stream — which the pipeline
+ * `onCount` fires only when the consumer drains the stream – which the pipeline
  * writers do. A writer that stops early would leave the count short; callers
  * relying on it for `expectsOutput` must consume the stream fully.
  */
