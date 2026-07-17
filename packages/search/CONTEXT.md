@@ -54,9 +54,9 @@ A capability a Search Field opts into: `output`, `searchable`, `filterable`,
 _Avoid_: flag, capability
 
 **Internal Field**:
-A Search Field declaring no Role. Projected into the Document so later Derives
-can read it, then pruned before the writer sees it. Never stored, never indexed,
-absent from the collection definition.
+A Search Field declaring no Role. Projected into the Search Document so later
+Derives can read it, then pruned before the writer sees it. Never stored, never
+indexed, absent from the collection definition.
 _Avoid_: hidden field, scratch field, private field
 
 **Path**:
@@ -68,7 +68,7 @@ _Avoid_: sh:path, predicate, selector
 
 **Derive**:
 A Search Field’s computation – what to compute from what was already read. Runs
-in declaration order over the Document; never touches the graph.
+in declaration order over the Search Document; never touches the graph.
 _Avoid_: transform, resolver, mapper
 
 A field has a Path or a Derive, never both. **Path says what to read; Derive
@@ -117,14 +117,18 @@ Mechanical, per field; never hand-written, never a public vocabulary.
 _Avoid_: dr: predicate, intermediate vocabulary, internal namespace
 
 **Projection**:
-Turning one root’s framed quads into a **Document**. The one type-changing step
-(quad → document); shared across all engines.
+Turning one root’s framed quads into a **Search Document**. The one
+type-changing step (quad → document); shared across all engines.
 _Avoid_: mapping, serialization
 
-**Document**:
+**Search Document**:
 The engine-agnostic logical record the projection emits and a writer consumes.
 The shared contract between the engine-agnostic side and every engine adapter.
-_Avoid_: record, row, hit
+Prefixed like its siblings – `Search Field`, `Search Type`, `Search Schema` –
+because the prefix is this family’s namespace, not a claim that the record is
+only for searching: retrieval (`output`) is as much its job. Bare `Document`
+would also shadow the DOM global, and the browser query path reads this package.
+_Avoid_: document (unqualified), record, row, hit
 
 **Physical Field**:
 A field the engine actually stores – `title_search_nl`, `title_sort_nl`,
@@ -166,7 +170,7 @@ several stored fields, so the two are never one-to-one. Qualify which you mean.
 > **Dev:** The compatibility booleans read `quadsValidated`. Is that a field?
 >
 > **Expert:** An Internal Field. It declares no Role, so it’s projected into the
-> Document for the Derives to read and pruned before the writer. It never
+> Search Document for the Derives to read and pruned before the writer. It never
 > reaches the engine – not stored, not indexed, not in the collection
 > definition.
 >
