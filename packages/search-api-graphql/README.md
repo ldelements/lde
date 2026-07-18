@@ -63,14 +63,17 @@ types such as a common `Agent`) are created once and reused across root types.
 
 `types` never filters: every `SearchType` in the schema you pass gets a root
 field (options for a type not in the schema are a build-time error). To expose
-only part of what you index, narrow the **schema argument**
-(`searchSchema(…)` is a cheap constructor):
+only part of what you index, narrow the **schema argument** you hand
+`buildGraphQLSchema` (`searchSchema(…)` is a cheap constructor, so build one per
+consumer):
 
 ```ts
-// Index all three types (a projecting stage per type, see @lde/search-pipeline)…
-searchSchema(DATASET, PERSON, INTERNAL);
+// Index a superset: hand a three-type schema to the pipeline, which projects and
+// stores one collection per type (see @lde/search-pipeline). INTERNAL is indexed
+// (e.g. a label source references resolve against) but never served.
+const indexed = searchSchema(DATASET, PERSON, INTERNAL);
 
-// …but serve only two.
+// Serve a subset: the GraphQL API exposes only two of those types.
 const gqlSchema = buildGraphQLSchema(searchSchema(DATASET, PERSON));
 ```
 

@@ -154,7 +154,7 @@ const DATASET = defineSearchType({
 const schema = searchSchema(DATASET);
 for await (const document of projectRoots(quads, roots, schema, DATASET)) {
   // one flat search document per given root subject, streamed. The caller (the
-  // pipeline selector) supplies `roots`; tagging a document with its type for a
+  // pipeline selector) supplies `roots`; pairing a document with its type for a
   // multi-collection writer is the pipeline glue’s job (see
   // `@lde/search-pipeline`), not the projection’s.
 }
@@ -230,7 +230,7 @@ predicate IRIs with language tags preserved. `assertTypeInSchema` guards that
 the passed `SearchType` is a member of the schema – the port’s own membership
 check – so no schema is ever forged to scope a projection to one type.
 
-`projectRoots` yields a **bare** `SearchDocument`. Tagging each document with the
+`projectRoots` yields a **bare** `SearchDocument`. Pairing each document with the
 `SearchType` it belongs to, so the write side can fan a mixed stream out to
 per-type collections, is a routing concern owned by the pipeline glue – see
 `@lde/search-pipeline`’s `searchStages` and multi-collection writer – not the

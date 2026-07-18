@@ -1,7 +1,7 @@
 import type { SearchDocument, SearchType } from '@lde/search';
 
 /**
- * A projected {@link SearchDocument} tagged with the {@link SearchType} it was
+ * A projected {@link SearchDocument} paired with the {@link SearchType} it was
  * projected from.
  *
  * A search pipeline is N per-type stages writing to one terminal, and

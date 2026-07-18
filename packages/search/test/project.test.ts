@@ -580,7 +580,7 @@ describe('projectRoots', () => {
     ]);
   });
 
-  it('yields a bare document (no searchType tag)', async () => {
+  it('yields a bare document, not paired with a searchType', async () => {
     const quads = new Parser({ format: 'N-Triples' }).parse(
       `<https://ex/d/1> <${dcterms.title.value}> "Titel"@nl .`,
     );

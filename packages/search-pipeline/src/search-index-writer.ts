@@ -37,7 +37,7 @@ export interface SearchIndexWriterOptions {
  * The single terminal of a search-indexing pipeline: an engine-agnostic router
  * that fans already-projected documents out across a type’s collections. The
  * per-type {@link https://github.com/ldelements/lde/blob/main/docs/decisions/0013-project-inside-the-batch-per-root-type.md | stages}
- * project inside the batch and tag each document with its {@link SearchType}
+ * project inside the batch and pair each document with its {@link SearchType}
  * ({@link TypedSearchDocument}); this writer dispatches each document to the
  * engine run for **its** type by `searchType.class`. It **owns no projection**
  * (that moved into the stages) and **buffers nothing** (documents stream through
@@ -69,7 +69,7 @@ export function searchIndexWriter(
 ): Writer<TypedSearchDocument> {
   const { schema, writerFor } = options;
   // One engine writer per root type, built once; each run opens them all. Keyed
-  // by the type IRI, which is also how a tagged document names its type.
+  // by the type IRI, which is also how a paired document names its type.
   const writers = new Map<string, Writer<SearchDocument>>(
     [...schema.values()].map((searchType) => [
       searchType.class,
@@ -104,9 +104,9 @@ export function searchIndexWriter(
           dataset: Dataset,
           items: AsyncIterable<TypedSearchDocument>,
         ) => {
-          // Route each tagged document to its type’s run, streaming. A stage
-          // writes one type, but the terminal carries no stage identity, so it
-          // routes per item by the tag. Each type gets one `run.write`, fed a
+          // Route each document to its type’s run, streaming. A stage writes
+          // one type, but the terminal carries no stage identity, so it routes
+          // per item by its `searchType`. Each type gets one `run.write`, fed a
           // bounded queue the run drains concurrently – so memory stays O(batch)
           // per type, never O(dataset). Almost always one lane per call.
           const lanes = new Map<

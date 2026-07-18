@@ -25,7 +25,8 @@ const NAME = 'https://example.org/name';
 
 // The Dataset Register in miniature: a `datasets` catalog collection plus one
 // typed label collection (its Organization label source). Two per-type stages
-// project into tagged documents; this terminal routes each to its collection.
+// project into documents paired with their type; this terminal routes each to
+// its collection.
 const schema = searchSchema(
   {
     name: 'Dataset',
@@ -66,8 +67,8 @@ function mixedQuads(): Quad[] {
   ];
 }
 
-/** Project `roots` of one type and tag each document, as a stage would. */
-async function tagged(
+/** Project `roots` of one type and pair each document with it, as a stage would. */
+async function paired(
   quads: readonly Quad[],
   roots: readonly string[],
   searchType: SearchType,
@@ -79,12 +80,12 @@ async function tagged(
   return documents;
 }
 
-/** The tagged documents the two stages would emit for `mixedQuads`. */
+/** The documents (paired with their type) the two stages would emit for `mixedQuads`. */
 async function mixedDocuments(): Promise<TypedSearchDocument[]> {
   const quads = mixedQuads();
   return [
-    ...(await tagged(quads, ['https://ex/d/1'], datasetType)),
-    ...(await tagged(quads, ['https://ex/o/1'], organizationType)),
+    ...(await paired(quads, ['https://ex/d/1'], datasetType)),
+    ...(await paired(quads, ['https://ex/o/1'], organizationType)),
   ];
 }
 
@@ -237,7 +238,7 @@ describe('searchIndexWriter over multiple Typesense collections', () => {
 
   it('commits an empty collection for a type absent from the projection, leaving the others intact', async () => {
     // Only Dataset documents: the Organization projection is empty this run.
-    const datasetOnly = await tagged(
+    const datasetOnly = await paired(
       mixedQuads(),
       ['https://ex/d/1'],
       datasetType,

@@ -78,11 +78,12 @@ export async function* frameSubjects(
       .flatMap((quad) => bySubject.get(quad.object.value) ?? []);
     const subgraph = [...owned, ...referenced];
     const expanded = await jsonld.fromRDF(subgraph);
-    // Frame for THIS specific root subject by `@id`, not just by root type. A
-    // one-hop reference can itself be of `rootType` (e.g. a terminology source
-    // that is also a separately registered dataset), so framing by type alone
-    // returns several root nodes and `[0]` could be the referenced one – which
-    // would emit it twice and drop this subject entirely.
+    // Frame for THIS specific root subject by its `@id`. The subgraph embeds the
+    // root’s one-hop references, and such a referent can itself be one of the
+    // requested `roots` (e.g. a terminology source that is also a separately
+    // registered dataset). Framing by `{ '@id': rootIri }` pins the output to
+    // this subject, so the referent is framed once in its own turn rather than
+    // surfacing here as a second `@graph` node that `[0]` might pick instead.
     const framed = await jsonld.frame(
       expanded,
       { '@id': rootIri },

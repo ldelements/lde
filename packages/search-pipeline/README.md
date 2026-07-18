@@ -18,12 +18,12 @@ The division of labour ([ADR 6](../../docs/decisions/0006-make-the-writer-transa
 - **this package** composes them:
   - `searchStages` builds one projecting `Stage` per root type. Each stage
     selects its own roots, extracts each root’s quads, and projects the
-    **root-complete batch** into documents tagged with their `SearchType`
+    **root-complete batch** into documents paired with their `SearchType`
     (`TypedSearchDocument`) – so projection happens inside the batch and memory
     is bounded by `batchSize` roots, not the dataset
     ([ADR 13](../../docs/decisions/0013-project-inside-the-batch-per-root-type.md));
   - `searchIndexWriter` is the pipeline’s single terminal: an engine-agnostic
-    router that dispatches each tagged document to the engine writer for **its**
+    router that dispatches each document to the engine writer for **its**
     type’s collection ([ADR 9](../../docs/decisions/0009-route-a-whole-schema-projection-to-per-type-collections.md)).
     It owns no projection and buffers nothing.
 
@@ -136,7 +136,7 @@ given the same names (`collections`), or it reads the derived ones and finds an
 empty index.
 
 Each stage projects its own root-complete batches (`@lde/search`’s
-`projectRoots`) into documents tagged with its `SearchType`, and the terminal
+`projectRoots`) into documents paired with its `SearchType`, and the terminal
 dispatches each to the engine run for its type’s collection as it arrives –
 before the engine acts on the dataset’s completion, so an In-place stale sweep
 never races its own documents. The run lifecycle (run context, per-dataset flush

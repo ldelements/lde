@@ -43,7 +43,7 @@ const dataset = new Dataset({
   distributions: [],
 });
 
-/** A tagged document, as a per-type stage would emit it. */
+/** A document paired with its type, as a per-type stage would emit it. */
 function typed(
   classIri: string,
   id: string,

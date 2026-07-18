@@ -53,7 +53,7 @@ export function projectDocument(
  * and the projection frames each distinct subject once. {@link assertTypeInSchema}
  * guards that `searchType` belongs to `schema` – the port’s own membership check
  * – so no schema is ever forged to scope a projection to one type. Yields a bare
- * {@link SearchDocument}: tagging a document with its type is a routing concern,
+ * {@link SearchDocument}: pairing a document with its type is a routing concern,
  * owned by the pipeline glue, not the projection.
  *
  * Consumes `quads` once, so it accepts any `Iterable` – a batch’s materialized
