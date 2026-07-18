@@ -1,3 +1,9 @@
+## 0.8.1 (2026-07-18)
+
+### 🚀 Features
+
+- **search:** add projectRoots, the roots-given projection primitive ([#625](https://github.com/ldelements/lde/pull/625))
+
 ## 0.8.0 (2026-07-16)
 
 ### 🚀 Features
