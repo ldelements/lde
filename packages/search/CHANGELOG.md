@@ -1,3 +1,59 @@
+## 0.9.0 (2026-07-18)
+
+### 🚀 Features
+
+- ⚠️  **search-pipeline:** project inside the batch, per root type (ADR 13) ([#627](https://github.com/ldelements/lde/pull/627))
+
+### ⚠️  Breaking Changes
+
+- **search-pipeline:** project inside the batch, per root type (ADR 13)  ([#627](https://github.com/ldelements/lde/pull/627))
+  @lde/search no longer exports projectGraph or TypedSearchDocument, and
+  buildSubjectIndex takes only the quad source (no rootTypes).
+  * feat(search-pipeline)!: per-type projecting stages, retire the buffering writer
+  Compose a search pipeline as one terminal and N per-type stages. searchStages
+  builds one projecting Stage per root type: each selects its roots, extracts each
+  root's quads, and projects the root-complete batch (projectRoots) into documents
+  tagged with their SearchType, so memory is bounded by batchSize roots, not the
+  dataset. selectByClass is a convenience selector for the object grain.
+  searchIndexWriter becomes a Writer<TypedSearchDocument>: it keeps ADR 9's
+  per-collection fan-out and run lifecycle but stops projecting and stops
+  buffering, routing each tagged document straight to its type's engine run.
+  TypedSearchDocument now lives here, the glue that needs it.
+  BREAKING CHANGE: searchIndexWriter now consumes TypedSearchDocument, not Quad,
+  and no longer projects; compose it with searchStages.
+  * fix(search-pipeline): fail clearly when a selector omits the stage's rootVariable
+  The batch project closure dereferenced binding[rootVariable].value directly, so a
+  config mismatch (the stage's rootVariable differs from the selector's projected
+  variable) threw an opaque TypeError. Guard the deref and throw a named error that
+  points at the type and the unbound variable.
+  * docs(search): fix the GraphQL indexing example and drop the tag metaphor
+  The search-api-graphql README credited searchSchema with indexing (it only builds
+  a schema, and the line was an unassigned no-op); clarify that the pipeline indexes
+  the superset schema while the GraphQL API serves a subset. Reword the frameSubjects
+  comment, which still referenced the removed rootType. Rename the document-SearchType
+  relationship from tag to pair throughout (TypedSearchDocument is literally a pair);
+  BCP-47 language-tag wording is left untouched."
+  M	package-lock.json
+  M	packages/search-api-graphql/README.md
+  M	packages/search-pipeline/README.md
+  M	packages/search-pipeline/package.json
+  M	packages/search-pipeline/src/index.ts
+  M	packages/search-pipeline/src/search-index-writer.ts
+  A	packages/search-pipeline/src/search-stages.ts
+  A	packages/search-pipeline/src/typed-search-document.ts
+  M	packages/search-pipeline/test/multi-collection.integration.test.ts
+  M	packages/search-pipeline/test/search-index-writer.test.ts
+  A	packages/search-pipeline/test/search-stages.test.ts
+  M	packages/search/README.md
+  M	packages/search/package.json
+  M	packages/search/src/engine.ts
+  M	packages/search/src/frame-by-type.ts
+  M	packages/search/src/index.ts
+  M	packages/search/src/project.ts
+  M	packages/search/test/frame-by-type.test.ts
+  M	packages/search/test/project.test.ts
+  M	packages/search/vite.config.ts
+
 ## 0.8.1 (2026-07-18)
 
 ### 🚀 Features
