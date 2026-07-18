@@ -62,7 +62,7 @@ const nameReader: Reader = {
 };
 
 describe('searchStages', () => {
-  it('projects each root type over its selector’s roots, tagged with its type', async () => {
+  it('projects each root type over its selector’s roots, paired with its type', async () => {
     const [stage] = searchStages({
       schema,
       types: [
@@ -137,7 +137,7 @@ describe('searchStages', () => {
     });
 
     expect(received).toHaveLength(1);
-    // Tagged with the schema’s own object, not the lookalike.
+    // Paired with the schema’s own object, not the lookalike.
     expect(received[0].searchType).toBe(person);
   });
 
@@ -160,6 +160,35 @@ describe('searchStages', () => {
         ],
       }),
     ).toThrow(/not in the schema/);
+  });
+
+  it('fails clearly when the selector does not bind the stage’s rootVariable', async () => {
+    // The stage reads ?subject, but `rootsSelector` binds ?root – a config
+    // mismatch. The batch deref must throw a named error, not an opaque
+    // `Cannot read properties of undefined`.
+    const [stage] = searchStages({
+      schema,
+      types: [
+        {
+          searchType: person,
+          rootVariable: 'subject',
+          itemSelector: rootsSelector(['https://ex/p/1']),
+          readers: nameReader,
+        },
+      ],
+    });
+
+    const writer: DatasetWriter<TypedSearchDocument> = {
+      write: async (_dataset, items) => {
+        for await (const _item of items) {
+          // drain
+        }
+      },
+    };
+
+    await expect(stage.run(dataset, distribution, writer)).rejects.toThrow(
+      /did not bind \?subject/,
+    );
   });
 });
 

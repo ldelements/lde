@@ -61,8 +61,8 @@ export interface SearchStagesOptions {
 /**
  * Compose one projecting {@link Stage} per root type – the source side of a
  * search pipeline. Each stage selects its own roots, extracts each root’s quads,
- * and projects the root-complete batch into tagged {@link TypedSearchDocument}s
- * ({@link projectRoots} + the `searchType` tag), which the pipeline’s single
+ * and projects the root-complete batch into {@link TypedSearchDocument}s
+ * ({@link projectRoots} + the `searchType` pair), which the pipeline’s single
  * {@link searchIndexWriter} terminal routes to that type’s collection. Projection
  * happens **inside the batch**, so memory is bounded by `batchSize` roots, never
  * by the dataset
@@ -98,9 +98,17 @@ export function searchStages(
         // The batch is root-complete by construction: `context.bindings` are the
         // selector rows the readers ran with, so these are exactly this batch’s
         // roots. Project them, then re-attach the type the stage was built for.
-        const roots = context.bindings.map(
-          (binding) => binding[rootVariable].value,
-        );
+        const roots = context.bindings.map((binding) => {
+          const term = binding[rootVariable];
+          if (term === undefined) {
+            // The selector projected a different variable than the stage reads:
+            // a config mismatch. Fail loudly rather than deref `undefined`.
+            throw new Error(
+              `Stage “${searchType.name}”: selector did not bind ?${rootVariable} – the stage’s rootVariable must match the selector’s projected variable.`,
+            );
+          }
+          return term.value;
+        });
         for await (const document of projectRoots(
           quads,
           roots,
