@@ -4,7 +4,6 @@ import { dcat, dcterms, xsd } from '@tpluscode/rdf-ns-builders';
 import {
   projectDocument,
   projectRoots,
-  irisOf,
   type SearchDocument,
 } from '../src/project.js';
 import {
@@ -55,6 +54,7 @@ const fields: SearchField[] = [
     name: 'publisher',
     path: dcterms.publisher.value,
     kind: 'reference',
+    facetable: true,
   },
   {
     name: 'keyword',
@@ -66,15 +66,17 @@ const fields: SearchField[] = [
     name: 'format',
     path: `${DR}format`,
     kind: 'keyword',
+    facetable: true,
     transform: (value) => value.replace(IANA, ''),
   },
-  { name: 'class', path: `${DR}class`, kind: 'reference' },
+  { name: 'class', path: `${DR}class`, kind: 'reference', facetable: true },
   {
     name: 'date_posted',
     path: `${DR}datePosted`,
     kind: 'date',
+    sortable: true,
   },
-  { name: 'size', path: `${DR}size`, kind: 'integer' },
+  { name: 'size', path: `${DR}size`, kind: 'integer', facetable: true },
 ];
 
 const schema: SearchType = {
@@ -85,7 +87,11 @@ const schema: SearchType = {
     {
       name: 'class_count',
       kind: 'integer',
-      derive: (framed) => irisOf(framed, `${DR}class`).length,
+      sortable: true,
+      // Reads the `class` reference already projected into the document –
+      // never the graph – so `path` stays the whole statement of what is read.
+      derive: (document) =>
+        (document.class as readonly string[] | undefined)?.length ?? 0,
     },
   ],
 };
@@ -129,11 +135,17 @@ describe('projectDocument', () => {
         name: 'Dataset',
         class: DATASET,
         fields: [
-          { name: 'size', path: `${DR}size`, kind: 'integer' },
+          {
+            name: 'size',
+            path: `${DR}size`,
+            kind: 'integer',
+            facetable: true,
+          },
           {
             name: 'language',
             path: dcterms.language.value,
             kind: 'keyword',
+            facetable: true,
           },
           {
             name: 'keyword',
@@ -145,6 +157,7 @@ describe('projectDocument', () => {
             name: 'class',
             path: `${DR}class`,
             kind: 'reference',
+            facetable: true,
           },
         ],
       },
@@ -161,7 +174,9 @@ describe('projectDocument', () => {
       {
         name: 'Dataset',
         class: DATASET,
-        fields: [{ name: 'size', path: `${DR}size`, kind: 'number' }],
+        fields: [
+          { name: 'size', path: `${DR}size`, kind: 'number', facetable: true },
+        ],
       },
     );
     expect(document.size).toBe(1234.5);
@@ -171,7 +186,9 @@ describe('projectDocument', () => {
     const withBoolean: SearchType = {
       name: 'Dataset',
       class: DATASET,
-      fields: [{ name: 'iiif', path: `${DR}iiif`, kind: 'boolean' }],
+      fields: [
+        { name: 'iiif', path: `${DR}iiif`, kind: 'boolean', facetable: true },
+      ],
     };
     const project = (value: unknown): SearchDocument =>
       projectDocument(
@@ -389,7 +406,7 @@ describe('projectDocument', () => {
             name: 'statusRank',
             kind: 'integer',
             sortable: true,
-            derive: (_node, partial) => (partial.status === 'valid' ? 1 : 0),
+            derive: (document) => (document.status === 'valid' ? 1 : 0),
           },
           // Returning undefined leaves the field absent.
           { name: 'absent', kind: 'keyword', derive: () => undefined },
@@ -404,6 +421,66 @@ describe('projectDocument', () => {
     expect(document.statusRank).toBe(1);
     expect(document).not.toHaveProperty('absent');
     expect(document).not.toHaveProperty('external');
+  });
+
+  it('prunes an internal (zero-role) field of every non-text kind from the document', () => {
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/d/internal',
+        [`${DR}token`]: ['tok'],
+        [`${DR}ref`]: { '@id': 'https://ex/o/9' },
+        [`${DR}count`]: { '@value': '7' },
+        [`${DR}score`]: { '@value': '1.5' },
+        [`${DR}flag`]: { '@value': 'true' },
+      },
+      {
+        name: 'Dataset',
+        class: DATASET,
+        fields: [
+          { name: 'token', path: `${DR}token`, kind: 'keyword' },
+          { name: 'ref', path: `${DR}ref`, kind: 'reference' },
+          { name: 'count', path: `${DR}count`, kind: 'integer' },
+          { name: 'score', path: `${DR}score`, kind: 'number' },
+          { name: 'flag', path: `${DR}flag`, kind: 'boolean' },
+        ],
+      },
+    );
+    // Each field declares no role, so it is internal: projected then pruned.
+    // The document a writer sees carries only its id – it reaches neither a
+    // writer nor the collection definition.
+    expect(document).toEqual({ id: 'https://ex/d/internal' });
+  });
+
+  it('projects an internal field so a later derive reads it, then prunes the internal field', () => {
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/d/reading-device',
+        [`${DR}class`]: [
+          { '@id': 'http://schema.org/Person' },
+          { '@id': 'http://schema.org/Place' },
+        ],
+      },
+      {
+        name: 'Dataset',
+        class: DATASET,
+        fields: [
+          // An internal reading device: a reference with no role, projected so
+          // the derive below can read it, pruned before the writer sees it.
+          { name: 'classes', path: `${DR}class`, kind: 'reference' },
+          {
+            name: 'classCount',
+            kind: 'integer',
+            facetable: true,
+            derive: (document) =>
+              (document.classes as readonly string[] | undefined)?.length ?? 0,
+          },
+        ],
+      },
+    );
+    // The derive read the internal field’s value…
+    expect(document.classCount).toBe(2);
+    // …but the internal field itself never reaches the writer.
+    expect(document).not.toHaveProperty('classes');
   });
 
   it('buckets untagged literals into the reserved und locale', () => {
@@ -480,11 +557,17 @@ describe('projectDocument', () => {
             locales: ['nl'],
             output: true,
           },
-          { name: 'keyword', path: dcat.keyword.value, kind: 'keyword' },
+          {
+            name: 'keyword',
+            path: dcat.keyword.value,
+            kind: 'keyword',
+            facetable: true,
+          },
           {
             name: 'publisher',
             path: dcterms.publisher.value,
             kind: 'reference',
+            facetable: true,
           },
         ],
       },

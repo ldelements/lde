@@ -58,8 +58,7 @@ a typed, deterministic function – easy to test, and swappable per deployment.
 Exports are stratified by audience:
 
 - **`@lde/search`** – the authoring surface: `defineSearchType`,
-  `searchSchema`, `projectRoots` (+ the IR readers `derive` functions use),
-  validation, and every model/query/result type.
+  `searchSchema`, `projectRoots`, validation, and every model/query/result type.
 - **`@lde/search/adapter`** – plumbing for engine adapters and API surfaces:
   `physicalFields`, the field selectors, `assertValidQuery`, the filter
   operators and storage codecs.
@@ -101,20 +100,19 @@ Two conventions hold across the whole family:
 ## Field model
 
 The mapping is data, not code. Each field declares its `kind`, the IR `path` to
-read (or a `derive` function for a **derived** field, computed from the framed
-node in declaration order – so it may read fields declared before it), and the
-capabilities it opts into. The physical field names a declaration fans out to
-(per-locale search/sort keys) come from
-`physicalFields`, the single convention projection, the collection definition and the
-query compiler all share.
+read (or a `derive` function for a **derived** field, computed from the document
+in declaration order – so it may read fields declared before it, never the
+graph), and the capabilities (**roles**) it opts into. `path` is therefore the
+complete statement of what the projection reads from the graph. A field that
+declares **no** role is an **internal field**: projected so a later `derive` can
+read it, then pruned before the writer and absent from the collection definition
+– not stored, not indexed, no RAM. The physical field names a declaration fans
+out to (per-locale search/sort keys) come from `physicalFields`, the single
+convention projection, the collection definition and the query compiler all
+share.
 
 ```ts
-import {
-  defineSearchType,
-  projectRoots,
-  irisOf,
-  searchSchema,
-} from '@lde/search';
+import { defineSearchType, projectRoots, searchSchema } from '@lde/search';
 
 const DATASET = defineSearchType({
   name: 'Dataset', // logical API name: names the GraphQL type, a REST path, …
@@ -141,12 +139,17 @@ const DATASET = defineSearchType({
     },
     // → size (int)
     { name: 'size', path: 'urn:dr:size', kind: 'integer', sortable: true },
-    // derived field (no path): computed from the framed node
+    // internal field (no role): projected as a reading device for the derive
+    // below, then pruned before the writer – absent from the collection too
+    { name: 'classes', path: 'urn:dr:class', kind: 'reference' },
+    // derived field (no path): computed from the document in declaration order,
+    // never from the graph – so `path` stays the whole statement of what is read
     {
       name: 'classCount',
       kind: 'integer',
       sortable: true,
-      derive: (node) => irisOf(node, 'urn:dr:class').length,
+      derive: (document) =>
+        (document.classes as string[] | undefined)?.length ?? 0,
     },
   ],
 });
@@ -225,8 +228,9 @@ each root’s subgraph is framed one at a time and its document yielded as
 produced, so beyond a subject index memory stays flat at scale (framing the
 whole graph at once is roughly O(N²)). Duplicate triples are collapsed first,
 because some SPARQL engines (e.g. QLever) do not deduplicate `CONSTRUCT` output.
-The IR carries no `@context`, so a `derive` function reading it sees full
-predicate IRIs with language tags preserved. `assertTypeInSchema` guards that
+Every predicate a value comes from is read through a field’s `path`; a `derive`
+computes only from the document projected so far, so `path` is the whole
+statement of what the projection reads. `assertTypeInSchema` guards that
 the passed `SearchType` is a member of the schema – the port’s own membership
 check – so no schema is ever forged to scope a projection to one type.
 

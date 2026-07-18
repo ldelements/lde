@@ -12,7 +12,7 @@ const NAME = 'objects';
 const objectType: SearchType = {
   name: 'Object',
   class: 'https://example.org/Object',
-  fields: [{ name: 'title', kind: 'keyword' }],
+  fields: [{ name: 'title', kind: 'keyword', output: true }],
 };
 
 const datasetA = new Dataset({

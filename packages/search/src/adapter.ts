@@ -17,6 +17,7 @@ export {
   filterableFields,
   sortableFields,
   outputFields,
+  isInternalField,
   referenceFields,
   fieldNamed,
   labelFieldOf,

@@ -1,7 +1,11 @@
 import type { CollectionCreateSchema } from 'typesense';
 import type { CollectionFieldSchema } from 'typesense/lib/Typesense/Collection.js';
 import { type SearchField, type SearchType } from '@lde/search';
-import { displayFieldPattern, physicalFields } from '@lde/search/adapter';
+import {
+  displayFieldPattern,
+  isInternalField,
+  physicalFields,
+} from '@lde/search/adapter';
 import { deriveCollectionName } from './collection-name.js';
 
 /** Deployment-specific options the generic field model does not carry. */
@@ -46,6 +50,10 @@ export interface CollectionDefinitionOptions {
  * only the folded `*_search_${locale}`, facet/reference and `*_sort_${locale}`
  * companions are indexed. Keeping retrieval-only fields un-indexed is the lever
  * for holding a large index’s RAM down.
+ *
+ * {@link isInternalField Internal fields} (those declaring no role) are omitted
+ * entirely: they exist only as a projection-time reading device for the
+ * derives, so the collection stores nothing for them.
  */
 export function buildCollectionDefinition(
   searchType: SearchType,
@@ -73,6 +81,13 @@ function typesenseFields(
   defaultLocale: string | undefined,
   defaultSortingField: string | undefined,
 ): CollectionFieldSchema[] {
+  // An internal field (no role) is projected as a reading device for the
+  // derives and pruned before the writer, so the collection stores nothing for
+  // it: not stored, not indexed, no RAM. Same predicate the projection prunes
+  // by, so the index and the document cannot disagree.
+  if (isInternalField(field)) {
+    return [];
+  }
   const names = physicalFields(field);
   if (field.kind === 'text') {
     const locales = field.locales;

@@ -13,8 +13,8 @@ const datasetType: SearchType = {
   name: 'Dataset',
   class: 'https://example.org/Dataset',
   fields: [
-    { name: 'title', kind: 'keyword' },
-    { name: 'year', kind: 'integer' },
+    { name: 'title', kind: 'keyword', output: true },
+    { name: 'year', kind: 'integer', facetable: true },
   ],
 };
 

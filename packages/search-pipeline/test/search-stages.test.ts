@@ -22,7 +22,7 @@ const NAME = 'https://example.org/name';
 const schema = searchSchema({
   name: 'Person',
   class: PERSON,
-  fields: [{ name: 'name', kind: 'keyword', path: NAME }],
+  fields: [{ name: 'name', kind: 'keyword', path: NAME, output: true }],
 });
 const person = schema.get(PERSON) as SearchType;
 
@@ -115,7 +115,7 @@ describe('searchStages', () => {
     const lookalike: SearchType = {
       name: 'Person',
       class: PERSON,
-      fields: [{ name: 'name', kind: 'keyword', path: NAME }],
+      fields: [{ name: 'name', kind: 'keyword', path: NAME, output: true }],
     };
     const [stage] = searchStages({
       schema,

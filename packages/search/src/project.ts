@@ -8,6 +8,7 @@ import {
 import {
   assertTypeInSchema,
   displayFieldName,
+  isInternalField,
   isoToUnixSeconds,
   physicalFields,
   type KeywordField,
@@ -24,10 +25,14 @@ export type SearchDocument = { id: string } & Record<string, unknown>;
 /**
  * Project one framed JSON-LD node into a flat search document: apply each field
  * of the type in declaration order. A field with a `derive` function computes
- * its value from the node and the document as populated so far (so a derived
- * field may read fields declared before it). The physical field names a field
- * fans out to come from {@link physicalFields}, the single source shared with
- * the engine collection definition and the query compiler.
+ * its value from the document as populated so far (so a derived field may read
+ * fields declared before it), never from the graph – `path` is the complete
+ * statement of what the projection reads. {@link isInternalField Internal
+ * fields} (those declaring no role) are populated so a later derive can read
+ * them, then pruned before the document is returned: they must reach neither a
+ * writer nor the collection definition. The physical field names a field fans
+ * out to come from {@link physicalFields}, the single source shared with the
+ * engine collection definition and the query compiler.
  */
 export function projectDocument(
   node: FramedNode,
@@ -42,6 +47,14 @@ export function projectDocument(
   const document: SearchDocument = { id };
   for (const field of searchType.fields) {
     applyField(document, node, field);
+  }
+  // Prune internal fields: they were projected only so the derives above could
+  // read them (a structural memo shared across every derive that needs the
+  // value), and must not reach the writer or the collection definition.
+  for (const field of searchType.fields) {
+    if (isInternalField(field)) {
+      delete document[field.name];
+    }
   }
   return document;
 }
@@ -82,7 +95,7 @@ function applyField(
   field: SearchField,
 ): void {
   if (field.derive !== undefined) {
-    const value = field.derive(node, document);
+    const value = field.derive(document);
     if (value !== undefined) {
       document[field.name] = value;
     }
@@ -209,7 +222,9 @@ function applyFacet(
   }
 }
 
-// --- Framed-IR readers (exported so derivations can read arbitrary paths) ---
+// --- Framed-IR readers: read a declared `path` off the framed node. Internal
+// to projection – a `derive` reads the projected document, never the node, so
+// `path` stays the whole statement of what the projection reads from the graph.
 
 /** A literal value with its (possibly empty) language tag. */
 interface LangValue {
@@ -223,20 +238,17 @@ function langValuesOf(node: FramedNode, path: string): LangValue[] {
     .filter((value): value is LangValue => value !== undefined);
 }
 
-export function literalsOf(node: FramedNode, path: string): string[] {
+function literalsOf(node: FramedNode, path: string): string[] {
   return valuesOf(node, path)
     .map(literalString)
     .filter((value): value is string => value !== undefined);
 }
 
-export function firstLiteralOf(
-  node: FramedNode,
-  path: string,
-): string | undefined {
+function firstLiteralOf(node: FramedNode, path: string): string | undefined {
   return literalsOf(node, path)[0];
 }
 
-export function irisOf(node: FramedNode, path: string): string[] {
+function irisOf(node: FramedNode, path: string): string[] {
   return valuesOf(node, path)
     .map(iriString)
     .filter((value): value is string => value !== undefined);
