@@ -5,12 +5,14 @@ import type { Client } from 'typesense';
 import { Dataset } from '@lde/dataset';
 import type { RunContext, Writer } from '@lde/pipeline';
 import {
+  projectRoots,
   searchSchema,
   type SearchDocument,
   type SearchType,
 } from '@lde/search';
 import { BlueGreenRebuild } from '@lde/search-typesense';
 import { searchIndexWriter } from '../src/search-index-writer.js';
+import type { TypedSearchDocument } from '../src/typed-search-document.js';
 import { TypesenseContainer } from './typesense-container.js';
 
 const { namedNode, literal, quad } = DataFactory;
@@ -22,8 +24,8 @@ const TITLE = 'https://example.org/title';
 const NAME = 'https://example.org/name';
 
 // The Dataset Register in miniature: a `datasets` catalog collection plus one
-// typed label collection (its Organization label source), built from one
-// whole-schema projection.
+// typed label collection (its Organization label source). Two per-type stages
+// project into tagged documents; this terminal routes each to its collection.
 const schema = searchSchema(
   {
     name: 'Dataset',
@@ -36,6 +38,9 @@ const schema = searchSchema(
     fields: [{ name: 'name', kind: 'keyword', path: NAME, array: true }],
   },
 );
+
+const datasetType = schema.get(DATASET) as SearchType;
+const organizationType = schema.get(ORGANIZATION) as SearchType;
 
 const COLLECTION: Record<string, string> = {
   [DATASET]: 'datasets',
@@ -58,6 +63,28 @@ function mixedQuads(): Quad[] {
       namedNode(ORGANIZATION),
     ),
     quad(namedNode('https://ex/o/1'), namedNode(NAME), literal('Rijksmuseum')),
+  ];
+}
+
+/** Project `roots` of one type and tag each document, as a stage would. */
+async function tagged(
+  quads: readonly Quad[],
+  roots: readonly string[],
+  searchType: SearchType,
+): Promise<TypedSearchDocument[]> {
+  const documents: TypedSearchDocument[] = [];
+  for await (const document of projectRoots(quads, roots, schema, searchType)) {
+    documents.push({ searchType, document });
+  }
+  return documents;
+}
+
+/** The tagged documents the two stages would emit for `mixedQuads`. */
+async function mixedDocuments(): Promise<TypedSearchDocument[]> {
+  const quads = mixedQuads();
+  return [
+    ...(await tagged(quads, ['https://ex/d/1'], datasetType)),
+    ...(await tagged(quads, ['https://ex/o/1'], organizationType)),
   ];
 }
 
@@ -146,7 +173,7 @@ describe('searchIndexWriter over multiple Typesense collections', () => {
       writerFor: blueGreenFor(client),
     }).openRun(makeRunContext());
 
-    await run.write(dataset, stream(mixedQuads()));
+    await run.write(dataset, stream(await mixedDocuments()));
     await run.flush?.(dataset, 'success');
     await run.commit();
 
@@ -155,7 +182,7 @@ describe('searchIndexWriter over multiple Typesense collections', () => {
     expect(await aliasTarget(client, 'organizations')).toMatch(
       /^organizations_\d+$/,
     );
-    // Each carries only the documents projected for its type.
+    // Each carries only the documents routed for its type.
     expect(await liveIds(client, 'datasets')).toEqual(['https://ex/d/1']);
     expect(await liveIds(client, 'organizations')).toEqual(['https://ex/o/1']);
   });
@@ -186,7 +213,7 @@ describe('searchIndexWriter over multiple Typesense collections', () => {
     const run = await searchIndexWriter({ schema, writerFor: failing }).openRun(
       makeRunContext(),
     );
-    await run.write(dataset, stream(mixedQuads()));
+    await run.write(dataset, stream(await mixedDocuments()));
     await run.flush?.(dataset, 'success');
 
     const commit = run.commit();
@@ -209,15 +236,12 @@ describe('searchIndexWriter over multiple Typesense collections', () => {
   });
 
   it('commits an empty collection for a type absent from the projection, leaving the others intact', async () => {
-    // Only Dataset quads: the Organization projection is empty this run.
-    const datasetOnly = [
-      quad(
-        namedNode('https://ex/d/1'),
-        namedNode(RDF_TYPE),
-        namedNode(DATASET),
-      ),
-      quad(namedNode('https://ex/d/1'), namedNode(TITLE), literal('Verhaal')),
-    ];
+    // Only Dataset documents: the Organization projection is empty this run.
+    const datasetOnly = await tagged(
+      mixedQuads(),
+      ['https://ex/d/1'],
+      datasetType,
+    );
 
     const run = await searchIndexWriter({
       schema,
@@ -227,7 +251,7 @@ describe('searchIndexWriter over multiple Typesense collections', () => {
     await run.flush?.(dataset, 'success');
     await run.commit();
 
-    // Datasets went live with its document; organizations went live empty —
+    // Datasets went live with its document; organizations went live empty –
     // the empty projection wiped only its own collection, never datasets.
     expect(await liveIds(client, 'datasets')).toEqual(['https://ex/d/1']);
     expect(await aliasTarget(client, 'organizations')).toMatch(
@@ -241,7 +265,7 @@ describe('searchIndexWriter over multiple Typesense collections', () => {
       schema,
       writerFor: blueGreenFor(client),
     }).openRun(makeRunContext());
-    await run.write(dataset, stream(mixedQuads()));
+    await run.write(dataset, stream(await mixedDocuments()));
     await run.flush?.(dataset, 'success');
 
     await run.abort(new Error('run failed before commit'));

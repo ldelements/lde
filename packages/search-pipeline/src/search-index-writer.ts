@@ -1,24 +1,20 @@
-import type { Quad } from '@rdfjs/types';
 import type { Dataset } from '@lde/dataset';
-import type {
-  DatasetOutcome,
-  RunContext,
-  RunWriter,
-  Writer,
-} from '@lde/pipeline';
 import {
-  projectGraph,
-  type SearchDocument,
-  type SearchSchema,
-  type SearchType,
-} from '@lde/search';
+  AsyncQueue,
+  type DatasetOutcome,
+  type RunContext,
+  type RunWriter,
+  type Writer,
+} from '@lde/pipeline';
+import type { SearchDocument, SearchSchema, SearchType } from '@lde/search';
+import type { TypedSearchDocument } from './typed-search-document.js';
 
 /** Options for {@link searchIndexWriter}. */
 export interface SearchIndexWriterOptions {
   /**
-   * The declarative schema driving the projection: one {@link SearchType} per
-   * root type, each mapping framed RDF to flat search-document fields. The
-   * writer opens one engine run per type in it.
+   * The declarative schema: one {@link SearchType} per root type. The writer
+   * opens one engine run per type in it and routes each document to its type’s
+   * run. Must be the same schema the stages project through.
    */
   schema: SearchSchema;
   /**
@@ -31,20 +27,23 @@ export interface SearchIndexWriterOptions {
    * multi-collection deployment (the Dataset Register’s `datasets` plus its
    * Organization / Class / TerminologySource label collections) returns a
    * distinct writer per type, each an independent blue/green rebuild with its
-   * own collection, alias and cross-pod lock. The projection is whole-schema
-   * either way; the per-collection fan-out is this writer’s job.
+   * own collection, alias and cross-pod lock. The per-collection fan-out is this
+   * writer’s job.
    */
   writerFor: (searchType: SearchType) => Writer<SearchDocument>;
 }
 
 /**
- * The projection step of a search-indexing pipeline, as a quad `Writer`, fanned
- * out across a type’s collections. It turns each dataset’s extracted CONSTRUCT
- * quads into engine-agnostic search documents ({@link projectGraph}: frame by
- * root type, then project each node with its type’s declaration) and dispatches
- * each document to the engine run for **its** type. This is the one
- * type-changing step (quad → document), shared across engines – which is why it
- * lives here and not inside an engine adapter.
+ * The single terminal of a search-indexing pipeline: an engine-agnostic router
+ * that fans already-projected documents out across a type’s collections. The
+ * per-type {@link https://github.com/ldelements/lde/blob/main/docs/decisions/0013-project-inside-the-batch-per-root-type.md | stages}
+ * project inside the batch and tag each document with its {@link SearchType}
+ * ({@link TypedSearchDocument}); this writer dispatches each document to the
+ * engine run for **its** type by `searchType.class`. It **owns no projection**
+ * (that moved into the stages) and **buffers nothing** (documents stream through
+ * to the run as they arrive) – it is purely the per-collection fan-out
+ * {@link https://github.com/ldelements/lde/blob/main/docs/decisions/0009-route-a-whole-schema-projection-to-per-type-collections.md | ADR 9}
+ * made it.
  *
  * Each root type is an independent engine run (its own collection, alias and
  * lock), so the collections commit, sweep and fail in isolation:
@@ -61,19 +60,16 @@ export interface SearchIndexWriterOptions {
  * - `abort` (a run failure, or a partial commit) drops every half-built
  *   collection that has not committed and leaves the live ones untouched.
  *
- * A dataset’s quads are buffered until its flush and projected then, so the
- * documents land before every engine acts on the dataset’s completion (e.g. an
- * In-place stale sweep). Memory is bounded by one dataset’s extraction, and
- * released at each flush – nothing accumulates across datasets. Streaming
- * bounded entity batches *within* one huge dataset needs the two-level
- * iteration (dataset → entity-URI batches) and is not implemented yet.
+ * Memory is bounded by one batch of documents per type, not the dataset:
+ * `write` routes each document to its type’s run through a bounded queue and
+ * never accumulates them.
  */
 export function searchIndexWriter(
   options: SearchIndexWriterOptions,
-): Writer<Quad> {
+): Writer<TypedSearchDocument> {
   const { schema, writerFor } = options;
   // One engine writer per root type, built once; each run opens them all. Keyed
-  // by the type IRI, which is also how a projected document names its type.
+  // by the type IRI, which is also how a tagged document names its type.
   const writers = new Map<string, Writer<SearchDocument>>(
     [...schema.values()].map((searchType) => [
       searchType.class,
@@ -82,7 +78,9 @@ export function searchIndexWriter(
   );
 
   return {
-    async openRun(context: RunContext): Promise<RunWriter<Quad>> {
+    async openRun(
+      context: RunContext,
+    ): Promise<RunWriter<TypedSearchDocument>> {
       const runs = new Map<string, RunWriter<SearchDocument>>();
       try {
         for (const [typeIri, writer] of writers) {
@@ -101,62 +99,60 @@ export function searchIndexWriter(
       // (a committed blue/green rebuild’s abort drops its now-live collection).
       const committed = new Set<string>();
 
-      // One buffered pass per dataset, keyed by IRI. The pipeline processes
-      // datasets sequentially, but keeping the key explicit makes a write after
-      // another dataset's flush safe too.
-      const passes = new Map<string, { dataset: Dataset; quads: Quad[] }>();
-
-      const project = async (pass: {
-        dataset: Dataset;
-        quads: Quad[];
-      }): Promise<void> => {
-        passes.delete(pass.dataset.iri.toString());
-        if (pass.quads.length === 0) {
-          return;
-        }
-        // Whole-schema projection into one mixed stream, split by type here so
-        // each type’s documents reach its own collection’s run.
-        const byType = new Map<string, SearchDocument[]>();
-        for await (const { searchType, document } of projectGraph(
-          pass.quads,
-          schema,
-        )) {
-          const documents = byType.get(searchType.class);
-          if (documents === undefined) {
-            byType.set(searchType.class, [document]);
-          } else {
-            documents.push(document);
-          }
-        }
-        // Every yielded type is a schema type, so it has a run; iterate the
-        // runs and write each the documents projected for its type (none, for a
-        // type absent from this pass).
-        for (const [typeIri, run] of runs) {
-          const documents = byType.get(typeIri);
-          if (documents !== undefined) {
-            await run.write(pass.dataset, stream(documents));
-          }
-        }
-      };
-
       return {
-        write: async (dataset: Dataset, quads: AsyncIterable<Quad>) => {
-          const key = dataset.iri.toString();
-          let pass = passes.get(key);
-          if (pass === undefined) {
-            pass = { dataset, quads: [] };
-            passes.set(key, pass);
-          }
-          for await (const quad of quads) {
-            pass.quads.push(quad);
+        write: async (
+          dataset: Dataset,
+          items: AsyncIterable<TypedSearchDocument>,
+        ) => {
+          // Route each tagged document to its type’s run, streaming. A stage
+          // writes one type, but the terminal carries no stage identity, so it
+          // routes per item by the tag. Each type gets one `run.write`, fed a
+          // bounded queue the run drains concurrently – so memory stays O(batch)
+          // per type, never O(dataset). Almost always one lane per call.
+          const lanes = new Map<
+            string,
+            { queue: AsyncQueue<SearchDocument>; done: Promise<void> }
+          >();
+          const laneFor = (searchType: SearchType) => {
+            let lane = lanes.get(searchType.class);
+            if (lane === undefined) {
+              const run = runs.get(searchType.class);
+              if (run === undefined) {
+                throw new Error(
+                  `No engine run for search type “${searchType.name}” (${searchType.class}); it is not in this writer’s schema.`,
+                );
+              }
+              const queue = new AsyncQueue<SearchDocument>();
+              const done = run.write(dataset, queue);
+              // If the run stops consuming (its write rejects), unblock the
+              // producer so a full queue cannot deadlock the push loop below.
+              done.catch((error: unknown) => queue.abort(error));
+              lane = { queue, done };
+              lanes.set(searchType.class, lane);
+            }
+            return lane;
+          };
+
+          try {
+            for await (const { searchType, document } of items) {
+              await laneFor(searchType).queue.push(document);
+            }
+            for (const lane of lanes.values()) {
+              lane.queue.close();
+            }
+            await Promise.all([...lanes.values()].map((lane) => lane.done));
+          } catch (error) {
+            for (const lane of lanes.values()) {
+              lane.queue.abort(error);
+            }
+            await Promise.allSettled(
+              [...lanes.values()].map((lane) => lane.done),
+            );
+            throw error;
           }
         },
 
         flush: async (dataset: Dataset, outcome: DatasetOutcome) => {
-          const pass = passes.get(dataset.iri.toString());
-          if (pass !== undefined) {
-            await project(pass);
-          }
           // Flush every collection independently: one collection’s flush failure
           // (a rollback, or an In-place stale sweep) must not skip another’s –
           // the pipeline isolates a flush error per dataset and still commits,
@@ -170,22 +166,15 @@ export function searchIndexWriter(
         },
 
         reset: async (dataset: Dataset) => {
-          // Discard the buffered pass so the re-run replaces it, and let every
-          // collection’s run discard whatever it already holds for the dataset –
-          // independently, so one collection’s reset failure never leaves
-          // another holding the discarded pass’s documents into the re-run.
-          passes.delete(dataset.iri.toString());
+          // Let every collection’s run discard whatever it already holds for the
+          // dataset – independently, so one collection’s reset failure never
+          // leaves another holding the discarded documents into the re-run.
           await settleAll(runs.values(), 'reset', (run) =>
             run.reset?.(dataset),
           );
         },
 
         commit: async () => {
-          // Safety net: project passes that were never flushed, so a committed
-          // run never silently drops written quads.
-          for (const pass of [...passes.values()]) {
-            await project(pass);
-          }
           // Commit every collection independently, so one failure neither
           // blocks nor wipes another – the `datasets` index goes live even if a
           // label collection cannot. Record each collection that went live, so
@@ -236,9 +225,4 @@ async function settleAll<Item>(
       `${failures.length} of ${targets.length} search collections failed to ${verb}`,
     );
   }
-}
-
-/** Yield the given documents as an async iterable, like a streaming source. */
-async function* stream<Item>(items: readonly Item[]): AsyncIterable<Item> {
-  yield* items;
 }
