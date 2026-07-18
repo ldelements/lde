@@ -69,22 +69,24 @@ export function buildSubjectIndex(
 }
 
 /**
- * Frame every root subject of `rootType` from a prebuilt {@link SubjectIndex}
- * into one JSON-LD node – the reusable core behind {@link frameByType}. Each
- * root subject’s own triples plus the one-hop nodes it references (e.g. nested
- * publisher/distribution resources) are framed one subject at a time, so beyond
- * the shared subject index only a single subgraph is held (whole-graph
- * `jsonld.frame()` is ~O(N²)). The frame carries no `@context`, so framed keys
- * are full predicate IRIs.
+ * Frame each of the given `roots` from a prebuilt {@link SubjectIndex} into one
+ * JSON-LD node. Each root subject’s own triples plus the one-hop nodes it
+ * references (e.g. nested publisher/distribution resources) are framed one
+ * subject at a time, so beyond the shared subject index only a single subgraph
+ * is held (whole-graph `jsonld.frame()` is ~O(N²)). The frame carries no
+ * `@context`, so framed keys are full predicate IRIs.
+ *
+ * The roots are supplied explicitly rather than discovered from `rdf:type`: a
+ * caller with the roots already in hand ({@link projectRoots}, from the pipeline
+ * selector) passes them directly; a whole-graph caller ({@link frameByType},
+ * {@link projectGraph}) passes {@link SubjectIndex.rootsByType}. A root absent
+ * from the index simply frames nothing.
  */
 export async function* frameSubjects(
   index: SubjectIndex,
-  rootType: string,
+  roots: readonly string[],
 ): AsyncIterable<FramedNode> {
   const { bySubject } = index;
-  // A type the index was not built for has no roots, so it frames nothing; the
-  // `projectType`/`projectGraph` callers only pass types they registered.
-  const roots = index.rootsByType.get(rootType) ?? [];
   for (const rootIri of roots) {
     const owned = bySubject.get(rootIri) ?? [];
     const referenced = owned
@@ -99,7 +101,7 @@ export async function* frameSubjects(
     // Frame for THIS specific root subject by `@id`, not just by root type. A
     // one-hop reference can itself be of `rootType` (e.g. a terminology source
     // that is also a separately registered dataset), so framing by type alone
-    // returns several root nodes and `[0]` could be the referenced one — which
+    // returns several root nodes and `[0]` could be the referenced one – which
     // would emit it twice and drop this subject entirely.
     const framed = await jsonld.frame(
       expanded,
@@ -124,5 +126,6 @@ export async function* frameByType(
   quads: Iterable<Quad>,
   rootType: string,
 ): AsyncIterable<FramedNode> {
-  yield* frameSubjects(buildSubjectIndex(quads, [rootType]), rootType);
+  const index = buildSubjectIndex(quads, [rootType]);
+  yield* frameSubjects(index, index.rootsByType.get(rootType) ?? []);
 }

@@ -4,10 +4,12 @@ import { dcat, dcterms, rdf, xsd } from '@tpluscode/rdf-ns-builders';
 import {
   projectDocument,
   projectGraph,
+  projectRoots,
   irisOf,
   type SearchDocument,
 } from '../src/project.js';
 import {
+  defineSearchType,
   searchSchema,
   type SearchField,
   type SearchType,
@@ -590,5 +592,114 @@ describe('projectGraph', () => {
     expect(
       Object.fromEntries(tagged.map((entry) => [entry.id, entry.type])),
     ).toEqual({ 'https://ex/d/1': DATASET, 'https://ex/x/1': other });
+  });
+});
+
+describe('projectRoots', () => {
+  const dataset = defineSearchType({ name: 'Dataset', class: DATASET, fields });
+  const schema = searchSchema(dataset);
+
+  it('projects exactly the given roots, without any rdf:type', async () => {
+    // No type triples: the roots are supplied by the caller (the selector).
+    const quads = new Parser({ format: 'N-Triples' }).parse(`
+      <https://ex/d/1> <${dcterms.title.value}> "Titel"@nl .
+      <https://ex/d/2> <${dcterms.title.value}> "Andere"@nl .
+    `);
+
+    const documents: SearchDocument[] = [];
+    for await (const document of projectRoots(
+      quads,
+      ['https://ex/d/1', 'https://ex/d/2'],
+      schema,
+      dataset,
+    )) {
+      documents.push(document);
+    }
+
+    expect(documents.map((document) => document.id).sort()).toEqual([
+      'https://ex/d/1',
+      'https://ex/d/2',
+    ]);
+    const byId = Object.fromEntries(
+      documents.map((document) => [document.id, document]),
+    );
+    expect(byId['https://ex/d/1'].title_search_nl).toBe('titel');
+  });
+
+  it('frames a repeated root once (a non-DISTINCT selector may yield duplicates)', async () => {
+    const quads = new Parser({ format: 'N-Triples' }).parse(
+      `<https://ex/d/1> <${dcterms.title.value}> "Titel"@nl .`,
+    );
+
+    const documents: SearchDocument[] = [];
+    for await (const document of projectRoots(
+      quads,
+      ['https://ex/d/1', 'https://ex/d/1'],
+      schema,
+      dataset,
+    )) {
+      documents.push(document);
+    }
+
+    // One distinct root → one document, not one per occurrence.
+    expect(documents.map((document) => document.id)).toEqual([
+      'https://ex/d/1',
+    ]);
+  });
+
+  it('yields a bare document (no searchType tag)', async () => {
+    const quads = new Parser({ format: 'N-Triples' }).parse(
+      `<https://ex/d/1> <${dcterms.title.value}> "Titel"@nl .`,
+    );
+
+    const documents: SearchDocument[] = [];
+    for await (const document of projectRoots(
+      quads,
+      ['https://ex/d/1'],
+      schema,
+      dataset,
+    )) {
+      documents.push(document);
+    }
+
+    expect(documents).toHaveLength(1);
+    expect(documents[0]).not.toHaveProperty('searchType');
+    expect(documents[0]).not.toHaveProperty('document');
+    expect(documents[0].id).toBe('https://ex/d/1');
+  });
+
+  it('frames only the given roots, ignoring other subjects in the quads', async () => {
+    const quads = new Parser({ format: 'N-Triples' }).parse(`
+      <https://ex/d/1> <${dcterms.title.value}> "Een"@nl .
+      <https://ex/d/2> <${dcterms.title.value}> "Twee"@nl .
+    `);
+
+    const ids: string[] = [];
+    for await (const document of projectRoots(
+      quads,
+      ['https://ex/d/1'],
+      schema,
+      dataset,
+    )) {
+      ids.push(document.id);
+    }
+
+    expect(ids).toEqual(['https://ex/d/1']);
+  });
+
+  it('rejects a searchType not in the schema (no forged schema)', async () => {
+    const foreign: SearchType = {
+      name: 'Other',
+      class: 'http://example.org/Other',
+      fields,
+    };
+
+    // The membership guard runs before the first yield, so advancing the
+    // iterator once surfaces it.
+    await expect(
+      projectRoots([], ['https://ex/d/1'], schema, foreign)
+        [Symbol.asyncIterator]()
+        .next(),
+    ).rejects.toThrow(/not in this engine’s schema/);
   });
 });
