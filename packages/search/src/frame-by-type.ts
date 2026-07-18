@@ -1,8 +1,5 @@
 import type { Quad } from '@rdfjs/types';
 import jsonld from 'jsonld';
-import { rdf } from '@tpluscode/rdf-ns-builders';
-
-const RDF_TYPE = rdf.type.value;
 
 /** A framed JSON-LD node (full-IRI keys); the engine-agnostic search IR. */
 export type FramedNode = Record<string, unknown>;
@@ -10,38 +7,31 @@ export type FramedNode = Record<string, unknown>;
 const FRAME_OPTIONS = { omitGraph: false, embed: '@always' as const };
 
 /**
- * A one-pass index of a quad source: every subject’s (deduplicated) triples,
- * plus the root subjects of each requested type in appearance order. Built by
- * {@link buildSubjectIndex} from a single iteration of the source, so a caller
- * can pass a chained generator (`function* () { yield* a; yield* b; }`) rather
- * than materialize a merged array; a multi-type projection then frames every
- * type off this one index instead of re-scanning per type.
+ * A one-pass index of a quad source: every subject’s (deduplicated) triples.
+ * Built by {@link buildSubjectIndex} from a single iteration of the source, so a
+ * caller can pass a chained generator (`function* () { yield* a; yield* b; }`)
+ * rather than materialize a merged array, then frame any of its subjects off
+ * this one index.
  */
 export interface SubjectIndex {
   /** Each subject IRI → its own deduplicated triples, in first-seen order. */
   readonly bySubject: ReadonlyMap<string, readonly Quad[]>;
-  /** Each requested root type IRI → its root subjects, in appearance order. */
-  readonly rootsByType: ReadonlyMap<string, readonly string[]>;
 }
 
 /**
- * Iterate `quads` once, grouping each subject’s triples and collecting the root
- * subjects of every type in `rootTypes`. Duplicate triples are collapsed here
- * because some SPARQL engines (e.g. QLever) do not deduplicate CONSTRUCT
- * output. The source is consumed a single time, so it may be a one-shot
- * iterable (a generator chaining several sources); the whole subject index is
- * held, but never more than that plus one framed subgraph at a time
+ * Iterate `quads` once, grouping each subject’s triples. Duplicate triples are
+ * collapsed here because some SPARQL engines (e.g. QLever) do not deduplicate
+ * CONSTRUCT output. The source is consumed a single time, so it may be a
+ * one-shot iterable (a generator chaining several sources); the whole subject
+ * index is held, but never more than that plus one framed subgraph at a time
  * downstream.
+ *
+ * Roots are never discovered here – the caller ({@link projectRoots}, from the
+ * pipeline selector) already holds them and passes them to {@link frameSubjects}
+ * – so `quads` need carry no `rdf:type` triple.
  */
-export function buildSubjectIndex(
-  quads: Iterable<Quad>,
-  rootTypes: Iterable<string>,
-): SubjectIndex {
+export function buildSubjectIndex(quads: Iterable<Quad>): SubjectIndex {
   const bySubject = new Map<string, Quad[]>();
-  const rootsByType = new Map<string, string[]>();
-  for (const type of rootTypes) {
-    rootsByType.set(type, []);
-  }
   const seen = new Set<string>();
   for (const quad of quads) {
     const key = `${quad.subject.value} ${quad.predicate.value} ${quad.object.value} ${quad.object.termType === 'Literal' ? quad.object.language || quad.object.datatype.value : ''}`;
@@ -56,16 +46,8 @@ export function buildSubjectIndex(
     } else {
       owned.push(quad);
     }
-    // `rootsByType` is keyed by exactly the requested root types, so the lookup
-    // doubles as the membership test: a hit means this subject is a root.
-    if (quad.predicate.value === RDF_TYPE) {
-      const roots = rootsByType.get(quad.object.value);
-      if (roots !== undefined) {
-        roots.push(subject);
-      }
-    }
   }
-  return { bySubject, rootsByType };
+  return { bySubject };
 }
 
 /**
@@ -76,11 +58,9 @@ export function buildSubjectIndex(
  * is held (whole-graph `jsonld.frame()` is ~O(N²)). The frame carries no
  * `@context`, so framed keys are full predicate IRIs.
  *
- * The roots are supplied explicitly rather than discovered from `rdf:type`: a
- * caller with the roots already in hand ({@link projectRoots}, from the pipeline
- * selector) passes them directly; a whole-graph caller ({@link frameByType},
- * {@link projectGraph}) passes {@link SubjectIndex.rootsByType}. A root absent
- * from the index simply frames nothing.
+ * The roots are supplied explicitly rather than discovered from `rdf:type`: the
+ * caller ({@link projectRoots}, from the pipeline selector) already holds them
+ * and passes them directly. A root absent from the index simply frames nothing.
  */
 export async function* frameSubjects(
   index: SubjectIndex,
@@ -113,19 +93,4 @@ export async function* frameSubjects(
       yield node;
     }
   }
-}
-
-/**
- * Frame CONSTRUCT quads into one JSON-LD node per subject of `rootType`, for a
- * single root type. Consumes `quads` once (see {@link buildSubjectIndex}), so
- * it accepts any `Iterable` – a materialized array or a chained generator. For
- * a multi-type schema, {@link buildSubjectIndex} + {@link frameSubjects} share
- * one index across types rather than re-scanning per type.
- */
-export async function* frameByType(
-  quads: Iterable<Quad>,
-  rootType: string,
-): AsyncIterable<FramedNode> {
-  const index = buildSubjectIndex(quads, [rootType]);
-  yield* frameSubjects(index, index.rootsByType.get(rootType) ?? []);
 }

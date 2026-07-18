@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { Parser } from 'n3';
-import { dcat, dcterms, rdf, xsd } from '@tpluscode/rdf-ns-builders';
+import { dcat, dcterms, xsd } from '@tpluscode/rdf-ns-builders';
 import {
   projectDocument,
-  projectGraph,
   projectRoots,
   irisOf,
   type SearchDocument,
@@ -526,72 +525,6 @@ describe('projectDocument', () => {
       },
     );
     expect(document).toEqual({ id: 'https://ex/d/9' });
-  });
-});
-
-describe('projectGraph', () => {
-  it('frames each root type in the schema and projects matching nodes', async () => {
-    const quads = new Parser({ format: 'N-Triples' }).parse(`
-      <https://ex/d/1> <${rdf.type.value}> <${DATASET}> .
-      <https://ex/d/1> <${dcterms.title.value}> "Titel"@nl .
-      <https://ex/d/2> <${rdf.type.value}> <${DATASET}> .
-      <https://ex/d/2> <${dcterms.title.value}> "Andere"@nl .
-      <https://ex/x/1> <${rdf.type.value}> <http://example.org/Other> .
-      <https://ex/x/1> <${dcterms.title.value}> "Ignored"@nl .
-    `);
-
-    const documents: SearchDocument[] = [];
-    for await (const { searchType, document } of projectGraph(
-      quads,
-      searchSchema({ name: 'Dataset', class: DATASET, fields }),
-    )) {
-      expect(searchType.name).toBe('Dataset');
-      documents.push(document);
-    }
-
-    const ids = documents.map((document) => document.id).sort();
-    expect(ids).toEqual(['https://ex/d/1', 'https://ex/d/2']);
-    const byId = Object.fromEntries(
-      documents.map((document) => [document.id, document]),
-    );
-    expect(byId['https://ex/d/1'].title_search_nl).toBe('titel');
-    expect(byId['https://ex/d/2'].title_nl).toBe('Andere');
-  });
-
-  it('consumes a one-shot iterable once, framing every type off a single scan', async () => {
-    const other = 'http://example.org/Other';
-    const quads = new Parser({ format: 'N-Triples' }).parse(`
-      <https://ex/d/1> <${rdf.type.value}> <${DATASET}> .
-      <https://ex/d/1> <${dcterms.title.value}> "Titel"@nl .
-      <https://ex/x/1> <${rdf.type.value}> <${other}> .
-      <https://ex/x/1> <${dcterms.title.value}> "Ander"@nl .
-    `);
-    // A generator is exhausted after one pass, so a per-type re-scan would drop
-    // every type but the first – projecting both proves the single-scan index.
-    function* once(): Generator<(typeof quads)[number]> {
-      yield* quads;
-    }
-
-    const tagged: { type: string; id: string }[] = [];
-    for await (const { searchType, document } of projectGraph(
-      once(),
-      searchSchema(
-        { name: 'Dataset', class: DATASET, fields },
-        { name: 'Other', class: other, fields },
-      ),
-    )) {
-      tagged.push({ type: searchType.class, id: document.id });
-    }
-
-    expect(tagged.map((entry) => entry.id).sort()).toEqual([
-      'https://ex/d/1',
-      'https://ex/x/1',
-    ]);
-    // Each document carries the type it was framed from, so a writer can route
-    // it to that type’s collection.
-    expect(
-      Object.fromEntries(tagged.map((entry) => [entry.id, entry.type])),
-    ).toEqual({ 'https://ex/d/1': DATASET, 'https://ex/x/1': other });
   });
 });
 

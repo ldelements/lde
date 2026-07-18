@@ -7,14 +7,8 @@
 // Projection: RDF CONSTRUCT quads → flat search documents, driven by the
 // unified SearchField/SearchType model. The IR readers (irisOf, …) are here
 // because `derive` functions are written against them.
-export {
-  projectGraph,
-  projectRoots,
-  irisOf,
-  literalsOf,
-  firstLiteralOf,
-} from './project.js';
-export type { SearchDocument, TypedSearchDocument } from './project.js';
+export { projectRoots, irisOf, literalsOf, firstLiteralOf } from './project.js';
+export type { SearchDocument } from './project.js';
 
 // Unified field model: one declaration drives projection, engine collection
 // schema, query semantics and the GraphQL surface – a discriminated union by
