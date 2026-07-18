@@ -29,11 +29,11 @@ It provides four things:
   out of it, so the two cannot drift;
 - **engine port** – `SearchEngine` and the logical result types
   (`SearchResult` / `SearchHit` / `ResultDocument` / `Reference` / …);
-- **streaming projection** – `projectGraph`, RDF `CONSTRUCT` quads → flat
-  search documents.
+- **streaming projection** – `projectRoots`, RDF `CONSTRUCT` quads → flat
+  search documents, one root type at a time.
 
 ```
-SearchSchema ─┬─► projection      (projectGraph → flat documents)        [here]
+SearchSchema ─┬─► projection      (projectRoots → flat documents)        [here]
               ├─► engine adapter  (collection definition + query compiler)   e.g. @lde/search-typesense
               ├─► query semantics (SearchQuery, filter/sort/facet)       [here]
               └─► API surface     (GraphQL / REST)                       e.g. @lde/search-api-graphql
@@ -58,7 +58,7 @@ a typed, deterministic function – easy to test, and swappable per deployment.
 Exports are stratified by audience:
 
 - **`@lde/search`** – the authoring surface: `defineSearchType`,
-  `searchSchema`, `projectGraph` (+ the IR readers `derive` functions use),
+  `searchSchema`, `projectRoots` (+ the IR readers `derive` functions use),
   validation, and every model/query/result type.
 - **`@lde/search/adapter`** – plumbing for engine adapters and API surfaces:
   `physicalFields`, the field selectors, `assertValidQuery`, the filter
@@ -78,8 +78,9 @@ and GraphQL (one of the surfaces):
 | `SearchType`   | One root type’s complete declaration: its logical API `name`, its `class` IRI and its fields (incl. derived)     | NodeShape      | object type |
 | `SearchSchema` | The whole search declaration: every `SearchType`, keyed by `class` IRI – build one with `searchSchema(...types)` | shapes graph   | schema      |
 
-`projectGraph` and the GraphQL surface consume a `SearchSchema` (projecting
-every type in one pass); the engine port executes one `SearchType` at a time.
+`projectRoots` and the engine port each execute one `SearchType` at a time –
+projection over the roots the pipeline selector supplied for that type; the
+GraphQL surface consumes the whole `SearchSchema`.
 
 ### API conventions
 
@@ -110,7 +111,7 @@ query compiler all share.
 ```ts
 import {
   defineSearchType,
-  projectGraph,
+  projectRoots,
   irisOf,
   searchSchema,
 } from '@lde/search';
@@ -150,14 +151,12 @@ const DATASET = defineSearchType({
   ],
 });
 
-for await (const { searchType, document } of projectGraph(
-  quads,
-  searchSchema(DATASET),
-)) {
-  // one flat search document per matching subject, streamed and tagged with the
-  // SearchType it was framed from — so a multi-collection writer can route each
-  // document to the collection for its type. A single-collection consumer just
-  // reads `document`.
+const schema = searchSchema(DATASET);
+for await (const document of projectRoots(quads, roots, schema, DATASET)) {
+  // one flat search document per given root subject, streamed. The caller (the
+  // pipeline selector) supplies `roots`; pairing a document with its type for a
+  // multi-collection writer is the pipeline glue’s job (see
+  // `@lde/search-pipeline`), not the projection’s.
 }
 ```
 
@@ -219,31 +218,38 @@ source fails at startup. A reference without a `labelSource` stays id-only.
 
 ## Projection
 
-`projectGraph` is fully streaming: subjects are grouped and framed one at a time
-and documents are yielded as produced, so beyond a subject index memory stays
-flat at scale (framing the whole graph at once is roughly O(N²)). Duplicate
-triples are collapsed first, because some SPARQL engines (e.g. QLever) do not
-deduplicate `CONSTRUCT` output. The IR carries no `@context`, so a `derive` function
-reading it sees full predicate IRIs with language tags preserved.
+`projectRoots` projects **one root type** over the roots the caller supplies –
+the pipeline selector already holds them, so nothing is discovered from
+`rdf:type` and a `CONSTRUCT` need emit no type triple. It is fully streaming:
+each root’s subgraph is framed one at a time and its document yielded as
+produced, so beyond a subject index memory stays flat at scale (framing the
+whole graph at once is roughly O(N²)). Duplicate triples are collapsed first,
+because some SPARQL engines (e.g. QLever) do not deduplicate `CONSTRUCT` output.
+The IR carries no `@context`, so a `derive` function reading it sees full
+predicate IRIs with language tags preserved. `assertTypeInSchema` guards that
+the passed `SearchType` is a member of the schema – the port’s own membership
+check – so no schema is ever forged to scope a projection to one type.
 
-Each yielded value is a `{ searchType, document }` pair: the whole schema
-projects into **one** mixed stream, and every document is tagged with the
-`SearchType` it was framed from. That tag is what lets the write side fan the
-stream out to per-type collections without re-deriving the type from the
-document – see `@lde/search-pipeline`’s multi-collection writer.
+`projectRoots` yields a **bare** `SearchDocument`. Pairing each document with the
+`SearchType` it belongs to, so the write side can fan a mixed stream out to
+per-type collections, is a routing concern owned by the pipeline glue – see
+`@lde/search-pipeline`’s `searchStages` and multi-collection writer – not the
+projection. One stage per root type keeps `@lde/search` pipeline-free.
 
-`projectGraph` **consumes the quads once** – a single scan builds the subject
-index every type frames off – and so accepts any `Iterable<Quad>`, not just a
-materialized array. A caller merging several sources can pass a chained
+`projectRoots` **consumes the quads once** – a single scan builds the subject
+index the roots frame off – and so accepts any `Iterable<Quad>`, not just a
+materialized array. A caller merging several readers can pass a chained
 generator instead of building a third full array at the projection peak:
 
 ```ts
-projectGraph(
+projectRoots(
   (function* () {
     yield* registerQuads;
     yield* dkgQuads;
   })(),
+  roots,
   schema,
+  DATASET,
 );
 ```
 
@@ -307,7 +313,7 @@ unrepresentable; the port enforces them for everyone else (deployment
 ## Typed results
 
 An engine is **bound to the whole `SearchSchema` at construction** – like
-every other schema consumer (`projectGraph(quads, schema)`,
+every other schema consumer (`projectRoots(quads, roots, schema, type)`,
 `buildGraphQLSchema(schema)`): the adapter factory takes the deployment’s
 declaration, so a query can never meet the wrong index, and deployment-level
 concerns (the label cache, cross-type search, facet batching) have one home.

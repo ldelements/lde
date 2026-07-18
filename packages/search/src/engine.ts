@@ -4,10 +4,10 @@ import type { SearchSchema, SearchType } from './schema.js';
 /**
  * The engine port: the boundary a concrete engine adapter (e.g. the engine
  * `@lde/search-typesense`’s `createTypesenseSearchEngine` returns) implements.
- * An engine is **bound to the whole {@link SearchSchema} at construction** —
+ * An engine is **bound to the whole {@link SearchSchema} at construction** –
  * the adapter factory takes the deployment’s declaration together with the
  * physical location of every type (its collections map), mirroring the other
- * schema consumers (`projectGraph(quads, schema)`,
+ * schema consumers (`projectRoots(quads, roots, schema, type)`,
  * `buildGraphQLSchema(schema)`): everything is a function of the schema. A
  * query can never meet the wrong index, deployment-level concerns (label
  * cache, cross-type search, facet batching) have one home, and a search names
@@ -20,8 +20,8 @@ import type { SearchSchema, SearchType } from './schema.js';
  *
  * Port contract: an adapter ALWAYS rejects a `searchType` that is not in its
  * bound schema, and ALWAYS validates the incoming query against it
- * (`assertValidQuery`) — unknown or non-filterable fields, mismatched
- * operators, unknown facets — rather than passing garbage to its engine.
+ * (`assertValidQuery`) – unknown or non-filterable fields, mismatched
+ * operators, unknown facets – rather than passing garbage to its engine.
  * Validation is not the caller’s job: it must hold for every surface and for
  * injected deployment policy.
  *
@@ -34,7 +34,7 @@ import type { SearchSchema, SearchType } from './schema.js';
 export interface SearchEngine<
   Types extends readonly SearchType[] = readonly SearchType[],
 > {
-  /** The declaration this engine serves — exposed so a surface can route and
+  /** The declaration this engine serves – exposed so a surface can route and
    *  a caller can enumerate the searchable types. */
   readonly schema: SearchSchema<Types>;
   search<T extends Types[number]>(
@@ -94,7 +94,7 @@ export type FacetMap<FacetField extends string = string> = Readonly<
 >;
 
 /**
- * The facet-field-name union of a search type — the keys a {@link SearchResult}’s
+ * The facet-field-name union of a search type – the keys a {@link SearchResult}’s
  * `facets` can hold. Narrow for a declaration captured as a literal (via
  * `defineSearchType` or `as const satisfies SearchType`); a plain
  * `: SearchType` annotation degrades to `string` (its field names are not
@@ -105,7 +105,7 @@ export type FacetFieldsOf<Type extends SearchType> = SearchType extends Type
   : Extract<Type['fields'][number], { readonly facetable: true }>['name'];
 
 /**
- * The output-field-name union of a search type — the keys a {@link ResultDocument}
+ * The output-field-name union of a search type – the keys a {@link ResultDocument}
  * can hold. Like {@link FacetFieldsOf}, degrades to `string` for a widened
  * declaration.
  */
@@ -116,7 +116,7 @@ export type OutputFieldsOf<Type extends SearchType> = SearchType extends Type
 /**
  * One result row. `id` (the stable document key, an IRI) is kept *out* of
  * {@link ResultDocument}: it is always present and is the hit’s identity, a
- * different contract from the optional, typed logical field values — and it maps
+ * different contract from the optional, typed logical field values – and it maps
  * straight onto the GraphQL output’s guaranteed `id: String!`. The document
  * holds only the selectable fields.
  */
@@ -126,7 +126,7 @@ export interface SearchHit<OutputField extends string = string> {
 }
 
 /**
- * The logical result document at the query seam — engine- and RDF-neutral.
+ * The logical result document at the query seam – engine- and RDF-neutral.
  * Distinct from the flat, fanned-out projection `SearchDocument` that lives
  * index-side: this carries logical fields with language maps and references,
  * ready for a surface to shape. Keyed by output field name; `Partial` because a

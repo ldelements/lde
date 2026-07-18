@@ -26,11 +26,11 @@
   ],
   "dependencies": {
     "@lde/search": "^0.8.1",
-    "@rdfjs/types": "^2.0.1",
     "tslib": "^2.3.0"
   },
   "devDependencies": {
     "@lde/search-typesense": "^0.10.2",
+    "@rdfjs/types": "^2.0.1",
     "n3": "^2.1.1",
     "testcontainers": "^12.0.3",
     "typesense": "^3.0.6"

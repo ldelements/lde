@@ -22,17 +22,6 @@ import {
 export type SearchDocument = { id: string } & Record<string, unknown>;
 
 /**
- * A projected document tagged with the {@link SearchType} it was projected
- * from – one element of {@link projectGraph}’s mixed, whole-schema stream. The
- * tag is what lets a multi-collection writer route each document to the
- * collection for its type without re-deriving the type from the document.
- */
-export interface TypedSearchDocument {
-  readonly searchType: SearchType;
-  readonly document: SearchDocument;
-}
-
-/**
  * Project one framed JSON-LD node into a flat search document: apply each field
  * of the type in declaration order. A field with a `derive` function computes
  * its value from the node and the document as populated so far (so a derived
@@ -58,46 +47,14 @@ export function projectDocument(
 }
 
 /**
- * Frame `quads` for every root type in the schema and project each node with its
- * type’s declaration – the multi-shape pipeline. Yields each document tagged
- * with its {@link SearchType} ({@link TypedSearchDocument}), so a downstream
- * multi-collection writer can route it to that type’s collection; a
- * single-collection consumer just reads `.document`. Streams one document at a
- * time so memory stays flat. The IR maps to a declaration by type, so adding a
- * shape is adding a `SearchType` to the schema (no engine change).
- *
- * Consumes `quads` once (a single scan builds the shared subject index that
- * every type frames off), so it accepts any `Iterable` – a materialized array or
- * a chained generator merging several sources (`function* () { yield* a; yield* b; }`)
- * with no intermediate copy at the projection peak.
- */
-export async function* projectGraph(
-  quads: Iterable<Quad>,
-  schema: SearchSchema,
-): AsyncIterable<TypedSearchDocument> {
-  const types = [...schema.values()];
-  const index = buildSubjectIndex(
-    quads,
-    types.map((searchType) => searchType.class),
-  );
-  for (const searchType of types) {
-    const roots = index.rootsByType.get(searchType.class) ?? [];
-    for await (const node of frameSubjects(index, roots)) {
-      yield { searchType, document: projectDocument(node, searchType) };
-    }
-  }
-}
-
-/**
  * Project a single type over a known set of `roots` – the per-type, roots-given
- * projection. Unlike {@link projectGraph}, the roots are supplied by the caller
- * (the pipeline selector) rather than discovered from `rdf:type`, so `quads`
- * need carry no type triples and the projection frames each distinct subject
- * once. {@link assertTypeInSchema} guards that `searchType` belongs to `schema`
- * – the port’s own membership check – so no schema is ever forged to scope a
- * projection to one type. Yields a bare {@link SearchDocument}: tagging a
- * document with its type is a routing concern, owned by the pipeline glue, not
- * the projection.
+ * projection. The roots are supplied by the caller (the pipeline selector)
+ * rather than discovered from `rdf:type`, so `quads` need carry no type triples
+ * and the projection frames each distinct subject once. {@link assertTypeInSchema}
+ * guards that `searchType` belongs to `schema` – the port’s own membership check
+ * – so no schema is ever forged to scope a projection to one type. Yields a bare
+ * {@link SearchDocument}: pairing a document with its type is a routing concern,
+ * owned by the pipeline glue, not the projection.
  *
  * Consumes `quads` once, so it accepts any `Iterable` – a batch’s materialized
  * array or a chained generator merging several readers.
@@ -109,12 +66,11 @@ export async function* projectRoots(
   searchType: SearchType,
 ): AsyncIterable<SearchDocument> {
   assertTypeInSchema(schema, searchType);
-  const index = buildSubjectIndex(quads, []);
+  const index = buildSubjectIndex(quads);
   // Distinct roots only. A selector may return an IRI more than once – a
   // non-`DISTINCT` `SELECT` over a one-to-many join yields the same subject per
   // matched row – and a repeated root would otherwise frame and emit a
-  // duplicate document under the same `id`. (`projectGraph`’s roots come from
-  // `rootsByType`, which is inherently unique, so it never needs this.)
+  // duplicate document under the same `id`.
   for await (const node of frameSubjects(index, [...new Set(roots)])) {
     yield projectDocument(node, searchType);
   }

@@ -1,6 +1,4 @@
 import { describe, expect, it, vi, type Mock } from 'vitest';
-import { DataFactory } from 'n3';
-import type { Quad } from '@rdfjs/types';
 import { Dataset } from '@lde/dataset';
 import type { RunContext, RunWriter, Writer } from '@lde/pipeline';
 import {
@@ -9,37 +7,49 @@ import {
   type SearchType,
 } from '@lde/search';
 import { searchIndexWriter } from '../src/search-index-writer.js';
+import type { TypedSearchDocument } from '../src/typed-search-document.js';
 
-const { namedNode, literal, quad } = DataFactory;
-
-const RDF_TYPE = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
 const PERSON = 'https://example.org/Person';
 const WORK = 'https://example.org/CreativeWork';
-const NAME = 'https://example.org/name';
 
 const schema = searchSchema(
   {
     name: 'person',
     class: PERSON,
-    fields: [{ name: 'name', kind: 'keyword', path: NAME }],
+    fields: [
+      { name: 'name', kind: 'keyword', path: 'https://example.org/name' },
+    ],
   },
   {
     name: 'work',
     class: WORK,
-    fields: [{ name: 'name', kind: 'keyword', path: NAME }],
+    fields: [
+      { name: 'name', kind: 'keyword', path: 'https://example.org/name' },
+    ],
   },
 );
+
+/** The schema’s own declaration object for a class (identity matters). */
+function typeOf(classIri: string): SearchType {
+  const searchType = schema.get(classIri);
+  if (searchType === undefined) {
+    throw new Error(`no such type: ${classIri}`);
+  }
+  return searchType;
+}
 
 const dataset = new Dataset({
   iri: new URL('http://example.org/dataset/1'),
   distributions: [],
 });
 
-function typedQuads(iri: string, type: string, name: string): Quad[] {
-  return [
-    quad(namedNode(iri), namedNode(RDF_TYPE), namedNode(type)),
-    quad(namedNode(iri), namedNode(NAME), literal(name)),
-  ];
+/** A document paired with its type, as a per-type stage would emit it. */
+function typed(
+  classIri: string,
+  id: string,
+  name: string,
+): TypedSearchDocument {
+  return { searchType: typeOf(classIri), document: { id, name: [name] } };
 }
 
 async function* stream<Item>(items: readonly Item[]): AsyncIterable<Item> {
@@ -75,6 +85,7 @@ function makeFleet(
     commit?: (searchType: SearchType) => Promise<void>;
     flush?: (searchType: SearchType) => Promise<void>;
     reset?: (searchType: SearchType) => Promise<void>;
+    write?: (searchType: SearchType) => Promise<void>;
   } = {},
 ) {
   const collections = new Map<string, FakeCollection>();
@@ -103,6 +114,7 @@ function makeFleet(
           collected.push(document);
         }
         collection.writes.push({ dataset: written, documents: collected });
+        await overrides.write?.(searchType);
       },
       // Record the call first, then run any injected failure, so a test can
       // assert every collection was reached even when one of them throws.
@@ -131,7 +143,7 @@ function makeFleet(
 
 function openRun(
   fleet: ReturnType<typeof makeFleet>,
-): Promise<RunWriter<Quad>> {
+): Promise<RunWriter<TypedSearchDocument>> {
   return searchIndexWriter({ schema, writerFor: fleet.writerFor }).openRun(
     makeRunContext(),
   );
@@ -149,27 +161,25 @@ const ids = (documents: SearchDocument[]) =>
   documents.map((document) => document.id);
 
 describe('searchIndexWriter', () => {
-  it('routes each type’s documents to its own collection on flush', async () => {
+  it('routes each type’s documents to its own collection', async () => {
     const fleet = makeFleet();
     const run = await openRun(fleet);
 
     await run.write(
       dataset,
       stream([
-        ...typedQuads('http://example.org/person/1', PERSON, 'Alice'),
-        ...typedQuads('http://example.org/work/1', WORK, 'Nachtwacht'),
+        typed(PERSON, 'http://example.org/person/1', 'Alice'),
+        typed(WORK, 'http://example.org/work/1', 'Nachtwacht'),
       ]),
     );
     await run.flush?.(dataset, 'success');
 
     const person = collectionOf(fleet, PERSON);
     const work = collectionOf(fleet, WORK);
-    expect(person.writes).toHaveLength(1);
-    expect(ids(person.writes[0].documents)).toEqual([
+    expect(ids(person.writes.flatMap((write) => write.documents))).toEqual([
       'http://example.org/person/1',
     ]);
-    expect(work.writes).toHaveLength(1);
-    expect(ids(work.writes[0].documents)).toEqual([
+    expect(ids(work.writes.flatMap((write) => write.documents))).toEqual([
       'http://example.org/work/1',
     ]);
   });
@@ -184,21 +194,21 @@ describe('searchIndexWriter', () => {
     }
   });
 
-  it('combines multiple writes for one dataset into a single projection', async () => {
+  it('streams every document of one write straight to its run', async () => {
     const fleet = makeFleet();
     const run = await openRun(fleet);
 
     await run.write(
       dataset,
-      stream(typedQuads('http://example.org/person/1', PERSON, 'Alice')),
-    );
-    await run.write(
-      dataset,
-      stream(typedQuads('http://example.org/person/2', PERSON, 'Bob')),
+      stream([
+        typed(PERSON, 'http://example.org/person/1', 'Alice'),
+        typed(PERSON, 'http://example.org/person/2', 'Bob'),
+      ]),
     );
     await run.flush?.(dataset, 'success');
 
     const person = collectionOf(fleet, PERSON);
+    // One write call, one lane, both documents delivered in order.
     expect(person.writes).toHaveLength(1);
     expect(ids(person.writes[0].documents)).toEqual([
       'http://example.org/person/1',
@@ -206,18 +216,17 @@ describe('searchIndexWriter', () => {
     ]);
   });
 
-  it('does not accumulate quads across dataset flushes', async () => {
+  it('delivers documents from separate write calls independently', async () => {
     const fleet = makeFleet();
     const run = await openRun(fleet);
 
     await run.write(
       dataset,
-      stream(typedQuads('http://example.org/person/1', PERSON, 'Alice')),
+      stream([typed(PERSON, 'http://example.org/person/1', 'Alice')]),
     );
-    await run.flush?.(dataset, 'success');
     await run.write(
       dataset,
-      stream(typedQuads('http://example.org/person/2', PERSON, 'Bob')),
+      stream([typed(PERSON, 'http://example.org/person/2', 'Bob')]),
     );
     await run.flush?.(dataset, 'success');
 
@@ -232,10 +241,10 @@ describe('searchIndexWriter', () => {
     const fleet = makeFleet();
     const run = await openRun(fleet);
 
-    // Only Person quads: the Work collection receives no documents this dataset.
+    // Only Person documents: the Work collection receives none this dataset.
     await run.write(
       dataset,
-      stream(typedQuads('http://example.org/person/1', PERSON, 'Alice')),
+      stream([typed(PERSON, 'http://example.org/person/1', 'Alice')]),
     );
     await run.flush?.(dataset, 'success');
 
@@ -257,11 +266,11 @@ describe('searchIndexWriter', () => {
     }
   });
 
-  it('writes no documents for a dataset whose extraction was empty, but still flushes', async () => {
+  it('writes nothing for an empty document stream, but still flushes', async () => {
     const fleet = makeFleet();
     const run = await openRun(fleet);
 
-    await run.write(dataset, stream<Quad>([]));
+    await run.write(dataset, stream<TypedSearchDocument>([]));
     await run.flush?.(dataset, 'success');
 
     for (const collection of fleet.collections.values()) {
@@ -270,9 +279,42 @@ describe('searchIndexWriter', () => {
     }
   });
 
+  it('rejects a document whose type is not in the writer’s schema', async () => {
+    const fleet = makeFleet();
+    const run = await openRun(fleet);
+    const foreign: TypedSearchDocument = {
+      searchType: {
+        name: 'Ghost',
+        class: 'https://example.org/Ghost',
+        fields: [],
+      },
+      document: { id: 'x' },
+    };
+
+    await expect(run.write(dataset, stream([foreign]))).rejects.toThrow(
+      /not in this writer’s schema/,
+    );
+  });
+
+  it('surfaces a run’s write failure rather than swallowing it', async () => {
+    const failure = new Error('import failed');
+    const fleet = makeFleet({
+      write: (searchType) =>
+        searchType.class === PERSON
+          ? Promise.reject(failure)
+          : Promise.resolve(),
+    });
+    const run = await openRun(fleet);
+
+    await expect(
+      run.write(
+        dataset,
+        stream([typed(PERSON, 'http://example.org/person/1', 'Alice')]),
+      ),
+    ).rejects.toBe(failure);
+  });
+
   it('flushes every collection even when one collection’s flush fails, then surfaces it', async () => {
-    // The Person collection's flush (e.g. a rollback of a failed dataset)
-    // throws; the Work collection must still be flushed, not skipped.
     const failure = new Error('person rollback failed');
     const fleet = makeFleet({
       flush: (searchType) =>
@@ -310,49 +352,31 @@ describe('searchIndexWriter', () => {
     expect(collectionOf(fleet, PERSON).resets).toEqual([dataset]);
   });
 
-  it('reset discards the buffered pass and forwards to every collection', async () => {
+  it('reset forwards to every collection', async () => {
     const fleet = makeFleet();
     const run = await openRun(fleet);
 
-    await run.write(
-      dataset,
-      stream(typedQuads('http://example.org/person/1', PERSON, 'Endpoint')),
-    );
     await run.reset?.(dataset);
-    await run.write(
-      dataset,
-      stream(typedQuads('http://example.org/person/1', PERSON, 'Dump')),
-    );
-    await run.flush?.(dataset, 'success');
 
-    const person = collectionOf(fleet, PERSON);
-    expect(person.resets).toEqual([dataset]);
+    expect(collectionOf(fleet, PERSON).resets).toEqual([dataset]);
     expect(collectionOf(fleet, WORK).resets).toEqual([dataset]);
-    expect(person.writes).toHaveLength(1);
-    expect(person.writes[0].documents).toEqual([
-      { id: 'http://example.org/person/1', name: ['Dump'] },
-    ]);
   });
 
-  it('projects never-flushed leftovers on commit, then commits every collection', async () => {
+  it('commits every collection', async () => {
     const fleet = makeFleet();
     const run = await openRun(fleet);
 
     await run.write(
       dataset,
-      stream(typedQuads('http://example.org/person/1', PERSON, 'Alice')),
+      stream([typed(PERSON, 'http://example.org/person/1', 'Alice')]),
     );
     await run.commit();
 
-    const person = collectionOf(fleet, PERSON);
-    expect(person.writes).toHaveLength(1);
-    expect(person.commit).toHaveBeenCalledOnce();
+    expect(collectionOf(fleet, PERSON).commit).toHaveBeenCalledOnce();
     expect(collectionOf(fleet, WORK).commit).toHaveBeenCalledOnce();
   });
 
   it('commits every collection independently and aggregates the failures', async () => {
-    // The Work collection’s commit fails; the Person collection must still go
-    // live, and the failure must surface as an AggregateError.
     const failure = new Error('work collection swap failed');
     const fleet = makeFleet({
       commit: (searchType) =>
@@ -362,10 +386,8 @@ describe('searchIndexWriter', () => {
 
     await expect(run.commit()).rejects.toThrow(AggregateError);
 
-    const person = collectionOf(fleet, PERSON);
-    const work = collectionOf(fleet, WORK);
-    expect(person.commit).toHaveBeenCalledOnce();
-    expect(work.commit).toHaveBeenCalledOnce();
+    expect(collectionOf(fleet, PERSON).commit).toHaveBeenCalledOnce();
+    expect(collectionOf(fleet, WORK).commit).toHaveBeenCalledOnce();
   });
 
   it('abort after a partial commit finalizes only the collections that did not go live', async () => {
@@ -448,16 +470,16 @@ describe('searchIndexWriter', () => {
 
     await run.write(
       dataset,
-      stream(typedQuads('http://example.org/person/1', PERSON, 'Alice')),
+      stream([typed(PERSON, 'http://example.org/person/1', 'Alice')]),
     );
     await run.reset?.(dataset);
     await run.write(
       dataset,
-      stream(typedQuads('http://example.org/person/1', PERSON, 'Alice')),
+      stream([typed(PERSON, 'http://example.org/person/1', 'Alice')]),
     );
     await run.flush?.(dataset, 'success');
 
-    expect(written).toHaveLength(1);
+    expect(written).toHaveLength(2);
   });
 
   it('opens every collection’s run with the pipeline’s run context', async () => {

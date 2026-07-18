@@ -3,21 +3,21 @@
 The GraphQL surface for the [`@lde/search`](../search) core. **Both engine- and
 domain-agnostic:** it builds an executable
 [graphql-js](https://graphql.org/graphql-js/) `GraphQLSchema` from your whole
-[`SearchSchema`](../search/README.md#terminology) at runtime — one root query
+[`SearchSchema`](../search/README.md#terminology) at runtime – one root query
 field per `SearchType`, each searchable in its own way. All root fields are
 served by the same resolver implementation (no per-type code, no codegen);
 each root field gets its own instance of it, bound to that field’s
 `SearchType`, over any `SearchEngine`. It names neither your **domain** (each type’s GraphQL name
-is the `SearchType`’s own logical `name` — `Dataset`, `Person`, `CreativeWork`,
+is the `SearchType`’s own logical `name` – `Dataset`, `Person`, `CreativeWork`,
 …) nor your **engine** (the resolver calls the schema-bound `context.engine`, be it
 [`@lde/search-typesense`](../search-typesense) or another adapter).
 
 ## Runtime configuration, not codegen
 
 `buildGraphQLSchema(schema)` constructs the GraphQL schema once at startup from
-the field model — no SDL artifact, no generated resolver stubs. For you that
+the field model – no SDL artifact, no generated resolver stubs. For you that
 means: no codegen step in the build, no generated files to commit and review,
-and no stale artifact that can drift from the declaration — change the
+and no stale artifact that can drift from the declaration – change the
 `SearchType`, restart, and the API is current. (The flip side, no artifact
 showing contract changes as diffs, is restored by the
 [snapshot guard](#guarding-the-contract).) The field model
@@ -63,14 +63,17 @@ types such as a common `Agent`) are created once and reused across root types.
 
 `types` never filters: every `SearchType` in the schema you pass gets a root
 field (options for a type not in the schema are a build-time error). To expose
-only part of what you index, narrow the **schema argument**
-(`searchSchema(…)` is a cheap constructor):
+only part of what you index, narrow the **schema argument** you hand
+`buildGraphQLSchema` (`searchSchema(…)` is a cheap constructor, so build one per
+consumer):
 
 ```ts
-// Index all three types…
-projectGraph(quads, searchSchema(DATASET, PERSON, INTERNAL));
+// Index a superset: hand a three-type schema to the pipeline, which projects and
+// stores one collection per type (see @lde/search-pipeline). INTERNAL is indexed
+// (e.g. a label source references resolve against) but never served.
+const indexed = searchSchema(DATASET, PERSON, INTERNAL);
 
-// …but serve only two.
+// Serve a subset: the GraphQL API exposes only two of those types.
 const gqlSchema = buildGraphQLSchema(searchSchema(DATASET, PERSON));
 ```
 
@@ -98,7 +101,7 @@ const gqlSchema = buildGraphQLSchema(searchSchema(DATASET, PERSON));
 ## Guarding the contract
 
 Why the API, the index and a future REST surface cannot drift apart is the
-search family’s overall approach — one field model, one query IR — described
+search family’s overall approach – one field model, one query IR – described
 in [`@lde/search`](../search/README.md). Specific to this surface: the GraphQL
 contract is **frozen** (breaking to change), yet generated rather than
 handwritten, so nothing in the repo shows a contract change as a reviewable
@@ -114,8 +117,8 @@ it('keeps the public GraphQL contract stable', () => {
 ```
 
 The first run writes the emitted SDL to a committed snapshot file; every later
-run re-emits and diffs against it. Any contract change — your own schema edit,
+run re-emits and diffs against it. Any contract change – your own schema edit,
 or a new version of this library emitting different GraphQL for the same
-declaration — fails the test and shows the SDL diff, until you consciously
+declaration – fails the test and shows the SDL diff, until you consciously
 accept it (`vitest -u`) and the reviewer sees the contract change spelled out
 in the PR.
