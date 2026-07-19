@@ -31,12 +31,22 @@ const schema = searchSchema(
   {
     name: 'Dataset',
     class: DATASET,
-    fields: [{ name: 'title', kind: 'keyword', path: TITLE, array: true }],
+    fields: [
+      {
+        name: 'title',
+        kind: 'keyword',
+        path: TITLE,
+        array: true,
+        output: true,
+      },
+    ],
   },
   {
     name: 'Organization',
     class: ORGANIZATION,
-    fields: [{ name: 'name', kind: 'keyword', path: NAME, array: true }],
+    fields: [
+      { name: 'name', kind: 'keyword', path: NAME, array: true, output: true },
+    ],
   },
 );
 

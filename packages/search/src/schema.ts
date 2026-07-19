@@ -1,4 +1,3 @@
-import type { FramedNode } from './frame-by-type.js';
 import type { SearchDocument } from './project.js';
 
 /**
@@ -57,9 +56,11 @@ export function filterOperatorFor(kind: FieldKind): FilterOperator | undefined {
  * Capability flags (`searchable`/`filterable`/`facetable`/`sortable`/`output`)
  * are independent opt-ins: a field exposes exactly the roles it declares. A
  * field with a {@link SearchFieldBase.derive `derive`} function instead of a
- * `path` is a **derived field** – computed from the framed node rather than
- * projected from the IR – yet it still carries full query/schema/output
- * behavior (e.g. `status`, the compatibility booleans).
+ * `path` is a **derived field** – computed from the document projected so far
+ * rather than read from the graph – yet it still carries full query/schema/output
+ * behavior (e.g. `status`, the compatibility booleans). A field declaring **no**
+ * role at all is an {@link isInternalField **internal field**}: projected so a
+ * later derive can read it, then pruned before the writer.
  *
  * The physical field names a declaration fans out to (per-locale search/sort
  * keys) follow one convention, owned by
@@ -104,15 +105,17 @@ export interface SearchFieldBase {
   readonly sortable?: boolean;
   /**
    * Compute this field’s value instead of projecting it from a `path` – a
-   * status token, a compatibility boolean, a count over the framed node.
+   * status token, a compatibility boolean, a count over an earlier field.
    * Mutually exclusive with `path`. Runs in declaration order during
-   * projection, receiving the framed node and the document as populated so
-   * far, so a derived field may read fields declared before it (e.g. a
-   * `statusRank` reading the derived `status`). Return `undefined` to leave
-   * the field absent. The field still carries full query/schema/output
-   * behaviour like any other.
+   * projection, receiving **only** the document as populated so far – never the
+   * graph – so a derived field reads fields declared before it (e.g. a
+   * `statusRank` reading the derived `status`, or a count reading an
+   * {@link isInternalField internal} field). Return `undefined` to leave the
+   * field absent. The field still carries full query/schema/output behaviour
+   * like any other. Reading only the document is what keeps `path` the complete
+   * statement of what the projection reads from the graph.
    */
-  readonly derive?: (node: FramedNode, document: SearchDocument) => unknown;
+  readonly derive?: (document: SearchDocument) => unknown;
 }
 
 /** Full-text inclusion with a `query_by` weight (folded; per-locale for
@@ -685,6 +688,28 @@ export function sortableFields(searchType: SearchType): readonly SearchField[] {
 /** Fields that appear in the API output type, in declaration order. */
 export function outputFields(searchType: SearchType): readonly SearchField[] {
   return searchType.fields.filter((field) => field.output === true);
+}
+
+/**
+ * Whether a field declares **no** role – none of `output`, `searchable`,
+ * `filterable`, `facetable`, `sortable`. Such a field is an **internal field**:
+ * the projection populates it (so a later {@link SearchFieldBase.derive} can
+ * read it), then prunes it before the document reaches a writer, and the engine
+ * collection definition omits it entirely – not stored, not indexed, no RAM.
+ * Absence of a role declares that intent; there is no separate marker flag.
+ *
+ * The single predicate the projection and the collection definition share, so
+ * they cannot disagree on what is internal. See the Search context’s load-bearing
+ * line: *a field without a Role is an Internal Field.*
+ */
+export function isInternalField(field: SearchField): boolean {
+  return (
+    field.output !== true &&
+    field.searchable === undefined &&
+    field.filterable !== true &&
+    field.facetable !== true &&
+    field.sortable !== true
+  );
 }
 
 /** Fields of kind `reference` (IRI-valued, label-resolved), in declaration order. */

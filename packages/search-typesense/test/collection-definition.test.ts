@@ -266,3 +266,56 @@ describe('und-locale text', () => {
     ]);
   });
 });
+
+describe('internal fields', () => {
+  it('omits an internal (zero-role) field of every kind from the collection', () => {
+    const collection = buildCollectionDefinition(
+      {
+        name: 'Doc',
+        class: 'urn:example:Doc',
+        fields: [
+          { name: 'token', path: 'urn:ex:token', kind: 'keyword' },
+          { name: 'ref', path: 'urn:ex:ref', kind: 'reference' },
+          { name: 'count', path: 'urn:ex:count', kind: 'integer' },
+          { name: 'score', path: 'urn:ex:score', kind: 'number' },
+          { name: 'flag', path: 'urn:ex:flag', kind: 'boolean' },
+          { name: 'note', path: 'urn:ex:note', kind: 'text', locales: ['nl'] },
+        ],
+      },
+      { name: 'docs' },
+    );
+    // Every field declares no role, so it is internal – a projection-time
+    // reading device, pruned before the writer. The collection stores nothing
+    // for any of them: not stored, not indexed, no RAM.
+    expect(collection.fields).toEqual([]);
+  });
+
+  it('keeps a field the moment it declares any role', () => {
+    const collection = buildCollectionDefinition(
+      {
+        name: 'Doc',
+        class: 'urn:example:Doc',
+        fields: [
+          { name: 'hidden', path: 'urn:ex:hidden', kind: 'keyword' },
+          {
+            name: 'shown',
+            path: 'urn:ex:shown',
+            kind: 'keyword',
+            facetable: true,
+          },
+        ],
+      },
+      { name: 'docs' },
+    );
+    // Only the field carrying a role reaches the collection.
+    expect(collection.fields).toEqual([
+      {
+        name: 'shown',
+        type: 'string',
+        facet: true,
+        sort: false,
+        optional: true,
+      },
+    ]);
+  });
+});
