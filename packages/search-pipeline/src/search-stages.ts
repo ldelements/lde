@@ -4,18 +4,19 @@ import {
   type ItemSelector,
   type StageReaders,
 } from '@lde/pipeline';
-import { projectRoots, type SearchSchema, type SearchType } from '@lde/search';
+import { projectRoots, type RootType, type SearchSchema } from '@lde/search';
 import type { TypedSearchDocument } from './typed-search-document.js';
 
 /** One root type’s stage in a search pipeline. */
 export interface SearchStageType {
   /**
-   * The {@link SearchType} this stage projects. Must belong to
+   * The {@link RootType} this stage projects. Must belong to
    * {@link SearchStagesOptions.schema} (matched by `class`); the stage projects
    * with the schema’s own declaration object, so `assertTypeInSchema`’s identity
-   * check inside {@link projectRoots} always holds.
+   * check inside {@link projectRoots} always holds. A Reference Type is never a
+   * stage: it is reached only through an inline reference, never selected.
    */
-  searchType: SearchType;
+  searchType: RootType;
   /**
    * The selector variable that binds this type’s roots – the CONSTRUCT subject
    * the batch is complete for. Must **not** be `dataset`: `?dataset` is
@@ -125,7 +126,7 @@ export function searchStages(
 /**
  * An {@link ItemSelector} that selects every instance of a root type’s source
  * class: `SELECT ?‹rootVariable› WHERE { ?‹rootVariable› a <class> }`. A
- * convenience for the **object grain**, where {@link SearchType.class} really is
+ * convenience for the **object grain**, where {@link RootType.class} really is
  * the source class – **not** a default: root selection is a deployment concern,
  * and three of the Dataset Register’s four catalog types have no source class at
  * all (their entry point – “registered, newest registration, has a title” – is a
@@ -136,7 +137,7 @@ export function searchStages(
  * SPARQL reader).
  */
 export function selectByClass(
-  searchType: SearchType,
+  searchType: RootType,
   rootVariable = 'root',
 ): ItemSelector {
   return new SparqlItemSelector({

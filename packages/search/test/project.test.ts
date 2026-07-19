@@ -483,6 +483,225 @@ describe('projectDocument', () => {
     expect(document).not.toHaveProperty('classes');
   });
 
+  it('flattens an inline reading-device reference with a derive, then prunes it', () => {
+    // The reading device (ADR 11): an inline reference declaring no role is an
+    // internal field. Its referent’s fields are projected so a derive can select
+    // and flatten a value a path cannot address; the internal field is pruned
+    // before the writer sees it.
+    const registration = defineSearchType({
+      name: 'Registration',
+      fields: [
+        { name: 'dateRead', kind: 'date', path: 'https://schema.org/dateRead' },
+        {
+          name: 'datePosted',
+          kind: 'date',
+          path: 'https://schema.org/datePosted',
+        },
+      ],
+    });
+    const dataset = defineSearchType({
+      name: 'Dataset',
+      class: DATASET,
+      fields: [
+        {
+          name: 'registration',
+          kind: 'reference',
+          array: true,
+          path: `${DR}registration`,
+          ref: { typeName: 'Registration', strategy: 'inline' },
+        },
+        {
+          name: 'datePosted',
+          kind: 'date',
+          output: true,
+          // Select the newest registration by dateRead, flatten its datePosted.
+          derive: (document) => {
+            const registrations =
+              (document.registration as
+                | readonly { dateRead?: number; datePosted?: number }[]
+                | undefined) ?? [];
+            return [...registrations].sort(
+              (left, right) => (right.dateRead ?? 0) - (left.dateRead ?? 0),
+            )[0]?.datePosted;
+          },
+        },
+      ],
+    });
+    const withReference = searchSchema(dataset, registration);
+
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/d/reg',
+        [`${DR}registration`]: [
+          {
+            '@id': 'https://ex/r/1',
+            'https://schema.org/dateRead': { '@value': '2024-01-01T00:00:00Z' },
+            'https://schema.org/datePosted': {
+              '@value': '2024-02-01T00:00:00Z',
+            },
+          },
+          {
+            '@id': 'https://ex/r/2',
+            'https://schema.org/dateRead': { '@value': '2024-06-01T00:00:00Z' },
+            'https://schema.org/datePosted': {
+              '@value': '2024-07-01T00:00:00Z',
+            },
+          },
+        ],
+      },
+      dataset,
+      withReference,
+    );
+
+    // The derive read the newest registration (r/2, read 2024-06) and flattened
+    // its datePosted (2024-07)…
+    expect(document.datePosted).toBe(
+      Math.trunc(Date.parse('2024-07-01T00:00:00Z') / 1000),
+    );
+    // …and the internal inline reference itself never reaches the writer.
+    expect(document).not.toHaveProperty('registration');
+  });
+
+  it('leaves an inline reference absent when the node carries no referent', () => {
+    const registration = defineSearchType({
+      name: 'Registration',
+      fields: [
+        { name: 'dateRead', kind: 'date', path: 'https://schema.org/dateRead' },
+      ],
+    });
+    const dataset = defineSearchType({
+      name: 'Dataset',
+      class: DATASET,
+      fields: [
+        {
+          name: 'registration',
+          kind: 'reference',
+          array: true,
+          output: true,
+          path: `${DR}registration`,
+          ref: { typeName: 'Registration', strategy: 'inline' },
+        },
+      ],
+    });
+    const withReference = searchSchema(dataset, registration);
+    const document = projectDocument(
+      { '@id': 'https://ex/d/empty' },
+      dataset,
+      withReference,
+    );
+    expect(document).toEqual({ id: 'https://ex/d/empty' });
+  });
+
+  it('projects nothing for an inline reference when no schema is supplied', () => {
+    // An inline reference is a nested structure that can only be resolved with a
+    // schema; projected without one, it must not fall through to a bare-IRI
+    // facet under its own name.
+    const dataset: SearchType = {
+      name: 'Dataset',
+      class: DATASET,
+      fields: [
+        {
+          name: 'registration',
+          kind: 'reference',
+          output: true,
+          path: `${DR}registration`,
+          ref: { typeName: 'Registration', strategy: 'inline' },
+        },
+      ],
+    };
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/d/noschema',
+        [`${DR}registration`]: { '@id': 'https://ex/r/1' },
+      },
+      dataset,
+    );
+    expect(document).toEqual({ id: 'https://ex/d/noschema' });
+  });
+
+  it('skips an inline reference the given schema does not declare', () => {
+    // projectDocument does not check type membership (projectRoots does); framed
+    // against a schema that omits the referent, an inline reference contributes
+    // no nesting rather than throwing.
+    const dataset = defineSearchType({
+      name: 'Dataset',
+      class: DATASET,
+      fields: [
+        {
+          name: 'registration',
+          kind: 'reference',
+          output: true,
+          path: `${DR}registration`,
+          ref: { typeName: 'Registration', strategy: 'inline' },
+        },
+      ],
+    });
+    const foreignSchema = searchSchema({
+      name: 'Other',
+      class: 'urn:other',
+      fields: [],
+    });
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/d/foreign',
+        [`${DR}registration`]: { '@id': 'https://ex/r/9' },
+      },
+      dataset,
+      foreignSchema,
+    );
+    expect(document).not.toHaveProperty('registration');
+  });
+
+  it('surfaces an inline output reference as a nested document (API device)', () => {
+    const creator = defineSearchType({
+      name: 'Creator',
+      fields: [
+        {
+          name: 'label',
+          kind: 'text',
+          path: 'https://schema.org/name',
+          locales: ['nl'],
+          output: true,
+          searchable: { weight: 1 },
+        },
+      ],
+    });
+    const dataset = defineSearchType({
+      name: 'Dataset',
+      class: DATASET,
+      fields: [
+        {
+          name: 'creator',
+          kind: 'reference',
+          output: true,
+          path: `${DR}creator`,
+          ref: { typeName: 'Creator', strategy: 'inline' },
+        },
+      ],
+    });
+    const withReference = searchSchema(dataset, creator);
+
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/d/api',
+        [`${DR}creator`]: {
+          '@id': 'https://ex/c/1',
+          'https://schema.org/name': { '@language': 'nl', '@value': 'Naam' },
+        },
+      },
+      dataset,
+      withReference,
+    );
+
+    // An output inline reference surfaces its referent as a nested Search
+    // Document (its Reference Type’s projected fields), not a bare IRI.
+    expect(document.creator).toMatchObject({
+      id: 'https://ex/c/1',
+      label_nl: 'Naam',
+      label_search_nl: 'naam',
+    });
+  });
+
   it('buckets untagged literals into the reserved und locale', () => {
     const document = projectDocument(
       {

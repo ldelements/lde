@@ -8,11 +8,13 @@ import {
   facetableFields,
   fieldNamed,
   filterableFields,
+  inlineFramingDepth,
   isoToUnixSeconds,
   isRangeFacet,
   outputFields,
   physicalFields,
   referenceFields,
+  referenceTypeNamed,
   searchableFields,
   searchSchema,
   sortableFields,
@@ -496,6 +498,162 @@ describe('searchSchema validation', () => {
         { name: 'Dataset', class: 'urn:other', fields: [] },
       ),
     ).toThrow(/Duplicate search type name/);
+  });
+
+  describe('reference types and inline references', () => {
+    const registration = {
+      name: 'Registration',
+      fields: [
+        { name: 'dateRead', kind: 'date', path: 'https://schema.org/dateRead' },
+        {
+          name: 'datePosted',
+          kind: 'date',
+          path: 'https://schema.org/datePosted',
+        },
+      ],
+    } as const;
+
+    const datasetWithInline = {
+      name: 'Dataset',
+      class: DATASET,
+      fields: [
+        {
+          name: 'registration',
+          kind: 'reference',
+          array: true,
+          path: 'urn:lde:Dataset/registration',
+          ref: { typeName: 'Registration', strategy: 'inline' },
+        },
+      ],
+    } as const;
+
+    it('accepts a reference type (no class) and keeps it out of the indexed map', () => {
+      const schema = searchSchema(datasetWithInline, registration);
+      // The class-keyed map – and so every writer’s collections – holds only
+      // the Root Type. The Reference Type is reachable only through the
+      // reference.
+      expect([...schema.values()].map((type) => type.name)).toEqual([
+        'Dataset',
+      ]);
+      expect(referenceTypeNamed(schema, 'Registration')).toEqual(registration);
+      expect(referenceTypeNamed(schema, 'Dataset')).toBeUndefined();
+    });
+
+    it('resolves an inline ref.typeName against the declared reference types', () => {
+      expect(() => searchSchema(datasetWithInline, registration)).not.toThrow();
+    });
+
+    it('rejects an inline reference whose typeName names no declared type', () => {
+      expect(() => searchSchema(datasetWithInline)).toThrow(
+        /inline reference .*Registration.*declare a reference type/i,
+      );
+    });
+
+    it('rejects an inline reference resolving to a root type, not a reference type', () => {
+      expect(() =>
+        searchSchema(datasetWithInline, {
+          name: 'Registration',
+          class: 'urn:other',
+          fields: [],
+        }),
+      ).toThrow(/inline reference .*Registration.*reference type/i);
+    });
+
+    it('rejects an inline cycle', () => {
+      const a = {
+        name: 'A',
+        fields: [
+          {
+            name: 'toB',
+            kind: 'reference',
+            path: 'urn:lde:A/toB',
+            ref: { typeName: 'B', strategy: 'inline' },
+          },
+        ],
+      } as const;
+      const b = {
+        name: 'B',
+        fields: [
+          {
+            name: 'toA',
+            kind: 'reference',
+            path: 'urn:lde:B/toA',
+            ref: { typeName: 'A', strategy: 'inline' },
+          },
+        ],
+      } as const;
+      expect(() =>
+        searchSchema(
+          {
+            name: 'Dataset',
+            class: DATASET,
+            fields: [
+              {
+                name: 'a',
+                kind: 'reference',
+                path: 'urn:lde:Dataset/a',
+                ref: { typeName: 'A', strategy: 'inline' },
+              },
+            ],
+          },
+          a,
+          b,
+        ),
+      ).toThrow(/inline (reference )?cycle/i);
+    });
+
+    it('computes the framing depth from the inline reference chain', () => {
+      const measurement = {
+        name: 'Measurement',
+        fields: [
+          {
+            name: 'value',
+            kind: 'number',
+            path: 'http://www.w3.org/ns/dqv#value',
+          },
+        ],
+      } as const;
+      const subset = {
+        name: 'Subset',
+        fields: [
+          {
+            name: 'measurement',
+            kind: 'reference',
+            array: true,
+            path: 'http://www.w3.org/ns/dqv#hasQualityMeasurement',
+            ref: { typeName: 'Measurement', strategy: 'inline' },
+          },
+        ],
+      } as const;
+      const dataset = {
+        name: 'Dataset',
+        class: DATASET,
+        fields: [
+          {
+            name: 'subset',
+            kind: 'reference',
+            array: true,
+            path: 'http://rdfs.org/ns/void#subset',
+            ref: { typeName: 'Subset', strategy: 'inline' },
+          },
+        ],
+      } as const;
+      const chainSchema = searchSchema(dataset, subset, measurement);
+      // Dataset → Subset → Measurement is two hops.
+      expect(inlineFramingDepth(chainSchema, dataset)).toBe(2);
+      // A root type with no inline reference frames its own one hop.
+      const flatDataset = {
+        name: 'Flat',
+        class: 'urn:flat',
+        fields: [],
+      } as const;
+      expect(inlineFramingDepth(searchSchema(flatDataset), flatDataset)).toBe(
+        1,
+      );
+      // Against a schema that does not declare the referent, an inline reference
+      // contributes no depth (the type is being framed through a foreign schema).
+      expect(inlineFramingDepth(searchSchema(flatDataset), dataset)).toBe(1);
+    });
   });
 
   describe('reference label sources', () => {

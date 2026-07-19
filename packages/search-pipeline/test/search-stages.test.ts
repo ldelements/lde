@@ -10,7 +10,7 @@ import {
   type Reader,
   type VariableBindings,
 } from '@lde/pipeline';
-import { projectRoots, searchSchema, type SearchType } from '@lde/search';
+import { projectRoots, searchSchema, type RootType } from '@lde/search';
 import { searchStages, selectByClass } from '../src/search-stages.js';
 import type { TypedSearchDocument } from '../src/typed-search-document.js';
 
@@ -24,7 +24,7 @@ const schema = searchSchema({
   class: PERSON,
   fields: [{ name: 'name', kind: 'keyword', path: NAME, output: true }],
 });
-const person = schema.get(PERSON) as SearchType;
+const person = schema.get(PERSON) as RootType;
 
 const dataset = new Dataset({
   iri: new URL('http://example.org/dataset/1'),
@@ -112,7 +112,7 @@ describe('searchStages', () => {
   it('projects with the schema’s own declaration even when handed a class-equal lookalike', async () => {
     // A reconstructed object with the same class – `assertTypeInSchema` is an
     // identity check, so searchStages must re-resolve to the schema’s own object.
-    const lookalike: SearchType = {
+    const lookalike: RootType = {
       name: 'Person',
       class: PERSON,
       fields: [{ name: 'name', kind: 'keyword', path: NAME, output: true }],
@@ -142,7 +142,7 @@ describe('searchStages', () => {
   });
 
   it('throws when a type is not in the schema', () => {
-    const foreign: SearchType = {
+    const foreign: RootType = {
       name: 'Ghost',
       class: 'https://example.org/Ghost',
       fields: [],

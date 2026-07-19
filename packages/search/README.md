@@ -71,11 +71,22 @@ Exports are stratified by audience:
 The model has three levels, with analogues in SHACL ([one possible source](#why-a-declarative-model))
 and GraphQL (one of the surfaces):
 
-| Term           | What it is                                                                                                       | SHACL          | GraphQL     |
-| -------------- | ---------------------------------------------------------------------------------------------------------------- | -------------- | ----------- |
-| `SearchField`  | One queryable field: a `kind`, the IR `path` it projects from, and the capability flags it opts into             | property shape | field       |
-| `SearchType`   | One root type’s complete declaration: its logical API `name`, its `class` IRI and its fields (incl. derived)     | NodeShape      | object type |
-| `SearchSchema` | The whole search declaration: every `SearchType`, keyed by `class` IRI – build one with `searchSchema(...types)` | shapes graph   | schema      |
+| Term           | What it is                                                                                                                                                                                                                       | SHACL          | GraphQL     |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- | ----------- |
+| `SearchField`  | One queryable field: a `kind`, the IR `path` it projects from, and the capability flags it opts into                                                                                                                             | property shape | field       |
+| `SearchType`   | One type’s complete declaration: its logical API `name` and fields (incl. derived). A **Root Type** declares a `class` (indexed, keys the schema); a **Reference Type** declares none (reached only through an inline reference) | NodeShape      | object type |
+| `SearchSchema` | The whole search declaration: every Root Type, keyed by `class` IRI, plus the Reference Types – build one with `searchSchema(...types)`                                                                                          | shapes graph   | schema      |
+
+A `SearchType` is a **Root Type** or a **Reference Type**, told apart by one
+absence: a Root Type declares a `class`, so roots are selected for it and a
+writer opens a collection for it; a Reference Type declares none, so it is
+never selected, framed by type or indexed – its identity is its name, and its
+type comes from the edge that points at it. `searchSchema` partitions its
+arguments accordingly: Root Types key the class map (`schema.values()` yields
+only them, so no writer ever opens a collection for a Reference Type), Reference
+Types go into a name index an inline `ref.typeName` resolves against. The
+absence is load-bearing, and enforced at the type level – an indexed Reference
+Type fails to compile ([ADR 11](../../docs/decisions/0011-decouple-rdf-depth-from-the-api-surface.md)).
 
 `projectRoots` and the engine port each execute one `SearchType` at a time –
 projection over the roots the pipeline selector supplied for that type; the
@@ -208,10 +219,29 @@ directly.
 | `date`               | `range` (inclusive)  | yes   | yes              | ISO 8601 string (surface)       |
 | `boolean`            | `is`                 | yes   | –                | boolean (absent = false)        |
 
-A `reference` carries `labelOnly` today (id + display label); the `idOnly` and
-`inline` strategies are forward declarations. References are object-shaped from
-day one so that `inline` can later **add** fields to a reference type without
-breaking clients.
+A `reference` carries one of two strategies today: `labelOnly` (id + display
+label, resolved at query time from a label source) and `inline` (the referent’s
+own projected fields, carried inline). `idOnly` stays a forward declaration.
+
+An **inline reference** resolves `ref.typeName` to a declared **Reference Type**
+and projects the referent through it – a nested `SearchDocument`, or an array
+for an `array` reference. Roles decide whether the nesting surfaces, so the same
+construct serves two jobs (see
+[ADR 11](../../docs/decisions/0011-decouple-rdf-depth-from-the-api-surface.md)):
+
+- a **reading device** declares no role, so it is an internal field: projected
+  so a later `derive` can select and flatten a value a `path` cannot address (a
+  qualified hop), then pruned before the writer – nothing nested reaches the
+  engine or the API;
+- an **API device** declares `output`, deliberately surfacing the nested
+  Reference Type.
+
+So RDF depth and API shape stay independent: inline as deep as the source
+demands, expose exactly the flat fields you want. Framing follows the inline
+reference graph to the depth the schema declares (`Dataset → Subset →
+Measurement` is two hops), and `searchSchema` rejects inline cycles – the one
+way that depth could be unbounded – so it stays a bounded property of the
+declaration.
 
 A reference resolves its label from a **label source**: `labelSource` names
 the `SearchType` whose collection holds the referenced entities. The named

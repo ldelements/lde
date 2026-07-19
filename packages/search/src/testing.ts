@@ -6,11 +6,7 @@ import {
   type FilterOperator,
   type SearchQuery,
 } from './query.js';
-import {
-  facetableFields,
-  filterableFields,
-  type SearchType,
-} from './schema.js';
+import { facetableFields, filterableFields, type RootType } from './schema.js';
 
 /**
  * The executable {@link SearchEngine} port contract (import from
@@ -33,8 +29,8 @@ export function describeSearchEngineContract(
   engine: () => SearchEngine,
 ): void {
   describe(`SearchEngine port contract: ${name}`, () => {
-    const types = (): readonly SearchType[] => [...engine().schema.values()];
-    const browse = (searchType: SearchType): SearchQuery => ({
+    const types = (): readonly RootType[] => [...engine().schema.values()];
+    const browse = (searchType: RootType): SearchQuery => ({
       where: [],
       orderBy: [],
       limit: 1,
@@ -52,7 +48,7 @@ export function describeSearchEngineContract(
     });
 
     it('rejects a search type outside its schema', async () => {
-      const foreign: SearchType = {
+      const foreign: RootType = {
         name: 'NotInSchema',
         class: 'urn:test:not-in-schema',
         fields: [],
@@ -104,7 +100,7 @@ export function describeSearchEngineContract(
     });
 
     it('rejects a searchFacets batch for a type outside its schema', async () => {
-      const foreign: SearchType = {
+      const foreign: RootType = {
         name: 'NotInSchema',
         class: 'urn:test:not-in-schema',
         fields: [],
@@ -194,7 +190,7 @@ function mismatchedFilter(
 }
 
 /** The locale a query against this type may select (any is contract-valid). */
-function firstLocale(searchType: SearchType): string {
+function firstLocale(searchType: RootType): string {
   for (const field of searchType.fields) {
     if (field.kind === 'text' && field.locales.length > 0) {
       return field.locales[0];

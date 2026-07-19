@@ -19,6 +19,7 @@ import {
 import {
   type Filter,
   type LocalizedValue,
+  type RootType,
   type SearchEngine,
   type SearchField,
   type SearchQuery,
@@ -76,7 +77,7 @@ export interface SearchTypeOptions {
 
 export interface BuildGraphQLSchemaOptions {
   /** Optional fine-tuning per root type, keyed by the {@link SearchType}
-   *  `name` (the logical API name, e.g. `Dataset`) — the key a consumer knows
+   *  `name` (the logical API name, e.g. `Dataset`) – the key a consumer knows
    *  the type by. A type without an entry gets the defaults. */
   readonly types?: Readonly<Record<string, SearchTypeOptions>>;
   /** Output-language ordering; defaults to Accept-Language-first, `und` last. */
@@ -105,7 +106,7 @@ function screamingSnake(name: string): string {
 
 /**
  * Construct an executable GraphQL schema from the whole {@link SearchSchema} at
- * runtime — no codegen, no SDL artifact. One root query field per
+ * runtime – no codegen, no SDL artifact. One root query field per
  * {@link SearchType} (e.g. `datasets`, `people`), each searchable in its own
  * way through its own output/`where`/`orderBy`/facet types, while the shared
  * types (`LanguageString`, buckets, filter inputs, reference types) are created
@@ -193,7 +194,7 @@ export function buildGraphQLSchema(
   });
 
   // Duplicate root type names cannot occur: SearchSchema is branded, so
-  // searchSchema() — which rejects duplicates — is the only constructor.
+  // searchSchema() – which rejects duplicates – is the only constructor.
 
   // One reference type per referenced shape, shared across every root type and
   // reused by every field (Person and CreativeWork both referencing Agent yield
@@ -207,7 +208,7 @@ export function buildGraphQLSchema(
       const { typeName } = field.ref;
       if (rootTypeNames.has(typeName)) {
         throw new Error(
-          `Reference type name “${typeName}” (field “${field.name}” of “${searchType.name}”) collides with a root type of the same name; rename one — a reference does not resolve to a root type.`,
+          `Reference type name “${typeName}” (field “${field.name}” of “${searchType.name}”) collides with a root type of the same name; rename one – a reference does not resolve to a root type.`,
         );
       }
       if (!referenceTypes.has(typeName)) {
@@ -294,9 +295,9 @@ export function buildGraphQLSchema(
     }
   }
 
-  /** The root query field for one {@link SearchType}, with its derived types. */
+  /** The root query field for one {@link RootType}, with its derived types. */
   function rootField(
-    searchType: SearchType,
+    searchType: RootType,
     typeOptions: SearchTypeOptions | undefined,
   ): GraphQLFieldConfig<Source, SearchContext> {
     const typeName = searchType.name;
@@ -479,7 +480,7 @@ export function buildGraphQLSchema(
 }
 
 /**
- * The SDL of the built schema. Not a shipped artifact — a consumer uses it for an
+ * The SDL of the built schema. Not a shipped artifact – a consumer uses it for an
  * optional CI snapshot test over its own schema, catching accidental breaking
  * changes to its frozen contract (including a `buildGraphQLSchema` change in a
  * future version of this library silently altering it).
@@ -500,7 +501,7 @@ interface QueryArgs {
 }
 
 /** Pure args → {@link SearchQuery} mapping. Rejects out-of-bounds paging
- *  (`page < 1`, `perPage` outside `1..maxPerPage`) with a clear error — a
+ *  (`page < 1`, `perPage` outside `1..maxPerPage`) with a clear error – a
  *  negative offset or an unbounded page size must not reach the engine. */
 function argsToQuery(
   args: QueryArgs,

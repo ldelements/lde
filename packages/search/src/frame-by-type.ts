@@ -52,11 +52,17 @@ export function buildSubjectIndex(quads: Iterable<Quad>): SubjectIndex {
 
 /**
  * Frame each of the given `roots` from a prebuilt {@link SubjectIndex} into one
- * JSON-LD node. Each root subject’s own triples plus the one-hop nodes it
- * references (e.g. nested publisher/distribution resources) are framed one
- * subject at a time, so beyond the shared subject index only a single subgraph
- * is held (whole-graph `jsonld.frame()` is ~O(N²)). The frame carries no
- * `@context`, so framed keys are full predicate IRIs.
+ * JSON-LD node. Each root subject’s own triples plus the nodes it references –
+ * to `depth` hops (e.g. nested publisher/distribution resources at one hop, an
+ * inline reference’s referents deeper) – are framed one subject at a time, so
+ * beyond the shared subject index only a single subgraph is held (whole-graph
+ * `jsonld.frame()` is ~O(N²)). The frame carries no `@context`, so framed keys
+ * are full predicate IRIs.
+ *
+ * `depth` is the number of reference hops to embed; it defaults to one (the
+ * long-standing single-hop embed) and comes from the schema for a type with
+ * inline references (`inlineFramingDepth`). Bounded per batch, so the O(N²)
+ * framing cost applies to a batch of roots, not the graph (ADR 12).
  *
  * The roots are supplied explicitly rather than discovered from `rdf:type`: the
  * caller ({@link projectRoots}, from the pipeline selector) already holds them
@@ -65,18 +71,11 @@ export function buildSubjectIndex(quads: Iterable<Quad>): SubjectIndex {
 export async function* frameSubjects(
   index: SubjectIndex,
   roots: readonly string[],
+  depth = 1,
 ): AsyncIterable<FramedNode> {
   const { bySubject } = index;
   for (const rootIri of roots) {
-    const owned = bySubject.get(rootIri) ?? [];
-    const referenced = owned
-      .filter(
-        (quad) =>
-          quad.object.termType === 'NamedNode' ||
-          quad.object.termType === 'BlankNode',
-      )
-      .flatMap((quad) => bySubject.get(quad.object.value) ?? []);
-    const subgraph = [...owned, ...referenced];
+    const subgraph = collectSubgraph(bySubject, rootIri, depth);
     const expanded = await jsonld.fromRDF(subgraph);
     // Frame for THIS specific root subject by its `@id`. The subgraph embeds the
     // root’s one-hop references, and such a referent can itself be one of the
@@ -94,4 +93,44 @@ export async function* frameSubjects(
       yield node;
     }
   }
+}
+
+/**
+ * Collect a root subject’s triples plus those of every subject it references
+ * within `depth` hops, breadth-first. Each subject is visited once (so a
+ * reference cycle in the data terminates and no subject’s triples are
+ * duplicated); `jsonld.frame` embeds whatever the subgraph reaches. Bounded by
+ * `depth`, so only the reachable subgraph of one root is materialized at a time.
+ */
+function collectSubgraph(
+  bySubject: ReadonlyMap<string, readonly Quad[]>,
+  rootIri: string,
+  depth: number,
+): Quad[] {
+  const collected: Quad[] = [];
+  const visited = new Set<string>();
+  let frontier = [rootIri];
+  for (let hop = 0; hop <= depth; hop++) {
+    const next: string[] = [];
+    for (const subject of frontier) {
+      if (visited.has(subject)) {
+        continue;
+      }
+      visited.add(subject);
+      const owned = bySubject.get(subject) ?? [];
+      collected.push(...owned);
+      if (hop < depth) {
+        for (const quad of owned) {
+          if (
+            quad.object.termType === 'NamedNode' ||
+            quad.object.termType === 'BlankNode'
+          ) {
+            next.push(quad.object.value);
+          }
+        }
+      }
+    }
+    frontier = next;
+  }
+  return collected;
 }
