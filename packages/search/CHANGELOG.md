@@ -1,3 +1,13 @@
+## 0.10.0 (2026-07-19)
+
+### 🚀 Features
+
+- ⚠️  **search:** make path the whole statement of what projection reads ([#628](https://github.com/ldelements/lde/pull/628))
+
+### ⚠️  Breaking Changes
+
+- **search:** make path the whole statement of what projection reads  ([#628](https://github.com/ldelements/lde/pull/628))
+
 ## 0.9.0 (2026-07-18)
 
 ### 🚀 Features
