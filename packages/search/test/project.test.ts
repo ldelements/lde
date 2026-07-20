@@ -702,6 +702,81 @@ describe('projectDocument', () => {
     });
   });
 
+  it('prunes an internal helper field from a surfaced (output) inline referent, after a derive reads it', () => {
+    // A Reference Type may carry an internal helper field – no role – that its
+    // own derive reads. When the reference is surfaced (`output`), the invariant
+    // *a field without a role reaches neither the engine nor the API* must still
+    // hold inside the nested document: the helper is projected (so the derive
+    // reads it) then pruned, while the derived output field survives.
+    const creator = defineSearchType({
+      name: 'Creator',
+      fields: [
+        {
+          name: 'label',
+          kind: 'text',
+          path: 'https://schema.org/name',
+          locales: ['nl'],
+          output: true,
+          searchable: { weight: 1 },
+        },
+        // Internal helper: no role, read by the derive below, pruned from the
+        // surfaced referent.
+        {
+          name: 'rawSort',
+          kind: 'keyword',
+          path: 'https://schema.org/alternateName',
+        },
+        {
+          name: 'sortLabel',
+          kind: 'keyword',
+          output: true,
+          derive: (referent) =>
+            (referent.rawSort as readonly string[] | undefined)?.[0],
+        },
+      ],
+    });
+    const dataset = defineSearchType({
+      name: 'Dataset',
+      class: DATASET,
+      fields: [
+        {
+          name: 'creator',
+          kind: 'reference',
+          array: true,
+          output: true,
+          path: `${DR}creator`,
+          ref: { typeName: 'Creator', strategy: 'inline' },
+        },
+      ],
+    });
+    const withReference = searchSchema(dataset, creator);
+
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/d/prune',
+        [`${DR}creator`]: [
+          {
+            '@id': 'https://ex/c/2',
+            'https://schema.org/name': { '@language': 'nl', '@value': 'Naam' },
+            'https://schema.org/alternateName': 'Alt',
+          },
+        ],
+      },
+      dataset,
+      withReference,
+    );
+
+    const [referent] = document.creator as SearchDocument[];
+    // The derive read the helper (sortLabel carries its value)…
+    expect(referent).toMatchObject({
+      id: 'https://ex/c/2',
+      label_nl: 'Naam',
+      sortLabel: 'Alt',
+    });
+    // …but the internal helper itself never surfaces in the nested document.
+    expect(referent).not.toHaveProperty('rawSort');
+  });
+
   it('buckets untagged literals into the reserved und locale', () => {
     const document = projectDocument(
       {

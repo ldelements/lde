@@ -34,9 +34,11 @@ export type SearchDocument = { id: string } & Record<string, unknown>;
  * statement of what the projection reads. {@link isInternalField Internal
  * fields} (those declaring no role) are populated so a later derive can read
  * them, then pruned before the document is returned: they must reach neither a
- * writer nor the collection definition. The physical field names a field fans
- * out to come from {@link physicalFields}, the single source shared with the
- * engine collection definition and the query compiler.
+ * writer nor the collection definition. Pruning ({@link pruneInternalFields})
+ * recurses into the referents of surfaced inline references, so that invariant
+ * holds at every depth, not just the root. The physical field names a field
+ * fans out to come from {@link physicalFields}, the single source shared with
+ * the engine collection definition and the query compiler.
  */
 export function projectDocument(
   node: FramedNode,
@@ -44,22 +46,55 @@ export function projectDocument(
   schema?: SearchSchema,
 ): SearchDocument {
   const document = projectFields(node, searchType, schema);
-  // Prune internal fields: they were projected only so the derives above could
-  // read them (a structural memo shared across every derive that needs the
-  // value), and must not reach the writer or the collection definition.
-  for (const field of searchType.fields) {
-    if (isInternalField(field)) {
-      delete document[field.name];
-    }
-  }
+  pruneInternalFields(document, searchType, schema);
   return document;
 }
 
+/**
+ * Prune every internal field from a fully projected document, in place. Runs
+ * only after all projection – so every derive that might read an internal
+ * field, at any depth, has already run – which makes this single post-order
+ * pass safe. A no-role inline reference is itself internal, so it is deleted
+ * whole here; a surfaced (`output`) inline reference survives, but its own
+ * internal helper fields are pruned from the nested document. That keeps the
+ * *a field without a role reaches neither the engine nor the API* invariant
+ * true at every depth of the reference graph, not just at the root.
+ */
+function pruneInternalFields(
+  document: SearchDocument,
+  searchType: SearchType,
+  schema: SearchSchema | undefined,
+): void {
+  for (const field of searchType.fields) {
+    if (isInternalField(field)) {
+      delete document[field.name];
+      continue;
+    }
+    // A surfaced inline reference nests its referent(s) as SearchDocument(s);
+    // prune those too, by their reference type.
+    if (schema === undefined || field.kind !== 'reference') {
+      continue;
+    }
+    const ref = field.ref;
+    if (ref?.strategy !== 'inline') {
+      continue;
+    }
+    const referenceType = referenceTypeNamed(schema, ref.typeName);
+    const nested = document[field.name];
+    if (referenceType === undefined || nested === undefined) {
+      continue;
+    }
+    for (const referent of Array.isArray(nested) ? nested : [nested]) {
+      pruneInternalFields(referent as SearchDocument, referenceType, schema);
+    }
+  }
+}
+
 /** Apply every field of `searchType` to a fresh document, without pruning – the
- *  shared core of {@link projectDocument} (which then prunes internal fields)
- *  and inline-referent projection (which keeps them, because the referent’s
- *  fields exist to be read by the declaring type’s derives or surfaced whole,
- *  and whether it surfaces is decided by the *declaring* field’s roles). */
+ *  shared core of {@link projectDocument} and inline-referent projection.
+ *  Pruning is deferred to a single recursive pass ({@link pruneInternalFields})
+ *  once the whole nested structure is projected, so a derive at any depth can
+ *  still read an internal field before it is removed. */
 function projectFields(
   node: FramedNode,
   searchType: SearchType,
@@ -258,13 +293,13 @@ function applyFacet(
  * each projected through the reference’s {@link ReferenceType} (its fields’
  * paths relative to the referent node) and attached under the field’s name – a
  * nested {@link SearchDocument} for a single reference, an array for an
- * `array` one. The nested fields keep their internal fields un-pruned: they
- * exist to be read by the declaring type’s derives (the *reading device*) or
- * surfaced whole (the *API device*), and whether the nesting reaches the writer
- * is decided by *this* field’s roles – an internal inline reference is pruned in
- * full by {@link projectDocument}. Recurses through `schema`, so an inline
- * reference may itself carry further inline references to the schema’s declared
- * depth. The referent type is guaranteed declared by {@link searchSchema}.
+ * `array` one. The referent is projected in full – internal fields included –
+ * so the declaring type’s (or the reference type’s own) derives can read them;
+ * {@link pruneInternalFields} then removes the internal fields from a *surfaced*
+ * referent and deletes an internal inline reference whole. Recurses through
+ * `schema`, so an inline reference may itself carry further inline references to
+ * the schema’s declared depth. The referent type is guaranteed declared by
+ * {@link searchSchema}.
  */
 function applyInlineReference(
   document: SearchDocument,
