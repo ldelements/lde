@@ -4,7 +4,7 @@ Date: 2026-07-16
 
 ## Status
 
-Proposed
+Accepted
 
 Extends the reference model of
 [ADR 8 (Resolve reference labels from per-reference label sources)](./0008-resolve-reference-labels-from-per-reference-label-sources.md)

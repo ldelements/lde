@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { Client } from 'typesense';
-import { searchSchema, type SearchQuery, type SearchType } from '@lde/search';
+import {
+  defineSearchType,
+  searchSchema,
+  type RootType,
+  type SearchQuery,
+} from '@lde/search';
 import { deriveCollectionName } from '../src/collection-name.js';
 import { buildCollectionDefinition } from '../src/collection-definition.js';
 import { createTypesenseSearchEngine } from '../src/search.js';
@@ -8,7 +13,7 @@ import { BlueGreenRebuild } from '../src/blue-green-rebuild.js';
 import { InPlaceRebuild } from '../src/in-place-rebuild.js';
 import { fakeTypesenseClient, labelLookup } from './fake-typesense-client.js';
 
-const typeNamed = (name: string): SearchType => ({
+const typeNamed = (name: string): RootType => ({
   name,
   class: `https://example.org/${name}`,
   fields: [{ name: 'title', kind: 'keyword' }],
@@ -164,10 +169,45 @@ describe('the writers and the engine agree on a type’s collection', () => {
       /is not in this engine’s schema/,
     );
   });
+
+  it('gives a reference type no collection – only root types are indexed', () => {
+    const registration = defineSearchType({
+      name: 'Registration',
+      fields: [
+        { name: 'dateRead', kind: 'date', path: 'https://schema.org/dateRead' },
+      ],
+    });
+    const dataset = defineSearchType({
+      name: 'Dataset',
+      class: 'https://example.org/Dataset',
+      fields: [
+        {
+          name: 'registration',
+          kind: 'reference',
+          output: true,
+          path: 'urn:lde:Dataset/registration',
+          ref: { typeName: 'Registration', strategy: 'inline' },
+        },
+      ],
+    });
+    const engine = createTypesenseSearchEngine(
+      noClient,
+      searchSchema(dataset, registration),
+    );
+    // The Root Type has a collection…
+    expect(engine.collectionNameFor(dataset)).toBe('datasets');
+    // …but the Reference Type is not indexed: asking for its collection is a
+    // compile error (it is absent from the engine’s served types) and rejects
+    // at run time too.
+    expect(() =>
+      // @ts-expect-error a reference type has no collection.
+      engine.collectionNameFor(registration),
+    ).toThrow(/is not in this engine’s schema/);
+  });
 });
 
 describe('label sources', () => {
-  const organization: SearchType = {
+  const organization: RootType = {
     name: 'Organization',
     class: 'http://xmlns.com/foaf/0.1/Organization',
     fields: [
@@ -180,7 +220,7 @@ describe('label sources', () => {
       },
     ],
   };
-  const dataset: SearchType = {
+  const dataset: RootType = {
     name: 'Dataset',
     class: 'http://www.w3.org/ns/dcat#Dataset',
     fields: [

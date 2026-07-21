@@ -1,7 +1,7 @@
-import type { SearchDocument, SearchType } from '@lde/search';
+import type { RootType, SearchDocument } from '@lde/search';
 
 /**
- * A projected {@link SearchDocument} paired with the {@link SearchType} it was
+ * A projected {@link SearchDocument} paired with the {@link RootType} it was
  * projected from.
  *
  * A search pipeline is N per-type stages writing to one terminal, and
@@ -18,6 +18,6 @@ import type { SearchDocument, SearchType } from '@lde/search';
  * ([ADR 13](https://github.com/ldelements/lde/blob/main/docs/decisions/0013-project-inside-the-batch-per-root-type.md)).
  */
 export interface TypedSearchDocument {
-  readonly searchType: SearchType;
+  readonly searchType: RootType;
   readonly document: SearchDocument;
 }

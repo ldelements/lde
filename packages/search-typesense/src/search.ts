@@ -6,6 +6,8 @@ import {
   type Reference,
   type ReferenceField,
   type ResultDocument,
+  type RootType,
+  type RootTypeOf,
   type SearchField,
   type SearchHit,
   type SearchEngine,
@@ -83,7 +85,7 @@ export interface TypesenseSearchEngine<
    * exists), never an input. Throws for a type outside this engine’s schema,
    * like every other entry point.
    */
-  collectionNameFor(searchType: Types[number]): string;
+  collectionNameFor(searchType: RootTypeOf<Types>): string;
 }
 
 /**
@@ -160,7 +162,7 @@ export function createTypesenseSearchEngine<
         referenceFields(searchType)
           .filter((field) => field.labelSource !== undefined)
           .map((field) => {
-            const source = typesByName.get(field.labelSource!) as SearchType;
+            const source = typesByName.get(field.labelSource!) as RootType;
             const labelField = labelFieldOf(source) as TextField;
             return [
               field.name,
@@ -286,7 +288,7 @@ export function createTypesenseSearchEngine<
   // cannot leave an unhandled rejection behind if the search itself fails.
   // `undefined` when the cache is off or the type has no label sources.
   function startCachedLabels(
-    searchType: SearchType,
+    searchType: RootType,
   ): Promise<ReadonlyMap<string, LocalizedValue>> | undefined {
     const sources = distinctLabelSources.get(searchType.class);
     if (
@@ -325,12 +327,12 @@ export function createTypesenseSearchEngine<
 
   const engine: TypesenseSearchEngine = {
     schema,
-    collectionNameFor(searchType: SearchType): string {
+    collectionNameFor(searchType: RootType): string {
       assertTypeInSchema(schema, searchType);
       return collections.get(searchType.class) as string;
     },
     async search(
-      searchType: SearchType,
+      searchType: RootType,
       query: SearchQuery,
     ): Promise<SearchResult> {
       // The port contract: a type outside the bound schema and a structurally
@@ -354,7 +356,7 @@ export function createTypesenseSearchEngine<
       return parseSearchResponse(response, searchType, labels);
     },
     async searchFacets(
-      searchType: SearchType,
+      searchType: RootType,
       queries: readonly SearchQuery[],
     ): Promise<readonly FacetsOutcome[]> {
       assertTypeInSchema(schema, searchType);

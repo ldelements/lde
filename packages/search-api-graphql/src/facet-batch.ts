@@ -1,9 +1,9 @@
 import DataLoader from 'dataloader';
 import type {
   FacetBucket,
+  RootType,
   SearchEngine,
   SearchQuery,
-  SearchType,
 } from '@lde/search';
 
 /** Resolves one selected facet field to its buckets; see {@link createFacetLoader}. */
@@ -26,7 +26,7 @@ export type FacetLoader = (field: string) => Promise<readonly FacetBucket[]>;
  */
 export function createFacetLoader(
   engine: SearchEngine,
-  searchType: SearchType,
+  searchType: RootType,
   query: SearchQuery,
   onFacetError?: (field: string, error: unknown) => void,
 ): FacetLoader {

@@ -1,5 +1,10 @@
 import type { SearchQuery } from './query.js';
-import type { SearchSchema, SearchType } from './schema.js';
+import type {
+  RootType,
+  RootTypeOf,
+  SearchSchema,
+  SearchType,
+} from './schema.js';
 
 /**
  * The engine port: the boundary a concrete engine adapter (e.g. the engine
@@ -37,7 +42,7 @@ export interface SearchEngine<
   /** The declaration this engine serves – exposed so a surface can route and
    *  a caller can enumerate the searchable types. */
   readonly schema: SearchSchema<Types>;
-  search<T extends Types[number]>(
+  search<T extends RootTypeOf<Types>>(
     searchType: T,
     query: SearchQuery,
   ): Promise<SearchResult<FacetFieldsOf<T>, OutputFieldsOf<T>>>;
@@ -58,7 +63,7 @@ export interface SearchEngine<
    * transport itself). The port contract holds for every query in the batch;
    * an empty `queries` resolves to `[]` without touching the engine.
    */
-  searchFacets<T extends Types[number]>(
+  searchFacets<T extends RootTypeOf<Types>>(
     searchType: T,
     queries: readonly SearchQuery[],
   ): Promise<readonly FacetsOutcome<FacetFieldsOf<T>>[]>;
@@ -100,7 +105,7 @@ export type FacetMap<FacetField extends string = string> = Readonly<
  * `: SearchType` annotation degrades to `string` (its field names are not
  * statically known).
  */
-export type FacetFieldsOf<Type extends SearchType> = SearchType extends Type
+export type FacetFieldsOf<Type extends SearchType> = RootType extends Type
   ? string
   : Extract<Type['fields'][number], { readonly facetable: true }>['name'];
 
@@ -109,7 +114,7 @@ export type FacetFieldsOf<Type extends SearchType> = SearchType extends Type
  * can hold. Like {@link FacetFieldsOf}, degrades to `string` for a widened
  * declaration.
  */
-export type OutputFieldsOf<Type extends SearchType> = SearchType extends Type
+export type OutputFieldsOf<Type extends SearchType> = RootType extends Type
   ? string
   : Extract<Type['fields'][number], { readonly output: true }>['name'];
 

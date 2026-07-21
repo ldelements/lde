@@ -3,6 +3,7 @@ import { Dataset } from '@lde/dataset';
 import type { RunContext, RunWriter, Writer } from '@lde/pipeline';
 import {
   searchSchema,
+  type RootType,
   type SearchDocument,
   type SearchType,
 } from '@lde/search';
@@ -30,7 +31,7 @@ const schema = searchSchema(
 );
 
 /** The schema’s own declaration object for a class (identity matters). */
-function typeOf(classIri: string): SearchType {
+function typeOf(classIri: string): RootType {
   const searchType = schema.get(classIri);
   if (searchType === undefined) {
     throw new Error(`no such type: ${classIri}`);
@@ -66,7 +67,7 @@ function makeRunContext(): RunContext {
 
 /** One fake engine collection: records every lifecycle call routed to it. */
 interface FakeCollection {
-  readonly searchType: SearchType;
+  readonly searchType: RootType;
   readonly writes: { dataset: Dataset; documents: SearchDocument[] }[];
   readonly flushes: { dataset: Dataset; outcome: string }[];
   readonly resets: Dataset[];
@@ -91,7 +92,7 @@ function makeFleet(
   const collections = new Map<string, FakeCollection>();
   const commitOverride = overrides.commit;
 
-  const writerFor = (searchType: SearchType): Writer<SearchDocument> => {
+  const writerFor = (searchType: RootType): Writer<SearchDocument> => {
     const collection: FakeCollection = {
       searchType,
       writes: [],
@@ -192,6 +193,47 @@ describe('searchIndexWriter', () => {
     for (const collection of fleet.collections.values()) {
       expect(collection.openRunCalls).toBe(1);
     }
+  });
+
+  it('opens no run for a reference type – only root types get a writer', async () => {
+    // A schema with a Root Type and a Reference Type (reached by an inline
+    // reference). The Reference Type is absent from `schema.values()`, so the
+    // writer never asks for one: no collection, no run.
+    const withReference = searchSchema(
+      {
+        name: 'Dataset',
+        class: 'https://example.org/Dataset',
+        fields: [
+          {
+            name: 'registration',
+            kind: 'reference',
+            output: true,
+            path: 'urn:lde:Dataset/registration',
+            ref: { typeName: 'Registration', strategy: 'inline' },
+          },
+        ],
+      },
+      {
+        name: 'Registration',
+        fields: [
+          {
+            name: 'dateRead',
+            kind: 'date',
+            path: 'https://schema.org/dateRead',
+          },
+        ],
+      },
+    );
+    const built: string[] = [];
+    const writerFor = (searchType: RootType): Writer<SearchDocument> => {
+      built.push(searchType.name);
+      return {
+        openRun: () => Promise.resolve({} as RunWriter<SearchDocument>),
+      };
+    };
+    searchIndexWriter({ schema: withReference, writerFor });
+
+    expect(built).toEqual(['Dataset']);
   });
 
   it('streams every document of one write straight to its run', async () => {
@@ -413,7 +455,7 @@ describe('searchIndexWriter', () => {
     const opened: SearchType[] = [];
     const aborted: SearchType[] = [];
     const failure = new Error('lock held');
-    const writerFor = (searchType: SearchType): Writer<SearchDocument> => ({
+    const writerFor = (searchType: RootType): Writer<SearchDocument> => ({
       openRun: async () => {
         // The second type to open fails; the first must be rolled back.
         if (opened.length === 1) {

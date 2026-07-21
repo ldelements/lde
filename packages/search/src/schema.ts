@@ -232,26 +232,65 @@ export interface FacetRange {
   readonly max?: number;
 }
 
-/**
- * One root type’s complete search declaration: its logical API `name`, the
- * `class` IRI its documents are instances of (the RDF class), and the queryable
- * `fields` (including {@link SearchField.derive derived} ones). A SHACL
- * generator can emit one per NodeShape (`name`←`sh:name`/local name,
- * `class`←`sh:targetClass`, `fields`←its property shapes), but that is a source,
- * not a requirement.
- */
-export interface SearchType {
+/** The declaration members every {@link SearchType} shares. */
+export interface SearchTypeBase {
   /** Logical API name (PascalCase, e.g. `Dataset`) – names the type in the API
    *  surfaces (GraphQL type names, a REST path), the way each field’s
    *  {@link SearchField.name} names that field. Deliberately declared rather
    *  than derived from the `class` IRI, so re-modelling the vocabulary cannot
    *  silently rename the public contract. */
   readonly name: string;
-  /** The RDF class IRI its documents are instances of (`sh:targetClass`); the
-   *  key a {@link SearchSchema} maps this type under. */
-  readonly class: string;
   readonly fields: readonly SearchField[];
 }
+
+/**
+ * A **Root Type**: a {@link SearchType} that is indexed. It declares a `class`,
+ * roots are selected for it, a Writer owns a collection for it, and the
+ * {@link SearchSchema} is keyed by it. A SHACL generator can emit one per
+ * NodeShape (`name`←`sh:name`/local name, `class`←`sh:targetClass`,
+ * `fields`←its property shapes), but that is a source, not a requirement.
+ */
+export interface RootType extends SearchTypeBase {
+  /** The RDF class IRI its documents are instances of (`sh:targetClass`); the
+   *  key a {@link SearchSchema} maps this type under. Its presence is what makes
+   *  a type a Root Type – and so what gives it a collection. */
+  readonly class: string;
+}
+
+/**
+ * A **Reference Type**: a {@link SearchType} reached only through an
+ * {@link ReferenceField.ref inline reference}. It declares **no `class`** –
+ * never selected, never framed by type, never indexed; its identity is its
+ * `name`, and its type comes from the edge that points at it, not from the node.
+ * The absence is load-bearing, not stylistic: a `class` would put it in the
+ * {@link SearchSchema} map and silently earn it a collection nobody asked for.
+ * The shape an inline reference carries – see
+ * [ADR 11](../../docs/decisions/0011-decouple-rdf-depth-from-the-api-surface.md).
+ */
+export interface ReferenceType extends SearchTypeBase {
+  /** A Reference Type declares no class; declaring one makes it a
+   *  {@link RootType}. Typed as `never` so the two shapes discriminate the way
+   *  {@link SearchField} discriminates by `kind`: an indexed Reference Type
+   *  fails to compile, not at run time. */
+  readonly class?: never;
+}
+
+/**
+ * One type’s complete search declaration: its logical API `name`, the queryable
+ * `fields` (including {@link SearchField.derive derived} ones), and – for a
+ * {@link RootType} – the RDF `class` its documents are instances of. Either a
+ * Root Type or a {@link ReferenceType}; the absence of a `class` tells them
+ * apart.
+ */
+export type SearchType = RootType | ReferenceType;
+
+/** The Root Types among a declared tuple – the ones a {@link SearchSchema}
+ *  keys and a Writer opens a collection for. Reference Types are excluded, so
+ *  no consumer that iterates `schema.values()` ever meets one. */
+export type RootTypeOf<Types extends readonly SearchType[]> = Extract<
+  Types[number],
+  { readonly class: string }
+>;
 
 /**
  * Declare a {@link SearchType}, capturing it as a literal: the `const` type
@@ -268,11 +307,16 @@ export function defineSearchType<const Type extends SearchType>(
 }
 
 /**
- * The complete search declaration of a deployment: every root {@link SearchType},
- * keyed by its `class` IRI. Build one with {@link searchSchema}, which captures
- * the declared types as a literal tuple (`Types`), so schema-bound consumers
- * (the engine port) can type their per-type behaviour off it. A plain
+ * The complete search declaration of a deployment: every {@link RootType},
+ * keyed by its `class` IRI, plus the {@link ReferenceType}s an inline reference
+ * resolves against. Build one with {@link searchSchema}, which captures the
+ * declared types as a literal tuple (`Types`), so schema-bound consumers (the
+ * engine port) can type their per-type behaviour off it. A plain
  * `: SearchSchema` annotation widens gracefully to `SearchType`.
+ *
+ * `values()` yields only Root Types – Reference Types are held apart in a name
+ * index ({@link referenceTypeNamed}), so a Writer that opens one collection per
+ * `values()` entry can never open one for a Reference Type.
  */
 /** Brand for {@link SearchSchema}: type-only, no runtime existence. Makes the
  *  schema NOMINAL – a hand-built `Map` is not assignable, so `searchSchema()`
@@ -282,19 +326,44 @@ export declare const validSearchSchema: unique symbol;
 
 export interface SearchSchema<
   Types extends readonly SearchType[] = readonly SearchType[],
-> extends ReadonlyMap<string, Types[number]> {
+> extends ReadonlyMap<string, RootTypeOf<Types>> {
   readonly [validSearchSchema]: true;
 }
 
 /**
- * Build a {@link SearchSchema} from root-type declarations, keyed by `class`.
+ * The Reference Type name index each {@link SearchSchema} carries alongside its
+ * class-keyed root map, kept out of the map itself so no consumer iterating
+ * `values()` ever meets a Reference Type. Held in a `WeakMap` rather than a
+ * property, so the schema stays a plain branded `Map` and the index is read only
+ * through {@link referenceTypeNamed}.
+ */
+const referenceTypesBySchema = new WeakMap<
+  SearchSchema,
+  ReadonlyMap<string, ReferenceType>
+>();
+
+/** Whether a declared type is a {@link RootType} (declares a `class`) rather
+ *  than a {@link ReferenceType}. */
+function isRootType(searchType: SearchType): searchType is RootType {
+  return searchType.class !== undefined;
+}
+
+/**
+ * Build a {@link SearchSchema} from type declarations. Its arguments are
+ * **partitioned**: {@link RootType}s (those declaring a `class`) key the map –
+ * so a Writer opens exactly one collection per Root Type – and
+ * {@link ReferenceType}s (no `class`) go into a name index that an inline
+ * `ref.typeName` resolves against ({@link referenceTypeNamed}).
  *
  * Every declaration is validated ({@link assertValidSearchType}) – the
  * declaration-time counterpart of the port’s `assertValidQuery` – and the
- * schema-wide invariants are enforced: no two types may share a `class` IRI
- * (they would silently overwrite each other in the map) or a `name` (names
- * key the API surfaces). Throws on the first invalid declaration, so a bad
- * schema fails at startup, not per document at index time or per query.
+ * schema-wide invariants are enforced: no two Root Types may share a `class` IRI
+ * (they would silently overwrite each other in the map) and no two types may
+ * share a `name` (names key the API surfaces, across Root and Reference Types
+ * alike). Every inline reference must resolve to a declared Reference Type, and
+ * the inline reference graph must be acyclic – the only way its depth could be
+ * unbounded. Throws on the first invalid declaration, so a bad schema fails at
+ * startup, not per document at index time or per query.
  */
 export function searchSchema<const Types extends readonly SearchType[]>(
   ...types: Types
@@ -303,24 +372,147 @@ export function searchSchema<const Types extends readonly SearchType[]>(
   const names = new Set<string>();
   for (const searchType of types) {
     assertValidSearchType(searchType);
-    if (typeIris.has(searchType.class)) {
-      throw new Error(
-        `Duplicate search type IRI “${searchType.class}”; each SearchType must declare a distinct class.`,
-      );
+    if (isRootType(searchType)) {
+      if (typeIris.has(searchType.class)) {
+        throw new Error(
+          `Duplicate search type IRI “${searchType.class}”; each Root Type must declare a distinct class.`,
+        );
+      }
+      typeIris.add(searchType.class);
     }
     if (names.has(searchType.name)) {
       throw new Error(
         `Duplicate search type name “${searchType.name}”; each SearchType must declare a distinct name.`,
       );
     }
-    typeIris.add(searchType.class);
     names.add(searchType.name);
   }
+  const referenceTypes = new Map<string, ReferenceType>(
+    types
+      .filter((searchType) => !isRootType(searchType))
+      .map((searchType) => [searchType.name, searchType]),
+  );
+  assertResolvableInlineReferences(types, referenceTypes);
   assertResolvableLabelSources(types);
   // The one blessed cast: only this validated constructor mints the brand.
-  return new Map(
-    types.map((searchType) => [searchType.class, searchType]),
+  const schema = new Map(
+    types
+      .filter(isRootType)
+      .map((searchType) => [searchType.class, searchType]),
   ) as unknown as SearchSchema<Types>;
+  referenceTypesBySchema.set(schema, referenceTypes);
+  return schema;
+}
+
+/**
+ * The {@link ReferenceType} an inline `ref.typeName` names, or `undefined` when
+ * the schema declares none by that name. The read side of the name index
+ * {@link searchSchema} partitions the Reference Types into – the projection
+ * resolves an inline reference’s referent shape through it.
+ */
+export function referenceTypeNamed(
+  schema: SearchSchema,
+  name: string,
+): ReferenceType | undefined {
+  return referenceTypesBySchema.get(schema)?.get(name);
+}
+
+/** Whether a field is an inline reference – a {@link ReferenceField} whose
+ *  `ref` carries its referent’s projected fields ({@link ReferenceType}). */
+export function isInlineReference(
+  field: SearchField,
+): field is ReferenceField & {
+  readonly ref: { readonly typeName: string; readonly strategy: 'inline' };
+} {
+  return field.kind === 'reference' && field.ref?.strategy === 'inline';
+}
+
+/**
+ * The framing depth a Root Type needs: how many hops the inline reference graph
+ * reaches from it (`Dataset → Subset → Measurement` is two), floored at one so
+ * the existing single-hop embed for non-inline references is preserved. Depth is
+ * a property of the declaration, bounded because {@link searchSchema} rejects
+ * inline cycles – never a knob or a constant. Framing bounded per batch keeps
+ * memory bounded by the unit of work (ADR 12), not the graph.
+ */
+export function inlineFramingDepth(
+  schema: SearchSchema,
+  searchType: SearchType,
+): number {
+  return Math.max(1, inlineChainLength(schema, searchType));
+}
+
+/** The longest inline reference chain reachable from `searchType`. The recursion
+ *  terminates because {@link searchSchema} rejects inline cycles; a reference the
+ *  given schema does not declare (e.g. a type framed against another schema)
+ *  contributes no depth. */
+function inlineChainLength(
+  schema: SearchSchema,
+  searchType: SearchType,
+): number {
+  let longest = 0;
+  for (const field of searchType.fields) {
+    if (!isInlineReference(field)) {
+      continue;
+    }
+    const referent = referenceTypeNamed(schema, field.ref.typeName);
+    if (referent === undefined) {
+      continue;
+    }
+    longest = Math.max(longest, 1 + inlineChainLength(schema, referent));
+  }
+  return longest;
+}
+
+/**
+ * Every inline `ref.typeName` must resolve to a **declared Reference Type**, and
+ * the inline reference graph must be acyclic. Unlike a `labelOnly` reference –
+ * whose `typeName` is just an API name – an inline reference carries its
+ * referent’s fields, so it must know their shape, and an inline cycle is the one
+ * way framing depth could be unbounded. Checked schema-wide, because a single
+ * declaration cannot see its siblings.
+ */
+function assertResolvableInlineReferences(
+  types: readonly SearchType[],
+  referenceTypes: ReadonlyMap<string, ReferenceType>,
+): void {
+  for (const searchType of types) {
+    for (const field of searchType.fields) {
+      if (!isInlineReference(field)) {
+        continue;
+      }
+      if (!referenceTypes.has(field.ref.typeName)) {
+        throw new Error(
+          `Inline reference “${searchType.name}.${field.name}” names “${field.ref.typeName}”, which is not a declared reference type; declare a reference type (a SearchType with no class) with that name.`,
+        );
+      }
+    }
+  }
+  for (const referenceType of referenceTypes.values()) {
+    assertNoInlineCycle(referenceType, referenceTypes, new Set());
+  }
+}
+
+function assertNoInlineCycle(
+  referenceType: ReferenceType,
+  referenceTypes: ReadonlyMap<string, ReferenceType>,
+  onPath: ReadonlySet<string>,
+): void {
+  if (onPath.has(referenceType.name)) {
+    throw new Error(
+      `Inline reference cycle through reference type “${referenceType.name}”; an inline reference graph must be acyclic, so its framing depth stays bounded.`,
+    );
+  }
+  const extended = new Set([...onPath, referenceType.name]);
+  for (const field of referenceType.fields) {
+    if (!isInlineReference(field)) {
+      continue;
+    }
+    // Resolvability is validated before any cycle check, so every inline
+    // `typeName` here names a declared reference type.
+    const referent = referenceTypes.get(field.ref.typeName) as ReferenceType;
+    assertNoInlineCycle(referent, referenceTypes, extended);
+  }
 }
 
 /**
@@ -554,7 +746,7 @@ interface FlatField extends SearchFieldBase, Searchable, RangeFacetable {
  */
 export function assertTypeInSchema(
   schema: SearchSchema,
-  searchType: SearchType,
+  searchType: RootType,
 ): void {
   if (schema.get(searchType.class) !== searchType) {
     throw new Error(

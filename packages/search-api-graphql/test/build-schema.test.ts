@@ -6,6 +6,7 @@ import {
   type SearchEngine,
   type SearchQuery,
   type SearchResult,
+  type RootType,
   type SearchType,
 } from '@lde/search';
 import { buildGraphQLSchema, type SearchContext } from '../src/build-schema.js';
@@ -648,7 +649,7 @@ describe('buildGraphQLSchema', () => {
       expect(sdl).toMatch(/enum PersonSortField/);
       expect(sdl).toMatch(/input CreativeWorkWhere/);
       // Person has no filterable fields, so it gets no `where` arg (an empty
-      // input object would be invalid GraphQL) — CreativeWork keeps its own.
+      // input object would be invalid GraphQL) – CreativeWork keeps its own.
       expect(sdl).not.toMatch(/PersonWhere/);
       // The shared reference shape is emitted once, reused by both types.
       expect(sdl.match(/^type Agent /gm)).toHaveLength(1);
@@ -658,7 +659,7 @@ describe('buildGraphQLSchema', () => {
       const searchedTypes: string[] = [];
       const engine: SearchEngine = {
         schema: searchSchema(PERSON, CREATIVE_WORK),
-        async search(searchType: SearchType): Promise<SearchResult> {
+        async search(searchType: RootType): Promise<SearchResult> {
           searchedTypes.push(searchType.class);
           return { total: 0, hits: [], facets: {} };
         },
@@ -692,7 +693,7 @@ describe('buildGraphQLSchema', () => {
             name: 'author',
             kind: 'reference',
             output: true,
-            // Person is also a root type in this schema — same GraphQL name.
+            // Person is also a root type in this schema – same GraphQL name.
             ref: { typeName: 'Person', strategy: 'labelOnly' },
           },
         ],
@@ -713,7 +714,7 @@ describe('buildGraphQLSchema', () => {
       expect(() => searchSchema(PERSON, alsoPerson)).toThrow(
         /Duplicate search type name “Person”/,
       );
-      // @ts-expect-error — a hand-built map is not a (branded) SearchSchema
+      // @ts-expect-error – a hand-built map is not a (branded) SearchSchema
       void (() => buildGraphQLSchema(new Map([[PERSON.class, PERSON]])));
     });
 

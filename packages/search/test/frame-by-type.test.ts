@@ -154,6 +154,61 @@ describe('frameSubjects', () => {
     expect(framed.map((node) => node['@id'])).toEqual(['https://ex/d/1']);
   });
 
+  it('embeds only one hop by default, but follows the reference graph to a declared depth', async () => {
+    // Two hops of forward references – the Dataset Register’s IIIF shape:
+    // dataset → void:subset → dqv:hasQualityMeasurement → dqv:value.
+    const subset = 'http://rdfs.org/ns/void#subset';
+    const measurement = 'http://www.w3.org/ns/dqv#hasQualityMeasurement';
+    const value = 'http://www.w3.org/ns/dqv#value';
+    const ntriples = `
+      <https://ex/d/1> <${subset}> <https://ex/s/1> .
+      <https://ex/s/1> <${measurement}> <https://ex/m/1> .
+      <https://ex/m/1> <${value}> "42" .
+    `;
+
+    // Depth 1: the subset is embedded, but its measurement is not resolved past
+    // its @id (the grandchild’s value is absent).
+    const [shallow] = await collect(
+      frameSubjects(buildSubjectIndex(quads(ntriples)), ['https://ex/d/1'], 1),
+    );
+    expect(shallow[subset]).toMatchObject({ '@id': 'https://ex/s/1' });
+    expect(
+      (shallow[subset] as Record<string, unknown>)[measurement],
+    ).toMatchObject({ '@id': 'https://ex/m/1' });
+    expect(
+      (
+        (shallow[subset] as Record<string, unknown>)[measurement] as Record<
+          string,
+          unknown
+        >
+      )[value],
+    ).toBeUndefined();
+
+    // Depth 2: the grandchild measurement’s value is embedded too.
+    const [deep] = await collect(
+      frameSubjects(buildSubjectIndex(quads(ntriples)), ['https://ex/d/1'], 2),
+    );
+    const deepMeasurement = (deep[subset] as Record<string, unknown>)[
+      measurement
+    ] as Record<string, unknown>;
+    expect(deepMeasurement[value]).toBe('42');
+  });
+
+  it('terminates on a reference cycle in the data, visiting each subject once', async () => {
+    // a → b → a is a cycle; a diamond (a → b, a → c, b → d, c → d) revisits d.
+    // Both would loop or duplicate without the visited set.
+    const link = dcterms.source.value;
+    const index = buildSubjectIndex(
+      quads(`
+        <https://ex/a> <${link}> <https://ex/b> .
+        <https://ex/b> <${link}> <https://ex/a> .
+      `),
+    );
+    const [node] = await collect(frameSubjects(index, ['https://ex/a'], 5));
+    expect(node['@id']).toBe('https://ex/a');
+    expect(node[link]).toMatchObject({ '@id': 'https://ex/b' });
+  });
+
   it('frames nothing for a root absent from the index', async () => {
     expect(
       await collect(

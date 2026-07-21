@@ -8,11 +8,15 @@ import {
 import {
   assertTypeInSchema,
   displayFieldName,
+  inlineFramingDepth,
   isInternalField,
+  isInlineReference,
   isoToUnixSeconds,
   physicalFields,
+  referenceTypeNamed,
   type KeywordField,
   type ReferenceField,
+  type RootType,
   type SearchField,
   type SearchSchema,
   type SearchType,
@@ -30,31 +34,81 @@ export type SearchDocument = { id: string } & Record<string, unknown>;
  * statement of what the projection reads. {@link isInternalField Internal
  * fields} (those declaring no role) are populated so a later derive can read
  * them, then pruned before the document is returned: they must reach neither a
- * writer nor the collection definition. The physical field names a field fans
- * out to come from {@link physicalFields}, the single source shared with the
- * engine collection definition and the query compiler.
+ * writer nor the collection definition. Pruning ({@link pruneInternalFields})
+ * recurses into the referents of surfaced inline references, so that invariant
+ * holds at every depth, not just the root. The physical field names a field
+ * fans out to come from {@link physicalFields}, the single source shared with
+ * the engine collection definition and the query compiler.
  */
 export function projectDocument(
   node: FramedNode,
   searchType: SearchType,
+  schema?: SearchSchema,
+): SearchDocument {
+  const document = projectFields(node, searchType, schema);
+  pruneInternalFields(document, searchType, schema);
+  return document;
+}
+
+/**
+ * Prune every internal field from a fully projected document, in place. Runs
+ * only after all projection – so every derive that might read an internal
+ * field, at any depth, has already run – which makes this single post-order
+ * pass safe. A no-role inline reference is itself internal, so it is deleted
+ * whole here; a surfaced (`output`) inline reference survives, but its own
+ * internal helper fields are pruned from the nested document. That keeps the
+ * *a field without a role reaches neither the engine nor the API* invariant
+ * true at every depth of the reference graph, not just at the root.
+ */
+function pruneInternalFields(
+  document: SearchDocument,
+  searchType: SearchType,
+  schema: SearchSchema | undefined,
+): void {
+  for (const field of searchType.fields) {
+    if (isInternalField(field)) {
+      delete document[field.name];
+      continue;
+    }
+    // A surfaced inline reference nests its referent(s) as SearchDocument(s);
+    // prune those too, by their reference type.
+    if (schema === undefined || field.kind !== 'reference') {
+      continue;
+    }
+    const ref = field.ref;
+    if (ref?.strategy !== 'inline') {
+      continue;
+    }
+    const referenceType = referenceTypeNamed(schema, ref.typeName);
+    const nested = document[field.name];
+    if (referenceType === undefined || nested === undefined) {
+      continue;
+    }
+    for (const referent of Array.isArray(nested) ? nested : [nested]) {
+      pruneInternalFields(referent as SearchDocument, referenceType, schema);
+    }
+  }
+}
+
+/** Apply every field of `searchType` to a fresh document, without pruning – the
+ *  shared core of {@link projectDocument} and inline-referent projection.
+ *  Pruning is deferred to a single recursive pass ({@link pruneInternalFields})
+ *  once the whole nested structure is projected, so a derive at any depth can
+ *  still read an internal field before it is removed. */
+function projectFields(
+  node: FramedNode,
+  searchType: SearchType,
+  schema: SearchSchema | undefined,
 ): SearchDocument {
   const id = node['@id'];
   if (typeof id !== 'string') {
     throw new Error(
-      `Cannot project a ${searchType.class} node without an @id: every search document needs a stable key, and an empty one would collide with other keyless nodes.`,
+      `Cannot project a “${searchType.name}” node without an @id: every search document needs a stable key, and an empty one would collide with other keyless nodes.`,
     );
   }
   const document: SearchDocument = { id };
   for (const field of searchType.fields) {
-    applyField(document, node, field);
-  }
-  // Prune internal fields: they were projected only so the derives above could
-  // read them (a structural memo shared across every derive that needs the
-  // value), and must not reach the writer or the collection definition.
-  for (const field of searchType.fields) {
-    if (isInternalField(field)) {
-      delete document[field.name];
-    }
+    applyField(document, node, field, schema);
   }
   return document;
 }
@@ -76,7 +130,7 @@ export async function* projectRoots(
   quads: Iterable<Quad>,
   roots: readonly string[],
   schema: SearchSchema,
-  searchType: SearchType,
+  searchType: RootType,
 ): AsyncIterable<SearchDocument> {
   assertTypeInSchema(schema, searchType);
   const index = buildSubjectIndex(quads);
@@ -84,8 +138,9 @@ export async function* projectRoots(
   // non-`DISTINCT` `SELECT` over a one-to-many join yields the same subject per
   // matched row – and a repeated root would otherwise frame and emit a
   // duplicate document under the same `id`.
-  for await (const node of frameSubjects(index, [...new Set(roots)])) {
-    yield projectDocument(node, searchType);
+  const depth = inlineFramingDepth(schema, searchType);
+  for await (const node of frameSubjects(index, [...new Set(roots)], depth)) {
+    yield projectDocument(node, searchType, schema);
   }
 }
 
@@ -93,6 +148,7 @@ function applyField(
   document: SearchDocument,
   node: FramedNode,
   field: SearchField,
+  schema: SearchSchema | undefined,
 ): void {
   if (field.derive !== undefined) {
     const value = field.derive(document);
@@ -104,6 +160,16 @@ function applyField(
   const path = field.path;
   if (path === undefined) {
     // Neither path nor derive: populated outside the projection, if at all.
+    return;
+  }
+  if (isInlineReference(field)) {
+    // An inline reference is a nested structure, not a bare IRI: it can only be
+    // projected with the schema that declares its reference type. Without one,
+    // project nothing rather than fall through and emit the referent IRIs under
+    // the field name (the wrong shape).
+    if (schema !== undefined) {
+      applyInlineReference(document, node, path, field, schema);
+    }
     return;
   }
   switch (field.kind) {
@@ -220,6 +286,43 @@ function applyFacet(
       dedupe(values.map((value) => fold(value))),
     );
   }
+}
+
+/**
+ * Project an inline reference: the referent node(s) embedded under `path` are
+ * each projected through the reference’s {@link ReferenceType} (its fields’
+ * paths relative to the referent node) and attached under the field’s name – a
+ * nested {@link SearchDocument} for a single reference, an array for an
+ * `array` one. The referent is projected in full – internal fields included –
+ * so the declaring type’s (or the reference type’s own) derives can read them;
+ * {@link pruneInternalFields} then removes the internal fields from a *surfaced*
+ * referent and deletes an internal inline reference whole. Recurses through
+ * `schema`, so an inline reference may itself carry further inline references to
+ * the schema’s declared depth. The referent type is guaranteed declared by
+ * {@link searchSchema}.
+ */
+function applyInlineReference(
+  document: SearchDocument,
+  node: FramedNode,
+  path: string,
+  field: ReferenceField & { readonly ref: { readonly typeName: string } },
+  schema: SearchSchema,
+): void {
+  // Resolves for a schema that declares the referent (always so for the schema a
+  // type is projected through); a type framed against a foreign schema that
+  // omits it simply contributes no nesting.
+  const referenceType = referenceTypeNamed(schema, field.ref.typeName);
+  if (referenceType === undefined) {
+    return;
+  }
+  const referents = valuesOf(node, path)
+    .filter(isObject)
+    .filter((referent) => typeof referent['@id'] === 'string')
+    .map((referent) => projectFields(referent, referenceType, schema));
+  if (referents.length === 0) {
+    return;
+  }
+  document[field.name] = field.array === true ? referents : referents[0];
 }
 
 // --- Framed-IR readers: read a declared `path` off the framed node. Internal

@@ -7,8 +7,8 @@ import type { RunContext, Writer } from '@lde/pipeline';
 import {
   projectRoots,
   searchSchema,
+  type RootType,
   type SearchDocument,
-  type SearchType,
 } from '@lde/search';
 import { BlueGreenRebuild } from '@lde/search-typesense';
 import { searchIndexWriter } from '../src/search-index-writer.js';
@@ -50,8 +50,8 @@ const schema = searchSchema(
   },
 );
 
-const datasetType = schema.get(DATASET) as SearchType;
-const organizationType = schema.get(ORGANIZATION) as SearchType;
+const datasetType = schema.get(DATASET) as RootType;
+const organizationType = schema.get(ORGANIZATION) as RootType;
 
 const COLLECTION: Record<string, string> = {
   [DATASET]: 'datasets',
@@ -81,7 +81,7 @@ function mixedQuads(): Quad[] {
 async function paired(
   quads: readonly Quad[],
   roots: readonly string[],
-  searchType: SearchType,
+  searchType: RootType,
 ): Promise<TypedSearchDocument[]> {
   const documents: TypedSearchDocument[] = [];
   for await (const document of projectRoots(quads, roots, schema, searchType)) {
@@ -113,7 +113,7 @@ function makeRunContext(): RunContext {
 
 function blueGreenFor(
   client: Client,
-): (searchType: SearchType) => Writer<SearchDocument> {
+): (searchType: RootType) => Writer<SearchDocument> {
   return (searchType) =>
     new BlueGreenRebuild(client, searchType, {
       name: COLLECTION[searchType.class],
@@ -201,7 +201,7 @@ describe('searchIndexWriter over multiple Typesense collections', () => {
   it('lets the datasets index go live even when a label collection fails to commit', async () => {
     // The Organization rebuild fails at commit, before its alias swaps. The
     // datasets index must still go live; the failure must surface.
-    const failing: (searchType: SearchType) => Writer<SearchDocument> = (
+    const failing: (searchType: RootType) => Writer<SearchDocument> = (
       searchType,
     ) => {
       const real = blueGreenFor(client)(searchType);

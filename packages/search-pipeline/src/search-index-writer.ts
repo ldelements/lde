@@ -6,21 +6,22 @@ import {
   type RunWriter,
   type Writer,
 } from '@lde/pipeline';
-import type { SearchDocument, SearchSchema, SearchType } from '@lde/search';
+import type { RootType, SearchDocument, SearchSchema } from '@lde/search';
 import type { TypedSearchDocument } from './typed-search-document.js';
 
 /** Options for {@link searchIndexWriter}. */
 export interface SearchIndexWriterOptions {
   /**
-   * The declarative schema: one {@link SearchType} per root type. The writer
-   * opens one engine run per type in it and routes each document to its type’s
-   * run. Must be the same schema the stages project through.
+   * The declarative schema: one {@link RootType} per collection. The writer
+   * opens one engine run per Root Type in it and routes each document to its
+   * type’s run. Reference Types are absent from `schema.values()`, so none ever
+   * earns a run. Must be the same schema the stages project through.
    */
   schema: SearchSchema;
   /**
    * The engine writer that owns a given root type’s collection – e.g. a
    * `@lde/search-typesense` `BlueGreenRebuild` bound to that type and the
-   * collection name it keeps its alias on. Called once per {@link SearchType}
+   * collection name it keeps its alias on. Called once per {@link RootType}
    * in the schema when the writer is built.
    *
    * A single-collection deployment returns one writer for its one type; a
@@ -30,7 +31,7 @@ export interface SearchIndexWriterOptions {
    * own collection, alias and cross-pod lock. The per-collection fan-out is this
    * writer’s job.
    */
-  writerFor: (searchType: SearchType) => Writer<SearchDocument>;
+  writerFor: (searchType: RootType) => Writer<SearchDocument>;
 }
 
 /**
@@ -113,7 +114,7 @@ export function searchIndexWriter(
             string,
             { queue: AsyncQueue<SearchDocument>; done: Promise<void> }
           >();
-          const laneFor = (searchType: SearchType) => {
+          const laneFor = (searchType: RootType) => {
             let lane = lanes.get(searchType.class);
             if (lane === undefined) {
               const run = runs.get(searchType.class);
