@@ -1,3 +1,54 @@
+## 0.10.0 (2026-07-21)
+
+### 🚀 Features
+
+- ⚠️  **search:** implement inline references and class-less reference types ([#629](https://github.com/ldelements/lde/pull/629))
+
+### ⚠️  Breaking Changes
+
+- **search:** implement inline references and class-less reference types  ([#629](https://github.com/ldelements/lde/pull/629))
+  class is now optional on SearchType (a reference type declares
+  none); an inline ref.typeName is resolved and cycle-checked at searchSchema
+  construction.
+  * feat(search): prune internal fields recursively through surfaced inline referents
+  - Prune internal (no-role) fields at every depth: a surfaced (output)
+    inline reference now has its referent's internal helper fields removed
+    before the writer, so the "a field without a role reaches neither the
+    engine nor the API" invariant holds inside nested documents, not just
+    at the root.
+  - Pruning runs as one post-order pass after all projection, so a derive
+    at any depth still reads a helper field before it is removed.
+  - Mark ADR 11 Accepted."
+  M	docs/decisions/0011-decouple-rdf-depth-from-the-api-surface.md
+  M	packages/search-api-graphql/src/build-schema.ts
+  M	packages/search-api-graphql/src/facet-batch.ts
+  M	packages/search-api-graphql/test/build-schema.test.ts
+  M	packages/search-pipeline/src/search-index-writer.ts
+  M	packages/search-pipeline/src/search-stages.ts
+  M	packages/search-pipeline/src/typed-search-document.ts
+  M	packages/search-pipeline/test/multi-collection.integration.test.ts
+  M	packages/search-pipeline/test/search-index-writer.test.ts
+  M	packages/search-pipeline/test/search-stages.test.ts
+  M	packages/search-typesense/src/search.ts
+  M	packages/search-typesense/test/collection-name.test.ts
+  M	packages/search/README.md
+  M	packages/search/src/adapter.ts
+  M	packages/search/src/engine.ts
+  M	packages/search/src/frame-by-type.ts
+  M	packages/search/src/index.ts
+  M	packages/search/src/project.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/src/testing.ts
+  M	packages/search/test/frame-by-type.test.ts
+  M	packages/search/test/project.test.ts
+  M	packages/search/test/schema.test.ts
+  M	packages/search/vite.config.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.13.0
+- Updated @lde/search to 0.11.0
+
 ## 0.9.0 (2026-07-19)
 
 ### 🚀 Features
