@@ -10,6 +10,7 @@ import {
   type RootType,
   type SearchDocument,
 } from '@lde/search';
+import { irAlias } from '@lde/search/adapter';
 import { BlueGreenRebuild } from '@lde/search-typesense';
 import { searchIndexWriter } from '../src/search-index-writer.js';
 import type { TypedSearchDocument } from '../src/typed-search-document.js';
@@ -53,6 +54,11 @@ const schema = searchSchema(
 const datasetType = schema.get(DATASET) as RootType;
 const organizationType = schema.get(ORGANIZATION) as RootType;
 
+// The Extraction CONSTRUCT emits values under the field’s IR Alias; the framed
+// quads fed to the projection are keyed by it, not by the source path.
+const TITLE_ALIAS = irAlias(datasetType, datasetType.fields[0]);
+const NAME_ALIAS = irAlias(organizationType, organizationType.fields[0]);
+
 const COLLECTION: Record<string, string> = {
   [DATASET]: 'datasets',
   [ORGANIZATION]: 'organizations',
@@ -67,13 +73,21 @@ const dataset = new Dataset({
 function mixedQuads(): Quad[] {
   return [
     quad(namedNode('https://ex/d/1'), namedNode(RDF_TYPE), namedNode(DATASET)),
-    quad(namedNode('https://ex/d/1'), namedNode(TITLE), literal('Verhaal')),
+    quad(
+      namedNode('https://ex/d/1'),
+      namedNode(TITLE_ALIAS),
+      literal('Verhaal'),
+    ),
     quad(
       namedNode('https://ex/o/1'),
       namedNode(RDF_TYPE),
       namedNode(ORGANIZATION),
     ),
-    quad(namedNode('https://ex/o/1'), namedNode(NAME), literal('Rijksmuseum')),
+    quad(
+      namedNode('https://ex/o/1'),
+      namedNode(NAME_ALIAS),
+      literal('Rijksmuseum'),
+    ),
   ];
 }
 

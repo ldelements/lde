@@ -1,10 +1,12 @@
 import {
+  SparqlConstructReader,
   SparqlItemSelector,
   Stage,
   type ItemSelector,
   type StageReaders,
 } from '@lde/pipeline';
 import { projectRoots, type RootType, type SearchSchema } from '@lde/search';
+import { extractionQueryString } from './extraction.js';
 import type { TypedSearchDocument } from './typed-search-document.js';
 
 /** One root type’s stage in a search pipeline. */
@@ -30,8 +32,16 @@ export interface SearchStageType {
    * convenience for the object grain, not a default.
    */
   itemSelector: ItemSelector;
-  /** Reader(s) that extract each selected root’s quads. */
-  readers: StageReaders;
+  /**
+   * Reader(s) that extract each selected root’s quads. Defaults to a single
+   * {@link SparqlConstructReader} running the **Extraction** CONSTRUCT generated
+   * from `searchType` ({@link extractionQuery}), with `rootVariable` as the free
+   * subject the batch’s roots bind to – the schema-derived reader the projection
+   * is guaranteed to agree with (they share the {@link irAlias} convention).
+   * Supply your own only to read from a non-SPARQL source, merge several
+   * readers, or attach transforms.
+   */
+  readers?: StageReaders;
   /**
    * Roots (and so documents) per batch – the memory bound. Under a root-bound
    * selector it moves memory and request count, never output.
@@ -88,9 +98,19 @@ export function searchStages(
       );
     }
     const { rootVariable } = type;
+    // Default to the Extraction CONSTRUCT generated from the schema, its subject
+    // left free for the batch’s VALUES injection. The reader and the projection
+    // then agree by construction: both key off the same IR Aliases.
+    const readers =
+      type.readers ??
+      new SparqlConstructReader({
+        query: extractionQueryString(searchType, schema, {
+          subjectVariable: rootVariable,
+        }),
+      });
     return new Stage<TypedSearchDocument>({
       name: searchType.name,
-      readers: type.readers,
+      readers,
       itemSelector: type.itemSelector,
       batchSize: type.batchSize,
       maxConcurrency: type.maxConcurrency,
