@@ -920,6 +920,27 @@ export function fieldNamed(
 }
 
 /**
+ * The **IR Alias** predicate for a field: `urn:lde:‹SearchType.name›/‹field.name›`.
+ * The extraction CONSTRUCT emits a field’s value under this minted predicate, and
+ * the {@link projectDocument projection} reads it back under the same key – the
+ * two sides agree by calling this one function rather than by a hand-written
+ * convention that can drift (exactly the argument {@link physicalFields}’ JSDoc
+ * makes for the physical fanout).
+ *
+ * A property path cannot be a CONSTRUCT template verb, so flattening a multi-hop
+ * value onto its subject must mint a predicate for it; that predicate is a
+ * mechanical function of the field name, never authored by hand and never a
+ * public vocabulary. Field names are unique per type and restricted to
+ * `[A-Za-z_][A-Za-z0-9_]*` ({@link validateSearchType}), so the alias needs no
+ * escaping; it is qualified by the **type** name because one subject can be a
+ * root of two types (`frame-by-type`), which must not collide on a shared field
+ * name.
+ */
+export function irAlias(searchType: SearchType, field: SearchField): string {
+  return `urn:lde:${searchType.name}/${field.name}`;
+}
+
+/**
  * Whether a facet on this field returns fixed range bins (a histogram) rather
  * than one bucket per distinct value: it declares non-empty
  * {@link RangeFacetable.facetRanges}. One predicate for the surface’s facet

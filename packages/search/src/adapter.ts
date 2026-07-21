@@ -9,6 +9,7 @@
 export {
   assertTypeInSchema,
   physicalFields,
+  irAlias,
   displayFieldName,
   displayFieldPattern,
   displayLangOf,

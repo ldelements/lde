@@ -9,6 +9,7 @@ import {
   fieldNamed,
   filterableFields,
   inlineFramingDepth,
+  irAlias,
   isoToUnixSeconds,
   isRangeFacet,
   outputFields,
@@ -156,6 +157,33 @@ describe('physicalFields', () => {
       search: [],
       sort: [],
     });
+  });
+});
+
+describe('irAlias', () => {
+  const dataset: SearchType = {
+    name: 'Dataset',
+    class: DATASET,
+    fields: [{ name: 'publisherName', kind: 'text', locales: ['nl'] }],
+  };
+  const person: SearchType = {
+    name: 'Person',
+    fields: [{ name: 'label', kind: 'text', locales: ['nl'] }],
+  };
+
+  it('mints urn:lde:‹Type›/‹field› from the type and field names', () => {
+    expect(irAlias(dataset, dataset.fields[0])).toBe(
+      'urn:lde:Dataset/publisherName',
+    );
+  });
+
+  it('qualifies by type name, so one subject can be a root of two types', () => {
+    // Same field name, different declaring type → distinct aliases.
+    const datasetLabel = { name: 'label', kind: 'text', locales: ['nl'] };
+    expect(irAlias(dataset, datasetLabel as SearchField)).not.toBe(
+      irAlias(person, person.fields[0]),
+    );
+    expect(irAlias(person, person.fields[0])).toBe('urn:lde:Person/label');
   });
 });
 

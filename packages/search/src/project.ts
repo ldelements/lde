@@ -9,6 +9,7 @@ import {
   assertTypeInSchema,
   displayFieldName,
   inlineFramingDepth,
+  irAlias,
   isInternalField,
   isInlineReference,
   isoToUnixSeconds,
@@ -108,7 +109,7 @@ function projectFields(
   }
   const document: SearchDocument = { id };
   for (const field of searchType.fields) {
-    applyField(document, node, field, schema);
+    applyField(document, node, field, searchType, schema);
   }
   return document;
 }
@@ -148,6 +149,7 @@ function applyField(
   document: SearchDocument,
   node: FramedNode,
   field: SearchField,
+  searchType: SearchType,
   schema: SearchSchema | undefined,
 ): void {
   if (field.derive !== undefined) {
@@ -157,42 +159,48 @@ function applyField(
     }
     return;
   }
-  const path = field.path;
-  if (path === undefined) {
+  if (field.path === undefined) {
     // Neither path nor derive: populated outside the projection, if at all.
     return;
   }
+  // The framed node is keyed by the {@link irAlias IR Alias} the extraction
+  // CONSTRUCT minted, not by the source `path`: `path` states what to read from
+  // the graph (the reader adapter’s grammar), the alias is what the reader
+  // emitted it under. Minting against `searchType` – a root field against the
+  // root type, an inline referent’s field against its reference type – is what
+  // lets one subject be a root of two types without their fields colliding.
+  const alias = irAlias(searchType, field);
   if (isInlineReference(field)) {
     // An inline reference is a nested structure, not a bare IRI: it can only be
     // projected with the schema that declares its reference type. Without one,
     // project nothing rather than fall through and emit the referent IRIs under
     // the field name (the wrong shape).
     if (schema !== undefined) {
-      applyInlineReference(document, node, path, field, schema);
+      applyInlineReference(document, node, alias, field, schema);
     }
     return;
   }
   switch (field.kind) {
     case 'text':
-      return applyText(document, langValuesOf(node, path), field);
+      return applyText(document, langValuesOf(node, alias), field);
     case 'keyword':
-      return applyFacet(document, literalsOf(node, path), field);
+      return applyFacet(document, literalsOf(node, alias), field);
     case 'reference':
-      return applyFacet(document, irisOf(node, path), field);
+      return applyFacet(document, irisOf(node, alias), field);
     case 'integer':
       return setNumber(
         document,
         field.name,
-        toInteger(firstLiteralOf(node, path)),
+        toInteger(firstLiteralOf(node, alias)),
       );
     case 'number':
       return setNumber(
         document,
         field.name,
-        toNumber(firstLiteralOf(node, path)),
+        toNumber(firstLiteralOf(node, alias)),
       );
     case 'date': {
-      const literal = firstLiteralOf(node, path);
+      const literal = firstLiteralOf(node, alias);
       return setNumber(
         document,
         field.name,
@@ -201,7 +209,7 @@ function applyField(
     }
     case 'boolean': {
       // The xsd:boolean lexical space: true/false/1/0.
-      const literal = firstLiteralOf(node, path);
+      const literal = firstLiteralOf(node, alias);
       if (literal !== undefined) {
         document[field.name] = literal === 'true' || literal === '1';
       }
@@ -289,12 +297,13 @@ function applyFacet(
 }
 
 /**
- * Project an inline reference: the referent node(s) embedded under `path` are
- * each projected through the reference’s {@link ReferenceType} (its fields’
- * paths relative to the referent node) and attached under the field’s name – a
- * nested {@link SearchDocument} for a single reference, an array for an
- * `array` one. The referent is projected in full – internal fields included –
- * so the declaring type’s (or the reference type’s own) derives can read them;
+ * Project an inline reference: the referent node(s) embedded under the field’s
+ * {@link irAlias IR Alias} are each projected through the reference’s
+ * {@link ReferenceType} (whose own fields read their own aliases, minted against
+ * the reference type) and attached under the field’s name – a nested
+ * {@link SearchDocument} for a single reference, an array for an `array` one.
+ * The referent is projected in full – internal fields included – so the
+ * declaring type’s (or the reference type’s own) derives can read them;
  * {@link pruneInternalFields} then removes the internal fields from a *surfaced*
  * referent and deletes an internal inline reference whole. Recurses through
  * `schema`, so an inline reference may itself carry further inline references to
@@ -304,7 +313,7 @@ function applyFacet(
 function applyInlineReference(
   document: SearchDocument,
   node: FramedNode,
-  path: string,
+  alias: string,
   field: ReferenceField & { readonly ref: { readonly typeName: string } },
   schema: SearchSchema,
 ): void {
@@ -315,7 +324,7 @@ function applyInlineReference(
   if (referenceType === undefined) {
     return;
   }
-  const referents = valuesOf(node, path)
+  const referents = valuesOf(node, alias)
     .filter(isObject)
     .filter((referent) => typeof referent['@id'] === 'string')
     .map((referent) => projectFields(referent, referenceType, schema));
@@ -325,9 +334,11 @@ function applyInlineReference(
   document[field.name] = field.array === true ? referents : referents[0];
 }
 
-// --- Framed-IR readers: read a declared `path` off the framed node. Internal
-// to projection – a `derive` reads the projected document, never the node, so
-// `path` stays the whole statement of what the projection reads from the graph.
+// --- Framed-IR readers: read a field’s value off the framed node by its
+// {@link irAlias IR Alias} key. Internal to projection – a `derive` reads the
+// projected document, never the node, so `path` stays the whole statement of
+// what the projection reads from the graph, and the alias the whole statement of
+// what the reader emitted it under.
 
 /** A literal value with its (possibly empty) language tag. */
 interface LangValue {
@@ -335,30 +346,30 @@ interface LangValue {
   readonly lang: string;
 }
 
-function langValuesOf(node: FramedNode, path: string): LangValue[] {
-  return valuesOf(node, path)
+function langValuesOf(node: FramedNode, key: string): LangValue[] {
+  return valuesOf(node, key)
     .map(toLangValue)
     .filter((value): value is LangValue => value !== undefined);
 }
 
-function literalsOf(node: FramedNode, path: string): string[] {
-  return valuesOf(node, path)
+function literalsOf(node: FramedNode, key: string): string[] {
+  return valuesOf(node, key)
     .map(literalString)
     .filter((value): value is string => value !== undefined);
 }
 
-function firstLiteralOf(node: FramedNode, path: string): string | undefined {
-  return literalsOf(node, path)[0];
+function firstLiteralOf(node: FramedNode, key: string): string | undefined {
+  return literalsOf(node, key)[0];
 }
 
-function irisOf(node: FramedNode, path: string): string[] {
-  return valuesOf(node, path)
+function irisOf(node: FramedNode, key: string): string[] {
+  return valuesOf(node, key)
     .map(iriString)
     .filter((value): value is string => value !== undefined);
 }
 
-function valuesOf(node: FramedNode, path: string): unknown[] {
-  const value = node[path];
+function valuesOf(node: FramedNode, key: string): unknown[] {
+  const value = node[key];
   if (value === undefined) {
     return [];
   }

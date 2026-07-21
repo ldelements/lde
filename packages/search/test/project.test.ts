@@ -17,19 +17,26 @@ const DR = 'urn:dr:';
 const IANA = 'https://www.iana.org/assignments/media-types/';
 const DATASET = dcat.Dataset.value;
 
+// The extraction CONSTRUCT emits each value under its field’s IR Alias
+// (`urn:lde:‹Type›/‹field›`), and the projection reads it back under that key –
+// never under the source `path`. Framed nodes here are therefore keyed by the
+// alias, which is a function of the declaring type name and the field name.
+const alias = (type: string, field: string) => `urn:lde:${type}/${field}`;
+const dsKey = (field: string) => alias('Dataset', field);
+
 const node = {
   '@id': 'https://ex/d/1',
-  [dcterms.title.value]: [
+  [dsKey('title')]: [
     { '@language': 'nl', '@value': 'Titel' },
     { '@language': 'en', '@value': 'Title' },
   ],
-  [dcterms.publisher.value]: { '@id': 'https://ex/o/1' },
-  [`${DR}publisherName`]: { '@language': 'nl', '@value': 'Erfgoed' },
-  [dcat.keyword.value]: [{ '@language': 'nl', '@value': 'Erfgoed' }],
-  [`${DR}format`]: [`${IANA}text/turtle`],
-  [`${DR}class`]: [{ '@id': 'http://schema.org/Person' }],
-  [`${DR}datePosted`]: { '@value': '2024-01-01T00:00:00.000Z' },
-  [`${DR}size`]: { '@type': xsd.integer.value, '@value': '1234' },
+  [dsKey('publisher')]: { '@id': 'https://ex/o/1' },
+  [dsKey('publisherName')]: { '@language': 'nl', '@value': 'Erfgoed' },
+  [dsKey('keyword')]: [{ '@language': 'nl', '@value': 'Erfgoed' }],
+  [dsKey('format')]: [`${IANA}text/turtle`],
+  [dsKey('class')]: [{ '@id': 'http://schema.org/Person' }],
+  [dsKey('date_posted')]: { '@value': '2024-01-01T00:00:00.000Z' },
+  [dsKey('size')]: { '@type': xsd.integer.value, '@value': '1234' },
 };
 
 const fields: SearchField[] = [
@@ -126,10 +133,10 @@ describe('projectDocument', () => {
     const document = projectDocument(
       {
         '@id': 'https://ex/d/3',
-        [`${DR}size`]: { '@value': 42 },
-        [dcterms.language.value]: { '@value': true },
-        [dcat.keyword.value]: 'bareString',
-        [`${DR}class`]: 'http://example.org/BareClass',
+        [dsKey('size')]: { '@value': 42 },
+        [dsKey('language')]: { '@value': true },
+        [dsKey('keyword')]: 'bareString',
+        [dsKey('class')]: 'http://example.org/BareClass',
       },
       {
         name: 'Dataset',
@@ -170,7 +177,7 @@ describe('projectDocument', () => {
 
   it('projects a number field as a float (not truncated like integer)', () => {
     const document = projectDocument(
-      { '@id': 'https://ex/d/12', [`${DR}size`]: { '@value': '1234.5' } },
+      { '@id': 'https://ex/d/12', [dsKey('size')]: { '@value': '1234.5' } },
       {
         name: 'Dataset',
         class: DATASET,
@@ -192,7 +199,7 @@ describe('projectDocument', () => {
     };
     const project = (value: unknown): SearchDocument =>
       projectDocument(
-        { '@id': 'https://ex/d/5', [`${DR}iiif`]: { '@value': value } },
+        { '@id': 'https://ex/d/5', [dsKey('iiif')]: { '@value': value } },
         withBoolean,
       );
 
@@ -207,7 +214,7 @@ describe('projectDocument', () => {
 
   it('folds the transformed values (not the raw ones) for a facet search field', () => {
     const document = projectDocument(
-      { '@id': 'https://ex/d/4', [`${DR}format`]: [`${IANA}text/turtle`] },
+      { '@id': 'https://ex/d/4', [dsKey('format')]: [`${IANA}text/turtle`] },
       {
         name: 'Dataset',
         class: DATASET,
@@ -230,7 +237,7 @@ describe('projectDocument', () => {
     const document = projectDocument(
       {
         '@id': 'https://ex/d/2',
-        [dcterms.title.value]: { '@language': 'nl', '@value': 'Solo' },
+        [dsKey('title')]: { '@language': 'nl', '@value': 'Solo' },
       },
       { name: 'Dataset', class: DATASET, fields },
     );
@@ -253,7 +260,7 @@ describe('projectDocument', () => {
     const document = projectDocument(
       {
         '@id': 'https://ex/d/6',
-        [dcterms.title.value]: { '@language': 'fr', '@value': 'Bonjour' },
+        [dsKey('title')]: { '@language': 'fr', '@value': 'Bonjour' },
       },
       { name: 'Dataset', class: DATASET, fields },
     );
@@ -273,7 +280,7 @@ describe('projectDocument', () => {
       {
         '@id': 'https://ex/d/6b',
         // Non-conformant `pt_BR` (underscore instead of hyphen) – dirty data.
-        [dcterms.title.value]: { '@language': 'pt_BR', '@value': 'Mapa' },
+        [dsKey('title')]: { '@language': 'pt_BR', '@value': 'Mapa' },
       },
       { name: 'Dataset', class: DATASET, fields },
     );
@@ -288,7 +295,7 @@ describe('projectDocument', () => {
     const document = projectDocument(
       {
         '@id': 'https://ex/d/7',
-        [dcterms.title.value]: { '@value': 'Naamloos' },
+        [dsKey('title')]: { '@value': 'Naamloos' },
       },
       { name: 'Dataset', class: DATASET, fields },
     );
@@ -304,7 +311,7 @@ describe('projectDocument', () => {
     const document = projectDocument(
       {
         '@id': 'https://ex/d/10',
-        [dcterms.title.value]: { '@language': 'nl', '@value': 'Verhalen' },
+        [dsKey('title')]: { '@language': 'nl', '@value': 'Verhalen' },
       },
       {
         name: 'Dataset',
@@ -331,7 +338,7 @@ describe('projectDocument', () => {
     const document = projectDocument(
       {
         '@id': 'https://ex/d/10b',
-        [dcterms.title.value]: [
+        [dsKey('title')]: [
           { '@language': 'nl', '@value': 'Verhalen' },
           { '@language': 'fr', '@value': 'Récits' },
         ],
@@ -364,7 +371,7 @@ describe('projectDocument', () => {
     const document = projectDocument(
       {
         '@id': 'https://ex/d/8',
-        [dcterms.title.value]: [
+        [dsKey('title')]: [
           { '@language': 'nl', '@value': 'Titel' },
           { '@language': 'nl', '@value': 'Ondertitel' },
         ],
@@ -380,7 +387,7 @@ describe('projectDocument', () => {
     const document = projectDocument(
       {
         '@id': 'https://ex/d/11',
-        [dcterms.title.value]: { '@language': 'nl', '@value': 'Titel' },
+        [dsKey('title')]: { '@language': 'nl', '@value': 'Titel' },
       },
       {
         name: 'Dataset',
@@ -427,11 +434,11 @@ describe('projectDocument', () => {
     const document = projectDocument(
       {
         '@id': 'https://ex/d/internal',
-        [`${DR}token`]: ['tok'],
-        [`${DR}ref`]: { '@id': 'https://ex/o/9' },
-        [`${DR}count`]: { '@value': '7' },
-        [`${DR}score`]: { '@value': '1.5' },
-        [`${DR}flag`]: { '@value': 'true' },
+        [dsKey('token')]: ['tok'],
+        [dsKey('ref')]: { '@id': 'https://ex/o/9' },
+        [dsKey('count')]: { '@value': '7' },
+        [dsKey('score')]: { '@value': '1.5' },
+        [dsKey('flag')]: { '@value': 'true' },
       },
       {
         name: 'Dataset',
@@ -455,7 +462,7 @@ describe('projectDocument', () => {
     const document = projectDocument(
       {
         '@id': 'https://ex/d/reading-device',
-        [`${DR}class`]: [
+        [dsKey('classes')]: [
           { '@id': 'http://schema.org/Person' },
           { '@id': 'http://schema.org/Place' },
         ],
@@ -532,18 +539,22 @@ describe('projectDocument', () => {
     const document = projectDocument(
       {
         '@id': 'https://ex/d/reg',
-        [`${DR}registration`]: [
+        [dsKey('registration')]: [
           {
             '@id': 'https://ex/r/1',
-            'https://schema.org/dateRead': { '@value': '2024-01-01T00:00:00Z' },
-            'https://schema.org/datePosted': {
+            [alias('Registration', 'dateRead')]: {
+              '@value': '2024-01-01T00:00:00Z',
+            },
+            [alias('Registration', 'datePosted')]: {
               '@value': '2024-02-01T00:00:00Z',
             },
           },
           {
             '@id': 'https://ex/r/2',
-            'https://schema.org/dateRead': { '@value': '2024-06-01T00:00:00Z' },
-            'https://schema.org/datePosted': {
+            [alias('Registration', 'dateRead')]: {
+              '@value': '2024-06-01T00:00:00Z',
+            },
+            [alias('Registration', 'datePosted')]: {
               '@value': '2024-07-01T00:00:00Z',
             },
           },
@@ -612,7 +623,7 @@ describe('projectDocument', () => {
     const document = projectDocument(
       {
         '@id': 'https://ex/d/noschema',
-        [`${DR}registration`]: { '@id': 'https://ex/r/1' },
+        [dsKey('registration')]: { '@id': 'https://ex/r/1' },
       },
       dataset,
     );
@@ -644,7 +655,7 @@ describe('projectDocument', () => {
     const document = projectDocument(
       {
         '@id': 'https://ex/d/foreign',
-        [`${DR}registration`]: { '@id': 'https://ex/r/9' },
+        [dsKey('registration')]: { '@id': 'https://ex/r/9' },
       },
       dataset,
       foreignSchema,
@@ -684,9 +695,9 @@ describe('projectDocument', () => {
     const document = projectDocument(
       {
         '@id': 'https://ex/d/api',
-        [`${DR}creator`]: {
+        [dsKey('creator')]: {
           '@id': 'https://ex/c/1',
-          'https://schema.org/name': { '@language': 'nl', '@value': 'Naam' },
+          [alias('Creator', 'label')]: { '@language': 'nl', '@value': 'Naam' },
         },
       },
       dataset,
@@ -754,11 +765,14 @@ describe('projectDocument', () => {
     const document = projectDocument(
       {
         '@id': 'https://ex/d/prune',
-        [`${DR}creator`]: [
+        [dsKey('creator')]: [
           {
             '@id': 'https://ex/c/2',
-            'https://schema.org/name': { '@language': 'nl', '@value': 'Naam' },
-            'https://schema.org/alternateName': 'Alt',
+            [alias('Creator', 'label')]: {
+              '@language': 'nl',
+              '@value': 'Naam',
+            },
+            [alias('Creator', 'rawSort')]: 'Alt',
           },
         ],
       },
@@ -781,7 +795,14 @@ describe('projectDocument', () => {
     const document = projectDocument(
       {
         '@id': 'https://ex/d/13',
-        [dcterms.title.value]: [
+        [dsKey('title')]: [
+          { '@language': 'nl', '@value': 'Café' },
+          'Untagged subtitle',
+        ],
+        // `note` reads dcterms:title too, so the extraction emits the value under
+        // its own alias as well – each field gets its own IR Alias, even when two
+        // share a source path.
+        [dsKey('note')]: [
           { '@language': 'nl', '@value': 'Café' },
           'Untagged subtitle',
         ],
@@ -833,12 +854,12 @@ describe('projectDocument', () => {
     const document = projectDocument(
       {
         '@id': 'https://ex/d/12',
-        [dcterms.title.value]: [
+        [dsKey('title')]: [
           { '@language': 'nl', '@value': 'Titel' },
           { '@language': 'nl', '@value': { nested: true } },
         ],
-        [dcat.keyword.value]: [{ '@value': { nested: true } }, 'kaart'],
-        [dcterms.publisher.value]: [{ nested: true }, { '@id': 'https://o/1' }],
+        [dsKey('keyword')]: [{ '@value': { nested: true } }, 'kaart'],
+        [dsKey('publisher')]: [{ nested: true }, { '@id': 'https://o/1' }],
       },
       {
         name: 'Dataset',
@@ -874,7 +895,7 @@ describe('projectDocument', () => {
   it('throws when the framed node has no @id', () => {
     expect(() =>
       projectDocument(
-        { [dcterms.title.value]: { '@value': 'No id' } },
+        { [dsKey('title')]: { '@value': 'No id' } },
         { name: 'Dataset', class: DATASET, fields },
       ),
     ).toThrow(/without an @id/);
@@ -886,7 +907,7 @@ describe('projectDocument', () => {
     const document = projectDocument(
       {
         '@id': 'https://ex/d/9',
-        [dcterms.title.value]: { '@language': 'nl', '@value': 'Titel' },
+        [dsKey('title')]: { '@language': 'nl', '@value': 'Titel' },
       },
       {
         name: 'Dataset',
@@ -912,8 +933,8 @@ describe('projectRoots', () => {
   it('projects exactly the given roots, without any rdf:type', async () => {
     // No type triples: the roots are supplied by the caller (the selector).
     const quads = new Parser({ format: 'N-Triples' }).parse(`
-      <https://ex/d/1> <${dcterms.title.value}> "Titel"@nl .
-      <https://ex/d/2> <${dcterms.title.value}> "Andere"@nl .
+      <https://ex/d/1> <${dsKey('title')}> "Titel"@nl .
+      <https://ex/d/2> <${dsKey('title')}> "Andere"@nl .
     `);
 
     const documents: SearchDocument[] = [];
@@ -938,7 +959,7 @@ describe('projectRoots', () => {
 
   it('frames a repeated root once (a non-DISTINCT selector may yield duplicates)', async () => {
     const quads = new Parser({ format: 'N-Triples' }).parse(
-      `<https://ex/d/1> <${dcterms.title.value}> "Titel"@nl .`,
+      `<https://ex/d/1> <${dsKey('title')}> "Titel"@nl .`,
     );
 
     const documents: SearchDocument[] = [];
@@ -959,7 +980,7 @@ describe('projectRoots', () => {
 
   it('yields a bare document, not paired with a searchType', async () => {
     const quads = new Parser({ format: 'N-Triples' }).parse(
-      `<https://ex/d/1> <${dcterms.title.value}> "Titel"@nl .`,
+      `<https://ex/d/1> <${dsKey('title')}> "Titel"@nl .`,
     );
 
     const documents: SearchDocument[] = [];
@@ -980,8 +1001,8 @@ describe('projectRoots', () => {
 
   it('frames only the given roots, ignoring other subjects in the quads', async () => {
     const quads = new Parser({ format: 'N-Triples' }).parse(`
-      <https://ex/d/1> <${dcterms.title.value}> "Een"@nl .
-      <https://ex/d/2> <${dcterms.title.value}> "Twee"@nl .
+      <https://ex/d/1> <${dsKey('title')}> "Een"@nl .
+      <https://ex/d/2> <${dsKey('title')}> "Twee"@nl .
     `);
 
     const ids: string[] = [];
