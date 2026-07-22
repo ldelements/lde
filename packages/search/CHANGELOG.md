@@ -1,3 +1,60 @@
+## 0.12.0 (2026-07-22)
+
+### 🚀 Features
+
+- ⚠️  **search:** generate extraction CONSTRUCTs from the search schema ([#630](https://github.com/ldelements/lde/pull/630))
+
+### ⚠️  Breaking Changes
+
+- **search:** generate extraction CONSTRUCTs from the search schema  ([#630](https://github.com/ldelements/lde/pull/630))
+  the projection now reads each value under its field’s IR
+  alias, not its source path; a reader must emit values under irAlias(type,
+  field). path no longer keys the framed node.
+  * feat(search-pipeline)!: generate extraction CONSTRUCTs from the search schema
+  - Add extractionQuery / extractionQueryString: a pure SearchType →
+    QueryConstruct generator (Traqula AstFactory) that mints one IR-Alias
+    template triple per path-bearing field, a UNION branch per field reading its
+    source path as a SPARQL property path, a free subject for the pipeline’s
+    VALUES injection, and a nested template for inline references (recursing to
+    the schema’s declared depth).
+  - Default a stage’s reader to this generated Extraction CONSTRUCT: readers on
+    SearchStageType is now optional, so a SPARQL deployment need not hand-write
+    the query, and reader and projection agree by construction on the alias set.
+  - Add a schema↔CONSTRUCT contract test (the minted alias set equals the field
+    set the projection reads) and an end-to-end round-trip against a local SPARQL
+    endpoint (generate → read → frame → project).
+  - Drop the stale sparqljs entry from AGENTS.md Key Dependencies and register
+    the round-trip endpoint port.
+  BREAKING CHANGE: SearchStageType.readers is now optional and defaults to the
+  generated Extraction CONSTRUCT; a stage relying on the default must declare its
+  fields’ source paths in SPARQL property-path grammar.
+  * docs(search-pipeline): explain extraction queries are well-formed for non-deduplicating engines
+  - Document that the generated extraction CONSTRUCTs (UNION-per-field, given
+    roots, single-subject template, no projected-away constant triple) emit one
+    triple per genuine solution on a non-deduplicating engine such as QLever, so
+    there is no multiplicative CONSTRUCT inflation.
+  - Note that this removes the need for a client-side post-processing dedup pass,
+    which would defeat the batch-bounded streaming memory model; the residual
+    linear duplication from duplicate input roots is absorbed by the streaming
+    per-quad subject index as a cheap backstop."
+  M	AGENTS.md
+  M	packages/search-pipeline/README.md
+  M	packages/search-pipeline/package.json
+  A	packages/search-pipeline/src/extraction.ts
+  M	packages/search-pipeline/src/index.ts
+  M	packages/search-pipeline/src/search-stages.ts
+  A	packages/search-pipeline/test/extraction-roundtrip.integration.test.ts
+  A	packages/search-pipeline/test/extraction.test.ts
+  A	packages/search-pipeline/test/fixtures/drapo-sample.ttl
+  M	packages/search-pipeline/test/multi-collection.integration.test.ts
+  M	packages/search-pipeline/test/search-stages.test.ts
+  M	packages/search-pipeline/tsconfig.lib.json
+  M	packages/search/src/adapter.ts
+  M	packages/search/src/project.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/test/project.test.ts
+  M	packages/search/test/schema.test.ts
+
 ## 0.11.0 (2026-07-21)
 
 ### 🚀 Features
