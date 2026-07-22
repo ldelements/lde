@@ -186,3 +186,37 @@ across a dataset or across datasets, so the same pipeline indexes a 15-quad
 catalog entry and a dataset of millions of objects. The one irreducible atom is a
 single root’s quads: unbounded for a pathological root, and nothing here changes
 that.
+
+## Extraction queries and non-deduplicating engines
+
+The generated extraction CONSTRUCTs are deliberately shaped to be well-formed for
+**non-deduplicating** SPARQL engines such as
+[QLever](https://github.com/ad-freiburg/qlever), which emit one copy of the
+CONSTRUCT template per solution row rather than a deduplicated set. The generator
+guarantees one output triple per genuine value:
+
+- **UNION per field, never conjunction.** Each field is its own `UNION` branch
+  (`?root <path> ?value`), so two independent multi-valued fields never form a
+  cross-product – the failure mode that inflates a non-deduplicating engine’s
+  output by the product of their cardinalities (roughly 18-fold on a measured
+  QLever workload).
+- **No projected-away template triple.** Every template triple binds its own
+  variables (`?root <alias> ?value`); there is no constant triple (e.g.
+  `?root a <Type>`) to be re-emitted once per solution.
+- **Given roots.** Roots arrive as a `VALUES` set, not a pattern that fans out.
+- **Inline references keep the discipline recursively:** a reference type’s
+  fields are UNION’d off the referent variable, so even a multi-hop nested
+  template never conjoins independent multi-valued fields – only the intermediate
+  link triple repeats, and only linearly.
+
+Because the queries are duplicate-free by construction, correctness and bounded
+output volume do **not** depend on a client-side **post-processing deduplication
+step** – buffering a whole result to deduplicate it would defeat the
+batch-bounded streaming memory model above. The only residual duplication is
+linear and comes from duplicate _input_ – a non-`DISTINCT` selector feeding a
+multi-typed root more than once – which the streaming per-quad subject index
+(`buildSubjectIndex`) collapses as a cheap backstop, not as a compensator for
+query-shape inflation. Validated on a real QLever index over the full source
+dump: raw CONSTRUCT output equalled the distinct set for a type with distinct
+roots, and the projected documents were byte-identical to those from a
+deduplicating engine.
