@@ -21,7 +21,12 @@ The division of labour ([ADR 6](../../docs/decisions/0006-make-the-writer-transa
     **root-complete batch** into documents paired with their `SearchType`
     (`TypedSearchDocument`) – so projection happens inside the batch and memory
     is bounded by `batchSize` roots, not the dataset
-    ([ADR 13](../../docs/decisions/0013-project-inside-the-batch-per-root-type.md));
+    ([ADR 13](../../docs/decisions/0013-project-inside-the-batch-per-root-type.md)).
+    Extraction is **generated from the schema**: `extractionQuery` mints a
+    CONSTRUCT that reads each field’s source `path` (a SPARQL property path) and
+    emits it under the field’s IR Alias (`urn:lde:‹Type›/‹field›`) – the same key
+    the projection reads back – so the reader and the projection cannot drift. A
+    stage without an explicit `readers` defaults to this generated reader;
   - `searchIndexWriter` is the pipeline’s single terminal: an engine-agnostic
     router that dispatches each document to the engine writer for **its**
     type’s collection ([ADR 9](../../docs/decisions/0009-route-a-whole-schema-projection-to-per-type-collections.md)).
@@ -32,7 +37,7 @@ So a search pipeline is **one terminal, N stages**: `new Pipeline<TypedSearchDoc
 ## Usage
 
 ```typescript
-import { Pipeline, SparqlConstructReader } from '@lde/pipeline';
+import { Pipeline } from '@lde/pipeline';
 import { searchSchema } from '@lde/search';
 import { BlueGreenRebuild } from '@lde/search-typesense';
 import {
@@ -83,8 +88,11 @@ const pipeline = new Pipeline<TypedSearchDocument>({
   // One stage per root type: each selects its own roots (here by class –
   // `selectByClass` is a convenience for the object grain; a deployment writes
   // its own selector where the entry point is a domain fact) and extracts each
-  // root’s quads. `rootVariable` couples the selector’s projected variable to
-  // what the projection reads; it must not be `dataset` (reserved by the reader).
+  // root’s quads. Omitting `readers` defaults each stage to the Extraction
+  // CONSTRUCT generated from the schema (pass one only for a non-SPARQL source or
+  // to merge readers). `rootVariable` couples the selector’s projected variable
+  // to the CONSTRUCT’s free subject; it must not be `dataset` (reserved by the
+  // reader).
   stages: searchStages({
     schema,
     types: [
@@ -92,13 +100,11 @@ const pipeline = new Pipeline<TypedSearchDocument>({
         searchType: dataset,
         rootVariable: 'root',
         itemSelector: selectByClass(dataset),
-        readers: new SparqlConstructReader({ query: '…' }),
       },
       {
         searchType: organization,
         rootVariable: 'root',
         itemSelector: selectByClass(organization),
-        readers: new SparqlConstructReader({ query: '…' }),
       },
     ],
   }),
@@ -180,3 +186,37 @@ across a dataset or across datasets, so the same pipeline indexes a 15-quad
 catalog entry and a dataset of millions of objects. The one irreducible atom is a
 single root’s quads: unbounded for a pathological root, and nothing here changes
 that.
+
+## Extraction queries and non-deduplicating engines
+
+The generated extraction CONSTRUCTs are deliberately shaped to be well-formed for
+**non-deduplicating** SPARQL engines such as
+[QLever](https://github.com/ad-freiburg/qlever), which emit one copy of the
+CONSTRUCT template per solution row rather than a deduplicated set. The generator
+guarantees one output triple per genuine value:
+
+- **UNION per field, never conjunction.** Each field is its own `UNION` branch
+  (`?root <path> ?value`), so two independent multi-valued fields never form a
+  cross-product – the failure mode that inflates a non-deduplicating engine’s
+  output by the product of their cardinalities (roughly 18-fold on a measured
+  QLever workload).
+- **No projected-away template triple.** Every template triple binds its own
+  variables (`?root <alias> ?value`); there is no constant triple (e.g.
+  `?root a <Type>`) to be re-emitted once per solution.
+- **Given roots.** Roots arrive as a `VALUES` set, not a pattern that fans out.
+- **Inline references keep the discipline recursively:** a reference type’s
+  fields are UNION’d off the referent variable, so even a multi-hop nested
+  template never conjoins independent multi-valued fields – only the intermediate
+  link triple repeats, and only linearly.
+
+Because the queries are duplicate-free by construction, correctness and bounded
+output volume do **not** depend on a client-side **post-processing deduplication
+step** – buffering a whole result to deduplicate it would defeat the
+batch-bounded streaming memory model above. The only residual duplication is
+linear and comes from duplicate _input_ – a non-`DISTINCT` selector feeding a
+multi-typed root more than once – which the streaming per-quad subject index
+(`buildSubjectIndex`) collapses as a cheap backstop, not as a compensator for
+query-shape inflation. Validated on a real QLever index over the full source
+dump: raw CONSTRUCT output equalled the distinct set for a type with distinct
+roots, and the projected documents were byte-identical to those from a
+deduplicating engine.

@@ -11,6 +11,7 @@ import {
   type VariableBindings,
 } from '@lde/pipeline';
 import { projectRoots, searchSchema, type RootType } from '@lde/search';
+import { irAlias } from '@lde/search/adapter';
 import { searchStages, selectByClass } from '../src/search-stages.js';
 import type { TypedSearchDocument } from '../src/typed-search-document.js';
 
@@ -25,6 +26,11 @@ const schema = searchSchema({
   fields: [{ name: 'name', kind: 'keyword', path: NAME, output: true }],
 });
 const person = schema.get(PERSON) as RootType;
+
+// The stub reader stands in for the Extraction CONSTRUCT, so it emits each
+// value under the field’s IR Alias – the key the projection reads – not the
+// source path.
+const NAME_ALIAS = irAlias(person, person.fields[0]);
 
 const dataset = new Dataset({
   iri: new URL('http://example.org/dataset/1'),
@@ -54,7 +60,7 @@ const nameReader: Reader = {
     for (const binding of options?.bindings ?? []) {
       const root = binding.root.value;
       quads.push(
-        quad(namedNode(root), namedNode(NAME), literal(`Name ${root}`)),
+        quad(namedNode(root), namedNode(NAME_ALIAS), literal(`Name ${root}`)),
       );
     }
     return Promise.resolve(stream(quads));
