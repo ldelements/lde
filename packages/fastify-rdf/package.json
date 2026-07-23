@@ -1,6 +1,6 @@
 {
   "name": "@lde/fastify-rdf",
-  "version": "0.4.8",
+  "version": "0.5.0",
   "description": "Fastify plugin for serving RDF data with content negotiation",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",

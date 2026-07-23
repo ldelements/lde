@@ -1,3 +1,17 @@
+## 0.12.0 (2026-07-23)
+
+### 🚀 Features
+
+- ⚠️  **search-api-graphql:** serve the API with a framework-agnostic handler ([4aae319](https://github.com/ldelements/lde/commit/4aae319))
+
+### ⚠️  Breaking Changes
+
+- **search-api-graphql:** serve the API with a framework-agnostic handler  ([4aae319](https://github.com/ldelements/lde/commit/4aae319))
+  @lde/search-api-graphql now requires graphql ^16 (was
+  ^15.8): the graphql-armor validation plugins do not accept graphql 15,
+  and mixed graphql copies fail at runtime with the realm check. printed
+  SDL no longer ends with a trailing newline (graphql 16 printSchema).
+
 ## 0.11.0 (2026-07-22)
 
 ### 🧱 Updated Dependencies
