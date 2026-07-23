@@ -6,3 +6,7 @@ export {
   FileLoadedSparqlProvenanceStore,
   type FileLoadedSparqlProvenanceStoreOptions,
 } from './fileLoadedSparqlProvenanceStore.js';
+export {
+  FileProvenanceStore,
+  type FileProvenanceStoreOptions,
+} from './fileProvenanceStore.js';
