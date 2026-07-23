@@ -1,3 +1,9 @@
+## 0.6.7 (2026-07-23)
+
+### 🩹 Fixes
+
+- **distribution-downloader:** create the download target directory ([5c03db2](https://github.com/ldelements/lde/commit/5c03db2))
+
 ## 0.6.6 (2026-06-26)
 
 ### 🧱 Updated Dependencies

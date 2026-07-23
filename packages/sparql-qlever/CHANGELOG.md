@@ -1,3 +1,19 @@
+## 0.15.0 (2026-07-23)
+
+### 🩹 Fixes
+
+- ⚠️  **sparql-qlever:** pass parallel parsing as -p to support current QLever ([9303761](https://github.com/ldelements/lde/commit/9303761))
+
+### ⚠️  Breaking Changes
+
+- **sparql-qlever:** pass parallel parsing as -p to support current QLever  ([9303761](https://github.com/ldelements/lde/commit/9303761))
+  The QleverIndexOptions key 'parse-parallel' is renamed to 'parallel-parsing'.
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-downloader to 0.6.7
+- Updated @lde/sparql-importer to 0.6.7
+
 ## 0.14.12 (2026-07-08)
 
 ### 🧱 Updated Dependencies
