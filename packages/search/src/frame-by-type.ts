@@ -66,7 +66,12 @@ export function buildSubjectIndex(quads: Iterable<Quad>): SubjectIndex {
  *
  * The roots are supplied explicitly rather than discovered from `rdf:type`: the
  * caller ({@link projectRoots}, from the pipeline selector) already holds them
- * and passes them directly. A root absent from the index simply frames nothing.
+ * and passes them directly. A root absent from the index simply frames nothing –
+ * without ever reaching `jsonld.frame`, whose `@id` validation would otherwise
+ * throw on a root that is not an IRI (a blank-node label). A **blank-node root
+ * is skipped** even when its label is in the index: a blank node has no stable
+ * document key, so it can never become a search document – blank-node subjects
+ * are embeddable through a reference, never indexable as roots.
  */
 export async function* frameSubjects(
   index: SubjectIndex,
@@ -75,6 +80,10 @@ export async function* frameSubjects(
 ): AsyncIterable<FramedNode> {
   const { bySubject } = index;
   for (const rootIri of roots) {
+    const owned = bySubject.get(rootIri);
+    if (owned === undefined || owned[0].subject.termType === 'BlankNode') {
+      continue;
+    }
     const subgraph = collectSubgraph(bySubject, rootIri, depth);
     const expanded = await jsonld.fromRDF(subgraph);
     // Frame for THIS specific root subject by its `@id`. The subgraph embeds the
