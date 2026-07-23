@@ -2,7 +2,9 @@
 
 # A Drapo-shaped SCHEMA-AP-NDE sample: CreativeWork roots typed in the source
 # (so selectByClass selects them), each with localized name/description and a
-# labelOnly creator reference resolving a typed Person.
+# labelOnly creator reference resolving a typed Person. The blank-node
+# CreativeWork mirrors Drapo’s blank-node instances: it has no stable document
+# key, so selectByClass must never select it as a root.
 
 <https://ex/cw/1> a schema:CreativeWork ;
   schema:name "Het meisje met de parel"@nl, "Girl with a Pearl Earring"@en ;
@@ -11,6 +13,9 @@
 
 <https://ex/cw/2> a schema:CreativeWork ;
   schema:name "De nachtwacht"@nl .
+
+_:anonymousWork a schema:CreativeWork ;
+  schema:name "Naamloos werk"@nl .
 
 <https://ex/p/1> a schema:Person ;
   schema:name "Johannes Vermeer" .

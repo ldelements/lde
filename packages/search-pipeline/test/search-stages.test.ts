@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import nock from 'nock';
 import { DataFactory } from 'n3';
 import type { Quad } from '@rdfjs/types';
 import { Dataset, Distribution } from '@lde/dataset';
@@ -206,6 +207,30 @@ describe('selectByClass', () => {
 
   it('accepts a custom root variable', () => {
     expect(() => selectByClass(person, 'subject')).not.toThrow();
+  });
+
+  it('excludes blank-node subjects at the endpoint', async () => {
+    // A blank node has no stable document key, so it can never become a search
+    // document (framing skips it). Filtering at the endpoint also keeps result
+    // pages full, so pagination is not cut short by client-side dropped rows.
+    let query = '';
+    nock('http://example.org')
+      .post('/sparql')
+      .reply(
+        200,
+        (_uri, requestBody) => {
+          query = decodeURIComponent(String(requestBody).replace(/\+/g, ' '));
+          return { head: { vars: ['root'] }, results: { bindings: [] } };
+        },
+        { 'Content-Type': 'application/sparql-results+json' },
+      );
+
+    const selector = selectByClass(person);
+    for await (const row of selector.select(distribution, 10)) {
+      void row;
+    }
+
+    expect(query.replace(/\s+/g, '')).toMatch(/isblank\(\?root\)/i);
   });
 });
 

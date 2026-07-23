@@ -123,6 +123,8 @@ describe('extraction round-trip: generate → read → frame → project', () =>
     const byId = Object.fromEntries(
       received.map((item) => [item.document.id, item.document]),
     );
+    // Exactly the two IRI-rooted works: the fixture’s blank-node CreativeWork
+    // is never selected as a root – a blank node has no stable document key.
     expect(Object.keys(byId).sort()).toEqual([
       'https://ex/cw/1',
       'https://ex/cw/2',
