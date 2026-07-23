@@ -218,4 +218,41 @@ describe('frameSubjects', () => {
       ),
     ).toEqual([]);
   });
+
+  it('skips a blank-node root, framing the remaining roots', async () => {
+    // A selector can bind a blank-node subject (e.g. 149 blank-node
+    // schema:Place in the Drapo dataset). A blank node has no stable document
+    // key, so it can never become a document – and its label is not a valid
+    // frame `@id`, so without the skip `jsonld.frame` would throw and abort
+    // the whole stage.
+    const parsed = quads(`
+      _:place <${foaf.name.value}> "Naamloos"@nl .
+      <https://ex/d/1> <${dcterms.title.value}> "Titel"@nl .
+    `);
+    const blankSubject = parsed
+      .map((quad) => quad.subject)
+      .find((subject) => subject.termType === 'BlankNode');
+    expect(blankSubject).toBeDefined();
+
+    const nodes = await collect(
+      frameSubjects(buildSubjectIndex(parsed), [
+        String(blankSubject?.value),
+        'https://ex/d/1',
+      ]),
+    );
+
+    expect(nodes.map((node) => node['@id'])).toEqual(['https://ex/d/1']);
+  });
+
+  it('frames nothing for a blank-node label absent from the index', async () => {
+    // Blank-node labels are not stable across queries, so a selector-bound
+    // label usually matches nothing in the extraction’s index. It must still
+    // skip rather than reach `jsonld.frame`, whose `@id` validation throws on
+    // a non-IRI root.
+    expect(
+      await collect(
+        frame(`<https://ex/d/1> <${rdf.type.value}> <${DATASET}> .`, ['b42']),
+      ),
+    ).toEqual([]);
+  });
 });

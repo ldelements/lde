@@ -264,6 +264,12 @@ statement of what the projection reads. `assertTypeInSchema` guards that
 the passed `SearchType` is a member of the schema – the port’s own membership
 check – so no schema is ever forged to scope a projection to one type.
 
+**Blank-node roots are not indexable**: a blank node has no stable document
+key, so framing skips a blank-node root (and any root absent from the index)
+rather than crash. Blank-node subjects still embed fine when _referenced_ from
+a root; they just cannot _be_ one – select roots accordingly
+(`selectByClass` in `@lde/search-pipeline` already excludes them).
+
 `projectRoots` yields a **bare** `SearchDocument`. Pairing each document with the
 `SearchType` it belongs to, so the write side can fan a mixed stream out to
 per-type collections, is a routing concern owned by the pipeline glue – see
