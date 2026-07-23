@@ -146,7 +146,7 @@ await pipeline.run();
 <tr>
   <td><a href="packages/search-api-graphql">@lde/search-api-graphql</a></td>
   <td><a href="https://www.npmjs.com/package/@lde/search-api-graphql"><img src="https://img.shields.io/npm/v/@lde/search-api-graphql" alt="npm"></a></td>
-  <td>Engine- and domain-agnostic GraphQL surface for search: builds an executable GraphQL schema from a SearchSchema at runtime, one root query field per type</td>
+  <td>Engine- and domain-agnostic GraphQL surface for search: builds an executable GraphQL schema from a SearchSchema at runtime and serves it as a framework-agnostic fetch handler with a self-contained playground</td>
 </tr>
 <tr>
   <td><a href="packages/search-pipeline">@lde/search-pipeline</a></td>
@@ -267,11 +267,11 @@ graph TD
 
 ## Who uses LD Elements
 
-<a href="https://netwerkdigitaalerfgoed.nl/en/"><img src="https://github.com/netwerk-digitaal-erfgoed.png?size=40" width="20" valign="middle"></a>&ensp;<a href="https://netwerkdigitaalerfgoed.nl/en/">Netwerk Digitaal Erfgoed</a> — Dutch national digital heritage infrastructure, commissioned by the Ministry of Education, Culture and Science
+<a href="https://netwerkdigitaalerfgoed.nl/en/"><img src="https://github.com/netwerk-digitaal-erfgoed.png?size=40" width="20" valign="middle"></a>&ensp;<a href="https://netwerkdigitaalerfgoed.nl/en/">Netwerk Digitaal Erfgoed</a> – Dutch national digital heritage infrastructure, commissioned by the Ministry of Education, Culture and Science
 
-<a href="https://dc4eu.nl"><img src="https://dc4eu.nl/wp-content/uploads/2022/01/logo.png" width="20" valign="middle"></a>&ensp;<a href="https://dc4eu.nl">DC4EU</a> — Dutch Collections for Europe, the accredited national aggregator connecting Dutch heritage institutions with Europeana
+<a href="https://dc4eu.nl"><img src="https://dc4eu.nl/wp-content/uploads/2022/01/logo.png" width="20" valign="middle"></a>&ensp;<a href="https://dc4eu.nl">DC4EU</a> – Dutch Collections for Europe, the accredited national aggregator connecting Dutch heritage institutions with Europeana
 
-<a href="https://hklimburg.nl/nieuws/linked-open-limburg">Linked Open Limburg</a> — Coöperatie Erfgoed Limburg’s regional heritage programme, built on LDE’s pipeline components
+<a href="https://hklimburg.nl/nieuws/linked-open-limburg">Linked Open Limburg</a> – Coöperatie Erfgoed Limburg’s regional heritage programme, built on LDE’s pipeline components
 
 ## Comparison
 
