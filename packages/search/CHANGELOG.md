@@ -1,3 +1,9 @@
+## 0.12.1 (2026-07-23)
+
+### 🩹 Fixes
+
+- **search:** skip blank-node roots instead of crashing framing ([87faa38](https://github.com/ldelements/lde/commit/87faa38))
+
 ## 0.12.0 (2026-07-22)
 
 ### 🚀 Features

@@ -1,6 +1,6 @@
 {
   "name": "@lde/search-api-graphql",
-  "version": "0.12.0",
+  "version": "0.12.1",
   "description": "Engine- and domain-agnostic GraphQL surface for @lde/search: builds an executable GraphQLSchema from a whole SearchSchema at runtime (no codegen) – one root query field per SearchType – served by generic resolvers over any SearchEngine – and serves it as a framework-agnostic fetch handler with a self-contained playground, SDL endpoint, CORS and depth/cost limits. You supply the schema and per-type typeNames; it names neither your domain nor your engine.",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
@@ -28,7 +28,7 @@
     "@escape.tech/graphql-armor-cost-limit": "^2.4.3",
     "@escape.tech/graphql-armor-max-depth": "^2.4.2",
     "@graphql-yoga/render-graphiql": "^5.21.2",
-    "@lde/search": "^0.12.0",
+    "@lde/search": "^0.12.1",
     "dataloader": "^2.2.3",
     "graphql": "^16.0.0",
     "graphql-yoga": "^5.21.2",

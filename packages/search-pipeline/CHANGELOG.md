@@ -1,3 +1,14 @@
+## 0.12.1 (2026-07-23)
+
+### 🩹 Fixes
+
+- **search-pipeline:** exclude blank-node subjects from selectByClass ([ee2ca3c](https://github.com/ldelements/lde/commit/ee2ca3c))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.15.1
+- Updated @lde/search to 0.12.1
+
 ## 0.12.0 (2026-07-23)
 
 ### 🧱 Updated Dependencies
