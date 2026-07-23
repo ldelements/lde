@@ -59,6 +59,60 @@ const gqlSchema = buildGraphQLSchema(searchSchema(DATASET, PERSON), {
 Shared types (`LanguageString`, the facet buckets, filter inputs and reference
 types such as a common `Agent`) are created once and reused across root types.
 
+## Serving the API
+
+`createSearchGraphQLHandler` turns the schema into a **served API**: one
+framework-agnostic `(request: Request) => Promise<Response>` handler (built on
+[graphql-yoga](https://the-guild.dev/graphql/yoga-server), see
+[ADR 14](../../docs/decisions/0014-serve-the-search-graphql-api-with-graphql-yoga.md))
+covering POST execution, introspection, error shaping and per-request
+`Accept-Language` parsing:
+
+```ts
+import { createSearchGraphQLHandler } from '@lde/search-api-graphql';
+
+const handler = createSearchGraphQLHandler({
+  searchSchema: searchSchema(DATASET, PERSON),
+  engine, // e.g. createTypesenseSearchEngine(…)
+});
+
+// SvelteKit (src/routes/graphql/+server.ts):
+export const GET = ({ request }) => handler(request);
+export const POST = GET;
+
+// Plain node:http:
+import { createServerAdapter } from '@whatwg-node/server';
+createServer(createServerAdapter(handler)).listen(4000);
+```
+
+Every host that speaks `Request`/`Response` (SvelteKit, Hono, Fastify via a
+bridge, plain Node) mounts it the same way. Batteries included:
+
+- **Playground**: `GET /graphql` serves the bundled GraphiQL –
+  self-contained (no external CDN) and sent without framing headers, so a docs
+  site can `<iframe>` the deployed playground as a live client. Disable it per
+  environment (`playground: false`) or swap the renderer (`renderPlayground`).
+- **SDL**: `GET /graphql?sdl` returns the schema contract as SDL – publish it
+  or generate static docs in CI without a running introspection query.
+- **CORS** for cross-origin browser clients (configurable via `cors`).
+- **Depth and cost limits** ([graphql-armor](https://escape.tech/graphql-armor/);
+  `maxDepth`, default 15, and `maxCost`, default 5000) guard the public
+  endpoint against arbitrarily expensive queries; introspection stays exempt.
+
+To serve **custom fields next to the generated search API**, merge your own
+schema with `buildGraphQLSchema()`’s output (e.g. `@graphql-tools/schema`’s
+`mergeSchemas`) and pass the union as `schema` instead of `searchSchema`; the
+same endpoint and playground serve both:
+
+```ts
+const handler = createSearchGraphQLHandler({
+  schema: mergeSchemas({
+    schemas: [buildGraphQLSchema(searchSchema(DATASET)), myCustomSchema],
+  }),
+  engine,
+});
+```
+
 ## Serving a subset of the schema
 
 `types` never filters: every `SearchType` in the schema you pass gets a root

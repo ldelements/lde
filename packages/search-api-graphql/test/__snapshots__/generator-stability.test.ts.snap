@@ -96,6 +96,5 @@ enum ThingSortField {
 enum SortDirection {
   ASC
   DESC
-}
-"
+}"
 `;

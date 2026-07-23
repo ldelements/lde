@@ -1,4 +1,10 @@
 export { buildGraphQLSchema, printGraphQLSchema } from './build-schema.js';
+export { createSearchGraphQLHandler } from './handler.js';
+export type {
+  SearchGraphQLHandler,
+  SearchGraphQLHandlerOptions,
+  PlaygroundRenderer,
+} from './handler.js';
 export type {
   SearchContext,
   BuildGraphQLSchemaOptions,
