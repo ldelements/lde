@@ -55,3 +55,4 @@ vite.base.config.d.ts.map
 .nx/polygraph
 .nx/self-healing
 .nx/migrate-runs
+dist-docker

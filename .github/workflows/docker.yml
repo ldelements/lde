@@ -1,0 +1,65 @@
+name: Docker
+
+on:
+  push:
+    tags:
+      - '@lde/search-api-server@*'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Tag or ref to build the image from (e.g. @lde/search-api-server@0.1.0)'
+        required: true
+
+permissions:
+  contents: read
+  packages: write
+
+# Release runs tag several packages in quick succession; serialize the image
+# pushes so :latest cannot land out of order.
+concurrency:
+  group: docker-publish
+  cancel-in-progress: false
+
+jobs:
+  publish-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
+
+      # The image is built from this tagged commit's own workspace outputs
+      # (nx docker:build stages the compiled package, its workspace
+      # dependencies and a pruned lockfile), so it needs no npm publish to
+      # have happened – the release tag alone identifies the version.
+      - name: Determine version
+        id: version
+        # The ref reaches the shell via env, never inline interpolation, so a
+        # crafted dispatch input cannot inject shell syntax.
+        env:
+          REF: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref_name }}
+        run: |
+          echo "version=${REF##*@}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Build and smoke-test the image
+        run: npx nx run @lde/search-api-server:docker:smoke
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push the image
+        run: |
+          docker tag packages-search-api-server "ghcr.io/ldelements/search-api-server:${{ steps.version.outputs.version }}"
+          docker tag packages-search-api-server ghcr.io/ldelements/search-api-server:latest
+          docker push "ghcr.io/ldelements/search-api-server:${{ steps.version.outputs.version }}"
+          docker push ghcr.io/ldelements/search-api-server:latest

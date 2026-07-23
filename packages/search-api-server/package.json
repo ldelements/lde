@@ -1,0 +1,61 @@
+{
+  "name": "@lde/search-api-server",
+  "version": "0.0.0",
+  "description": "The served @lde/search API as a bootable process and prebuilt Docker image: loads a mounted schema-declaration module and Typesense connection details from the environment, then serves /graphql (execution, playground, SDL) plus /health over node:http. The composition layer that binds the engine-agnostic @lde/search-api-graphql handler to @lde/search-typesense – for turnkey, non-JS and ops-driven deployments.",
+  "repository": {
+    "url": "git+https://github.com/ldelements/lde.git",
+    "directory": "packages/search-api-server"
+  },
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "search-api-server": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "!**/*.tsbuildinfo"
+  ],
+  "dependencies": {
+    "@lde/search": "^0.12.0",
+    "@lde/search-api-graphql": "^0.12.0",
+    "@lde/search-typesense": "^0.15.0",
+    "@whatwg-node/server": "^0.11.0",
+    "tslib": "^2.3.0",
+    "typesense": "^3.0.6"
+  },
+  "nx": {
+    "targets": {
+      "docker:stage": {
+        "options": {
+          "cwd": "{projectRoot}",
+          "command": "rm -rf dist-docker && mkdir dist-docker && cp package.json dist-docker/ && cp -R dist dist-docker/dist"
+        }
+      },
+      "copy-workspace-modules": {},
+      "prune-lockfile": {},
+      "docker:lockfile": {},
+      "docker:smoke": {
+        "executor": "nx:run-commands",
+        "dependsOn": [
+          "docker:build"
+        ],
+        "cache": false,
+        "options": {
+          "command": "./tools/docker-smoke.sh packages-search-api-server"
+        }
+      }
+    }
+  }
+}

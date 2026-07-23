@@ -82,6 +82,9 @@
     },
     {
       "path": "./packages/search-pipeline"
+    },
+    {
+      "path": "./packages/search-api-server"
     }
   ],
   "compilerOptions": {

@@ -41,3 +41,11 @@ jobs:
       # - run: npx nx-cloud record -- echo Hello World
       # Nx Affected runs only tasks affected by the changes in this PR/commit. Learn more: https://nx.dev/ci/features/affected
       - run: npx nx affected -t lint test typecheck build
+
+      # docker:smoke builds each affected Docker image and boots it, so a
+      # runtime-only failure (e.g. a dependency missing from the pruned image)
+      # cannot pass a green build. A separate step, AFTER the test suites:
+      # image builds are heavy enough to starve timing-sensitive tests when
+      # they share the runner (its build/stage prerequisites replay from the
+      # cache of the previous step).
+      - run: npx nx affected -t docker:smoke
