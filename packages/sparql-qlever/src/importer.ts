@@ -19,7 +19,7 @@ export interface QleverIndexOptions {
   /** Memory budget for sorting during the index build. @default '10G' */
   'stxxl-memory'?: string;
   /** @default true */
-  'parse-parallel'?: boolean;
+  'parallel-parsing'?: boolean;
   /** Build only PSO and POS permutations. Faster, but queries with predicate variables won't work. Also disables pattern precomputation. @default false */
   'only-pso-and-pos-permutations'?: boolean;
 }
@@ -178,7 +178,7 @@ export class Importer implements ImporterInterface {
       const raw = await readFile(this.cacheInfoPath(dataFile), 'utf-8');
       cacheInfo = JSON.parse(raw) as CacheInfo;
     } catch {
-      return false; // No cache marker — first run.
+      return false; // No cache marker – first run.
     }
 
     if (cacheInfo.sourceFile !== basename(dataFile)) {
@@ -234,12 +234,14 @@ export class Importer implements ImporterInterface {
     // TODO: write index to named volume instead of bind mount for better performance.
 
     const parallel =
-      parseParallel ?? this.options.qleverOptions['parse-parallel'];
+      parseParallel ?? this.options.qleverOptions['parallel-parsing'];
     const flags = [
       `-i ${this.options.indexName}`,
       `-s ${settingsFile}`,
       `-F ${format}`,
-      `--parse-parallel ${parallel}`,
+      // Short flag because the long flag is version-dependent: current QLever
+      // spells it --parallel-parsing, older versions --parse-parallel.
+      `-p ${parallel}`,
       `-m ${this.options.qleverOptions['stxxl-memory']}`,
       this.options.qleverOptions['only-pso-and-pos-permutations']
         ? '-o --no-patterns'
@@ -265,9 +267,9 @@ export class Importer implements ImporterInterface {
  * POSIX-quote a value for safe interpolation into a shell command: wrap it in
  * single quotes and escape any embedded single quote as `'\''`.
  *
- * Without this, a data filename containing an apostrophe — e.g. a dataset
+ * Without this, a data filename containing an apostrophe – e.g. a dataset
  * titled `'s-Hertogenbosch`, whose distribution URL maps to a local file like
- * `…Erfgoed+'s-Hertogenbosch.nt` — would terminate the surrounding quotes, so
+ * `…Erfgoed+'s-Hertogenbosch.nt` – would terminate the surrounding quotes, so
  * `cat`/`gunzip` would read a non-existent path and feed `qlever-index` empty
  * input. The index then "succeeds" with 0 triples, the import is treated as
  * failed, and every distribution (and the JSON-LD fallback) fails the same way.
@@ -279,7 +281,7 @@ function shellQuote(value: string): string {
 type fileFormat = 'nt' | 'nq' | 'ttl';
 
 /**
- * Native QLever index formats — `qlever-index -F <flag>` consumes these
+ * Native QLever index formats – `qlever-index -F <flag>` consumes these
  * directly. JSON-LD is not here: it is preprocessed to N-Quads first (see
  * {@link preprocess}).
  */
@@ -295,7 +297,7 @@ const nativeFormats = new Map<string, fileFormat>([
  * skip the Node-side preprocessor; TriG comes last so a streaming native dump
  * is always preferred when a dataset offers both.
  *
- * `application/zip` is intentionally absent — the inner RDF format must be
+ * `application/zip` is intentionally absent – the inner RDF format must be
  * declared via `mediaType` with `application/zip` appearing only as the
  * `compressFormat`, so we know what is inside.
  */
@@ -312,7 +314,7 @@ const defaultQleverIndexOptions = {
   'ascii-prefixes-only': true,
   'num-triples-per-batch': 3_000_000,
   'stxxl-memory': '10G',
-  'parse-parallel': true,
+  'parallel-parsing': true,
   'only-pso-and-pos-permutations': false,
 } satisfies Required<QleverIndexOptions>;
 

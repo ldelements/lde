@@ -233,7 +233,7 @@ describe('Importer', () => {
       );
     });
 
-    it('retries with --parse-parallel false on multiline string literal error', async () => {
+    it('retries with parallel parsing disabled on multiline string literal error', async () => {
       let callCount = 0;
       const runner: TaskRunner<string> & { commands: string[] } = {
         commands: [],
@@ -260,8 +260,8 @@ describe('Importer', () => {
 
       expect(result).toBeInstanceOf(ImportSuccessful);
       expect(runner.commands.length).toBe(2);
-      expect(runner.commands[0]).toContain('--parse-parallel true');
-      expect(runner.commands[1]).toContain('--parse-parallel false');
+      expect(runner.commands[0]).toContain('-p true');
+      expect(runner.commands[1]).toContain('-p false');
     });
 
     it('does not retry non-multiline-literal errors', async () => {
@@ -336,7 +336,7 @@ describe('Importer', () => {
       // A dataset titled e.g. "'s-Hertogenbosch" maps to a local filename with
       // an apostrophe. Naive single-quoting (`cat '<name>'`) lets the apostrophe
       // terminate the quote, so cat/gunzip read a non-existent path and feed
-      // qlever-index empty input — silently indexing 0 triples.
+      // qlever-index empty input – silently indexing 0 triples.
       const trickyFile = join(
         tempDir,
         "Dataset+Beeldbank+Erfgoed+'s-Hertogenbosch.ttl",
@@ -366,7 +366,7 @@ describe('Importer', () => {
       expect(command).not.toContain("Erfgoed+'s"); // the broken, unescaped form
 
       // And the decompress sub-command actually reads the real file when a shell
-      // runs it — this is what produced empty input (0 triples) before the fix.
+      // runs it – this is what produced empty input (0 triples) before the fix.
       const decompress = command.slice(0, command.indexOf('| qlever-index'));
       const output = execFileSync('sh', ['-c', decompress], {
         cwd: tempDir,
