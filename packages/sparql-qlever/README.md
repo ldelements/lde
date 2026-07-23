@@ -22,7 +22,7 @@ Passed to `qlever-server` at startup.
 | ----------------------- | ------------------------------------------------ | ------- |
 | `memory-max-size`       | Maximum memory for query processing and caching. | `'4G'`  |
 | `default-query-timeout` | Default query timeout.                           | `'30s'` |
-| `cache-max-size`        | Maximum cache size for query results.            | —       |
+| `cache-max-size`        | Maximum cache size for query results.            | –       |
 
 Example:
 
@@ -46,5 +46,5 @@ Passed to `qlever-index` during import.
 | `ascii-prefixes-only`           | Enable faster parsing for well-behaved TTL files.                                             | `true`      |
 | `num-triples-per-batch`         | Triples per batch; lower values reduce memory usage.                                          | `3_000_000` |
 | `stxxl-memory`                  | Memory budget for sorting during the index build.                                             | `'10G'`     |
-| `parse-parallel`                | Parse input in parallel.                                                                      | `true`      |
+| `parallel-parsing`              | Parse input in parallel.                                                                      | `true`      |
 | `only-pso-and-pos-permutations` | Build only PSO and POS permutations. Faster, but queries with predicate variables won't work. | `false`     |
