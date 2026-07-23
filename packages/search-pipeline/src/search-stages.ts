@@ -152,6 +152,12 @@ export function searchStages(
  * all (their entry point – “registered, newest registration, has a title” – is a
  * deployment fact no schema states).
  *
+ * **Blank-node subjects are excluded** (`FILTER(!isBlank(?‹rootVariable›))`): a
+ * blank node has no stable document key, so it can never become a search
+ * document – framing skips it. Excluding it at the endpoint keeps result pages
+ * full, so pagination walks the whole class instead of stopping at the first
+ * page a client-side drop would leave short.
+ *
  * `rootVariable` defaults to `root` and must match the stage’s
  * {@link SearchStageType.rootVariable}; it must not be `dataset` (reserved by the
  * SPARQL reader).
@@ -161,6 +167,6 @@ export function selectByClass(
   rootVariable = 'root',
 ): ItemSelector {
   return new SparqlItemSelector({
-    query: `SELECT ?${rootVariable} WHERE { ?${rootVariable} a <${searchType.class}> }`,
+    query: `SELECT ?${rootVariable} WHERE { ?${rootVariable} a <${searchType.class}> FILTER(!isBlank(?${rootVariable})) }`,
   });
 }

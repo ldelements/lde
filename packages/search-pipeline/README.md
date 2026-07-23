@@ -155,7 +155,10 @@ the CONSTRUCT’s subject yields a batch that is not root-complete, and projecti
 will then silently emit partial documents – a promise `@lde/pipeline` cannot
 check ([ADR 13](../../docs/decisions/0013-project-inside-the-batch-per-root-type.md)).
 `selectByClass(searchType)` is a convenience for the object grain (where the
-type’s `class` really is the source class), **not** a default.
+type’s `class` really is the source class), **not** a default. It excludes
+blank-node subjects (`FILTER(!isBlank(?root))`): a blank node has no stable
+document key, so it can never become a search document – a custom selector
+should exclude them too.
 
 ## Per-collection isolation
 
