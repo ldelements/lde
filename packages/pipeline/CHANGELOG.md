@@ -1,3 +1,9 @@
+## 0.34.4 (2026-07-23)
+
+### 🚀 Features
+
+- **pipeline:** add file-backed FileProvenanceStore ([1365270](https://github.com/ldelements/lde/commit/1365270))
+
 ## 0.34.3 (2026-07-23)
 
 ### 🧱 Updated Dependencies
