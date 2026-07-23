@@ -40,6 +40,26 @@ describe('LastModifiedDownloader', () => {
       expect(fileContent).toBe('mock file');
     });
 
+    it('creates the target directory if it does not exist', async () => {
+      const missingDir = join(os.tmpdir(), 'lde-download-test', 'nested');
+      await fs.rm(join(os.tmpdir(), 'lde-download-test'), {
+        recursive: true,
+        force: true,
+      });
+      nock('https://example.com').get('/file.nt').reply(200, 'mock file');
+
+      const missingDirDownloader = new LastModifiedDownloader(missingDir);
+      const result = await missingDirDownloader.download(distribution);
+
+      const fileContent = await fs.readFile(result.path, 'utf8');
+      expect(fileContent).toBe('mock file');
+
+      await fs.rm(join(os.tmpdir(), 'lde-download-test'), {
+        recursive: true,
+        force: true,
+      });
+    });
+
     it('does not download file again if it is up to date', async () => {
       nock('https://example.com')
         .get('/file.nt')
