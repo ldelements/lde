@@ -1,3 +1,5 @@
+export { searchIndexerPipeline } from './search-indexer-pipeline.js';
+export type { SearchIndexerPipelineOptions } from './search-indexer-pipeline.js';
 export { searchStages, selectByClass } from './search-stages.js';
 export type { SearchStagesOptions, SearchStageType } from './search-stages.js';
 export { extractionQuery, extractionQueryString } from './extraction.js';

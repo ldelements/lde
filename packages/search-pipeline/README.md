@@ -34,6 +34,62 @@ The division of labour ([ADR 6](../../docs/decisions/0006-make-the-writer-transa
 
 So a search pipeline is **one terminal, N stages**: `new Pipeline<TypedSearchDocument>({ datasetSelector, stages: searchStages(...), writers: searchIndexWriter(...) })`.
 
+## Quick start: `searchIndexerPipeline`
+
+For the common **object grain** – index every IRI-identified instance of each
+root type’s source class – `searchIndexerPipeline` wires that whole composition
+and returns the ready-to-run `Pipeline`. It generates one stage per root type
+in the schema, each selecting the type’s non-blank roots by class
+(`selectByClass`; a blank node has no stable document key, so it can never
+become a document), extracting with the schema-generated CONSTRUCT, and routing
+every document to the engine writer for its type’s collection. The consumer
+supplies only the domain (the schema, which datasets) and the deployment shell
+(the engine writer, the SPARQL/import adapter):
+
+```typescript
+import { searchIndexerPipeline } from '@lde/search-pipeline';
+import {
+  FileProvenanceStore,
+  ImportResolver,
+  SparqlDistributionResolver,
+} from '@lde/pipeline';
+import { ConsoleReporter } from '@lde/pipeline-console-reporter';
+import { createQlever } from '@lde/sparql-qlever';
+import { InPlaceRebuild } from '@lde/search-typesense';
+
+const pipeline = searchIndexerPipeline({
+  schema,
+  datasets,
+  // Import each dataset’s data dump into a local QLever and query that.
+  distributionResolver: new ImportResolver(new SparqlDistributionResolver(), {
+    ...createQlever({ mode: 'docker', image: 'adfreiburg/qlever:latest' }),
+    strategy: 'import',
+  }),
+  writerFor: (searchType) => new InPlaceRebuild(typesenseClient, searchType),
+  // Optional: skip datasets whose source and pipeline version are unchanged.
+  provenanceStore: new FileProvenanceStore({ path: 'data/provenance.json' }),
+  pipelineVersion: '1',
+  reporter: new ConsoleReporter(),
+});
+await pipeline.run();
+```
+
+Each role in that wiring maps to a package:
+
+| Role                                   | Package                                                                                                                                                                                                                |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Dataset selection                      | [`@lde/pipeline`](../pipeline) – `Dataset[]` directly, or a `DatasetSelector` such as `RegistrySelector`                                                                                                               |
+| Distribution resolution and import     | [`@lde/pipeline`](../pipeline) `ImportResolver` + [`@lde/sparql-qlever`](../sparql-qlever) `createQlever` (the concrete [`@lde/sparql-server`](../sparql-server)/[`@lde/sparql-importer`](../sparql-importer) adapter) |
+| Root selection, extraction, projection | this package (`searchStages` over [`@lde/search`](../search))                                                                                                                                                          |
+| Engine writer, one collection per type | [`@lde/search-typesense`](../search-typesense) – `InPlaceRebuild` or `BlueGreenRebuild`                                                                                                                                |
+| Provenance (skip-unchanged)            | [`@lde/pipeline`](../pipeline) – `FileProvenanceStore`, or a triplestore-backed store                                                                                                                                  |
+| Reporting                              | [`@lde/pipeline-console-reporter`](../pipeline-console-reporter) `ConsoleReporter`                                                                                                                                     |
+
+A deployment that needs more – a bespoke root selector (where the entry point
+is a domain fact, not a class), per-stage tuning, non-SPARQL readers, or
+quad-level plugins – composes the parts directly, as below; the convenience
+owns no capability of its own.
+
 ## Usage
 
 ```typescript
