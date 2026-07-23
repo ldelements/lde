@@ -1,9 +1,9 @@
 import { Distribution } from '@lde/dataset';
 import filenamifyUrl from 'filenamify-url';
-import { join, resolve, sep } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { createWriteStream } from 'node:fs';
-import { access, rm, stat } from 'node:fs/promises';
+import { access, mkdir, rm, stat } from 'node:fs/promises';
 export interface Logger {
   fatal(msg: string, ...args: unknown[]): void;
   error(msg: string, ...args: unknown[]): void;
@@ -74,6 +74,7 @@ export class LastModifiedDownloader implements Downloader {
     }
 
     try {
+      await mkdir(dirname(filePath), { recursive: true });
       await pipeline(downloadResponse.body, createWriteStream(filePath));
     } catch (error) {
       await rm(filePath, { force: true });
