@@ -331,6 +331,14 @@ describe('validateSearchType', () => {
     ]);
   });
 
+  it('rejects an unknown field kind', () => {
+    // A typo’d kind in a plain-JS declaration must fail at declaration time –
+    // every kind-dependent rule would silently pass for it otherwise.
+    expect(
+      validateSearchType(typeWith({ name: 'broken', kind: 'no-such-kind' })),
+    ).toEqual([{ field: 'broken', reason: 'unknown-kind' }]);
+  });
+
   it('rejects a field name carrying a regex metacharacter', () => {
     // The name is interpolated raw into the display RE2 pattern, so a
     // metacharacter would over-match or break the collection schema.
