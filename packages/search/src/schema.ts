@@ -181,11 +181,12 @@ export interface ReferenceField extends SearchFieldBase, Searchable {
      *  indexed root type (and until cross-collection references exist, it must
      *  not collide with one). */
     readonly typeName: string;
-    /** How much of the referenced entity the reference carries. Only
-     *  `labelOnly` (id + display label) is implemented; `idOnly` and `inline`
-     *  are forward declarations, so that declarations (and the SHACL
-     *  `search:nestedStrategy` mapping) keep their shape when those land, and
-     *  `inline` can then add fields to the reference type additively. */
+    /** How much of the referenced entity the reference carries. `labelOnly`
+     *  (id + display label, resolved from a label source) and `inline` (the
+     *  referent’s own projected fields, carried inline through a declared
+     *  {@link ReferenceType} – see {@link isInlineReference}) are implemented;
+     *  `idOnly` is a forward declaration, so that declarations (and the SHACL
+     *  `search:nestedStrategy` mapping) keep their shape when it lands. */
     readonly strategy: 'labelOnly' | 'idOnly' | 'inline';
   };
 }
