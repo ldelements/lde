@@ -143,6 +143,78 @@ describe('SparqlItemSelector', () => {
     expect(rows[1].uri.value).toBe('http://example.com/2');
   });
 
+  it('keeps paginating when a full page contains skipped rows', async () => {
+    // A skipped (blank-node) row still occupied a result slot at the endpoint:
+    // the page is full, so pagination must continue – and OFFSET must advance
+    // by the fetched count, not the yielded count, or rows are re-read.
+    const queries: string[] = [];
+    const mockFetcher = {
+      fetchBindings: vi
+        .fn()
+        .mockImplementation((_endpoint: string, q: string) => {
+          queries.push(q);
+          if (queries.length === 1) {
+            return bindingsStream([
+              { uri: blankNode('b0') },
+              { uri: namedNode('http://example.com/1') },
+            ]);
+          }
+          return bindingsStream([{ uri: namedNode('http://example.com/2') }]);
+        }),
+    };
+
+    const selector = new SparqlItemSelector({
+      query,
+      fetcher: mockFetcher as never,
+    });
+
+    const rows: VariableBindings[] = [];
+    for await (const row of selector.select(distribution, 2)) {
+      rows.push(row);
+    }
+
+    expect(rows.map((row) => row.uri.value)).toEqual([
+      'http://example.com/1',
+      'http://example.com/2',
+    ]);
+    expect(queries).toHaveLength(2);
+    expect(queries[1]).toMatch(/OFFSET\s+2/);
+  });
+
+  it('keeps paginating past a page of only skipped rows', async () => {
+    // All rows dropped is not the end of the results – the endpoint returned a
+    // full page, so the next page may still hold yieldable rows.
+    const queries: string[] = [];
+    const mockFetcher = {
+      fetchBindings: vi
+        .fn()
+        .mockImplementation((_endpoint: string, q: string) => {
+          queries.push(q);
+          if (queries.length === 1) {
+            return bindingsStream([
+              { uri: blankNode('b0') },
+              { uri: blankNode('b1') },
+            ]);
+          }
+          return bindingsStream([{ uri: namedNode('http://example.com/1') }]);
+        }),
+    };
+
+    const selector = new SparqlItemSelector({
+      query,
+      fetcher: mockFetcher as never,
+    });
+
+    const rows: VariableBindings[] = [];
+    for await (const row of selector.select(distribution, 2)) {
+      rows.push(row);
+    }
+
+    expect(rows.map((row) => row.uri.value)).toEqual(['http://example.com/1']);
+    expect(queries).toHaveLength(2);
+    expect(queries[1]).toMatch(/OFFSET\s+2/);
+  });
+
   it('defaults page size to 10', async () => {
     const queries: string[] = [];
     const mockFetcher = {
@@ -621,7 +693,7 @@ describe('SparqlItemSelector', () => {
         fetcher: mockFetcher as never,
       });
 
-      // No policy supplied at construction or per call — pagination still
+      // No policy supplied at construction or per call – pagination still
       // works against the module-level default policy.
       const rows: VariableBindings[] = [];
       for await (const row of selector.select(distribution, 10)) {

@@ -113,6 +113,8 @@ new SparqlItemSelector({
 });
 ```
 
+Only `NamedNode` binding values are yielded – binding values double as stable item identities downstream, which a blank-node label or literal cannot provide. A row without any `NamedNode` binding is dropped, but still counts toward pagination (it occupied a result slot at the endpoint), so a partly-dropped page never ends pagination early. To skip such rows without fetching them at all, filter in the query itself (e.g. `FILTER(!isBlank(?s))`, as `selectByClass` in `@lde/search-pipeline` does).
+
 #### Capping total results with `maxResults`
 
 By default, `SparqlItemSelector` paginates through **all** matching rows: any `LIMIT` clause in the query is interpreted as the page size, then it walks pages with `OFFSET` until the source is exhausted. To cap the total bindings yielded across all pages – for sampling, testing, prototyping, or just safety – set `maxResults`:
