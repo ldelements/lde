@@ -30,7 +30,7 @@
     "@graphql-yoga/render-graphiql": "^5.21.2",
     "@lde/search": "^0.12.2",
     "dataloader": "^2.2.3",
-    "graphql": "^16.0.0",
+    "graphql": "^17.0.2",
     "graphql-yoga": "^5.21.2",
     "negotiator": "^0.6.4",
     "tslib": "^2.3.0"
