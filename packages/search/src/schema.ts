@@ -581,6 +581,7 @@ export interface SearchTypeIssue {
   readonly reason:
     | 'duplicate-field-name'
     | 'invalid-field-name'
+    | 'unknown-kind'
     | 'invalid-locale'
     | 'missing-ref'
     | 'ref-not-allowed'
@@ -667,6 +668,12 @@ export function validateSearchType(
     // pattern, so it must be a metacharacter-free identifier.
     if (!FIELD_NAME_PATTERN.test(field.name)) {
       issue('invalid-field-name');
+    }
+    // Every kind-dependent rule below would silently pass for a kind outside
+    // the union, so a typo’d kind in a plain-JS declaration must fail here.
+    if (!Object.hasOwn(OPERATOR_BY_KIND, field.kind)) {
+      issue('unknown-kind');
+      continue;
     }
     if (field.kind === 'reference') {
       if (field.output === true && field.ref === undefined) {

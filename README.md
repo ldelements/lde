@@ -149,6 +149,16 @@ await pipeline.run();
   <td>Engine- and domain-agnostic GraphQL surface for search: builds an executable GraphQL schema from a SearchSchema at runtime and serves it as a framework-agnostic fetch handler with a self-contained playground</td>
 </tr>
 <tr>
+  <td><a href="packages/search-api-server">@lde/search-api-server</a></td>
+  <td><a href="https://www.npmjs.com/package/@lde/search-api-server"><img src="https://img.shields.io/npm/v/@lde/search-api-server" alt="npm"></a></td>
+  <td>The served search API as a bootable process and prebuilt Docker image: mounts a schema-declaration module, binds the GraphQL handler to a Typesense engine, and serves /graphql plus /health from environment config</td>
+</tr>
+<tr>
+  <td><a href="packages/search-indexer">@lde/search-indexer</a></td>
+  <td><a href="https://www.npmjs.com/package/@lde/search-indexer"><img src="https://img.shields.io/npm/v/@lde/search-indexer" alt="npm"></a></td>
+  <td>The search indexer as a bootable process and prebuilt Docker image: mounts the same schema-declaration module as the API server, selects datasets from a registry, and rebuilds the Typesense collections from environment config</td>
+</tr>
+<tr>
   <td><a href="packages/search-pipeline">@lde/search-pipeline</a></td>
   <td><a href="https://www.npmjs.com/package/@lde/search-pipeline"><img src="https://img.shields.io/npm/v/@lde/search-pipeline" alt="npm"></a></td>
   <td>Applies the @lde/search projection inside an @lde/pipeline run, fanning each document out to the transactional engine writer for its type’s collection (owns no projection itself)</td>
@@ -241,11 +251,17 @@ graph TD
     docgen
     search --> text-normalization
     search-api-graphql --> search
+    search-api-server --> search-api-graphql
+    search-api-server --> search-typesense
     search-typesense --> search
     search-typesense --> text-normalization
     search-typesense --> pipeline
     search-pipeline --> search
     search-pipeline --> pipeline
+    search-indexer --> search-pipeline
+    search-indexer --> search-typesense
+    search-indexer --> sparql-qlever
+    search-indexer --> pipeline-console-reporter
   end
 
   subgraph Monitoring

@@ -58,11 +58,50 @@
       "options": {
         "testTargetName": "test"
       }
+    },
+    {
+      "plugin": "@nx/docker",
+      "options": {
+        "buildTarget": "docker:build",
+        "runTarget": "docker:run"
+      }
     }
   ],
   "targetDefaults": {
     "test": {
       "dependsOn": ["^build"]
+    },
+    "docker:stage": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "dependsOn": ["build"],
+      "inputs": ["production", "^production"],
+      "outputs": ["{projectRoot}/dist-docker"]
+    },
+    "copy-workspace-modules": {
+      "executor": "@nx/js:copy-workspace-modules",
+      "dependsOn": ["docker:stage"],
+      "options": {
+        "outputPath": "{projectRoot}/dist-docker"
+      }
+    },
+    "prune-lockfile": {
+      "executor": "@nx/js:prune-lockfile",
+      "dependsOn": ["docker:stage"],
+      "options": {
+        "outputPath": "{projectRoot}/dist-docker"
+      }
+    },
+    "docker:lockfile": {
+      "executor": "nx:run-commands",
+      "dependsOn": ["copy-workspace-modules", "prune-lockfile"],
+      "options": {
+        "cwd": "{projectRoot}/dist-docker",
+        "command": "find workspace_modules -type d \\( -name src -o -name test \\) -prune -exec rm -rf {} + && find . -name '*.tsbuildinfo' -type f -delete && npm install --package-lock-only --ignore-scripts --legacy-peer-deps"
+      }
+    },
+    "docker:build": {
+      "dependsOn": ["docker:lockfile"]
     }
   },
   "release": {
