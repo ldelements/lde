@@ -1,6 +1,6 @@
 {
   "name": "@lde/task-runner",
-  "version": "0.2.12",
+  "version": "0.2.13",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
     "directory": "packages/task-runner"

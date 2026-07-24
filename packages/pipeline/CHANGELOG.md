@@ -1,3 +1,15 @@
+## 0.35.3 (2026-07-24)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset-registry-client to 0.9.1
+- Updated @lde/local-sparql-endpoint to 0.2.15
+- Updated @lde/distribution-health to 0.2.9
+- Updated @lde/distribution-probe to 0.2.7
+- Updated @lde/sparql-importer to 0.6.9
+- Updated @lde/sparql-server to 0.4.14
+- Updated @lde/dataset to 0.7.9
+
 ## 0.35.2 (2026-07-24)
 
 ### 🩹 Fixes

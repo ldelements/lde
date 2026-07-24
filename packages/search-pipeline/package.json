@@ -1,6 +1,6 @@
 {
   "name": "@lde/search-pipeline",
-  "version": "0.12.3",
+  "version": "0.12.4",
   "description": "Search indexing as an @lde/pipeline instance: a Writer<Quad> that applies the @lde/search projection to extracted RDF and fans each document out to the transactional engine writer for its type's collection. Glue between the pipeline quad world and the search-engine document world; owns no projection or engine logic itself.",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
@@ -25,21 +25,21 @@
     "!**/*.tsbuildinfo"
   ],
   "dependencies": {
-    "@lde/search": "^0.12.1",
+    "@lde/search": "^0.12.2",
     "@traqula/generator-sparql-1-1": "^1.1.8",
     "@traqula/parser-sparql-1-1": "^1.1.5",
     "@traqula/rules-sparql-1-1": "^1.1.0",
     "tslib": "^2.3.0"
   },
   "devDependencies": {
-    "@lde/search-typesense": "^0.15.3",
+    "@lde/search-typesense": "^0.15.4",
     "@rdfjs/types": "^2.0.1",
     "n3": "^2.1.1",
     "testcontainers": "^12.0.3",
     "typesense": "^3.0.6"
   },
   "peerDependencies": {
-    "@lde/dataset": "^0.7.8",
-    "@lde/pipeline": "^0.35.2"
+    "@lde/dataset": "^0.7.9",
+    "@lde/pipeline": "^0.35.3"
   }
 }

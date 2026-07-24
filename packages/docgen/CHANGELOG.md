@@ -1,3 +1,7 @@
+## 0.6.21 (2026-07-24)
+
+This was a version bump only for @lde/docgen to align it with other projects, there were no code changes.
+
 ## 0.6.20 (2026-07-08)
 
 This was a version bump only for @lde/docgen to align it with other projects, there were no code changes.

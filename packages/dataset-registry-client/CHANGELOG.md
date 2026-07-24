@@ -1,3 +1,10 @@
+## 0.9.1 (2026-07-24)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/local-sparql-endpoint to 0.2.15
+- Updated @lde/dataset to 0.7.9
+
 ## 0.9.0 (2026-07-23)
 
 This was a version bump only for @lde/dataset-registry-client to align it with other projects, there were no code changes.

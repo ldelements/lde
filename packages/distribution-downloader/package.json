@@ -1,6 +1,6 @@
 {
   "name": "@lde/distribution-downloader",
-  "version": "0.6.7",
+  "version": "0.6.8",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
     "directory": "packages/distribution-downloader"
@@ -24,7 +24,7 @@
     "!**/*.tsbuildinfo"
   ],
   "dependencies": {
-    "@lde/dataset": "^0.7.8",
+    "@lde/dataset": "^0.7.9",
     "filenamify-url": "4.0.0",
     "tslib": "^2.3.0"
   }

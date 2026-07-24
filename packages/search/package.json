@@ -1,6 +1,6 @@
 {
   "name": "@lde/search",
-  "version": "0.12.1",
+  "version": "0.12.2",
   "description": "Engine- and domain-agnostic core for RDF-backed search: a unified declarative field model (SearchField/SearchType/SearchSchema), a neutral query IR, the SearchEngine port with logical result types, and a streaming CONSTRUCT-to-document projection. Bakes in no engine, protocol, or domain.",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
@@ -43,7 +43,7 @@
     "!**/*.tsbuildinfo"
   ],
   "dependencies": {
-    "@lde/text-normalization": "^0.1.1",
+    "@lde/text-normalization": "^0.1.2",
     "@rdfjs/types": "^2.0.1",
     "inflection": "^3.0.2",
     "jsonld": "^9.0.0",

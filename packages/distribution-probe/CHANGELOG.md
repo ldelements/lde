@@ -1,3 +1,9 @@
+## 0.2.7 (2026-07-24)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset to 0.7.9
+
 ## 0.2.6 (2026-07-08)
 
 This was a version bump only for @lde/distribution-probe to align it with other projects, there were no code changes.
