@@ -1,3 +1,14 @@
+## 0.12.2 (2026-07-24)
+
+### 🚀 Features
+
+- **search-pipeline:** add searchIndexerPipeline convenience ([#647](https://github.com/ldelements/lde/pull/647))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.15.2
+- Updated @lde/pipeline to 0.35.1
+
 ## 0.12.1 (2026-07-23)
 
 ### 🩹 Fixes

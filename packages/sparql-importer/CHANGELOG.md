@@ -1,3 +1,9 @@
+## 0.6.8 (2026-07-24)
+
+### 🚀 Features
+
+- **search-pipeline:** add searchIndexerPipeline convenience ([#647](https://github.com/ldelements/lde/pull/647))
+
 ## 0.6.7 (2026-07-23)
 
 ### 🧱 Updated Dependencies

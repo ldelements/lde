@@ -1,3 +1,9 @@
+## 0.4.13 (2026-07-24)
+
+### 🚀 Features
+
+- **search-pipeline:** add searchIndexerPipeline convenience ([#647](https://github.com/ldelements/lde/pull/647))
+
 ## 0.4.12 (2026-06-26)
 
 This was a version bump only for @lde/sparql-server to align it with other projects, there were no code changes.
