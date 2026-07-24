@@ -70,154 +70,125 @@ await pipeline.run();
 ## Packages
 
 <table>
-<tr><th colspan="3" align="left">Discovery – Find and retrieve dataset descriptions from registries</th></tr>
+<tr><th colspan="2" align="left">Discovery – Find and retrieve dataset descriptions from registries</th></tr>
 <tr>
-  <td><a href="packages/dataset">@lde/dataset</a></td>
-  <td><a href="https://www.npmjs.com/package/@lde/dataset"><img src="https://img.shields.io/npm/v/@lde/dataset" alt="npm"></a></td>
+  <td><a href="packages/dataset">@lde/dataset</a><br><a href="https://www.npmjs.com/package/@lde/dataset"><img src="https://img.shields.io/npm/v/@lde/dataset" alt="npm"></a></td>
   <td>Core dataset and distribution objects</td>
 </tr>
 <tr>
-  <td><a href="packages/dataset-registry-client">@lde/dataset-registry-client</a></td>
-  <td><a href="https://www.npmjs.com/package/@lde/dataset-registry-client"><img src="https://img.shields.io/npm/v/@lde/dataset-registry-client" alt="npm"></a></td>
+  <td><a href="packages/dataset-registry-client">@lde/dataset-registry-client</a><br><a href="https://www.npmjs.com/package/@lde/dataset-registry-client"><img src="https://img.shields.io/npm/v/@lde/dataset-registry-client" alt="npm"></a></td>
   <td>Retrieve dataset descriptions from DCAT-AP 3.0 registries</td>
 </tr>
-<tr><th colspan="3" align="left">Processing – Transform, enrich and analyse datasets with SPARQL pipelines</th></tr>
+<tr><th colspan="2" align="left">Processing – Transform, enrich and analyse datasets with SPARQL pipelines</th></tr>
 <tr>
-  <td><a href="packages/pipeline">@lde/pipeline</a></td>
-  <td><a href="https://www.npmjs.com/package/@lde/pipeline"><img src="https://img.shields.io/npm/v/@lde/pipeline" alt="npm"></a></td>
+  <td><a href="packages/pipeline">@lde/pipeline</a><br><a href="https://www.npmjs.com/package/@lde/pipeline"><img src="https://img.shields.io/npm/v/@lde/pipeline" alt="npm"></a></td>
   <td>Build pipelines that query, transform and enrich Linked Data</td>
 </tr>
 <tr>
-  <td><a href="packages/pipeline-shacl-sampler">@lde/pipeline-shacl-sampler</a></td>
-  <td><a href="https://www.npmjs.com/package/@lde/pipeline-shacl-sampler"><img src="https://img.shields.io/npm/v/@lde/pipeline-shacl-sampler" alt="npm"></a></td>
+  <td><a href="packages/pipeline-shacl-sampler">@lde/pipeline-shacl-sampler</a><br><a href="https://www.npmjs.com/package/@lde/pipeline-shacl-sampler"><img src="https://img.shields.io/npm/v/@lde/pipeline-shacl-sampler" alt="npm"></a></td>
   <td>Per-class sampling stages derived from SHACL shapes</td>
 </tr>
 <tr>
-  <td><a href="packages/pipeline-shacl-validator">@lde/pipeline-shacl-validator</a></td>
-  <td><a href="https://www.npmjs.com/package/@lde/pipeline-shacl-validator"><img src="https://img.shields.io/npm/v/@lde/pipeline-shacl-validator" alt="npm"></a></td>
+  <td><a href="packages/pipeline-shacl-validator">@lde/pipeline-shacl-validator</a><br><a href="https://www.npmjs.com/package/@lde/pipeline-shacl-validator"><img src="https://img.shields.io/npm/v/@lde/pipeline-shacl-validator" alt="npm"></a></td>
   <td>SHACL validation for pipeline stages</td>
 </tr>
 <tr>
-  <td><a href="packages/pipeline-void">@lde/pipeline-void</a></td>
-  <td><a href="https://www.npmjs.com/package/@lde/pipeline-void"><img src="https://img.shields.io/npm/v/@lde/pipeline-void" alt="npm"></a></td>
+  <td><a href="packages/pipeline-void">@lde/pipeline-void</a><br><a href="https://www.npmjs.com/package/@lde/pipeline-void"><img src="https://img.shields.io/npm/v/@lde/pipeline-void" alt="npm"></a></td>
   <td>VoID statistical analysis for RDF datasets</td>
 </tr>
 <tr>
-  <td><a href="packages/distribution-downloader">@lde/distribution-downloader</a></td>
-  <td><a href="https://www.npmjs.com/package/@lde/distribution-downloader"><img src="https://img.shields.io/npm/v/@lde/distribution-downloader" alt="npm"></a></td>
+  <td><a href="packages/distribution-downloader">@lde/distribution-downloader</a><br><a href="https://www.npmjs.com/package/@lde/distribution-downloader"><img src="https://img.shields.io/npm/v/@lde/distribution-downloader" alt="npm"></a></td>
   <td>Download distributions for local processing</td>
 </tr>
 <tr>
-  <td><a href="packages/distribution-health">@lde/distribution-health</a></td>
-  <td><a href="https://www.npmjs.com/package/@lde/distribution-health"><img src="https://img.shields.io/npm/v/@lde/distribution-health" alt="npm"></a></td>
+  <td><a href="packages/distribution-health">@lde/distribution-health</a><br><a href="https://www.npmjs.com/package/@lde/distribution-health"><img src="https://img.shields.io/npm/v/@lde/distribution-health" alt="npm"></a></td>
   <td>Derive distribution usability from reachability and RDF validity</td>
 </tr>
 <tr>
-  <td><a href="packages/distribution-probe">@lde/distribution-probe</a></td>
-  <td><a href="https://www.npmjs.com/package/@lde/distribution-probe"><img src="https://img.shields.io/npm/v/@lde/distribution-probe" alt="npm"></a></td>
+  <td><a href="packages/distribution-probe">@lde/distribution-probe</a><br><a href="https://www.npmjs.com/package/@lde/distribution-probe"><img src="https://img.shields.io/npm/v/@lde/distribution-probe" alt="npm"></a></td>
   <td>Probe distributions for availability and metadata</td>
 </tr>
 <tr>
-  <td><a href="packages/iiif-validator">@lde/iiif-validator</a></td>
-  <td><a href="https://www.npmjs.com/package/@lde/iiif-validator"><img src="https://img.shields.io/npm/v/@lde/iiif-validator" alt="npm"></a></td>
+  <td><a href="packages/iiif-validator">@lde/iiif-validator</a><br><a href="https://www.npmjs.com/package/@lde/iiif-validator"><img src="https://img.shields.io/npm/v/@lde/iiif-validator" alt="npm"></a></td>
   <td>Validate that a URL resolves to a valid IIIF Presentation Manifest</td>
 </tr>
 <tr>
-  <td><a href="packages/sparql-importer">@lde/sparql-importer</a></td>
-  <td><a href="https://www.npmjs.com/package/@lde/sparql-importer"><img src="https://img.shields.io/npm/v/@lde/sparql-importer" alt="npm"></a></td>
+  <td><a href="packages/sparql-importer">@lde/sparql-importer</a><br><a href="https://www.npmjs.com/package/@lde/sparql-importer"><img src="https://img.shields.io/npm/v/@lde/sparql-importer" alt="npm"></a></td>
   <td>Import data dumps to a local SPARQL endpoint for querying</td>
 </tr>
-<tr><th colspan="3" align="left">Publication – Serve and document your data</th></tr>
+<tr><th colspan="2" align="left">Publication – Serve and document your data</th></tr>
 <tr>
-  <td><a href="packages/fastify-rdf">@lde/fastify-rdf</a></td>
-  <td><a href="https://www.npmjs.com/package/@lde/fastify-rdf"><img src="https://img.shields.io/npm/v/@lde/fastify-rdf" alt="npm"></a></td>
+  <td><a href="packages/fastify-rdf">@lde/fastify-rdf</a><br><a href="https://www.npmjs.com/package/@lde/fastify-rdf"><img src="https://img.shields.io/npm/v/@lde/fastify-rdf" alt="npm"></a></td>
   <td>Fastify plugin for RDF content negotiation and request body parsing</td>
 </tr>
 <tr>
-  <td><a href="packages/docgen">@lde/docgen</a></td>
-  <td><a href="https://www.npmjs.com/package/@lde/docgen"><img src="https://img.shields.io/npm/v/@lde/docgen" alt="npm"></a></td>
+  <td><a href="packages/docgen">@lde/docgen</a><br><a href="https://www.npmjs.com/package/@lde/docgen"><img src="https://img.shields.io/npm/v/@lde/docgen" alt="npm"></a></td>
   <td>Generate documentation from RDF such as SHACL shapes</td>
 </tr>
 <tr>
-  <td><a href="packages/search">@lde/search</a></td>
-  <td><a href="https://www.npmjs.com/package/@lde/search"><img src="https://img.shields.io/npm/v/@lde/search" alt="npm"></a></td>
+  <td><a href="packages/search">@lde/search</a><br><a href="https://www.npmjs.com/package/@lde/search"><img src="https://img.shields.io/npm/v/@lde/search" alt="npm"></a></td>
   <td>The search core: projects RDF into engine-agnostic search documents (framing + a declarative field spec)</td>
 </tr>
 <tr>
-  <td><a href="packages/search-api-graphql">@lde/search-api-graphql</a></td>
-  <td><a href="https://www.npmjs.com/package/@lde/search-api-graphql"><img src="https://img.shields.io/npm/v/@lde/search-api-graphql" alt="npm"></a></td>
+  <td><a href="packages/search-api-graphql">@lde/search-api-graphql</a><br><a href="https://www.npmjs.com/package/@lde/search-api-graphql"><img src="https://img.shields.io/npm/v/@lde/search-api-graphql" alt="npm"></a></td>
   <td>Engine- and domain-agnostic GraphQL surface for search: builds an executable GraphQL schema from a SearchSchema at runtime and serves it as a framework-agnostic fetch handler with a self-contained playground</td>
 </tr>
 <tr>
-  <td><a href="packages/search-api-server">@lde/search-api-server</a></td>
-  <td><a href="https://www.npmjs.com/package/@lde/search-api-server"><img src="https://img.shields.io/npm/v/@lde/search-api-server" alt="npm"></a></td>
+  <td><a href="packages/search-api-server">@lde/search-api-server</a><br><a href="https://www.npmjs.com/package/@lde/search-api-server"><img src="https://img.shields.io/npm/v/@lde/search-api-server" alt="npm"></a></td>
   <td>The served search API as a bootable process and prebuilt Docker image: mounts a schema-declaration module, binds the GraphQL handler to a Typesense engine, and serves /graphql plus /health from environment config</td>
 </tr>
 <tr>
-  <td><a href="packages/search-indexer">@lde/search-indexer</a></td>
-  <td><a href="https://www.npmjs.com/package/@lde/search-indexer"><img src="https://img.shields.io/npm/v/@lde/search-indexer" alt="npm"></a></td>
+  <td><a href="packages/search-indexer">@lde/search-indexer</a><br><a href="https://www.npmjs.com/package/@lde/search-indexer"><img src="https://img.shields.io/npm/v/@lde/search-indexer" alt="npm"></a></td>
   <td>The search indexer as a bootable process and prebuilt Docker image: mounts the same schema-declaration module as the API server, selects datasets from a registry, and rebuilds the Typesense collections from environment config</td>
 </tr>
 <tr>
-  <td><a href="packages/search-pipeline">@lde/search-pipeline</a></td>
-  <td><a href="https://www.npmjs.com/package/@lde/search-pipeline"><img src="https://img.shields.io/npm/v/@lde/search-pipeline" alt="npm"></a></td>
+  <td><a href="packages/search-pipeline">@lde/search-pipeline</a><br><a href="https://www.npmjs.com/package/@lde/search-pipeline"><img src="https://img.shields.io/npm/v/@lde/search-pipeline" alt="npm"></a></td>
   <td>Applies the @lde/search projection inside an @lde/pipeline run, fanning each document out to the transactional engine writer for its type’s collection (owns no projection itself)</td>
 </tr>
 <tr>
-  <td><a href="packages/search-typesense">@lde/search-typesense</a></td>
-  <td><a href="https://www.npmjs.com/package/@lde/search-typesense"><img src="https://img.shields.io/npm/v/@lde/search-typesense" alt="npm"></a></td>
+  <td><a href="packages/search-typesense">@lde/search-typesense</a><br><a href="https://www.npmjs.com/package/@lde/search-typesense"><img src="https://img.shields.io/npm/v/@lde/search-typesense" alt="npm"></a></td>
   <td>Typesense engine adapter: transactional Blue/green (build fresh, swap atomically) and In-place (update the live index) rebuild writers</td>
 </tr>
 <tr>
-  <td><a href="packages/text-normalization">@lde/text-normalization</a></td>
-  <td><a href="https://www.npmjs.com/package/@lde/text-normalization"><img src="https://img.shields.io/npm/v/@lde/text-normalization" alt="npm"></a></td>
+  <td><a href="packages/text-normalization">@lde/text-normalization</a><br><a href="https://www.npmjs.com/package/@lde/text-normalization"><img src="https://img.shields.io/npm/v/@lde/text-normalization" alt="npm"></a></td>
   <td>Text folding (diacritic stripping and transliteration) for search index and query normalization</td>
 </tr>
-<tr><th colspan="3" align="left">Monitoring – Observe pipeline runs and endpoint health</th></tr>
+<tr><th colspan="2" align="left">Monitoring – Observe pipeline runs and endpoint health</th></tr>
 <tr>
-  <td><a href="packages/distribution-monitor">@lde/distribution-monitor</a></td>
-  <td><a href="https://www.npmjs.com/package/@lde/distribution-monitor"><img src="https://img.shields.io/npm/v/@lde/distribution-monitor" alt="npm"></a></td>
+  <td><a href="packages/distribution-monitor">@lde/distribution-monitor</a><br><a href="https://www.npmjs.com/package/@lde/distribution-monitor"><img src="https://img.shields.io/npm/v/@lde/distribution-monitor" alt="npm"></a></td>
   <td>Monitor DCAT distributions (SPARQL endpoints and data dumps) with periodic probes</td>
 </tr>
 <tr>
-  <td><a href="packages/pipeline-console-reporter">@lde/pipeline-console-reporter</a></td>
-  <td><a href="https://www.npmjs.com/package/@lde/pipeline-console-reporter"><img src="https://img.shields.io/npm/v/@lde/pipeline-console-reporter" alt="npm"></a></td>
+  <td><a href="packages/pipeline-console-reporter">@lde/pipeline-console-reporter</a><br><a href="https://www.npmjs.com/package/@lde/pipeline-console-reporter"><img src="https://img.shields.io/npm/v/@lde/pipeline-console-reporter" alt="npm"></a></td>
   <td>Console progress reporter for pipelines</td>
 </tr>
-<tr><th colspan="3" align="left">Infrastructure – Manage SPARQL servers and run tasks</th></tr>
+<tr><th colspan="2" align="left">Infrastructure – Manage SPARQL servers and run tasks</th></tr>
 <tr>
-  <td><a href="packages/local-sparql-endpoint">@lde/local-sparql-endpoint</a></td>
-  <td><a href="https://www.npmjs.com/package/@lde/local-sparql-endpoint"><img src="https://img.shields.io/npm/v/@lde/local-sparql-endpoint" alt="npm"></a></td>
+  <td><a href="packages/local-sparql-endpoint">@lde/local-sparql-endpoint</a><br><a href="https://www.npmjs.com/package/@lde/local-sparql-endpoint"><img src="https://img.shields.io/npm/v/@lde/local-sparql-endpoint" alt="npm"></a></td>
   <td>Quickly start a local SPARQL endpoint for testing and development</td>
 </tr>
 <tr>
-  <td><a href="packages/sparql-server">@lde/sparql-server</a></td>
-  <td><a href="https://www.npmjs.com/package/@lde/sparql-server"><img src="https://img.shields.io/npm/v/@lde/sparql-server" alt="npm"></a></td>
+  <td><a href="packages/sparql-server">@lde/sparql-server</a><br><a href="https://www.npmjs.com/package/@lde/sparql-server"><img src="https://img.shields.io/npm/v/@lde/sparql-server" alt="npm"></a></td>
   <td>Start, stop and control SPARQL servers</td>
 </tr>
 <tr>
-  <td><a href="packages/sparql-qlever">@lde/sparql-qlever</a></td>
-  <td><a href="https://www.npmjs.com/package/@lde/sparql-qlever"><img src="https://img.shields.io/npm/v/@lde/sparql-qlever" alt="npm"></a></td>
+  <td><a href="packages/sparql-qlever">@lde/sparql-qlever</a><br><a href="https://www.npmjs.com/package/@lde/sparql-qlever"><img src="https://img.shields.io/npm/v/@lde/sparql-qlever" alt="npm"></a></td>
   <td>QLever SPARQL adapter for importing and serving data</td>
 </tr>
 <tr>
-  <td><a href="packages/wait-for-sparql">@lde/wait-for-sparql</a></td>
-  <td><a href="https://www.npmjs.com/package/@lde/wait-for-sparql"><img src="https://img.shields.io/npm/v/@lde/wait-for-sparql" alt="npm"></a></td>
+  <td><a href="packages/wait-for-sparql">@lde/wait-for-sparql</a><br><a href="https://www.npmjs.com/package/@lde/wait-for-sparql"><img src="https://img.shields.io/npm/v/@lde/wait-for-sparql" alt="npm"></a></td>
   <td>Wait for a SPARQL endpoint to become available</td>
 </tr>
 <tr>
-  <td><a href="packages/task-runner">@lde/task-runner</a></td>
-  <td><a href="https://www.npmjs.com/package/@lde/task-runner"><img src="https://img.shields.io/npm/v/@lde/task-runner" alt="npm"></a></td>
+  <td><a href="packages/task-runner">@lde/task-runner</a><br><a href="https://www.npmjs.com/package/@lde/task-runner"><img src="https://img.shields.io/npm/v/@lde/task-runner" alt="npm"></a></td>
   <td>Task runner core classes and interfaces</td>
 </tr>
 <tr>
-  <td><a href="packages/task-runner-docker">@lde/task-runner-docker</a></td>
-  <td><a href="https://www.npmjs.com/package/@lde/task-runner-docker"><img src="https://img.shields.io/npm/v/@lde/task-runner-docker" alt="npm"></a></td>
+  <td><a href="packages/task-runner-docker">@lde/task-runner-docker</a><br><a href="https://www.npmjs.com/package/@lde/task-runner-docker"><img src="https://img.shields.io/npm/v/@lde/task-runner-docker" alt="npm"></a></td>
   <td>Run tasks in Docker containers</td>
 </tr>
 <tr>
-  <td><a href="packages/task-runner-native">@lde/task-runner-native</a></td>
-  <td><a href="https://www.npmjs.com/package/@lde/task-runner-native"><img src="https://img.shields.io/npm/v/@lde/task-runner-native" alt="npm"></a></td>
+  <td><a href="packages/task-runner-native">@lde/task-runner-native</a><br><a href="https://www.npmjs.com/package/@lde/task-runner-native"><img src="https://img.shields.io/npm/v/@lde/task-runner-native" alt="npm"></a></td>
   <td>Run tasks natively on the host system</td>
 </tr>
 </table>
