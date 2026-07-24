@@ -1,3 +1,13 @@
+## 0.33.2 (2026-07-24)
+
+### 🩹 Fixes
+
+- **pipeline:** count fetched rows for selector pagination ([#653](https://github.com/ldelements/lde/pull/653))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.35.2
+
 ## 0.33.1 (2026-07-24)
 
 ### 🧱 Updated Dependencies
