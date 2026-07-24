@@ -41,7 +41,7 @@ QLever the pipeline controls.
   `@lde/search-pipeline` without breaking its engine-agnosticism. Published
   to npm and shipped as `ghcr.io/ldelements/search-indexer`, reusing ADR 15’s
   entire delivery pattern (workspace-built image, `docker:smoke` CI gate,
-  release-tag-triggered publish).
+  release-triggered publish).
 - **The schema-module loader moves to `@lde/search/module`** and both images
   use it, implementing the shared-mount symmetry in code: one loader, one
   validation, one error vocabulary. Consumer-specific optional exports

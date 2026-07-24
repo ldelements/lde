@@ -63,9 +63,12 @@ crashed at startup (dataset-register#2128/#2130). We adopt its end state.
   schema and probed over HTTP (`/health`, `/graphql?sdl`) in `nx affected`,
   so both build-time and runtime-only failures (the
   `ERR_MODULE_NOT_FOUND` class) fail the PR, not production.
-- **Publishing is tag-triggered but registry-independent**: the release run’s
-  `@lde/search-api-server@<version>` tag triggers the Docker workflow, which
-  checks out that commit, rebuilds and smoke-tests the image, and pushes
+- **Publishing is release-triggered but registry-independent**: the GitHub
+  Release nx release creates for `@lde/search-api-server@<version>` triggers
+  the Docker workflow (a _tag_ trigger can never fire here: a multi-package
+  release pushes more than three tags at once, and GitHub then emits no
+  tag-push events), which checks out that commit, rebuilds and smoke-tests
+  the image, and pushes
   `ghcr.io/ldelements/search-api-server:<version>` and `:latest`. Image tags
   stay aligned with the package’s semver; `nx release`’s own Docker support
   (experimental, calendar-versioned, and unable to both npm- and
