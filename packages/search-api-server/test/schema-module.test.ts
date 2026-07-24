@@ -33,4 +33,10 @@ describe('loadSchemaModule', () => {
       loadSchemaModule(fixture('invalid-declaration.mjs')),
     ).rejects.toThrowError(/declares an invalid schema/);
   });
+
+  it('rejects a non-object optional export, naming it', async () => {
+    await expect(
+      loadSchemaModule(fixture('invalid-options.mjs')),
+    ).rejects.toThrowError(/export “schemaOptions” must be an object/);
+  });
 });
