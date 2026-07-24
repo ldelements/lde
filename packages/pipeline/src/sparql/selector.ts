@@ -34,7 +34,7 @@ export interface SparqlItemSelectorOptions {
    * SELECT query projecting at least one named variable.
    *
    * A `LIMIT` clause in the query overrides the stage's `batchSize` as the
-   * page size – use this when the SPARQL endpoint enforces a result limit.
+   * page size — use this when the SPARQL endpoint enforces a result limit.
    * It does **not** cap the total number of bindings the selector yields;
    * pagination continues with `OFFSET` until the source is exhausted. Use
    * {@link maxResults} to cap the total.
@@ -42,10 +42,10 @@ export interface SparqlItemSelectorOptions {
   query: string;
   /**
    * Maximum number of bindings the selector yields across all pages.
-   * Use this for sampling – “give me at most N items, don’t walk the full
+   * Use this for sampling — “give me at most N items, don’t walk the full
    * source”. Independent of {@link query}’s `LIMIT`, which controls page
    * size. Pagination stops as soon as `maxResults` bindings have been
-   * yielded.
+   * yielded. Must not be negative.
    */
   maxResults?: number;
   /** Custom fetcher instance. */
@@ -53,31 +53,40 @@ export interface SparqlItemSelectorOptions {
 }
 
 /**
- * {@link ItemSelector} that pages through SPARQL SELECT results,
- * yielding all projected variable bindings (NamedNode values only) per row.
- * A row whose projected variables bind no NamedNode at all (e.g. only blank
- * nodes) is dropped – binding values double as stable item identities
- * downstream, which a blank-node label cannot provide. Dropped rows still
- * count toward pagination (they occupied result slots at the endpoint), so a
- * partly-dropped page never ends pagination early.
+ * {@link ItemSelector} that pages through SPARQL SELECT results, yielding one
+ * bindings row per result row. A row is yielded only when **every** projected
+ * variable binds a NamedNode: binding values double as stable item identities
+ * downstream and are re-injected into reader queries as a `VALUES` block,
+ * which needs uniform rows – a blank-node label or literal provides no stable
+ * identity, and a partially-bound row would silently weaken the join. Any
+ * other row is dropped, but still counts toward pagination (it occupied a
+ * result slot at the endpoint), so a partly-dropped page never ends
+ * pagination early. Dropped rows are still fetched; to skip them at the
+ * endpoint, filter in the query itself (e.g. `FILTER(isIRI(?s))`).
  *
  * The endpoint URL comes from the {@link Distribution} passed to {@link select}.
- * Pagination is an internal detail – consumers iterate binding rows directly.
+ * Pagination is an internal detail — consumers iterate binding rows directly.
  *
  * The page size (results per SPARQL request) is determined by, in order:
  * 1. A `LIMIT` clause in the selector query (for endpoints with hard result limits)
  * 2. The stage's {@link StageOptions.batchSize} (passed via {@link select})
  * 3. A default of 10
  *
+ * The page size must be positive – a page size of 0 could never terminate,
+ * so it is rejected as a configuration error.
+ *
  * {@link SparqlItemSelectorOptions.maxResults} is independent of page size:
  * it caps the *total* bindings yielded across pages without changing how
- * the first page is requested. The last (partial) page’s `LIMIT` is
- * shrunk to whatever’s left of the cap so the endpoint doesn’t over-fetch
- * on the remainder.
+ * the first page is requested. As long as no row has been dropped, the last
+ * (partial) page’s `LIMIT` is shrunk to whatever’s left of the cap so the
+ * endpoint doesn’t over-fetch on the remainder; once rows have been dropped,
+ * pages stay at full size – shrinking them to the yielded remainder would
+ * crawl a dropped-row region one row per request.
  */
 export class SparqlItemSelector implements ItemSelector {
   private readonly parsed: QuerySelect;
   private readonly queryLimit?: number;
+  private readonly variableNames: readonly string[];
   private readonly maxResults?: number;
   private readonly userFetcher?: SparqlEndpointFetcher;
 
@@ -94,8 +103,15 @@ export class SparqlItemSelector implements ItemSelector {
       );
     }
 
+    if (options.maxResults !== undefined && options.maxResults < 0) {
+      throw new Error(
+        `maxResults must not be negative; got ${options.maxResults}`,
+      );
+    }
+
     this.parsed = parsed as QuerySelect;
     this.queryLimit = this.parsed.solutionModifiers.limitOffset?.limit;
+    this.variableNames = variables.map((variable) => variable.value);
     this.maxResults = options.maxResults;
     this.userFetcher = options.fetcher;
   }
@@ -107,9 +123,15 @@ export class SparqlItemSelector implements ItemSelector {
   ): AsyncIterableIterator<VariableBindings> {
     if (this.maxResults === 0) return;
     const basePageSize = this.queryLimit ?? batchSize ?? 10;
+    if (basePageSize <= 0) {
+      throw new Error(
+        `Page size must be positive; got ${basePageSize} (from the query’s LIMIT or the stage’s batchSize)`,
+      );
+    }
     const endpoint = distribution.accessUrl!;
     const policy = options?.timeout ?? defaultTimeoutPolicy;
     let offset = 0;
+    let totalFetched = 0;
     let totalYielded = 0;
 
     while (true) {
@@ -118,10 +140,14 @@ export class SparqlItemSelector implements ItemSelector {
           ? this.maxResults - totalYielded
           : Infinity;
       // The first page uses the configured page size as-is – keeps page-size
-      // and total-cap orthogonal. Subsequent pages clamp to `remaining` so
-      // the last (partial) page doesn’t over-fetch.
+      // and total-cap orthogonal. Subsequent pages clamp to `remaining` so the
+      // last (partial) page doesn’t over-fetch – but only while nothing has
+      // been dropped: once yields lag fetches, clamping would crawl a
+      // dropped-row region at down to one row per request (see class JSDoc).
       const effectivePageSize =
-        offset === 0 ? basePageSize : Math.min(basePageSize, remaining);
+        offset === 0 || totalFetched > totalYielded
+          ? basePageSize
+          : Math.min(basePageSize, remaining);
       this.parsed.solutionModifiers.limitOffset = F.solutionModifierLimitOffset(
         effectivePageSize,
         offset,
@@ -135,22 +161,19 @@ export class SparqlItemSelector implements ItemSelector {
         policy,
       );
 
-      // Pagination counts FETCHED rows, not yielded ones: a row dropped by the
-      // NamedNode filter (e.g. a blank-node binding) still occupied a slot in
-      // the page, so it must advance OFFSET, and a full page of partly-dropped
-      // rows must not look short – that would end pagination with results still
-      // remaining at the endpoint. Only `maxResults` counts yielded rows.
+      // Fetched rows drive pagination, yielded rows only `maxResults` – see
+      // the class JSDoc for why dropped rows must keep their page slot.
       let fetched = 0;
       for await (const record of stream) {
         fetched++;
-        const row = Object.fromEntries(
-          Object.entries(record).filter(
-            ([, term]) => term.termType === 'NamedNode',
-          ),
-        ) as VariableBindings;
+        totalFetched++;
 
-        if (Object.keys(row).length > 0) {
-          yield row;
+        if (
+          this.variableNames.every(
+            (name) => record[name]?.termType === 'NamedNode',
+          )
+        ) {
+          yield record as VariableBindings;
           totalYielded++;
           if (
             this.maxResults !== undefined &&
@@ -161,7 +184,7 @@ export class SparqlItemSelector implements ItemSelector {
         }
       }
 
-      if (fetched === 0 || fetched < effectivePageSize) {
+      if (fetched < effectivePageSize) {
         return;
       }
 
