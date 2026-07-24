@@ -144,7 +144,7 @@ function subjectSelector(
   assertSafeIri(targetClass.value);
   return {
     // Forward `options` so the Pipeline’s per-dataset TimeoutPolicy
-    // reaches the inner SparqlItemSelector — without this the adaptive
+    // reaches the inner SparqlItemSelector – without this the adaptive
     // budget is silently bypassed for subject selection.
     select(distribution, batchSize, options) {
       const query = buildSubjectSelectorQuery({
@@ -193,10 +193,14 @@ export function buildSubjectSelectorQuery({
     fromClause = `FROM <${namedGraph}>`;
   }
   const typePattern = buildTypePattern(targetClass, namespaceAliases);
+  // Exclude blank-node subjects at the endpoint: the selector would drop them
+  // client-side anyway (no stable identity), but only after fetching them –
+  // and a class instantiated by many blank nodes would then be walked to the
+  // end through pages that yield nothing.
   return [
     'SELECT DISTINCT ?s',
     fromClause,
-    `WHERE { ${subjectFilter ?? ''} ${typePattern} ${excludeFilter ?? ''} }`,
+    `WHERE { ${subjectFilter ?? ''} ${typePattern} FILTER(!isBlank(?s)) ${excludeFilter ?? ''} }`,
   ].join('\n');
 }
 

@@ -113,6 +113,8 @@ new SparqlItemSelector({
 });
 ```
 
+A row is yielded only when **every** projected variable binds a `NamedNode` – binding values double as stable item identities downstream, which a blank-node label or literal cannot provide. Other rows are dropped client-side but still count toward pagination, so they are fetched first; to skip them at the endpoint, filter in the query itself (e.g. `FILTER(isIRI(?s))`, as `selectByClass` in `@lde/search-pipeline` does with `FILTER(!isBlank(?root))`).
+
 #### Capping total results with `maxResults`
 
 By default, `SparqlItemSelector` paginates through **all** matching rows: any `LIMIT` clause in the query is interpreted as the page size, then it walks pages with `OFFSET` until the source is exhausted. To cap the total bindings yielded across all pages – for sampling, testing, prototyping, or just safety – set `maxResults`:
@@ -127,7 +129,7 @@ new SparqlItemSelector({
 When `maxResults` is set:
 
 - Pagination stops as soon as `maxResults` bindings have been yielded – no wasted page request after the cap is hit.
-- The last (partial) page's `LIMIT` is shrunk to the remaining cap so the endpoint doesn't over-fetch on the remainder (e.g. with `maxResults: 85` and `pageSize: 10`, the 9th page request is `LIMIT 5`, not `LIMIT 10`).
+- As long as no row has been dropped, the last (partial) page's `LIMIT` is shrunk to the remaining cap so the endpoint doesn't over-fetch on the remainder (e.g. with `maxResults: 85` and `pageSize: 10`, the 9th page request is `LIMIT 5`, not `LIMIT 10`). Once rows have been dropped, pages stay at full size – shrinking to the yielded remainder would crawl a dropped-row region one row per request.
 - The first page uses the configured page size as-is; `maxResults` and page size stay orthogonal. If `maxResults < pageSize`, the first page may return a few rows that aren't yielded.
 - `maxResults: 0` is a valid no-op; the selector yields nothing without issuing any SPARQL request.
 - `maxResults` is independent of any `LIMIT` clause in the query, which still controls page size when the cap is larger than one page.
