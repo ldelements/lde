@@ -82,7 +82,7 @@ Each package uses conditional exports with a `development` condition for local d
 - Test files use `.test.ts` suffix in `test/` directory
 - Fixtures in `test/fixtures/`
 - HTTP mocking with Nock
-- Tests that start a local SPARQL endpoint (`@lde/local-sparql-endpoint`) must use unique ports across packages to avoid conflicts when Nx runs tests in parallel. Current port allocations: `dataset-registry-client` (3002), `pipeline` sparqlQuery (3001), `pipeline` executor (3003), `pipeline` provenance store (3004), `pipeline-void` namespace-normalization (3005–3006), `search-pipeline` extraction round-trip (3007)
+- Tests that start a local SPARQL endpoint (`@lde/local-sparql-endpoint`) must use unique ports across packages to avoid conflicts when Nx runs tests in parallel. Current port allocations: `dataset-registry-client` (3002), `pipeline` sparqlQuery (3001), `pipeline` executor (3003), `pipeline` provenance store (3004), `pipeline-void` namespace-normalization (3005–3006), `search-pipeline` extraction round-trip (3007), `search-pipeline` searchIndexerPipeline end-to-end (3008)
 
 ### Key Dependencies
 
