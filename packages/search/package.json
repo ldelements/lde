@@ -16,6 +16,12 @@
       "development": "./src/index.ts",
       "default": "./dist/index.js"
     },
+    "./module": {
+      "types": "./dist/module.d.ts",
+      "import": "./dist/module.js",
+      "development": "./src/module.ts",
+      "default": "./dist/module.js"
+    },
     "./adapter": {
       "types": "./dist/adapter.d.ts",
       "import": "./dist/adapter.js",

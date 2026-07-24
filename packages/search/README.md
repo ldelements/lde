@@ -62,6 +62,11 @@ Exports are stratified by audience:
 - **`@lde/search/adapter`** – plumbing for engine adapters and API surfaces:
   `physicalFields`, the field selectors, `assertValidQuery`, the filter
   operators and storage codecs.
+- **`@lde/search/module`** – `loadSchemaModule`, the Node-only loader for a
+  mounted schema-declaration module (an `.mjs` default-exporting declarations
+  as plain data). The one loader both the indexer image and the served-API
+  image boot from, so the write and the read side cannot disagree about the
+  schema.
 - **`@lde/search/testing`** – `describeSearchEngineContract`, the executable
   port contract every engine adapter runs against a live instance of itself
   (vitest; optional peer).

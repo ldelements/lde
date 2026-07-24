@@ -1,5 +1,5 @@
-import { pathToFileURL } from 'node:url';
-import { searchSchema, type SearchSchema, type SearchType } from '@lde/search';
+import { loadSchemaModule as loadDeclarations } from '@lde/search/module';
+import type { SearchSchema } from '@lde/search';
 import type { BuildGraphQLSchemaOptions } from '@lde/search-api-graphql';
 import type { TypesenseSearchEngineOptions } from '@lde/search-typesense';
 
@@ -26,48 +26,22 @@ export interface SchemaModule {
 }
 
 /**
- * Load and validate a mounted schema-declaration module: an ES module whose
- * default export is a non-empty array of {@link SearchType} declarations.
- * Throws with the module path in the message for every failure mode – an
- * unreadable file, a wrong export shape, an invalid declaration – so a bad
- * mount fails the boot with a diagnosis, never the first query.
+ * Load and validate a mounted schema-declaration module
+ * (`@lde/search/module`’s {@link loadDeclarations | loadSchemaModule} – the
+ * loader the indexer image shares, so both sides mount the same file), then
+ * validate the read side’s optional exports. Throws with the module path in
+ * the message for every failure mode, so a bad mount fails the boot with a
+ * diagnosis, never the first query.
  */
 export async function loadSchemaModule(
   modulePath: string,
 ): Promise<SchemaModule> {
-  let moduleExports: Record<string, unknown>;
-  try {
-    moduleExports = (await import(pathToFileURL(modulePath).href)) as Record<
-      string,
-      unknown
-    >;
-  } catch (cause) {
-    throw new Error(
-      `Cannot load schema module “${modulePath}”: ${cause instanceof Error ? cause.message : String(cause)}`,
-      { cause },
-    );
-  }
-  const declarations = moduleExports['default'];
-  if (!Array.isArray(declarations) || declarations.length === 0) {
-    throw new Error(
-      `Schema module “${modulePath}” must default-export a non-empty array of search type declarations.`,
-    );
-  }
-  try {
-    return {
-      searchSchema: searchSchema(...(declarations as SearchType[])),
-      schemaOptions: optionalObject(moduleExports, 'schemaOptions', modulePath),
-      engineOptions: optionalObject(moduleExports, 'engineOptions', modulePath),
-    };
-  } catch (cause) {
-    if (cause instanceof Error && cause.message.includes(modulePath)) {
-      throw cause;
-    }
-    throw new Error(
-      `Schema module “${modulePath}” declares an invalid schema: ${cause instanceof Error ? cause.message : String(cause)}`,
-      { cause },
-    );
-  }
+  const { schema, moduleExports } = await loadDeclarations(modulePath);
+  return {
+    searchSchema: schema,
+    schemaOptions: optionalObject(moduleExports, 'schemaOptions', modulePath),
+    engineOptions: optionalObject(moduleExports, 'engineOptions', modulePath),
+  };
 }
 
 function optionalObject<Options>(
