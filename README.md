@@ -154,6 +154,11 @@ await pipeline.run();
   <td>The served search API as a bootable process and prebuilt Docker image: mounts a schema-declaration module, binds the GraphQL handler to a Typesense engine, and serves /graphql plus /health from environment config</td>
 </tr>
 <tr>
+  <td><a href="packages/search-indexer">@lde/search-indexer</a></td>
+  <td><a href="https://www.npmjs.com/package/@lde/search-indexer"><img src="https://img.shields.io/npm/v/@lde/search-indexer" alt="npm"></a></td>
+  <td>The search indexer as a bootable process and prebuilt Docker image: mounts the same schema-declaration module as the API server, selects datasets from a registry, and rebuilds the Typesense collections from environment config</td>
+</tr>
+<tr>
   <td><a href="packages/search-pipeline">@lde/search-pipeline</a></td>
   <td><a href="https://www.npmjs.com/package/@lde/search-pipeline"><img src="https://img.shields.io/npm/v/@lde/search-pipeline" alt="npm"></a></td>
   <td>Applies the @lde/search projection inside an @lde/pipeline run, fanning each document out to the transactional engine writer for its type’s collection (owns no projection itself)</td>
@@ -253,6 +258,10 @@ graph TD
     search-typesense --> pipeline
     search-pipeline --> search
     search-pipeline --> pipeline
+    search-indexer --> search-pipeline
+    search-indexer --> search-typesense
+    search-indexer --> sparql-qlever
+    search-indexer --> pipeline-console-reporter
   end
 
   subgraph Monitoring

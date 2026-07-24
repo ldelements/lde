@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - '@lde/search-api-server@*'
+      - '@lde/search-indexer@*'
   workflow_dispatch:
     inputs:
       ref:
@@ -31,14 +32,17 @@ jobs:
       # The image is built from this tagged commit's own workspace outputs
       # (nx docker:build stages the compiled package, its workspace
       # dependencies and a pruned lockfile), so it needs no npm publish to
-      # have happened – the release tag alone identifies the version.
-      - name: Determine version
+      # have happened – the release tag alone identifies the package and
+      # version (e.g. "@lde/search-indexer@0.1.0").
+      - name: Determine package and version
         id: version
         # The ref reaches the shell via env, never inline interpolation, so a
         # crafted dispatch input cannot inject shell syntax.
         env:
           REF: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref_name }}
         run: |
+          package="${REF#@lde/}"
+          echo "package=${package%@*}" >> "$GITHUB_OUTPUT"
           echo "version=${REF##*@}" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-node@v7
@@ -49,7 +53,7 @@ jobs:
       - run: npm ci
 
       - name: Build and smoke-test the image
-        run: npx nx run @lde/search-api-server:docker:smoke
+        run: npx nx run "@lde/${{ steps.version.outputs.package }}:docker:smoke"
 
       - uses: docker/login-action@v3
         with:
@@ -59,7 +63,9 @@ jobs:
 
       - name: Push the image
         run: |
-          docker tag packages-search-api-server "ghcr.io/ldelements/search-api-server:${{ steps.version.outputs.version }}"
-          docker tag packages-search-api-server ghcr.io/ldelements/search-api-server:latest
-          docker push "ghcr.io/ldelements/search-api-server:${{ steps.version.outputs.version }}"
-          docker push ghcr.io/ldelements/search-api-server:latest
+          package="${{ steps.version.outputs.package }}"
+          version="${{ steps.version.outputs.version }}"
+          docker tag "packages-${package}" "ghcr.io/ldelements/${package}:${version}"
+          docker tag "packages-${package}" "ghcr.io/ldelements/${package}:latest"
+          docker push "ghcr.io/ldelements/${package}:${version}"
+          docker push "ghcr.io/ldelements/${package}:latest"
