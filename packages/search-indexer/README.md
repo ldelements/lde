@@ -117,6 +117,14 @@ itself runs:
   cannot reach a host-published port. Alternatively, run the indexer with
   `network_mode: host` and leave `QLEVER_NETWORK` unset.
 
+`QLEVER_NETWORK` must name a network the indexer container is actually
+attached to – for compose, the prefixed name Docker creates (e.g.
+`myproject_default`), not the short service-file name. A wrong or unattached
+network is not caught at boot: each dataset imports fully, then fails when
+the endpoint never becomes reachable. And run at most one indexer per
+network – the QLever container name is derived from the network, so two
+indexers sharing one would remove each other’s QLever.
+
 This mode does not work on container runtimes without a Docker socket
 (containerd-based Kubernetes); there, run endpoint-only for now.
 

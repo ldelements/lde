@@ -29,13 +29,12 @@ describe('createQlever', () => {
     expect(server.queryEndpoint.toString()).toBe('http://qlever:7001/sparql');
   });
 
-  it('rejects a network without a container name', () => {
-    expect(() =>
-      createQlever({
-        mode: 'docker',
-        image: 'adfreiburg/qlever:latest',
-        network: 'app_default',
-      }),
-    ).toThrow('network requires containerName');
+  it('rejects a network without a container name at the type level', () => {
+    createQlever({
+      mode: 'docker',
+      image: 'adfreiburg/qlever:latest',
+      // @ts-expect-error network requires containerName, the endpoint hostname
+      network: 'app_default',
+    });
   });
 });

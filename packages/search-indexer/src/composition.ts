@@ -62,17 +62,23 @@ export function distributionResolverFrom(
   if (!config.qlever) {
     return undefined;
   }
-  const { importer, server } = createQlever({
-    mode: 'docker',
-    image: config.qlever.image,
-    dataDir: config.qlever.dataDir,
-    // The network-scoped name keeps two stacks on one host from removing
-    // each other's QLever, and doubles as the endpoint hostname.
-    ...(config.qlever.network && {
-      network: config.qlever.network,
-      containerName: `qlever-${config.qlever.network}`,
-    }),
-  });
+  const { importer, server } = config.qlever.network
+    ? createQlever({
+        mode: 'docker',
+        image: config.qlever.image,
+        dataDir: config.qlever.dataDir,
+        network: config.qlever.network,
+        // The network-scoped name doubles as the endpoint hostname. It keeps
+        // stacks on different networks from removing each other’s QLever;
+        // indexers sharing one network would still collide, so run at most
+        // one indexer per network.
+        containerName: `qlever-${config.qlever.network}`,
+      })
+    : createQlever({
+        mode: 'docker',
+        image: config.qlever.image,
+        dataDir: config.qlever.dataDir,
+      });
   return new ImportResolver(new SparqlDistributionResolver(), {
     importer,
     server,
