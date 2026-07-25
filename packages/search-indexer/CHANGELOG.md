@@ -1,3 +1,13 @@
+## 0.0.3 (2026-07-25)
+
+### 🚀 Features
+
+- **sparql-qlever:** reach QLever by container name over a Docker network ([#663](https://github.com/ldelements/lde/pull/663))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/sparql-qlever to 0.15.3
+
 ## 0.0.2 (2026-07-25)
 
 ### 🩹 Fixes
