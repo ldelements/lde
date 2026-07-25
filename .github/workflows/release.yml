@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - main
+  # Manual trigger: releases whatever releasable conventional commits have
+  # accumulated since the last tags; a no-op when there are none.
+  workflow_dispatch:
 
 concurrency:
   group: release
@@ -46,7 +49,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.PAT }} # Needed for pushing release commits.
 
       # Publishes via npm OIDC trusted publishing (see id-token: write above), which
-      # mints a short-lived credential per run — no long-lived npm token needed.
+      # mints a short-lived credential per run – no long-lived npm token needed.
       - run: npx nx release publish --access public
         env:
           NPM_CONFIG_PROVENANCE: true
