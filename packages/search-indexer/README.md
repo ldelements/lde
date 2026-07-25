@@ -79,7 +79,11 @@ images.
 A misconfigured boot reports **all** problems in one error, not one per crash
 loop. `PROVENANCE_FILE` must sit on a durable volume, and cannot be combined
 with `REBUILD_MODE=blue-green`: a skipped dataset would be missing from the
-fresh collection the swap makes live.
+fresh collection the swap makes live. Its directory must be writable by the
+image’s runtime user (uid 1000) – the image pre-creates `/provenance` with
+that ownership, so a named volume mounted there just works, while a bind
+mount must be `chown`ed on the host. A run fails at start when the file is
+not writable, instead of silently never skipping.
 
 ## The QLever import path
 

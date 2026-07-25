@@ -1,5 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ProcessingRecord } from '../../src/index.js';
@@ -125,5 +132,49 @@ describe('FileProvenanceStore', () => {
 
     await expect(store.get(DATASET_URI)).rejects.toThrow();
     await expect(store.set(DATASET_URI, RECORD)).rejects.toThrow();
+  });
+
+  describe('check', () => {
+    it('passes on a writable directory, leaving nothing behind', async () => {
+      const store = new FileProvenanceStore({ path });
+
+      await store.check();
+
+      expect(await readdir(directory)).toEqual([]);
+    });
+
+    it('creates missing parent directories', async () => {
+      const nestedPath = join(directory, 'state', 'nested', 'provenance.json');
+      const store = new FileProvenanceStore({ path: nestedPath });
+
+      await store.check();
+
+      expect(await readdir(join(directory, 'state', 'nested'))).toEqual([]);
+    });
+
+    it('leaves an existing provenance file untouched', async () => {
+      const store = new FileProvenanceStore({ path });
+      await store.set(DATASET_URI, RECORD);
+
+      await store.check();
+
+      expect(await store.get(DATASET_URI)).toEqual(RECORD);
+      expect(await readdir(directory)).toEqual(['provenance.json']);
+    });
+
+    it('rejects when the directory is not writable', async () => {
+      // The root-owned volume case from issue #661: the directory exists but
+      // the runtime user cannot create files in it.
+      const store = new FileProvenanceStore({ path });
+      await chmod(directory, 0o555);
+
+      try {
+        await expect(store.check()).rejects.toThrow(
+          `Provenance file ${path} is not writable`,
+        );
+      } finally {
+        await chmod(directory, 0o755);
+      }
+    });
   });
 });

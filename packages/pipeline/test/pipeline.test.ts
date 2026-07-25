@@ -2768,7 +2768,7 @@ describe('Pipeline', () => {
       expect(stage.run).toHaveBeenCalledTimes(1);
     });
 
-    it('continues the run when the store write fails', async () => {
+    it('continues the run when the store write fails, reporting each failure', async () => {
       const dataset1 = makeDataset('http://example.org/dataset/1');
       const dataset2 = makeDataset('http://example.org/dataset/2');
       const resolver = makeDumpResolver();
@@ -2777,6 +2777,7 @@ describe('Pipeline', () => {
         set: vi.fn().mockRejectedValue(new Error('disk full')),
       };
       const stage = makeStage('stage1');
+      const reporter = makeReporter();
 
       const pipeline = new Pipeline({
         datasetSelector: makeDatasetSelector(dataset1, dataset2),
@@ -2785,12 +2786,90 @@ describe('Pipeline', () => {
         distributionResolver: resolver,
         provenanceStore: store,
         pipelineVersion: 'v1',
+        reporter,
       });
 
       await expect(pipeline.run()).resolves.toBeUndefined();
       // Both datasets are processed despite each write throwing.
       expect(stage.run).toHaveBeenCalledTimes(2);
       expect(store.set).toHaveBeenCalledTimes(2);
+      // But the failures are surfaced, not swallowed: a store that fails
+      // every write silently disables skip-unchanged.
+      expect(reporter.stageFailed).toHaveBeenCalledTimes(2);
+      expect(reporter.stageFailed).toHaveBeenCalledWith(
+        'provenance',
+        expect.objectContaining({ message: 'disk full' }),
+      );
+    });
+
+    it('wraps a non-Error write failure for the reporter', async () => {
+      const resolver = makeDumpResolver();
+      const store: ProvenanceStore & { set: ReturnType<typeof vi.fn> } = {
+        get: vi.fn().mockResolvedValue(null),
+        set: vi.fn().mockRejectedValue('disk full'),
+      };
+      const reporter = makeReporter();
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [makeStage('stage1')],
+        writers: writer,
+        distributionResolver: resolver,
+        provenanceStore: store,
+        pipelineVersion: 'v1',
+        reporter,
+      });
+
+      await expect(pipeline.run()).resolves.toBeUndefined();
+      expect(reporter.stageFailed).toHaveBeenCalledWith(
+        'provenance',
+        expect.objectContaining({ message: 'disk full' }),
+      );
+    });
+
+    it('fails the run when the store check fails, before selecting datasets', async () => {
+      const resolver = makeDumpResolver();
+      const store: ProvenanceStore & { check: ReturnType<typeof vi.fn> } = {
+        check: vi.fn().mockRejectedValue(new Error('not writable')),
+        get: vi.fn().mockResolvedValue(null),
+        set: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [makeStage('stage1')],
+        writers: writer,
+        distributionResolver: resolver,
+        provenanceStore: store,
+        pipelineVersion: 'v1',
+      });
+
+      // A store that cannot persist records would process every dataset but
+      // lose the outcome, so skip-unchanged would silently never engage.
+      await expect(pipeline.run()).rejects.toThrow('not writable');
+      expect(resolver.probe).not.toHaveBeenCalled();
+    });
+
+    it('checks the store once at the start of the run', async () => {
+      const resolver = makeDumpResolver();
+      const store: ProvenanceStore & { check: ReturnType<typeof vi.fn> } = {
+        check: vi.fn().mockResolvedValue(undefined),
+        get: vi.fn().mockResolvedValue(null),
+        set: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [makeStage('stage1')],
+        writers: writer,
+        distributionResolver: resolver,
+        provenanceStore: store,
+        pipelineVersion: 'v1',
+      });
+
+      await pipeline.run();
+
+      expect(store.check).toHaveBeenCalledTimes(1);
     });
 
     it('does not gate or record when no store is configured', async () => {
