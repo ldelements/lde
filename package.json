@@ -11,6 +11,9 @@
     "packages/*"
   ],
   "scripts": {
+    "docs:build": "vitepress build docs",
+    "docs:dev": "vitepress dev docs",
+    "docs:preview": "vitepress preview docs",
     "prepare": "husky"
   },
   "lint-staged": {
@@ -43,6 +46,7 @@
     "jiti": "2.7.0",
     "jsonc-eslint-parser": "^3.1.0",
     "lint-staged": "^17.0.8",
+    "mermaid": "^11.16.0",
     "nock": "^14.0.16",
     "nx": "23.1.0",
     "prettier": "^3.9.6",
@@ -52,6 +56,8 @@
     "typescript-eslint": "8.65.0",
     "verdaccio": "6.7.4",
     "vite": "8.0.9",
+    "vitepress": "^1.6.4",
+    "vitepress-plugin-mermaid": "^2.0.17",
     "vitest": "4.1.0"
   },
   "nx": {
