@@ -114,7 +114,7 @@ npx nx run @lde/search-indexer:docker:build   # → packages-search-indexer
 npx nx run @lde/search-indexer:docker:smoke   # boots it with --check
 ```
 
-CI runs `docker:smoke` for affected PRs; each release tag rebuilds and pushes
+CI runs `docker:smoke` for affected PRs; each release rebuilds and pushes
 `ghcr.io/ldelements/search-indexer:<version>` (`.github/workflows/docker.yml`).
 
 ## Programmatic use

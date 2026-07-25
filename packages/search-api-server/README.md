@@ -119,7 +119,7 @@ npx nx run @lde/search-api-server:docker:build   # → packages-search-api-serve
 npx nx run @lde/search-api-server:docker:smoke   # boots it and probes /health + ?sdl
 ```
 
-CI runs `docker:smoke` for affected PRs; each release tag rebuilds and pushes
+CI runs `docker:smoke` for affected PRs; each release rebuilds and pushes
 `ghcr.io/ldelements/search-api-server:<version>` (`.github/workflows/docker.yml`).
 
 ## Programmatic use

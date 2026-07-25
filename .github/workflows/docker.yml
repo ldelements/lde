@@ -1,10 +1,12 @@
 name: Docker
 
+# Triggered by the GitHub Releases nx release creates, NOT by tag pushes: a
+# multi-package release pushes all its tags in one batch, and GitHub emits no
+# tag-push events at all when more than three tags arrive at once – so a tag
+# trigger would silently never fire for this monorepo.
 on:
-  push:
-    tags:
-      - '@lde/search-api-server@*'
-      - '@lde/search-indexer@*'
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       ref:
@@ -23,6 +25,13 @@ concurrency:
 
 jobs:
   publish-image:
+    # Every released package fires a release event; only the image-shipping
+    # packages get past this guard (keep it in sync with the packages that
+    # have a Dockerfile).
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      startsWith(github.event.release.tag_name, '@lde/search-api-server@') ||
+      startsWith(github.event.release.tag_name, '@lde/search-indexer@')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

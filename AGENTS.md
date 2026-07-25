@@ -100,7 +100,7 @@ The `@nx/js:library` generator’s output diverges from the conventions in this 
    - `name` → `@lde/<new-name>`
    - `description` – write something useful
    - `repository.directory` → `packages/<new-name>`
-   - `version` → `0.0.0` (do NOT keep the sibling’s version). The first CI release bumps from the manifest over the package’s full history, so `0.0.0` lands it at `0.1.0` (observed with `search-typesense` and `text-normalization`), while a manifest pre-set to `0.1.0` shipped `0.2.0` (`pipeline-shacl-sampler`). This must be in place before the PR merges – see [Releasing a new package](#releasing-a-new-package).
+   - `version` → `0.0.0` (do NOT keep the sibling’s version). The first CI release bumps from the manifest over the package’s full history under the zero-major scheme (minor = breaking, patch = feature/fix), so `0.0.0` lands at `0.0.1` for plain `feat` commits (`search-api-server`, `search-indexer`) and at `0.1.0` only when the history carries a breaking-marked commit (`search-typesense`, `text-normalization`); a manifest pre-set to `0.1.0` overshoots (`pipeline-shacl-sampler` shipped `0.2.0`). This must be in place before the PR merges – see [Releasing a new package](#releasing-a-new-package).
    - `dependencies` and `peerDependencies` – replace with what the new package actually needs
 4. **Replace the source.** Empty out `src/` and `test/`, write the new code.
 5. **Update `tsconfig.lib.json` `references`** to match the new package’s actual `@lde/*` peers.
