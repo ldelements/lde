@@ -5,8 +5,15 @@ import Docker, { Container, ContainerCreateOptions } from 'dockerode';
 export interface DockerTaskRunnerOptions {
   image: string;
   containerName?: string;
+  /** Publish this container port to the same port on the host. */
   port?: number;
   mountDir?: string;
+  /**
+   * Docker network to attach the container to. On a user-defined network,
+   * other containers reach it by its `containerName` as hostname, so
+   * publishing a host `port` becomes unnecessary.
+   */
+  network?: string;
   docker?: Docker;
 }
 
@@ -78,6 +85,13 @@ export class DockerTaskRunner implements TaskRunner<Container> {
             },
           ],
         },
+      };
+    }
+
+    if (this.options.network) {
+      containerOptions.HostConfig = {
+        ...containerOptions.HostConfig,
+        NetworkMode: this.options.network,
       };
     }
 

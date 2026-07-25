@@ -10,6 +10,20 @@ Only **one** index is cached at a time. In a multi-dataset pipeline, each datase
 
 Caching is enabled by default. Disable it by passing `cacheIndex: false` to `createQlever()` or the `Importer` constructor (e.g. driven by a `QLEVER_CACHE_INDEX=false` environment variable).
 
+## Networking (Docker mode)
+
+By default `createQlever({ mode: 'docker' })` publishes QLever’s port on the host and addresses the query endpoint as `localhost` – correct when the consumer runs on the host, or shares the QLever container’s network namespace. A consumer that itself runs in a container on a bridge network cannot reach a host-published port; pass `network` (a Docker network the consumer is attached to) together with `containerName`, and QLever joins that network with the endpoint addressed by container name instead:
+
+```ts
+const { importer, server } = createQlever({
+  mode: 'docker',
+  image: 'adfreiburg/qlever:latest',
+  network: 'app_default',
+  containerName: 'qlever',
+});
+server.queryEndpoint.toString(); // 'http://qlever:7001/sparql'
+```
+
 ## Configuration
 
 `createQlever()` accepts `indexOptions` and `serverOptions` to tune QLever's index builder and server respectively.

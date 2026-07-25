@@ -83,4 +83,17 @@ describe('distributionResolverFrom', () => {
     );
     expect(resolver).toBeInstanceOf(ImportResolver);
   });
+
+  it('builds the QLever import path on a Docker network', () => {
+    const resolver = distributionResolverFrom(
+      configFromEnvironment({
+        ...minimal,
+        QLEVER_IMAGE: 'adfreiburg/qlever:latest',
+        IMPORT_STRATEGY: 'import',
+        DATA_DIR: '/tmp/qlever-data',
+        QLEVER_NETWORK: 'app_default',
+      }),
+    );
+    expect(resolver).toBeInstanceOf(ImportResolver);
+  });
 });

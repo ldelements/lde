@@ -3,11 +3,10 @@
   "compilerOptions": {
     "outDir": "./out-tsc/vitest",
     "types": ["node"],
-    "ignoreDeprecations": "6.0"
+    "ignoreDeprecations": "6.0",
+    "rootDir": "."
   },
   "include": [
-    "vite.config.ts",
-    "vitest.config.ts",
     "test/**/*.test.ts",
     "test/**/*.spec.ts",
     "test/**/*.test.tsx",

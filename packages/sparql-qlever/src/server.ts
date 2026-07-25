@@ -26,13 +26,21 @@ export class Server<Task> implements SparqlServer {
   private readonly indexName: string;
   private task?: Task;
   private readonly port: number;
+  private readonly hostname: string;
   private readonly qleverOptions: RequiredQleverServerOptions &
     Pick<QleverServerOptions, 'cache-max-size'>;
 
-  constructor({ taskRunner, indexName, port, qleverOptions }: Arguments<Task>) {
+  constructor({
+    taskRunner,
+    indexName,
+    port,
+    hostname,
+    qleverOptions,
+  }: Arguments<Task>) {
     this.taskRunner = taskRunner;
     this.indexName = indexName;
     this.port = port ?? 7001;
+    this.hostname = hostname ?? 'localhost';
     this.qleverOptions = { ...defaultQleverServerOptions, ...qleverOptions };
   }
 
@@ -63,7 +71,7 @@ export class Server<Task> implements SparqlServer {
   }
 
   public get queryEndpoint(): URL {
-    return new URL(`http://localhost:${this.port}/sparql`);
+    return new URL(`http://${this.hostname}:${this.port}/sparql`);
   }
 }
 
@@ -72,5 +80,12 @@ export interface Arguments<Task> {
   indexName: string;
   /** @default 7001 */
   port?: number;
+  /**
+   * Hostname at which consumers reach the query endpoint. Defaults to
+   * `localhost`, which is right whenever the server shares the consumer’s
+   * network namespace: a native process, a host-published Docker port, or
+   * QLever running inside the consumer’s own container.
+   */
+  hostname?: string;
   qleverOptions?: QleverServerOptions;
 }

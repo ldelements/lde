@@ -66,6 +66,12 @@ export function distributionResolverFrom(
     mode: 'docker',
     image: config.qlever.image,
     dataDir: config.qlever.dataDir,
+    // The network-scoped name keeps two stacks on one host from removing
+    // each other's QLever, and doubles as the endpoint hostname.
+    ...(config.qlever.network && {
+      network: config.qlever.network,
+      containerName: `qlever-${config.qlever.network}`,
+    }),
   });
   return new ImportResolver(new SparqlDistributionResolver(), {
     importer,
