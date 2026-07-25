@@ -24,7 +24,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  publish-image:
+  build:
     # Every released package fires a release event; only the image-shipping
     # packages get past this guard (keep it in sync with the packages that
     # have a Dockerfile).
@@ -32,7 +32,17 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       startsWith(github.event.release.tag_name, '@lde/search-api-server@') ||
       startsWith(github.event.release.tag_name, '@lde/search-indexer@')
-    runs-on: ubuntu-latest
+    # Each architecture builds AND boots natively on its own runner, so the
+    # docker:smoke gate covers both – an emulated (QEMU) arm64 build could
+    # only ever boot-test amd64.
+    strategy:
+      matrix:
+        include:
+          - architecture: amd64
+            runner: ubuntu-latest
+          - architecture: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -70,11 +80,41 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Push the image
+      - name: Push the architecture image
         run: |
           package="${{ steps.version.outputs.package }}"
           version="${{ steps.version.outputs.version }}"
-          docker tag "packages-${package}" "ghcr.io/ldelements/${package}:${version}"
-          docker tag "packages-${package}" "ghcr.io/ldelements/${package}:latest"
-          docker push "ghcr.io/ldelements/${package}:${version}"
-          docker push "ghcr.io/ldelements/${package}:latest"
+          docker tag "packages-${package}" "ghcr.io/ldelements/${package}:${version}-${{ matrix.architecture }}"
+          docker push "ghcr.io/ldelements/${package}:${version}-${{ matrix.architecture }}"
+
+  # Stitches the per-architecture images into one multi-architecture manifest,
+  # so :<version> and :latest resolve natively on amd64 and arm64 alike.
+  # Skipped automatically when build is skipped (needs propagates the skip).
+  publish-manifest:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Determine package and version
+        id: version
+        env:
+          REF: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.event.release.tag_name }}
+        run: |
+          package="${REF#@lde/}"
+          echo "package=${package%@*}" >> "$GITHUB_OUTPUT"
+          echo "version=${REF##*@}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create the multi-architecture manifest
+        run: |
+          package="${{ steps.version.outputs.package }}"
+          version="${{ steps.version.outputs.version }}"
+          docker buildx imagetools create \
+            --tag "ghcr.io/ldelements/${package}:${version}" \
+            --tag "ghcr.io/ldelements/${package}:latest" \
+            "ghcr.io/ldelements/${package}:${version}-amd64" \
+            "ghcr.io/ldelements/${package}:${version}-arm64"
