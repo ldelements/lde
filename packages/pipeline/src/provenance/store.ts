@@ -10,6 +10,14 @@ import type { ProcessingRecord } from './record.js';
  */
 export interface ProvenanceStore {
   /**
+   * Verify the store can persist records, throwing when it cannot. The
+   * pipeline calls this once at the start of a run, so a store that would
+   * fail every write – e.g. a provenance file on a mount the runtime user
+   * cannot write to – fails the run immediately instead of silently
+   * disabling skip-unchanged.
+   */
+  check?(): Promise<void>;
+  /**
    * The record from the dataset’s last processing, or `null` if it has never
    * been processed (or the store was wiped). A `null` result drives a
    * reprocess.

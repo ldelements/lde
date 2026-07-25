@@ -23,7 +23,10 @@ COPY dist-docker/ ./
 
 # Default DATA_DIR for the QLever import path; a real deployment mounts a
 # volume here (and the same host path into the sibling QLever container).
-RUN mkdir -p /data && chown node:node /data
+# /provenance is the conventional home of PROVENANCE_FILE. Both are owned by
+# the runtime user so a fresh named volume mounted there – which inherits the
+# image directory’s ownership – is writable by uid 1000 (issue #661).
+RUN mkdir -p /data /provenance && chown node:node /data /provenance
 
 USER node
 CMD ["node", "dist/cli.js"]

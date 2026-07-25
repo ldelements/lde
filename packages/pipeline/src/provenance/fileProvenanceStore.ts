@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { ProcessingRecord } from './record.js';
 import type { ProvenanceStore } from './store.js';
@@ -32,6 +32,26 @@ export class FileProvenanceStore implements ProvenanceStore {
 
   constructor(options: FileProvenanceStoreOptions) {
     this.path = options.path;
+  }
+
+  /**
+   * Verify the file can be written by actually creating (and removing) a
+   * probe file next to it. Catches the mount that a non-root runtime user
+   * cannot write to (e.g. a root-owned Docker volume, see issue #661) at the
+   * start of the run, before writes would silently fail per dataset.
+   */
+  async check(): Promise<void> {
+    try {
+      await mkdir(dirname(this.path), { recursive: true });
+      const probePath = `${this.path}.${process.pid}.check`;
+      await writeFile(probePath, '');
+      await unlink(probePath);
+    } catch (error) {
+      throw new Error(
+        `Provenance file ${this.path} is not writable; make its directory writable by the user the pipeline runs as: ${String(error)}`,
+        { cause: error },
+      );
+    }
   }
 
   async get(datasetUri: URL): Promise<ProcessingRecord | null> {

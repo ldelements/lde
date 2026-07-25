@@ -466,6 +466,12 @@ export class Pipeline<Out = Quad> {
 
     this.reporter?.pipelineStart?.(this.name);
 
+    // Fail fast on a store that cannot persist records (e.g. a provenance
+    // file on a mount the runtime user cannot write to): every dataset would
+    // process fine, but the records would be lost and skip-unchanged would
+    // silently never engage on any later run.
+    await this.provenanceStore?.check?.();
+
     const selectStart = Date.now();
     const datasets = await this.datasetSelector.select();
     this.reporter?.datasetsSelected?.(datasets.total, Date.now() - selectStart);
@@ -751,9 +757,15 @@ export class Pipeline<Out = Quad> {
         generatedAt: new Date().toISOString(),
         status,
       });
-    } catch {
-      // A failed write must not abort the run; the dataset simply reprocesses
-      // next run, its record not yet updated.
+    } catch (error) {
+      // A failed write must not abort the run – the dataset simply
+      // reprocesses next run, its record not yet updated – but it must be
+      // surfaced: a store that fails every write silently disables
+      // skip-unchanged.
+      this.reporter?.stageFailed?.(
+        'provenance',
+        error instanceof Error ? error : new Error(String(error)),
+      );
     }
   }
 

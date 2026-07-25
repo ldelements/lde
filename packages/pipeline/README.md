@@ -339,10 +339,13 @@ A `ProvenanceStore` gives the pipeline a small per-dataset memory, so a future r
 
 ```typescript
 interface ProvenanceStore {
+  check?(): Promise<void>;
   get(datasetUri: URL): Promise<ProcessingRecord | null>;
   set(datasetUri: URL, record: ProcessingRecord): Promise<void>;
 }
 ```
+
+The optional `check` verifies the store can persist records; the pipeline calls it once at the start of a run, so a store that would fail every write fails the run immediately instead of silently disabling skip-unchanged. A record write that fails mid-run is reported through the reporter (`stageFailed` with stage `'provenance'`) and does not abort the run.
 
 A `ProcessingRecord` holds the two opaque change fields – `sourceFingerprint` (derived automatically from source metadata) and `pipelineVersion` (consumer-declared) – plus `generatedAt` and a `status` of `'success'` or `'failed'`. The two change fields are compared only for equality, never parsed or ordered.
 
@@ -375,7 +378,7 @@ import { FileProvenanceStore } from '@lde/pipeline';
 const store = new FileProvenanceStore({ path: './state/provenance.json' });
 ```
 
-Writes are atomic (temp file + rename), so a run killed mid-write cannot corrupt the next run’s skip decisions. Safe for a single writer: concurrent pipeline processes writing the same file lose each other’s updates – use the SPARQL-backed store (or file locking) instead. The file must sit on a durable volume to survive across runs, the same requirement the SPARQL-backed store already has.
+Writes are atomic (temp file + rename), so a run killed mid-write cannot corrupt the next run’s skip decisions. Safe for a single writer: concurrent pipeline processes writing the same file lose each other’s updates – use the SPARQL-backed store (or file locking) instead. The file must sit on a durable volume to survive across runs, the same requirement the SPARQL-backed store already has, and its directory must be writable by the user the pipeline runs as – `check` probes this with a real write at the start of the run, so a read-only or root-owned mount fails loudly instead of silently disabling skipping.
 
 #### Enabling skipping
 
