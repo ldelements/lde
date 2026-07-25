@@ -1,3 +1,9 @@
+## 0.35.4 (2026-07-25)
+
+### 🩹 Fixes
+
+- **pipeline:** fail fast when the provenance store cannot persist records ([#662](https://github.com/ldelements/lde/pull/662))
+
 ## 0.35.3 (2026-07-24)
 
 ### 🧱 Updated Dependencies

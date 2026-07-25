@@ -1,3 +1,16 @@
+## 0.0.2 (2026-07-25)
+
+### 🩹 Fixes
+
+- **pipeline:** fail fast when the provenance store cannot persist records ([#662](https://github.com/ldelements/lde/pull/662))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline-console-reporter to 0.26.4
+- Updated @lde/search-typesense to 0.15.5
+- Updated @lde/search-pipeline to 0.12.5
+- Updated @lde/pipeline to 0.35.4
+
 ## 0.0.1 (2026-07-24)
 
 ### 🚀 Features
