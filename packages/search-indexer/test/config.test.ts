@@ -211,5 +211,20 @@ describe('configFromEnvironment', () => {
         configFromEnvironment({ ...minimal, IMPORT_STRATEGY: 'import' }),
       ).toThrowError(/IMPORT_STRATEGY requires QLEVER_IMAGE/);
     });
+
+    it('reads the Docker network QLever joins', () => {
+      const config = configFromEnvironment({
+        ...minimal,
+        QLEVER_IMAGE: 'adfreiburg/qlever:latest',
+        QLEVER_NETWORK: 'app_default',
+      });
+      expect(config.qlever?.network).toBe('app_default');
+    });
+
+    it('rejects a network without an image', () => {
+      expect(() =>
+        configFromEnvironment({ ...minimal, QLEVER_NETWORK: 'app_default' }),
+      ).toThrowError(/QLEVER_NETWORK requires QLEVER_IMAGE/);
+    });
   });
 });

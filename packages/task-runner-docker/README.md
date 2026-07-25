@@ -32,7 +32,8 @@ await runner.stop(container);
 | `image`         | `string` | Yes      | Docker image to use                                  |
 | `containerName` | `string` | No       | Name for the container (auto-removed on restart)     |
 | `mountDir`      | `string` | No       | Host directory to mount at `/mount` in the container |
-| `port`          | `number` | No       | Port to expose from the container                    |
+| `port`          | `number` | No       | Container port to publish on the same host port      |
+| `network`       | `string` | No       | Docker network to attach the container to            |
 | `docker`        | `Docker` | No       | Custom Dockerode instance                            |
 
 ## Features
@@ -40,7 +41,9 @@ await runner.stop(container);
 - Automatically pulls the Docker image before running
 - Mounts a host directory as `/mount` with the `mountDir` option
 - Runs commands as the current user (UID/GID) for file permissions
-- Exposes ports with `port` option
+- Publishes ports on the host with the `port` option
+- Attaches the container to a Docker network with the `network` option, where
+  other containers reach it by its `containerName` as hostname
 - Stops containers (without removing) so logs remain available via `docker logs`
 - Removes previous containers with the same name on restart
 - Streams container logs to stdout

@@ -59,6 +59,11 @@ export interface QleverConfig {
   readonly strategy: 'sparql' | 'sparqlWithImportFallback' | 'import';
   /** Directory for downloaded dumps and QLever index caches. */
   readonly dataDir: string;
+  /** Docker network the spawned QLever joins (`QLEVER_NETWORK`), reached by
+   *  container name. Required when the indexer itself runs containerized on
+   *  a bridge network; without it QLever is published on the host and
+   *  addressed as `localhost`. */
+  readonly network?: string;
 }
 
 const IMPORT_STRATEGIES = [
@@ -236,10 +241,16 @@ function qleverFromEnvironment(
 ): QleverConfig | undefined {
   const image = environment['QLEVER_IMAGE'];
   const strategy = environment['IMPORT_STRATEGY'];
+  const network = environment['QLEVER_NETWORK'];
   if (!image) {
     if (strategy) {
       problems.push(
         'IMPORT_STRATEGY requires QLEVER_IMAGE: without an import engine there is nothing to import into',
+      );
+    }
+    if (network) {
+      problems.push(
+        'QLEVER_NETWORK requires QLEVER_IMAGE: without an import engine there is no QLever container to attach',
       );
     }
     return undefined;
@@ -256,5 +267,6 @@ function qleverFromEnvironment(
     image,
     strategy: (strategy ?? 'sparql') as QleverConfig['strategy'],
     dataDir: environment['DATA_DIR'] ?? '/data',
+    network,
   };
 }

@@ -58,23 +58,24 @@ images.
 
 ## Configuration
 
-| Variable             | Default                     | Meaning                                                                      |
-| -------------------- | --------------------------- | ---------------------------------------------------------------------------- |
-| `SCHEMA_MODULE`      | `/config/search-schema.mjs` | Path of the mounted schema-declaration module                                |
-| `REGISTRY_ENDPOINT`  | **required**                | SPARQL endpoint of the DCAT dataset registry                                 |
-| `DATASETS`           | all registry datasets       | Dataset IRIs to index (whitespace- or comma-separated)                       |
-| `DATASET_CRITERIA`   | all registry datasets       | Registry search criteria as a JSON object (mutually exclusive w/ `DATASETS`) |
-| `TYPESENSE_HOST`     | **required**                | Typesense host                                                               |
-| `TYPESENSE_PORT`     | `8108`                      | Typesense port                                                               |
-| `TYPESENSE_PROTOCOL` | `http`                      | `http` or `https`                                                            |
-| `TYPESENSE_API_KEY`  | **required**                | An admin key: the indexer creates, writes and swaps collections              |
-| `REBUILD_MODE`       | `in-place`                  | `in-place` (update the live collection) or `blue-green` (swap on commit)     |
-| `COLLECTION_PREFIX`  | none                        | Prefix for every derived collection name (configure the read side to match)  |
-| `PROVENANCE_FILE`    | none                        | JSON file remembering per-dataset processing, to skip unchanged datasets     |
-| `PIPELINE_VERSION`   | none                        | Version keying the skip decisions; required with `PROVENANCE_FILE`           |
-| `QLEVER_IMAGE`       | none                        | Enables the QLever import path (see below), e.g. `adfreiburg/qlever:latest`  |
-| `IMPORT_STRATEGY`    | `sparql`                    | `sparql`, `sparqlWithImportFallback` or `import`; requires `QLEVER_IMAGE`    |
-| `DATA_DIR`           | `/data`                     | Directory for downloaded dumps and QLever index caches                       |
+| Variable             | Default                     | Meaning                                                                                             |
+| -------------------- | --------------------------- | --------------------------------------------------------------------------------------------------- |
+| `SCHEMA_MODULE`      | `/config/search-schema.mjs` | Path of the mounted schema-declaration module                                                       |
+| `REGISTRY_ENDPOINT`  | **required**                | SPARQL endpoint of the DCAT dataset registry                                                        |
+| `DATASETS`           | all registry datasets       | Dataset IRIs to index (whitespace- or comma-separated)                                              |
+| `DATASET_CRITERIA`   | all registry datasets       | Registry search criteria as a JSON object (mutually exclusive w/ `DATASETS`)                        |
+| `TYPESENSE_HOST`     | **required**                | Typesense host                                                                                      |
+| `TYPESENSE_PORT`     | `8108`                      | Typesense port                                                                                      |
+| `TYPESENSE_PROTOCOL` | `http`                      | `http` or `https`                                                                                   |
+| `TYPESENSE_API_KEY`  | **required**                | An admin key: the indexer creates, writes and swaps collections                                     |
+| `REBUILD_MODE`       | `in-place`                  | `in-place` (update the live collection) or `blue-green` (swap on commit)                            |
+| `COLLECTION_PREFIX`  | none                        | Prefix for every derived collection name (configure the read side to match)                         |
+| `PROVENANCE_FILE`    | none                        | JSON file remembering per-dataset processing, to skip unchanged datasets                            |
+| `PIPELINE_VERSION`   | none                        | Version keying the skip decisions; required with `PROVENANCE_FILE`                                  |
+| `QLEVER_IMAGE`       | none                        | Enables the QLever import path (see below), e.g. `adfreiburg/qlever:latest`                         |
+| `IMPORT_STRATEGY`    | `sparql`                    | `sparql`, `sparqlWithImportFallback` or `import`; requires `QLEVER_IMAGE`                           |
+| `DATA_DIR`           | `/data`                     | Directory for downloaded dumps and QLever index caches                                              |
+| `QLEVER_NETWORK`     | none                        | Docker network the spawned QLever joins; set when the indexer itself runs containerized (see below) |
 
 A misconfigured boot reports **all** problems in one error, not one per crash
 loop. `PROVENANCE_FILE` must sit on a durable volume, and cannot be combined
@@ -102,6 +103,27 @@ explains why a statically-declared QLever service cannot work). That requires:
 - `DATA_DIR` on a volume whose **host path is identical** for the indexer and
   the spawned QLever containers – the pipeline passes `DATA_DIR` as a bind
   mount to a sibling container, where it resolves against the host.
+
+How the indexer reaches the QLever it spawned depends on where the indexer
+itself runs:
+
+- **On the host** (`npx @lde/search-indexer` with Docker available): leave
+  `QLEVER_NETWORK` unset. QLever’s port is published on the host and
+  addressed as `localhost`.
+- **In a container on a bridge network** (the `docker compose` default): set
+  `QLEVER_NETWORK` to a network the indexer is attached to. QLever joins that
+  network and is addressed by container name (`qlever-<network>`) instead – a
+  containerized indexer’s `localhost` is its own network namespace, so it
+  cannot reach a host-published port. Alternatively, run the indexer with
+  `network_mode: host` and leave `QLEVER_NETWORK` unset.
+
+`QLEVER_NETWORK` must name a network the indexer container is actually
+attached to – for compose, the prefixed name Docker creates (e.g.
+`myproject_default`), not the short service-file name. A wrong or unattached
+network is not caught at boot: each dataset imports fully, then fails when
+the endpoint never becomes reachable. And run at most one indexer per
+network – the QLever container name is derived from the network, so two
+indexers sharing one would remove each other’s QLever.
 
 This mode does not work on container runtimes without a Docker socket
 (containerd-based Kubernetes); there, run endpoint-only for now.

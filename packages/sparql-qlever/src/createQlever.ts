@@ -26,6 +26,23 @@ export type QleverOptions = {
       mode: 'docker';
       image: string;
       containerName?: string;
+      network?: never;
+    }
+  | {
+      mode: 'docker';
+      image: string;
+      /**
+       * Docker network to attach the QLever containers to. Set this when the
+       * consumer itself runs in a container on that network: the query
+       * endpoint is then addressed by `containerName` as hostname instead of
+       * a host-published `localhost` port, which a containerized consumer on
+       * a bridge network cannot reach. Leave unset when the consumer runs on
+       * the host (or shares the QLever container’s network namespace), where
+       * `localhost` is correct.
+       */
+      network: string;
+      /** The hostname at which consumers on the network reach the endpoint. */
+      containerName: string;
     }
   | { mode: 'native' }
 );
@@ -38,13 +55,20 @@ export type QleverOptions = {
  */
 export function createQlever(options: QleverOptions) {
   const port = options.port ?? 7001;
+  // On a shared network the endpoint is reached by container name, so don't
+  // claim a host port.
+  const hostname =
+    options.mode === 'docker' && options.network
+      ? options.containerName
+      : undefined;
   const taskRunner: TaskRunner<unknown> =
     options.mode === 'docker'
       ? new DockerTaskRunner({
           image: options.image,
           containerName: options.containerName,
           mountDir: options.dataDir,
-          port,
+          network: options.network,
+          port: hostname ? undefined : port,
         })
       : new NativeTaskRunner({ cwd: options.dataDir });
 
@@ -61,6 +85,7 @@ export function createQlever(options: QleverOptions) {
       taskRunner,
       indexName: options.indexName ?? 'data',
       port,
+      hostname,
       qleverOptions: options.serverOptions,
     }),
   };
