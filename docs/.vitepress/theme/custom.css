@@ -1,0 +1,13 @@
+/* The default theme does not indent first-level nested sidebar groups, so
+   the package category groups read as siblings of their 'Packages' parent.
+   Indent them to make the hierarchy visible. */
+.VPSidebarItem.level-1.collapsible {
+  padding-left: 16px;
+}
+
+/* Diagrams opting out of down-scaling (useMaxWidth: false) render at natural
+   size; let them scroll horizontally instead of overflowing the page. */
+.vp-doc .mermaid,
+.vp-doc div:has(> svg[aria-roledescription]) {
+  overflow-x: auto;
+}

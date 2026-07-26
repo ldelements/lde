@@ -1,8 +1,12 @@
-# Task Runner Native
+# @lde/task-runner-native
 
 Run shell commands natively on the host system using Node.js `child_process`.
 
-## Usage
+## Installation
+
+```sh
+npm install @lde/task-runner-native
+```
 
 ```typescript
 import { NativeTaskRunner } from '@lde/task-runner-native';
@@ -18,22 +22,8 @@ const task = await runner.run('echo "Hello World"');
 // Wait for completion
 const output = await runner.wait(task);
 console.log(output); // "Hello World"
-
-// Or stop a long-running task
-const task2 = await runner.run('sleep 60');
-await runner.stop(task2); // Sends SIGTERM, then SIGKILL after timeout
 ```
 
-## Options
+## Documentation
 
-| Option                    | Type     | Default           | Description                                               |
-| ------------------------- | -------- | ----------------- | --------------------------------------------------------- |
-| `cwd`                     | `string` | Current directory | Working directory for spawned processes                   |
-| `gracefulShutdownTimeout` | `number` | `5000`            | Milliseconds to wait after SIGTERM before sending SIGKILL |
-
-## Features
-
-- Spawns commands in a detached process group
-- Graceful shutdown with SIGTERM → SIGKILL escalation
-- Handles already-exited processes in `stop()`
-- Captures stdout and stderr output
+See the [full documentation](https://ldelements.org/reference/task-runner-native).

@@ -10,6 +10,9 @@ Uses TypeScript with ESNext modules and Vite for building/testing.
 
 ## Documentation
 
+- The VitePress docs site in `docs/` is the source of truth for all documentation – see [ADR 17](docs/decisions/0017-make-the-docs-site-the-source-of-truth-for-documentation.md). Substantive documentation for a package goes to `docs/reference/<package>.md`, NOT its README.
+- Package READMEs stay slim (they are the npm pages): a one-to-three-sentence description, an Installation section, at most one minimal usage example, and a link to the package’s docs page. Do not grow them beyond that shape.
+- Validate docs changes with `npm run docs:build` – it fails on dead links. Serve locally with `npm run docs:dev`.
 - Record architecture decisions in @docs/decisions following the ADR format.
   ADR titles start with a verb (e.g. ‘Merge pipeline approaches’).
 

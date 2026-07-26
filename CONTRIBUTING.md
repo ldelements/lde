@@ -31,12 +31,27 @@ To run tasks only for packages affected by your changes:
 npx nx affected -t lint test typecheck build
 ```
 
+## Documentation
+
+The [documentation site](https://ldelements.org) is the source of truth for all documentation
+(see [ADR 17](docs/decisions/0017-make-the-docs-site-the-source-of-truth-for-documentation.md)).
+It lives in `docs/` as a [VitePress](https://vitepress.dev) site:
+
+```sh
+npm run docs:dev      # serve locally with hot reload
+npm run docs:build    # build; fails on dead links (also runs in CI)
+```
+
+Substantive documentation for a package goes to `docs/reference/<package>.md`, not its README.
+Package READMEs stay slim – they are the npm pages: a short description, an Installation section,
+at most one minimal example, and a link to the package’s docs page.
+
 ## Code style
 
 - **TypeScript** in strict mode with ESNext modules.
 - **ESLint** and **Prettier** run automatically via pre-commit hooks (lint-staged + Husky).
   You normally don’t need to run them manually.
-- **Conventional commits** — prefix your commit messages with a type (`feat:`, `fix:`, `chore:`, etc.).
+- **Conventional commits** – prefix your commit messages with a type (`feat:`, `fix:`, `chore:`, etc.).
   This drives automated versioning.
 
 ## Submitting changes

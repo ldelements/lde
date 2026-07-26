@@ -5,6 +5,8 @@
 [![CI](https://github.com/ldelements/lde/actions/workflows/ci.yml/badge.svg)](https://github.com/ldelements/lde/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
+📖 **[Documentation](https://ldelements.org/)** – guide, package reference and design decisions.
+
 Every organization working with Linked Data ends up building the same infrastructure from scratch:
 endpoint management, data import, transformation pipelines, dataset discovery.
 
@@ -195,62 +197,7 @@ await pipeline.run();
 
 ## Architecture
 
-```mermaid
-graph TD
-  subgraph Discovery
-    dataset
-    dataset-registry-client --> dataset
-  end
-
-  subgraph Processing
-    pipeline --> dataset-registry-client
-    pipeline --> sparql-server
-    pipeline --> sparql-importer
-    pipeline-shacl-sampler --> pipeline
-    pipeline-shacl-validator --> pipeline
-    pipeline-void --> pipeline
-    distribution-downloader --> dataset
-    distribution-probe --> dataset
-    pipeline --> distribution-probe
-    sparql-importer --> dataset
-    distribution-health --> distribution-probe
-    distribution-health --> sparql-importer
-  end
-
-  subgraph Publication
-    fastify-rdf
-    docgen
-    search --> text-normalization
-    search-api-graphql --> search
-    search-api-server --> search-api-graphql
-    search-api-server --> search-typesense
-    search-typesense --> search
-    search-typesense --> text-normalization
-    search-typesense --> pipeline
-    search-pipeline --> search
-    search-pipeline --> pipeline
-    search-indexer --> search-pipeline
-    search-indexer --> search-typesense
-    search-indexer --> sparql-qlever
-    search-indexer --> pipeline-console-reporter
-  end
-
-  subgraph Monitoring
-    pipeline-console-reporter --> pipeline
-    distribution-monitor --> distribution-probe
-  end
-
-  subgraph Infrastructure
-    sparql-qlever --> sparql-importer
-    sparql-qlever --> sparql-server
-    sparql-qlever --> task-runner-docker
-    task-runner-docker --> task-runner
-    task-runner-native --> task-runner
-    sparql-server
-    local-sparql-endpoint
-    wait-for-sparql
-  end
-```
+See the [architecture documentation](https://ldelements.org/guide/architecture) for how the packages fit together, including the full dependency diagram.
 
 ## Who uses LD Elements
 
@@ -262,12 +209,7 @@ graph TD
 
 ## Comparison
 
-|                       | **LD Elements**           | **[TriplyETL](https://docs.triply.cc/triply-etl/)** | **[rdf-connect](https://rdf-connect.github.io)** | **[OpenLDES / LDI](https://informatievlaanderen.github.io/VSDS-Linked-Data-Interactions/)** |
-| --------------------- | ------------------------- | --------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------- |
-| **Focus**             | SPARQL-native pipelines   | RDF ETL platform                                    | RDF stream processing                            | LDES ingestion & publication                                                                |
-| **Pipeline language** | SPARQL + TypeScript       | TypeScript DSL                                      | Declarative (RML)                                | YAML (Spring Boot)                                                                          |
-| **Lock-in**           | None – plain SPARQL files | Proprietary platform                                | Framework-specific                               | Framework-specific                                                                          |
-| **License**           | MIT                       | Proprietary                                         | MIT                                              | EUPL-1.2                                                                                    |
+See [when to use LDE](https://ldelements.org/guide/when-to-use-lde) for how LDE compares to TriplyETL, rdf-connect and OpenLDES/LDI.
 
 ## Development
 
@@ -279,6 +221,8 @@ npx nx run-many -t build
 npx nx run-many -t test
 npx nx affected -t lint test typecheck build  # only changed packages
 ```
+
+The documentation site lives in [docs/](docs); serve it locally with `npm run docs:dev`.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full development workflow.
 
