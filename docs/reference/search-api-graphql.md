@@ -148,8 +148,11 @@ const gqlSchema = buildGraphQLSchema(searchSchema(DATASET, PERSON));
 
 - **Output type** (the `SearchType`’s `name`): localized text → best-first `[LanguageString!]!`
   (`[0].language` is the language actually served); references → named per-shape
-  types (`Organization`, `Term`) with a `name`; scalars/booleans per kind; `date`
-  → ISO 8601 string; nullability from `required` / `array` / `kind`.
+  types (`Organization`, `Term`) with a `name` – a reference whose `typeName`
+  names a root type (`creator` → `Person`) is served under a derived name
+  (`PersonReference`), since GraphQL type names must be unique; scalars/booleans
+  per kind; `date` → ISO 8601 string; nullability from `required` / `array` /
+  `kind`.
 - **`where`** one input per `filterable` field (`StringFilter`, `IntRange` /
   `FloatRange` / `DateRange`, or `Boolean`); omitted entirely for a type with no
   filterable fields.

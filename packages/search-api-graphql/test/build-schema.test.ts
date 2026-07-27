@@ -684,8 +684,8 @@ describe('buildGraphQLSchema', () => {
       );
     });
 
-    it('throws when a reference type name collides with a root type name', () => {
-      const withCollidingRef: SearchType = {
+    it('serves a labelOnly reference to a root type under ‹Name›Reference', () => {
+      const withReferenceToRoot: SearchType = {
         name: 'CreativeWork',
         class: 'https://schema.org/CreativeWork',
         fields: [
@@ -693,14 +693,49 @@ describe('buildGraphQLSchema', () => {
             name: 'author',
             kind: 'reference',
             output: true,
-            // Person is also a root type in this schema – same GraphQL name.
+            // Person is also a root type in this schema – the labelOnly way to
+            // carry an id plus a label resolved from the Person collection.
+            ref: { typeName: 'Person', strategy: 'labelOnly' },
+          },
+        ],
+      };
+      const sdl = printSchema(
+        buildGraphQLSchema(searchSchema(PERSON, withReferenceToRoot)),
+      );
+      // The root type keeps its name; the reference is served under a derived
+      // name, since GraphQL type names must be unique.
+      expect(sdl.match(/^type Person /gm)).toHaveLength(1);
+      expect(sdl).toMatch(/author: PersonReference/);
+      expect(sdl).toMatch(
+        /type PersonReference \{\s+id: String!\s+name: \[LanguageString!\]!\s+\}/,
+      );
+    });
+
+    it('throws when the derived reference name is itself taken', () => {
+      const takenDerivedName: SearchType = {
+        name: 'PersonReference',
+        class: 'https://example.org/PersonReference',
+        fields: [{ name: 'name', kind: 'keyword', output: true }],
+      };
+      const withReferenceToRoot: SearchType = {
+        name: 'CreativeWork',
+        class: 'https://schema.org/CreativeWork',
+        fields: [
+          {
+            name: 'author',
+            kind: 'reference',
+            output: true,
             ref: { typeName: 'Person', strategy: 'labelOnly' },
           },
         ],
       };
       expect(() =>
-        buildGraphQLSchema(searchSchema(PERSON, withCollidingRef)),
-      ).toThrow(/Reference type name “Person”.*collides with a root type/);
+        buildGraphQLSchema(
+          searchSchema(PERSON, takenDerivedName, withReferenceToRoot),
+        ),
+      ).toThrow(
+        /Reference type “Person”.*would be served as “PersonReference”, which collides/,
+      );
     });
 
     it('rejects a duplicate root type name at declaration time', () => {

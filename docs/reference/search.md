@@ -275,7 +275,11 @@ directly.
 
 A `reference` carries one of two strategies today: `labelOnly` (id + display
 label, resolved at query time from a label source) and `inline` (the referent’s
-own projected fields, carried inline). `idOnly` stays a forward declaration.
+own projected fields, carried inline). `idOnly` stays a forward declaration. A
+`labelOnly` reference’s `ref.typeName` is a name, not a key: it may name an
+indexed root type (`creator` → `Person`, with `labelSource: 'Person'`) – the
+standard way to reference entities of another collection; only an `inline`
+reference must resolve to a declared Reference Type.
 
 An **inline reference** resolves `ref.typeName` to a declared **Reference Type**
 and projects the referent through it – a nested `SearchDocument`, or an array
