@@ -1,3 +1,9 @@
+## 0.12.3 (2026-07-27)
+
+### 🩹 Fixes
+
+- **search-api-graphql:** serve labelOnly references to root types ([#668](https://github.com/ldelements/lde/pull/668))
+
 ## 0.12.2 (2026-07-24)
 
 ### 🚀 Features
