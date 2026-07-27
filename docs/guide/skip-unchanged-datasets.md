@@ -22,14 +22,23 @@ The file must sit on a durable volume so it survives across runs, and is safe fo
 
 ## How the skip decision works
 
-For each dataset the pipeline probes its distributions, derives a **source-change fingerprint** from metadata the probe already collected (modification date and byte size – no body download), reads the stored record, and skips **before paying the import cost** when both change fields match:
+For each dataset the pipeline probes its distributions, derives a **source-change fingerprint** – no body download – reads the stored record, and skips **before paying the import cost** when both change fields match:
 
 ```
 skip iff  recorded.sourceFingerprint === current.sourceFingerprint
      AND  recorded.pipelineVersion   === current.pipelineVersion
 ```
 
-A live SPARQL endpoint yields no fingerprint, so endpoint-backed datasets are always reprocessed. A dataset that **failed** but whose source is unchanged is recorded as `'failed'` and skipped on later runs, so a deterministically failing import is not retried every run.
+The fingerprint combines two signals:
+
+- **Modification date**: the most recent of the dataset description’s declared `dct:modified` and the artifact’s HTTP `Last-Modified` collected by the probe. Taking the maximum keeps a stale declared date from masking a newer upload – publishers routinely leave `dct:modified` behind – erring toward reprocessing rather than serving stale output.
+- **Byte size**: the probe’s `Content-Length`, falling back to the declared `dcat:byteSize`.
+
+A live SPARQL endpoint exposes neither signal, so endpoint-backed datasets are always reprocessed; the same goes for a data dump whose probe yields no usable date or size. Malformed metadata – an unparseable date, a non-numeric length – is treated as absent rather than corrupting the fingerprint.
+
+The downloader reuses the same modification date as its change signal: a cached dump file at least as new as that date is not downloaded again. The skip layer and the download layer agree by construction, so there is no separate cache state to store or invalidate.
+
+A dataset that **failed** but whose source is unchanged is recorded as `'failed'` and skipped on later runs, so a deterministically failing import is not retried every run.
 
 ## Rotate the pipeline version when output changes
 
@@ -37,7 +46,7 @@ A live SPARQL endpoint yields no fingerprint, so endpoint-backed datasets are al
 
 ## Use a triplestore-backed store
 
-When your pipeline output is bulk-loaded into a read-only triplestore (e.g. [QLever](https://github.com/ad-freiburg/qlever)), use `FileLoadedSparqlProvenanceStore` instead: it reads records through SPARQL queries against the live endpoint and writes them as [PROV-O](https://www.w3.org/TR/prov-o/) N-Quads files to be bulk-loaded together with the next run’s output:
+When your pipeline output is bulk-loaded into a read-only triplestore (e.g. [QLever](https://github.com/ad-freiburg/qlever)), use `FileLoadedSparqlProvenanceStore` instead – a _SPARQL_ store whose contents are _file-loaded_: it reads records through SPARQL queries against the live endpoint and writes them as [PROV-O](https://www.w3.org/TR/prov-o/) N-Quads files to be bulk-loaded together with the next run’s output:
 
 ```typescript
 import { FileLoadedSparqlProvenanceStore } from '@lde/pipeline';
