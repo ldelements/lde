@@ -57,8 +57,7 @@ export type VoidStageName =
 
 /** A transform, or transforms, decorating a VoID stage's reader output. */
 export type VoidStageTransform =
-  | QuadTransform<ReaderContext>
-  | QuadTransform<ReaderContext>[];
+  QuadTransform<ReaderContext> | QuadTransform<ReaderContext>[];
 
 /**
  * Options for configuring VoID stage execution.
@@ -110,6 +109,12 @@ export interface VoidStagesOptions extends Omit<
   /** Additional vocabulary namespace URIs to detect beyond the built-in defaults. */
   vocabularies?: readonly string[];
   /**
+   * When true, iterate the vocabularies (property-partition) stage per
+   * property (see {@link DetectVocabulariesOptions.perProperty}).
+   * @default true
+   */
+  perProperty?: boolean;
+  /**
    * Transforms to attach to bundled stages, keyed by {@link VOID_STAGE_NAMES}.
    *
    * Each transform decorates the reader of the named stage – so a consumer
@@ -125,6 +130,7 @@ async function createVoidStage(
   options?: {
     transform?: VoidStageTransform;
     perClass?: boolean;
+    perProperty?: boolean;
     batchSize?: number;
     maxConcurrency?: number;
     expectsOutput?: boolean;
@@ -141,7 +147,11 @@ async function createVoidStage(
   return new Stage({
     name: filename,
     readers: reader,
-    itemSelector: options?.perClass ? classSelector() : undefined,
+    itemSelector: options?.perClass
+      ? classSelector()
+      : options?.perProperty
+        ? propertySelector()
+        : undefined,
     batchSize: options?.batchSize,
     maxConcurrency: options?.maxConcurrency,
     expectsOutput: options?.expectsOutput,
@@ -175,6 +185,44 @@ function classSelector(): ItemSelector {
         'SELECT DISTINCT ?class',
         fromClause,
         `WHERE { ${subjectFilter} ?s a ?class . FILTER(!isBlank(?class)) }`,
+        'LIMIT 1000',
+      ].join('\n');
+
+      return new SparqlItemSelector({
+        query: selectorQuery,
+      }).select(distribution, batchSize, options);
+    },
+  };
+}
+
+/**
+ * Select the distinct properties of a dataset, so the property-partition
+ * query can iterate in bounded batches instead of aggregating every property
+ * at once.
+ *
+ * The chunking exists for memory, not style: the unchunked
+ * `entity-properties.rq` computes two `COUNT(DISTINCT …)` aggregates grouped
+ * over every property in one query, which materializes the dataset’s full
+ * scan – measured to exhaust a 16 GB query budget on a 608M-triple dataset,
+ * so large datasets got no property partitions (and, downstream, no
+ * `void:vocabulary`) at all. With a property batch injected as `VALUES`, the
+ * working set is bounded by one batch’s triples regardless of dataset size.
+ */
+function propertySelector(): ItemSelector {
+  return {
+    // Forward `options` so the Pipeline’s per-dataset TimeoutPolicy
+    // reaches the inner SparqlItemSelector – see classSelector.
+    select: (distribution, batchSize, options) => {
+      const subjectFilter = distribution.subjectFilter ?? '';
+      let fromClause = '';
+      if (distribution.namedGraph) {
+        assertSafeIri(distribution.namedGraph);
+        fromClause = `FROM <${distribution.namedGraph}>`;
+      }
+      const selectorQuery = [
+        'SELECT DISTINCT ?p',
+        fromClause,
+        `WHERE { ${subjectFilter} ?s ?p ?o . }`,
         'LIMIT 1000',
       ].join('\n');
 
@@ -312,17 +360,31 @@ export function uriSpaces(
 export interface DetectVocabulariesOptions extends VoidStageOptions {
   /** Additional vocabulary namespace URIs to detect beyond the built-in defaults. */
   vocabularies?: readonly string[];
+  /** Maximum number of property bindings per reader call. @default 10 */
+  batchSize?: number;
+  /** Maximum concurrent in-flight reader batches. @default 10 */
+  maxConcurrency?: number;
+  /**
+   * When true, iterate the property-partition query per property using a
+   * property selector, so its memory use is bounded by the batch instead of
+   * the whole dataset (see {@link propertySelector}). @default true
+   */
+  perProperty?: boolean;
 }
 
 export function detectVocabularies(
   options?: DetectVocabulariesOptions,
 ): Promise<Stage> {
-  const { vocabularies, transform } = options ?? {};
+  const { vocabularies, transform, batchSize, maxConcurrency, perProperty } =
+    options ?? {};
   const allVocabularies = vocabularies
     ? [...defaultVocabularies, ...vocabularies]
     : undefined;
   return createVoidStage(VOID_STAGE_NAMES.vocabularies, {
     transform: [withVocabularies(allVocabularies), ...asTransforms(transform)],
+    perProperty: perProperty ?? true,
+    batchSize,
+    maxConcurrency,
   });
 }
 
@@ -341,6 +403,10 @@ export async function voidStages(
     uriSpaces: uriSpaceMap,
     vocabularies,
     transforms,
+    // Destructured out of stageOptions so it cannot leak into the global
+    // stages’ createVoidStage options – it applies to the vocabularies stage
+    // only.
+    perProperty,
     ...stageOptions
   } = options ?? {};
 
@@ -378,6 +444,7 @@ export async function voidStages(
     detectVocabularies({
       ...withTransform(VOID_STAGE_NAMES.vocabularies),
       vocabularies,
+      perProperty,
     }),
     subjectUriSpaces(withTransform(VOID_STAGE_NAMES.subjectUriSpace)),
     ...(uriSpaceMap
