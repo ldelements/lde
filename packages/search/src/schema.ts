@@ -8,13 +8,7 @@ import type { SearchDocument } from './project.js';
  * *derived* from this by the engine adapter, never declared here.
  */
 export type FieldKind =
-  | 'text'
-  | 'keyword'
-  | 'integer'
-  | 'number'
-  | 'boolean'
-  | 'date'
-  | 'reference';
+  'text' | 'keyword' | 'integer' | 'number' | 'boolean' | 'date' | 'reference';
 
 /** The `where` operator a kind accepts, or `undefined` when it is not filterable
  *  through `where` (`text` feeds the free-text `query` instead). */
@@ -75,11 +69,7 @@ export function filterOperatorFor(kind: FieldKind): FilterOperator | undefined {
  * and a hand-written declaration is just as valid.
  */
 export type SearchField =
-  | TextField
-  | KeywordField
-  | ReferenceField
-  | NumericField
-  | BooleanField;
+  TextField | KeywordField | ReferenceField | NumericField | BooleanField;
 
 /** The declaration members every {@link SearchField} kind shares. */
 export interface SearchFieldBase {
@@ -177,9 +167,13 @@ export interface ReferenceField extends SearchFieldBase, Searchable {
     /** Logical API type name of the referenced entity (PascalCase, e.g.
      *  `Organization`) – names the reference’s type in the API surfaces, the
      *  way {@link SearchType.name} names a root type; fields sharing it share
-     *  one emitted type. A name, not a key: it need not correspond to any
-     *  indexed root type (and until cross-collection references exist, it must
-     *  not collide with one). */
+     *  one emitted type. For a `labelOnly`/`idOnly` reference it is a name,
+     *  not a key: it need not correspond to any indexed root type, and it may
+     *  name one (`creator` → `Person`, with the labels resolved from that
+     *  root’s collection via `labelSource`) – an API surface then serves the
+     *  reference under a derived name (GraphQL: `‹Name›Reference`) to keep
+     *  type names unique. An `inline` reference’s typeName instead resolves to
+     *  a declared {@link ReferenceType}, so it can never name a root type. */
     readonly typeName: string;
     /** How much of the referenced entity the reference carries. `labelOnly`
      *  (id + display label, resolved from a label source) and `inline` (the

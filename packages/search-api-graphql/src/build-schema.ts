@@ -198,33 +198,45 @@ export function buildGraphQLSchema(
 
   // One reference type per referenced shape, shared across every root type and
   // reused by every field (Person and CreativeWork both referencing Agent yield
-  // one Agent type).
+  // one Agent type). A reference may name a root type – the `labelOnly` way to
+  // carry an id plus a label resolved from that root’s collection (`creator` →
+  // `Person`) – but GraphQL type names must be unique, so such a reference is
+  // served under `‹Name›Reference` instead. An `inline` reference can never
+  // collide: searchSchema resolves its typeName to a declared Reference Type
+  // and rejects duplicate names schema-wide.
   const referenceTypes = new Map<string, GraphQLObjectType>();
+  const takenTypeNames = new Set(rootTypeNames);
   for (const searchType of schema.values()) {
     for (const field of outputFields(searchType)) {
-      if (field.kind !== 'reference' || field.ref === undefined) {
+      if (
+        field.kind !== 'reference' ||
+        field.ref === undefined ||
+        referenceTypes.has(field.ref.typeName)
+      ) {
         continue;
       }
       const { typeName } = field.ref;
-      if (rootTypeNames.has(typeName)) {
+      const graphQLName = rootTypeNames.has(typeName)
+        ? `${typeName}Reference`
+        : typeName;
+      if (takenTypeNames.has(graphQLName)) {
         throw new Error(
-          `Reference type name “${typeName}” (field “${field.name}” of “${searchType.name}”) collides with a root type of the same name; rename one – a reference does not resolve to a root type.`,
+          `Reference type “${typeName}” (field “${field.name}” of “${searchType.name}”) would be served as “${graphQLName}”, which collides with another type name; rename one.`,
         );
       }
-      if (!referenceTypes.has(typeName)) {
-        referenceTypes.set(
-          typeName,
-          new GraphQLObjectType({
-            name: typeName,
-            fields: {
-              id: { type: new GraphQLNonNull(GraphQLString) },
-              name: labelList(
-                (source) => source.label as LocalizedValue | undefined,
-              ),
-            },
-          }),
-        );
-      }
+      takenTypeNames.add(graphQLName);
+      referenceTypes.set(
+        typeName,
+        new GraphQLObjectType({
+          name: graphQLName,
+          fields: {
+            id: { type: new GraphQLNonNull(GraphQLString) },
+            name: labelList(
+              (source) => source.label as LocalizedValue | undefined,
+            ),
+          },
+        }),
+      );
     }
   }
 
