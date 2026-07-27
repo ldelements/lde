@@ -99,7 +99,7 @@ export default withMermaid({
   },
   title: 'LDE',
   description:
-    'Linked Data Elements – shared building blocks for the full Linked Data lifecycle.',
+    'Linked Data Elements – coherent, composable building blocks for your Linked Data apps and pipelines, covering the whole lifecycle.',
   cleanUrls: true,
   lastUpdated: true,
   sitemap: {
