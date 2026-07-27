@@ -1,7 +1,7 @@
 import { withVocabularies } from '../src/index.js';
 import { Dataset, Distribution } from '@lde/dataset';
 import type { ReaderContext } from '@lde/pipeline';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { DataFactory } from 'n3';
 import type { Quad } from '@rdfjs/types';
 
@@ -36,7 +36,13 @@ async function collect(stream: AsyncIterable<Quad>): Promise<Quad[]> {
 }
 
 describe('withVocabularies', () => {
-  const transform = withVocabularies();
+  // Fresh per test: the transform now remembers emitted vocabularies per
+  // distribution across batches, so a shared instance would leak state
+  // between tests.
+  let transform: ReturnType<typeof withVocabularies>;
+  beforeEach(() => {
+    transform = withVocabularies();
+  });
 
   it('passes through all input quads', async () => {
     const input = quad(

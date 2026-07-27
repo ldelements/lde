@@ -1,4 +1,5 @@
 import type { ReaderContext, QuadTransform } from '@lde/pipeline';
+import type { Distribution } from '@lde/dataset';
 import type { Quad } from '@rdfjs/types';
 import prefixes from '@zazuko/prefixes';
 import { DataFactory } from 'n3';
@@ -22,18 +23,37 @@ export const defaultVocabularies: readonly string[] = [
  * Attach it to the `entity-properties.rq` stage's reader – directly via
  * {@link detectVocabularies} or through the `transforms` map of
  * {@link voidStages}.
+ *
+ * With per-property iteration the transform sees one batch at a time, so it
+ * remembers which vocabularies it already emitted per {@link Distribution}
+ * and yields each `void:vocabulary` quad only once per stage run. The memory
+ * is keyed weakly on the distribution instance – one per run – so a fallback
+ * re-run of the same dataset (a fresh distribution) starts clean.
  */
 export function withVocabularies(
   vocabularies: readonly string[] = defaultVocabularies,
 ): QuadTransform<ReaderContext> {
-  return (quads, { dataset }) =>
-    appendVocabularies(quads, dataset.iri.toString(), vocabularies);
+  const emittedPerRun = new WeakMap<Distribution, Set<string>>();
+  return (quads, { dataset, distribution }) => {
+    let emitted = emittedPerRun.get(distribution);
+    if (!emitted) {
+      emitted = new Set();
+      emittedPerRun.set(distribution, emitted);
+    }
+    return appendVocabularies(
+      quads,
+      dataset.iri.toString(),
+      vocabularies,
+      emitted,
+    );
+  };
 }
 
 async function* appendVocabularies(
   quads: AsyncIterable<Quad>,
   datasetIri: string,
   vocabularies: readonly string[],
+  emitted: Set<string>,
 ): AsyncIterable<Quad> {
   const detectedVocabularies = new Set<string>();
 
@@ -53,6 +73,10 @@ async function* appendVocabularies(
 
   const datasetNode = namedNode(datasetIri);
   for (const vocabUri of detectedVocabularies) {
+    if (emitted.has(vocabUri)) {
+      continue;
+    }
+    emitted.add(vocabUri);
     yield quad(datasetNode, _void.vocabulary, namedNode(vocabUri));
   }
 }

@@ -16,14 +16,15 @@ Returns all VoID stages in their recommended execution order. The ordering is op
 
 Accepts an optional `VoidStagesOptions` object:
 
-| Option           | Default | Description                                                                                                     |
-| ---------------- | ------- | --------------------------------------------------------------------------------------------------------------- |
-| `batchSize`      | 10      | Maximum class bindings per reader call (per-class stages only)                                                  |
-| `maxConcurrency` | 10      | Maximum concurrent in-flight reader batches (per-class stages only)                                             |
-| `perClass`       | –       | Override per-class iteration for all five per-class stages                                                      |
-| `uriSpaces`      | –       | When provided, includes the object URI space stage                                                              |
-| `vocabularies`   | –       | Additional vocabulary namespace URIs to detect beyond the built-in defaults                                     |
-| `transforms`     | –       | Transforms to attach to bundled stages, keyed by `VOID_STAGE_NAMES` (see [Stage transforms](#stage-transforms)) |
+| Option           | Default | Description                                                                                                       |
+| ---------------- | ------- | ----------------------------------------------------------------------------------------------------------------- |
+| `batchSize`      | 10      | Maximum item bindings per reader call (per-class stages and the per-property vocabularies stage)                  |
+| `maxConcurrency` | 10      | Maximum concurrent in-flight reader batches (per-class stages and the per-property vocabularies stage)            |
+| `perClass`       | –       | Override per-class iteration for all five per-class stages                                                        |
+| `perProperty`    | `true`  | Iterate the vocabularies (property-partition) stage per property, bounding its memory by batch instead of dataset |
+| `uriSpaces`      | –       | When provided, includes the object URI space stage                                                                |
+| `vocabularies`   | –       | Additional vocabulary namespace URIs to detect beyond the built-in defaults                                       |
+| `transforms`     | –       | Transforms to attach to bundled stages, keyed by `VOID_STAGE_NAMES` (see [Stage transforms](#stage-transforms))   |
 
 Per-request timeouts are configured at the `Pipeline` level via `PipelineOptions.timeout`, not per VoID stage.
 
@@ -77,10 +78,10 @@ The class selector that drives per-class iteration honours the distribution’s 
 
 #### Domain-specific stages:
 
-| Factory                  | Description                                                                                                                                                                                                                                                                                          |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `detectVocabularies()`   | [`entity-properties.rq`](https://github.com/ldelements/lde/blob/main/packages/pipeline-void/queries/entity-properties.rq) – Entity properties with automatic `void:vocabulary` detection. Accepts `DetectVocabulariesOptions` with an optional `vocabularies` array to extend the built-in defaults. |
-| `uriSpaces(uriSpaceMap)` | [`object-uri-space.rq`](https://github.com/ldelements/lde/blob/main/packages/pipeline-void/queries/object-uri-space.rq) – Object URI namespace linksets, aggregated against a provided URI space map                                                                                                 |
+| Factory                  | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `detectVocabularies()`   | [`entity-properties.rq`](https://github.com/ldelements/lde/blob/main/packages/pipeline-void/queries/entity-properties.rq) – Entity properties with automatic `void:vocabulary` detection. Accepts `DetectVocabulariesOptions`: an optional `vocabularies` array to extend the built-in defaults, plus `perProperty` (default `true`), `batchSize` and `maxConcurrency`. By default the query iterates per property – the single global `GROUP BY` over every property materializes the dataset’s full scan and exhausts the query-memory budget on large datasets (measured on a 608M-triple dataset); `perProperty: false` restores the single query. |
+| `uriSpaces(uriSpaceMap)` | [`object-uri-space.rq`](https://github.com/ldelements/lde/blob/main/packages/pipeline-void/queries/object-uri-space.rq) – Object URI namespace linksets, aggregated against a provided URI space map                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 
 ## Namespace normalization
 
@@ -105,11 +106,11 @@ Use `namespacePartitionMergePlugin(aliases)` for namespaces other than schema.or
 
 ## Stage transforms
 
-A VoID stage decorates its reader’s output with a `QuadTransform<ReaderContext>` attached as data (see [@lde/pipeline](./pipeline)’s extension model and [ADR 2](../decisions/0002-unify-pipeline-extension-on-quad-transforms)). It runs once per reader call and may fire its own SPARQL queries against the `distribution` in scope – so write it to accept being called more than once: a global stage calls it once over the complete output, a per-class stage with batching enabled once per batch (one class at `batchSize: 1`).
+A VoID stage decorates its reader’s output with a `QuadTransform<ReaderContext>` attached as data (see [@lde/pipeline](./pipeline)’s extension model and [ADR 2](../decisions/0002-unify-pipeline-extension-on-quad-transforms)). It runs once per reader call and may fire its own SPARQL queries against the `distribution` in scope – so write it to accept being called more than once: a global stage calls it once over the complete output, an iterating stage once per batch (one class – or, on the vocabularies stage, one property – at `batchSize: 1`).
 
 Two transform factories are built in:
 
-- `withVocabularies(vocabularies?)` – passes through all quads and appends `void:vocabulary` triples for detected vocabulary namespace prefixes in `void:property` quads. The built-in defaults are exported as `defaultVocabularies` (sourced from `@zazuko/prefixes`); `detectVocabularies()` attaches it to the `entity-properties.rq` stage.
+- `withVocabularies(vocabularies?)` – passes through all quads and appends `void:vocabulary` triples for detected vocabulary namespace prefixes in `void:property` quads. The built-in defaults are exported as `defaultVocabularies` (sourced from `@zazuko/prefixes`); `detectVocabularies()` attaches it to the `entity-properties.rq` stage. The transform remembers which vocabularies it already emitted per distribution instance, so per-property batches yield each `void:vocabulary` quad once per stage run – reuse one transform instance within a run, and expect a fresh distribution (e.g. a fallback re-run) to start clean.
 - `withUriSpaces(uriSpaceMap)` – consumes `void:Linkset` quads, matches each `void:objectsTarget` against the configured URI space prefixes using `startsWith`, and aggregates triple counts per matched space. Emits `void:objectsTarget` pointing to the target dataset IRI (taken from the metadata quad subjects), not the raw prefix; unmatched linksets are discarded. `uriSpaces(uriSpaceMap)` attaches it to the `object-uri-space.rq` stage.
 
 ### Attaching your own transform

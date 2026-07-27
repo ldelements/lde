@@ -74,7 +74,9 @@ function canonical(quads: Quad[]): Set<string> {
 }
 
 describe('per-property partition chunking (end to end)', () => {
-  const port = 3007;
+  // Unique across the repo's integration suites – nx runs packages' tests
+  // concurrently, so a shared port is a flaky EADDRINUSE.
+  const port = 3011;
   const distribution = Distribution.sparql(
     new URL(`http://localhost:${port}/sparql`),
   );
@@ -149,5 +151,9 @@ describe('per-property partition chunking (end to end)', () => {
       .filter((q) => q.predicate.value === `${VOID}vocabulary`)
       .map((q) => q.object.value);
     expect(vocabularies).toContain('http://schema.org/');
+
+    // Emitted once per vocabulary, not once per property batch that
+    // matches it – both schema.org name variants map to their namespace.
+    expect(new Set(vocabularies).size).toBe(vocabularies.length);
   }, 30_000);
 });

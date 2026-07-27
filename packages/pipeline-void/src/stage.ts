@@ -81,11 +81,13 @@ export interface VoidStageOptions {
 /**
  * Options for per-class VoID stages that iterate over classes.
  *
- * `batchSize` and `maxConcurrency` control how class bindings are batched
- * and processed concurrently – they have no effect on global (non-per-class) stages.
+ * `batchSize` and `maxConcurrency` control how item bindings are batched and
+ * processed concurrently. They apply to every iterating stage – the five
+ * per-class stages and (via {@link VoidStagesOptions}) the per-property
+ * vocabularies stage – and have no effect on global one-query stages.
  */
 export interface PerClassVoidStageOptions extends VoidStageOptions {
-  /** Maximum number of class bindings per reader call. @default 10 */
+  /** Maximum number of item bindings per reader call. @default 10 */
   batchSize?: number;
   /** Maximum concurrent in-flight reader batches. @default 10 */
   maxConcurrency?: number;
@@ -166,11 +168,23 @@ function asTransforms(
   return Array.isArray(transform) ? [...transform] : [transform];
 }
 
-function classSelector(): ItemSelector {
+/**
+ * Build an {@link ItemSelector} that pages through the distinct bindings of
+ * one variable.
+ *
+ * The `ORDER BY` is load-bearing: the inner {@link SparqlItemSelector} pages
+ * with `LIMIT`/`OFFSET` (the query’s `LIMIT` is the page size), and SPARQL
+ * guarantees no result order without `ORDER BY` – unordered pages can skip or
+ * repeat items on endpoints with unstable ordering.
+ */
+function distinctItemSelector(
+  variable: string,
+  pattern: (subjectFilter: string) => string,
+): ItemSelector {
   return {
     // Forward `options` so the Pipeline’s per-dataset TimeoutPolicy
     // reaches the inner SparqlItemSelector – without this the adaptive
-    // budget is silently bypassed for class selection.
+    // budget is silently bypassed for item selection.
     select: (distribution, batchSize, options) => {
       const subjectFilter = distribution.subjectFilter ?? '';
       let fromClause = '';
@@ -178,13 +192,11 @@ function classSelector(): ItemSelector {
         assertSafeIri(distribution.namedGraph);
         fromClause = `FROM <${distribution.namedGraph}>`;
       }
-      // Exclude blank-node classes at the endpoint: the selector would drop
-      // them client-side anyway (no stable identity), but only after fetching
-      // them.
       const selectorQuery = [
-        'SELECT DISTINCT ?class',
+        `SELECT DISTINCT ?${variable}`,
         fromClause,
-        `WHERE { ${subjectFilter} ?s a ?class . FILTER(!isBlank(?class)) }`,
+        `WHERE { ${pattern(subjectFilter)} }`,
+        `ORDER BY ?${variable}`,
         'LIMIT 1000',
       ].join('\n');
 
@@ -193,6 +205,17 @@ function classSelector(): ItemSelector {
       }).select(distribution, batchSize, options);
     },
   };
+}
+
+function classSelector(): ItemSelector {
+  // Exclude blank-node classes at the endpoint: the selector would drop
+  // them client-side anyway (no stable identity), but only after fetching
+  // them.
+  return distinctItemSelector(
+    'class',
+    (subjectFilter) =>
+      `${subjectFilter} ?s a ?class . FILTER(!isBlank(?class))`,
+  );
 }
 
 /**
@@ -209,28 +232,10 @@ function classSelector(): ItemSelector {
  * working set is bounded by one batch’s triples regardless of dataset size.
  */
 function propertySelector(): ItemSelector {
-  return {
-    // Forward `options` so the Pipeline’s per-dataset TimeoutPolicy
-    // reaches the inner SparqlItemSelector – see classSelector.
-    select: (distribution, batchSize, options) => {
-      const subjectFilter = distribution.subjectFilter ?? '';
-      let fromClause = '';
-      if (distribution.namedGraph) {
-        assertSafeIri(distribution.namedGraph);
-        fromClause = `FROM <${distribution.namedGraph}>`;
-      }
-      const selectorQuery = [
-        'SELECT DISTINCT ?p',
-        fromClause,
-        `WHERE { ${subjectFilter} ?s ?p ?o . }`,
-        'LIMIT 1000',
-      ].join('\n');
-
-      return new SparqlItemSelector({
-        query: selectorQuery,
-      }).select(distribution, batchSize, options);
-    },
-  };
+  return distinctItemSelector(
+    'p',
+    (subjectFilter) => `${subjectFilter} ?s ?p ?o .`,
+  );
 }
 
 // Global stages
@@ -357,13 +362,12 @@ export function uriSpaces(
   });
 }
 
-export interface DetectVocabulariesOptions extends VoidStageOptions {
+export interface DetectVocabulariesOptions extends Omit<
+  PerClassVoidStageOptions,
+  'perClass'
+> {
   /** Additional vocabulary namespace URIs to detect beyond the built-in defaults. */
   vocabularies?: readonly string[];
-  /** Maximum number of property bindings per reader call. @default 10 */
-  batchSize?: number;
-  /** Maximum concurrent in-flight reader batches. @default 10 */
-  maxConcurrency?: number;
   /**
    * When true, iterate the property-partition query per property using a
    * property selector, so its memory use is bounded by the batch instead of
