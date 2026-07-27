@@ -17,10 +17,15 @@ permissions:
   contents: read
   packages: write
 
-# Release runs tag several packages in quick succession; serialize the image
-# pushes so :latest cannot land out of order.
+# A multi-package nx release fires a burst of release events. GitHub keeps at
+# most one *pending* run per concurrency group (cancel-in-progress: false only
+# protects the in-progress run), so a single shared group silently cancelled
+# every image build in the batch except one. Key the group by release tag
+# instead: each package builds independently – safe, because every package
+# pushes to its own ghcr image, so their :latest tags never contend – while
+# duplicate runs for the same tag still coalesce.
 concurrency:
-  group: docker-publish
+  group: docker-publish-${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.event.release.tag_name }}
   cancel-in-progress: false
 
 jobs:
