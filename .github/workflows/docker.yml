@@ -23,10 +23,11 @@ permissions:
 # every image build in the batch except one. Key the group by release tag
 # instead: each package builds independently – safe, because every package
 # pushes to its own ghcr image, so their :latest tags never contend – while
-# duplicate runs for the same tag still coalesce.
+# duplicate runs for the same tag coalesce: builds of one immutable tag are
+# idempotent, so the newest run simply supersedes the older one.
 concurrency:
   group: docker-publish-${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.event.release.tag_name }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   build:
