@@ -105,7 +105,7 @@ Open the playground at `http://localhost:4000/graphql`, or query directly. Each 
 ```sh
 curl -s http://localhost:4000/graphql \
   -H 'Content-Type: application/json' \
-  -d '{"query": "{ datasets(query: \"map\") { total items { id title { language value } } } }"}'
+  -d '{"query": "{ datasets(query: \"map\") { pagination { total } items { id title { language value } } } }"}'
 ```
 
 Try a typo – `"musem"` still finds your museums – and note the ranking: title matches come first, thanks to the field weights. `GET /graphql?sdl` returns the schema as SDL; `GET /health` reports liveness.
@@ -115,7 +115,7 @@ The `keyword` field was declared `facetable`, so the result also carries facets.
 ```sh
 curl -s http://localhost:4000/graphql \
   -H 'Content-Type: application/json' \
-  -d '{"query": "{ datasets(query: \"map\") { total facets { keyword { value count } } } }"}'
+  -d '{"query": "{ datasets(query: \"map\") { pagination { total } facets { keyword { value count } } } }"}'
 ```
 
 Feed the buckets to filter checkboxes and pass the chosen values back as `where: { keyword: { in: ["maps"] } }`; a facet’s own filter is skipped when computing its buckets, so the other options stay visible.

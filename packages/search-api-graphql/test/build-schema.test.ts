@@ -159,9 +159,11 @@ describe('buildGraphQLSchema', () => {
     const result = await run(
       `{
         datasets(query: "kaart") {
-          total
-          page
-          perPage
+          pagination {
+            total
+            page
+            perPage
+          }
           items {
             id
             title { language value }
@@ -182,8 +184,7 @@ describe('buildGraphQLSchema', () => {
 
     expect(result.errors).toBeUndefined();
     const data = result.data?.datasets as Record<string, unknown>;
-    expect(data.total).toBe(1);
-    expect(data.page).toBe(1);
+    expect(data.pagination).toEqual({ total: 1, page: 1, perPage: 20 });
     const item = (data.items as Record<string, unknown>[])[0];
     expect(item.id).toBe('https://d/1');
     expect(item.title).toEqual([
@@ -212,10 +213,13 @@ describe('buildGraphQLSchema', () => {
   it('rejects out-of-bounds paging before it reaches the engine', async () => {
     const { engine } = fakeEngine(canned);
     const context = { engine, acceptLanguage: ['nl'] };
-    const badPage = await run(`{ datasets(page: 0) { total } }`, context);
+    const badPage = await run(
+      `{ datasets(page: 0) { pagination { total } } }`,
+      context,
+    );
     expect(badPage.errors?.[0]?.message).toMatch(/page must be at least 1/);
     const badPerPage = await run(
-      `{ datasets(perPage: 101) { total } }`,
+      `{ datasets(perPage: 101) { pagination { total } } }`,
       context,
     );
     expect(badPerPage.errors?.[0]?.message).toMatch(
@@ -456,7 +460,7 @@ describe('buildGraphQLSchema', () => {
     };
     const result = await run(
       `{ datasets {
-        total
+        pagination { total }
         items { id }
         facets { keyword { value count } status { value count } }
       } }`,
@@ -471,7 +475,7 @@ describe('buildGraphQLSchema', () => {
     // non-null result and discarding the items.
     expect(result.errors).toBeUndefined();
     const data = result.data?.datasets as Record<string, unknown>;
-    expect(data.total).toBe(1);
+    expect((data.pagination as Record<string, unknown>).total).toBe(1);
     expect((data.items as Record<string, unknown>[])[0].id).toBe('https://d/1');
     // Every facet in the failed batch degraded to an empty list, and the
     // cause was reported once per selected field.
@@ -482,13 +486,16 @@ describe('buildGraphQLSchema', () => {
 
   it('guards perPage: 0, resolving page to 1 rather than failing on NaN', async () => {
     const { engine } = fakeEngine(canned);
-    const result = await run(`{ datasets(perPage: 0) { page total } }`, {
-      engine,
-      acceptLanguage: ['nl'],
-    });
+    const result = await run(
+      `{ datasets(perPage: 0) { pagination { page total } } }`,
+      {
+        engine,
+        acceptLanguage: ['nl'],
+      },
+    );
     expect(result.errors).toBeUndefined();
     const data = result.data?.datasets as Record<string, unknown>;
-    expect(data.page).toBe(1);
+    expect((data.pagination as Record<string, unknown>).page).toBe(1);
   });
 
   it('maps where, orderBy and pagination into the SearchQuery', async () => {
@@ -500,7 +507,7 @@ describe('buildGraphQLSchema', () => {
           orderBy: { field: SIZE, direction: ASC }
           page: 3
           perPage: 10
-        ) { total }
+        ) { pagination { total } }
       }`,
       { engine, acceptLanguage: ['nl'] },
     );
@@ -524,7 +531,10 @@ describe('buildGraphQLSchema', () => {
 
   it('falls back to the und locale when no Accept-Language is given', async () => {
     const { engine, received } = fakeEngine(canned);
-    await run(`{ datasets { total } }`, { engine, acceptLanguage: [] });
+    await run(`{ datasets { pagination { total } } }`, {
+      engine,
+      acceptLanguage: [],
+    });
     expect(received().locale).toBe('und');
   });
 
@@ -551,7 +561,7 @@ describe('buildGraphQLSchema', () => {
     });
     await graphql({
       schema: gqlSchema,
-      source: `{ datasets { total } }`,
+      source: `{ datasets { pagination { total } } }`,
       contextValue: { engine, acceptLanguage: ['nl'] },
     });
     expect(captured?.where).toEqual([{ field: 'status', in: ['valid'] }]);
@@ -653,6 +663,10 @@ describe('buildGraphQLSchema', () => {
       expect(sdl).not.toMatch(/PersonWhere/);
       // The shared reference shape is emitted once, reused by both types.
       expect(sdl.match(/^type Agent /gm)).toHaveLength(1);
+      // One shared Pagination type across every ‹Type›SearchResult, so a
+      // client pager fragment on Pagination serves all root types.
+      expect(sdl.match(/^type Pagination /gm)).toHaveLength(1);
+      expect(sdl.match(/pagination: Pagination!/g)).toHaveLength(2);
     });
 
     it('routes each root field through the schema-bound engine', async () => {
@@ -667,7 +681,7 @@ describe('buildGraphQLSchema', () => {
       };
       const result = await graphql({
         schema: twoTypeSchema,
-        source: `{ people { total } creativeWorks { total } }`,
+        source: `{ people { pagination { total } } creativeWorks { pagination { total } } }`,
         contextValue: { engine, acceptLanguage: ['nl'] },
       });
       expect(result.errors).toBeUndefined();

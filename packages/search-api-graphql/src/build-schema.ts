@@ -167,6 +167,16 @@ export function buildGraphQLSchema(
       count: { type: new GraphQLNonNull(GraphQLInt) },
     },
   });
+  // The pagination actually applied (after queryDefaults), shared across every
+  // ‹Type›SearchResult so one client pager fragment serves all root types.
+  const paginationType = new GraphQLObjectType({
+    name: 'Pagination',
+    fields: {
+      total: { type: new GraphQLNonNull(GraphQLInt) },
+      page: { type: new GraphQLNonNull(GraphQLInt) },
+      perPage: { type: new GraphQLNonNull(GraphQLInt) },
+    },
+  });
   const sortDirection = new GraphQLEnumType({
     name: 'SortDirection',
     values: { ASC: { value: 'asc' }, DESC: { value: 'desc' } },
@@ -384,9 +394,7 @@ export function buildGraphQLSchema(
       name: `${typeName}SearchResult`,
       fields: {
         items: { type: nonNullListOf(outputType) },
-        total: { type: new GraphQLNonNull(GraphQLInt) },
-        page: { type: new GraphQLNonNull(GraphQLInt) },
-        perPage: { type: new GraphQLNonNull(GraphQLInt) },
+        pagination: { type: new GraphQLNonNull(paginationType) },
         // Resolved lazily, per selected key (skip-own-filter); the result object
         // (which carries the per-request facet loader) is the facets source.
         ...(facetsType && {
@@ -424,9 +432,11 @@ export function buildGraphQLSchema(
         });
         return {
           items: result.hits.map((hit) => ({ id: hit.id, ...hit.document })),
-          total: result.total,
-          page: pageForOffset(finalQuery.offset, finalQuery.limit),
-          perPage: finalQuery.limit,
+          pagination: {
+            total: result.total,
+            page: pageForOffset(finalQuery.offset, finalQuery.limit),
+            perPage: finalQuery.limit,
+          },
           // Carried for the facet field resolvers (see facet-batch.ts).
           loadFacet: createFacetLoader(
             context.engine,

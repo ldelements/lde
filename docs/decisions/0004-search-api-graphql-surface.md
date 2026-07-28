@@ -220,11 +220,15 @@ type DatasetFacets {
   size: [RangeBucket!]!
 }
 
-type DatasetSearchResult {
-  items: [Dataset!]!
+type Pagination {
+  # shared across every ‹Type›SearchResult, so one client pager fragment serves all root types
   total: Int!
   page: Int!
   perPage: Int!
+}
+type DatasetSearchResult {
+  items: [Dataset!]!
+  pagination: Pagination!
   facets: DatasetFacets!
 }
 
@@ -239,8 +243,11 @@ type Query {
 }
 ```
 
-Numbered pagination (`page`/`perPage` + `total`), per
-[ADR 3](./0003-search-api-core-query-model.md) – no Relay connection. The reference types
+Numbered pagination (`page`/`perPage` args; applied values + `total` grouped
+in the shared `Pagination` result type), per
+[ADR 3](./0003-search-api-core-query-model.md) – no Relay connection. The
+arguments stay flat: GraphQL has no input fragments, so a `pagination` input
+object would group without the reuse payoff the output grouping buys. The reference types
 carry `id + name` (labelOnly) from DR’s sidecar labels collection, resolved by the adapter.
 `publisher` is single (`dct:publisher` `maxCount 1`); `creator` is search-only (its name feeds
 full-text `query` but it has no output field); `catalog` is filter-only (in `where`, not output);
