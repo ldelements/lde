@@ -1,3 +1,13 @@
+## 0.34.0 (2026-07-28)
+
+### 🚀 Features
+
+- ⚠️  **pipeline-void:** iterate property partitions per property ([#672](https://github.com/ldelements/lde/pull/672))
+
+### ⚠️  Breaking Changes
+
+- **pipeline-void:** iterate property partitions per property  ([#672](https://github.com/ldelements/lde/pull/672))
+
 ## 0.33.4 (2026-07-25)
 
 ### 🧱 Updated Dependencies
