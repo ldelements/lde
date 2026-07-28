@@ -92,13 +92,13 @@ describe('createSearchGraphQLHandler', () => {
 
     const response = await post(
       handler,
-      '{ datasets(query: "kaart") { total items { id keyword } } }',
+      '{ datasets(query: "kaart") { pagination { total } items { id keyword } } }',
     );
     expect(response.status).toBe(200);
     const { data, errors } = await response.json();
 
     expect(errors).toBeUndefined();
-    expect(data.datasets.total).toBe(1);
+    expect(data.datasets.pagination.total).toBe(1);
     expect(data.datasets.items[0].id).toBe('https://d/1');
     expect(received().text).toBe('kaart');
   });
@@ -213,7 +213,10 @@ describe('createSearchGraphQLHandler', () => {
       maxDepth: 1,
     });
 
-    const response = await post(handler, '{ datasets { total } }');
+    const response = await post(
+      handler,
+      '{ datasets { pagination { total } } }',
+    );
     const { data, errors } = await response.json();
 
     expect(data).toBeUndefined();
@@ -230,7 +233,7 @@ describe('createSearchGraphQLHandler', () => {
 
     const response = await post(
       handler,
-      '{ datasets { total items { id keyword } } }',
+      '{ datasets { pagination { total } items { id keyword } } }',
     );
     const { data, errors } = await response.json();
 
@@ -261,12 +264,15 @@ describe('createSearchGraphQLHandler', () => {
     merged.getQueryType()!.getFields().hello.resolve = () => 'world';
     const handler = createSearchGraphQLHandler({ schema: merged, engine });
 
-    const response = await post(handler, '{ hello datasets { total } }');
+    const response = await post(
+      handler,
+      '{ hello datasets { pagination { total } } }',
+    );
     const { data, errors } = await response.json();
 
     expect(errors).toBeUndefined();
     expect(data.hello).toBe('world');
-    expect(data.datasets.total).toBe(1);
+    expect(data.datasets.pagination.total).toBe(1);
   });
 
   it('requires exactly one of searchSchema and schema', () => {

@@ -178,8 +178,11 @@ const gqlSchema = buildGraphQLSchema(searchSchema(DATASET, PERSON));
   dispatched as one `engine.searchFacets` call, so a typical page costs the
   listing search plus one batched facet round-trip.
 
-- **Result envelope**: `items` plus `total` (the full match count), `page`
-  and `perPage` (the pagination actually applied, after `queryDefaults`).
+- **Result envelope**: `items` plus `pagination` – `total` (the full match
+  count), `page` and `perPage` (the pagination actually applied, after
+  `queryDefaults`). `Pagination` is one shared type across every
+  `‹Type›SearchResult`, so a client pager fragment on it serves all root
+  types.
 
 **Output language order**: localized values flatten to a best-first
 `[LanguageString!]!` – by default the requested `Accept-Language` languages

@@ -7,9 +7,7 @@ exports[`GraphQL generator stability > emits a stable SDL for a representative s
 
 type ThingSearchResult {
   items: [Thing!]!
-  total: Int!
-  page: Int!
-  perPage: Int!
+  pagination: Pagination!
   facets: ThingFacets!
 }
 
@@ -35,6 +33,12 @@ type LanguageString {
 type Agent {
   id: String!
   name: [LanguageString!]!
+}
+
+type Pagination {
+  total: Int!
+  page: Int!
+  perPage: Int!
 }
 
 type ThingFacets {
