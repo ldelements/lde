@@ -1,3 +1,22 @@
+## 0.13.0 (2026-07-28)
+
+### 🚀 Features
+
+- ⚠️  **search-api-graphql:** group result pagination into a shared Pagination type ([#673](https://github.com/ldelements/lde/pull/673))
+
+### ⚠️  Breaking Changes
+
+- **search-api-graphql:** group result pagination into a shared Pagination type  ([#673](https://github.com/ldelements/lde/pull/673))
+  the result envelope fields total, page and perPage moved
+  into a pagination object; select pagination { total page perPage } instead."
+  M	docs/decisions/0004-search-api-graphql-surface.md
+  M	docs/guide/build-a-search-api.md
+  M	docs/reference/search-api-graphql.md
+  M	packages/search-api-graphql/src/build-schema.ts
+  M	packages/search-api-graphql/test/__snapshots__/generator-stability.test.ts.snap
+  M	packages/search-api-graphql/test/build-schema.test.ts
+  M	packages/search-api-graphql/test/handler.test.ts
+
 ## 0.12.3 (2026-07-27)
 
 ### 🩹 Fixes
