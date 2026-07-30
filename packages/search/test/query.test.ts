@@ -61,7 +61,7 @@ describe('validateQuery', () => {
           facets: ['status'],
           orderBy: [
             { field: 'relevance', direction: 'desc' },
-            // Declared but not `sortable`: allowed — `sortable` means publicly
+            // Declared but not `sortable`: allowed – `sortable` means publicly
             // selectable, and deployment policy may sort on a private tie-break.
             { field: 'statusRank', direction: 'asc' },
           ],
@@ -108,6 +108,24 @@ describe('validateQuery', () => {
       { part: 'facets', field: 'size', reason: 'not-facetable' },
       { part: 'orderBy', field: 'nonexistent', reason: 'unknown-field' },
     ]);
+  });
+
+  it('accepts `id`, which no type declares but every type carries', () => {
+    expect(
+      validateQuery(
+        { ...base, where: [{ field: 'id', in: ['https://example.org/1'] }] },
+        searchType,
+      ),
+    ).toEqual([]);
+  });
+
+  it('rejects a non-membership operator on `id`: an IRI has no range', () => {
+    expect(
+      validateQuery(
+        { ...base, where: [{ field: 'id', range: { min: 1 } }] },
+        searchType,
+      ),
+    ).toEqual([{ part: 'where', field: 'id', reason: 'operator-mismatch' }]);
   });
 
   it('assertValidQuery names the type and every issue', () => {

@@ -347,6 +347,18 @@ describe('validateSearchType', () => {
     ).toEqual([{ field: 'v1.2', reason: 'invalid-field-name' }]);
   });
 
+  it('rejects a field named `id`, which every document already carries', () => {
+    // The IRI is surfaced and filtered under that name for every type; a
+    // declared `id` would shadow it and answer a different question. A domain
+    // identifier belongs under its own name (e.g. `identifier`).
+    expect(
+      validateSearchType(typeWith({ name: 'id', kind: 'keyword' })),
+    ).toEqual([{ field: 'id', reason: 'reserved-field-name' }]);
+    expect(
+      validateSearchType(typeWith({ name: 'identifier', kind: 'keyword' })),
+    ).toEqual([]);
+  });
+
   it('rejects a declared locale containing an underscore', () => {
     // `_` is the reserved name↔locale separator; a locale carrying one would
     // collide with the physical/display field naming.

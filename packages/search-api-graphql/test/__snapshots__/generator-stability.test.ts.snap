@@ -56,6 +56,7 @@ type ValueBucket {
 }
 
 input ThingWhere {
+  id: StringFilter
   keyword: StringFilter
   creator: StringFilter
   publisher: StringFilter

@@ -53,6 +53,14 @@ A capability a Search Field opts into: `output`, `searchable`, `filterable`,
 `facetable`, `sortable`. Independent; a field exposes exactly what it declares.
 _Avoid_: flag, capability
 
+**Id**:
+A document’s IRI – the one field every indexed thing carries and no Search Type
+declares. Not a Search Field: it declares no Roles, yet is surfaced by every
+type and filterable on every type (membership only). Its identity, not one of
+its values, so it lives on the hit rather than in the Search Document. A
+declaration naming a field `id` is rejected.
+_Avoid_: identifier, key, URI field
+
 **Internal Field**:
 A Search Field declaring no Role. Projected into the Search Document so later
 Derives can read it, then pruned before the writer sees it. Never stored, never
@@ -68,11 +76,19 @@ _Avoid_: sh:path, predicate, selector
 
 **Derive**:
 A Search Field’s computation – what to compute from what was already read. Runs
-in declaration order over the Search Document; never touches the graph.
+in declaration order over the Search Document; never touches the graph, and
+never reaches outside it. Pure and synchronous: a Derive cannot fail.
 _Avoid_: transform, resolver, mapper
 
 A field has a Path or a Derive, never both. **Path says what to read; Derive
 says what to compute from what was read.**
+
+A value obtained from beyond the record – a service, a store, anything the
+projection did not read – is an **enrichment**, which belongs to
+`@lde/search-pipeline` and runs _after_ projection. Used here, never redefined.
+The boundary is what each is a function of: **a Derive is a function of the
+Search Document; an enrichment is a function of the world.** A Derive therefore
+cannot read an enriched value.
 
 Two absences declare intent, and both are load-bearing: **a field without a Role
 is an Internal Field; a type without a `class` is a Reference Type.**
@@ -142,6 +158,11 @@ _Avoid_: column, engine field
 **Field**: unqualified, ambiguous between a **Search Field** (the declaration)
 and a **Physical Field** (what the engine stores). One declaration becomes
 several stored fields, so the two are never one-to-one. Qualify which you mean.
+
+**Identifier**: not the **Id**. The Id is what a thing _is_ (its IRI); an
+identifier is what some source system _calls_ it – an inventory or catalogue
+number, carried by an ordinary Search Field (`schema:identifier`). A type may
+declare `identifier`; none may declare `id`.
 
 ## Example dialogue
 

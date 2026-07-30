@@ -586,8 +586,23 @@ export interface SearchTypeIssue {
     | 'transform-not-allowed'
     | 'derive-with-path'
     | 'text-not-filterable'
-    | 'text-not-facetable';
+    | 'text-not-facetable'
+    | 'reserved-field-name';
 }
+
+/**
+ * The reserved logical name of a document’s IRI – the one field every indexed
+ * thing carries, and the only one no {@link SearchType} declares. It is the
+ * hit’s identity ({@link SearchHit.id}), not a value in its
+ * {@link ResultDocument}, so it is surfaced and filtered by name alone.
+ *
+ * `id` answers *what the thing is*; a domain field like `schema:identifier`
+ * answers *what a source system calls it* (a catalogue or record number). Those
+ * are different questions, so a declaration may still carry an `identifier`
+ * field of its own – but never an `id` one, which
+ * {@link validateSearchType} rejects as `reserved-field-name`.
+ */
+export const ID_FIELD = 'id';
 
 /** Kinds that can feed full-text search (project a folded search field). */
 const SEARCHABLE_KINDS: readonly FieldKind[] = ['text', 'keyword', 'reference'];
@@ -620,7 +635,7 @@ const LOCALE_PATTERN = /^[A-Za-z0-9]+(-[A-Za-z0-9]+)*$/;
  * - field names are unique (a duplicate would silently shadow in every
  *   consumer, each picking a different winner) and a metacharacter-free
  *   identifier (the name is interpolated into physical field names and the
- *   display RE2 pattern);
+ *   display RE2 pattern), and is not the reserved {@link ID_FIELD};
  * - a `text` field’s declared locales are BCP-47-shaped (no `_`, which is the
  *   reserved name↔locale separator);
  * - a `reference` field that is `output` declares `ref` (the API surfaces
@@ -662,6 +677,12 @@ export function validateSearchType(
     // pattern, so it must be a metacharacter-free identifier.
     if (!FIELD_NAME_PATTERN.test(field.name)) {
       issue('invalid-field-name');
+    }
+    // `id` is the document’s IRI, surfaced and filtered for every type; a
+    // declared field of that name would shadow it in the API output and in
+    // `where`, silently answering a different question.
+    if (field.name === ID_FIELD) {
+      issue('reserved-field-name');
     }
     // Every kind-dependent rule below would silently pass for a kind outside
     // the union, so a typo’d kind in a plain-JS declaration must fail here.

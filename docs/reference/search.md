@@ -254,7 +254,7 @@ time).
 **Declarations are also validated at runtime** (for declarations built
 outside TypeScript – a SHACL generator, plain JS): `searchSchema()`
 rejects a structurally invalid declaration (duplicate or non-identifier field
-names, a locale containing `_`, an `output`
+names, a field named `id` – see [Lookup by IRI](#lookup-by-iri) –, a locale containing `_`, an `output`
 reference without `ref`, `text` without locales, `locales` on a non-text kind,
 `facetRanges` on a non-numeric kind, `searchable`/`transform` on a kind whose
 projection cannot honour it, `filterable`/`facetable` on `text`, two types
@@ -418,11 +418,46 @@ engine adapters and surfaces compile through the shared `SearchQuery` IR and the
 
 Queries are **always validated**: the port contract requires every engine
 adapter to reject a structurally invalid `SearchQuery` (`assertValidQuery`) –
-unknown or non-`filterable` fields in `where`, an operator not matching the
+unknown or non-`filterable` fields in `where` (bar `id`, filterable on every
+type – see [Lookup by IRI](#lookup-by-iri)), an operator not matching the
 field’s kind, non-`facetable` facet requests – no matter which surface or
 policy produced it. A typed surface like GraphQL makes most of these
 unrepresentable; the port enforces them for everyone else (deployment
 `queryDefaults`, in-process callers, weaker-typed surfaces).
+
+### Lookup by IRI
+
+Every type is filterable on **`id`** – the document’s IRI – without declaring
+it, and every surface returns it. It is the one field no `SearchType` declares,
+because every indexed thing already carries it: it is the hit’s identity
+(`SearchHit.id`), not a value in its `ResultDocument`. `searchSchema()` rejects
+a declared field named `id` (`reserved-field-name`) so nothing can shadow it.
+
+Membership only – an IRI has no range and no truth value – so a lookup is also a
+batch lookup:
+
+```graphql
+{
+  organizations(where: { id: { in: ["https://id.drapo.nl/ffed9f91-…"] } }) {
+    items {
+      id
+      name {
+        value
+      }
+    }
+  }
+}
+```
+
+This is what makes an IRI a usable entry point: a client holding a reference’s
+`id` (from `publisher`, `isPartOf`, `creator`, …) fetches that entity’s own
+fields from its own collection, rather than the schema having to carry them
+inline on every referring document.
+
+Keep `id` distinct from a domain identifier. `id` is _what the thing is_; a
+declared field like `identifier` (`schema:identifier`) is _what a source system
+calls it_ – an inventory or catalogue number. Both may exist on one type; they
+answer different questions.
 
 Sorting has two deliberate wrinkles. `orderBy` accepts the sentinel field
 **`relevance`** – text-match ranking, not a declared field (Typesense compiles

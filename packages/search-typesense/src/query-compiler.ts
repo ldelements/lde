@@ -12,6 +12,7 @@ import {
   fieldNamed,
   filterOperator,
   filterOperatorFor,
+  ID_FIELD,
   isoToUnixSeconds,
   isRangeFacet,
   pageForOffset,
@@ -20,14 +21,14 @@ import {
 } from '@lde/search/adapter';
 
 /**
- * Options for {@link buildSearchParams} — the query half of the engine
+ * Options for {@link buildSearchParams} – the query half of the engine
  * adapter. {@link TypesenseSearchEngineOptions} extends this, so each knob is
  * declared once and the engine forwards its options wholesale.
  */
 export interface BuildSearchParamsOptions {
   /**
    * Cap on the number of buckets returned per facet (`max_facet_values`). Left
-   * unset, Typesense defaults to 10 — too few for high-cardinality facets
+   * unset, Typesense defaults to 10 – too few for high-cardinality facets
    * (publisher, keyword), so a deployment with such facets must raise it. Range
    * facets return one bucket per declared range regardless, but a value > the
    * range count is still safe.
@@ -47,7 +48,7 @@ export interface BuildSearchParamsOptions {
 
 /**
  * Compile the engine-neutral {@link SearchQuery} into Typesense search
- * parameters — the query half of the engine adapter. Pure (no client, no env),
+ * parameters – the query half of the engine adapter. Pure (no client, no env),
  * so the mapping is asserted directly in unit tests. Field names come from
  * {@link physicalFields}, the same convention the projection and the collection
  * schema use, so a query can never reference a field the index does not carry.
@@ -186,12 +187,20 @@ function compileFilter(
   filter: Filter,
   searchType: SearchType,
 ): string | undefined {
+  // `id` is the Typesense document key, not a declared field: filter it by
+  // exact membership, the same clause `fetchLabels` uses to resolve a
+  // reference’s label from its own collection.
+  if (filter.field === ID_FIELD) {
+    return 'in' in filter && filter.in.length > 0
+      ? `${ID_FIELD}:=[${filter.in.map(escapeFilterValue).join(',')}]`
+      : undefined;
+  }
   const field = fieldNamed(searchType, filter.field);
   if (field === undefined) {
     return undefined;
   }
   // A clause whose operator does not match the field's kind (e.g. `range` on a
-  // keyword) would reach the engine as garbage syntax — skip it instead.
+  // keyword) would reach the engine as garbage syntax – skip it instead.
   if (filterOperatorFor(field.kind) !== filterOperator(filter)) {
     return undefined;
   }

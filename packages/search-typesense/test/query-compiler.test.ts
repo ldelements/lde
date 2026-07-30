@@ -115,13 +115,52 @@ describe('buildSearchParams', () => {
     );
   });
 
+  it('compiles an `id` clause to exact membership on the document key', () => {
+    // `id` is declared by no type: it is the document's IRI, filtered by the
+    // same exact clause label resolution uses. Backtick-wrapped, so the IRI's
+    // `:` and `/` stay literal.
+    const params = buildSearchParams(
+      {
+        ...base,
+        where: [
+          { field: 'id', in: ['https://id.example.org/a', 'urn:b'] },
+          { field: 'status', in: ['valid'] },
+        ],
+      },
+      schema,
+    );
+    expect(params.filter_by).toBe(
+      'id:=[`https://id.example.org/a`,`urn:b`] && status:[`valid`]',
+    );
+  });
+
+  it('skips a vacuous or non-membership `id` clause', () => {
+    const ignored: unknown[] = [];
+    const params = buildSearchParams(
+      {
+        ...base,
+        where: [
+          { field: 'id', in: [] },
+          { field: 'id', range: { min: 1 } },
+        ],
+      },
+      schema,
+      { onIgnoredFilter: (filter) => ignored.push(filter) },
+    );
+    expect(params.filter_by).toBeUndefined();
+    expect(ignored).toEqual([
+      { field: 'id', in: [] },
+      { field: 'id', range: { min: 1 } },
+    ]);
+  });
+
   it('skips a clause that compiles to nothing and reports it via onIgnoredFilter', () => {
     const ignored: unknown[] = [];
     const params = buildSearchParams(
       {
         ...base,
         where: [
-          { field: 'status', in: ['valid'] }, // fine — kept
+          { field: 'status', in: ['valid'] }, // fine – kept
           { field: 'nonexistent', in: ['x'] }, // unknown field
           { field: 'keyword', range: { min: 1 } }, // operator ≠ field kind
           { field: 'status', in: [] }, // empty membership

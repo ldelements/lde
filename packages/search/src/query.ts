@@ -1,4 +1,9 @@
-import { fieldNamed, filterOperatorFor, type SearchType } from './schema.js';
+import {
+  fieldNamed,
+  filterOperatorFor,
+  ID_FIELD,
+  type SearchType,
+} from './schema.js';
 
 /**
  * The engine- and protocol-neutral query IR. Every API surface compiles its
@@ -26,7 +31,7 @@ export interface SearchQuery {
  * One `where` clause. The operator is fixed by the target field’s {@link FieldKind}
  * ({@link filterOperatorFor}): keyword/reference use `in` (OR within the field),
  * the numeric/date kinds use an inclusive `range`, boolean uses `is`. Bounds are
- * inclusive only — no `gt`/`gte`/`lt`/`lte`.
+ * inclusive only – no `gt`/`gte`/`lt`/`lte`.
  */
 export type Filter =
   | { readonly field: string; readonly in: readonly string[] }
@@ -61,29 +66,27 @@ export function filterOperator(filter: Filter): FilterOperator {
  * One structural problem {@link validateQuery} found: the query references a
  * field the search type does not declare, or uses it in a role it does not
  * opt into. Vacuous-but-valid clauses (an empty `in` list, a `range` with no
- * bound) are NOT issues — a compiler skips those as no-ops.
+ * bound) are NOT issues – a compiler skips those as no-ops.
  */
 export interface QueryIssue {
   readonly part: 'where' | 'facets' | 'orderBy';
   readonly field: string;
   readonly reason:
-    | 'unknown-field'
-    | 'not-filterable'
-    | 'operator-mismatch'
-    | 'not-facetable';
+    'unknown-field' | 'not-filterable' | 'operator-mismatch' | 'not-facetable';
 }
 
 /**
  * Structurally validate a query against its search type: every `where` clause
  * targets a declared, `filterable` field with the operator its kind accepts
- * ({@link filterOperatorFor}); every requested facet is a declared, `facetable`
+ * ({@link filterOperatorFor}) – or the undeclared, always-filterable
+ * {@link ID_FIELD}, which takes `in`; every requested facet is a declared, `facetable`
  * field; every sort is `relevance` or a declared field. Sorting deliberately
  * checks declaration only, not the `sortable` flag: that flag means *publicly
  * selectable*, and a deployment policy may sort on a private tie-break field.
  *
  * This is the port’s always-on guard: every {@link SearchEngine} adapter MUST
  * reject a query with issues ({@link assertValidQuery}) instead of passing
- * garbage to its engine, so validation holds for every caller — including
+ * garbage to its engine, so validation holds for every caller – including
  * `queryDefaults` policies and surfaces weaker than GraphQL.
  */
 export function validateQuery(
@@ -92,6 +95,19 @@ export function validateQuery(
 ): readonly QueryIssue[] {
   const issues: QueryIssue[] = [];
   for (const filter of query.where) {
+    // `id` is filterable on every type without being declared by any: it is the
+    // document’s IRI, so the lookup exists wherever documents do. Membership
+    // only – an IRI has no range and no truth value.
+    if (filter.field === ID_FIELD) {
+      if (filterOperator(filter) !== 'in') {
+        issues.push({
+          part: 'where',
+          field: filter.field,
+          reason: 'operator-mismatch',
+        });
+      }
+      continue;
+    }
     const field = fieldNamed(searchType, filter.field);
     if (field === undefined) {
       issues.push({
@@ -154,7 +170,7 @@ export function assertValidQuery(
 }
 
 /**
- * The 1-based page an `offset` falls on — the numbered-pagination presentation
+ * The 1-based page an `offset` falls on – the numbered-pagination presentation
  * of the IR, shared by the surfaces and the adapters. `limit: 0` (a facet-only
  * query) fetches no hits and has no meaningful page, so it pins to 1 rather
  * than dividing by zero.

@@ -207,6 +207,19 @@ describe('createTypesenseSearchEngine (integration)', () => {
     ]);
   });
 
+  it('looks documents up by `id`, the field no type declares', async () => {
+    const result = await engine.search(datasetSchema, {
+      ...baseQuery,
+      where: [{ field: 'id', in: ['d3', 'd1'] }],
+      orderBy: [{ field: 'statusRank', direction: 'asc' }],
+    });
+
+    // Membership, so an id lookup is also a batch lookup – and it reaches
+    // documents a `status` filter would exclude (d3 is invalid).
+    expect(result.total).toBe(2);
+    expect(result.hits.map((hit) => hit.id).sort()).toEqual(['d1', 'd3']);
+  });
+
   it('ranks a full-text query through the weighted query_by fields', async () => {
     const result = await engine.search(datasetSchema, {
       ...baseQuery,

@@ -24,6 +24,7 @@ export {
   referenceTypeNamed,
   inlineFramingDepth,
   fieldNamed,
+  ID_FIELD,
   labelFieldOf,
   isRangeFacet,
   isoToUnixSeconds,

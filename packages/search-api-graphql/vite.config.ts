@@ -22,7 +22,7 @@ export default mergeConfig(
           lines: 100,
           // Full-suite baseline, re-anchored when covered branches are
           // deleted (autoUpdate only ever raises; see AGENTS.md).
-          branches: 94.07,
+          branches: 94.16,
           statements: 100,
         },
       },

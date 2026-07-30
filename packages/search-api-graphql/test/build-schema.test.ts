@@ -529,6 +529,29 @@ describe('buildGraphQLSchema', () => {
     expect(query.offset).toBe(20);
   });
 
+  it('maps a where on the undeclared `id` into an IRI membership filter', async () => {
+    const { engine, received } = fakeEngine(canned);
+    await run(
+      `{
+        datasets(where: { id: { in: ["https://id.example.org/a", "urn:b"] } }) {
+          pagination { total }
+        }
+      }`,
+      { engine, acceptLanguage: ['nl'] },
+    );
+    expect(received().where).toEqual([
+      { field: 'id', in: ['https://id.example.org/a', 'urn:b'] },
+    ]);
+
+    // An empty StringFilter compiles to an empty membership, as for any field.
+    const empty = fakeEngine(canned);
+    await run(`{ datasets(where: { id: {} }) { pagination { total } } }`, {
+      engine: empty.engine,
+      acceptLanguage: ['nl'],
+    });
+    expect(empty.received().where).toEqual([{ field: 'id', in: [] }]);
+  });
+
   it('falls back to the und locale when no Accept-Language is given', async () => {
     const { engine, received } = fakeEngine(canned);
     await run(`{ datasets { pagination { total } } }`, {
@@ -658,9 +681,9 @@ describe('buildGraphQLSchema', () => {
       );
       expect(sdl).toMatch(/enum PersonSortField/);
       expect(sdl).toMatch(/input CreativeWorkWhere/);
-      // Person has no filterable fields, so it gets no `where` arg (an empty
-      // input object would be invalid GraphQL) – CreativeWork keeps its own.
-      expect(sdl).not.toMatch(/PersonWhere/);
+      // Person declares no filterable field, yet still gets a `where` input:
+      // `id` is filterable on every type, so no type is unaddressable by IRI.
+      expect(sdl).toMatch(/input PersonWhere \{\s*id: StringFilter\s*\}/);
       // The shared reference shape is emitted once, reused by both types.
       expect(sdl.match(/^type Agent /gm)).toHaveLength(1);
       // One shared Pagination type across every ‹Type›SearchResult, so a

@@ -20,8 +20,8 @@ export default mergeConfig(
           // partial vitest run must never rewrite these – see AGENTS.md.
           functions: 98.65,
           lines: 98.83,
-          branches: 93.61,
-          statements: 98.85,
+          branches: 93.75,
+          statements: 98.86,
         },
       },
     },
