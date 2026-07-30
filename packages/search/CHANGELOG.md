@@ -1,3 +1,13 @@
+## 0.13.0 (2026-07-30)
+
+### 🚀 Features
+
+- ⚠️  **search:** look documents up by their IRI on every type ([#676](https://github.com/ldelements/lde/pull/676))
+
+### ⚠️  Breaking Changes
+
+- **search:** look documents up by their IRI on every type  ([#676](https://github.com/ldelements/lde/pull/676))
+
 ## 0.12.3 (2026-07-27)
 
 ### 🩹 Fixes
