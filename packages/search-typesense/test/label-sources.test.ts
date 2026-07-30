@@ -151,14 +151,18 @@ describe('per-reference label sources', () => {
     expect(result.hits[0].document.license).toEqual([
       { id: 'https://license/1' },
     ]);
-    const requestedIds = fake.performs
+    const requestedIds = fake
+      .labelPerforms()
       .flat()
       .flatMap((search) => filterByIds(String(search.filter_by)));
     expect(requestedIds).not.toContain('https://license/1');
     // Each source was asked in its own collection, in ONE round-trip.
-    expect(fake.performs).toHaveLength(1);
+    expect(fake.labelPerforms()).toHaveLength(1);
     const byCollection = new Map(
-      fake.performs.flat().map((search) => [String(search.collection), search]),
+      fake
+        .labelPerforms()
+        .flat()
+        .map((search) => [String(search.collection), search]),
     );
     expect(
       filterByIds(String(byCollection.get('organizations')?.filter_by)),
@@ -240,7 +244,8 @@ describe('per-reference label sources', () => {
 
     await engine.search(dataset, baseQuery);
 
-    const orgSearch = fake.performs
+    const orgSearch = fake
+      .labelPerforms()
       .flat()
       .find((search) => String(search.collection) === 'organizations');
     // Organization declares locales ['und', 'nl']; the lookup must query both
@@ -318,8 +323,8 @@ describe('per-reference label sources', () => {
 
     await engine.search(dataset, baseQuery);
 
-    expect(fake.performs).toHaveLength(1);
-    const batches = fake.performs[0];
+    expect(fake.labelPerforms()).toHaveLength(1);
+    const batches = fake.labelPerforms()[0];
     expect(batches).toHaveLength(3); // 401 ids in batches of 200
     expect(
       batches.every((search) => search.collection === 'organizations'),
@@ -357,7 +362,7 @@ describe('per-reference label sources', () => {
 
     // Both collections were exported once; no per-search lookup travelled.
     expect(fake.exportCalls()).toBe(2);
-    expect(fake.performs).toHaveLength(0);
+    expect(fake.labelPerforms()).toHaveLength(0);
     expect(result.hits[0].document.publisher).toEqual([
       { id: 'https://org/1', label: { nl: ['Het Archief'] } },
     ]);
@@ -470,6 +475,6 @@ describe('per-reference label sources', () => {
     const result = await engine.search(bare.get(dataset.class)!, baseQuery);
 
     expect(result.hits[0].document.license).toEqual([{ id: 'https://l/1' }]);
-    expect(fake.performs).toHaveLength(0);
+    expect(fake.labelPerforms()).toHaveLength(0);
   });
 });

@@ -18,6 +18,7 @@ export {
   searchSchema,
   validateSearchType,
   assertValidSearchType,
+  ID_FIELD,
 } from './schema.js';
 export type {
   FieldKind,

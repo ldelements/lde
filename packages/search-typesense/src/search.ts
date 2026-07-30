@@ -1,4 +1,5 @@
 import type { Client } from 'typesense';
+import type { SearchParams } from 'typesense/lib/Typesense/Documents.js';
 import {
   type FacetBucket,
   type FacetsOutcome,
@@ -24,6 +25,7 @@ import {
   displayLangOf,
   fieldNamed,
   isRangeFacet,
+  isUnsatisfiable,
   labelFieldOf,
   outputFields,
   physicalFields,
@@ -310,8 +312,7 @@ export function createTypesenseSearchEngine<
   // so the cached and source-less paths never pay for collecting the IRIs.
   async function resolveLabels(
     cachedLabelsPromise:
-      | Promise<ReadonlyMap<string, LocalizedValue>>
-      | undefined,
+      Promise<ReadonlyMap<string, LocalizedValue>> | undefined,
     groups: () => readonly LabelLookupGroup[],
   ): Promise<ReadonlyMap<string, LocalizedValue>> {
     if (cachedLabelsPromise !== undefined) {
@@ -340,12 +341,25 @@ export function createTypesenseSearchEngine<
       // rejected up front, for EVERY caller.
       assertTypeInSchema(schema, searchType);
       assertValidQuery(query, searchType);
+      // Asks for no document (an empty `id` membership): answer it without a
+      // round-trip rather than dispatching a query whose only filter compiles
+      // away, which would hand back the whole collection.
+      if (isUnsatisfiable(query)) {
+        return { total: 0, hits: [], facets: {} };
+      }
       const params = buildSearchParams(query, searchType, options);
       const cachedLabelsPromise = startCachedLabels(searchType);
-      const response = (await client
-        .collections(collections.get(searchType.class) as string)
-        .documents()
-        .search(params)) as TypesenseSearchResponse;
+      // ONE search, but through `multi_search` (POST) like the facet batch and
+      // the label lookup: `documents().search()` is a GET, so a long
+      // `filter_by` – a batch `id` lookup, or any membership over many IRIs –
+      // would overflow Typesense's 4000-char query-string limit. POST puts it
+      // in the body, so the filter is bounded by the caller's request, not by
+      // the URL.
+      const response = await performSingleSearch(
+        client,
+        collections.get(searchType.class) as string,
+        params,
+      );
       const labels = await resolveLabels(cachedLabelsPromise, () =>
         labelLookupGroups(
           [response],
@@ -368,12 +382,23 @@ export function createTypesenseSearchEngine<
       }
       const collection = collections.get(searchType.class) as string;
       const cachedLabelsPromise = startCachedLabels(searchType);
+      // A query asking for no document faces the same inversion as in
+      // `search()`: its only filter would compile away and it would count
+      // facets over the whole collection. Such a query is answered with empty
+      // facets and kept OUT of the batch, so `dispatched` maps each sent search
+      // back to its caller position.
+      const dispatched = queries
+        .map((query, index) => ({ query, index }))
+        .filter(({ query }) => !isUnsatisfiable(query));
+      if (dispatched.length === 0) {
+        return queries.map(() => ({ facets: {} }));
+      }
       // The whole batch travels as ONE multi_search round-trip. Each query
       // compiles as facet-only regardless of what it carries: no hits
       // (per_page 0) and no ordering – nothing is transferred or sorted that
       // this method cannot return.
       const { results } = (await client.multiSearch.perform({
-        searches: queries.map((query) => ({
+        searches: dispatched.map(({ query }) => ({
           collection,
           ...buildSearchParams(
             { ...query, orderBy: [], limit: 0, offset: 0 },
@@ -398,18 +423,26 @@ export function createTypesenseSearchEngine<
       // multi_search reports a failed entry inline instead of rejecting the
       // call; pass that through as a per-query outcome – naming the facets,
       // not the position, since the batch order is the caller's internal –
-      // so one failed query never discards its siblings' facets.
-      return results.map((result, index) =>
-        'error' in result
-          ? {
-              error: new Error(
-                `Typesense facet search for “${queries[index].facets.join('”, “')}” failed${
-                  result.code !== undefined ? ` (${result.code})` : ''
-                }: ${result.error}`,
-              ),
-            }
-          : { facets: parseSearchResponse(result, searchType, labels).facets },
-      );
+      // so one failed query never discards its siblings' facets. Every caller
+      // position is answered: a dispatched query by its entry, an
+      // unsatisfiable one by empty facets.
+      const outcomes: FacetsOutcome[] = queries.map(() => ({ facets: {} }));
+      dispatched.forEach(({ index }, entry) => {
+        const result = results[entry];
+        outcomes[index] =
+          result === undefined || 'error' in result
+            ? {
+                error: new Error(
+                  `Typesense facet search for “${queries[index].facets.join('”, “')}” failed${
+                    result?.code !== undefined ? ` (${result.code})` : ''
+                  }: ${result?.error ?? 'no result entry'}`,
+                ),
+              }
+            : {
+                facets: parseSearchResponse(result, searchType, labels).facets,
+              };
+      });
+      return outcomes;
     },
   };
   // The runtime object is string-keyed; the literal-schema typing narrows it.
@@ -547,6 +580,38 @@ function labelLookupGroups(
     source,
     iris: [...iris],
   }));
+}
+
+/**
+ * Dispatch one search as a single-entry `multi_search` (POST). `multi_search`
+ * reports a failed entry inline instead of rejecting the call, so the entry is
+ * translated back into a throw: `search()` rejects on engine failure, and that
+ * contract must not weaken just because the transport moved off GET.
+ */
+async function performSingleSearch(
+  client: Pick<Client, 'multiSearch'>,
+  collection: string,
+  params: SearchParams<object>,
+): Promise<TypesenseSearchResponse> {
+  const { results } = (await client.multiSearch.perform({
+    searches: [{ collection, ...params }],
+  })) as {
+    results: readonly (TypesenseSearchResponse | TypesenseErrorEntry)[];
+  };
+  const [result] = results;
+  if (result === undefined) {
+    throw new Error(
+      `Typesense search of “${collection}” returned no result entry.`,
+    );
+  }
+  if ('error' in result) {
+    throw new Error(
+      `Typesense search of “${collection}” failed${
+        result.code !== undefined ? ` (${result.code})` : ''
+      }: ${result.error}`,
+    );
+  }
+  return result;
 }
 
 /**

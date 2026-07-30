@@ -467,6 +467,72 @@ describe('createTypesenseSearchEngine searchFacets (multi_search batching)', () 
     expect(performs).toHaveLength(0);
   });
 
+  it('makes no request when every query in the batch is unsatisfiable', async () => {
+    const { client, performs } = fakeTypesenseClient({
+      multiSearch: () => ({ found: 0, hits: [] }),
+    });
+    const engine = createTypesenseSearchEngine(client, labelledSchema(), {
+      collections: labelledCollections,
+    });
+
+    await expect(
+      engine.searchFacets(schema, [
+        {
+          ...facetBrowse,
+          where: [{ field: 'id', in: [] }],
+          facets: ['status'],
+        },
+        {
+          ...facetBrowse,
+          where: [{ field: 'id', in: [] }],
+          facets: ['keyword'],
+        },
+      ]),
+    ).resolves.toEqual([{ facets: {} }, { facets: {} }]);
+    expect(performs).toHaveLength(0);
+  });
+
+  it('fails loudly when the fake declares no multi_search answerer', async () => {
+    // Guards the fake's own contract: an undeclared endpoint rejects, so no
+    // test can silently exercise a path it did not configure.
+    const { client } = fakeTypesenseClient();
+    const engine = createTypesenseSearchEngine(client, labelledSchema(), {
+      collections: labelledCollections,
+    });
+
+    await expect(engine.search(schema, facetBrowse)).rejects.toThrow(
+      /No multiSearch configured/,
+    );
+  });
+
+  it('translates a failed root-search entry into a rejection', async () => {
+    // `multi_search` reports a failure inline; `search()` must still reject, as
+    // it did when the root search was a GET that threw on a 4xx.
+    const { client } = fakeTypesenseClient({
+      multiSearch: () => ({ code: 404, error: 'collection not found' }),
+    });
+    const engine = createTypesenseSearchEngine(client, labelledSchema(), {
+      collections: labelledCollections,
+    });
+
+    await expect(engine.search(schema, facetBrowse)).rejects.toThrow(
+      /search of “datasets” failed \(404\): collection not found/,
+    );
+  });
+
+  it('rejects when the root search comes back with no entry at all', async () => {
+    const client = {
+      multiSearch: { perform: async () => ({ results: [] }) },
+    } as unknown as Parameters<typeof createTypesenseSearchEngine>[0];
+    const engine = createTypesenseSearchEngine(client, labelledSchema(), {
+      collections: labelledCollections,
+    });
+
+    await expect(engine.search(schema, facetBrowse)).rejects.toThrow(
+      /search of “datasets” returned no result entry/,
+    );
+  });
+
   it('reports a failed entry as an in-place error outcome, keeping its siblings', async () => {
     const { client } = fakeTypesenseClient({
       multiSearch: (_search, index) =>

@@ -24,6 +24,7 @@ export {
   referenceTypeNamed,
   inlineFramingDepth,
   fieldNamed,
+  ID_FIELD,
   labelFieldOf,
   isRangeFacet,
   isoToUnixSeconds,
@@ -34,6 +35,7 @@ export { physicalNameTokens } from './physical-name.js';
 export {
   filterOperatorFor,
   filterOperator,
+  isUnsatisfiable,
   validateQuery,
   assertValidQuery,
   pageForOffset,

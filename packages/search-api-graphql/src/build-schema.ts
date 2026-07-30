@@ -30,6 +30,7 @@ import {
   facetableFields,
   filterableFields,
   filterOperatorFor,
+  ID_FIELD,
   isRangeFacet,
   outputFields,
   pageForOffset,
@@ -340,23 +341,22 @@ export function buildGraphQLSchema(
       },
     });
 
-    // A GraphQL input object must have at least one field, so a type with no
-    // filterable fields gets no `where` arg at all rather than an invalid
-    // empty input.
+    // Every type is filterable on `id`, so the input always has at least one
+    // field and always exists – no type is unaddressable by IRI, whatever it
+    // declares.
     const filterable = filterableFields(searchType);
-    const whereInput =
-      filterable.length === 0
-        ? undefined
-        : new GraphQLInputObjectType({
-            name: `${typeName}Where`,
-            fields: () => {
-              const fields: Record<string, GraphQLInputFieldConfig> = {};
-              for (const field of filterable) {
-                fields[field.name] = { type: whereFieldType(field) };
-              }
-              return fields;
-            },
-          });
+    const whereInput = new GraphQLInputObjectType({
+      name: `${typeName}Where`,
+      fields: () => {
+        const fields: Record<string, GraphQLInputFieldConfig> = {
+          [ID_FIELD]: { type: stringFilter },
+        };
+        for (const field of filterable) {
+          fields[field.name] = { type: whereFieldType(field) };
+        }
+        return fields;
+      },
+    });
 
     const sortValues: GraphQLEnumValueConfigMap = {
       RELEVANCE: { value: 'relevance' },
@@ -410,7 +410,7 @@ export function buildGraphQLSchema(
       type: new GraphQLNonNull(resultType),
       args: {
         query: { type: GraphQLString },
-        ...(whereInput && { where: { type: whereInput } }),
+        where: { type: whereInput },
         orderBy: { type: orderByInput },
         page: { type: GraphQLInt, defaultValue: 1 },
         perPage: { type: GraphQLInt, defaultValue: 20 },
@@ -564,6 +564,11 @@ function whereToFilters(
     return [];
   }
   const filters: Filter[] = [];
+  // `id` first: it is declared by no type, so the field loop below never sees it.
+  const id = where[ID_FIELD] as { in?: string[] } | undefined | null;
+  if (id !== undefined && id !== null) {
+    filters.push({ field: ID_FIELD, in: id.in ?? [] });
+  }
   for (const field of filterableFields(searchType)) {
     const value = where[field.name];
     if (value === undefined || value === null) {

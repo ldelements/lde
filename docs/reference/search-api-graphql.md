@@ -154,8 +154,10 @@ const gqlSchema = buildGraphQLSchema(searchSchema(DATASET, PERSON));
   per kind; `date` → ISO 8601 string; nullability from `required` / `array` /
   `kind`.
 - **`where`** one input per `filterable` field (`StringFilter`, `IntRange` /
-  `FloatRange` / `DateRange`, or `Boolean`); omitted entirely for a type with no
-  filterable fields.
+  `FloatRange` / `DateRange`, or `Boolean`), plus **`id: StringFilter`** on every
+  type – the document’s IRI, declared by no type and filterable on all of them
+  ([Lookup by IRI](./search#lookup-by-iri)). So the input always exists, even for
+  a type that declares no filterable field of its own.
 - **`orderBy`**: `RELEVANCE` plus every `sortable` field, as an enum – field
   names SCREAMING_SNAKE_CASEd (`datePosted` → `DATE_POSTED`); `direction`
   defaults to `DESC`.

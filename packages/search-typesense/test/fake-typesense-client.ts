@@ -20,7 +20,12 @@ export function labelLookup(
 }
 
 export interface FakeTypesenseClientOptions {
-  /** Answer for `collections().documents().search()`. */
+  /**
+   * Answer for a root search. The engine dispatches one through `multi_search`
+   * (POST) like every other query – a GET could not carry a long `filter_by` –
+   * so this answers the compiled entries, told apart from a label lookup by the
+   * `query_by_weights` only {@link buildSearchParams} emits.
+   */
   readonly searchResponse?: Record<string, unknown>;
   /** The documents export endpoint (JSONL) per collection; calls are counted. */
   readonly exportJsonl?: (collection: string) => Promise<string>;
@@ -35,8 +40,12 @@ export interface FakeTypesenseClientOptions {
 export interface FakeTypesenseClient {
   readonly client: Client;
   /** Every `multi_search` POST’s `searches` array, in call order, so batching
-   *  is observable. */
+   *  is observable. Includes the root search, which travels the same way. */
   readonly performs: readonly (readonly Record<string, unknown>[])[];
+  /** Just the label-lookup performs – those carrying no compiled query
+   *  (`query_by_weights`) – so a test can count label round-trips without
+   *  counting the root search that triggered them. */
+  readonly labelPerforms: () => readonly (readonly Record<string, unknown>[])[];
   /** How often the documents export endpoint was called, so the label cache’s
    *  load behaviour is observable. */
   readonly exportCalls: () => number;
@@ -56,8 +65,8 @@ export function fakeTypesenseClient(
   const client = {
     collections: (name?: string) => ({
       documents: () => ({
-        search: () =>
-          Promise.resolve(options.searchResponse ?? { found: 0, hits: [] }),
+        // No `search`: every query the engine issues – root, facet batch and
+        // label lookup alike – goes through `multi_search` below.
         export: () => {
           exportCalls += 1;
           return options.exportJsonl === undefined
@@ -69,16 +78,33 @@ export function fakeTypesenseClient(
     multiSearch: {
       perform: async (request: { searches: Record<string, unknown>[] }) => {
         performs.push(request.searches);
-        if (options.multiSearch === undefined) {
-          throw new Error('No multiSearch configured.');
-        }
-        return { results: request.searches.map(options.multiSearch) };
+        return {
+          results: request.searches.map((search, index) => {
+            // A compiled root/facet search carries query_by_weights; a label
+            // lookup does not. So `searchResponse` answers the former without
+            // shadowing a configured label-lookup answerer.
+            if (
+              options.searchResponse !== undefined &&
+              'query_by_weights' in search
+            ) {
+              return options.searchResponse;
+            }
+            if (options.multiSearch === undefined) {
+              throw new Error('No multiSearch configured.');
+            }
+            return options.multiSearch(search, index);
+          }),
+        };
       },
     },
   };
   return {
     client: client as unknown as Client,
     performs,
+    labelPerforms: () =>
+      performs.filter(
+        (searches) => !searches.some((search) => 'query_by_weights' in search),
+      ),
     exportCalls: () => exportCalls,
   };
 }
