@@ -6,7 +6,12 @@ import {
   type FilterOperator,
   type SearchQuery,
 } from './query.js';
-import { facetableFields, filterableFields, type RootType } from './schema.js';
+import {
+  facetableFields,
+  filterableFields,
+  ID_FIELD,
+  type RootType,
+} from './schema.js';
 
 /**
  * The executable {@link SearchEngine} port contract (import from
@@ -14,8 +19,9 @@ import { facetableFields, filterableFields, type RootType } from './schema.js';
  * live instance of itself, so the port rules hold by test rather than by
  * prose. Covers schema binding (a type outside the bound schema is rejected),
  * the always-on query validation (a structurally invalid query is rejected
- * before it reaches the engine) and the result shape of a browse query and a
- * `searchFacets` batch – for every type in the schema.
+ * before it reaches the engine), the undeclared `id` lookup, and the result
+ * shape of a browse query and a `searchFacets` batch – for every type in the
+ * schema.
  *
  * ```ts
  * describeSearchEngineContract('TypesenseSearchEngine', () => engine);
@@ -67,6 +73,23 @@ export function describeSearchEngineContract(
         await expect(engine().search(searchType, query)).rejects.toThrow(
           /unknown-field/,
         );
+      }
+    });
+
+    it('applies an `id` lookup rather than ignoring the clause', async () => {
+      // `id` is filterable on every type without being declared by any, so an
+      // adapter that resolves `where` fields through its declaration alone
+      // takes the unknown-field path and drops the clause – returning EVERY
+      // document where the caller asked for one. Pinned here because that
+      // failure is silent: no error, just the wrong result set.
+      for (const searchType of types()) {
+        const query: SearchQuery = {
+          ...browse(searchType),
+          where: [{ field: ID_FIELD, in: ['urn:test:no-such-document'] }],
+        };
+        const result = await engine().search(searchType, query);
+        expect(result.total).toBe(0);
+        expect(result.hits).toEqual([]);
       }
     });
 

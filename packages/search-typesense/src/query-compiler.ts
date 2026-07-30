@@ -187,9 +187,11 @@ function compileFilter(
   filter: Filter,
   searchType: SearchType,
 ): string | undefined {
-  // `id` is the Typesense document key, not a declared field: filter it by
-  // exact membership, the same clause `fetchLabels` uses to resolve a
-  // reference’s label from its own collection.
+  // `id` is the Typesense document key, not a declared field. Exact `:=`
+  // membership, like a non-facet field ({@link compileMembership}), so an IRI
+  // cannot partial-match on a shared path segment. (`fetchLabels` resolves
+  // labels with the looser `id:[…]`; these are deliberately not the same
+  // clause.)
   if (filter.field === ID_FIELD) {
     return 'in' in filter && filter.in.length > 0
       ? `${ID_FIELD}:=[${filter.in.map(escapeFilterValue).join(',')}]`
