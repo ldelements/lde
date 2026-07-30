@@ -454,6 +454,21 @@ This is what makes an IRI a usable entry point: a client holding a reference’s
 fields from its own collection, rather than the schema having to carry them
 inline on every referring document.
 
+Two consequences of treating identity as its own kind of filter:
+
+- **An empty `in` on `id` matches nothing**, where an empty `in` on any other
+  field is a no-op the compilers skip. An identity filter enumerates the
+  documents wanted, so the empty set wants none; a value filter constrains a
+  dimension, so an empty set constrains nothing (a facet UI with nothing
+  selected sends exactly that). `isUnsatisfiable` reports the case, and an
+  adapter must answer it with an empty result instead of dispatching – otherwise
+  a client mapping a possibly-empty reference array into a lookup gets the whole
+  collection. Facets for such a query are empty too.
+- **The batch is bounded by the request, not by a URL.** The Typesense adapter
+  sends every query – root search, facet batch, label lookup – as a
+  `multi_search` POST, so a long `filter_by` cannot overflow the 4000-character
+  GET query-string limit that a few dozen IRIs would breach.
+
 Keep `id` distinct from a domain identifier. `id` is _what the thing is_; a
 declared field like `identifier` (`schema:identifier`) is _what a source system
 calls it_ – an inventory or catalogue number. Both may exist on one type; they

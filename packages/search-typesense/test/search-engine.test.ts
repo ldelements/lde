@@ -220,6 +220,58 @@ describe('createTypesenseSearchEngine (integration)', () => {
     expect(result.hits.map((hit) => hit.id).sort()).toEqual(['d1', 'd3']);
   });
 
+  it('carries an id batch far past the GET query-string limit', async () => {
+    // The clause travels in the multi_search POST body, so the batch is bounded
+    // by the request rather than by 4000 URL chars: 400 IRIs of realistic
+    // length encode to ~30 000, which the old GET transport could not send.
+    const iris = Array.from(
+      { length: 400 },
+      (_, index) =>
+        `https://id.drapo.nl/ffed9f91-4f5d-5eca-978f-ded1628${String(
+          index,
+        ).padStart(5, '0')}`,
+    );
+    const result = await engine.search(datasetSchema, {
+      ...baseQuery,
+      where: [{ field: 'id', in: [...iris, 'd2'] }],
+    });
+
+    // Only the one real id matches; the rest simply are not there.
+    expect(result.total).toBe(1);
+    expect(result.hits.map((hit) => hit.id)).toEqual(['d2']);
+  });
+
+  it('answers an empty id membership with nothing, not with everything', async () => {
+    // A client mapping a possibly-empty reference array into a batch lookup
+    // asked for no document; the whole collection would be the wrong answer.
+    const result = await engine.search(datasetSchema, {
+      ...baseQuery,
+      where: [{ field: 'id', in: [] }],
+    });
+
+    expect(result.total).toBe(0);
+    expect(result.hits).toEqual([]);
+  });
+
+  it('answers facets for an unsatisfiable query as empty, siblings intact', async () => {
+    const [unsatisfiable, sibling] = await engine.searchFacets(datasetSchema, [
+      {
+        ...baseQuery,
+        limit: 0,
+        where: [{ field: 'id', in: [] }],
+        facets: ['status'],
+      },
+      { ...baseQuery, limit: 0, facets: ['status'] },
+    ]);
+
+    if ('error' in unsatisfiable || 'error' in sibling) {
+      throw new Error('expected both facet outcomes to succeed');
+    }
+    expect(unsatisfiable.facets).toEqual({});
+    // The satisfiable sibling still gets its real counts, positionally aligned.
+    expect(sibling.facets.status?.length).toBeGreaterThan(0);
+  });
+
   it('ranks a full-text query through the weighted query_by fields', async () => {
     const result = await engine.search(datasetSchema, {
       ...baseQuery,

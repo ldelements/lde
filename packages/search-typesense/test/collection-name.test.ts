@@ -261,7 +261,7 @@ describe('label sources', () => {
 
     // The label lookup must target the collection the Organization writer
     // would have built – the same convention, never a second naming map.
-    expect(fake.performs[0][0].collection).toBe('organizations');
+    expect(fake.labelPerforms()[0][0].collection).toBe('organizations');
     expect(result.hits[0].document.publisher).toEqual({
       id: 'https://org/1',
       label: { nl: ['Het Archief'] },
@@ -284,6 +284,6 @@ describe('label sources', () => {
 
     await engine.search(dataset, browse);
 
-    expect(fake.performs[0][0].collection).toBe('labels');
+    expect(fake.labelPerforms()[0][0].collection).toBe('labels');
   });
 });

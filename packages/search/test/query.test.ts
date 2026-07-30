@@ -3,6 +3,7 @@ import {
   assertValidQuery,
   filterOperator,
   filterOperatorFor,
+  isUnsatisfiable,
   pageForOffset,
   validateQuery,
   type SearchQuery,
@@ -26,6 +27,37 @@ describe('filterOperatorFor', () => {
     expect(filterOperatorFor('number')).toBe('range');
     expect(filterOperatorFor('date')).toBe('range');
     expect(filterOperatorFor('boolean')).toBe('is');
+  });
+});
+
+describe('isUnsatisfiable', () => {
+  const base: SearchQuery = {
+    where: [],
+    orderBy: [],
+    limit: 10,
+    offset: 0,
+    facets: [],
+    locale: 'nl',
+  };
+
+  it('holds only for an empty `id` membership – the request for no document', () => {
+    expect(isUnsatisfiable({ ...base, where: [{ field: 'id', in: [] }] })).toBe(
+      true,
+    );
+    // A non-empty lookup asks for something.
+    expect(
+      isUnsatisfiable({ ...base, where: [{ field: 'id', in: ['urn:a'] }] }),
+    ).toBe(false);
+    // A value field's empty membership stays a no-op: no values means no
+    // constraint (a facet UI with nothing selected), not "no documents".
+    expect(
+      isUnsatisfiable({ ...base, where: [{ field: 'status', in: [] }] }),
+    ).toBe(false);
+    // Other operators on `id` are already an operator-mismatch, not this.
+    expect(
+      isUnsatisfiable({ ...base, where: [{ field: 'id', is: true }] }),
+    ).toBe(false);
+    expect(isUnsatisfiable(base)).toBe(false);
   });
 });
 

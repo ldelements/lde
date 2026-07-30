@@ -63,6 +63,29 @@ export function filterOperator(filter: Filter): FilterOperator {
 }
 
 /**
+ * Whether the query asks for nothing, so no engine can answer it with a hit.
+ * True for an empty `in` on {@link ID_FIELD} – and only there, deliberately:
+ *
+ * An **identity** filter enumerates the documents wanted, so the empty set
+ * wants none. A **value** filter constrains a dimension, so an empty set
+ * constrains nothing – which is why every other vacuous clause is a no-op the
+ * compilers skip (a facet UI with nothing selected sends exactly that). The
+ * readings differ because the fields differ in kind, and only for `id` would
+ * “no constraint” hand back the whole collection to a caller who asked for
+ * specific things – the likely shape being a client mapping a possibly-empty
+ * reference array (`id: { in: doc.publisher }`) into a batch lookup.
+ *
+ * An adapter MUST answer an unsatisfiable query with an empty result rather
+ * than dispatching it.
+ */
+export function isUnsatisfiable(query: SearchQuery): boolean {
+  return query.where.some(
+    (filter) =>
+      filter.field === ID_FIELD && 'in' in filter && filter.in.length === 0,
+  );
+}
+
+/**
  * One structural problem {@link validateQuery} found: the query references a
  * field the search type does not declare, or uses it in a role it does not
  * opt into. Vacuous-but-valid clauses (an empty `in` list, a `range` with no

@@ -118,6 +118,16 @@ facet-only queries (e.g. a faceted listing’s skip-own-filter variants) as a
 every facet result in the batch. A failed entry is reported in place as a
 per-query outcome, so its siblings’ facets survive.
 
+**Every query travels as a `multi_search` POST** – the root search included, not
+just the facet batch and the label lookup. Typesense’s per-collection search
+endpoint is a GET, so a long `filter_by` (a batch [lookup by
+IRI](./search#lookup-by-iri), or any membership over many IRIs, which URL-encode
+to several times their length) would overflow its 4000-character query-string
+limit. In the POST body the filter is bounded by the request instead. Because
+`multi_search` reports a failure as an inline entry rather than rejecting, the
+adapter translates a failed root entry back into a throw: `search()` still
+rejects on engine failure.
+
 The pure halves `buildSearchParams` and `parseSearchResponse` are exported for
 direct use and testing.
 

@@ -35,6 +35,7 @@ export { physicalNameTokens } from './physical-name.js';
 export {
   filterOperatorFor,
   filterOperator,
+  isUnsatisfiable,
   validateQuery,
   assertValidQuery,
   pageForOffset,
