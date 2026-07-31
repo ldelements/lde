@@ -4,8 +4,10 @@ import {
   type FacetBucket,
   type FacetsOutcome,
   type LocalizedValue,
+  type NestedDocument,
   type Reference,
   type ReferenceField,
+  type ReferenceType,
   type ResultDocument,
   type RootType,
   type RootTypeOf,
@@ -24,9 +26,11 @@ import {
   assertValidQuery,
   displayLangOf,
   fieldNamed,
+  isInlineReference,
   isRangeFacet,
   isUnsatisfiable,
   labelFieldOf,
+  nestedReferenceType,
   outputFields,
   physicalFields,
   referenceFields,
@@ -367,7 +371,7 @@ export function createTypesenseSearchEngine<
           outputReferenceSources.get(searchType.class) ?? [],
         ),
       );
-      return parseSearchResponse(response, searchType, labels);
+      return parseSearchResponse(response, searchType, labels, schema);
     },
     async searchFacets(
       searchType: RootType,
@@ -439,7 +443,8 @@ export function createTypesenseSearchEngine<
                 ),
               }
             : {
-                facets: parseSearchResponse(result, searchType, labels).facets,
+                facets: parseSearchResponse(result, searchType, labels, schema)
+                  .facets,
               };
       });
       return outcomes;
@@ -727,17 +732,21 @@ export interface TypesenseSearchResponse {
  * Reconstruct a Typesense response into the engine-neutral {@link SearchResult}:
  * the flat, fanned-out document is turned back into a logical one (per-locale
  * display fields → a language map, reference IRIs → labelled references via the
- * label-source lookup, scalars passed through). `labels` maps a reference IRI
- * to its resolved label; an IRI absent from it yields an id-only reference.
+ * label-source lookup, nested objects → nested Search Documents, scalars passed
+ * through). `labels` maps a reference IRI to its resolved label; an IRI absent
+ * from it yields an id-only reference. `schema` resolves the Reference Type a
+ * surfaced inline reference nests; without one such a field reconstructs as
+ * nothing rather than as the wrong shape.
  */
 export function parseSearchResponse(
   response: TypesenseSearchResponse,
   searchType: SearchType,
   labels: ReadonlyMap<string, LocalizedValue>,
+  schema?: SearchSchema,
 ): SearchResult {
   const hits: SearchHit[] = (response.hits ?? []).map((hit) => ({
     id: String(hit.document.id),
-    document: reconstructDocument(hit.document, searchType, labels),
+    document: reconstructDocument(hit.document, searchType, labels, schema),
   }));
   // Reference facets are IRI-keyed; their buckets carry a resolved data label.
   // Plain facets (tokens, free strings) carry no label – the consumer owns display.
@@ -779,10 +788,11 @@ function reconstructDocument(
   flat: Record<string, unknown>,
   searchType: SearchType,
   labels: ReadonlyMap<string, LocalizedValue>,
+  schema: SearchSchema | undefined,
 ): ResultDocument {
   const document: Record<string, SearchValue> = {};
   for (const field of outputFields(searchType)) {
-    const value = logicalValue(flat, field, labels);
+    const value = logicalValue(flat, field, labels, schema);
     if (value !== undefined) {
       document[field.name] = value;
     }
@@ -794,12 +804,32 @@ function logicalValue(
   flat: Record<string, unknown>,
   field: SearchField,
   labels: ReadonlyMap<string, LocalizedValue>,
+  schema: SearchSchema | undefined,
 ): SearchValue | undefined {
   switch (field.kind) {
     case 'text':
       return localizedValue(flat, field);
-    case 'reference':
-      return referenceValue(flat, field, labels);
+    case 'reference': {
+      // A surfaced inline reference carries its referent’s own fields, so it
+      // reconstructs as a nested Search Document rather than as an IRI plus a
+      // label. Nesting is rebuilt HERE, below every surface, so a second
+      // surface inherits it instead of reimplementing it (ADR 11).
+      const nested =
+        schema === undefined ? undefined : nestedReferenceType(schema, field);
+      if (nested !== undefined) {
+        return nestedValue(flat[field.name], field, nested, labels, schema!);
+      }
+      // A surfaced inline reference stores nested documents, not IRIs. Without
+      // the schema that declares its reference type there is nothing to
+      // reconstruct them by, so reconstruct nothing rather than hand back the
+      // wrong shape – the same call the projection makes when it is handed no
+      // schema. (Only output fields are reconstructed, and `searchSchema`
+      // allows an inline reference no Role but `output`, so every inline
+      // reference reaching this point is a surfaced one.)
+      return isInlineReference(field)
+        ? undefined
+        : referenceValue(flat, field, labels);
+    }
     case 'keyword': {
       const value = flat[field.name];
       return Array.isArray(value) || typeof value === 'string'
@@ -840,6 +870,43 @@ function localizedValue(
     }
   }
   return Object.keys(map).length > 0 ? map : undefined;
+}
+
+/**
+ * Rebuild a surfaced inline reference from the nested object(s) the engine
+ * stored: one {@link NestedDocument} per referent, each carrying its Reference
+ * Type’s own output fields – so a multi-valued reference keeps every referent’s
+ * values grouped rather than smeared across parallel arrays. `id` is carried
+ * only when the referent had one; a blank-node referent nests without it, since
+ * a nested document is read, not addressed. A nested reference type may itself
+ * surface an inline reference, which recurses through {@link reconstructDocument}.
+ */
+function nestedValue(
+  raw: unknown,
+  field: ReferenceField,
+  referenceType: ReferenceType,
+  labels: ReadonlyMap<string, LocalizedValue>,
+  schema: SearchSchema,
+): SearchValue | undefined {
+  const referents = (Array.isArray(raw) ? raw : [raw]).filter(
+    (referent): referent is Record<string, unknown> =>
+      typeof referent === 'object' && referent !== null,
+  );
+  const documents: NestedDocument[] = referents.map((referent) => {
+    const document = reconstructDocument(
+      referent,
+      referenceType,
+      labels,
+      schema,
+    );
+    return typeof referent.id === 'string'
+      ? { id: referent.id, ...document }
+      : document;
+  });
+  if (documents.length === 0) {
+    return undefined;
+  }
+  return field.array === true ? documents : documents[0];
 }
 
 /** Map stored reference IRIs to labelled references; id-only when no label. */

@@ -12,6 +12,8 @@ import {
   irAlias,
   isoToUnixSeconds,
   isRangeFacet,
+  nestedFieldName,
+  nestedReferenceType,
   outputFields,
   physicalFields,
   referenceFields,
@@ -701,6 +703,161 @@ describe('searchSchema validation', () => {
       // Against a schema that does not declare the referent, an inline reference
       // contributes no depth (the type is being framed through a foreign schema).
       expect(inlineFramingDepth(searchSchema(flatDataset), dataset)).toBe(1);
+    });
+  });
+
+  describe('nested fields', () => {
+    const datasetNesting = (strategy: 'inline' | 'labelOnly') =>
+      ({
+        name: 'Dataset',
+        class: DATASET,
+        fields: [
+          {
+            name: 'media',
+            kind: 'reference',
+            array: true,
+            output: true,
+            path: 'https://schema.org/associatedMedia',
+            ref: { typeName: 'MediaObject', strategy },
+          },
+        ],
+      }) as const;
+
+    // The declaration under test is deliberately malformed in some cases, so
+    // the overriding members are applied untyped and the whole cast back.
+    const mediaObjectWith = (field: Record<string, unknown>): SearchType =>
+      ({
+        name: 'MediaObject',
+        fields: [
+          {
+            name: 'contentUrl',
+            kind: 'keyword',
+            array: true,
+            output: true,
+            path: 'https://schema.org/contentUrl',
+            ...field,
+          },
+        ],
+      }) as SearchType;
+
+    it('resolves the reference type a surfaced inline reference nests', () => {
+      const dataset = datasetNesting('inline');
+      const mediaObject = mediaObjectWith({});
+      const schema = searchSchema(dataset, mediaObject);
+      expect(nestedReferenceType(schema, dataset.fields[0])).toEqual(
+        mediaObject,
+      );
+    });
+
+    it('nests nothing for a reading device or a non-inline reference', () => {
+      // No Role: the reading device an inline reference is the other half of,
+      // pruned before the writer rather than surfaced.
+      const readingDevice = {
+        name: 'Dataset',
+        class: DATASET,
+        fields: [
+          {
+            name: 'media',
+            kind: 'reference',
+            path: 'https://schema.org/associatedMedia',
+            ref: { typeName: 'MediaObject', strategy: 'inline' },
+          },
+        ],
+      } as const;
+      const schema = searchSchema(readingDevice, mediaObjectWith({}));
+      expect(
+        nestedReferenceType(schema, readingDevice.fields[0]),
+      ).toBeUndefined();
+      // A labelOnly reference carries an IRI plus a resolved label, not fields.
+      const labelOnly = datasetNesting('labelOnly');
+      expect(
+        nestedReferenceType(
+          searchSchema(labelOnly, mediaObjectWith({})),
+          labelOnly.fields[0],
+        ),
+      ).toBeUndefined();
+    });
+
+    it.each([
+      ['searchable', { searchable: { weight: 1 } }],
+      ['filterable', { filterable: true }],
+      ['facetable', { facetable: true }],
+      ['sortable', { sortable: true }],
+    ])(
+      'rejects a nested field declaring %s, naming the field',
+      (role, declaration) => {
+        // A nested field is stored with its referent and read back with it; it
+        // never becomes an addressable field of its own, so any Role but
+        // `output` would be silently ignored per query. Startup is where a
+        // schema invariant fails.
+        expect(() =>
+          searchSchema(datasetNesting('inline'), mediaObjectWith(declaration)),
+        ).toThrow(
+          new RegExp(
+            `Nested field “MediaObject.contentUrl” declares “${role}”`,
+          ),
+        );
+      },
+    );
+
+    it.each([
+      ['searchable', { searchable: { weight: 1 } }],
+      ['facetable', { facetable: true }],
+    ])(
+      'rejects an inline reference declaring %s alongside its nesting',
+      (role, declaration) => {
+        // An inline reference has exactly two jobs: a reading device (no Role)
+        // or a surfaced nested object (`output`). Anything else would have an
+        // engine search, facet, filter or sort on a nested document.
+        expect(() =>
+          searchSchema(
+            {
+              ...datasetNesting('inline'),
+              fields: [
+                { ...datasetNesting('inline').fields[0], ...declaration },
+              ],
+            },
+            mediaObjectWith({}),
+          ),
+        ).toThrow(
+          new RegExp(`Inline reference “Dataset.media” declares “${role}”`),
+        );
+      },
+    );
+
+    it('names every unserviceable role a nested field declares', () => {
+      expect(() =>
+        searchSchema(
+          datasetNesting('inline'),
+          mediaObjectWith({ filterable: true, facetable: true }),
+        ),
+      ).toThrow(/“filterable”, “facetable”/);
+    });
+
+    it('rejects a label source on a nested field', () => {
+      // Reconstruction runs no label lookup for a nested field, so a label
+      // source there resolves nothing.
+      expect(() =>
+        searchSchema(
+          datasetNesting('inline'),
+          mediaObjectWith({
+            kind: 'reference',
+            labelSource: 'Organization',
+            ref: { typeName: 'Organization', strategy: 'labelOnly' },
+          }),
+        ),
+      ).toThrow(
+        /Nested field “MediaObject.contentUrl” declares a label source/,
+      );
+    });
+
+    it('names the nested Physical Field of a referent’s field', () => {
+      // The engine addresses a stored nested document by qualifying the
+      // referent’s own field name with the reference that carries it.
+      expect(nestedFieldName('media', 'contentUrl')).toBe('media.contentUrl');
+      expect(nestedFieldName('media.thumbnail', 'label_nl')).toBe(
+        'media.thumbnail.label_nl',
+      );
     });
   });
 

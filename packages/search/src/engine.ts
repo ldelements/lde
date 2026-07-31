@@ -77,8 +77,7 @@ export interface SearchEngine<
  * the failed query. Discriminate with `'error' in outcome`.
  */
 export type FacetsOutcome<FacetField extends string = string> =
-  | { readonly facets: FacetMap<FacetField> }
-  | { readonly error: unknown };
+  { readonly facets: FacetMap<FacetField> } | { readonly error: unknown };
 
 /** What an engine returns: logical hits, a total, and the requested facets. */
 export interface SearchResult<
@@ -150,7 +149,24 @@ export type SearchValue =
   | readonly string[]
   | LocalizedValue
   | Reference
-  | readonly Reference[];
+  | readonly Reference[]
+  | NestedDocument
+  | readonly NestedDocument[];
+
+/**
+ * A **nested Search Document**: the referent of a surfaced (`output`) inline
+ * reference, carrying its Reference Type’s own output fields – each referent’s
+ * values grouped together, so a multi-valued reference never degrades into
+ * parallel arrays a consumer has to pair by index.
+ *
+ * `id` is present only when the referent is a named node: nesting carries the
+ * referent’s fields, not a document key, so a blank-node referent nests exactly
+ * like a named one, minus the `id`. Distinct from {@link Reference}, which is
+ * what an `idOnly`/`labelOnly` reference carries – there the IRI *is* the value.
+ */
+export interface NestedDocument {
+  readonly [field: string]: SearchValue | undefined;
+}
 
 /**
  * A JSON-LD-style language map (`@container: @language`, `@set` arrays); the key

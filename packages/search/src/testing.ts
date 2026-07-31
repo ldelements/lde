@@ -10,7 +10,11 @@ import {
   facetableFields,
   filterableFields,
   ID_FIELD,
+  nestedReferenceType,
+  outputFields,
   type RootType,
+  type SearchField,
+  type SearchType,
 } from './schema.js';
 
 /**
@@ -184,6 +188,57 @@ export function describeSearchEngineContract(
         await expect(engine().searchFacets(searchType, [])).resolves.toEqual(
           [],
         );
+      }
+    });
+
+    it('serves a surfaced inline reference as nested documents, never a bare IRI', async () => {
+      // The API device of an Inline Reference (ADR 11): a reference declared
+      // `inline` with `output` reaches the caller as its referent’s own fields,
+      // grouped per referent. Every engine owes that shape – reconstruction
+      // lives below the surfaces, so a surface never has to rebuild it – and an
+      // adapter that stores the reference as an IRI fails here rather than in
+      // one deployment’s UI.
+      for (const searchType of types()) {
+        const nested: { field: SearchField; referenceType: SearchType }[] = [];
+        for (const field of searchType.fields) {
+          const referenceType = nestedReferenceType(engine().schema, field);
+          if (referenceType !== undefined) {
+            nested.push({ field, referenceType });
+          }
+        }
+        if (nested.length === 0) {
+          continue;
+        }
+        const result = await engine().search(searchType, {
+          ...browse(searchType),
+          limit: 20,
+        });
+        for (const hit of result.hits) {
+          for (const { field, referenceType } of nested) {
+            const value = hit.document[field.name];
+            if (value === undefined) {
+              continue; // A referent-less document nests nothing.
+            }
+            // A multi-valued reference keeps one document per referent, so a
+            // consumer never pairs parallel arrays by index.
+            expect(Array.isArray(value)).toBe(field.array === true);
+            const referents = (
+              Array.isArray(value) ? value : [value]
+            ) as Record<string, unknown>[];
+            const declared = new Set([
+              ID_FIELD,
+              ...outputFields(referenceType).map(
+                (nestedField) => nestedField.name,
+              ),
+            ]);
+            for (const referent of referents) {
+              expect(referent).toBeTypeOf('object');
+              expect(
+                Object.keys(referent).every((key) => declared.has(key)),
+              ).toBe(true);
+            }
+          }
+        }
       }
     });
 

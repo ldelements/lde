@@ -31,7 +31,10 @@ export interface SearchIndexWriterOptions {
    * own collection, alias and cross-pod lock. The per-collection fan-out is this
    * writer’s job.
    */
-  writerFor: (searchType: RootType) => Writer<SearchDocument>;
+  writerFor: (
+    searchType: RootType,
+    schema: SearchSchema,
+  ) => Writer<SearchDocument>;
 }
 
 /**
@@ -74,7 +77,7 @@ export function searchIndexWriter(
   const writers = new Map<string, Writer<SearchDocument>>(
     [...schema.values()].map((searchType) => [
       searchType.class,
-      writerFor(searchType),
+      writerFor(searchType, schema),
     ]),
   );
 

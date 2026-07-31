@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  defineSearchType,
   searchSchema,
   type LocalizedValue,
   type SearchQuery,
@@ -188,6 +189,135 @@ describe('parseSearchResponse', () => {
     expect(result.hits[0].document.iiif).toBe(true);
     expect(result.hits[1].document.iiif).toBe(false);
     expect(result.hits[0].document.status).toBeUndefined();
+  });
+});
+
+describe('parseSearchResponse nested inline references', () => {
+  const mediaObject = defineSearchType({
+    name: 'MediaObject',
+    fields: [
+      {
+        name: 'contentUrl',
+        kind: 'keyword',
+        array: true,
+        output: true,
+        path: 'https://schema.org/contentUrl',
+      },
+      {
+        name: 'width',
+        kind: 'integer',
+        output: true,
+        path: 'https://schema.org/width',
+      },
+      {
+        name: 'caption',
+        kind: 'text',
+        locales: ['nl'],
+        output: true,
+        path: 'https://schema.org/caption',
+      },
+    ],
+  });
+  const creativeWork = defineSearchType({
+    name: 'CreativeWork',
+    class: 'https://schema.org/CreativeWork',
+    fields: [
+      {
+        name: 'media',
+        kind: 'reference',
+        array: true,
+        output: true,
+        path: 'https://schema.org/associatedMedia',
+        ref: { typeName: 'MediaObject', strategy: 'inline' },
+      },
+      {
+        name: 'primaryMedia',
+        kind: 'reference',
+        output: true,
+        path: 'https://schema.org/primaryImageOfPage',
+        ref: { typeName: 'MediaObject', strategy: 'inline' },
+      },
+    ],
+  });
+  const nestedSchema = searchSchema(creativeWork, mediaObject);
+  const nestedResponse = {
+    found: 1,
+    hits: [
+      {
+        document: {
+          id: 'https://ex/w/1',
+          media: [
+            {
+              id: 'https://ex/m/1',
+              contentUrl: ['https://ex/1.jpg'],
+              width: 4096,
+              caption_nl: 'Voorkant',
+            },
+            // A blank-node referent (no id) missing the optional width.
+            { contentUrl: ['https://ex/2.jpg'] },
+          ],
+          primaryMedia: { contentUrl: ['https://ex/1.jpg'], width: 4096 },
+        },
+      },
+    ],
+  };
+
+  it('reconstructs each referent as a nested document, values grouped per referent', () => {
+    const { hits } = parseSearchResponse(
+      nestedResponse,
+      creativeWork,
+      new Map(),
+      nestedSchema,
+    );
+    // One document per referent – never two parallel arrays a consumer has to
+    // pair by index. `id` is carried only by the referent that had one: a
+    // nested document is read, not addressed.
+    expect(hits[0].document.media).toEqual([
+      {
+        id: 'https://ex/m/1',
+        contentUrl: ['https://ex/1.jpg'],
+        width: 4096,
+        caption: { nl: ['Voorkant'] },
+      },
+      { contentUrl: ['https://ex/2.jpg'] },
+    ]);
+  });
+
+  it('reconstructs a single-valued inline reference as one nested document', () => {
+    const { hits } = parseSearchResponse(
+      nestedResponse,
+      creativeWork,
+      new Map(),
+      nestedSchema,
+    );
+    expect(hits[0].document.primaryMedia).toEqual({
+      contentUrl: ['https://ex/1.jpg'],
+      width: 4096,
+    });
+  });
+
+  it('omits an inline reference the document carries no referent for', () => {
+    const { hits } = parseSearchResponse(
+      { found: 1, hits: [{ document: { id: 'https://ex/w/2', media: [] } }] },
+      creativeWork,
+      new Map(),
+      nestedSchema,
+    );
+    expect(hits[0].document.media).toBeUndefined();
+    expect(hits[0].document.primaryMedia).toBeUndefined();
+  });
+
+  it('reconstructs nothing for a nested reference without the schema declaring it', () => {
+    // No schema means no reference type to rebuild the referents by. Serving
+    // nothing is the same call the projection makes when it is handed no
+    // schema; the alternative is handing a consumer the wrong shape.
+    const { hits } = parseSearchResponse(
+      nestedResponse,
+      creativeWork,
+      new Map(),
+    );
+    expect(hits[0].document.media).toBeUndefined();
+    expect(hits[0].document.primaryMedia).toBeUndefined();
   });
 });
 

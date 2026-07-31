@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { SearchType } from '@lde/search';
+import { defineSearchType, searchSchema, type SearchType } from '@lde/search';
 import { buildCollectionDefinition } from '../src/collection-definition.js';
 
 const schema: SearchType = {
@@ -317,5 +317,189 @@ describe('internal fields', () => {
         optional: true,
       },
     ]);
+  });
+});
+
+describe('surfaced inline references', () => {
+  const mediaObject = defineSearchType({
+    name: 'MediaObject',
+    fields: [
+      {
+        name: 'contentUrl',
+        kind: 'keyword',
+        array: true,
+        output: true,
+        path: 'https://schema.org/contentUrl',
+      },
+      {
+        name: 'width',
+        kind: 'integer',
+        output: true,
+        path: 'https://schema.org/width',
+      },
+      {
+        name: 'caption',
+        kind: 'text',
+        locales: ['nl'],
+        output: true,
+        path: 'https://schema.org/caption',
+      },
+      // No role: the reading device an inline reference is the other half of.
+      { name: 'rawWidth', kind: 'keyword', path: 'https://schema.org/width' },
+    ],
+  });
+
+  const creativeWorkWith = (media: Record<string, unknown>) =>
+    defineSearchType({
+      name: 'CreativeWork',
+      class: 'https://schema.org/CreativeWork',
+      fields: [
+        {
+          name: 'media',
+          kind: 'reference',
+          output: true,
+          path: 'https://schema.org/associatedMedia',
+          ref: { typeName: 'MediaObject', strategy: 'inline' },
+          ...media,
+        },
+      ],
+    });
+
+  const definitionFor = (media: Record<string, unknown>) => {
+    const creativeWork = creativeWorkWith(media);
+    return buildCollectionDefinition(creativeWork, {
+      name: 'works',
+      schema: searchSchema(creativeWork, mediaObject),
+    });
+  };
+
+  it('stores a multi-valued inline reference as one nested object per referent', () => {
+    const collection = definitionFor({ array: true });
+    // `object[]` – each referent keeps its own values grouped, so a consumer
+    // never pairs parallel arrays by index. Everything nested is un-indexed:
+    // a nested field carries `output` only, so it is display weight on disk.
+    expect(collection.fields).toEqual([
+      { name: 'media', type: 'object[]', index: false, optional: true },
+      {
+        name: 'media.contentUrl',
+        type: 'string[]',
+        index: false,
+        optional: true,
+      },
+      { name: 'media.width', type: 'int64', index: false, optional: true },
+      // A nested text field stores its display values exactly as a root one
+      // does – one field per present language, matched by one pattern.
+      {
+        name: 'media.caption_[^_]+',
+        type: 'string',
+        index: false,
+        optional: true,
+      },
+    ]);
+    // The nested object types are what turn nesting on; Typesense rejects them
+    // otherwise.
+    expect(collection.enable_nested_fields).toBe(true);
+  });
+
+  it('stores a single-valued inline reference as one nested object', () => {
+    expect(definitionFor({}).fields?.[0]).toEqual({
+      name: 'media',
+      type: 'object',
+      index: false,
+      optional: true,
+    });
+    expect(definitionFor({ required: true }).fields?.[0]).toEqual({
+      name: 'media',
+      type: 'object',
+      index: false,
+      optional: false,
+    });
+  });
+
+  it('contributes nothing for an internal field inside a reference type', () => {
+    // `rawWidth` declares no role, so the invariant *a field without a role
+    // reaches neither the engine nor the API* holds at nesting depth too.
+    expect(definitionFor({}).fields).not.toContainEqual(
+      expect.objectContaining({ name: 'media.rawWidth' }),
+    );
+  });
+
+  it('nests a reference type that itself surfaces an inline reference', () => {
+    const thumbnail = defineSearchType({
+      name: 'Thumbnail',
+      fields: [
+        {
+          name: 'contentUrl',
+          kind: 'keyword',
+          output: true,
+          path: 'https://schema.org/contentUrl',
+        },
+      ],
+    });
+    const media = defineSearchType({
+      name: 'MediaObject',
+      fields: [
+        {
+          name: 'thumbnail',
+          kind: 'reference',
+          array: true,
+          output: true,
+          path: 'https://schema.org/thumbnail',
+          ref: { typeName: 'Thumbnail', strategy: 'inline' },
+        },
+      ],
+    });
+    const creativeWork = creativeWorkWith({});
+    const collection = buildCollectionDefinition(creativeWork, {
+      name: 'works',
+      schema: searchSchema(creativeWork, media, thumbnail),
+    });
+    expect(collection.fields).toEqual([
+      { name: 'media', type: 'object', index: false, optional: true },
+      {
+        name: 'media.thumbnail',
+        type: 'object[]',
+        index: false,
+        optional: true,
+      },
+      {
+        name: 'media.thumbnail.contentUrl',
+        type: 'string',
+        index: false,
+        optional: true,
+      },
+    ]);
+  });
+
+  it('rejects building a collection for a nesting type without its schema', () => {
+    // Without the schema the nesting is invisible: the collection would declare
+    // the reference as a string the projection never writes, and every document
+    // would fail to import. Fail where the collection is built instead.
+    expect(() =>
+      buildCollectionDefinition(creativeWorkWith({}), { name: 'works' }),
+    ).toThrow(/needs the search schema.*“media”/);
+  });
+
+  it('leaves a reading-device inline reference out of the collection', () => {
+    // No role: pruned before the writer, so nothing is stored – no nested
+    // object, and no nesting flag on the collection.
+    const creativeWork = defineSearchType({
+      name: 'CreativeWork',
+      class: 'https://schema.org/CreativeWork',
+      fields: [
+        {
+          name: 'media',
+          kind: 'reference',
+          path: 'https://schema.org/associatedMedia',
+          ref: { typeName: 'MediaObject', strategy: 'inline' },
+        },
+      ],
+    });
+    const collection = buildCollectionDefinition(creativeWork, {
+      name: 'works',
+      schema: searchSchema(creativeWork, mediaObject),
+    });
+    expect(collection.fields).toEqual([]);
+    expect(collection.enable_nested_fields).toBeUndefined();
   });
 });

@@ -853,3 +853,161 @@ describe('und-locale text output', () => {
     ]);
   });
 });
+
+describe('nested inline references', () => {
+  const MEDIA_OBJECT: SearchType = {
+    name: 'MediaObject',
+    fields: [
+      {
+        name: 'contentUrl',
+        kind: 'keyword',
+        array: true,
+        output: true,
+        path: 'https://schema.org/contentUrl',
+      },
+      {
+        name: 'width',
+        kind: 'integer',
+        output: true,
+        path: 'https://schema.org/width',
+      },
+      {
+        name: 'caption',
+        kind: 'text',
+        locales: ['nl'],
+        output: true,
+        path: 'https://schema.org/caption',
+      },
+      // No Role: pruned before the writer, so it is no part of the API either.
+      { name: 'rawWidth', kind: 'keyword', path: 'https://schema.org/width' },
+    ],
+  };
+  const CREATIVE_WORK_WITH_MEDIA: SearchType = {
+    name: 'CreativeWork',
+    class: 'https://schema.org/CreativeWork',
+    fields: [
+      {
+        name: 'media',
+        kind: 'reference',
+        array: true,
+        output: true,
+        path: 'https://schema.org/associatedMedia',
+        ref: { typeName: 'MediaObject', strategy: 'inline' },
+      },
+    ],
+  };
+  const nestedSchema = searchSchema(CREATIVE_WORK_WITH_MEDIA, MEDIA_OBJECT);
+
+  it('builds the reference type from the Reference Type’s output fields', () => {
+    const sdl = printSchema(buildGraphQLSchema(nestedSchema));
+    expect(sdl).toMatch(/media: \[MediaObject!\]!/);
+    // Each field is typed by exactly the per-kind rules a root type’s fields
+    // get. `id` is nullable: a referent needs no identity, so a blank-node one
+    // nests without one.
+    expect(sdl).toMatch(
+      /type MediaObject \{\s+id: String\s+contentUrl: \[String!\]!\s+width: Int\s+caption: \[LanguageString!\]!\s+\}/,
+    );
+    // An Internal Field inside a Reference Type stays out of the API.
+    expect(sdl).not.toMatch(/rawWidth/);
+  });
+
+  it('serves a nested object’s fields directly, one referent at a time', async () => {
+    const { engine } = fakeEngine({
+      total: 1,
+      hits: [
+        {
+          id: 'https://ex/w/1',
+          document: {
+            media: [
+              {
+                id: 'https://ex/m/1',
+                contentUrl: ['https://ex/1.jpg'],
+                width: 4096,
+                caption: { nl: ['Voorkant'] },
+              },
+              // A blank-node referent: no id, and no width.
+              { contentUrl: ['https://ex/2.jpg'] },
+            ],
+          },
+        },
+      ],
+      facets: {},
+    });
+    const result = await graphql({
+      schema: buildGraphQLSchema(nestedSchema),
+      source: `{
+        creativeWorks {
+          items {
+            id
+            media { id contentUrl width caption { language value } }
+          }
+        }
+      }`,
+      contextValue: { engine, acceptLanguage: ['nl'] },
+    });
+
+    expect(result.errors).toBeUndefined();
+    // The response shape matches the data's shape: each referent's values stay
+    // together instead of arriving as parallel arrays to pair by index.
+    expect(result.data).toEqual({
+      creativeWorks: {
+        items: [
+          {
+            id: 'https://ex/w/1',
+            media: [
+              {
+                id: 'https://ex/m/1',
+                contentUrl: ['https://ex/1.jpg'],
+                width: 4096,
+                caption: [{ language: 'nl', value: 'Voorkant' }],
+              },
+              {
+                id: null,
+                contentUrl: ['https://ex/2.jpg'],
+                width: null,
+                caption: [],
+              },
+            ],
+          },
+        ],
+      },
+    });
+  });
+
+  it('serves a reference type that itself nests one', () => {
+    const thumbnail: SearchType = {
+      name: 'Thumbnail',
+      fields: [
+        {
+          name: 'contentUrl',
+          kind: 'keyword',
+          output: true,
+          path: 'https://schema.org/contentUrl',
+        },
+      ],
+    };
+    const media: SearchType = {
+      name: 'MediaObject',
+      fields: [
+        {
+          name: 'thumbnail',
+          kind: 'reference',
+          output: true,
+          path: 'https://schema.org/thumbnail',
+          ref: { typeName: 'Thumbnail', strategy: 'inline' },
+        },
+      ],
+    };
+    const sdl = printSchema(
+      buildGraphQLSchema(
+        searchSchema(CREATIVE_WORK_WITH_MEDIA, media, thumbnail),
+      ),
+    );
+    expect(sdl).toMatch(
+      /type MediaObject \{\s+id: String\s+thumbnail: Thumbnail\s+\}/,
+    );
+    expect(sdl).toMatch(
+      /type Thumbnail \{\s+id: String\s+contentUrl: String\s+\}/,
+    );
+  });
+});

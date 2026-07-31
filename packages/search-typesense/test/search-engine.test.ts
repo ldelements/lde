@@ -27,6 +27,27 @@ const organizationSchema: SearchType = {
   ],
 };
 
+// The shape a surfaced inline reference carries: a Reference Type, declaring
+// no class, reached only through `Dataset.media`.
+const mediaObjectSchema: SearchType = {
+  name: 'MediaObject',
+  fields: [
+    {
+      name: 'contentUrl',
+      kind: 'keyword',
+      array: true,
+      output: true,
+      path: 'https://schema.org/contentUrl',
+    },
+    {
+      name: 'width',
+      kind: 'integer',
+      output: true,
+      path: 'https://schema.org/width',
+    },
+  ],
+};
+
 const datasetSchema: SearchType = {
   name: 'Dataset',
   class: 'http://www.w3.org/ns/dcat#Dataset',
@@ -57,6 +78,14 @@ const datasetSchema: SearchType = {
       ref: { typeName: 'Agent', strategy: 'labelOnly' },
       labelSource: 'Organization',
     },
+    {
+      name: 'media',
+      kind: 'reference',
+      array: true,
+      output: true,
+      path: 'https://schema.org/associatedMedia',
+      ref: { typeName: 'MediaObject', strategy: 'inline' },
+    },
     { name: 'status', kind: 'keyword', facetable: true, filterable: true },
     { name: 'statusRank', kind: 'integer', sortable: true },
   ],
@@ -75,6 +104,17 @@ const documents = [
     keyword: ['kaarten'],
     keyword_search: ['kaarten'],
     publisher: ['https://org/1'],
+    // A surfaced inline reference: one nested document per referent, exactly as
+    // the projection nests them. The second referent is a blank node in the
+    // source, so it carries no `id`, and it has no width.
+    media: [
+      {
+        id: 'https://ex/m/1',
+        contentUrl: ['https://ex/1/full/max/0/default.jpg'],
+        width: 4096,
+      },
+      { contentUrl: ['https://ex/2/full/max/0/default.jpg'] },
+    ],
     status: 'valid',
     statusRank: 0,
   },
@@ -132,6 +172,12 @@ const baseQuery: SearchQuery = {
   locale: 'nl',
 };
 
+const fullSchema = searchSchema(
+  organizationSchema,
+  mediaObjectSchema,
+  datasetSchema,
+);
+
 describe('createTypesenseSearchEngine (integration)', () => {
   const container = new TypesenseContainer();
   let client: Client;
@@ -145,6 +191,7 @@ describe('createTypesenseSearchEngine (integration)', () => {
         name: 'datasets',
         defaultSortingField: 'statusRank',
         defaultLocale: 'nl',
+        schema: fullSchema,
       }),
     );
     // The label source's collection comes from the same declarative source.
@@ -162,13 +209,9 @@ describe('createTypesenseSearchEngine (integration)', () => {
       .documents()
       .import(labelDocuments, { action: 'create' });
 
-    engine = createTypesenseSearchEngine(
-      client,
-      searchSchema(organizationSchema, datasetSchema),
-      {
-        collections: { Dataset: 'datasets', Organization: 'labels' },
-      },
-    );
+    engine = createTypesenseSearchEngine(client, fullSchema, {
+      collections: { Dataset: 'datasets', Organization: 'labels' },
+    });
   }, 120_000);
 
   afterAll(async () => {
@@ -205,6 +248,32 @@ describe('createTypesenseSearchEngine (integration)', () => {
     expect(result.hits[1].document.publisher).toEqual([
       { id: 'https://org/1', label: { nl: ['Het Utrechts Archief'] } },
     ]);
+  });
+
+  it('serves a surfaced inline reference as nested documents, values grouped per referent', async () => {
+    // End to end through a real Typesense: the collection declares the nested
+    // object and its nested Physical Fields, the referents survive the
+    // round-trip grouped, and reconstruction hands back one nested Search
+    // Document per referent – `id` only on the referent that had one.
+    const result = await engine.search(datasetSchema, {
+      ...baseQuery,
+      where: [{ field: 'id', in: ['d1'] }],
+    });
+
+    expect(result.hits[0].document.media).toEqual([
+      {
+        id: 'https://ex/m/1',
+        contentUrl: ['https://ex/1/full/max/0/default.jpg'],
+        width: 4096,
+      },
+      { contentUrl: ['https://ex/2/full/max/0/default.jpg'] },
+    ]);
+    // A document without referents nests nothing rather than an empty list.
+    const others = await engine.search(datasetSchema, {
+      ...baseQuery,
+      where: [{ field: 'id', in: ['d2'] }],
+    });
+    expect(others.hits[0].document.media).toBeUndefined();
   });
 
   it('looks documents up by `id`, the field no type declares', async () => {
@@ -385,7 +454,7 @@ describe('createTypesenseSearchEngine (integration)', () => {
     const ignored: unknown[] = [];
     const reporting = createTypesenseSearchEngine(
       client,
-      searchSchema(organizationSchema, datasetSchema),
+      searchSchema(organizationSchema, mediaObjectSchema, datasetSchema),
       {
         collections: { Dataset: 'datasets', Organization: 'labels' },
         onIgnoredFilter: (filter) => ignored.push(filter),

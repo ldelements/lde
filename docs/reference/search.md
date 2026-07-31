@@ -28,7 +28,8 @@ It provides four things:
   semantics: every API surface compiles into it, every engine adapter compiles
   out of it, so the two cannot drift;
 - **engine port** – `SearchEngine` and the logical result types
-  (`SearchResult` / `SearchHit` / `ResultDocument` / `Reference` / …);
+  (`SearchResult` / `SearchHit` / `ResultDocument` / `Reference` /
+  `NestedDocument` / …);
 - **streaming projection** – `projectRoots`, RDF `CONSTRUCT` quads → flat
   search documents, one root type at a time.
 
@@ -84,6 +85,11 @@ Exports are stratified by audience:
     predicates;
   - `referenceTypeNamed` – resolve an inline `ref.typeName` to its declared
     Reference Type;
+  - `nestedReferenceType` – the Reference Type a **surfaced** (`output`) inline
+    reference nests, the one predicate the collection definition, result
+    reconstruction and the API surfaces share;
+  - `nestedFieldName` – the nested Physical Field naming convention
+    (`media.contentUrl`), the nested counterpart of `physicalFields`;
   - `inlineFramingDepth` – the framing depth a Root Type’s inline reference
     graph needs;
   - `labelFieldOf` – the `label` text field a label source serves labels
@@ -264,14 +270,14 @@ than per document at index time. `validateSearchType` /
 `assertValidSearchType` are exported for validating a single declaration
 directly.
 
-| kind                 | `where`              | facet | sort             | output                          |
-| -------------------- | -------------------- | ----- | ---------------- | ------------------------------- |
-| `text`               | – (feeds free text)  | –     | yes (per-locale) | best-first language list        |
-| `keyword`            | `in` (membership)    | yes   | –                | string / `string[]`             |
-| `reference`          | `in` (membership)    | yes   | –                | labelled reference (id + label) |
-| `integer` / `number` | `range { min, max }` | yes   | yes              | number                          |
-| `date`               | `range` (inclusive)  | yes   | yes              | ISO 8601 string (surface)       |
-| `boolean`            | `is`                 | yes   | –                | boolean (absent = false)        |
+| kind                 | `where`              | facet | sort             | output                                                                                |
+| -------------------- | -------------------- | ----- | ---------------- | ------------------------------------------------------------------------------------- |
+| `text`               | – (feeds free text)  | –     | yes (per-locale) | best-first language list                                                              |
+| `keyword`            | `in` (membership)    | yes   | –                | string / `string[]`                                                                   |
+| `reference`          | `in` (membership)    | yes   | –                | labelled reference (id + label), or a nested document for a surfaced inline reference |
+| `integer` / `number` | `range { min, max }` | yes   | yes              | number                                                                                |
+| `date`               | `range` (inclusive)  | yes   | yes              | ISO 8601 string (surface)                                                             |
+| `boolean`            | `is`                 | yes   | –                | boolean (absent = false)                                                              |
 
 A `reference` carries one of two strategies today: `labelOnly` (id + display
 label, resolved at query time from a label source) and `inline` (the referent’s
@@ -291,8 +297,19 @@ construct serves two jobs (see
   so a later `derive` can select and flatten a value a `path` cannot address (a
   qualified hop), then pruned before the writer – nothing nested reaches the
   engine or the API;
-- an **API device** declares `output`, deliberately surfacing the nested
-  Reference Type.
+- an **API device** declares `output`, surfacing the nested Reference Type all
+  the way to the API: the engine stores the referent as a nested document, the
+  engine adapter reconstructs it as one, and every surface serves the referent’s
+  own fields. A multi-valued reference keeps each referent’s values grouped, so
+  a consumer never pairs parallel arrays by index.
+
+Those are its only two shapes, and a nested field carries **`output` only**.
+`searchable`, `filterable`, `facetable`, `sortable` and `labelSource` – on the
+inline reference itself or on any field of its Reference Type – are rejected by
+`searchSchema`, naming the field: a nested value is stored with its referent and
+read back with it, never as an addressable field of its own, so declaring one of
+those would be silently ignored per query. Filtering, faceting and sorting on
+nested fields is future work.
 
 A referent needs no identity of its own: the nesting carries its fields, not a
 document key. A blank-node referent – whose `@id` JSON-LD 1.1 framing prunes –

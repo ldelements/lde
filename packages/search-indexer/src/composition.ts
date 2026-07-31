@@ -9,7 +9,7 @@ import {
   type DistributionResolver,
   type Writer,
 } from '@lde/pipeline';
-import type { RootType, SearchDocument } from '@lde/search';
+import type { RootType, SearchDocument, SearchSchema } from '@lde/search';
 import {
   BlueGreenRebuild,
   deriveCollectionName,
@@ -32,17 +32,25 @@ export function datasetSelectorFrom(config: IndexerConfig): DatasetSelector {
  * {@link InPlaceRebuild} or {@link BlueGreenRebuild} per root type, its
  * collection name derived from the type – prefixed when the deployment says
  * so, so the read side must be configured with the same prefix.
+ *
+ * The mounted schema the pipeline hands each call travels into the writer: a
+ * type that surfaces an inline reference builds its collection from the
+ * Reference Type the schema resolves, so the nested fields are declared rather
+ * than silently dropped.
  */
 export function writerFactoryFrom(
   client: Client,
   config: IndexerConfig,
-): (searchType: RootType) => Writer<SearchDocument> {
-  return (searchType) => {
-    const options = config.collectionPrefix
-      ? {
-          name: `${config.collectionPrefix}${deriveCollectionName(searchType)}`,
-        }
-      : {};
+): (searchType: RootType, schema: SearchSchema) => Writer<SearchDocument> {
+  return (searchType, schema) => {
+    const options = {
+      schema,
+      ...(config.collectionPrefix
+        ? {
+            name: `${config.collectionPrefix}${deriveCollectionName(searchType)}`,
+          }
+        : {}),
+    };
     return config.rebuildMode === 'blue-green'
       ? new BlueGreenRebuild(client, searchType, options)
       : new InPlaceRebuild(client, searchType, options);

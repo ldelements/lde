@@ -38,7 +38,7 @@ describe('datasetSelectorFrom', () => {
 describe('writerFactoryFrom', () => {
   it('builds an in-place rebuild writer by default', () => {
     const writerFor = writerFactoryFrom(client, configFromEnvironment(minimal));
-    const writer = writerFor(datasetType);
+    const writer = writerFor(datasetType, schema);
     expect(writer).toBeInstanceOf(InPlaceRebuild);
     expect((writer as InPlaceRebuild<never>).collectionName).toBe('datasets');
   });
@@ -48,7 +48,7 @@ describe('writerFactoryFrom', () => {
       client,
       configFromEnvironment({ ...minimal, REBUILD_MODE: 'blue-green' }),
     );
-    const writer = writerFor(datasetType);
+    const writer = writerFor(datasetType, schema);
     expect(writer).toBeInstanceOf(BlueGreenRebuild);
     expect((writer as BlueGreenRebuild<never>).collectionName).toBe('datasets');
   });
@@ -58,7 +58,7 @@ describe('writerFactoryFrom', () => {
       client,
       configFromEnvironment({ ...minimal, COLLECTION_PREFIX: 'staging_' }),
     );
-    const writer = writerFor(datasetType);
+    const writer = writerFor(datasetType, schema);
     expect((writer as InPlaceRebuild<never>).collectionName).toBe(
       'staging_datasets',
     );

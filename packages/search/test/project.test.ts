@@ -731,7 +731,6 @@ describe('projectDocument', () => {
           path: 'https://schema.org/name',
           locales: ['nl'],
           output: true,
-          searchable: { weight: 1 },
         },
       ],
     });
@@ -764,10 +763,9 @@ describe('projectDocument', () => {
 
     // An output inline reference surfaces its referent as a nested Search
     // Document (its Reference Type’s projected fields), not a bare IRI.
-    expect(document.creator).toMatchObject({
+    expect(document.creator).toEqual({
       id: 'https://ex/c/1',
       label_nl: 'Naam',
-      label_search_nl: 'naam',
     });
   });
 
@@ -786,7 +784,6 @@ describe('projectDocument', () => {
           path: 'https://schema.org/name',
           locales: ['nl'],
           output: true,
-          searchable: { weight: 1 },
         },
         // Internal helper: no role, read by the derive below, pruned from the
         // surfaced referent.
