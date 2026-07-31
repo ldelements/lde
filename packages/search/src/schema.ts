@@ -79,7 +79,10 @@ export interface SearchFieldBase {
   /** Framed-IR predicate IRI to project from. Omit for a field populated by
    *  {@link SearchFieldBase.derive} (or outside the projection entirely). */
   readonly path?: string;
-  /** Multi-valued. */
+  /** Multi-valued: the field stores a list. Single-valued (the default) stores
+   *  the FIRST value the graph carries, whatever their number – for every kind
+   *  alike – so one declaration cannot mean a list to the projection and a
+   *  scalar to the collection definition and the API. */
   readonly array?: boolean;
   /** Always present: a non-null scalar in the API output and
    *  a non-optional field in the engine index. Moot for arrays/booleans/`id`,

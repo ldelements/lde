@@ -138,7 +138,7 @@ describe('extraction round-trip: generate → read → frame → project', () =>
     expect(first.description_nl).toBe('Een schilderij van Johannes Vermeer.');
     // …and the labelOnly creator carried as its bare IRI (label resolved at
     // query time from the Person collection, not here).
-    expect(first.creator).toEqual(['https://ex/p/1']);
+    expect(first.creator).toBe('https://ex/p/1');
 
     // A root with only a name still projects, with the optional fields absent.
     const second = byId['https://ex/cw/2'];

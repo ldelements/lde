@@ -199,7 +199,12 @@ const DATASET = defineSearchType({
     { name: 'size', path: 'urn:dr:size', kind: 'integer', sortable: true },
     // internal field (no role): projected as a reading device for the derive
     // below, then pruned before the writer – absent from the collection too
-    { name: 'classes', path: 'urn:dr:class', kind: 'reference' },
+    {
+      name: 'classes',
+      path: 'urn:dr:class',
+      kind: 'reference',
+      array: true,
+    },
     // derived field (no path): computed from the document in declaration order,
     // never from the graph – so `path` stays the whole statement of what is read
     {
@@ -278,6 +283,13 @@ directly.
 | `integer` / `number` | `range { min, max }` | yes   | yes              | number                                                                                |
 | `date`               | `range` (inclusive)  | yes   | yes              | ISO 8601 string (surface)                                                             |
 | `boolean`            | `is`                 | yes   | –                | boolean (absent = false)                                                              |
+
+**`array` decides a field’s shape**, whatever the graph carries: a declared
+`array` field stores a list, and a single-valued one stores the first value –
+for every kind alike, so the projection, the engine collection definition
+(`string` vs `string[]`) and the API output type never describe one declaration
+differently. Declare `array: true` wherever the source may carry several values
+you want to keep, including on an internal field a `derive` counts.
 
 A `reference` carries one of two strategies today: `labelOnly` (id + display
 label, resolved at query time from a label source) and `inline` (the referent’s
