@@ -1,3 +1,33 @@
+## 0.14.0 (2026-07-31)
+
+### 🚀 Features
+
+- ⚠️  **search:** nest an inline reference’s blank-node referents ([#687](https://github.com/ldelements/lde/pull/687))
+
+### ⚠️  Breaking Changes
+
+- **search:** nest an inline reference’s blank-node referents  ([#687](https://github.com/ldelements/lde/pull/687))
+  SearchFieldBase.derive receives a ProjectedNode rather
+  than a SearchDocument. A derive whose parameter is explicitly typed
+  SearchDocument no longer type-checks; type it ProjectedNode, or drop the
+  annotation and let it be inferred. Reading document.id inside a Reference
+  Type’s derive is no longer sound – a blank-node referent has none.
+  * fix(search): nest only a referent that projects a field
+  Dropping the @id filter on inline referents also dropped the only guard
+  that a non-node value is never nested: a literal value object under the
+  reference’s alias (dirty source data) passed the object test and projected
+  an empty nested document.
+  - Keep only referents that projected at least one field, so a content-free
+    document never reaches the writer – and never wins the slot of a
+    single-valued reference over a real referent behind it"
+  M	docs/reference/search.md
+  M	packages/search/CONTEXT.md
+  M	packages/search/src/index.ts
+  M	packages/search/src/project.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/test/project.test.ts
+  M	packages/search/vite.config.ts
+
 ## 0.13.0 (2026-07-30)
 
 ### 🚀 Features
