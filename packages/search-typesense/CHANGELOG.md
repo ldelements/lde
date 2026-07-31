@@ -1,3 +1,17 @@
+## 0.18.0 (2026-07-31)
+
+### 🚀 Features
+
+- ⚠️  **search:** serve a surfaced inline reference as a nested document ([#689](https://github.com/ldelements/lde/pull/689))
+
+### ⚠️  Breaking Changes
+
+- **search:** serve a surfaced inline reference as a nested document  ([#689](https://github.com/ldelements/lde/pull/689))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.15.0
+
 ## 0.17.0 (2026-07-31)
 
 ### 🧱 Updated Dependencies
