@@ -1,4 +1,4 @@
-import type { SearchDocument } from './project.js';
+import type { ProjectedNode } from './project.js';
 
 /**
  * The engine-neutral kind of a queryable field. It drives every downstream
@@ -103,9 +103,12 @@ export interface SearchFieldBase {
    * {@link isInternalField internal} field). Return `undefined` to leave the
    * field absent. The field still carries full query/schema/output behaviour
    * like any other. Reading only the document is what keeps `path` the complete
-   * statement of what the projection reads from the graph.
+   * statement of what the projection reads from the graph. The node it receives
+   * is the search document for a root type, and the referent’s own
+   * projected fields for a Reference Type – which carry an `id` only when the
+   * referent is a named node, never for a blank-node one.
    */
-  readonly derive?: (document: SearchDocument) => unknown;
+  readonly derive?: (document: ProjectedNode) => unknown;
 }
 
 /** Full-text inclusion with a `query_by` weight (folded; per-locale for

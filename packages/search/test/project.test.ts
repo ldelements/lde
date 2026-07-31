@@ -791,6 +791,53 @@ describe('projectDocument', () => {
     expect(referent).not.toHaveProperty('rawSort');
   });
 
+  it('never keys a nested document by a blank node label', () => {
+    // Framing prunes a blank node identifier that occurs once, but keeps it when
+    // the same referent is referenced twice. That label is minted per framing
+    // call: it recurs across documents and changes when unrelated triples do, so
+    // it is never a document key – the referent keeps its fields and no `id`,
+    // exactly as when framing pruned the label.
+    const creator = defineSearchType({
+      name: 'Creator',
+      fields: [
+        {
+          name: 'label',
+          kind: 'text',
+          path: 'https://schema.org/name',
+          locales: ['nl'],
+          output: true,
+        },
+      ],
+    });
+    const dataset = defineSearchType({
+      name: 'Dataset',
+      class: DATASET,
+      fields: [
+        {
+          name: 'creator',
+          kind: 'reference',
+          output: true,
+          path: `${DR}creator`,
+          ref: { typeName: 'Creator', strategy: 'inline' },
+        },
+      ],
+    });
+
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/d/blank',
+        [dsKey('creator')]: {
+          '@id': '_:b0',
+          [alias('Creator', 'label')]: { '@language': 'nl', '@value': 'Naam' },
+        },
+      },
+      dataset,
+      searchSchema(dataset, creator),
+    );
+
+    expect(document.creator).toEqual({ label_nl: 'Naam' });
+  });
+
   it('buckets untagged literals into the reserved und locale', () => {
     const document = projectDocument(
       {
@@ -897,6 +944,22 @@ describe('projectDocument', () => {
       projectDocument(
         { [dsKey('title')]: { '@value': 'No id' } },
         { name: 'Dataset', class: DATASET, fields },
+      ),
+    ).toThrow(/without an @id/);
+  });
+
+  it('throws when the framed node is keyed by a blank node label', () => {
+    // A blank node has no stable document key: `_:b0` is minted per framing
+    // call. A root bearing one is as keyless as one carrying no `@id` at all,
+    // and must be rejected rather than emitted under an unstable id.
+    expect(() =>
+      projectDocument(
+        { '@id': '_:b0' },
+        {
+          name: 'Dataset',
+          class: DATASET,
+          fields,
+        },
       ),
     ).toThrow(/without an @id/);
   });
@@ -1016,6 +1079,126 @@ describe('projectRoots', () => {
     }
 
     expect(ids).toEqual(['https://ex/d/1']);
+  });
+
+  it('keeps a blank-node referent of an inline reference', async () => {
+    // JSON-LD 1.1 framing prunes a blank node identifier that occurs only once
+    // in the results, so a blank-node referent arrives without an `@id`. A
+    // nested document is not a document key – nesting needs the referent’s
+    // fields – so it must survive framing with them intact.
+    const mediaObject = defineSearchType({
+      name: 'MediaObject',
+      fields: [
+        {
+          name: 'encodingFormat',
+          kind: 'keyword',
+          output: true,
+          path: 'https://schema.org/encodingFormat',
+        },
+      ],
+    });
+    const creativeWork = defineSearchType({
+      name: 'CreativeWork',
+      class: 'https://schema.org/CreativeWork',
+      fields: [
+        {
+          name: 'media',
+          kind: 'reference',
+          array: true,
+          output: true,
+          path: 'https://schema.org/associatedMedia',
+          ref: { typeName: 'MediaObject', strategy: 'inline' },
+        },
+      ],
+    });
+    const nestedSchema = searchSchema(creativeWork, mediaObject);
+    const quads = new Parser({ format: 'N-Triples' }).parse(`
+      <https://ex/w/1> <${alias('CreativeWork', 'media')}> _:b0 .
+      _:b0 <${alias('MediaObject', 'encodingFormat')}> "image/jpeg" .
+    `);
+
+    const documents: SearchDocument[] = [];
+    for await (const document of projectRoots(
+      quads,
+      ['https://ex/w/1'],
+      nestedSchema,
+      creativeWork,
+    )) {
+      documents.push(document);
+    }
+
+    expect(documents[0].media).toEqual([{ encodingFormat: ['image/jpeg'] }]);
+  });
+
+  it('keeps blank-node and named referents of one inline reference side by side', async () => {
+    // The reproduction from the field: a work whose media are one blank node
+    // (an image) and one named node (a IIIF manifest). Each referent keeps its
+    // own values grouped; only the named one is keyed.
+    const mediaObject = defineSearchType({
+      name: 'MediaObject',
+      fields: [
+        {
+          name: 'encodingFormat',
+          kind: 'keyword',
+          output: true,
+          path: 'https://schema.org/encodingFormat',
+        },
+        {
+          name: 'thumbnailUrl',
+          kind: 'reference',
+          output: true,
+          path: 'https://schema.org/thumbnailUrl',
+          ref: { typeName: 'MediaObject', strategy: 'idOnly' },
+        },
+      ],
+    });
+    const creativeWork = defineSearchType({
+      name: 'CreativeWork',
+      class: 'https://schema.org/CreativeWork',
+      fields: [
+        {
+          name: 'media',
+          kind: 'reference',
+          array: true,
+          output: true,
+          path: 'https://schema.org/associatedMedia',
+          ref: { typeName: 'MediaObject', strategy: 'inline' },
+        },
+      ],
+    });
+    const nestedSchema = searchSchema(creativeWork, mediaObject);
+    const mediaAlias = alias('CreativeWork', 'media');
+    const quads = new Parser({ format: 'N-Triples' }).parse(`
+      <https://ex/w/1> <${mediaAlias}> _:b0 .
+      _:b0 <${alias('MediaObject', 'encodingFormat')}> "image/jpeg" .
+      _:b0 <${alias('MediaObject', 'thumbnailUrl')}> <https://ex/thumb.jpg> .
+      <https://ex/w/1> <${mediaAlias}> <https://ex/iiif/manifest> .
+      <https://ex/iiif/manifest> <${alias('MediaObject', 'encodingFormat')}> "application/ld+json" .
+    `);
+
+    const documents: SearchDocument[] = [];
+    for await (const document of projectRoots(
+      quads,
+      ['https://ex/w/1'],
+      nestedSchema,
+      creativeWork,
+    )) {
+      documents.push(document);
+    }
+
+    expect(documents[0].media).toEqual(
+      expect.arrayContaining([
+        {
+          encodingFormat: ['image/jpeg'],
+          thumbnailUrl: ['https://ex/thumb.jpg'],
+        },
+        {
+          id: 'https://ex/iiif/manifest',
+          encodingFormat: ['application/ld+json'],
+        },
+      ]),
+    );
+    expect(documents[0].media).toHaveLength(2);
   });
 
   it('rejects a searchType not in the schema (no forged schema)', async () => {

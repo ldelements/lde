@@ -294,6 +294,13 @@ construct serves two jobs (see
 - an **API device** declares `output`, deliberately surfacing the nested
   Reference Type.
 
+A referent needs no identity of its own: the nesting carries its fields, not a
+document key. A blank-node referent – whose `@id` JSON-LD 1.1 framing prunes –
+nests exactly like a named one, minus the `id`, so a profile that allows a blank
+node here needs no flattening workaround. A blank node label (`_:b0`) never
+becomes that `id`: framing mints it per call. Only a root, which is keyed, must
+be an IRI.
+
 So RDF depth and API shape stay independent: inline as deep as the source
 demands, expose exactly the flat fields you want. Framing follows the inline
 reference graph to the depth the schema declares (`Dataset → Subset →
