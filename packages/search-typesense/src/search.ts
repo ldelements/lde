@@ -735,14 +735,17 @@ export interface TypesenseSearchResponse {
  * label-source lookup, nested objects → nested Search Documents, scalars passed
  * through). `labels` maps a reference IRI to its resolved label; an IRI absent
  * from it yields an id-only reference. `schema` resolves the Reference Type a
- * surfaced inline reference nests; without one such a field reconstructs as
- * nothing rather than as the wrong shape.
+ * surfaced inline reference nests – required, not optional: reconstruction is a
+ * function of the whole schema exactly as the engine is, and a caller that
+ * omitted it would silently serve nothing for every nested field. A schema that
+ * does not declare a field’s reference type reconstructs nothing for it rather
+ * than the wrong shape, the same call the projection makes.
  */
 export function parseSearchResponse(
   response: TypesenseSearchResponse,
   searchType: SearchType,
   labels: ReadonlyMap<string, LocalizedValue>,
-  schema?: SearchSchema,
+  schema: SearchSchema,
 ): SearchResult {
   const hits: SearchHit[] = (response.hits ?? []).map((hit) => ({
     id: String(hit.document.id),
@@ -788,7 +791,7 @@ function reconstructDocument(
   flat: Record<string, unknown>,
   searchType: SearchType,
   labels: ReadonlyMap<string, LocalizedValue>,
-  schema: SearchSchema | undefined,
+  schema: SearchSchema,
 ): ResultDocument {
   const document: Record<string, SearchValue> = {};
   for (const field of outputFields(searchType)) {
@@ -804,7 +807,7 @@ function logicalValue(
   flat: Record<string, unknown>,
   field: SearchField,
   labels: ReadonlyMap<string, LocalizedValue>,
-  schema: SearchSchema | undefined,
+  schema: SearchSchema,
 ): SearchValue | undefined {
   switch (field.kind) {
     case 'text':
@@ -814,18 +817,17 @@ function logicalValue(
       // reconstructs as a nested Search Document rather than as an IRI plus a
       // label. Nesting is rebuilt HERE, below every surface, so a second
       // surface inherits it instead of reimplementing it (ADR 11).
-      const nested =
-        schema === undefined ? undefined : nestedReferenceType(schema, field);
+      const nested = nestedReferenceType(schema, field);
       if (nested !== undefined) {
-        return nestedValue(flat[field.name], field, nested, labels, schema!);
+        return nestedValue(flat[field.name], field, nested, labels, schema);
       }
-      // A surfaced inline reference stores nested documents, not IRIs. Without
-      // the schema that declares its reference type there is nothing to
-      // reconstruct them by, so reconstruct nothing rather than hand back the
-      // wrong shape – the same call the projection makes when it is handed no
-      // schema. (Only output fields are reconstructed, and `searchSchema`
-      // allows an inline reference no Role but `output`, so every inline
-      // reference reaching this point is a surfaced one.)
+      // A surfaced inline reference stores nested documents, not IRIs, so a
+      // schema that does not declare its reference type (a type parsed against
+      // a foreign schema) reconstructs nothing rather than the wrong shape –
+      // the same call the projection makes. Only output fields are
+      // reconstructed, and `searchSchema` allows an inline reference no Role
+      // but `output`, so every inline reference reaching this point is a
+      // surfaced one.
       return isInlineReference(field)
         ? undefined
         : referenceValue(flat, field, labels);

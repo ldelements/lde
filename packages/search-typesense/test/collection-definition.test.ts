@@ -431,6 +431,7 @@ describe('surfaced inline references', () => {
         {
           name: 'contentUrl',
           kind: 'keyword',
+          array: true,
           output: true,
           path: 'https://schema.org/contentUrl',
         },
@@ -464,7 +465,7 @@ describe('surfaced inline references', () => {
       },
       {
         name: 'media.thumbnail.contentUrl',
-        type: 'string',
+        type: 'string[]',
         index: false,
         optional: true,
       },

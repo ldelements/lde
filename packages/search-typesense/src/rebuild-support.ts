@@ -1,6 +1,9 @@
 import type { Client } from 'typesense';
 import type { SearchType } from '@lde/search';
-import type { CollectionDefinitionOptions } from './collection-definition.js';
+import {
+  buildCollectionDefinition,
+  type CollectionDefinitionOptions,
+} from './collection-definition.js';
 import { deriveCollectionName } from './collection-name.js';
 import { DEFAULT_LOCK_TTL_MS } from './lock.js';
 import { DEFAULT_BATCH_SIZE } from './import.js';
@@ -35,7 +38,12 @@ export interface ResolvedRebuildOptions {
  * when the deployment supplies none.
  *
  * Writers resolve at construction rather than per run, so an underivable name
- * throws when the writer is built, not on the first rebuild.
+ * throws when the writer is built, not on the first rebuild. The collection
+ * definition is built here and discarded for the same reason: every way a
+ * declaration can fail to describe a collection – an unresolvable surfaced
+ * inline reference, whose nesting needs the schema – then fails at construction
+ * rather than inside the first run, after a lock is held and a whole extraction
+ * has been paid for.
  */
 export function resolveRebuildOptions(
   searchType: SearchType,
@@ -46,7 +54,7 @@ export function resolveRebuildOptions(
     lockTtlMs = DEFAULT_LOCK_TTL_MS,
     ...definitionOptions
   } = options;
-  return {
+  const resolved = {
     batchSize,
     lockTtlMs,
     definitionOptions: {
@@ -54,6 +62,8 @@ export function resolveRebuildOptions(
       name: definitionOptions.name ?? deriveCollectionName(searchType),
     },
   };
+  buildCollectionDefinition(searchType, resolved.definitionOptions);
+  return resolved;
 }
 
 /**

@@ -133,7 +133,12 @@ const response = {
 };
 
 describe('parseSearchResponse', () => {
-  const result = parseSearchResponse(response, schema, labels);
+  const result = parseSearchResponse(
+    response,
+    schema,
+    labels,
+    searchSchema(organization, schema),
+  );
 
   it('carries the total and the facet buckets keyed by field name', () => {
     expect(result.total).toBe(2);
@@ -307,14 +312,16 @@ describe('parseSearchResponse nested inline references', () => {
     expect(hits[0].document.primaryMedia).toBeUndefined();
   });
 
-  it('reconstructs nothing for a nested reference without the schema declaring it', () => {
-    // No schema means no reference type to rebuild the referents by. Serving
-    // nothing is the same call the projection makes when it is handed no
-    // schema; the alternative is handing a consumer the wrong shape.
+  it('reconstructs nothing for a nested reference the schema does not declare', () => {
+    // A schema without the reference type – a type parsed against a foreign
+    // schema – has nothing to rebuild the referents by. Serving nothing is the
+    // same call the projection makes; the alternative is handing a consumer the
+    // wrong shape.
     const { hits } = parseSearchResponse(
       nestedResponse,
       creativeWork,
       new Map(),
+      searchSchema({ name: 'Other', class: 'urn:other', fields: [] }),
     );
     expect(hits[0].document.media).toBeUndefined();
     expect(hits[0].document.primaryMedia).toBeUndefined();
@@ -357,7 +364,12 @@ describe('parseSearchResponse range facets', () => {
   };
 
   it('echoes each range bin’s half-open bounds onto its bucket, open ends omitted', () => {
-    const result = parseSearchResponse(rangeResponse, rangeSchema, new Map());
+    const result = parseSearchResponse(
+      rangeResponse,
+      rangeSchema,
+      new Map(),
+      searchSchema(rangeSchema),
+    );
     expect(result.facets.size).toEqual([
       { value: '0', count: 2, min: 1, max: 10 },
       { value: '1', count: 1, min: 10, max: 100 },
@@ -942,6 +954,23 @@ describe('fetchLabels', () => {
 });
 
 describe('und-locale text reconstruction', () => {
+  const undDoc = defineSearchType({
+    name: 'Doc',
+    class: 'urn:example:Doc',
+    fields: [
+      { name: 'summary', kind: 'text', locales: ['und'], output: true },
+      // A non-string stored value for a text field is dropped.
+      { name: 'bad', kind: 'text', locales: ['und'], output: true },
+      // A single (non-array) stored reference IRI.
+      {
+        name: 'publisher',
+        kind: 'reference',
+        output: true,
+        ref: { typeName: 'Organization', strategy: 'labelOnly' },
+      },
+    ],
+  });
+
   it('gathers the und display field into the language map', () => {
     const result = parseSearchResponse(
       {
@@ -957,23 +986,9 @@ describe('und-locale text reconstruction', () => {
           },
         ],
       },
-      {
-        name: 'Doc',
-        class: 'urn:example:Doc',
-        fields: [
-          { name: 'summary', kind: 'text', locales: ['und'], output: true },
-          // A non-string stored value for a text field is dropped.
-          { name: 'bad', kind: 'text', locales: ['und'], output: true },
-          // A single (non-array) stored reference IRI.
-          {
-            name: 'publisher',
-            kind: 'reference',
-            output: true,
-            ref: { typeName: 'Organization', strategy: 'labelOnly' },
-          },
-        ],
-      },
+      undDoc,
       new Map(),
+      searchSchema(undDoc),
     );
     expect(result.hits[0].document.summary).toEqual({ und: ['Plain prose'] });
     expect(result.hits[0].document).not.toHaveProperty('bad');

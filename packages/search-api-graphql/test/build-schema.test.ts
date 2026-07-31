@@ -981,6 +981,7 @@ describe('nested inline references', () => {
         {
           name: 'contentUrl',
           kind: 'keyword',
+          array: true,
           output: true,
           path: 'https://schema.org/contentUrl',
         },
@@ -1007,7 +1008,7 @@ describe('nested inline references', () => {
       /type MediaObject \{\s+id: String\s+thumbnail: Thumbnail\s+\}/,
     );
     expect(sdl).toMatch(
-      /type Thumbnail \{\s+id: String\s+contentUrl: String\s+\}/,
+      /type Thumbnail \{\s+id: String\s+contentUrl: \[String!\]!\s+\}/,
     );
   });
 });
