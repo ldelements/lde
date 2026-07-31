@@ -352,7 +352,13 @@ function applyInlineReference(
   }
   const referents = valuesOf(node, alias)
     .filter(isObject)
-    .map((referent) => projectFields(referent, referenceType, schema));
+    .map((referent) => projectFields(referent, referenceType, schema))
+    // Fields, not identity, are what makes something a referent: a literal
+    // value object under the alias (dirty source data), or a node this
+    // reference type reads nothing from, projects nothing and is no referent.
+    // Nesting it would hand the writer a content-free document – and, for a
+    // single-valued reference, let it win the slot over a real referent.
+    .filter((referent) => Object.keys(referent).length > 0);
   if (referents.length === 0) {
     return;
   }

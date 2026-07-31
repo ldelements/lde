@@ -630,6 +630,64 @@ describe('projectDocument', () => {
     expect(document).toEqual({ id: 'https://ex/d/noschema' });
   });
 
+  it('nests nothing for a value an inline reference cannot read as a referent', () => {
+    // A referent needs no identity, but it does need fields: a literal under the
+    // reference’s alias (dirty source data), or a node the reference type reads
+    // nothing from, projects no field at all. Nesting an empty document would
+    // hand the writer a content-free referent – and, for a single-valued
+    // reference, let it win the slot over a real referent behind it.
+    const creator = defineSearchType({
+      name: 'Creator',
+      fields: [
+        {
+          name: 'label',
+          kind: 'text',
+          path: 'https://schema.org/name',
+          locales: ['nl'],
+          output: true,
+        },
+      ],
+    });
+    const dataset = defineSearchType({
+      name: 'Dataset',
+      class: DATASET,
+      fields: [
+        {
+          name: 'creator',
+          kind: 'reference',
+          output: true,
+          path: `${DR}creator`,
+          ref: { typeName: 'Creator', strategy: 'inline' },
+        },
+      ],
+    });
+    const withReference = searchSchema(dataset, creator);
+
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/d/literal',
+        [dsKey('creator')]: [
+          { '@value': 'Jan Jansen' },
+          {
+            '@id': 'https://ex/c/3',
+            [alias('Creator', 'label')]: {
+              '@language': 'nl',
+              '@value': 'Naam',
+            },
+          },
+        ],
+      },
+      dataset,
+      withReference,
+    );
+
+    // The literal contributed no referent, so the real one takes the slot.
+    expect(document.creator).toEqual({
+      id: 'https://ex/c/3',
+      label_nl: 'Naam',
+    });
+  });
+
   it('skips an inline reference the given schema does not declare', () => {
     // projectDocument does not check type membership (projectRoots does); framed
     // against a schema that omits the referent, an inline reference contributes
