@@ -33,7 +33,7 @@ jobs:
       # The build fails on dead links, so this doubles as a docs check on PRs.
       - run: npm run docs:build
 
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         if: github.ref == 'refs/heads/main'
         with:
           path: docs/.vitepress/dist
