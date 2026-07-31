@@ -113,7 +113,15 @@ apart only by Roles:
   _qualified_ hop by inlining the intermediate node with its discriminator, then
   let a **Derive** select and flatten it. Pruned before the writer – nothing
   nested reaches the engine or the API.
-- _API device_ (`output`): deliberately surface a nested Reference Type.
+- _API device_ (`output`): surface a **Nested Search Document** – the referent’s
+  own Search Fields, stored, reconstructed and served as one object per referent,
+  so a multi-valued reference never becomes parallel arrays to pair by index.
+
+Those are its only two shapes. A Nested Search Document carries the Role
+`output` and nothing else: it is stored with its referent and read back with it,
+never as an addressable field of its own, so `searchable`, `filterable`,
+`facetable`, `sortable` and a Label Source are rejected by `searchSchema` –
+inside the Reference Type and on the Inline Reference itself.
 
 A referent needs **no identity**: nesting carries the referent’s fields, not a
 document key. A blank-node referent nests exactly like a named one, minus the
@@ -155,11 +163,19 @@ only for searching: retrieval (`output`) is as much its job. Bare `Document`
 would also shadow the DOM global, and the browser query path reads this package.
 _Avoid_: document (unqualified), record, row, hit
 
+**Search Document**, nested:
+The referent of a surfaced Inline Reference, carried inside its Search Document.
+Keyed by the referent’s own field names, and carrying an `Id` only when the
+referent is a named node – a nested document is read, not addressed.
+_Avoid_: sub-document, embedded record
+
 **Physical Field**:
 A field the engine actually stores – `title_search_nl`, `title_sort_nl`,
 `title_nl`. One Search Field fans out into several; `physicalFields()` owns the
 convention, so the projection, the collection definition and the query compiler
-cannot disagree.
+cannot disagree. A nested one qualifies the referent’s own physical name with
+the reference carrying it (`media.contentUrl`), owned by `nestedFieldName()` for
+the same reason.
 _Avoid_: column, engine field
 
 ## Flagged ambiguities

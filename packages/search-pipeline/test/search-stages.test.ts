@@ -95,8 +95,8 @@ describe('searchStages', () => {
 
     expect(received.map((item) => item.searchType)).toEqual([person, person]);
     expect(received.map((item) => item.document)).toEqual([
-      { id: 'https://ex/p/1', name: ['Name https://ex/p/1'] },
-      { id: 'https://ex/p/2', name: ['Name https://ex/p/2'] },
+      { id: 'https://ex/p/1', name: 'Name https://ex/p/1' },
+      { id: 'https://ex/p/2', name: 'Name https://ex/p/2' },
     ]);
   });
 

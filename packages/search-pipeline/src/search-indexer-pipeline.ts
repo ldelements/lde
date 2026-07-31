@@ -40,9 +40,15 @@ export interface SearchIndexerPipelineOptions {
   /**
    * The engine writer that owns a given root type’s collection – e.g. a
    * `@lde/search-typesense` `InPlaceRebuild` or `BlueGreenRebuild` bound to
-   * that type. Called once per {@link RootType} in the schema.
+   * that type. Called once per {@link RootType} in the schema, with the schema
+   * itself: an engine that stores a surfaced inline reference as a nested
+   * document needs it to declare the nesting, and it is the pipeline that holds
+   * it.
    */
-  writerFor: (searchType: RootType) => Writer<SearchDocument>;
+  writerFor: (
+    searchType: RootType,
+    schema: SearchSchema,
+  ) => Writer<SearchDocument>;
   /**
    * Optional per-dataset processing memory: skip a dataset whose source
    * fingerprint and {@link pipelineVersion} both match the stored record.
@@ -83,7 +89,8 @@ export interface SearchIndexerPipelineOptions {
  *     ...createQlever({ mode: 'docker', image: 'adfreiburg/qlever:latest' }),
  *     strategy: 'import',
  *   }),
- *   writerFor: (searchType) => new InPlaceRebuild(typesenseClient, searchType),
+ *   writerFor: (searchType, schema) =>
+ *     new InPlaceRebuild(typesenseClient, searchType, { schema }),
  * });
  * await pipeline.run();
  * ```

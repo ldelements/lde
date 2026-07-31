@@ -53,6 +53,7 @@ export type {
   SearchValue,
   LocalizedValue,
   Reference,
+  NestedDocument,
   FacetBucket,
   FacetMap,
   FacetsOutcome,

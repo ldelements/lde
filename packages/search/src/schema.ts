@@ -79,7 +79,10 @@ export interface SearchFieldBase {
   /** Framed-IR predicate IRI to project from. Omit for a field populated by
    *  {@link SearchFieldBase.derive} (or outside the projection entirely). */
   readonly path?: string;
-  /** Multi-valued. */
+  /** Multi-valued: the field stores a list. Single-valued (the default) stores
+   *  the FIRST value the graph carries, whatever their number – for every kind
+   *  alike – so one declaration cannot mean a list to the projection and a
+   *  scalar to the collection definition and the API. */
   readonly array?: boolean;
   /** Always present: a non-null scalar in the API output and
    *  a non-optional field in the engine index. Moot for arrays/booleans/`id`,
@@ -391,6 +394,7 @@ export function searchSchema<const Types extends readonly SearchType[]>(
       .map((searchType) => [searchType.name, searchType]),
   );
   assertResolvableInlineReferences(types, referenceTypes);
+  assertServiceableNestedFields(referenceTypes);
   assertResolvableLabelSources(types);
   // The one blessed cast: only this validated constructor mints the brand.
   const schema = new Map(
@@ -423,6 +427,45 @@ export function isInlineReference(
   readonly ref: { readonly typeName: string; readonly strategy: 'inline' };
 } {
   return field.kind === 'reference' && field.ref?.strategy === 'inline';
+}
+
+/**
+ * The {@link ReferenceType} a **surfaced** inline reference nests – an
+ * `output` inline reference’s referent shape – or `undefined` for every other
+ * field. The one predicate the collection definition, result reconstruction and
+ * the API surfaces share, so they cannot disagree about which fields carry a
+ * nested Search Document and which carry a bare IRI: an inline reference
+ * declaring no Role is a reading device, pruned before the writer
+ * ({@link isInternalField}), and a `labelOnly`/`idOnly` reference stays an id
+ * (plus a resolved label).
+ *
+ * A schema built by {@link searchSchema} always resolves the reference type of
+ * its own types; `undefined` for a type declared against another schema.
+ */
+export function nestedReferenceType(
+  schema: SearchSchema,
+  field: SearchField,
+): ReferenceType | undefined {
+  return isInlineReference(field) && field.output === true
+    ? referenceTypeNamed(schema, field.ref.typeName)
+    : undefined;
+}
+
+/**
+ * The Physical Field name a nested field carries in the engine: the surfaced
+ * inline reference’s own name, then the referent’s physical name –
+ * `media.contentUrl`, `media.label_nl`, and `media.thumbnail.contentUrl` one
+ * hop deeper. The nested counterpart of {@link physicalFields}, and equally the
+ * single home of its convention: the collection definition declares these
+ * names, so a second consumer (a nested filter compiler) reads them from here
+ * rather than restating the separator.
+ *
+ * The nested Search Document itself is keyed by the referent’s own field names
+ * ({@link ProjectedNode}) – the qualification is how an engine that stores
+ * nested documents flat addresses them, never what the projection writes.
+ */
+export function nestedFieldName(parent: string, name: string): string {
+  return `${parent}.${name}`;
 }
 
 /**
@@ -484,6 +527,21 @@ function assertResolvableInlineReferences(
           `Inline reference “${searchType.name}.${field.name}” names “${field.ref.typeName}”, which is not a declared reference type; declare a reference type (a SearchType with no class) with that name.`,
         );
       }
+      // The two jobs of an inline reference, told apart only by Roles: a
+      // reading device (no Role, pruned before the writer) or a surfaced nested
+      // object (`output`). Anything else asks an engine to search, filter,
+      // facet or sort on a value that is stored as a nested document – which no
+      // query compiler serves, so it would be ignored per query.
+      const extraRoles = unserviceableNestedRoles(field);
+      if (extraRoles.length > 0) {
+        throw new Error(
+          `Inline reference “${searchType.name}.${field.name}” declares ${extraRoles
+            .map((role) => `“${role}”`)
+            .join(
+              ', ',
+            )}, which it cannot serve: an inline reference is either a reading device (no Role) or surfaced (“output”).`,
+        );
+      }
     }
   }
   for (const referenceType of referenceTypes.values()) {
@@ -512,6 +570,66 @@ function assertNoInlineCycle(
     assertNoInlineCycle(referent, referenceTypes, extended);
   }
 }
+
+/**
+ * Every field of a {@link ReferenceType} must be one the nesting can actually
+ * serve. A nested field carries **`output` only**: it is stored as part of its
+ * referent and read back with it, so it never becomes an indexed, addressable
+ * field of its own. `searchable`, `filterable`, `facetable` and `sortable` on a
+ * nested field would need query-compiler and engine support that no engine port
+ * declares, and a `labelSource` would need a label lookup no reconstruction
+ * runs – each would be silently ignored per query. A Role-less field stays an
+ * {@link isInternalField Internal Field}, the reading device that is the other
+ * half of an inline reference’s job.
+ *
+ * Checked schema-wide, like the label sources and for the same reason: a single
+ * declaration cannot see whether it is a Reference Type at all.
+ */
+function assertServiceableNestedFields(
+  referenceTypes: ReadonlyMap<string, ReferenceType>,
+): void {
+  for (const referenceType of referenceTypes.values()) {
+    for (const field of referenceType.fields) {
+      const unserviceable = unserviceableNestedRoles(field);
+      if (unserviceable.length > 0) {
+        throw new Error(
+          `Nested field “${referenceType.name}.${field.name}” declares ${unserviceable
+            .map((role) => `“${role}”`)
+            .join(
+              ', ',
+            )}, which an inline reference cannot serve; a nested field carries “output” only.`,
+        );
+      }
+      if (
+        (field as { readonly labelSource?: string }).labelSource !== undefined
+      ) {
+        throw new Error(
+          `Nested field “${referenceType.name}.${field.name}” declares a label source, which an inline reference cannot serve; nest the referent through an inline reference instead of resolving a label for it.`,
+        );
+      }
+    }
+  }
+}
+
+/** The Roles a field declares that nesting cannot serve – every Role but
+ *  `output`, in declaration order, so a message names them all at once. */
+function unserviceableNestedRoles(
+  field: SearchField,
+): readonly (typeof UNSERVICEABLE_NESTED_ROLES)[number][] {
+  return UNSERVICEABLE_NESTED_ROLES.filter((role) =>
+    role === 'searchable'
+      ? field.searchable !== undefined
+      : field[role] === true,
+  );
+}
+
+/** The Roles a nested field cannot carry – everything but `output`. */
+const UNSERVICEABLE_NESTED_ROLES = [
+  'searchable',
+  'filterable',
+  'facetable',
+  'sortable',
+] as const;
 
 /**
  * The text field a label source serves labels from – the ‘label’ convention

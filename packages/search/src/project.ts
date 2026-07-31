@@ -298,10 +298,20 @@ function foldedSearchValue(values: readonly string[]): string {
 }
 
 /**
- * Project a faceted multi-value field: dedupe (after the optional transform),
- * write the value field, and – when `searchable` – a folded `${name}_search`
- * array. `keyword` reads literals; `reference` reads IRIs (the caller passes the
+ * Project a faceted field: dedupe (after the optional transform), write the
+ * value field, and – when `searchable` – its folded `${name}_search` companion.
+ * `keyword` reads literals; `reference` reads IRIs (the caller passes the
  * already-read raw values).
+ *
+ * **`array` decides the shape**, as it does for every other kind: a declared
+ * `array` field stores a list, and a single-valued one stores the first value –
+ * the graph may still carry several, exactly as it may carry several literals
+ * for a single-valued `integer` or `date` (which take the first too). Honouring
+ * it here is what keeps the projection, the engine collection definition
+ * (`string` vs `string[]`) and the API output type saying the same thing about
+ * one declaration; a list written into a single-valued field is a document the
+ * engine rejects, or – where it does not type-check, as inside a nested
+ * document – a value the API cannot serialize.
  */
 function applyFacet(
   document: ProjectedNode,
@@ -309,13 +319,18 @@ function applyFacet(
   field: KeywordField | ReferenceField,
 ): void {
   const values = dedupe(field.transform ? raw.map(field.transform) : raw);
-  setArray(document, field.name, values);
+  const folded = dedupe(values.map((value) => fold(value)));
+  const searchField = physicalFields(field).search[0];
+  if (field.array === true) {
+    setArray(document, field.name, values);
+    if (field.searchable) {
+      setArray(document, searchField, folded);
+    }
+    return;
+  }
+  setString(document, field.name, values[0]);
   if (field.searchable) {
-    setArray(
-      document,
-      physicalFields(field).search[0],
-      dedupe(values.map((value) => fold(value))),
-    );
+    setString(document, searchField, folded[0]);
   }
 }
 

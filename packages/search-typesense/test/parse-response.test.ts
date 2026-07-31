@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  defineSearchType,
   searchSchema,
   type LocalizedValue,
   type SearchQuery,
@@ -132,7 +133,12 @@ const response = {
 };
 
 describe('parseSearchResponse', () => {
-  const result = parseSearchResponse(response, schema, labels);
+  const result = parseSearchResponse(
+    response,
+    schema,
+    labels,
+    searchSchema(organization, schema),
+  );
 
   it('carries the total and the facet buckets keyed by field name', () => {
     expect(result.total).toBe(2);
@@ -191,6 +197,137 @@ describe('parseSearchResponse', () => {
   });
 });
 
+describe('parseSearchResponse nested inline references', () => {
+  const mediaObject = defineSearchType({
+    name: 'MediaObject',
+    fields: [
+      {
+        name: 'contentUrl',
+        kind: 'keyword',
+        array: true,
+        output: true,
+        path: 'https://schema.org/contentUrl',
+      },
+      {
+        name: 'width',
+        kind: 'integer',
+        output: true,
+        path: 'https://schema.org/width',
+      },
+      {
+        name: 'caption',
+        kind: 'text',
+        locales: ['nl'],
+        output: true,
+        path: 'https://schema.org/caption',
+      },
+    ],
+  });
+  const creativeWork = defineSearchType({
+    name: 'CreativeWork',
+    class: 'https://schema.org/CreativeWork',
+    fields: [
+      {
+        name: 'media',
+        kind: 'reference',
+        array: true,
+        output: true,
+        path: 'https://schema.org/associatedMedia',
+        ref: { typeName: 'MediaObject', strategy: 'inline' },
+      },
+      {
+        name: 'primaryMedia',
+        kind: 'reference',
+        output: true,
+        path: 'https://schema.org/primaryImageOfPage',
+        ref: { typeName: 'MediaObject', strategy: 'inline' },
+      },
+    ],
+  });
+  const nestedSchema = searchSchema(creativeWork, mediaObject);
+  const nestedResponse = {
+    found: 1,
+    hits: [
+      {
+        document: {
+          id: 'https://ex/w/1',
+          media: [
+            {
+              id: 'https://ex/m/1',
+              contentUrl: ['https://ex/1.jpg'],
+              width: 4096,
+              caption_nl: 'Voorkant',
+            },
+            // A blank-node referent (no id) missing the optional width.
+            { contentUrl: ['https://ex/2.jpg'] },
+          ],
+          primaryMedia: { contentUrl: ['https://ex/1.jpg'], width: 4096 },
+        },
+      },
+    ],
+  };
+
+  it('reconstructs each referent as a nested document, values grouped per referent', () => {
+    const { hits } = parseSearchResponse(
+      nestedResponse,
+      creativeWork,
+      new Map(),
+      nestedSchema,
+    );
+    // One document per referent – never two parallel arrays a consumer has to
+    // pair by index. `id` is carried only by the referent that had one: a
+    // nested document is read, not addressed.
+    expect(hits[0].document.media).toEqual([
+      {
+        id: 'https://ex/m/1',
+        contentUrl: ['https://ex/1.jpg'],
+        width: 4096,
+        caption: { nl: ['Voorkant'] },
+      },
+      { contentUrl: ['https://ex/2.jpg'] },
+    ]);
+  });
+
+  it('reconstructs a single-valued inline reference as one nested document', () => {
+    const { hits } = parseSearchResponse(
+      nestedResponse,
+      creativeWork,
+      new Map(),
+      nestedSchema,
+    );
+    expect(hits[0].document.primaryMedia).toEqual({
+      contentUrl: ['https://ex/1.jpg'],
+      width: 4096,
+    });
+  });
+
+  it('omits an inline reference the document carries no referent for', () => {
+    const { hits } = parseSearchResponse(
+      { found: 1, hits: [{ document: { id: 'https://ex/w/2', media: [] } }] },
+      creativeWork,
+      new Map(),
+      nestedSchema,
+    );
+    expect(hits[0].document.media).toBeUndefined();
+    expect(hits[0].document.primaryMedia).toBeUndefined();
+  });
+
+  it('reconstructs nothing for a nested reference the schema does not declare', () => {
+    // A schema without the reference type – a type parsed against a foreign
+    // schema – has nothing to rebuild the referents by. Serving nothing is the
+    // same call the projection makes; the alternative is handing a consumer the
+    // wrong shape.
+    const { hits } = parseSearchResponse(
+      nestedResponse,
+      creativeWork,
+      new Map(),
+      searchSchema({ name: 'Other', class: 'urn:other', fields: [] }),
+    );
+    expect(hits[0].document.media).toBeUndefined();
+    expect(hits[0].document.primaryMedia).toBeUndefined();
+  });
+});
+
 describe('parseSearchResponse range facets', () => {
   const rangeSchema: SearchType = {
     name: 'Dataset',
@@ -227,7 +364,12 @@ describe('parseSearchResponse range facets', () => {
   };
 
   it('echoes each range bin’s half-open bounds onto its bucket, open ends omitted', () => {
-    const result = parseSearchResponse(rangeResponse, rangeSchema, new Map());
+    const result = parseSearchResponse(
+      rangeResponse,
+      rangeSchema,
+      new Map(),
+      searchSchema(rangeSchema),
+    );
     expect(result.facets.size).toEqual([
       { value: '0', count: 2, min: 1, max: 10 },
       { value: '1', count: 1, min: 10, max: 100 },
@@ -812,6 +954,23 @@ describe('fetchLabels', () => {
 });
 
 describe('und-locale text reconstruction', () => {
+  const undDoc = defineSearchType({
+    name: 'Doc',
+    class: 'urn:example:Doc',
+    fields: [
+      { name: 'summary', kind: 'text', locales: ['und'], output: true },
+      // A non-string stored value for a text field is dropped.
+      { name: 'bad', kind: 'text', locales: ['und'], output: true },
+      // A single (non-array) stored reference IRI.
+      {
+        name: 'publisher',
+        kind: 'reference',
+        output: true,
+        ref: { typeName: 'Organization', strategy: 'labelOnly' },
+      },
+    ],
+  });
+
   it('gathers the und display field into the language map', () => {
     const result = parseSearchResponse(
       {
@@ -827,23 +986,9 @@ describe('und-locale text reconstruction', () => {
           },
         ],
       },
-      {
-        name: 'Doc',
-        class: 'urn:example:Doc',
-        fields: [
-          { name: 'summary', kind: 'text', locales: ['und'], output: true },
-          // A non-string stored value for a text field is dropped.
-          { name: 'bad', kind: 'text', locales: ['und'], output: true },
-          // A single (non-array) stored reference IRI.
-          {
-            name: 'publisher',
-            kind: 'reference',
-            output: true,
-            ref: { typeName: 'Organization', strategy: 'labelOnly' },
-          },
-        ],
-      },
+      undDoc,
       new Map(),
+      searchSchema(undDoc),
     );
     expect(result.hits[0].document.summary).toEqual({ und: ['Plain prose'] });
     expect(result.hits[0].document).not.toHaveProperty('bad');

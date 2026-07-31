@@ -67,16 +67,24 @@ const fields: SearchField[] = [
     name: 'keyword',
     path: dcat.keyword.value,
     kind: 'keyword',
+    array: true,
     searchable: { weight: 1 },
   },
   {
     name: 'format',
     path: `${DR}format`,
     kind: 'keyword',
+    array: true,
     facetable: true,
     transform: (value) => value.replace(IANA, ''),
   },
-  { name: 'class', path: `${DR}class`, kind: 'reference', facetable: true },
+  {
+    name: 'class',
+    path: `${DR}class`,
+    kind: 'reference',
+    array: true,
+    facetable: true,
+  },
   {
     name: 'date_posted',
     path: `${DR}datePosted`,
@@ -117,7 +125,8 @@ describe('projectDocument', () => {
     expect(document.publisherName_nl).toBe('Erfgoed');
     expect(document.publisherName_search_nl).toBe('erfgoed');
     expect(document.publisherName_en).toBeUndefined();
-    expect(document.publisher).toEqual(['https://ex/o/1']);
+    // Single-valued by declaration → the value itself, like every other kind.
+    expect(document.publisher).toBe('https://ex/o/1');
     expect(document.keyword).toEqual(['Erfgoed']);
     expect(document.keyword_search).toEqual(['erfgoed']);
     expect(document.format).toEqual(['text/turtle']);
@@ -170,9 +179,9 @@ describe('projectDocument', () => {
       },
     );
     expect(document.size).toBe(42);
-    expect(document.language).toEqual(['true']);
-    expect(document.keyword).toEqual(['bareString']);
-    expect(document.class).toEqual(['http://example.org/BareClass']);
+    expect(document.language).toBe('true');
+    expect(document.keyword).toBe('bareString');
+    expect(document.class).toBe('http://example.org/BareClass');
   });
 
   it('projects a number field as a float (not truncated like integer)', () => {
@@ -212,6 +221,52 @@ describe('projectDocument', () => {
     ).toBeUndefined();
   });
 
+  it('stores a single-valued keyword or reference as the value, a declared array as a list', () => {
+    // `array` decides the shape for these kinds exactly as it does for the
+    // others: the graph may carry several values either way, and a
+    // single-valued declaration takes the first – so the projection, the
+    // engine collection definition (`string` vs `string[]`) and the API output
+    // type all describe one declaration the same way.
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/d/shape',
+        [dsKey('format')]: [`${IANA}text/turtle`, `${IANA}application/ld+json`],
+        [dsKey('class')]: [
+          { '@id': 'http://schema.org/Person' },
+          { '@id': 'http://schema.org/Place' },
+        ],
+      },
+      {
+        name: 'Dataset',
+        class: DATASET,
+        fields: [
+          {
+            name: 'format',
+            path: `${DR}format`,
+            kind: 'keyword',
+            facetable: true,
+            searchable: { weight: 1 },
+            transform: (value) => value.replace(IANA, ''),
+          },
+          {
+            name: 'class',
+            path: `${DR}class`,
+            kind: 'reference',
+            array: true,
+            facetable: true,
+          },
+        ],
+      },
+    );
+
+    expect(document.format).toBe('text/turtle');
+    expect(document.format_search).toBe('text/turtle');
+    expect(document.class).toEqual([
+      'http://schema.org/Person',
+      'http://schema.org/Place',
+    ]);
+  });
+
   it('folds the transformed values (not the raw ones) for a facet search field', () => {
     const document = projectDocument(
       { '@id': 'https://ex/d/4', [dsKey('format')]: [`${IANA}text/turtle`] },
@@ -223,6 +278,7 @@ describe('projectDocument', () => {
             name: 'format',
             path: `${DR}format`,
             kind: 'keyword',
+            array: true,
             searchable: { weight: 1 },
             transform: (value) => value.replace(IANA, ''),
           },
@@ -473,7 +529,12 @@ describe('projectDocument', () => {
         fields: [
           // An internal reading device: a reference with no role, projected so
           // the derive below can read it, pruned before the writer sees it.
-          { name: 'classes', path: `${DR}class`, kind: 'reference' },
+          {
+            name: 'classes',
+            path: `${DR}class`,
+            kind: 'reference',
+            array: true,
+          },
           {
             name: 'classCount',
             kind: 'integer',
@@ -731,7 +792,6 @@ describe('projectDocument', () => {
           path: 'https://schema.org/name',
           locales: ['nl'],
           output: true,
-          searchable: { weight: 1 },
         },
       ],
     });
@@ -764,10 +824,9 @@ describe('projectDocument', () => {
 
     // An output inline reference surfaces its referent as a nested Search
     // Document (its Reference Type’s projected fields), not a bare IRI.
-    expect(document.creator).toMatchObject({
+    expect(document.creator).toEqual({
       id: 'https://ex/c/1',
       label_nl: 'Naam',
-      label_search_nl: 'naam',
     });
   });
 
@@ -786,7 +845,6 @@ describe('projectDocument', () => {
           path: 'https://schema.org/name',
           locales: ['nl'],
           output: true,
-          searchable: { weight: 1 },
         },
         // Internal helper: no role, read by the derive below, pruned from the
         // surfaced referent.
@@ -799,8 +857,7 @@ describe('projectDocument', () => {
           name: 'sortLabel',
           kind: 'keyword',
           output: true,
-          derive: (referent) =>
-            (referent.rawSort as readonly string[] | undefined)?.[0],
+          derive: (referent) => referent.rawSort as string | undefined,
         },
       ],
     });
@@ -993,8 +1050,8 @@ describe('projectDocument', () => {
       },
     );
     expect(document.title_nl).toBe('Titel');
-    expect(document.keyword).toEqual(['kaart']);
-    expect(document.publisher).toEqual(['https://o/1']);
+    expect(document.keyword).toBe('kaart');
+    expect(document.publisher).toBe('https://o/1');
   });
 
   it('throws when the framed node has no @id', () => {
@@ -1150,6 +1207,7 @@ describe('projectRoots', () => {
         {
           name: 'encodingFormat',
           kind: 'keyword',
+          array: true,
           output: true,
           path: 'https://schema.org/encodingFormat',
         },
@@ -1198,6 +1256,7 @@ describe('projectRoots', () => {
         {
           name: 'encodingFormat',
           kind: 'keyword',
+          array: true,
           output: true,
           path: 'https://schema.org/encodingFormat',
         },
@@ -1248,7 +1307,8 @@ describe('projectRoots', () => {
       expect.arrayContaining([
         {
           encodingFormat: ['image/jpeg'],
-          thumbnailUrl: ['https://ex/thumb.jpg'],
+          // Single-valued by declaration → the IRI itself.
+          thumbnailUrl: 'https://ex/thumb.jpg',
         },
         {
           id: 'https://ex/iiif/manifest',

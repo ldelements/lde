@@ -74,12 +74,22 @@ engine is constructed rather than on the first rebuild or search:
 
 ## Collection schema and engine
 
-`buildCollectionDefinition(searchType, { name?, defaultSortingField, … })` derives a
-Typesense collection from the unified `SearchField` model – the Typesense field
-type comes from each field’s `kind`, and the physical fanout (per-locale
-search/sort keys, plus one regex display field per output text field) matches
-what the projection writes, via `@lde/search`’s `physicalFields` and its display
-helpers, so the index and the documents cannot drift.
+`buildCollectionDefinition(searchType, { name?, schema?, defaultSortingField, … })`
+derives a Typesense collection from the unified `SearchField` model – the
+Typesense field type comes from each field’s `kind`, and the physical fanout
+(per-locale search/sort keys, plus one regex display field per output text
+field) matches what the projection writes, via `@lde/search`’s `physicalFields`
+and its display helpers, so the index and the documents cannot drift.
+
+A **surfaced inline reference** (`output` + `strategy: 'inline'`) is stored as a
+nested object – `object` or `object[]`, which turns on the collection’s
+`enable_nested_fields` – with one nested Physical Field per output field of its
+Reference Type (`media.contentUrl`, `media.caption_<lang>`, via
+`nestedFieldName`). Everything nested is declared `index: false`: a nested field
+carries `output` only, so it is display weight on disk, like the language
+labels. Pass the `schema` option for a type that surfaces one – it is what
+resolves the Reference Type; a type declaring one without it throws here, rather
+than building a collection whose documents would all fail to import.
 
 **Memory lever.** Typesense keeps the index in RAM (with a raw copy of each
 document on disk), so RAM tracks the _indexed_ surface – roughly 2–3× the size
@@ -105,7 +115,11 @@ down.
   stays id-only. With `labelCacheTtlMs` set, each label-source collection is
   instead loaded once into an in-memory cache;
 - reconstructs the logical `SearchResult` (`parseSearchResponse`) – language
-  maps, labelled references, labelled facet buckets.
+  maps, labelled references, labelled facet buckets, and one nested Search
+  Document per referent of a surfaced inline reference (each referent’s values
+  grouped, `id` only where the referent had one). Nesting is rebuilt here,
+  below every API surface, so a second surface inherits it rather than
+  reimplementing it.
 
 A label source is just another `SearchType` in the schema (with an `output`,
 `searchable` text field called `label`), so its collection is named by the same

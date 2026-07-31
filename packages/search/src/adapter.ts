@@ -20,6 +20,8 @@ export {
   outputFields,
   isInternalField,
   isInlineReference,
+  nestedReferenceType,
+  nestedFieldName,
   referenceFields,
   referenceTypeNamed,
   inlineFramingDepth,

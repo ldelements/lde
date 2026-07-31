@@ -71,7 +71,8 @@ const pipeline = searchIndexerPipeline({
     ...createQlever({ mode: 'docker', image: 'adfreiburg/qlever:latest' }),
     strategy: 'import',
   }),
-  writerFor: (searchType) => new InPlaceRebuild(typesenseClient, searchType),
+  writerFor: (searchType, schema) =>
+    new InPlaceRebuild(typesenseClient, searchType, { schema }),
   // Optional: skip datasets whose source and pipeline version are unchanged.
   provenanceStore: new FileProvenanceStore({ path: 'data/provenance.json' }),
   pipelineVersion: '1',
@@ -176,8 +177,8 @@ const pipeline = new Pipeline<TypedSearchDocument>({
   // engine reading these collections cannot disagree about where they are.
   writers: searchIndexWriter({
     schema,
-    writerFor: (searchType) =>
-      new BlueGreenRebuild(typesenseClient, searchType),
+    writerFor: (searchType, schema) =>
+      new BlueGreenRebuild(typesenseClient, searchType, { schema }),
   }),
 });
 
@@ -193,8 +194,9 @@ derivation:
 ```ts
 import { BlueGreenRebuild, deriveCollectionName } from '@lde/search-typesense';
 
-writerFor: (searchType) =>
+writerFor: (searchType, schema) =>
   new BlueGreenRebuild(typesenseClient, searchType, {
+    schema,
     name: `${process.env.INDEX_PREFIX}_${deriveCollectionName(searchType)}`,
   });
 ```

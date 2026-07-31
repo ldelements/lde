@@ -150,7 +150,11 @@ const gqlSchema = buildGraphQLSchema(searchSchema(DATASET, PERSON));
   (`[0].language` is the language actually served); references → named per-shape
   types (`Organization`, `Term`) with a `name` – a reference whose `typeName`
   names a root type (`creator` → `Person`) is served under a derived name
-  (`PersonReference`), since GraphQL type names must be unique; scalars/booleans
+  (`PersonReference`), since GraphQL type names must be unique; a **surfaced
+  inline reference** instead gets a type built from its Reference Type’s own
+  `output` fields – the same per-kind rules as a root type, with a nullable
+  `id`, since a referent needs no identity – so a client selects a nested
+  object’s fields directly and renders one referent at a time; scalars/booleans
   per kind; `date` → ISO 8601 string; nullability from `required` / `array` /
   `kind`.
 - **`where`** one input per `filterable` field (`StringFilter`, `IntRange` /

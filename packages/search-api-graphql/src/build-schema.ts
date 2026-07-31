@@ -32,6 +32,7 @@ import {
   filterOperatorFor,
   ID_FIELD,
   isRangeFacet,
+  nestedReferenceType,
   outputFields,
   pageForOffset,
   sortableFields,
@@ -217,37 +218,76 @@ export function buildGraphQLSchema(
   // and rejects duplicate names schema-wide.
   const referenceTypes = new Map<string, GraphQLObjectType>();
   const takenTypeNames = new Set(rootTypeNames);
+
+  /**
+   * Register the GraphQL type one reference field is served as, once per
+   * referenced shape. A **surfaced inline** reference is served as the nested
+   * object its Reference Type declares – its own `output` fields, configured by
+   * exactly the same per-kind rules a root type’s fields are – so the response
+   * shape matches the data’s shape. Its `id` is nullable: a referent needs no
+   * identity, and a blank-node one nests without one. Every other reference
+   * stays the id-plus-label pair its strategy carries.
+   */
+  function registerReferenceType(field: SearchField, owner: SearchType): void {
+    if (
+      field.kind !== 'reference' ||
+      field.ref === undefined ||
+      referenceTypes.has(field.ref.typeName)
+    ) {
+      return;
+    }
+    const { typeName } = field.ref;
+    const graphQLName = rootTypeNames.has(typeName)
+      ? `${typeName}Reference`
+      : typeName;
+    if (takenTypeNames.has(graphQLName)) {
+      throw new Error(
+        `Reference type “${typeName}” (field “${field.name}” of “${owner.name}”) would be served as “${graphQLName}”, which collides with another type name; rename one.`,
+      );
+    }
+    takenTypeNames.add(graphQLName);
+    const nested = nestedReferenceType(schema, field);
+    referenceTypes.set(
+      typeName,
+      new GraphQLObjectType({
+        name: graphQLName,
+        // A thunk, so a Reference Type nesting another one resolves whatever
+        // the registration order is (the graph is acyclic by searchSchema).
+        fields: (): Record<
+          string,
+          GraphQLFieldConfig<Source, SearchContext>
+        > =>
+          nested === undefined
+            ? {
+                id: { type: new GraphQLNonNull(GraphQLString) },
+                name: labelList(
+                  (source) => source.label as LocalizedValue | undefined,
+                ),
+              }
+            : {
+                id: { type: GraphQLString },
+                ...Object.fromEntries(
+                  outputFields(nested).map((nestedField) => [
+                    nestedField.name,
+                    outputFieldConfig(nestedField),
+                  ]),
+                ),
+              },
+      }),
+    );
+    if (nested === undefined) {
+      return;
+    }
+    // A nested reference type’s own surfaced references are types too; register
+    // them now, so every type exists before the thunks above are called.
+    for (const nestedField of outputFields(nested)) {
+      registerReferenceType(nestedField, nested);
+    }
+  }
+
   for (const searchType of schema.values()) {
     for (const field of outputFields(searchType)) {
-      if (
-        field.kind !== 'reference' ||
-        field.ref === undefined ||
-        referenceTypes.has(field.ref.typeName)
-      ) {
-        continue;
-      }
-      const { typeName } = field.ref;
-      const graphQLName = rootTypeNames.has(typeName)
-        ? `${typeName}Reference`
-        : typeName;
-      if (takenTypeNames.has(graphQLName)) {
-        throw new Error(
-          `Reference type “${typeName}” (field “${field.name}” of “${searchType.name}”) would be served as “${graphQLName}”, which collides with another type name; rename one.`,
-        );
-      }
-      takenTypeNames.add(graphQLName);
-      referenceTypes.set(
-        typeName,
-        new GraphQLObjectType({
-          name: graphQLName,
-          fields: {
-            id: { type: new GraphQLNonNull(GraphQLString) },
-            name: labelList(
-              (source) => source.label as LocalizedValue | undefined,
-            ),
-          },
-        }),
-      );
+      registerReferenceType(field, searchType);
     }
   }
 
