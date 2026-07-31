@@ -54,7 +54,7 @@
     "tslib": "^2.3.0",
     "typescript": "~6.0.3",
     "typescript-eslint": "8.65.0",
-    "verdaccio": "6.7.4",
+    "verdaccio": "6.9.0",
     "vite": "8.0.9",
     "vitepress": "^1.6.4",
     "vitepress-plugin-mermaid": "^2.0.17",
