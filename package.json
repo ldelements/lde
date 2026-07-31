@@ -37,7 +37,7 @@
     "@swc/helpers": "0.5.23",
     "@testcontainers/postgresql": "^12.0.4",
     "@types/negotiator": "^0.6.4",
-    "@types/node": "^26.1.1",
+    "@types/node": "^26.1.2",
     "@vitest/coverage-v8": "4.1.0",
     "@vitest/ui": "4.1.0",
     "eslint": "^9.39.2",
