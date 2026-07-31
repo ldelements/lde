@@ -24,8 +24,17 @@ import {
   type TextField,
 } from './schema.js';
 
+/**
+ * A projected node: the fields of one {@link SearchType}, flat. A root always
+ * carries the `id` that keys it – it is a {@link SearchDocument} – but an inline
+ * referent carries one only when the referent is a named node: a nested document
+ * is not a document key, so nesting needs the referent’s fields, not its
+ * identity.
+ */
+export type ProjectedNode = Record<string, unknown>;
+
 /** A flat search document. `id` is the engine document key. */
-export type SearchDocument = { id: string } & Record<string, unknown>;
+export type SearchDocument = { id: string } & ProjectedNode;
 
 /**
  * Project one framed JSON-LD node into a flat search document: apply each field
@@ -46,7 +55,14 @@ export function projectDocument(
   searchType: SearchType,
   schema?: SearchSchema,
 ): SearchDocument {
-  const document = projectFields(node, searchType, schema);
+  if (documentKey(node) === undefined) {
+    throw new Error(
+      `Cannot project a “${searchType.name}” node without an @id (a blank node label is not one): every search document needs a stable key, and an empty one would collide with other keyless nodes.`,
+    );
+  }
+  // The guard above is what makes this a SearchDocument: projectFields sets `id`
+  // for exactly the nodes documentKey resolves.
+  const document = projectFields(node, searchType, schema) as SearchDocument;
   pruneInternalFields(document, searchType, schema);
   return document;
 }
@@ -62,7 +78,7 @@ export function projectDocument(
  * true at every depth of the reference graph, not just at the root.
  */
 function pruneInternalFields(
-  document: SearchDocument,
+  document: ProjectedNode,
   searchType: SearchType,
   schema: SearchSchema | undefined,
 ): void {
@@ -71,7 +87,7 @@ function pruneInternalFields(
       delete document[field.name];
       continue;
     }
-    // A surfaced inline reference nests its referent(s) as SearchDocument(s);
+    // A surfaced inline reference nests its referent(s) as projected node(s);
     // prune those too, by their reference type.
     if (schema === undefined || field.kind !== 'reference') {
       continue;
@@ -86,7 +102,7 @@ function pruneInternalFields(
       continue;
     }
     for (const referent of Array.isArray(nested) ? nested : [nested]) {
-      pruneInternalFields(referent as SearchDocument, referenceType, schema);
+      pruneInternalFields(referent as ProjectedNode, referenceType, schema);
     }
   }
 }
@@ -100,18 +116,25 @@ function projectFields(
   node: FramedNode,
   searchType: SearchType,
   schema: SearchSchema | undefined,
-): SearchDocument {
-  const id = node['@id'];
-  if (typeof id !== 'string') {
-    throw new Error(
-      `Cannot project a “${searchType.name}” node without an @id: every search document needs a stable key, and an empty one would collide with other keyless nodes.`,
-    );
-  }
-  const document: SearchDocument = { id };
+): ProjectedNode {
+  const id = documentKey(node);
+  const document: ProjectedNode = id === undefined ? {} : { id };
   for (const field of searchType.fields) {
     applyField(document, node, field, searchType, schema);
   }
   return document;
+}
+
+/**
+ * The document key a framed node carries, if any. A blank node label (`_:b0`) is
+ * not one: framing mints it per call, so it recurs across documents and can
+ * change when unrelated triples do. A node bearing one is therefore projected as
+ * if framing had pruned its `@id` – which it does whenever the label occurs only
+ * once in the framing results.
+ */
+function documentKey(node: FramedNode): string | undefined {
+  const id = node['@id'];
+  return typeof id === 'string' && !id.startsWith('_:') ? id : undefined;
 }
 
 /**
@@ -146,7 +169,7 @@ export async function* projectRoots(
 }
 
 function applyField(
-  document: SearchDocument,
+  document: ProjectedNode,
   node: FramedNode,
   field: SearchField,
   searchType: SearchType,
@@ -229,7 +252,7 @@ function applyField(
  * languages emit nothing.
  */
 function applyText(
-  document: SearchDocument,
+  document: ProjectedNode,
   values: readonly LangValue[],
   field: TextField,
 ): void {
@@ -281,7 +304,7 @@ function foldedSearchValue(values: readonly string[]): string {
  * already-read raw values).
  */
 function applyFacet(
-  document: SearchDocument,
+  document: ProjectedNode,
   raw: readonly string[],
   field: KeywordField | ReferenceField,
 ): void {
@@ -301,7 +324,10 @@ function applyFacet(
  * {@link irAlias IR Alias} are each projected through the reference’s
  * {@link ReferenceType} (whose own fields read their own aliases, minted against
  * the reference type) and attached under the field’s name – a nested
- * {@link SearchDocument} for a single reference, an array for an `array` one.
+ * {@link ProjectedNode} for a single reference, an array for an `array` one.
+ * A referent needs **no identity**: nesting carries its fields, not a document
+ * key, so a blank-node referent – whose `@id` JSON-LD 1.1 framing prunes when its
+ * label occurs once – nests exactly like a named one, minus the `id`.
  * The referent is projected in full – internal fields included – so the
  * declaring type’s (or the reference type’s own) derives can read them;
  * {@link pruneInternalFields} then removes the internal fields from a *surfaced*
@@ -311,7 +337,7 @@ function applyFacet(
  * {@link searchSchema}.
  */
 function applyInlineReference(
-  document: SearchDocument,
+  document: ProjectedNode,
   node: FramedNode,
   alias: string,
   field: ReferenceField & { readonly ref: { readonly typeName: string } },
@@ -326,8 +352,13 @@ function applyInlineReference(
   }
   const referents = valuesOf(node, alias)
     .filter(isObject)
-    .filter((referent) => typeof referent['@id'] === 'string')
-    .map((referent) => projectFields(referent, referenceType, schema));
+    .map((referent) => projectFields(referent, referenceType, schema))
+    // Fields, not identity, are what makes something a referent: a literal
+    // value object under the alias (dirty source data), or a node this
+    // reference type reads nothing from, projects nothing and is no referent.
+    // Nesting it would hand the writer a content-free document – and, for a
+    // single-valued reference, let it win the slot over a real referent.
+    .filter((referent) => Object.keys(referent).length > 0);
   if (referents.length === 0) {
     return;
   }
@@ -428,7 +459,7 @@ function toNumber(literal: string | undefined): number | undefined {
 }
 
 function setNumber(
-  document: SearchDocument,
+  document: ProjectedNode,
   field: string,
   value: number | undefined,
 ): void {
@@ -442,7 +473,7 @@ function dedupe(values: readonly string[]): string[] {
 }
 
 function setString(
-  document: SearchDocument,
+  document: ProjectedNode,
   field: string,
   value: string | undefined,
 ): void {
@@ -452,7 +483,7 @@ function setString(
 }
 
 function setArray(
-  document: SearchDocument,
+  document: ProjectedNode,
   field: string,
   values: readonly string[],
 ): void {

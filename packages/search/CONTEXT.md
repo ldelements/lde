@@ -115,6 +115,15 @@ apart only by Roles:
   nested reaches the engine or the API.
 - _API device_ (`output`): deliberately surface a nested Reference Type.
 
+A referent needs **no identity**: nesting carries the referent’s fields, not a
+document key. A blank-node referent nests exactly like a named one, minus the
+`id` – so a profile that allows a blank node (a SCHEMA-AP-NDE `MediaObject`, say)
+needs no flattening workaround. A blank node label (`_:b0`) is never that `id`:
+framing mints it per call, so it recurs across documents and changes when
+unrelated triples do. Only a Root, which _is_ keyed, requires an IRI. Fields are
+what make a referent: a value projecting none (a literal under the reference’s
+alias) nests nothing.
+
 RDF depth and API shape are therefore independent: inline as deep as the source
 demands, expose exactly the flat fields you want
 ([ADR 11](../../docs/decisions/0011-decouple-rdf-depth-from-the-api-surface.md)).
