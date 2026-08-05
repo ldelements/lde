@@ -10,7 +10,11 @@ import {
 } from '@lde/pipeline';
 import type { RootType, SearchDocument, SearchSchema } from '@lde/search';
 import { searchIndexWriter } from './search-index-writer.js';
-import { searchStages, selectByClass } from './search-stages.js';
+import {
+  registrySource,
+  searchStages,
+  selectByClass,
+} from './search-stages.js';
 import type { TypedSearchDocument } from './typed-search-document.js';
 
 /** Options for {@link searchIndexerPipeline}. */
@@ -49,6 +53,25 @@ export interface SearchIndexerPipelineOptions {
     searchType: RootType,
     schema: SearchSchema,
   ) => Writer<SearchDocument>;
+  /**
+   * Root types whose triples come from the **dataset registry** rather than
+   * from each dataset’s own distribution – typically the dataset description
+   * itself and what hangs off it, which live in the register because
+   * registering a dataset is submitting a description
+   * ({@link registrySource}).
+   *
+   * Routing is deployment topology, so it is configured here and not declared
+   * on the {@link SearchType}: a type is defined by its `class`, not by where
+   * its triples come from. Name the types by their `name`; an unknown name
+   * throws here, at wiring time, rather than yielding an empty collection at
+   * run time.
+   */
+  registryTypes?: {
+    /** The registry’s SPARQL endpoint – where these types read. */
+    endpoint: URL;
+    /** {@link SearchType.name}s of the root types to source from it. */
+    names: readonly string[];
+  };
   /**
    * Optional per-dataset processing memory: skip a dataset whose source
    * fingerprint and {@link pipelineVersion} both match the stored record.
@@ -105,6 +128,7 @@ export function searchIndexerPipeline(
   options: SearchIndexerPipelineOptions,
 ): Pipeline<TypedSearchDocument> {
   const { schema, datasets } = options;
+  const fromRegistry = registryTypeNames(options);
   return new Pipeline<TypedSearchDocument>({
     datasetSelector: Array.isArray(datasets)
       ? new ManualDatasetSelection(datasets)
@@ -116,6 +140,9 @@ export function searchIndexerPipeline(
         searchType,
         rootVariable: 'root',
         itemSelector: selectByClass(searchType),
+        sourceFor: fromRegistry.has(searchType.name)
+          ? registrySource(options.registryTypes!.endpoint)
+          : undefined,
       })),
     }),
     writers: searchIndexWriter({ schema, writerFor: options.writerFor }),
@@ -123,4 +150,30 @@ export function searchIndexerPipeline(
     pipelineVersion: options.pipelineVersion,
     reporter: options.reporter,
   });
+}
+
+/**
+ * The declared registry-sourced type names, validated against the schema. An
+ * unrecognised name is a configuration mistake that would otherwise be silent –
+ * the type would read the dataset’s distribution, find no dataset description
+ * there, and ship an empty collection – so it throws at wiring time.
+ */
+function registryTypeNames(
+  options: SearchIndexerPipelineOptions,
+): ReadonlySet<string> {
+  const names = new Set(options.registryTypes?.names ?? []);
+  const declared = new Set(
+    [...options.schema.values()].map((searchType) => searchType.name),
+  );
+  const unknown = [...names].filter((name) => !declared.has(name));
+  if (unknown.length > 0) {
+    throw new Error(
+      `Unknown registry root type(s) ${unknown
+        .map((name) => `“${name}”`)
+        .join(', ')}; the schema declares ${[...declared]
+        .map((name) => `“${name}”`)
+        .join(', ')}.`,
+    );
+  }
+  return names;
 }

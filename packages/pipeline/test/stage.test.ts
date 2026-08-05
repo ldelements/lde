@@ -650,19 +650,15 @@ describe('Stage', () => {
     ): Validator {
       const violations = options.violations ?? (options.conforms ? 0 : 1);
       return {
-        validate: vi.fn(
-          async (): Promise<ValidationResult> => ({
-            conforms: options.conforms,
-            violations,
-          }),
-        ),
-        report: vi.fn(
-          async (): Promise<ValidationReport> => ({
-            conforms: options.conforms,
-            violations,
-            quadsValidated: 0,
-          }),
-        ),
+        validate: vi.fn(async (): Promise<ValidationResult> => ({
+          conforms: options.conforms,
+          violations,
+        })),
+        report: vi.fn(async (): Promise<ValidationReport> => ({
+          conforms: options.conforms,
+          violations,
+          quadsValidated: 0,
+        })),
       };
     }
 
@@ -794,13 +790,11 @@ describe('Stage', () => {
           writeOrder.push('validate');
           return { conforms: true, violations: 0 };
         }),
-        report: vi.fn(
-          async (): Promise<ValidationReport> => ({
-            conforms: true,
-            violations: 0,
-            quadsValidated: 2,
-          }),
-        ),
+        report: vi.fn(async (): Promise<ValidationReport> => ({
+          conforms: true,
+          violations: 0,
+          quadsValidated: 2,
+        })),
       };
 
       const writer: DatasetWriter = {
@@ -834,13 +828,11 @@ describe('Stage', () => {
           writeOrder.push('validate');
           return { conforms: false, violations: 1 };
         }),
-        report: vi.fn(
-          async (): Promise<ValidationReport> => ({
-            conforms: false,
-            violations: 1,
-            quadsValidated: 1,
-          }),
-        ),
+        report: vi.fn(async (): Promise<ValidationReport> => ({
+          conforms: false,
+          violations: 1,
+          quadsValidated: 1,
+        })),
       };
 
       const writer: DatasetWriter = {
@@ -1222,6 +1214,83 @@ describe('Stage', () => {
             stages: [child],
           }),
       ).toThrow(/cannot combine with chained 'stages'/);
+    });
+  });
+
+  describe('sourceFor', () => {
+    /** The registry-sourced shape: a fixed endpoint, scoped to the graph the
+     *  dataset in hand names. */
+    function registrySource(dataset: Dataset): Distribution {
+      const source = Distribution.sparql(
+        new URL('http://registry.example.org/sparql'),
+      );
+      source.namedGraph = dataset.iri.toString();
+      return source;
+    }
+
+    it('hands readers the substituted distribution', async () => {
+      const reader = capturingExecutor([q1]);
+      const stage = new Stage({
+        name: 'registry',
+        readers: reader,
+        sourceFor: registrySource,
+      });
+
+      await stage.run(dataset, distribution, collectingWriter());
+
+      const source = reader.read.mock.calls[0][1] as Distribution;
+      expect(source.accessUrl.toString()).toBe(
+        'http://registry.example.org/sparql',
+      );
+      expect(source.namedGraph).toBe('http://example.org/dataset');
+    });
+
+    it('hands the item selector the same substituted distribution', async () => {
+      // Selection and extraction must agree on the source: roots selected from
+      // one endpoint and quads read from another join on nothing.
+      const seen: Distribution[] = [];
+      const selector: ItemSelector = {
+        async *select(distribution) {
+          seen.push(distribution);
+          yield { s: namedNode('http://example.org/s1') };
+        },
+      };
+      const reader = capturingExecutor([q1]);
+      const stage = new Stage({
+        name: 'registry',
+        readers: reader,
+        itemSelector: selector,
+        sourceFor: registrySource,
+      });
+
+      await stage.run(dataset, distribution, collectingWriter());
+
+      expect(seen[0]).toBe(reader.read.mock.calls[0][1]);
+      expect(seen[0].accessUrl.toString()).toBe(
+        'http://registry.example.org/sparql',
+      );
+    });
+
+    it('receives the resolved distribution, so it can defer to it', async () => {
+      const reader = capturingExecutor([q1]);
+      const stage = new Stage({
+        name: 'passthrough',
+        readers: reader,
+        sourceFor: (_dataset, resolved) => resolved,
+      });
+
+      await stage.run(dataset, distribution, collectingWriter());
+
+      expect(reader.read.mock.calls[0][1]).toBe(distribution);
+    });
+
+    it('reads the dataset’s own distribution when omitted', async () => {
+      const reader = capturingExecutor([q1]);
+      const stage = new Stage({ name: 'plain', readers: reader });
+
+      await stage.run(dataset, distribution, collectingWriter());
+
+      expect(reader.read.mock.calls[0][1]).toBe(distribution);
     });
   });
 });

@@ -13,7 +13,11 @@ import {
 } from '@lde/pipeline';
 import { projectRoots, searchSchema, type RootType } from '@lde/search';
 import { irAlias } from '@lde/search/adapter';
-import { searchStages, selectByClass } from '../src/search-stages.js';
+import {
+  registrySource,
+  searchStages,
+  selectByClass,
+} from '../src/search-stages.js';
 import type { TypedSearchDocument } from '../src/typed-search-document.js';
 
 const { namedNode, literal, quad } = DataFactory;
@@ -231,6 +235,123 @@ describe('selectByClass', () => {
     }
 
     expect(query.replace(/\s+/g, '')).toMatch(/isblank\(\?root\)/i);
+  });
+});
+
+describe('registrySource', () => {
+  const REGISTRY = new URL('http://registry.example.org/sparql');
+
+  it('reads the registry endpoint, scoped to the dataset’s own graph', () => {
+    const source = registrySource(REGISTRY)(dataset, distribution);
+
+    expect(source.accessUrl.toString()).toBe(REGISTRY.toString());
+    // The register names each registration’s graph after the dataset IRI, so
+    // scoping to it is what keeps a per-dataset pass from indexing the whole
+    // catalogue.
+    expect(source.namedGraph).toBe('http://example.org/dataset/1');
+    expect(source.isSparql()).toBe(true);
+  });
+
+  it('scopes per dataset, not per pipeline', () => {
+    const sourceFor = registrySource(REGISTRY);
+    const other = new Dataset({
+      iri: new URL('http://example.org/dataset/2'),
+      distributions: [],
+    });
+
+    expect(sourceFor(dataset, distribution).namedGraph).toBe(
+      'http://example.org/dataset/1',
+    );
+    expect(sourceFor(other, distribution).namedGraph).toBe(
+      'http://example.org/dataset/2',
+    );
+  });
+
+  it('routes a type’s selector and readers alike', async () => {
+    // Selection and extraction must meet the same source: roots selected from
+    // the registry and quads read from the dataset’s distribution would join on
+    // nothing.
+    const seen: Distribution[] = [];
+    const selector: ItemSelector = {
+      select: async function* (
+        source: Distribution,
+      ): AsyncIterable<VariableBindings> {
+        seen.push(source);
+        yield { root: namedNode('https://ex/p/1') };
+      },
+    };
+    const reader: Reader = {
+      read: (_dataset, source, options) => {
+        seen.push(source);
+        const quads = (options?.bindings ?? []).map((binding) =>
+          quad(
+            namedNode(binding.root.value),
+            namedNode(NAME_ALIAS),
+            literal('Name'),
+          ),
+        );
+        return Promise.resolve(stream(quads));
+      },
+    };
+    const [stage] = searchStages({
+      schema,
+      types: [
+        {
+          searchType: person,
+          rootVariable: 'root',
+          itemSelector: selector,
+          readers: reader,
+          sourceFor: registrySource(REGISTRY),
+        },
+      ],
+    });
+
+    const received: TypedSearchDocument[] = [];
+    await stage.run(dataset, distribution, {
+      write: async (_dataset, items) => {
+        for await (const item of items) {
+          received.push(item);
+        }
+      },
+    });
+
+    expect(seen).toHaveLength(2);
+    expect(seen[0]).toBe(seen[1]);
+    expect(seen[0].accessUrl.toString()).toBe(REGISTRY.toString());
+    expect(received.map((item) => item.document)).toEqual([
+      { id: 'https://ex/p/1', name: 'Name' },
+    ]);
+  });
+
+  it('leaves an unrouted type on the dataset’s own distribution', async () => {
+    const seen: Distribution[] = [];
+    const reader: Reader = {
+      read: (_dataset, source) => {
+        seen.push(source);
+        return Promise.resolve(stream<Quad>([]));
+      },
+    };
+    const [stage] = searchStages({
+      schema,
+      types: [
+        {
+          searchType: person,
+          rootVariable: 'root',
+          itemSelector: rootsSelector(['https://ex/p/1']),
+          readers: reader,
+        },
+      ],
+    });
+
+    await stage.run(dataset, distribution, {
+      write: async (_dataset, items) => {
+        for await (const item of items) {
+          void item;
+        }
+      },
+    });
+
+    expect(seen[0]).toBe(distribution);
   });
 });
 

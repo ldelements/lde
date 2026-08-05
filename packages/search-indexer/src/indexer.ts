@@ -40,6 +40,13 @@ export async function createSearchIndexer(
     datasets: datasetSelectorFrom(config),
     distributionResolver: distributionResolverFrom(config),
     writerFor: writerFactoryFrom(client, config),
+    registryTypes:
+      config.registryRootTypes.length > 0
+        ? {
+            endpoint: config.registryEndpoint,
+            names: config.registryRootTypes,
+          }
+        : undefined,
     provenanceStore: config.provenance
       ? new FileProvenanceStore({ path: config.provenance.path })
       : undefined,

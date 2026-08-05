@@ -1,8 +1,10 @@
+import { Distribution } from '@lde/dataset';
 import {
   SparqlConstructReader,
   SparqlItemSelector,
   Stage,
   type ItemSelector,
+  type StageOptions,
   type StageReaders,
 } from '@lde/pipeline';
 import { projectRoots, type RootType, type SearchSchema } from '@lde/search';
@@ -42,6 +44,13 @@ export interface SearchStageType {
    * readers, or attach transforms.
    */
   readers?: StageReaders;
+  /**
+   * Where this type’s stage reads, when that is not the dataset’s own
+   * distribution – see {@link StageOptions.sourceFor}. {@link registrySource}
+   * builds the one that matters here: a root type described by the **dataset
+   * registry** rather than by the dataset’s data.
+   */
+  sourceFor?: StageOptions<TypedSearchDocument>['sourceFor'];
   /**
    * Roots (and so documents) per batch – the memory bound. Under a root-bound
    * selector it moves memory and request count, never output.
@@ -112,6 +121,7 @@ export function searchStages(
       name: searchType.name,
       readers,
       itemSelector: type.itemSelector,
+      sourceFor: type.sourceFor,
       batchSize: type.batchSize,
       maxConcurrency: type.maxConcurrency,
       queueCapacity: type.queueCapacity,
@@ -169,4 +179,49 @@ export function selectByClass(
   return new SparqlItemSelector({
     query: `SELECT ?${rootVariable} WHERE { ?${rootVariable} a <${searchType.class}> FILTER(!isBlank(?${rootVariable})) }`,
   });
+}
+
+/**
+ * A {@link SearchStageType.sourceFor} that reads a root type from the **dataset
+ * registry** instead of from the dataset’s own data – the endpoint fixed,
+ * scoped to the graph the dataset in hand names.
+ *
+ * A dataset’s description is governed by a different application profile from
+ * the objects it contains, and it lives in the register, not in the
+ * distribution: registering a dataset *is* submitting a description, so the
+ * register is the one source that covers every dataset a pipeline can select.
+ * Nothing obliges a publisher to ship a description of the dataset in its own
+ * dump.
+ *
+ * The graph scoping is what keeps the stage per-dataset. A register holds every
+ * registration, so an unscoped stage would index the whole catalogue for each
+ * dataset processed; scoped, each pass sees exactly the one registration – and
+ * the roots a `selectByClass` finds inside that graph are that dataset’s own.
+ * It presumes the register names each registration’s graph after the dataset
+ * IRI, which is how a DCAT register that crawls per registration stores it (the
+ * NDE Dataset Register does so for every registration it holds).
+ *
+ * Routing is deployment topology, deliberately kept out of the
+ * {@link SearchType}: a type is defined by its `class`, not by where its
+ * triples come from, so the same declaration serves a deployment that sources
+ * it differently.
+ *
+ * ```ts
+ * searchStages({
+ *   schema,
+ *   types: [...schema.values()].map((searchType) => ({
+ *     searchType,
+ *     rootVariable: 'root',
+ *     itemSelector: selectByClass(searchType),
+ *     sourceFor: registryTypeNames.has(searchType.name)
+ *       ? registrySource(registryEndpoint)
+ *       : undefined,
+ *   })),
+ * });
+ * ```
+ */
+export function registrySource(
+  endpoint: URL,
+): NonNullable<SearchStageType['sourceFor']> {
+  return (dataset) => Distribution.sparql(endpoint, dataset.iri.toString());
 }

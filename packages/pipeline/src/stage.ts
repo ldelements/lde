@@ -76,9 +76,7 @@ export interface AttachedReader {
 
 /** One or more readers, each optionally carrying attached transforms. */
 export type StageReaders =
-  | Reader
-  | AttachedReader
-  | (Reader | AttachedReader)[];
+  Reader | AttachedReader | (Reader | AttachedReader)[];
 
 /** A reader paired with its attached transforms, normalised to an array. */
 interface NormalizedReader {
@@ -126,6 +124,31 @@ export interface StageOptions<Out = Quad> {
    * @default 10
    */
   maxConcurrency?: number;
+  /**
+   * Where this stage reads, when that is **not** the dataset’s own
+   * distribution: given the dataset and the distribution the pipeline resolved
+   * for it, return the {@link Distribution} this stage should use instead.
+   *
+   * One hook covers the whole stage – the item selector and every reader are
+   * handed the same substitute – because a stage that reads elsewhere must
+   * *select* there too, or its roots and its quads come from different sources.
+   *
+   * The dataset is passed so the substitute can be derived per dataset. The
+   * motivating case is a stage sourced from the dataset registry rather than
+   * from the dataset’s data: the registry endpoint is fixed, but the graph to
+   * scope to is the dataset in hand.
+   *
+   * ```ts
+   * sourceFor: (dataset) => {
+   *   const source = new Distribution(registryEndpoint, SPARQL_MEDIA_TYPE);
+   *   source.namedGraph = dataset.iri.toString();
+   *   return source;
+   * }
+   * ```
+   *
+   * Omit it – the default – to read the dataset’s own distribution.
+   */
+  sourceFor?: (dataset: Dataset, distribution: Distribution) => Distribution;
   /** Child stages that chain off this stage's output. */
   stages?: Stage[];
   /**
@@ -182,6 +205,7 @@ export class Stage<Out = Quad> {
   private readonly validation?: StageOptions<Out>['validation'];
   private readonly project?: BatchTransform<Out>;
   private readonly queueCapacity?: number;
+  private readonly sourceFor?: StageOptions<Out>['sourceFor'];
 
   constructor(options: StageOptions<Out>) {
     if (options.project && !options.itemSelector) {
@@ -204,6 +228,7 @@ export class Stage<Out = Quad> {
     this.expectsOutput = options.expectsOutput ?? false;
     this.project = options.project;
     this.queueCapacity = options.queueCapacity;
+    this.sourceFor = options.sourceFor;
   }
 
   /** The validator for this stage, if configured. */
@@ -213,11 +238,16 @@ export class Stage<Out = Quad> {
 
   async run(
     dataset: Dataset,
-    distribution: Distribution,
+    resolved: Distribution,
     writer: DatasetWriter<Out>,
     options?: RunOptions,
   ): Promise<NotSupported | void> {
     const timeout = options?.timeout;
+    // Substituted once, before anything reads: the selector and the readers
+    // must agree on where this stage's data comes from.
+    const distribution = this.sourceFor
+      ? this.sourceFor(dataset, resolved)
+      : resolved;
     if (this.itemSelector) {
       return this.runWithSelector(
         this.itemSelector.select(distribution, this.batchSize, {
