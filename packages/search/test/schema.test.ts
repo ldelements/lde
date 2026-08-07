@@ -569,6 +569,22 @@ describe('validateSearchType', () => {
     ]);
   });
 
+  it('rejects a projection value carried by an inline reference', () => {
+    // An inline reference is stored as a nested object; a projection value is a
+    // bare IRI. Declared together, every document import would fail.
+    expect(
+      validateSearchType(
+        typeWith({
+          name: 'dataset',
+          kind: 'reference',
+          from: 'dataset',
+          output: true,
+          ref: { typeName: 'Dataset', strategy: 'inline' },
+        }),
+      ),
+    ).toEqual([{ field: 'dataset', reason: 'from-with-inline-ref' }]);
+  });
+
   it('rejects two fields over the same projection value', () => {
     expect(
       validateSearchType(

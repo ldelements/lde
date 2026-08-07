@@ -746,6 +746,7 @@ export interface SearchTypeIssue {
     | 'from-not-allowed'
     | 'from-with-path'
     | 'from-with-derive'
+    | 'from-with-inline-ref'
     | 'unknown-projection-value'
     | 'duplicate-projection-value'
     | 'text-not-filterable'
@@ -829,9 +830,10 @@ const LOCALE_PATTERN = /^[A-Za-z0-9]+(-[A-Za-z0-9]+)*$/;
  *   computed, never both);
  * - `from` names a known {@link ProjectionValue}, sits on a `keyword`/`reference`
  *   field, excludes `path` and `derive` (the three are the value sources, and a
- *   field has exactly one), and no two fields declare the same projection value
- *   – which would leave a consumer reading the dataset off a declaration no
- *   rule picks between.
+ *   field has exactly one), is not an `inline` reference (a projection value is
+ *   a bare IRI, with no referent to carry fields from), and no two fields
+ *   declare the same projection value – which would leave a consumer reading
+ *   the dataset off a declaration no rule picks between.
  *
  * Pure and total: returns every issue rather than throwing;
  * {@link assertValidSearchType} is the throwing entry point.
@@ -946,6 +948,14 @@ export function validateSearchType(
       }
       if (field.derive !== undefined) {
         issue('from-with-derive');
+      }
+      // An inline reference carries a referent’s projected fields, and the
+      // collection definition declares it as a nested object. A projection
+      // value has no referent – it is a bare IRI – so the two together would
+      // declare an object field the projection fills with a string, and every
+      // document import would fail.
+      if (field.ref?.strategy === 'inline') {
+        issue('from-with-inline-ref');
       }
     }
   }
@@ -1138,8 +1148,9 @@ export function referenceFields(
 /**
  * The field a type declares over the dataset being indexed
  * ({@link ProjectionValue `from: 'dataset'`}), if it declares one.
- * {@link validateSearchType} allows at most one, so this is a total answer, not
- * a first match.
+ * {@link validateSearchType} rejects a second field over the same projection
+ * value, so for any type that reached a {@link SearchSchema} this is the only
+ * such field rather than the first of several.
  *
  * The single lookup every consumer of the declaration shares – the projection
  * that populates it, and the engine writer that keeps its provenance
