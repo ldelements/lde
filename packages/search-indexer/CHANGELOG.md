@@ -1,3 +1,11 @@
+## 0.6.0 (2026-08-07)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.21.0
+- Updated @lde/search-pipeline to 0.18.0
+- Updated @lde/search to 0.18.0
+
 ## 0.5.0 (2026-08-07)
 
 ### 🧱 Updated Dependencies

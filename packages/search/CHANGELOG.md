@@ -1,3 +1,39 @@
+## 0.18.0 (2026-08-07)
+
+### 🚀 Features
+
+- ⚠️  **search:** filter across several fields with one where clause ([#711](https://github.com/ldelements/lde/pull/711))
+
+### ⚠️  Breaking Changes
+
+- **search:** filter across several fields with one where clause  ([#711](https://github.com/ldelements/lde/pull/711))
+  SearchQuery.where clauses are { or: [Criterion] } rather than
+  a field plus an operator; filterOn builds the single-field case. A SearchType
+  declaring a field named and or or no longer validates."
+  M	docs/decisions/0003-search-api-core-query-model.md
+  A	docs/decisions/0018-filter-across-several-fields-with-one-clause.md
+  M	docs/reference/search-api-graphql.md
+  M	docs/reference/search.md
+  M	packages/search-api-graphql/package.json
+  M	packages/search-api-graphql/src/build-schema.ts
+  M	packages/search-api-graphql/src/facet-batch.ts
+  M	packages/search-api-graphql/test/__snapshots__/generator-stability.test.ts.snap
+  M	packages/search-api-graphql/test/build-schema.test.ts
+  M	packages/search-api-graphql/test/facet-batch.test.ts
+  M	packages/search-api-graphql/vite.config.ts
+  M	packages/search-typesense/src/query-compiler.ts
+  M	packages/search-typesense/test/parse-response.test.ts
+  M	packages/search-typesense/test/query-compiler.test.ts
+  M	packages/search-typesense/test/search-engine.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/src/adapter.ts
+  M	packages/search/src/index.ts
+  M	packages/search/src/query.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/src/testing.ts
+  M	packages/search/test/query.test.ts
+  M	packages/search/test/schema.test.ts
+
 ## 0.17.0 (2026-08-07)
 
 ### 🚀 Features
