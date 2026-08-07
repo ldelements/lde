@@ -127,8 +127,12 @@ export interface SearchIndexerPipelineOptions {
 export function searchIndexerPipeline(
   options: SearchIndexerPipelineOptions,
 ): Pipeline<TypedSearchDocument> {
-  const { schema, datasets } = options;
-  const fromRegistry = registryTypeNames(options);
+  const { schema, datasets, registryTypes } = options;
+  const fromRegistry = registryTypeNames(schema, registryTypes?.names);
+  const sourceFor =
+    registryTypes === undefined
+      ? undefined
+      : registrySource(registryTypes.endpoint);
   return new Pipeline<TypedSearchDocument>({
     datasetSelector: Array.isArray(datasets)
       ? new ManualDatasetSelection(datasets)
@@ -140,9 +144,7 @@ export function searchIndexerPipeline(
         searchType,
         rootVariable: 'root',
         itemSelector: selectByClass(searchType),
-        sourceFor: fromRegistry.has(searchType.name)
-          ? registrySource(options.registryTypes!.endpoint)
-          : undefined,
+        sourceFor: fromRegistry.has(searchType.name) ? sourceFor : undefined,
       })),
     }),
     writers: searchIndexWriter({ schema, writerFor: options.writerFor }),
@@ -159,11 +161,12 @@ export function searchIndexerPipeline(
  * there, and ship an empty collection – so it throws at wiring time.
  */
 function registryTypeNames(
-  options: SearchIndexerPipelineOptions,
+  schema: SearchSchema,
+  declaredNames: readonly string[] | undefined,
 ): ReadonlySet<string> {
-  const names = new Set(options.registryTypes?.names ?? []);
+  const names = new Set(declaredNames ?? []);
   const declared = new Set(
-    [...options.schema.values()].map((searchType) => searchType.name),
+    [...schema.values()].map((searchType) => searchType.name),
   );
   const unknown = [...names].filter((name) => !declared.has(name));
   if (unknown.length > 0) {

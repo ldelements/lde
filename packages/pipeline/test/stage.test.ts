@@ -1284,6 +1284,51 @@ describe('Stage', () => {
       expect(reader.read.mock.calls[0][1]).toBe(distribution);
     });
 
+    it('rejects a chained child that sources its own data', () => {
+      // A child reads its parent’s output as its distribution, so a sourceFor
+      // would substitute the chain away – a chain that mysteriously produces
+      // nothing, if it were only caught at run time.
+      const child = new Stage({
+        name: 'child',
+        readers: mockExecutor([]),
+        sourceFor: registrySource,
+      });
+      expect(
+        () =>
+          new Stage({
+            name: 'parent',
+            readers: mockExecutor([q1]),
+            stages: [child],
+          }),
+      ).toThrow(/chained stage 'child' declares 'sourceFor'/);
+    });
+
+    it('allows a chaining parent to source its own data', () => {
+      const child = new Stage({ name: 'child', readers: mockExecutor([]) });
+      expect(
+        () =>
+          new Stage({
+            name: 'parent',
+            readers: mockExecutor([q1]),
+            sourceFor: registrySource,
+            stages: [child],
+          }),
+      ).not.toThrow();
+    });
+
+    it('reports whether a stage sources its own data', () => {
+      expect(
+        new Stage({ name: 'plain', readers: mockExecutor([]) }).sourcesOwnData,
+      ).toBe(false);
+      expect(
+        new Stage({
+          name: 'registry',
+          readers: mockExecutor([]),
+          sourceFor: registrySource,
+        }).sourcesOwnData,
+      ).toBe(true);
+    });
+
     it('reads the dataset’s own distribution when omitted', async () => {
       const reader = capturingExecutor([q1]);
       const stage = new Stage({ name: 'plain', readers: reader });

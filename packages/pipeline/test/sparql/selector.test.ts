@@ -702,6 +702,34 @@ describe('SparqlItemSelector', () => {
       expect(queries[0]).not.toContain('FROM');
     });
 
+    it('keeps the scope on every page, not just the first', async () => {
+      // Pagination rewrites the query per page; were the scope applied to the
+      // page rather than the selection, page 2 onwards would silently widen to
+      // the whole endpoint.
+      const { fetcher, queries } = pagedFetcher([
+        [
+          { uri: namedNode('http://example.com/1') },
+          { uri: namedNode('http://example.com/2') },
+        ],
+        [{ uri: namedNode('http://example.com/3') }],
+      ]);
+      const selector = new SparqlItemSelector({
+        query,
+        fetcher: fetcher as never,
+      });
+
+      for await (const _row of selector.select(
+        scopedTo('http://example.com/graph'),
+        2,
+      )) {
+        // consume
+      }
+
+      expect(queries).toHaveLength(2);
+      expect(queries[1]).toContain('FROM <http://example.com/graph>');
+      expect(queries[1]).toMatch(/OFFSET\s+2/);
+    });
+
     it('scopes each selection independently', async () => {
       // One selector instance serves every dataset, so a per-call scope must
       // not leak into the next call – nor stay behind once a call is unscoped.

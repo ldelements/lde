@@ -147,6 +147,10 @@ export interface StageOptions<Out = Quad> {
    * ```
    *
    * Omit it – the default – to read the dataset’s own distribution.
+   *
+   * A **chained child** stage may not declare one: a child is handed its
+   * parent’s output as its distribution, so substituting a source would discard
+   * the chain it exists to continue. The parent’s constructor rejects that.
    */
   sourceFor?: (dataset: Dataset, distribution: Distribution) => Distribution;
   /** Child stages that chain off this stage's output. */
@@ -198,6 +202,9 @@ export class Stage<Out = Quad> {
   readonly stages: readonly Stage[];
   /** Whether an empty result is treated as a hard failure. @see {@link StageOptions.expectsOutput} */
   readonly expectsOutput: boolean;
+  /** Whether this stage reads a source of its own rather than the dataset’s
+   *  resolved distribution. @see {@link StageOptions.sourceFor} */
+  readonly sourcesOwnData: boolean;
   private readonly readers: NormalizedReader[];
   private readonly itemSelector?: ItemSelector;
   private readonly batchSize: number;
@@ -218,6 +225,16 @@ export class Stage<Out = Quad> {
         `Stage '${options.name}': 'project' cannot combine with chained 'stages' – a chained stage serializes to N-Triples, which a projected item cannot.`,
       );
     }
+    // A child is handed its parent's output as its distribution; a `sourceFor`
+    // would substitute that away, silently reading elsewhere instead of
+    // continuing the chain. Caught here rather than at run time, where it looks
+    // like a chain that mysteriously produced nothing.
+    const sourcedChild = options.stages?.find((child) => child.sourcesOwnData);
+    if (sourcedChild) {
+      throw new Error(
+        `Stage '${options.name}': chained stage '${sourcedChild.name}' declares 'sourceFor' – a chained stage reads its parent's output, so it cannot source its own data.`,
+      );
+    }
     this.name = options.name;
     this.stages = options.stages ?? [];
     this.readers = normalizeReaders(options.readers);
@@ -229,6 +246,7 @@ export class Stage<Out = Quad> {
     this.project = options.project;
     this.queueCapacity = options.queueCapacity;
     this.sourceFor = options.sourceFor;
+    this.sourcesOwnData = options.sourceFor !== undefined;
   }
 
   /** The validator for this stage, if configured. */

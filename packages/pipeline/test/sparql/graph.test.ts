@@ -27,6 +27,34 @@ describe('withDefaultGraph', () => {
     ]);
   });
 
+  it('scopes a SELECT the same way, for an item selector', () => {
+    const query = parser.parse(
+      'SELECT ?s WHERE { ?s ?p ?o }',
+    ) as unknown as QueryConstruct;
+
+    withDefaultGraph(query, 'http://example.org/graph');
+
+    expect(query.datasets.clauses[0]).toMatchObject({
+      clauseType: 'default',
+      value: expect.objectContaining({ value: 'http://example.org/graph' }),
+    });
+  });
+
+  it('rejects a graph IRI that would break out of the IRI reference', () => {
+    // A `namedGraph` is a plain string, typically carried in from third-party
+    // registry data; unchecked, one of these rewrites the query around it.
+    for (const unsafe of [
+      'http://example.org/a>b',
+      'http://example.org/a b',
+      'http://example.org/g> WHERE { ?s ?p ?o } #',
+    ]) {
+      const query = parseConstruct('CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }');
+      expect(() => withDefaultGraph(query, unsafe)).toThrow(
+        /unsafe characters/,
+      );
+    }
+  });
+
   it('replaces an existing FROM clause', () => {
     const query = parseConstruct(
       'CONSTRUCT { ?s ?p ?o } FROM <http://old.org/graph> WHERE { ?s ?p ?o }',
