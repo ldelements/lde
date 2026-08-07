@@ -60,6 +60,9 @@ type BooleanBucket {
   count: Int!
 }
 
+"""
+Sibling keys are combined with AND. Use \`or\` for a disjunction, and \`and\` when a query needs more than one of them.
+"""
 input ThingWhere {
   id: StringFilter
   keyword: StringFilter
@@ -70,6 +73,16 @@ input ThingWhere {
   created: DateRange
   status: StringFilter
   open: Boolean
+
+  """
+  A disjunction: a document matches when ANY of these criteria holds. Combined with the sibling keys by AND, so it widens across fields without widening the query as a whole.
+  """
+  or: [ThingCriterion!]
+
+  """
+  Further groups of conditions, all of which apply. The way to carry a second \`or\` disjunction alongside the first.
+  """
+  and: [ThingWhere!]
 }
 
 input StringFilter {
@@ -89,6 +102,21 @@ input FloatRange {
 input DateRange {
   min: String
   max: String
+}
+
+"""
+A condition on exactly one field. Used inside \`or\`, where the criteria are alternatives.
+"""
+input ThingCriterion @oneOf {
+  id: StringFilter
+  keyword: StringFilter
+  creator: StringFilter
+  publisher: StringFilter
+  size: IntRange
+  score: FloatRange
+  created: DateRange
+  status: StringFilter
+  open: Boolean
 }
 
 input ThingOrderBy {

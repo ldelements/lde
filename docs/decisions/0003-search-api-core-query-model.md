@@ -62,13 +62,7 @@ Typesense-vocabulary types are _derived_ from `kind`, never declared.
 
 ```ts
 type FieldKind =
-  | 'text'
-  | 'keyword'
-  | 'integer'
-  | 'number'
-  | 'boolean'
-  | 'date'
-  | 'reference';
+  'text' | 'keyword' | 'integer' | 'number' | 'boolean' | 'date' | 'reference';
 
 // The public type is a DISCRIMINATED UNION by kind (TextField | KeywordField |
 // ReferenceField | NumericField | BooleanField):
@@ -137,7 +131,7 @@ shared representation in the middle keeps GraphQL and REST from drifting.
 ```ts
 interface SearchQuery {
   readonly text?: string; // undefined/'' = browse
-  readonly where: readonly Filter[]; // AND across fields
+  readonly where: readonly Filter[]; // AND across clauses
   readonly orderBy: readonly Sort[];
   readonly limit: number; // numbered pagination
   readonly offset: number;
@@ -145,13 +139,21 @@ interface SearchQuery {
   readonly locale: string; // from Accept-Language; selects per-locale fields
 }
 
-type Filter =
-  | { readonly field: string; readonly in: readonly string[] } // keyword membership, OR within field
+// One criterion: one field, one operator, fixed by that field's kind.
+type Criterion =
+  | { readonly field: string; readonly in: readonly string[] }
   | {
       readonly field: string;
       readonly range: { min?: number | string; max?: number | string };
     }
   | { readonly field: string; readonly is: boolean };
+
+// A clause is a DISJUNCTION of criteria. An ordinary single-field filter is the
+// one-criterion case, so there is no separate cross-field variant an adapter
+// could overlook. See ADR 18.
+interface Filter {
+  readonly or: readonly Criterion[];
+}
 
 interface Sort {
   readonly field: string;
@@ -193,7 +195,7 @@ maps them to the engine’s native range faceting.
 A coarse category alongside granular values (e.g. `group:rdf` next to media types, `group:person`
 next to class IRIs) is materialized into the field’s own values during projection, so at query
 time a group token is an ordinary value: faceted natively, filtered by plain membership
-(`field.in: ["group:rdf"]` unions with granular values for free), and — where the field is
+(`field.in: ["group:rdf"]` unions with granular values for free), and – where the field is
 `output` – read like any other value. There is no `_group` companion, no `group:`-prefix split,
 no filter rewriting in the adapter; the engine stays dumb and denormalization (the document
 store’s strength) does the work. A cross-source signal that is not a subset of the field (e.g. a

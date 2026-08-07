@@ -1,6 +1,7 @@
 import DataLoader from 'dataloader';
 import type {
   FacetBucket,
+  Filter,
   RootType,
   SearchEngine,
   SearchQuery,
@@ -78,12 +79,27 @@ export function createFacetLoader(
  * a policy default on that field, e.g. valid-only `status`, so the facet
  * counts across every value.) The queries are facet-only: no hits (`limit:
  * 0`) and, with no hits to order, no `orderBy`.
+ *
+ * A clause is a facet’s **own** only when it carries exactly one criterion, on
+ * that field ({@link ownsFacet}). A disjunction (`or`) is nobody’s own and
+ * always stays: the user constrained the document as a whole, never that one
+ * axis, so there is no selection on it to widen. Keeping it is what leaves each facet
+ * *complete on its own field* – every value it offers is one the user can pick,
+ * with the count they will actually get. Dropping the clause’s own disjunct
+ * instead would hide values that do return hits (on an entity page: the very
+ * entity the page is about, absent from a sidebar beside results full of it),
+ * and dropping it whole would count a corpus the sibling facets do not.
+ * It also keeps a multi-field clause from ever splitting the batch.
  */
 export function groupFacetQueries(
   query: SearchQuery,
   fields: readonly string[],
 ): SearchQuery[] {
-  const filteredFields = new Set(query.where.map((filter) => filter.field));
+  const filteredFields = new Set(
+    query.where
+      .map(ownedField)
+      .filter((field): field is string => field !== undefined),
+  );
   const facetOnly: SearchQuery = { ...query, orderBy: [], limit: 0, offset: 0 };
   const sharedFields = fields.filter((field) => !filteredFields.has(field));
   const queries: SearchQuery[] = [];
@@ -93,9 +109,39 @@ export function groupFacetQueries(
   for (const field of fields.filter((field) => filteredFields.has(field))) {
     queries.push({
       ...facetOnly,
-      where: query.where.filter((filter) => filter.field !== field),
+      where: query.where.filter((filter) => !ownsFacet(filter, field)),
       facets: [field],
     });
   }
   return queries;
+}
+
+/** Whether a clause is `field`’s own – it constrains that field and nothing
+ *  else, so skip-own-filter removes it when counting that facet. */
+function ownsFacet(filter: Filter, field: string): boolean {
+  return ownedField(filter) === field;
+}
+
+/**
+ * The field a clause belongs to, or `undefined` when it belongs to none.
+ *
+ * A clause owns a field when **every** criterion names it – which covers the
+ * ordinary one-criterion filter and equally a same-field disjunction
+ * (`or: [{ created: { max: … } }, { created: { min: … } }]`, or a multi-select
+ * spelled as alternatives). Those ARE a selection on one axis, so skip-own-filter
+ * must drop them; leaving them in would compute the facet with the user’s own
+ * selection applied, offering back only what they already picked.
+ *
+ * A clause spanning several fields is nobody’s own: the user constrained the
+ * document as a whole, never one axis, so there is nothing on any single facet
+ * to widen.
+ */
+function ownedField(filter: Filter): string | undefined {
+  const [first, ...rest] = filter.or;
+  if (first === undefined) {
+    return undefined;
+  }
+  return rest.every((criterion) => criterion.field === first.field)
+    ? first.field
+    : undefined;
 }

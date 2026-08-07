@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   assertValidQuery,
+  filterOn,
   filterOperator,
   filterOperatorFor,
   isUnsatisfiable,
@@ -11,10 +12,18 @@ import {
 import type { SearchType } from '../src/schema.js';
 
 describe('filterOperator', () => {
-  it('reads the operator off a filter’s discriminating key', () => {
+  it('reads the operator off a criterion’s discriminating key', () => {
     expect(filterOperator({ field: 'format', in: ['text/turtle'] })).toBe('in');
     expect(filterOperator({ field: 'size', range: { min: 1 } })).toBe('range');
     expect(filterOperator({ field: 'iiif', is: true })).toBe('is');
+  });
+});
+
+describe('filterOn', () => {
+  it('wraps one criterion as a clause – the ordinary single-field filter', () => {
+    expect(filterOn({ field: 'status', in: ['valid'] })).toEqual({
+      or: [{ field: 'status', in: ['valid'] }],
+    });
   });
 });
 
@@ -41,21 +50,46 @@ describe('isUnsatisfiable', () => {
   };
 
   it('holds only for an empty `id` membership – the request for no document', () => {
-    expect(isUnsatisfiable({ ...base, where: [{ field: 'id', in: [] }] })).toBe(
-      true,
-    );
+    expect(
+      isUnsatisfiable({ ...base, where: [{ or: [{ field: 'id', in: [] }] }] }),
+    ).toBe(true);
     // A non-empty lookup asks for something.
     expect(
-      isUnsatisfiable({ ...base, where: [{ field: 'id', in: ['urn:a'] }] }),
+      isUnsatisfiable({
+        ...base,
+        where: [{ or: [{ field: 'id', in: ['urn:a'] }] }],
+      }),
     ).toBe(false);
     // A value field's empty membership stays a no-op: no values means no
     // constraint (a facet UI with nothing selected), not "no documents".
     expect(
-      isUnsatisfiable({ ...base, where: [{ field: 'status', in: [] }] }),
+      isUnsatisfiable({
+        ...base,
+        where: [{ or: [{ field: 'status', in: [] }] }],
+      }),
     ).toBe(false);
     // Other operators on `id` are already an operator-mismatch, not this.
     expect(
-      isUnsatisfiable({ ...base, where: [{ field: 'id', is: true }] }),
+      isUnsatisfiable({
+        ...base,
+        where: [{ or: [{ field: 'id', is: true }] }],
+      }),
+    ).toBe(false);
+    // A clause pairing `id` WITH a value field is a disjunction that happens to
+    // include identity, not an enumeration of wanted documents – so the
+    // identity reading does not apply and it stays a vacuous no-op.
+    expect(
+      isUnsatisfiable({
+        ...base,
+        where: [
+          {
+            or: [
+              { field: 'id', in: [] },
+              { field: 'creator', in: [] },
+            ],
+          },
+        ],
+      }),
     ).toBe(false);
     expect(isUnsatisfiable(base)).toBe(false);
   });
@@ -70,6 +104,8 @@ describe('validateQuery', () => {
       { name: 'size', kind: 'integer', filterable: true },
       { name: 'license', kind: 'keyword' }, // declared, but no roles opted into
       { name: 'statusRank', kind: 'integer', sortable: true },
+      { name: 'creator', kind: 'reference', filterable: true },
+      { name: 'about', kind: 'reference', filterable: true },
     ],
   };
   const base: SearchQuery = {
@@ -87,8 +123,8 @@ describe('validateQuery', () => {
         {
           ...base,
           where: [
-            { field: 'status', in: ['valid'] },
-            { field: 'size', range: { min: 1 } },
+            { or: [{ field: 'status', in: ['valid'] }] },
+            { or: [{ field: 'size', range: { min: 1 } }] },
           ],
           facets: ['status'],
           orderBy: [
@@ -109,8 +145,8 @@ describe('validateQuery', () => {
         {
           ...base,
           where: [
-            { field: 'status', in: [] },
-            { field: 'size', range: {} },
+            { or: [{ field: 'status', in: [] }] },
+            { or: [{ field: 'size', range: {} }] },
           ],
         },
         searchType,
@@ -123,9 +159,9 @@ describe('validateQuery', () => {
       {
         ...base,
         where: [
-          { field: 'nonexistent', in: ['x'] },
-          { field: 'license', in: ['MIT'] },
-          { field: 'status', range: { min: 1 } },
+          { or: [{ field: 'nonexistent', in: ['x'] }] },
+          { or: [{ field: 'license', in: ['MIT'] }] },
+          { or: [{ field: 'status', range: { min: 1 } }] },
         ],
         facets: ['nonexistent', 'size'],
         orderBy: [{ field: 'nonexistent', direction: 'asc' }],
@@ -145,7 +181,10 @@ describe('validateQuery', () => {
   it('accepts `id`, which no type declares but every type carries', () => {
     expect(
       validateQuery(
-        { ...base, where: [{ field: 'id', in: ['https://example.org/1'] }] },
+        {
+          ...base,
+          where: [{ or: [{ field: 'id', in: ['https://example.org/1'] }] }],
+        },
         searchType,
       ),
     ).toEqual([]);
@@ -154,16 +193,118 @@ describe('validateQuery', () => {
   it('rejects a non-membership operator on `id`: an IRI has no range', () => {
     expect(
       validateQuery(
-        { ...base, where: [{ field: 'id', range: { min: 1 } }] },
+        { ...base, where: [{ or: [{ field: 'id', range: { min: 1 } }] }] },
         searchType,
       ),
     ).toEqual([{ part: 'where', field: 'id', reason: 'operator-mismatch' }]);
   });
 
+  it('accepts a disjunction over several fields – the cross-field clause', () => {
+    const iri = 'https://example.org/vg';
+    expect(
+      validateQuery(
+        {
+          ...base,
+          where: [
+            {
+              or: [
+                { field: 'id', in: [iri] },
+                { field: 'creator', in: [iri] },
+                { field: 'about', in: [iri] },
+              ],
+            },
+          ],
+        },
+        searchType,
+      ),
+    ).toEqual([]);
+  });
+
+  it('checks every criterion of a clause, reporting one issue each', () => {
+    expect(
+      validateQuery(
+        {
+          ...base,
+          where: [
+            {
+              or: [
+                { field: 'creator', in: ['x'] },
+                { field: 'nonexistent', in: ['x'] },
+                { field: 'license', in: ['x'] },
+              ],
+            },
+          ],
+        },
+        searchType,
+      ),
+    ).toEqual([
+      { part: 'where', field: 'nonexistent', reason: 'unknown-field' },
+      { part: 'where', field: 'license', reason: 'not-filterable' },
+    ]);
+  });
+
+  it('lets one clause mix kinds: each criterion is matched to its own field', () => {
+    // `creator` takes `in` and `size` takes `range`. Because a criterion carries
+    // its own operator, a disjunction over both is well-formed – “made by this
+    // person OR larger than 100”.
+    expect(
+      validateQuery(
+        {
+          ...base,
+          where: [
+            {
+              or: [
+                { field: 'creator', in: ['x'] },
+                { field: 'size', range: { min: 100 } },
+              ],
+            },
+          ],
+        },
+        searchType,
+      ),
+    ).toEqual([]);
+    // …while an operator that does not match ITS OWN field is still rejected.
+    expect(
+      validateQuery(
+        { ...base, where: [{ or: [{ field: 'size', in: ['x'] }] }] },
+        searchType,
+      ),
+    ).toEqual([{ part: 'where', field: 'size', reason: 'operator-mismatch' }]);
+  });
+
+  it('accepts several criteria on one field – the same-field disjunction', () => {
+    // Two ranges on one field is the case a value list cannot express:
+    // “smaller than 10 or larger than 100”.
+    expect(
+      validateQuery(
+        {
+          ...base,
+          where: [
+            {
+              or: [
+                { field: 'size', range: { max: 10 } },
+                { field: 'size', range: { min: 100 } },
+              ],
+            },
+          ],
+        },
+        searchType,
+      ),
+    ).toEqual([]);
+  });
+
+  it('treats a clause with no criteria as vacuous, not invalid', () => {
+    // Like an empty `in` or a boundless `range`: it constrains nothing, so a
+    // compiler skips it as a no-op rather than the query being rejected.
+    expect(validateQuery({ ...base, where: [{ or: [] }] }, searchType)).toEqual(
+      [],
+    );
+  });
+
   it('assertValidQuery names the type and every issue', () => {
     expect(() =>
       assertValidQuery(
-        { ...base, where: [{ field: 'nonexistent', in: ['x'] }] },
+        { ...base, where: [{ or: [{ field: 'nonexistent', in: ['x'] }] }] },
         searchType,
       ),
     ).toThrow(

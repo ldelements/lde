@@ -587,6 +587,108 @@ This is what makes an IRI a usable entry point: a client holding a reference’s
 fields from its own collection, rather than the schema having to carry them
 inline on every referring document.
 
+### Matching a value in any of several fields
+
+Filters you write side by side must **all** match:
+
+```graphql
+where: { material: { in: ["oil"] }, status: { in: ["valid"] } }
+```
+
+When you want a value matched in **any** of several fields instead, put those
+alternatives under `or`. This is the query behind an entity page – “everything
+related to Van Gogh”, where the link may be recorded as `creator`, `about` or
+`contentLocation` depending on the source:
+
+```graphql
+query Related($iri: StringFilter!) {
+  heritageObjects(
+    where: {
+      material: { in: ["oil"] }
+      or: [{ creator: $iri }, { about: $iri }, { contentLocation: $iri }]
+    }
+  ) {
+    pagination {
+      total
+    }
+    facets {
+      material {
+        value
+        count
+      }
+    }
+  }
+}
+```
+
+You get one search, so `total`, the ranking and the facet counts are all correct
+– where issuing a query per field and merging the results client-side would lose
+each of them.
+
+Add `id` to the alternatives to include the entity’s **own** record alongside
+everything referring to it: `or: [{ id: $iri }, { creator: $iri }, …]`.
+
+Three things to know when writing `or`:
+
+- **It sits alongside your other filters**, which still all apply. Above, every
+  hit is an oil painting _and_ related to the IRI.
+- **Each alternative names one field.** `{ creator: $a, about: $b }` in a single
+  entry is rejected by the schema – write it as two entries.
+- **A field may appear more than once**, which is how you ask for two ranges on
+  one field: `or: [{ created: { max: "1800" } }, { created: { min: "1900" } }]`.
+
+Any kind of field can take part, not just references: `or: [{ material: $m },
+{ technique: $m }]` works the same way.
+
+#### Asking for two `or` groups at once
+
+A `where` takes one `or`. When you need two independent sets of alternatives –
+an agent recorded either way, _and_ a place recorded either way – list them under
+`and`:
+
+```graphql
+where: {
+  and: [
+    { or: [{ creator: $agent }, { contributor: $agent }] }
+    { or: [{ contentLocation: $place }, { locationCreated: $place }] }
+  ]
+}
+```
+
+That is the only thing `and` is needed for. For plain filters it changes nothing,
+since side-by-side keys already all apply – these are the same query:
+
+```graphql
+where: { status: { in: ["valid"] }, material: { in: ["oil"] } }
+where: { and: [{ status: { in: ["valid"] } }, { material: { in: ["oil"] } }] }
+```
+
+#### Facet counts under an `or`
+
+Your facets keep describing the results you are showing. A facet normally ignores
+the filter on its own field, so you can still see – and pick – its other values.
+An `or` spanning **several** fields is not any one field’s filter, so it applies
+to every facet: on the query above the `material` facet counts within the Van
+Gogh–related set, and a `creator` facet lists Van Gogh alongside the other
+creators in that set, each with the count you would get by picking it.
+
+An `or` whose alternatives all name the **same** field is a selection on that
+field, so its own facet ignores it like any other filter – you still see the
+other values you could pick, not just the ones already selected.
+
+One thing to watch: an alternative that constrains nothing – an empty `in`, say
+a facet variable with nothing selected – makes the whole `or` match everything,
+because “no constraint OR anything” is no constraint. If you build alternatives
+from optional inputs, leave the unset ones out of the list rather than passing
+them empty.
+
+Since `and` and `or` are `where` keys, a `SearchType` cannot declare a field
+called `and` or `or`; `searchSchema()` rejects it, as it does `id`.
+
+Underneath, each of these compiles to one `Filter` – `{ or: [Criterion, …] }` –
+in the query IR, and the whole `where` to a single engine query. See
+[ADR 18](../decisions/0018-filter-across-several-fields-with-one-clause.md).
+
 Two consequences of treating identity as its own kind of filter:
 
 - **An empty `in` on `id` matches nothing**, where an empty `in` on any other

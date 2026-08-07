@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { SearchEngine } from './engine.js';
 import {
+  filterOn,
   filterOperatorFor,
   type Filter,
   type FilterOperator,
@@ -72,7 +73,7 @@ export function describeSearchEngineContract(
       for (const searchType of types()) {
         const query: SearchQuery = {
           ...browse(searchType),
-          where: [{ field: 'fieldThatDoesNotExist', in: ['x'] }],
+          where: [filterOn({ field: 'fieldThatDoesNotExist', in: ['x'] })],
         };
         await expect(engine().search(searchType, query)).rejects.toThrow(
           /unknown-field/,
@@ -89,7 +90,9 @@ export function describeSearchEngineContract(
       for (const searchType of types()) {
         const query: SearchQuery = {
           ...browse(searchType),
-          where: [{ field: ID_FIELD, in: ['urn:test:no-such-document'] }],
+          where: [
+            filterOn({ field: ID_FIELD, in: ['urn:test:no-such-document'] }),
+          ],
         };
         const result = await engine().search(searchType, query);
         expect(result.total).toBe(0);
@@ -274,8 +277,8 @@ function mismatchedFilter(
   operator: FilterOperator | undefined,
 ): Filter {
   return operator === 'in'
-    ? { field, range: { min: 0 } }
-    : { field, in: ['x'] };
+    ? filterOn({ field, range: { min: 0 } })
+    : filterOn({ field, in: ['x'] });
 }
 
 /** The locale a query against this type may select (any is contract-valid). */

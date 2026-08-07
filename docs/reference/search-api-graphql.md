@@ -33,7 +33,7 @@ inputs, reference types and nullability are all derived from each field’s
 `kind` and capability flags. The common case needs no options at all:
 
 ```ts
-import { searchSchema } from '@lde/search';
+import { filterOn, searchSchema } from '@lde/search';
 import { buildGraphQLSchema } from '@lde/search-api-graphql';
 
 const gqlSchema = buildGraphQLSchema(searchSchema(DATASET, PERSON));
@@ -56,7 +56,7 @@ const gqlSchema = buildGraphQLSchema(searchSchema(DATASET, PERSON), {
     Dataset: {
       queryDefaults: (query) => ({
         ...query,
-        where: [...query.where, { field: 'status', in: ['valid'] }],
+        where: [...query.where, filterOn({ field: 'status', in: ['valid'] })],
       }),
     },
     Person: { queryField: 'people' },
@@ -161,7 +161,18 @@ const gqlSchema = buildGraphQLSchema(searchSchema(DATASET, PERSON));
   `FloatRange` / `DateRange`, or `Boolean`), plus **`id: StringFilter`** on every
   type – the document’s IRI, declared by no type and filterable on all of them
   ([Lookup by IRI](./search#lookup-by-iri)). So the input always exists, even for
-  a type that declares no filterable field of its own.
+  a type that declares no filterable field of its own. Keys you write side by
+  side all apply; two more keys combine them explicitly, so neither AND nor OR is
+  ever inferred from nesting:
+  - **`or: [‹Type›Criterion!]`** matches a value in **any** of several fields –
+    the entity-page query, where a link may be recorded as `creator`, `about` or
+    `contentLocation` ([Matching a value in any of several
+    fields](./search#matching-a-value-in-any-of-several-fields)). A criterion is
+    a `@oneOf` input, so each alternative names exactly one field; a field may
+    appear more than once, which is how two ranges on one field are expressed.
+  - **`and: [‹Type›Clause!]`** carries further clauses, each of which may hold
+    its own `or`. Only needed for a **second** set of alternatives – for plain
+    filters it is equivalent to writing them side by side.
 - **`orderBy`**: `RELEVANCE` plus every `sortable` field, as an enum – field
   names SCREAMING_SNAKE_CASEd (`datePosted` → `DATE_POSTED`); `direction`
   defaults to `DESC`.

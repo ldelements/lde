@@ -374,7 +374,7 @@ describe('buildGraphQLSchema', () => {
       { engine, acceptLanguage: ['nl'] },
       { iiif: facets.iiif[0].value },
     );
-    expect(received().where).toEqual([{ field: 'iiif', is: true }]);
+    expect(received().where).toEqual([{ or: [{ field: 'iiif', is: true }] }]);
   });
 
   it('resolves every selected facet key through ONE batched engine dispatch, returning [] where the engine has none', async () => {
@@ -442,9 +442,13 @@ describe('buildGraphQLSchema', () => {
     const facetQuery = batch[0];
     expect(facetQuery.facets).toEqual(['keyword']);
     expect(
-      facetQuery.where.find((filter) => filter.field === 'keyword'),
+      facetQuery.where.find((filter) =>
+        filter.or.some((criterion) => criterion.field === 'keyword'),
+      ),
     ).toBeUndefined();
-    expect(facetQuery.where).toContainEqual({ field: 'status', in: ['valid'] });
+    expect(facetQuery.where).toContainEqual({
+      or: [{ field: 'status', in: ['valid'] }],
+    });
   });
 
   it('groups the selected facets by effective where: unfiltered facets share one query, each own-filtered facet gets its own', async () => {
@@ -469,7 +473,9 @@ describe('buildGraphQLSchema', () => {
     const [batch] = facetBatches();
     expect(batch).toHaveLength(2);
     expect(batch[0].facets).toEqual(['keyword', 'publisher']);
-    expect(batch[0].where).toEqual([{ field: 'status', in: ['valid'] }]);
+    expect(batch[0].where).toEqual([
+      { or: [{ field: 'status', in: ['valid'] }] },
+    ]);
     expect(batch[1].facets).toEqual(['status']);
     expect(batch[1].where).toEqual([]);
   });
@@ -543,14 +549,15 @@ describe('buildGraphQLSchema', () => {
     );
 
     const query = received();
-    expect(query.where).toContainEqual({ field: 'status', in: ['valid'] });
-    // An empty StringFilter compiles to an empty membership.
-    expect(query.where).toContainEqual({ field: 'keyword', in: [] });
     expect(query.where).toContainEqual({
-      field: 'size',
-      range: { min: 1, max: 9 },
+      or: [{ field: 'status', in: ['valid'] }],
     });
-    expect(query.where).toContainEqual({ field: 'iiif', is: true });
+    // An empty StringFilter compiles to an empty membership.
+    expect(query.where).toContainEqual({ or: [{ field: 'keyword', in: [] }] });
+    expect(query.where).toContainEqual({
+      or: [{ field: 'size', range: { min: 1, max: 9 } }],
+    });
+    expect(query.where).toContainEqual({ or: [{ field: 'iiif', is: true }] });
     expect(query.orderBy).toEqual([{ field: 'size', direction: 'asc' }]);
     // Facets are requested per key via selection, not an arg; the listing query
     // carries none.
@@ -570,7 +577,7 @@ describe('buildGraphQLSchema', () => {
       { engine, acceptLanguage: ['nl'] },
     );
     expect(received().where).toEqual([
-      { field: 'id', in: ['https://id.example.org/a', 'urn:b'] },
+      { or: [{ field: 'id', in: ['https://id.example.org/a', 'urn:b'] }] },
     ]);
 
     // An empty StringFilter compiles to an empty membership, as for any field.
@@ -579,7 +586,151 @@ describe('buildGraphQLSchema', () => {
       engine: empty.engine,
       acceptLanguage: ['nl'],
     });
-    expect(empty.received().where).toEqual([{ field: 'id', in: [] }]);
+    expect(empty.received().where).toEqual([{ or: [{ field: 'id', in: [] }] }]);
+  });
+
+  it('maps `or` into one clause holding every alternative, ANDed with its siblings', async () => {
+    // The entity-page query: one IRI across the document's own identity and its
+    // reference fields, answered by a single search.
+    const { engine, received } = fakeEngine(canned);
+    await run(
+      `{
+        datasets(where: {
+          or: [{ id: { in: ["urn:vg"] } }, { publisher: { in: ["urn:vg"] } }]
+          status: { in: ["valid"] }
+        }) {
+          pagination { total }
+        }
+      }`,
+      { engine, acceptLanguage: ['nl'] },
+    );
+    // One clause for the disjunction…
+    expect(received().where).toContainEqual({
+      or: [
+        { field: 'id', in: ['urn:vg'] },
+        { field: 'publisher', in: ['urn:vg'] },
+      ],
+    });
+    // …and a separate clause for the sibling key, so the two AND.
+    expect(received().where).toContainEqual({
+      or: [{ field: 'status', in: ['valid'] }],
+    });
+  });
+
+  it('maps `and` into further clauses, so a query can carry two disjunctions', async () => {
+    const { engine, received } = fakeEngine(canned);
+    await run(
+      `{
+        datasets(where: {
+          and: [
+            { or: [{ publisher: { in: ["urn:vg"] } }, { keyword: { in: ["urn:vg"] } }] }
+            { or: [{ status: { in: ["valid"] } }, { size: { min: 100 } }] }
+          ]
+        }) {
+          pagination { total }
+        }
+      }`,
+      { engine, acceptLanguage: ['nl'] },
+    );
+    // Two independent disjunctions, ANDed – the shape a single `or` cannot hold.
+    expect(received().where).toEqual([
+      {
+        or: [
+          { field: 'publisher', in: ['urn:vg'] },
+          { field: 'keyword', in: ['urn:vg'] },
+        ],
+      },
+      {
+        or: [
+          { field: 'status', in: ['valid'] },
+          { field: 'size', range: { min: 100, max: undefined } },
+        ],
+      },
+    ]);
+  });
+
+  it('treats `and` over plain criteria as identical to sibling keys', async () => {
+    // Sibling keys already AND, so `and` is optional for plain criteria – it
+    // earns its keep only when a query needs a SECOND `or` (above). Pinned
+    // because the reference docs state the two forms are the same query.
+    const siblings = fakeEngine(canned);
+    await run(
+      `{
+        datasets(where: { status: { in: ["valid"] }, keyword: { in: ["atlas"] } }) {
+          pagination { total }
+        }
+      }`,
+      { engine: siblings.engine, acceptLanguage: ['nl'] },
+    );
+    const explicit = fakeEngine(canned);
+    await run(
+      `{
+        datasets(where: { and: [
+          { status: { in: ["valid"] } }
+          { keyword: { in: ["atlas"] } }
+        ] }) {
+          pagination { total }
+        }
+      }`,
+      { engine: explicit.engine, acceptLanguage: ['nl'] },
+    );
+    // Same clauses, and `where` is a conjunction – so the order they arrive in
+    // carries no meaning. Sibling keys emit in field-declaration order, `and`
+    // in the order written.
+    const clauses = (query: SearchQuery) =>
+      [...query.where].map((filter) => JSON.stringify(filter)).sort();
+    expect(clauses(explicit.received())).toEqual(clauses(siblings.received()));
+  });
+
+  it('treats an explicit `where: null` as no filter at all', async () => {
+    const { engine, received } = fakeEngine(canned);
+    const result = await run(
+      `{ datasets(where: null) { pagination { total } } }`,
+      { engine, acceptLanguage: ['nl'] },
+    );
+    expect(result.errors).toBeUndefined();
+    expect(received().where).toEqual([]);
+  });
+
+  it('nests `and` to any depth, flattening it into one conjunction', async () => {
+    // `and` carries further `Where`s, so it is recursive – safe, because a
+    // conjunction inside a conjunction collapses, and an `and` can never sit
+    // inside an `or` (which holds only criteria).
+    const { engine, received } = fakeEngine(canned);
+    await run(
+      `{
+        datasets(where: {
+          status: { in: ["valid"] }
+          and: [{ and: [{ keyword: { in: ["atlas"] } }] }]
+        }) {
+          pagination { total }
+        }
+      }`,
+      { engine, acceptLanguage: ['nl'] },
+    );
+    expect(received().where).toEqual([
+      { or: [{ field: 'status', in: ['valid'] }] },
+      { or: [{ field: 'keyword', in: ['atlas'] }] },
+    ]);
+  });
+
+  it('rejects a criterion naming two fields: a criterion is an atom', async () => {
+    // `@oneOf` is what keeps `where` a flat conjunction of disjunctions – a
+    // two-key criterion would be a conjunction nested inside an `or`, which the
+    // IR cannot represent and skip-own-filter could not reason about. Caught by
+    // GraphQL validation, before any resolver runs.
+    const { engine } = fakeEngine(canned);
+    const result = await run(
+      `{
+        datasets(where: {
+          or: [{ status: { in: ["valid"] }, keyword: { in: ["atlas"] } }]
+        }) {
+          pagination { total }
+        }
+      }`,
+      { engine, acceptLanguage: ['nl'] },
+    );
+    expect(result.errors?.[0]?.message).toMatch(/exactly one key/i);
   });
 
   it('falls back to the und locale when no Accept-Language is given', async () => {
@@ -606,7 +757,10 @@ describe('buildGraphQLSchema', () => {
         [schema.name]: {
           queryDefaults: (query) => ({
             ...query,
-            where: [...query.where, { field: 'status', in: ['valid'] }],
+            where: [
+              ...query.where,
+              { or: [{ field: 'status', in: ['valid'] }] },
+            ],
             orderBy: [{ field: 'relevance', direction: 'desc' }],
           }),
         },
@@ -617,7 +771,9 @@ describe('buildGraphQLSchema', () => {
       source: `{ datasets { pagination { total } } }`,
       contextValue: { engine, acceptLanguage: ['nl'] },
     });
-    expect(captured?.where).toEqual([{ field: 'status', in: ['valid'] }]);
+    expect(captured?.where).toEqual([
+      { or: [{ field: 'status', in: ['valid'] }] },
+    ]);
     expect(captured?.orderBy).toEqual([
       { field: 'relevance', direction: 'desc' },
     ]);
@@ -725,7 +881,22 @@ describe('buildGraphQLSchema', () => {
       expect(sdl).toMatch(/input CreativeWorkWhere/);
       // Person declares no filterable field, yet still gets a `where` input:
       // `id` is filterable on every type, so no type is unaddressable by IRI.
-      expect(sdl).toMatch(/input PersonWhere \{\s*id: StringFilter\s*\}/);
+      // A type declaring no filterable field is still addressable by IRI –
+      // through the `id` key, and through the `or`/`and` combinators, whose
+      // criteria then offer `id` alone.
+      const personWhere = sdl.slice(sdl.indexOf('input PersonWhere {'));
+      expect(personWhere.slice(0, personWhere.indexOf('\n}'))).toContain(
+        'id: StringFilter',
+      );
+      expect(sdl).toMatch(/input PersonWhere \{[^}]*or: \[PersonCriterion!\]/);
+      // `and` carries further `Where`s, so there is no second clause type.
+      expect(sdl).toMatch(/input PersonWhere \{[^}]*and: \[PersonWhere!\]/);
+      expect(sdl).not.toContain('PersonClause');
+      // A criterion is an atom, and for a type with no filterable field the
+      // only atom available is the IRI lookup.
+      expect(sdl).toMatch(
+        /input PersonCriterion @oneOf \{\s*id: StringFilter\s*\}/,
+      );
       // The shared reference shape is emitted once, reused by both types.
       expect(sdl.match(/^type Agent /gm)).toHaveLength(1);
       // One shared Pagination type across every ‹Type›SearchResult, so a
