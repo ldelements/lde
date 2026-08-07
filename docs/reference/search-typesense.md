@@ -269,6 +269,16 @@ the index. Declaring the dataset as an _internal_ field (no role at all, purely
 so a `derive` can read it) is fine: the projection prunes it before the writer,
 which falls back to `source`.
 
+**Adopting the field needs a fresh collection.** `InPlaceRebuild` creates a
+collection on demand and leaves an existing one alone, so a type that gains a
+`from: 'dataset'` field against a collection built without it keeps the old
+`source` column and has no field for the new one. Typesense stores the
+unindexed value happily, so the run imports; `commit` then fails when the
+membership sweep tries to facet a field the collection does not declare, and
+the documents already stamped with `source` are no longer reachable by any
+sweep. Drop and rebuild the collection when a type adopts the field.
+(Blue/green builds a fresh collection every run, so it needs nothing.)
+
 Both writers take a `Client` the caller owns (and reuses for queries), so this
 package adds no connection or document type of its own – any object with an `id`
 is a valid document, including the `SearchDocument`s `@lde/search` produces.

@@ -159,6 +159,13 @@ export class InPlaceRebuild<
         // the writer any other way, still lands in a swept collection. Where
         // the projection did fill it, the value is the same dataset IRI, so the
         // stamp only ever reasserts it.
+        //
+        // It reasserts the sweep’s column only, never the physical fanout a
+        // declared field also produces (the folded `${name}_search` companion
+        // of a `searchable` one). Folding is the projection’s convention, and
+        // restating it here would put it in two places – the split this change
+        // exists to close. So a document that reached the writer unprojected is
+        // sweepable but not full-text findable by dataset: absent, never wrong.
         write: async (dataset: Dataset, documents: AsyncIterable<TDocument>) =>
           importer.add(
             stampDocuments(documents, {
