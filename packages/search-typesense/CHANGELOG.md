@@ -1,3 +1,59 @@
+## 0.19.0 (2026-08-07)
+
+### 🚀 Features
+
+- ⚠️  **search:** declare a field over the indexed dataset ([#708](https://github.com/ldelements/lde/pull/708))
+
+### ⚠️  Breaking Changes
+
+- **search:** declare a field over the indexed dataset  ([#708](https://github.com/ldelements/lde/pull/708))
+  `staleDocumentsFilter`, `sourceDocumentsFilter`,
+  `thisRunDocumentsFilter` and `membershipSweepFilters` now take the provenance
+  field name as their first argument. Callers filtering on the private
+  bookkeeping field pass the exported `SOURCE_FIELD`.
+  * fix(search): reject a projection value carried by an inline reference
+  An inline reference is stored as a nested object and carries a referent's
+  projected fields; a projection value is a bare IRI with no referent. Declared
+  together they passed validation, so the collection definition declared an
+  object field that the projection filled with a string – and every document
+  import failed. Also soften datasetField's JSDoc: it is the only such field for
+  a type that reached a SearchSchema, not for a hand-built one that skipped
+  validation.
+  * docs(search-typesense): state what adopting a declared dataset field requires
+  - InPlaceRebuild leaves an existing collection alone, so a type that gains a
+    `from: 'dataset'` field keeps the old `source` column and has no field for
+    the new one: the run imports, then commit fails faceting a field the
+    collection does not declare. Say so, and say to rebuild the collection.
+  - Note that the writer's stamp reasserts the sweep's column only, never the
+    folded search companion a searchable declared field also fans out to –
+    folding is the projection's convention, and restating it in the writer would
+    put it in two places."
+  M	docs/reference/search-typesense.md
+  M	docs/reference/search.md
+  M	packages/search-pipeline/src/search-stages.ts
+  M	packages/search-pipeline/test/search-stages.test.ts
+  M	packages/search-typesense/src/blue-green-rebuild.ts
+  M	packages/search-typesense/src/in-place-rebuild.ts
+  M	packages/search-typesense/src/rebuild-support.ts
+  M	packages/search-typesense/src/sweep.ts
+  M	packages/search-typesense/test/blue-green-rebuild.test.ts
+  M	packages/search-typesense/test/in-place-rebuild.test.ts
+  M	packages/search-typesense/test/rebuild-support.test.ts
+  M	packages/search-typesense/test/sweep.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/CONTEXT.md
+  M	packages/search/src/adapter.ts
+  M	packages/search/src/index.ts
+  M	packages/search/src/project.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/test/project.test.ts
+  M	packages/search/test/schema.test.ts
+  M	packages/search/vite.config.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.16.0
+
 ## 0.18.2 (2026-08-07)
 
 ### 🧱 Updated Dependencies
