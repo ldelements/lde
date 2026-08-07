@@ -44,13 +44,16 @@ describe('ConsoleReporter', () => {
       expect(output).toContain('Selection produced no datasets');
     });
 
-    it('does not require a running spinner', () => {
-      // The event can arrive before any spinner exists (a selector that
-      // returns nothing without the pipeline having started one).
+    it('still prints when no spinner is running', () => {
+      // The warning matters most where no spinner was started at all; dropping
+      // it there would silence exactly the unattended run it exists for.
       const reporter = new ConsoleReporter();
-      vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+      const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
 
-      expect(() => reporter.selectionEmpty('empty')).not.toThrow();
+      reporter.selectionEmpty('Selection produced no datasets');
+
+      const output = spy.mock.calls.map((call) => String(call[0])).join('');
+      expect(output).toContain('Selection produced no datasets');
     });
   });
 

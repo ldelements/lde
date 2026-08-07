@@ -344,6 +344,23 @@ describe('Pipeline', () => {
       expect(reporter.selectionEmpty).toHaveBeenCalledOnce();
     });
 
+    it('aborts an abandoned run exactly once', async () => {
+      // Were the abandon-abort inside the run's try, an abort that rejected
+      // would fall into the catch and abort a second time – and make an
+      // abandoned run throw, which is the one thing abandoning must not do.
+      const failing = makeWriter();
+      failing.runWriter.abort.mockRejectedValue(new Error('lock release'));
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(),
+        stages: [makeStage('stage1')],
+        writers: failing,
+        distributionResolver: makeResolver(makeResolvedDistribution()),
+      });
+
+      await expect(pipeline.run()).rejects.toThrow('lock release');
+      expect(failing.runWriter.abort).toHaveBeenCalledOnce();
+    });
+
     it('does not throw when the selection is empty', async () => {
       // An empty registry is a legitimate state, not a failure: the run leaves
       // the destination alone and reports it, rather than failing a cron.

@@ -62,9 +62,15 @@ export class ConsoleReporter implements ProgressReporter {
   selectionEmpty(reason: string): void {
     // A run that changed nothing on purpose – loud enough to notice on a cron,
     // because the usual cause is an outage or a criteria typo rather than a
-    // genuinely empty registry.
-    this.activeSpinner?.warn(chalk.yellow(reason));
-    this.activeSpinner = undefined;
+    // genuinely empty registry. Printed either way: a spinner is only running
+    // when the pipeline reached selection through `pipelineStart`, and the
+    // warning matters most precisely where it did not.
+    if (this.activeSpinner) {
+      this.activeSpinner.warn(chalk.yellow(reason));
+      this.activeSpinner = undefined;
+      return;
+    }
+    this.printLine(logSymbols.warning, chalk.yellow(reason));
   }
 
   datasetStart(dataset: Dataset): void {

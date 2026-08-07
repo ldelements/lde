@@ -520,31 +520,39 @@ export class Pipeline<Out = Quad> {
           this.beforeDatasetWrite,
         ) as unknown as RunWriter<Out>)
       : openedWriter;
+    let abandoned = false;
 
     try {
       for await (const dataset of datasets) {
         selectedSources.push(dataset.iri.toString());
         await this.processDataset(dataset, runWriter, context);
       }
-      if (selectedSources.length === 0) {
-        // Committing an empty selection would hand every writer an empty
-        // membership as if it were the truth: an In-place writer’s sweep reads
-        // every indexed source as departed and deletes the lot, and a
-        // Blue/green writer swaps an empty collection live and drops the one
-        // that held the data. A selector returning nothing is indistinguishable
-        // from a registry outage or a criteria typo, so the run is abandoned
-        // instead – leaving the destination exactly as it was, which is what
-        // `abort` already guarantees for both writers. To empty a destination
-        // on purpose, drop it.
-        const reason = new EmptySelection();
-        this.reporter?.selectionEmpty?.(reason.message);
-        await runWriter.abort(reason);
-      } else {
+      // Committing an empty selection would hand every writer an empty
+      // membership as if it were the truth: an In-place writer’s sweep reads
+      // every indexed source as departed and deletes the lot, and a Blue/green
+      // writer swaps an empty collection live and drops the one that held the
+      // data. A selector returning nothing is indistinguishable from a registry
+      // outage or a criteria typo, so the run is abandoned instead – leaving
+      // the destination exactly as it was, which is what `abort` already
+      // guarantees for both writers. To empty a destination on purpose, drop it.
+      abandoned = selectedSources.length === 0;
+      if (!abandoned) {
         await runWriter.commit();
       }
     } catch (error) {
       await runWriter.abort(error);
       throw error;
+    }
+
+    // Outside the try, so the run is aborted exactly once. Inside it, an abort
+    // that rejected (a writer whose lock release fails, a fan-out branch that
+    // rethrows) would fall into the catch and be aborted a second time, and
+    // would make an abandoned run throw – which is the one thing abandoning is
+    // meant not to do.
+    if (abandoned) {
+      const reason = new EmptySelection();
+      this.reporter?.selectionEmpty?.(reason.message);
+      await runWriter.abort(reason);
     }
 
     const finalMemory = process.memoryUsage();
