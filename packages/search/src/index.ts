@@ -8,7 +8,11 @@
 // unified SearchField/SearchType model. A `derive` reads the projected document,
 // never the graph, so the IR readers stay internal to projection.
 export { projectRoots } from './project.js';
-export type { ProjectedNode, SearchDocument } from './project.js';
+export type {
+  ProjectedNode,
+  ProjectionContext,
+  SearchDocument,
+} from './project.js';
 
 // Unified field model: one declaration drives projection, engine collection
 // schema, query semantics and the GraphQL surface – a discriminated union by
@@ -37,6 +41,7 @@ export type {
   SearchTypeIssue,
   SearchSchema,
   FacetRange,
+  ProjectionValue,
 } from './schema.js';
 
 // Engine- and protocol-neutral query IR (what a `queryDefaults` policy or an

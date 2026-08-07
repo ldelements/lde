@@ -1335,3 +1335,149 @@ describe('projectRoots', () => {
     ).rejects.toThrow(/not in this engine’s schema/);
   });
 });
+
+describe('projection-time values', () => {
+  const person = defineSearchType({
+    name: 'Person',
+    class: 'http://schema.org/Person',
+    fields: [
+      {
+        name: 'dataset',
+        kind: 'reference',
+        from: 'dataset',
+        output: true,
+        filterable: true,
+        facetable: true,
+        ref: { typeName: 'Dataset', strategy: 'labelOnly' },
+      },
+    ],
+  });
+
+  it('populates a field declared over the indexed dataset', () => {
+    const document = projectDocument(
+      { '@id': 'https://ex/p/1' },
+      person,
+      undefined,
+      { dataset: 'https://ex/d/1' },
+    );
+
+    expect(document.dataset).toBe('https://ex/d/1');
+  });
+
+  it('leaves the field absent when the caller supplies no dataset', () => {
+    // Projecting a graph in isolation is legitimate; an absent value writes
+    // nothing rather than a placeholder, exactly as an unmatched path does.
+    const document = projectDocument({ '@id': 'https://ex/p/1' }, person);
+
+    expect(document).not.toHaveProperty('dataset');
+  });
+
+  it('writes the folded search companion, like any other faceted field', () => {
+    const searchable = defineSearchType({
+      name: 'Person',
+      class: 'http://schema.org/Person',
+      fields: [
+        {
+          name: 'dataset',
+          kind: 'keyword',
+          from: 'dataset',
+          facetable: true,
+          searchable: { weight: 1 },
+        },
+      ],
+    });
+
+    const document = projectDocument(
+      { '@id': 'https://ex/p/1' },
+      searchable,
+      undefined,
+      { dataset: 'https://ex/D/1' },
+    );
+
+    expect(document.dataset).toBe('https://ex/D/1');
+    expect(document.dataset_search).toBe('https://ex/d/1');
+  });
+
+  it('gives derive the context, so it can drop a value that is the containing dataset', () => {
+    // `isPartOf` is polymorphic: it may point at a containing CreativeWork as
+    // well as at the dataset. A deployment wanting only the former drops any
+    // value equal to the dataset being indexed – which is only possible if the
+    // dataset is known DURING projection.
+    const work = defineSearchType({
+      name: 'CreativeWork',
+      class: 'http://schema.org/CreativeWork',
+      fields: [
+        {
+          name: 'partOfRaw',
+          kind: 'reference',
+          path: 'http://schema.org/isPartOf',
+          array: true,
+        },
+        {
+          name: 'isPartOf',
+          kind: 'reference',
+          array: true,
+          output: true,
+          ref: { typeName: 'CreativeWork', strategy: 'labelOnly' },
+          derive: (document, context) =>
+            (document.partOfRaw as string[] | undefined)?.filter(
+              (value) => value !== context.dataset,
+            ),
+        },
+      ],
+    });
+
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/w/1',
+        [alias('CreativeWork', 'partOfRaw')]: [
+          { '@id': 'https://ex/d/1' },
+          { '@id': 'https://ex/w/parent' },
+        ],
+      },
+      work,
+      undefined,
+      { dataset: 'https://ex/d/1' },
+    );
+
+    expect(document.isPartOf).toEqual(['https://ex/w/parent']);
+  });
+
+  it('reaches an inline referent’s own fields', () => {
+    const media = defineSearchType({
+      name: 'MediaObject',
+      fields: [
+        { name: 'dataset', kind: 'keyword', from: 'dataset', output: true },
+      ],
+    });
+    const work = defineSearchType({
+      name: 'CreativeWork',
+      class: 'https://schema.org/CreativeWork',
+      fields: [
+        {
+          name: 'media',
+          kind: 'reference',
+          path: 'https://schema.org/associatedMedia',
+          output: true,
+          ref: { typeName: 'MediaObject', strategy: 'inline' },
+        },
+      ],
+    });
+    const nested = searchSchema(work, media);
+
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/w/1',
+        [alias('CreativeWork', 'media')]: { '@id': 'https://ex/m/1' },
+      },
+      work,
+      nested,
+      { dataset: 'https://ex/d/1' },
+    );
+
+    expect(document.media).toEqual({
+      id: 'https://ex/m/1',
+      dataset: 'https://ex/d/1',
+    });
+  });
+});

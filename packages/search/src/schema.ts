@@ -1,4 +1,4 @@
-import type { ProjectedNode } from './project.js';
+import type { ProjectedNode, ProjectionContext } from './project.js';
 
 /**
  * The engine-neutral kind of a queryable field. It drives every downstream
@@ -52,9 +52,13 @@ export function filterOperatorFor(kind: FieldKind): FilterOperator | undefined {
  * field with a {@link SearchFieldBase.derive `derive`} function instead of a
  * `path` is a **derived field** – computed from the document projected so far
  * rather than read from the graph – yet it still carries full query/schema/output
- * behavior (e.g. `status`, the compatibility booleans). A field declaring **no**
- * role at all is an {@link isInternalField **internal field**}: projected so a
- * later derive can read it, then pruned before the writer.
+ * behavior (e.g. `status`, the compatibility booleans). A `keyword`/`reference`
+ * field may instead declare {@link KeywordField.from `from`}, populating it from
+ * a {@link ProjectionValue} – something the run knows and the graph does not.
+ * `path`, `derive` and `from` are the three mutually exclusive value sources. A
+ * field declaring **no** role at all is an {@link isInternalField **internal
+ * field**}: projected so a later derive can read it, then pruned before the
+ * writer.
  *
  * The physical field names a declaration fans out to (per-locale search/sort
  * keys) follow one convention, owned by
@@ -110,9 +114,34 @@ export interface SearchFieldBase {
    * is the search document for a root type, and the referent’s own
    * projected fields for a Reference Type – which carry an `id` only when the
    * referent is a named node, never for a blank-node one.
+   *
+   * The second argument is the {@link ProjectionContext} – the run’s
+   * projection-time values, which are about the *indexing*, not the graph (the
+   * dataset being indexed). It is what lets a derive relate a projected value
+   * to its provenance: dropping a polymorphic `isPartOf` value that merely
+   * points back at the containing dataset, say.
    */
-  readonly derive?: (document: ProjectedNode) => unknown;
+  readonly derive?: (
+    document: ProjectedNode,
+    context: ProjectionContext,
+  ) => unknown;
 }
+
+/**
+ * A projection-time value a field can be declared **over** – something the run
+ * knows that the graph does not say. `dataset` is the IRI of the dataset being
+ * indexed: every indexed document comes from exactly one, and for the many
+ * entity types that carry no containing-collection property (`Person`,
+ * `Organization`, `Place`, …) it is the only available answer to *which dataset
+ * does this come from*.
+ *
+ * A field declaring one is populated by the projection, like a `path`-bearing
+ * or `derive`d field, and carries the full range of behaviour: `output`,
+ * `filterable`, `facetable`, and – for a `reference` – a
+ * {@link ReferenceField.labelSource `labelSource`} that resolves the IRI to a
+ * readable label at query time.
+ */
+export type ProjectionValue = 'dataset';
 
 /** Full-text inclusion with a `query_by` weight (folded; per-locale for
  *  localized text). Presence is what makes a field searchable. */
@@ -149,6 +178,9 @@ export interface KeywordField extends SearchFieldBase, Searchable {
   /** Projection-time value transform (e.g. strip a media-type prefix). */
   readonly transform?: (value: string) => string;
   readonly facetRanges?: never;
+  /** Populate from a {@link ProjectionValue} instead of the graph. Mutually
+   *  exclusive with `path` and `derive`. */
+  readonly from?: ProjectionValue;
 }
 
 /** An IRI-valued reference to another entity, label-resolved at the surface. */
@@ -157,6 +189,11 @@ export interface ReferenceField extends SearchFieldBase, Searchable {
   /** Projection-time value transform. */
   readonly transform?: (value: string) => string;
   readonly facetRanges?: never;
+  /** Populate from a {@link ProjectionValue} instead of the graph – a
+   *  `dataset` reference is how a type declares the dataset it was indexed
+   *  from, resolvable to a label like any other reference. Mutually exclusive
+   *  with `path` and `derive`. */
+  readonly from?: ProjectionValue;
   /**
    * The `name` of the {@link SearchType} whose collection resolves this
    * reference’s labels – its ‘label source’. The named type must declare an
@@ -706,6 +743,11 @@ export interface SearchTypeIssue {
     | 'searchable-not-allowed'
     | 'transform-not-allowed'
     | 'derive-with-path'
+    | 'from-not-allowed'
+    | 'from-with-path'
+    | 'from-with-derive'
+    | 'unknown-projection-value'
+    | 'duplicate-projection-value'
     | 'text-not-filterable'
     | 'text-not-facetable'
     | 'reserved-field-name';
@@ -730,6 +772,17 @@ const SEARCHABLE_KINDS: readonly FieldKind[] = ['text', 'keyword', 'reference'];
 
 /** Kinds whose projection applies the {@link KeywordField.transform}. */
 const TRANSFORMABLE_KINDS: readonly FieldKind[] = ['keyword', 'reference'];
+
+/**
+ * Kinds a {@link ProjectionValue} can populate: every projection value is an
+ * IRI or a token, so only the two string-shaped kinds can hold one. `reference`
+ * is what carries a {@link ReferenceField.labelSource}, and so the kind a
+ * facet over the dataset wants.
+ */
+const FROM_KINDS: readonly FieldKind[] = ['keyword', 'reference'];
+
+/** The {@link ProjectionValue}s a declaration may name. */
+const PROJECTION_VALUES: readonly string[] = ['dataset'];
 
 /**
  * A safe logical field name: a GraphQL-style identifier. The name is
@@ -773,7 +826,12 @@ const LOCALE_PATTERN = /^[A-Za-z0-9]+(-[A-Za-z0-9]+)*$/;
  * - `transform` only on `keyword`/`reference` (the only kinds whose
  *   projection applies it);
  * - `derive` and `path` are mutually exclusive (a field is projected or
- *   computed, never both).
+ *   computed, never both);
+ * - `from` names a known {@link ProjectionValue}, sits on a `keyword`/`reference`
+ *   field, excludes `path` and `derive` (the three are the value sources, and a
+ *   field has exactly one), and no two fields declare the same projection value
+ *   – which would leave a consumer reading the dataset off a declaration no
+ *   rule picks between.
  *
  * Pure and total: returns every issue rather than throwing;
  * {@link assertValidSearchType} is the throwing entry point.
@@ -783,6 +841,7 @@ export function validateSearchType(
 ): readonly SearchTypeIssue[] {
   const issues: SearchTypeIssue[] = [];
   const seen = new Set<string>();
+  const seenProjectionValues = new Set<string>();
   for (const declared of searchType.fields) {
     // Validation guards declarations built OUTSIDE TypeScript (a SHACL
     // generator, plain JS), so it inspects the uniform flat shape rather
@@ -869,6 +928,26 @@ export function validateSearchType(
     if (field.derive !== undefined && field.path !== undefined) {
       issue('derive-with-path');
     }
+    if (field.from !== undefined) {
+      if (!PROJECTION_VALUES.includes(field.from)) {
+        issue('unknown-projection-value');
+      } else if (seenProjectionValues.has(field.from)) {
+        // Two fields over one projection value leaves every consumer that
+        // resolves the value back to a declaration – the writer’s provenance
+        // field, above all – with no rule to pick between them.
+        issue('duplicate-projection-value');
+      }
+      seenProjectionValues.add(field.from);
+      if (!FROM_KINDS.includes(field.kind)) {
+        issue('from-not-allowed');
+      }
+      if (field.path !== undefined) {
+        issue('from-with-path');
+      }
+      if (field.derive !== undefined) {
+        issue('from-with-derive');
+      }
+    }
   }
   return issues;
 }
@@ -880,6 +959,7 @@ interface FlatField extends SearchFieldBase, Searchable, RangeFacetable {
   readonly locales?: readonly string[];
   readonly ref?: ReferenceField['ref'];
   readonly transform?: (value: string) => string;
+  readonly from?: ProjectionValue;
 }
 
 /**
@@ -1053,6 +1133,26 @@ export function referenceFields(
   searchType: SearchType,
 ): readonly ReferenceField[] {
   return searchType.fields.filter((field) => field.kind === 'reference');
+}
+
+/**
+ * The field a type declares over the dataset being indexed
+ * ({@link ProjectionValue `from: 'dataset'`}), if it declares one.
+ * {@link validateSearchType} allows at most one, so this is a total answer, not
+ * a first match.
+ *
+ * The single lookup every consumer of the declaration shares – the projection
+ * that populates it, and the engine writer that keeps its provenance
+ * bookkeeping on it rather than on a private field of its own.
+ */
+export function datasetField(
+  searchType: SearchType,
+): (KeywordField | ReferenceField) | undefined {
+  return searchType.fields.find(
+    (field): field is KeywordField | ReferenceField =>
+      (field.kind === 'keyword' || field.kind === 'reference') &&
+      field.from === 'dataset',
+  );
 }
 
 /** Look up a field by its logical name. */

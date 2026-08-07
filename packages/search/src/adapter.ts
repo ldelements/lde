@@ -26,6 +26,7 @@ export {
   referenceTypeNamed,
   inlineFramingDepth,
   fieldNamed,
+  datasetField,
   ID_FIELD,
   labelFieldOf,
   isRangeFacet,

@@ -16,6 +16,7 @@ import {
   physicalFields,
   referenceTypeNamed,
   type KeywordField,
+  type ProjectionValue,
   type ReferenceField,
   type RootType,
   type SearchField,
@@ -37,6 +38,27 @@ export type ProjectedNode = Record<string, unknown>;
 export type SearchDocument = { id: string } & ProjectedNode;
 
 /**
+ * What the projection knows that the graph does not say: the values a run
+ * carries about the *indexing* rather than about the data. They reach a
+ * declaration two ways – a field declaring {@link KeywordField.from `from`} is
+ * populated from one, and every `derive` receives the whole context as its
+ * second argument, so a derive can relate a projected value to it.
+ *
+ * Empty when the caller supplies nothing: projecting a graph in isolation (a
+ * test, a one-off) is legitimate, and a field over an absent value is simply
+ * left unpopulated, exactly as a `path` that matched nothing is.
+ */
+export interface ProjectionContext extends Partial<
+  Readonly<Record<ProjectionValue, string>>
+> {
+  /** The IRI of the dataset being indexed. */
+  readonly dataset?: string;
+}
+
+/** The context a projection runs with when its caller supplied none. */
+const NO_PROJECTION_CONTEXT: ProjectionContext = {};
+
+/**
  * Project one framed JSON-LD node into a flat search document: apply each field
  * of the type in declaration order. A field with a `derive` function computes
  * its value from the document as populated so far (so a derived field may read
@@ -54,6 +76,7 @@ export function projectDocument(
   node: FramedNode,
   searchType: SearchType,
   schema?: SearchSchema,
+  context: ProjectionContext = NO_PROJECTION_CONTEXT,
 ): SearchDocument {
   if (documentKey(node) === undefined) {
     throw new Error(
@@ -62,7 +85,12 @@ export function projectDocument(
   }
   // The guard above is what makes this a SearchDocument: projectFields sets `id`
   // for exactly the nodes documentKey resolves.
-  const document = projectFields(node, searchType, schema) as SearchDocument;
+  const document = projectFields(
+    node,
+    searchType,
+    schema,
+    context,
+  ) as SearchDocument;
   pruneInternalFields(document, searchType, schema);
   return document;
 }
@@ -116,11 +144,12 @@ function projectFields(
   node: FramedNode,
   searchType: SearchType,
   schema: SearchSchema | undefined,
+  context: ProjectionContext,
 ): ProjectedNode {
   const id = documentKey(node);
   const document: ProjectedNode = id === undefined ? {} : { id };
   for (const field of searchType.fields) {
-    applyField(document, node, field, searchType, schema);
+    applyField(document, node, field, searchType, schema, context);
   }
   return document;
 }
@@ -155,6 +184,7 @@ export async function* projectRoots(
   roots: readonly string[],
   schema: SearchSchema,
   searchType: RootType,
+  context: ProjectionContext = NO_PROJECTION_CONTEXT,
 ): AsyncIterable<SearchDocument> {
   assertTypeInSchema(schema, searchType);
   const index = buildSubjectIndex(quads);
@@ -164,7 +194,7 @@ export async function* projectRoots(
   // duplicate document under the same `id`.
   const depth = inlineFramingDepth(schema, searchType);
   for await (const node of frameSubjects(index, [...new Set(roots)], depth)) {
-    yield projectDocument(node, searchType, schema);
+    yield projectDocument(node, searchType, schema, context);
   }
 }
 
@@ -174,9 +204,18 @@ function applyField(
   field: SearchField,
   searchType: SearchType,
   schema: SearchSchema | undefined,
+  context: ProjectionContext,
 ): void {
+  // The three value sources, mutually exclusive by declaration
+  // (`validateSearchType`): a projection value, a computed value, a graph path.
+  if (
+    (field.kind === 'keyword' || field.kind === 'reference') &&
+    field.from !== undefined
+  ) {
+    return applyProjectionValue(document, field, field.from, context);
+  }
   if (field.derive !== undefined) {
-    const value = field.derive(document);
+    const value = field.derive(document, context);
     if (value !== undefined) {
       document[field.name] = value;
     }
@@ -199,7 +238,7 @@ function applyField(
     // project nothing rather than fall through and emit the referent IRIs under
     // the field name (the wrong shape).
     if (schema !== undefined) {
-      applyInlineReference(document, node, alias, field, schema);
+      applyInlineReference(document, node, alias, field, schema, context);
     }
     return;
   }
@@ -335,6 +374,31 @@ function applyFacet(
 }
 
 /**
+ * Project a field declared over a {@link ProjectionContext} value: read the
+ * value the run carries and write it exactly as a graph-read one, through
+ * {@link applyFacet} – so `array`, `transform` and the folded `searchable`
+ * companion mean the same thing for a declaration over the dataset as for one
+ * over a path, and the collection definition needs no special case.
+ *
+ * A value the context does not carry writes nothing: a projection run outside a
+ * pipeline (a test, a one-off) leaves the field absent rather than inventing a
+ * placeholder, the same as a `path` that matched nothing.
+ */
+function applyProjectionValue(
+  document: ProjectedNode,
+  field: KeywordField | ReferenceField,
+  from: ProjectionValue,
+  context: ProjectionContext,
+): void {
+  // `ProjectionContext` is keyed by `ProjectionValue`, so the declaration reads
+  // the context directly: a projection value that has no context key, or a
+  // context key no declaration can name, is a compile error rather than a
+  // silently unpopulated field.
+  const value = context[from];
+  applyFacet(document, value === undefined ? [] : [value], field);
+}
+
+/**
  * Project an inline reference: the referent node(s) embedded under the field’s
  * {@link irAlias IR Alias} are each projected through the reference’s
  * {@link ReferenceType} (whose own fields read their own aliases, minted against
@@ -357,6 +421,7 @@ function applyInlineReference(
   alias: string,
   field: ReferenceField & { readonly ref: { readonly typeName: string } },
   schema: SearchSchema,
+  context: ProjectionContext,
 ): void {
   // Resolves for a schema that declares the referent (always so for the schema a
   // type is projected through); a type framed against a foreign schema that
@@ -367,7 +432,7 @@ function applyInlineReference(
   }
   const referents = valuesOf(node, alias)
     .filter(isObject)
-    .map((referent) => projectFields(referent, referenceType, schema))
+    .map((referent) => projectFields(referent, referenceType, schema, context))
     // Fields, not identity, are what makes something a referent: a literal
     // value object under the alias (dirty source data), or a node this
     // reference type reads nothing from, projects nothing and is no referent.
