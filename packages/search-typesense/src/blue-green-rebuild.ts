@@ -10,9 +10,14 @@ import type { Dataset } from '@lde/dataset';
 import { buildCollectionDefinition } from './collection-definition.js';
 import { BatchImporter } from './import.js';
 import { httpStatus, openLockedRun, releaseLock } from './lock.js';
-import { SOURCE_FIELD, sourceDocumentsFilter } from './sweep.js';
+import {
+  SOURCE_FIELD,
+  provenanceField,
+  sourceDocumentsFilter,
+} from './sweep.js';
 import {
   assertNoReservedFields,
+  assertSweepableProvenanceField,
   deleteByFilter,
   resolveRebuildOptions,
   stampDocuments,
@@ -67,6 +72,10 @@ export class BlueGreenRebuild<
    */
   public readonly collectionName: string;
   private readonly resolved: ResolvedRebuildOptions;
+  /** The column this collection carries its documents’ dataset IRI in: the
+   *  type’s declared dataset field, or the private `source` when it declares
+   *  none. Both the stamp and the per-dataset rollback filter read it. */
+  private readonly sourceField: string;
 
   constructor(
     private readonly client: Client,
@@ -75,6 +84,10 @@ export class BlueGreenRebuild<
   ) {
     // `source` is stamped on every document for per-dataset rollback.
     assertNoReservedFields(searchType, [SOURCE_FIELD]);
+    // Rollback filters by a known dataset IRI rather than enumerating the
+    // indexed ones, so a declared field need not be facetable here.
+    assertSweepableProvenanceField(searchType, { requireFacetable: false });
+    this.sourceField = provenanceField(searchType);
     this.resolved = resolveRebuildOptions(searchType, options);
     this.collectionName = this.resolved.definitionOptions.name;
   }
@@ -82,6 +95,7 @@ export class BlueGreenRebuild<
   async openRun(context: RunContext): Promise<RunWriter<TDocument>> {
     const { batchSize, lockTtlMs, definitionOptions } = this.resolved;
     const name = this.collectionName;
+    const sourceField = this.sourceField;
 
     return openLockedRun(this.client, name, lockTtlMs, async () => {
       // Create the fresh (blue) collection up front, so a failure surfaces
@@ -96,9 +110,14 @@ export class BlueGreenRebuild<
       await this.client.collections().create({
         ...definition,
         name: collection,
+        // The private `source` only when the type declares no dataset field of
+        // its own; a declared one is already in the definition and carries the
+        // same IRI.
         fields: [
           ...(definition.fields ?? []),
-          { name: SOURCE_FIELD, type: 'string' },
+          ...(sourceField === SOURCE_FIELD
+            ? [{ name: SOURCE_FIELD, type: 'string' } as const]
+            : []),
         ],
       });
 
@@ -116,7 +135,7 @@ export class BlueGreenRebuild<
         await deleteByFilter(
           this.client,
           collection,
-          sourceDocumentsFilter(dataset.iri.toString()),
+          sourceDocumentsFilter(sourceField, dataset.iri.toString()),
         );
       };
 
@@ -124,7 +143,7 @@ export class BlueGreenRebuild<
         write: async (dataset: Dataset, documents: AsyncIterable<TDocument>) =>
           importer.add(
             stampDocuments(documents, {
-              [SOURCE_FIELD]: dataset.iri.toString(),
+              [sourceField]: dataset.iri.toString(),
             }),
           ),
 

@@ -157,11 +157,14 @@ Two conventions hold across the whole family:
 
 ## Field model
 
-The mapping is data, not code. Each field declares its `kind`, the IR `path` to
-read (or a `derive` function for a **derived** field, computed from the document
-in declaration order – so it may read fields declared before it, never the
-graph), and the capabilities (**roles**) it opts into. `path` is therefore the
-complete statement of what the projection reads from the graph. A field that
+The mapping is data, not code. Each field declares its `kind`, its value source,
+and the capabilities (**roles**) it opts into. There are three mutually
+exclusive value sources: the IR `path` to read; a `derive` function for a
+**derived** field, computed from the document in declaration order – so it may
+read fields declared before it, never the graph; or `from`, naming a
+[projection value](#projection-values) the run knows and the graph does not.
+`path` is therefore the complete statement of what the projection reads from the
+graph. A field that
 declares **no** role is an **internal field**: projected so a later `derive` can
 read it, then pruned before the writer and absent from the collection definition
 – not stored, not indexed, no RAM. The physical field names a declaration fans
@@ -403,6 +406,79 @@ projectRoots(
   DATASET,
 );
 ```
+
+### Projection values
+
+Some things a document should carry are true of the **indexing**, not of the
+graph. The dataset an entity was indexed from is the case that matters: every
+indexed document comes from exactly one, and for the entity types that carry no
+containing-collection property – `Person`, `Organization`, `Place`, `Term` – it
+is the only available answer to _which dataset does this come from_, because
+nothing in the data says it.
+
+A `keyword`/`reference` field declares itself over such a value with `from`
+instead of a `path` or a `derive`. The logical name is the deployment’s to
+choose, and the field behaves like any other: `output`, `filterable`,
+`facetable`, and – as a `reference` – a `labelSource` that resolves the IRI to a
+readable label at query time, so a dataset facet arrives with names rather than
+URIs.
+
+```ts
+const PERSON = defineSearchType({
+  name: 'Person',
+  class: 'http://schema.org/Person',
+  fields: [
+    {
+      name: 'label',
+      path: 'http://schema.org/name',
+      kind: 'text',
+      locales: ['nl'],
+      output: true,
+      searchable: { weight: 5 },
+    },
+    {
+      name: 'dataset',
+      kind: 'reference',
+      from: 'dataset',
+      output: true,
+      filterable: true,
+      facetable: true,
+      labelSource: 'Dataset',
+      ref: { typeName: 'Dataset', strategy: 'labelOnly' },
+    },
+  ],
+});
+```
+
+The value reaches the projection through `projectRoots`’ **projection context**;
+`@lde/search-pipeline`’s `searchStages` supplies it from the batch’s dataset, so
+a deployment declares the field and nothing else. Every `derive` receives the
+same context as its second argument, which is what lets a derive relate a
+projected value to its provenance – dropping a polymorphic `isPartOf` value that
+merely points back at the containing dataset, say:
+
+```ts
+{
+  name: 'isPartOf',
+  kind: 'reference',
+  array: true,
+  output: true,
+  ref: { typeName: 'CreativeWork', strategy: 'labelOnly' },
+  // `partOfRaw` is an internal field over schema:isPartOf
+  derive: (document, context) =>
+    (document.partOfRaw as string[] | undefined)?.filter(
+      (value) => value !== context.dataset,
+    ),
+}
+```
+
+Projecting without a context is legitimate (a test, a one-off): the field is
+simply left unpopulated, exactly as a `path` that matched nothing would be.
+
+A declared dataset field is also what the engine writer keeps its **provenance
+bookkeeping** on – see [`@lde/search-typesense`](./search-typesense.md#provenance)
+– so the facet, the label, any derive and the membership sweep read one column
+rather than two copies of one IRI.
 
 ## Locales
 

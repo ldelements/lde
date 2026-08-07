@@ -1,16 +1,40 @@
 // Pure deletion planning shared by the rebuild writers: which documents leave
 // a collection, expressed as source sets and Typesense filter strings. Kept
 // free of the Typesense client so the logic is unit-testable. This module owns
-// the bookkeeping field names, so stamping and every filter that reads them
-// can never disagree.
+// the private bookkeeping field names and resolves which field a collection
+// carries its provenance in, so stamping and every filter that reads it can
+// never disagree.
 
+import { datasetField, isInternalField } from '@lde/search/adapter';
+import type { SearchType } from '@lde/search';
 import { escapeFilterValue } from './query-compiler.js';
 
-/** The document field carrying the dataset IRI a document came from. */
+/** The private field carrying the dataset IRI a document came from, for a type
+ *  that declares none of its own – see {@link provenanceField}. */
 export const SOURCE_FIELD = 'source';
 
 /** The document field carrying the id of the run that last wrote a document. */
 export const LAST_SEEN_FIELD = 'last_seen';
+
+/**
+ * The field a collection carries its documents’ dataset IRI in – the one the
+ * membership sweep enumerates, filters and deletes by.
+ *
+ * A type that declares a field over the dataset
+ * ({@link datasetField `from: 'dataset'`}) *is* its provenance: the writer keeps
+ * its bookkeeping on that field rather than stamping a private one beside it,
+ * so the facet, the label resolution, any `derive` and the sweep all read one
+ * column that cannot drift. A type declaring nothing – or declaring the dataset
+ * only as an *internal* field, which the projection prunes before the writer
+ * ever sees it – falls back to the private {@link SOURCE_FIELD}, and behaves
+ * exactly as it always has.
+ */
+export function provenanceField(searchType: SearchType): string {
+  const declared = datasetField(searchType);
+  return declared === undefined || isInternalField(declared)
+    ? SOURCE_FIELD
+    : declared.name;
+}
 
 /**
  * Sources whose documents must leave the index: indexed, but no longer part
@@ -32,11 +56,16 @@ export function departedSources(
  * Typesense filter matching a source’s documents that this run did not touch:
  * everything the source no longer contains, ready for a per-source sweep.
  *
- * @param sourceIri The dataset IRI stamped on the documents as `source`
+ * @param sourceField The collection’s {@link provenanceField}
+ * @param sourceIri The dataset IRI the documents carry in that field
  * @param runId The current run; documents it wrote carry it as `last_seen`
  */
-export function staleDocumentsFilter(sourceIri: string, runId: string): string {
-  return `${sourceDocumentsFilter(sourceIri)} && ${LAST_SEEN_FIELD}:!=${escapeFilterValue(runId)}`;
+export function staleDocumentsFilter(
+  sourceField: string,
+  sourceIri: string,
+  runId: string,
+): string {
+  return `${sourceDocumentsFilter(sourceField, sourceIri)} && ${LAST_SEEN_FIELD}:!=${escapeFilterValue(runId)}`;
 }
 
 /**
@@ -44,10 +73,14 @@ export function staleDocumentsFilter(sourceIri: string, runId: string): string {
  * source (a departed source’s membership sweep, or a Blue/green writer rolling
  * a failed dataset out of its not-yet-live collection).
  *
- * @param sourceIri The dataset IRI stamped on the documents as `source`
+ * @param sourceField The collection’s {@link provenanceField}
+ * @param sourceIri The dataset IRI the documents carry in that field
  */
-export function sourceDocumentsFilter(sourceIri: string): string {
-  return `${SOURCE_FIELD}:=${escapeFilterValue(sourceIri)}`;
+export function sourceDocumentsFilter(
+  sourceField: string,
+  sourceIri: string,
+): string {
+  return `${sourceField}:=${escapeFilterValue(sourceIri)}`;
 }
 
 /**
@@ -57,14 +90,16 @@ export function sourceDocumentsFilter(sourceIri: string): string {
  * touching its prior-run documents, which the success sweep or a failed run
  * still owns.
  *
- * @param sourceIri The dataset IRI stamped on the documents as `source`
+ * @param sourceField The collection’s {@link provenanceField}
+ * @param sourceIri The dataset IRI the documents carry in that field
  * @param runId The current run, stamped on its documents as `last_seen`
  */
 export function thisRunDocumentsFilter(
+  sourceField: string,
   sourceIri: string,
   runId: string,
 ): string {
-  return `${sourceDocumentsFilter(sourceIri)} && ${LAST_SEEN_FIELD}:=${escapeFilterValue(runId)}`;
+  return `${sourceDocumentsFilter(sourceField, sourceIri)} && ${LAST_SEEN_FIELD}:=${escapeFilterValue(runId)}`;
 }
 
 /**
@@ -73,15 +108,19 @@ export function thisRunDocumentsFilter(
  * filter stays under a conservative length budget rather than listing every
  * source in one string.
  *
+ * @param sourceField The collection’s {@link provenanceField}
  * @param departed The departed source IRIs ({@link departedSources})
  */
-export function membershipSweepFilters(departed: readonly string[]): string[] {
+export function membershipSweepFilters(
+  sourceField: string,
+  departed: readonly string[],
+): string[] {
   const filters: string[] = [];
   let chunk: string[] = [];
   let chunkLength = 0;
   const flush = () => {
     if (chunk.length > 0) {
-      filters.push(`${SOURCE_FIELD}:=[${chunk.join(',')}]`);
+      filters.push(`${sourceField}:=[${chunk.join(',')}]`);
       chunk = [];
       chunkLength = 0;
     }

@@ -140,11 +140,19 @@ export function searchStages(
           }
           return term.value;
         });
+        // The dataset the batch came from is what a `from: 'dataset'` field is
+        // declared over, and what a `derive` reads to relate a projected value
+        // to its provenance. The stage is where it is known: the writer sees it
+        // only after projection, which is too late for either.
         for await (const document of projectRoots(
           quads,
           roots,
           schema,
           searchType,
+          // The same `iri.toString()` the writer’s provenance bookkeeping and
+          // `selectedSources()` use, so a declared field, the membership sweep
+          // and the selection all compare one spelling of the IRI.
+          { dataset: context.dataset.iri.toString() },
         )) {
           yield { searchType, document };
         }

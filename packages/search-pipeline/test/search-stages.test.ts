@@ -104,6 +104,58 @@ describe('searchStages', () => {
     ]);
   });
 
+  it('projects the batch’s dataset, so a declared field and a derive can see it', async () => {
+    // The stage is where the dataset is known: the writer sees it only after
+    // projection, which is too late for either.
+    const withDataset = searchSchema({
+      name: 'Person',
+      class: PERSON,
+      fields: [
+        { name: 'name', kind: 'keyword', path: NAME, output: true },
+        {
+          name: 'dataset',
+          kind: 'reference',
+          from: 'dataset',
+          output: true,
+          facetable: true,
+          ref: { typeName: 'Dataset', strategy: 'labelOnly' },
+        },
+        {
+          name: 'fromDataset',
+          kind: 'keyword',
+          filterable: true,
+          derive: (_document, context) =>
+            context.dataset === undefined ? undefined : 'yes',
+        },
+      ],
+    });
+    const [stage] = searchStages({
+      schema: withDataset,
+      types: [
+        {
+          searchType: withDataset.get(PERSON) as RootType,
+          rootVariable: 'root',
+          itemSelector: rootsSelector(['https://ex/p/1']),
+          readers: nameReader,
+        },
+      ],
+    });
+
+    const received: TypedSearchDocument[] = [];
+    const writer: DatasetWriter<TypedSearchDocument> = {
+      write: async (_dataset, items) => {
+        for await (const item of items) {
+          received.push(item);
+        }
+      },
+    };
+
+    await stage.run(dataset, distribution, writer);
+
+    expect(received[0].document.dataset).toBe('http://example.org/dataset/1');
+    expect(received[0].document.fromDataset).toBe('yes');
+  });
+
   it('names each stage after its type and yields one stage per type', () => {
     const stages = searchStages({
       schema,

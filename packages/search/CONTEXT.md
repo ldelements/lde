@@ -76,19 +76,38 @@ _Avoid_: sh:path, predicate, selector
 
 **Derive**:
 A Search Field’s computation – what to compute from what was already read. Runs
-in declaration order over the Search Document; never touches the graph, and
-never reaches outside it. Pure and synchronous: a Derive cannot fail.
+in declaration order over the Search Document and the Projection Context; never
+touches the graph, and never reaches outside those two. Pure and synchronous: a
+Derive cannot fail.
 _Avoid_: transform, resolver, mapper
 
-A field has a Path or a Derive, never both. **Path says what to read; Derive
-says what to compute from what was read.**
+**Projection Value**:
+Something the run knows and the graph does not say – a fact about the
+_indexing_, not about the data. Today one: the **Dataset** being indexed, which
+for the entity types carrying no containing-collection property is the only
+available answer to which dataset an entity comes from. A `keyword`/`reference`
+field declares itself over one with `from`, and then carries the full range of
+Roles like any other field.
+_Avoid_: bookkeeping field, stamp, system field
+
+**Projection Context**:
+The Projection Values a projection runs with. Supplied by the pipeline stage
+(which is where the Dataset is known – the writer sees it only _after_
+projection) and passed to every Derive as its second argument, so a Derive can
+relate a projected value to its provenance.
+_Avoid_: run context, environment
+
+A field has a Path, a Derive or a `from`, never more than one. **Path says what
+to read; Derive says what to compute from what was read; `from` says which
+Projection Value to take.**
 
 A value obtained from beyond the record – a service, a store, anything the
 projection did not read – is an **enrichment**, which belongs to
 `@lde/search-pipeline` and runs _after_ projection. Used here, never redefined.
 The boundary is what each is a function of: **a Derive is a function of the
-Search Document; an enrichment is a function of the world.** A Derive therefore
-cannot read an enriched value.
+Search Document and the Projection Context; an enrichment is a function of the
+world.** A Derive therefore cannot read an enriched value. A Projection Value is
+not an enrichment either: the run already holds it, so nothing is fetched.
 
 Two absences declare intent, and both are load-bearing: **a field without a Role
 is an Internal Field; a type without a `class` is a Reference Type.**

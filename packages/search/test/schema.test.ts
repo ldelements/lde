@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   assertTypeInSchema,
   assertValidSearchType,
+  datasetField,
   displayFieldName,
   displayFieldPattern,
   displayLangOf,
@@ -292,6 +293,26 @@ describe('schema selectors', () => {
     expect(fieldNamed(withReference, 'publisher')).toBe(publisher);
     expect(fieldNamed(withReference, 'nonexistent')).toBeUndefined();
   });
+
+  it('finds the field declared over the indexed dataset, and none where there is none', () => {
+    const declared: SearchField = {
+      name: 'dataset',
+      kind: 'reference',
+      from: 'dataset',
+      facetable: true,
+      ref: { typeName: 'Dataset', strategy: 'labelOnly' },
+    };
+    const withDataset: SearchType = {
+      name: 'Dataset',
+      class: DATASET,
+      fields: [...schema.fields, declared],
+    };
+
+    expect(datasetField(withDataset)).toBe(declared);
+    // `schema` declares text/keyword/numeric fields but nothing over a
+    // projection value.
+    expect(datasetField(schema)).toBeUndefined();
+  });
 });
 
 describe('isRangeFacet', () => {
@@ -487,6 +508,94 @@ describe('validateSearchType', () => {
         }),
       ),
     ).toEqual([{ field: 'status', reason: 'derive-with-path' }]);
+  });
+
+  it('accepts a reference declared over the indexed dataset', () => {
+    expect(
+      validateSearchType(
+        typeWith({
+          name: 'dataset',
+          kind: 'reference',
+          from: 'dataset',
+          output: true,
+          filterable: true,
+          facetable: true,
+          ref: { typeName: 'Dataset', strategy: 'labelOnly' },
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  it('rejects a projection value the projection cannot supply', () => {
+    expect(
+      validateSearchType(
+        typeWith({ name: 'run', kind: 'keyword', from: 'no-such-value' }),
+      ),
+    ).toEqual([{ field: 'run', reason: 'unknown-projection-value' }]);
+  });
+
+  it('allows from on keyword/reference only: the other kinds cannot hold an IRI', () => {
+    expect(
+      validateSearchType(
+        typeWith({ name: 'dataset', kind: 'integer', from: 'dataset' }),
+      ),
+    ).toEqual([{ field: 'dataset', reason: 'from-not-allowed' }]);
+  });
+
+  it('rejects a field declaring from beside another value source', () => {
+    expect(
+      validateSearchType(
+        typeWith(
+          {
+            name: 'fromPath',
+            kind: 'reference',
+            from: 'dataset',
+            path: 'urn:dr:dataset',
+          },
+          {
+            name: 'fromDerive',
+            kind: 'keyword',
+            from: 'dataset',
+            derive: () => 'x',
+          },
+        ),
+      ),
+    ).toEqual([
+      { field: 'fromPath', reason: 'from-with-path' },
+      // The second field re-declares `dataset`, which no consumer could then
+      // resolve to one declaration.
+      { field: 'fromDerive', reason: 'duplicate-projection-value' },
+      { field: 'fromDerive', reason: 'from-with-derive' },
+    ]);
+  });
+
+  it('rejects a projection value carried by an inline reference', () => {
+    // An inline reference is stored as a nested object; a projection value is a
+    // bare IRI. Declared together, every document import would fail.
+    expect(
+      validateSearchType(
+        typeWith({
+          name: 'dataset',
+          kind: 'reference',
+          from: 'dataset',
+          output: true,
+          ref: { typeName: 'Dataset', strategy: 'inline' },
+        }),
+      ),
+    ).toEqual([{ field: 'dataset', reason: 'from-with-inline-ref' }]);
+  });
+
+  it('rejects two fields over the same projection value', () => {
+    expect(
+      validateSearchType(
+        typeWith(
+          { name: 'dataset', kind: 'reference', from: 'dataset' },
+          { name: 'sourceDataset', kind: 'keyword', from: 'dataset' },
+        ),
+      ),
+    ).toEqual([
+      { field: 'sourceDataset', reason: 'duplicate-projection-value' },
+    ]);
   });
 
   it('allows transform on keyword/reference only', () => {
