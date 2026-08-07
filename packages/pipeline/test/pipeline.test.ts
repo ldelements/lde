@@ -2,7 +2,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { Pipeline, type PipelinePlugin } from '../src/pipeline.js';
+import {
+  EmptySelection,
+  Pipeline,
+  type PipelinePlugin,
+} from '../src/pipeline.js';
 import { Dataset, Distribution } from '@lde/dataset';
 import { Stage } from '../src/stage.js';
 import { NotSupported } from '../src/sparql/reader.js';
@@ -108,6 +112,7 @@ function makeReporter(): RequiredReporter {
     pipelineStart: vi.fn<NonNullable<ProgressReporter['pipelineStart']>>(),
     datasetsSelected:
       vi.fn<NonNullable<ProgressReporter['datasetsSelected']>>(),
+    selectionEmpty: vi.fn<NonNullable<ProgressReporter['selectionEmpty']>>(),
     datasetStart: vi.fn<NonNullable<ProgressReporter['datasetStart']>>(),
     distributionProbed:
       vi.fn<NonNullable<ProgressReporter['distributionProbed']>>(),
@@ -307,6 +312,68 @@ describe('Pipeline', () => {
         stages: [failingStage],
         writers: writer,
         distributionResolver: makeResolver(makeResolvedDistribution()),
+      });
+
+      await pipeline.run();
+
+      expect(writer.runWriter.commit).toHaveBeenCalledOnce();
+      expect(writer.runWriter.abort).not.toHaveBeenCalled();
+    });
+
+    it('abandons the run rather than committing an empty selection', async () => {
+      // Every writer reads the run's selection as the authoritative membership
+      // of its destination: an In-place sweep would read every indexed source
+      // as departed and delete the lot, and a Blue/green swap would ship an
+      // empty collection over the one holding the data. An empty selection is
+      // indistinguishable from a registry outage, so it must not commit.
+      const reporter = makeReporter();
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(),
+        stages: [makeStage('stage1')],
+        writers: writer,
+        distributionResolver: makeResolver(makeResolvedDistribution()),
+        reporter,
+      });
+
+      await pipeline.run();
+
+      expect(writer.runWriter.commit).not.toHaveBeenCalled();
+      expect(writer.runWriter.abort).toHaveBeenCalledExactlyOnceWith(
+        expect.any(EmptySelection),
+      );
+      expect(reporter.selectionEmpty).toHaveBeenCalledOnce();
+    });
+
+    it('does not throw when the selection is empty', async () => {
+      // An empty registry is a legitimate state, not a failure: the run leaves
+      // the destination alone and reports it, rather than failing a cron.
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(),
+        stages: [makeStage('stage1')],
+        writers: makeWriter(),
+        distributionResolver: makeResolver(makeResolvedDistribution()),
+      });
+
+      await expect(pipeline.run()).resolves.toBeUndefined();
+    });
+
+    it('still commits a selection whose only dataset was skipped', async () => {
+      // Selection is membership, not processing: a dataset skipped as unchanged
+      // is still selected, so the run has a membership to commit.
+      const store: ProvenanceStore = {
+        get: vi.fn().mockResolvedValue({
+          fingerprint: 'unchanged',
+          pipelineVersion: 'v1',
+        }),
+        set: vi.fn().mockResolvedValue(undefined),
+      };
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [makeStage('stage1')],
+        writers: writer,
+        distributionResolver: makeResolver(makeResolvedDistribution()),
+        provenanceStore: store,
+        pipelineVersion: 'v1',
       });
 
       await pipeline.run();

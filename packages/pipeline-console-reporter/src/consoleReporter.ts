@@ -59,6 +59,14 @@ export class ConsoleReporter implements ProgressReporter {
     }
   }
 
+  selectionEmpty(reason: string): void {
+    // A run that changed nothing on purpose – loud enough to notice on a cron,
+    // because the usual cause is an outage or a criteria typo rather than a
+    // genuinely empty registry.
+    this.activeSpinner?.warn(chalk.yellow(reason));
+    this.activeSpinner = undefined;
+  }
+
   datasetStart(dataset: Dataset): void {
     this.activeSpinner?.succeed();
     this.activeSpinner = undefined;
@@ -153,7 +161,7 @@ export class ConsoleReporter implements ProgressReporter {
       this.clearImportTimer();
       this.activeSpinner = undefined;
     } else {
-      this.clearImportTimer(); // defensive — prevents leaks from a previous dataset
+      this.clearImportTimer(); // defensive – prevents leaks from a previous dataset
       const url = distribution.accessUrl.toString();
       const probe = this.probeLines.find((line) => line.url === url);
       const text = probe?.text || url;

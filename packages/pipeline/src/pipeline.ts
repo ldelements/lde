@@ -50,6 +50,27 @@ import {
 } from './sparql/timeoutPolicy.js';
 
 /**
+ * Why a run was abandoned rather than committed: its selector produced no
+ * datasets, so the run holds no membership a writer could safely act on.
+ *
+ * Every writer reads the run’s selection as the authoritative membership of its
+ * destination – that is what lets an In-place writer sweep departed sources and
+ * a Blue/green writer ship a fresh collection. An empty selection would make
+ * that reading catastrophic (delete everything / swap in an empty collection),
+ * and it is indistinguishable from a registry outage or a criteria typo, so the
+ * pipeline aborts instead. Handed to {@link RunWriter.abort}, whose contract –
+ * leave the live destination as it was – is exactly the wanted behaviour.
+ */
+export class EmptySelection extends Error {
+  constructor() {
+    super(
+      'Selection produced no datasets; abandoning the run rather than treating an empty selection as membership. The destination is unchanged.',
+    );
+    this.name = 'EmptySelection';
+  }
+}
+
+/**
  * Context handed to a {@link PipelinePlugin.beforeStageWrite} transform: the
  * `dataset` whose merged output is being written and the `stage` that produced
  * it. The stage identity lets a transform mint stable IRIs keyed on
@@ -505,7 +526,22 @@ export class Pipeline<Out = Quad> {
         selectedSources.push(dataset.iri.toString());
         await this.processDataset(dataset, runWriter, context);
       }
-      await runWriter.commit();
+      if (selectedSources.length === 0) {
+        // Committing an empty selection would hand every writer an empty
+        // membership as if it were the truth: an In-place writer’s sweep reads
+        // every indexed source as departed and deletes the lot, and a
+        // Blue/green writer swaps an empty collection live and drops the one
+        // that held the data. A selector returning nothing is indistinguishable
+        // from a registry outage or a criteria typo, so the run is abandoned
+        // instead – leaving the destination exactly as it was, which is what
+        // `abort` already guarantees for both writers. To empty a destination
+        // on purpose, drop it.
+        const reason = new EmptySelection();
+        this.reporter?.selectionEmpty?.(reason.message);
+        await runWriter.abort(reason);
+      } else {
+        await runWriter.commit();
+      }
     } catch (error) {
       await runWriter.abort(error);
       throw error;

@@ -32,6 +32,28 @@ describe('ConsoleReporter', () => {
     expect(reporter).toBeInstanceOf(ConsoleReporter);
   });
 
+  describe('selectionEmpty', () => {
+    it('warns that the run was abandoned, with the reason', () => {
+      const reporter = new ConsoleReporter();
+      const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+
+      reporter.pipelineStart('test');
+      reporter.selectionEmpty('Selection produced no datasets');
+
+      const output = spy.mock.calls.map((call) => String(call[0])).join('');
+      expect(output).toContain('Selection produced no datasets');
+    });
+
+    it('does not require a running spinner', () => {
+      // The event can arrive before any spinner exists (a selector that
+      // returns nothing without the pipeline having started one).
+      const reporter = new ConsoleReporter();
+      vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+
+      expect(() => reporter.selectionEmpty('empty')).not.toThrow();
+    });
+  });
+
   describe('datasetValidated', () => {
     it('shows success when validation conforms', () => {
       const reporter = new ConsoleReporter();

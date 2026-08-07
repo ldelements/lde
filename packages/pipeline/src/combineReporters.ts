@@ -33,8 +33,7 @@ export function combineReporters(
       // yields a union of method types TS won't call directly, even though the
       // arguments are correlated.
       const handler = reporter[method] as
-        | ((...handlerArgs: ReporterArguments<Method>) => void)
-        | undefined;
+        ((...handlerArgs: ReporterArguments<Method>) => void) | undefined;
       // Every method is optional; notify only the children that implement it.
       // Invoke through `call` so a class-based reporter keeps its `this`: a bare
       // `handler?.(...)` would drop the receiver and break methods that touch
@@ -50,6 +49,7 @@ export function combineReporters(
   const combined: Required<ProgressReporter> = {
     pipelineStart: (...args) => forward('pipelineStart', ...args),
     datasetsSelected: (...args) => forward('datasetsSelected', ...args),
+    selectionEmpty: (...args) => forward('selectionEmpty', ...args),
     datasetStart: (...args) => forward('datasetStart', ...args),
     distributionProbed: (...args) => forward('distributionProbed', ...args),
     importStarted: (...args) => forward('importStarted', ...args),
