@@ -247,6 +247,28 @@ and `last_seen` (the run id); deletion is a sweep, never special-cased:
 
 Document ids must be unique per (source, entity) – the caller keys them.
 
+### Provenance
+
+`source` above is the **private** bookkeeping field a writer adds when the
+`SearchType` declares nothing over the dataset itself; a schema cannot declare a
+field of that name.
+
+A type that _does_ declare one – a `keyword`/`reference` field with
+[`from: 'dataset'`](./search.md#projection-values) – makes that field the
+collection’s provenance instead: the writer stamps it, the sweeps filter on it,
+and no private `source` column is added beside it. One column then feeds the
+facet, the query-time label resolution, any `derive` and the membership sweep,
+so they cannot drift the way two copies of one IRI can.
+
+Because the sweep deletes by it, a declared dataset field must be single-valued
+and carry no `transform` (the sweep matches the stored value against the run’s
+raw dataset IRIs), and – for `InPlaceRebuild`, which enumerates the indexed
+datasets by faceting it – must be `facetable`. Each is checked when the writer
+is constructed, so a declaration that cannot be swept fails before a run touches
+the index. Declaring the dataset as an _internal_ field (no role at all, purely
+so a `derive` can read it) is fine: the projection prunes it before the writer,
+which falls back to `source`.
+
 Both writers take a `Client` the caller owns (and reuses for queries), so this
 package adds no connection or document type of its own – any object with an `id`
 is a valid document, including the `SearchDocument`s `@lde/search` produces.

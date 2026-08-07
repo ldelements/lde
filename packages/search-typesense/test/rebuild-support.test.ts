@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { SearchType } from '@lde/search';
 import {
   assertNoReservedFields,
+  assertSweepableProvenanceField,
   resolveRebuildOptions,
   stampDocuments,
 } from '../src/rebuild-support.js';
@@ -83,6 +84,95 @@ describe('assertNoReservedFields', () => {
         'last_seen',
       ]),
     ).toThrow(/reserved bookkeeping field\(s\) “source”, “last_seen”/);
+  });
+});
+
+describe('assertSweepableProvenanceField', () => {
+  const typeWith = (field: object): SearchType => ({
+    name: 'Object',
+    class: 'https://example.org/Object',
+    fields: [field] as SearchType['fields'],
+  });
+
+  it('accepts a type declaring no dataset field at all', () => {
+    expect(() =>
+      assertSweepableProvenanceField(
+        typeWith({ name: 'title', kind: 'keyword' }),
+        {
+          requireFacetable: true,
+        },
+      ),
+    ).not.toThrow();
+  });
+
+  it('accepts a facetable, single-valued declaration', () => {
+    expect(() =>
+      assertSweepableProvenanceField(
+        typeWith({
+          name: 'dataset',
+          kind: 'reference',
+          from: 'dataset',
+          facetable: true,
+        }),
+        { requireFacetable: true },
+      ),
+    ).not.toThrow();
+  });
+
+  it('ignores an internal dataset field: the projection prunes it before the writer', () => {
+    expect(() =>
+      assertSweepableProvenanceField(
+        typeWith({ name: 'dataset', kind: 'reference', from: 'dataset' }),
+        { requireFacetable: true },
+      ),
+    ).not.toThrow();
+  });
+
+  it('rejects an array declaration, which a membership sweep would over-delete by', () => {
+    expect(() =>
+      assertSweepableProvenanceField(
+        typeWith({
+          name: 'dataset',
+          kind: 'reference',
+          from: 'dataset',
+          array: true,
+          facetable: true,
+        }),
+        { requireFacetable: true },
+      ),
+    ).toThrow(/array/);
+  });
+
+  it('rejects a transform, which would stop the stored value matching the selection', () => {
+    expect(() =>
+      assertSweepableProvenanceField(
+        typeWith({
+          name: 'dataset',
+          kind: 'reference',
+          from: 'dataset',
+          facetable: true,
+          transform: (value: string) => value.replace('https://', 'http://'),
+        }),
+        { requireFacetable: true },
+      ),
+    ).toThrow(/transform/);
+  });
+
+  it('requires facetable only where the writer enumerates the indexed datasets', () => {
+    const notFacetable = typeWith({
+      name: 'dataset',
+      kind: 'reference',
+      from: 'dataset',
+      output: true,
+    });
+
+    expect(() =>
+      assertSweepableProvenanceField(notFacetable, { requireFacetable: true }),
+    ).toThrow(/facetable/);
+    // Blue/green only ever filters by a known IRI, so it needs no facet.
+    expect(() =>
+      assertSweepableProvenanceField(notFacetable, { requireFacetable: false }),
+    ).not.toThrow();
   });
 });
 

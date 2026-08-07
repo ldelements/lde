@@ -288,4 +288,50 @@ describe('BlueGreenRebuild', () => {
         ),
     ).toThrow(/source/);
   });
+
+  it('stamps and rolls back on a declared dataset field, without a private source', async () => {
+    const withDataset = {
+      name: 'Dataset',
+      class: 'https://example.org/Dataset',
+      fields: [
+        { name: 'title', kind: 'keyword', output: true },
+        // Not facetable: Blue/green rolls back by a known IRI rather than
+        // enumerating the indexed datasets, so it needs no facet.
+        {
+          name: 'dataset',
+          kind: 'reference',
+          from: 'dataset',
+          output: true,
+          ref: { typeName: 'Dataset', strategy: 'labelOnly' },
+        },
+      ],
+    } satisfies SearchType;
+    const writer = new BlueGreenRebuild<{ id: string; title: string }>(
+      client,
+      withDataset,
+      { name: NAME },
+    );
+
+    const failing = new Dataset({
+      iri: new URL('http://example.org/dataset/2'),
+      distributions: [],
+    });
+    const run = await writer.openRun(makeRunContext([dataset.iri.toString()]));
+    await run.write(dataset, stream([{ id: 'a1', title: 'One' }]));
+    await run.flush?.(dataset, 'success');
+    await run.write(failing, stream([{ id: 'b1', title: 'Bee' }]));
+    // A failed dataset is rolled back by its dataset IRI.
+    await run.flush?.(failing, 'failed');
+    await run.commit();
+
+    const stored = (await client
+      .collections(NAME)
+      .documents('a1')
+      .retrieve()) as Record<string, unknown>;
+    expect(stored.dataset).toBe(dataset.iri.toString());
+    expect(stored).not.toHaveProperty('source');
+    await expect(
+      client.collections(NAME).documents('b1').retrieve(),
+    ).rejects.toThrow();
+  });
 });

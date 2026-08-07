@@ -16,11 +16,13 @@ import {
   SOURCE_FIELD,
   departedSources,
   membershipSweepFilters,
+  provenanceField,
   staleDocumentsFilter,
   thisRunDocumentsFilter,
 } from './sweep.js';
 import {
   assertNoReservedFields,
+  assertSweepableProvenanceField,
   deleteByFilter,
   resolveRebuildOptions,
   stampDocuments,
@@ -92,6 +94,11 @@ export class InPlaceRebuild<
   public readonly collectionName: string;
   private readonly maxSweepableSources: number;
   private readonly resolved: ResolvedRebuildOptions;
+  /** The column this collection carries its documents’ dataset IRI in: the
+   *  type’s declared dataset field, or the private `source` when it declares
+   *  none. Everything below – the stamp, every sweep filter, the source
+   *  enumeration – reads this one name. */
+  private readonly sourceField: string;
 
   constructor(
     private readonly client: Client,
@@ -99,6 +106,8 @@ export class InPlaceRebuild<
     options: InPlaceRebuildOptions = {},
   ) {
     assertNoReservedFields(searchType, [SOURCE_FIELD, LAST_SEEN_FIELD]);
+    assertSweepableProvenanceField(searchType, { requireFacetable: true });
+    this.sourceField = provenanceField(searchType);
     const {
       maxSweepableSources = DEFAULT_MAX_SWEEPABLE_SOURCES,
       ...rebuildOptions
@@ -111,18 +120,24 @@ export class InPlaceRebuild<
   async openRun(context: RunContext): Promise<RunWriter<TDocument>> {
     const { batchSize, lockTtlMs, definitionOptions } = this.resolved;
     const name = this.collectionName;
+    const sourceField = this.sourceField;
 
     return openLockedRun(this.client, name, lockTtlMs, async () => {
       // Create the collection on demand: SearchType schema + the bookkeeping
-      // fields, `source` faceted so the membership sweep can enumerate the
-      // distinct sources.
+      // fields. The private `source` – faceted so the membership sweep can
+      // enumerate the distinct sources – only when the type declares no dataset
+      // field of its own; when it does, that declared field already carries the
+      // IRI (and its own `facet: true`), and a second column would be the same
+      // value twice, free to drift.
       await ensureCollectionExists(this.client, name, () => {
         const definition = buildCollectionDefinition(
           this.searchType,
           definitionOptions,
         );
         const bookkeeping: CollectionFieldSchema[] = [
-          { name: SOURCE_FIELD, type: 'string', facet: true },
+          ...(sourceField === SOURCE_FIELD
+            ? [{ name: SOURCE_FIELD, type: 'string', facet: true } as const]
+            : []),
           { name: LAST_SEEN_FIELD, type: 'string' },
         ];
         return {
@@ -138,10 +153,16 @@ export class InPlaceRebuild<
       );
 
       return {
+        // Stamping the provenance field – rather than trusting the projection
+        // to have filled a declared one – is what keeps the sweep total: a
+        // caller projecting without a dataset context, or a document reaching
+        // the writer any other way, still lands in a swept collection. Where
+        // the projection did fill it, the value is the same dataset IRI, so the
+        // stamp only ever reasserts it.
         write: async (dataset: Dataset, documents: AsyncIterable<TDocument>) =>
           importer.add(
             stampDocuments(documents, {
-              [SOURCE_FIELD]: dataset.iri.toString(),
+              [sourceField]: dataset.iri.toString(),
               [LAST_SEEN_FIELD]: context.runId,
             }),
           ),
@@ -159,7 +180,11 @@ export class InPlaceRebuild<
           await deleteByFilter(
             this.client,
             name,
-            staleDocumentsFilter(dataset.iri.toString(), context.runId),
+            staleDocumentsFilter(
+              sourceField,
+              dataset.iri.toString(),
+              context.runId,
+            ),
           );
         },
 
@@ -171,7 +196,11 @@ export class InPlaceRebuild<
           await deleteByFilter(
             this.client,
             name,
-            thisRunDocumentsFilter(dataset.iri.toString(), context.runId),
+            thisRunDocumentsFilter(
+              sourceField,
+              dataset.iri.toString(),
+              context.runId,
+            ),
           );
         },
 
@@ -181,7 +210,7 @@ export class InPlaceRebuild<
             await this.indexedSources(name, this.maxSweepableSources),
             context.selectedSources(),
           );
-          for (const filter of membershipSweepFilters(departed)) {
+          for (const filter of membershipSweepFilters(sourceField, departed)) {
             await deleteByFilter(this.client, name, filter);
           }
           await releaseLock(this.client, name);
@@ -195,8 +224,8 @@ export class InPlaceRebuild<
   }
 
   /**
-   * The distinct sources present in the collection, via a single `source`
-   * facet. Requests one bucket beyond `maxSources` so genuine truncation is
+   * The distinct sources present in the collection, via a single facet over its
+   * {@link provenanceField}. Requests one bucket beyond `maxSources` so genuine truncation is
    * distinguishable from an exactly-full result: `maxSources` buckets are
    * returned intact, `maxSources + 1` proves more exist and the sweep would
    * miss some, so it throws rather than delete blind.
@@ -210,9 +239,9 @@ export class InPlaceRebuild<
       .documents()
       .search({
         q: '*',
-        query_by: SOURCE_FIELD,
+        query_by: this.sourceField,
         per_page: 0,
-        facet_by: SOURCE_FIELD,
+        facet_by: this.sourceField,
         max_facet_values: maxSources + 1,
       });
     const counts = response.facet_counts?.[0]?.counts ?? [];

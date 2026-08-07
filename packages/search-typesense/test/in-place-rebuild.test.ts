@@ -316,4 +316,96 @@ describe('InPlaceRebuild', () => {
       /source/,
     );
   });
+
+  describe('a type declaring the indexed dataset', () => {
+    const withDataset: SearchType = {
+      name: 'Object',
+      class: 'https://example.org/Object',
+      fields: [
+        { name: 'title', kind: 'keyword', output: true },
+        {
+          name: 'dataset',
+          kind: 'reference',
+          from: 'dataset',
+          output: true,
+          filterable: true,
+          facetable: true,
+          ref: { typeName: 'Dataset', strategy: 'labelOnly' },
+        },
+      ],
+    };
+
+    it('keeps its provenance on the declared field, with no private source beside it', async () => {
+      const writer = new InPlaceRebuild<{ id: string; title: string }>(
+        client,
+        withDataset,
+        { name: NAME },
+      );
+
+      const run = await writer.openRun(
+        makeRunContext([datasetA.iri.toString()]),
+      );
+      await run.write(datasetA, stream([{ id: 'a1', title: 'One' }]));
+      await run.flush?.(datasetA, 'success');
+      await run.commit();
+
+      const stored = (await client
+        .collections(NAME)
+        .documents('a1')
+        .retrieve()) as Record<string, unknown>;
+      expect(stored.dataset).toBe('http://example.org/dataset/a');
+      // One column, not the same IRI twice under two names.
+      expect(stored).not.toHaveProperty('source');
+      const definition = await client.collections(NAME).retrieve();
+      expect(definition.fields?.map((field) => field.name)).not.toContain(
+        'source',
+      );
+    });
+
+    it('sweeps a departed dataset by the declared field', async () => {
+      const writer = new InPlaceRebuild<{ id: string; title: string }>(
+        client,
+        withDataset,
+        { name: NAME },
+      );
+      await seed(
+        writer,
+        new Map([
+          [datasetA, [{ id: 'a1', title: 'One' }]],
+          [datasetB, [{ id: 'b1', title: 'Bee' }]],
+        ]),
+      );
+
+      // B leaves the selection: the membership sweep enumerates and deletes by
+      // `dataset`, the column the facet and the label resolution also read.
+      const run = await writer.openRun(
+        makeRunContext([datasetA.iri.toString()]),
+      );
+      await run.write(datasetA, stream([{ id: 'a1', title: 'One' }]));
+      await run.flush?.(datasetA, 'success');
+      await run.commit();
+
+      expect(await documentIds(client)).toEqual(['a1']);
+    });
+
+    it('refuses a declared dataset field the sweep cannot enumerate', () => {
+      const notFacetable: SearchType = {
+        name: 'Object',
+        class: 'https://example.org/Object',
+        fields: [
+          {
+            name: 'dataset',
+            kind: 'reference',
+            from: 'dataset',
+            output: true,
+            ref: { typeName: 'Dataset', strategy: 'labelOnly' },
+          },
+        ],
+      };
+
+      expect(
+        () => new InPlaceRebuild(client, notFacetable, { name: NAME }),
+      ).toThrow(/facetable/);
+    });
+  });
 });
