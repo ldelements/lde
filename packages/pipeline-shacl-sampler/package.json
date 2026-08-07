@@ -1,6 +1,6 @@
 {
   "name": "@lde/pipeline-shacl-sampler",
-  "version": "0.9.4",
+  "version": "0.9.5",
   "description": "Per-class sampling stages for @lde/pipeline, derived from SHACL shapes",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
@@ -33,6 +33,6 @@
   },
   "peerDependencies": {
     "@lde/dataset": "^0.7.9",
-    "@lde/pipeline": "^0.35.4"
+    "@lde/pipeline": "^0.35.5"
   }
 }

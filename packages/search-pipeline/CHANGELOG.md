@@ -1,3 +1,14 @@
+## 0.15.1 (2026-08-07)
+
+### 🚀 Features
+
+- **search-pipeline:** extract root types from the dataset registry ([#698](https://github.com/ldelements/lde/pull/698))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.18.1
+- Updated @lde/pipeline to 0.35.5
+
 ## 0.15.0 (2026-07-31)
 
 ### 🚀 Features
