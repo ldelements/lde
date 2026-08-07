@@ -347,6 +347,26 @@ type must declare an `output`, `searchable` text field called `label` –
 `searchSchema` validates this schema-wide, so a dangling or unsuitable label
 source fails at startup. A reference without a `labelSource` stays id-only.
 
+### Facet buckets
+
+A `FacetBucket` always carries its `value` and `count`; what else it carries is
+decided by the facet’s kind, and a surface types the bucket accordingly (see
+[bucket types](./search-api-graphql#what-it-builds-per-root-type)).
+
+**`label`** is the engine-resolved canonical **data** label, and appears only
+for a **reference** facet with a [label source](#field-model) – the bucket is
+IRI-keyed, so without it a consumer has nothing to display. Every other kind
+carries none, and this is a rule about the data, not an omission to fill in
+later:
+
+- a `keyword` facet’s value is a token or free string whose display the
+  consumer owns – its own i18n, or the value itself;
+- a `boolean` facet has no data label at all, and no language to negotiate one
+  from. Only the consumer knows that `true` means “Met afbeelding”. Its bucket
+  additionally carries **`is`**, the value as a real boolean, so it round-trips
+  straight into the `is` filter that selects it;
+- a range-facet bin carries `min`/`max` instead – see below.
+
 ### Range facets
 
 A facetable numeric field (`integer`/`number`/`date`) may declare

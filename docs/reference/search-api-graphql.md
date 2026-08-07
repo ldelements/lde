@@ -174,7 +174,18 @@ const gqlSchema = buildGraphQLSchema(searchSchema(DATASET, PERSON));
   - a numeric field with [`facetRanges`](./search#range-facets) returns
     `[RangeBucket!]!` instead – one bucket per declared half-open
     `[min, max)` bin, carrying `min`/`max` (null on an open end) and
-    `count`, with no `value` or `label`.
+    `count`, with no `value` or `label`;
+  - a `boolean` field returns `[BooleanBucket!]!` – `value: Boolean!` +
+    `count`, and **no `label` field at all**. The value is a real boolean, so
+    the bucket a client selects is exactly the term the `where` filter takes
+    (`where: { iiif: true }`) rather than a string to parse back. There is no
+    label because a boolean has no data label to resolve and no language to
+    negotiate one from: the sensible rendering (“Met afbeelding” / “Zonder
+    afbeelding”) is knowable only by the consumer. Because no third value can
+    arrive, one checkbox labelled with the facet’s own label is a safe
+    rendering – no field-name matching needed. A bucket is present only if
+    the engine counted documents for it, so a uniform result set yields one
+    bucket, not two.
 
   Selecting facet fields IS
   the request: each selected facet is computed with its own `where`-filter

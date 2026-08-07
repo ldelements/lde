@@ -83,7 +83,7 @@ the optional `printGraphQLSchema()` SDL snapshot (the real artifact).
 ### Construction rules (field model → schema)
 
 Type names derive from each `SearchType`’s logical `name`; shared types (`LanguageString`,
-`ValueBucket`, `RangeBucket`, `SortDirection`, `StringFilter`, `IntRange`, `FloatRange`,
+`ValueBucket`, `RangeBucket`, `BooleanBucket`, `SortDirection`, `StringFilter`, `IntRange`, `FloatRange`,
 `DateRange`, and the reference types) are emitted once across all root types, and the
 per-type keyed facets object is named `<name>Facets`. A type with no `filterable` fields gets
 no `where` arg, and one
@@ -125,14 +125,15 @@ GraphQL field names are the field model `name` verbatim (declare camelCase).
   coercion) – **variable-based clients break** (`$o: DatasetOrderBy` where `[DatasetOrderBy!]`
   is expected) – so a future array is a deliberate, potentially breaking change.
 - **Facets** – a **keyed object** (`<Type>Facets`), one field per `facetable` field, typed by
-  the field’s kind: a numeric range-facet field is `[RangeBucket!]!`, every other facet is
+  the field’s kind: a numeric range-facet field is `[RangeBucket!]!`, a `boolean` field is
+  `[BooleanBucket!]!`, every other facet is
   `[ValueBucket!]!`. The facet set and each bucket shape are thus encoded **statically in the
   schema**, not discovered at runtime through an enum + polymorphic bucket (no `__typename`, no
   fragments). **Selection is the request**: only the facet keys a query selects are computed
   (the resolver inspects the selection), each with its **own where-filter removed**
   (skip-own-filter – a multi-select facet still lists its other options; dropping a `status`
   filter also drops the valid-only default, so the status facet counts across every status).
-  Two bucket types:
+  Three bucket types:
   - `ValueBucket { value, count, label }` – `value` is the selection key (filter via
     `field.in`); `label` (nullable) is the engine-resolved canonical **data** label, present
     only for **reference** (IRI-keyed) facets, `null` for token/free-string facets whose
@@ -140,6 +141,14 @@ GraphQL field names are the field model `name` verbatim (declare camelCase).
     or the `value` itself). The null is load-bearing.
   - `RangeBucket { min, max, count }` – a half-open `[min, max)` numeric bin (`max` null on an
     open-ended top bin), filtered via `field.range`.
+  - `BooleanBucket { value, count }` – `value` is a real `Boolean!`, filtered via `field.is`
+    with no reparsing of a stringified `"true"`. Carries **no `label` field** – not a nullable
+    one: a boolean has no data label to resolve and no language to negotiate one from, and its
+    absence is a fact of the kind rather than a null a consumer must read as either “missing”
+    or “not applicable”. Because at most two buckets exist and no third value can arrive, a
+    consumer can safely render the idiomatic single checkbox carrying the facet’s own label
+    (“Met afbeelding (1071)”) instead of a two-option value list, without matching on field
+    names.
   - A grouped facet (a coarse category alongside granular values, e.g. `group:rdf` next to media
     types) needs **no special bucket**: its tokens are denormalized into the field at index time,
     so they are ordinary `ValueBucket` values – faceted, filtered (`field.in: ["group:rdf"]`) and,
@@ -208,6 +217,11 @@ type RangeBucket {
   max: Float
   count: Int!
 }
+type BooleanBucket {
+  value: Boolean! # a real boolean: send it straight back as `where: { iiif: true }`
+  count: Int!
+  # no label: nothing to resolve, no language to negotiate – the consumer names it
+}
 type DatasetFacets {
   # one field per facetable field, typed by kind; selection = request, skip-own-filter applied
   publisher: [ValueBucket!]!
@@ -218,6 +232,7 @@ type DatasetFacets {
   terminologySource: [ValueBucket!]!
   status: [ValueBucket!]!
   size: [RangeBucket!]!
+  iiif: [BooleanBucket!]!
 }
 
 type Pagination {

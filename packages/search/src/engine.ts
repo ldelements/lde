@@ -203,4 +203,10 @@ export interface FacetBucket {
    */
   readonly min?: number;
   readonly max?: number;
+  /**
+   * For a boolean-facet bucket: the value as a real boolean, so it round-trips
+   * straight into the `is` filter that selects it rather than leaving a
+   * consumer to parse `value` back. Absent on every other kind of facet.
+   */
+  readonly is?: boolean;
 }

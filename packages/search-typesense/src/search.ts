@@ -771,6 +771,9 @@ export function parseSearchResponse(
       field !== undefined && isRangeFacet(field)
         ? new Map(field.facetRanges.map((range) => [range.key, range]))
         : undefined;
+    // A boolean facet is reported with the values stringified; recover the
+    // boolean so the bucket carries the term the `is` filter expects.
+    const booleanFacet = field?.kind === 'boolean';
     facets[facet.field_name] = facet.counts.map((bucket) => {
       const label = labelled ? labels.get(bucket.value) : undefined;
       const range = rangesByKey?.get(bucket.value);
@@ -780,6 +783,7 @@ export function parseSearchResponse(
         ...(label !== undefined ? { label } : {}),
         ...(range?.min !== undefined ? { min: range.min } : {}),
         ...(range?.max !== undefined ? { max: range.max } : {}),
+        ...(booleanFacet ? { is: bucket.value === 'true' } : {}),
       };
     });
   }
