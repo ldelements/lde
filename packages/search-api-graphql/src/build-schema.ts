@@ -169,6 +169,20 @@ export function buildGraphQLSchema(
       count: { type: new GraphQLNonNull(GraphQLInt) },
     },
   });
+  // A boolean-facet bucket: the value as a real boolean, so the bucket a client
+  // selects round-trips straight into the `is` filter that selects it. No label
+  // – a boolean has no data label to resolve, and the sensible rendering (“with
+  // an image” / “without one”) is knowable only by the consumer.
+  const booleanBucket = new GraphQLObjectType({
+    name: 'BooleanBucket',
+    fields: {
+      value: {
+        type: new GraphQLNonNull(GraphQLBoolean),
+        resolve: (bucket: Source) => bucket.is,
+      },
+      count: { type: new GraphQLNonNull(GraphQLInt) },
+    },
+  });
   // The pagination actually applied (after queryDefaults), shared across every
   // ‹Type›SearchResult so one client pager fragment serves all root types.
   const paginationType = new GraphQLObjectType({
@@ -420,7 +434,8 @@ export function buildGraphQLSchema(
     });
 
     // Keyed facets object: one field per facetable field, typed by its kind
-    // (range fields → [RangeBucket!], else [ValueBucket!]). Only the selected
+    // (range fields → [RangeBucket!], boolean fields → [BooleanBucket!], else
+    // [ValueBucket!]). Only the selected
     // fields are resolved (GraphQL prunes the rest), so the selection IS the
     // request; how they are computed – skip-own-filter, batched into one
     // engine dispatch – lives in facet-batch.ts.
@@ -489,6 +504,13 @@ export function buildGraphQLSchema(
     };
   }
 
+  /** The bucket type a facet’s kind earns: bins for a range facet, a real
+   *  boolean for a boolean one, a keyed value otherwise. */
+  function bucketTypeFor(field: SearchField): GraphQLObjectType {
+    if (isRangeFacet(field)) return rangeBucket;
+    return field.kind === 'boolean' ? booleanBucket : valueBucket;
+  }
+
   /** The keyed facets object for one type (only called with ≥ 1 facetable field). */
   function facetsTypeFor(
     typeName: string,
@@ -503,9 +525,7 @@ export function buildGraphQLSchema(
         > = {};
         for (const field of facetable) {
           fields[field.name] = {
-            type: nonNullListOf(
-              isRangeFacet(field) ? rangeBucket : valueBucket,
-            ),
+            type: nonNullListOf(bucketTypeFor(field)),
             // The skip-own-filter query building, the batching into one
             // engine dispatch and the degrade-to-[] error handling all live
             // in the loader (facet-batch.ts).

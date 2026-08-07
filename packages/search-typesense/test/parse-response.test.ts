@@ -129,6 +129,14 @@ const response = {
         { value: 'https://org/3', count: 1 },
       ],
     },
+    {
+      // A boolean facet: Typesense reports the two values as strings.
+      field_name: 'iiif',
+      counts: [
+        { value: 'true', count: 2 },
+        { value: 'false', count: 1 },
+      ],
+    },
   ],
 };
 
@@ -157,6 +165,13 @@ describe('parseSearchResponse', () => {
         label: { nl: ['Het Utrechts Archief'] },
       },
       { value: 'https://org/3', count: 1 },
+    ]);
+  });
+
+  it('gives boolean-facet buckets a real boolean alongside the engine’s string value', () => {
+    expect(result.facets.iiif).toEqual([
+      { value: 'true', is: true, count: 2 },
+      { value: 'false', is: false, count: 1 },
     ]);
   });
 

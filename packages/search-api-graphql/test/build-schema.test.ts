@@ -347,6 +347,36 @@ describe('buildGraphQLSchema', () => {
     expect(facets.keyword).toEqual([{ value: 'kaarten', count: 3 }]);
   });
 
+  it('serves boolean-facet buckets as real booleans, ready to send straight back as a filter', async () => {
+    const { engine, received } = fakeEngine({
+      total: 0,
+      hits: [],
+      facets: {
+        iiif: [
+          { value: 'true', is: true, count: 1071 },
+          { value: 'false', is: false, count: 342 },
+        ],
+      },
+    });
+    const result = await run(
+      `{ datasets { facets { iiif { value count } } } }`,
+      { engine, acceptLanguage: ['nl'] },
+    );
+    const facets = (result.data?.datasets as Record<string, unknown>)
+      .facets as { iiif: { value: boolean; count: number }[] };
+    expect(facets.iiif).toEqual([
+      { value: true, count: 1071 },
+      { value: false, count: 342 },
+    ]);
+    // The bucket a client picked is exactly what its filter takes: no reparsing.
+    await run(
+      `query ($iiif: Boolean) { datasets(where: { iiif: $iiif }) { pagination { total } } }`,
+      { engine, acceptLanguage: ['nl'] },
+      { iiif: facets.iiif[0].value },
+    );
+    expect(received().where).toEqual([{ field: 'iiif', is: true }]);
+  });
+
   it('resolves every selected facet key through ONE batched engine dispatch, returning [] where the engine has none', async () => {
     const { engine, facetBatches } = fakeEngine({
       total: 0,
@@ -616,9 +646,21 @@ describe('buildGraphQLSchema', () => {
     expect(sdl).toMatch(/type DatasetFacets/);
     expect(sdl).toMatch(/keyword: \[ValueBucket!\]!/);
     expect(sdl).toMatch(/size: \[RangeBucket!\]!/);
+    expect(sdl).toMatch(/iiif: \[BooleanBucket!\]!/);
     expect(sdl).toMatch(/input DatasetWhere/);
     expect(sdl).toMatch(/status: StringFilter/);
     expect(sdl).toMatch(/size: IntRange/);
+  });
+
+  it('gives a boolean facet a real boolean value and no label to interpret', () => {
+    const sdl = printSchema(
+      buildGraphQLSchema(searchSchema(schema), datasetOptions),
+    );
+    expect(sdl).toContain(
+      ['type BooleanBucket {', '  value: Boolean!', '  count: Int!', '}'].join(
+        '\n',
+      ),
+    );
   });
 
   describe('multiple root types in one schema', () => {

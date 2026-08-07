@@ -46,13 +46,18 @@ type ThingFacets {
   creator: [ValueBucket!]!
   publisher: [ValueBucket!]!
   status: [ValueBucket!]!
-  open: [ValueBucket!]!
+  open: [BooleanBucket!]!
 }
 
 type ValueBucket {
   value: String!
   count: Int!
   label: [LanguageString!]
+}
+
+type BooleanBucket {
+  value: Boolean!
+  count: Int!
 }
 
 input ThingWhere {
