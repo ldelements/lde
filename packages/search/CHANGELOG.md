@@ -1,3 +1,13 @@
+## 0.17.0 (2026-08-07)
+
+### 🚀 Features
+
+- ⚠️  **search-api-graphql:** type boolean facets with a BooleanBucket ([#707](https://github.com/ldelements/lde/pull/707))
+
+### ⚠️  Breaking Changes
+
+- **search-api-graphql:** type boolean facets with a BooleanBucket  ([#707](https://github.com/ldelements/lde/pull/707))
+
 ## 0.16.0 (2026-08-07)
 
 ### 🚀 Features
