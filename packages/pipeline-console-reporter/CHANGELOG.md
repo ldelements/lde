@@ -1,3 +1,13 @@
+## 0.26.6 (2026-08-07)
+
+### 🩹 Fixes
+
+- **pipeline:** abandon a run whose selection is empty ([#706](https://github.com/ldelements/lde/pull/706))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.35.6
+
 ## 0.26.5 (2026-08-07)
 
 ### 🧱 Updated Dependencies
