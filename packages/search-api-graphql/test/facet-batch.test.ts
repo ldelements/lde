@@ -79,8 +79,8 @@ describe('groupFacetQueries', () => {
     const filtered: SearchQuery = {
       ...baseQuery,
       where: [
-        { field: 'keyword', in: ['x'] },
-        { field: 'status', in: ['valid'] },
+        { or: [{ field: 'keyword', in: ['x'] }] },
+        { or: [{ field: 'status', in: ['valid'] }] },
       ],
     };
     const queries = groupFacetQueries(filtered, [
@@ -94,18 +94,111 @@ describe('groupFacetQueries', () => {
       { ...filtered, facets: ['publisher'], limit: 0, offset: 0 },
       {
         ...filtered,
-        where: [{ field: 'status', in: ['valid'] }],
+        where: [{ or: [{ field: 'status', in: ['valid'] }] }],
         facets: ['keyword'],
         limit: 0,
         offset: 0,
       },
       {
         ...filtered,
-        where: [{ field: 'keyword', in: ['x'] }],
+        where: [{ or: [{ field: 'keyword', in: ['x'] }] }],
         facets: ['status'],
         limit: 0,
         offset: 0,
       },
+    ]);
+  });
+
+  it('keeps a multi-field clause whole: it is no single facet’s own', () => {
+    // The entity-page query: one IRI across several fields. The user never made
+    // a selection on `keyword` or `publisher`, so there is nothing to widen
+    // there – keeping the clause is what leaves each facet complete on its own
+    // field, offering exactly the values that would return hits.
+    const related: SearchQuery = {
+      ...baseQuery,
+      where: [
+        {
+          or: [
+            { field: 'keyword', in: ['urn:vg'] },
+            { field: 'publisher', in: ['urn:vg'] },
+          ],
+        },
+      ],
+    };
+    const queries = groupFacetQueries(related, ['keyword', 'publisher']);
+    // No facet owns the clause, so the sidebar stays ONE query, and its where
+    // is untouched.
+    expect(queries).toEqual([
+      {
+        ...related,
+        facets: ['keyword', 'publisher'],
+        limit: 0,
+        offset: 0,
+      },
+    ]);
+  });
+
+  it('drops a facet’s own single-field clause while keeping a multi-field one', () => {
+    const both: SearchQuery = {
+      ...baseQuery,
+      where: [
+        {
+          or: [
+            { field: 'keyword', in: ['urn:vg'] },
+            { field: 'publisher', in: ['urn:vg'] },
+          ],
+        },
+        { or: [{ field: 'keyword', in: ['atlas'] }] },
+      ],
+    };
+    const queries = groupFacetQueries(both, ['keyword']);
+    // Only the clause that names `keyword` ALONE is its own and drops; the
+    // cross-field clause stays, so the buckets still describe the related set.
+    expect(queries).toEqual([
+      {
+        ...both,
+        where: [
+          {
+            or: [
+              { field: 'keyword', in: ['urn:vg'] },
+              { field: 'publisher', in: ['urn:vg'] },
+            ],
+          },
+        ],
+        facets: ['keyword'],
+        limit: 0,
+        offset: 0,
+      },
+    ]);
+  });
+
+  it('drops a same-field disjunction from its own facet', () => {
+    // Every criterion names `keyword`, so the clause IS a selection on that one
+    // axis – a multi-select, or two ranges on one field. Skip-own-filter must
+    // drop it; keeping it would compute the facet with the user’s own selection
+    // applied, offering back only what they already picked.
+    const sameField: SearchQuery = {
+      ...baseQuery,
+      where: [
+        {
+          or: [
+            { field: 'keyword', in: ['atlas'] },
+            { field: 'keyword', in: ['kaarten'] },
+          ],
+        },
+      ],
+    };
+    expect(groupFacetQueries(sameField, ['keyword'])).toEqual([
+      { ...sameField, where: [], facets: ['keyword'], limit: 0, offset: 0 },
+    ]);
+  });
+
+  it('treats a clause with no criteria as nobody’s own', () => {
+    // A vacuous clause constrains nothing, so it is not a selection on any
+    // axis – it stays put and no facet claims it.
+    const vacuous: SearchQuery = { ...baseQuery, where: [{ or: [] }] };
+    expect(groupFacetQueries(vacuous, ['keyword'])).toEqual([
+      { ...vacuous, facets: ['keyword'], limit: 0, offset: 0 },
     ]);
   });
 
@@ -194,7 +287,7 @@ describe('createFacetLoader', () => {
     };
     const filtered: SearchQuery = {
       ...baseQuery,
-      where: [{ field: 'status', in: ['valid'] }],
+      where: [{ or: [{ field: 'status', in: ['valid'] }] }],
     };
     const load = createFacetLoader(engine, dataset, filtered, (field) =>
       failed.push(field),

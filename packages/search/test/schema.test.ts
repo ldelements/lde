@@ -382,6 +382,19 @@ describe('validateSearchType', () => {
     ).toEqual([]);
   });
 
+  it('rejects a field named `and` or `or`, the reserved `where` combinators', () => {
+    // Sibling keys in `where` already AND, so `or` is what makes a disjunction
+    // expressible and `and` what carries a second one. A declared field of
+    // either name would shadow the combinator and silently answer a different
+    // question, exactly as a declared `id` would.
+    expect(
+      validateSearchType(typeWith({ name: 'and', kind: 'keyword' })),
+    ).toEqual([{ field: 'and', reason: 'reserved-field-name' }]);
+    expect(
+      validateSearchType(typeWith({ name: 'or', kind: 'keyword' })),
+    ).toEqual([{ field: 'or', reason: 'reserved-field-name' }]);
+  });
+
   it('rejects a declared locale containing an underscore', () => {
     // `_` is the reserved name↔locale separator; a locale carrying one would
     // collide with the physical/display field naming.

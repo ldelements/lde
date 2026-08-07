@@ -768,6 +768,27 @@ export interface SearchTypeIssue {
  */
 export const ID_FIELD = 'id';
 
+/**
+ * The reserved `where` keys that name a **combinator** rather than a field.
+ * Sibling keys in a `where` object already AND, so `or` is what makes a
+ * disjunction expressible at all, and `and` is what lets a query carry more
+ * than one of them.
+ *
+ * They live in the same namespace a declaration draws from, so a field called
+ * `and` or `or` would shadow the combinator in `where` and silently answer a
+ * different question – exactly as a declared `id` would.
+ * {@link validateSearchType} rejects all three as `reserved-field-name`.
+ * Neither is plausible as an RDF property name; a deployment that needs one
+ * anyway can declare it under a different logical name, since the logical name
+ * is deliberately not derived from the predicate IRI.
+ */
+export const AND_KEY = 'and';
+export const OR_KEY = 'or';
+
+/** The logical field names no {@link SearchType} may declare, each because a
+ *  surface already gives that name a meaning of its own. */
+const RESERVED_FIELD_NAMES: readonly string[] = [ID_FIELD, AND_KEY, OR_KEY];
+
 /** Kinds that can feed full-text search (project a folded search field). */
 const SEARCHABLE_KINDS: readonly FieldKind[] = ['text', 'keyword', 'reference'];
 
@@ -860,10 +881,11 @@ export function validateSearchType(
     if (!FIELD_NAME_PATTERN.test(field.name)) {
       issue('invalid-field-name');
     }
-    // `id` is the document’s IRI, surfaced and filtered for every type; a
-    // declared field of that name would shadow it in the API output and in
-    // `where`, silently answering a different question.
-    if (field.name === ID_FIELD) {
+    // `id` is the document’s IRI, surfaced and filtered for every type, and
+    // `and`/`or` are the `where` combinators; a declared field of any of those
+    // names would shadow it in the API output or in `where`, silently
+    // answering a different question.
+    if (RESERVED_FIELD_NAMES.includes(field.name)) {
       issue('reserved-field-name');
     }
     // Every kind-dependent rule below would silently pass for a kind outside

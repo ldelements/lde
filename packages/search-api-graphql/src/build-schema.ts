@@ -17,6 +17,7 @@ import {
   type GraphQLOutputType,
 } from 'graphql';
 import {
+  type Criterion,
   type Filter,
   type LocalizedValue,
   type RootType,
@@ -27,10 +28,13 @@ import {
   type SearchType,
 } from '@lde/search';
 import {
+  AND_KEY,
   facetableFields,
   filterableFields,
+  filterOn,
   filterOperatorFor,
   ID_FIELD,
+  OR_KEY,
   isRangeFacet,
   nestedReferenceType,
   outputFields,
@@ -399,17 +403,59 @@ export function buildGraphQLSchema(
     // field and always exists – no type is unaddressable by IRI, whatever it
     // declares.
     const filterable = filterableFields(searchType);
-    const whereInput = new GraphQLInputObjectType({
+    /**
+     * One key per filterable field (plus the undeclared `id`), each typed by its
+     * OWN kind – so the operator a key accepts is fixed by the field it names,
+     * and a range on a keyword field cannot be written at all. This is the
+     * single vocabulary every level of `where` is built from: the same keys
+     * appear on the clause and on a criterion, so a field is never named a
+     * second way.
+     */
+    const fieldKeys = (): Record<string, GraphQLInputFieldConfig> => {
+      const fields: Record<string, GraphQLInputFieldConfig> = {
+        [ID_FIELD]: { type: stringFilter },
+      };
+      for (const field of filterable) {
+        fields[field.name] = { type: whereFieldType(field) };
+      }
+      return fields;
+    };
+
+    // A criterion is an ATOM: exactly one field, enforced by `@oneOf`. That is
+    // what keeps `where` a flat conjunction of disjunctions – a criterion that
+    // could carry two keys would be a conjunction nested inside an `or`, and
+    // skip-own-filter (ADR 5) has no answer for a clause buried inside another.
+    const criterionInput = new GraphQLInputObjectType({
+      name: `${typeName}Criterion`,
+      description:
+        'A condition on exactly one field. Used inside `or`, where the criteria are alternatives.',
+      isOneOf: true,
+      fields: fieldKeys,
+    });
+    const orKey: GraphQLInputFieldConfig = {
+      type: new GraphQLList(new GraphQLNonNull(criterionInput)),
+      description:
+        'A disjunction: a document matches when ANY of these criteria holds. Combined with the sibling keys by AND, so it widens across fields without widening the query as a whole.',
+    };
+    // `and` carries further `Where`s rather than a separate clause type. Safe to
+    // be recursive: a conjunction inside a conjunction FLATTENS, and the one
+    // shape that would not – an `and` inside an `or` – is unreachable, because
+    // `or` holds only `@oneOf` criteria. So `where` stays a flat conjunction of
+    // disjunctions at any nesting depth, and a reader meets one input type
+    // instead of two near-identical ones.
+    const whereInput: GraphQLInputObjectType = new GraphQLInputObjectType({
       name: `${typeName}Where`,
-      fields: () => {
-        const fields: Record<string, GraphQLInputFieldConfig> = {
-          [ID_FIELD]: { type: stringFilter },
-        };
-        for (const field of filterable) {
-          fields[field.name] = { type: whereFieldType(field) };
-        }
-        return fields;
-      },
+      description:
+        'Sibling keys are combined with AND. Use `or` for a disjunction, and `and` when a query needs more than one of them.',
+      fields: () => ({
+        ...fieldKeys(),
+        [OR_KEY]: orKey,
+        [AND_KEY]: {
+          type: new GraphQLList(new GraphQLNonNull(whereInput)),
+          description:
+            'Further groups of conditions, all of which apply. The way to carry a second `or` disjunction alongside the first.',
+        },
+      }),
     });
 
     const sortValues: GraphQLEnumValueConfigMap = {
@@ -620,40 +666,73 @@ function whereToFilters(
   where: Record<string, unknown> | undefined,
   searchType: SearchType,
 ): Filter[] {
-  if (where === undefined) {
+  // `== null` deliberately: an explicit `where: null` is as absent as an omitted
+  // one, and reading keys off it would throw.
+  if (where == null) {
     return [];
   }
-  const filters: Filter[] = [];
-  // `id` first: it is declared by no type, so the field loop below never sees it.
-  const id = where[ID_FIELD] as { in?: string[] } | undefined | null;
+  const filters = criteriaOf(where, searchType).map(filterOn);
+  // Sibling field keys AND, so each becomes a one-criterion filter of its own,
+  // while `or` becomes a SINGLE filter carrying every alternative. That is the
+  // whole AND/OR mapping: which bucket a criterion lands in, never a combinator
+  // inferred from how deeply it is nested.
+  const alternatives = (
+    (where[OR_KEY] as readonly Record<string, unknown>[] | null) ?? []
+  ).flatMap((criterion) => criteriaOf(criterion, searchType));
+  if (alternatives.length > 0) {
+    filters.push({ or: alternatives });
+  }
+  // `and` carries further groups, each contributing its own filters – which is
+  // how a query states a second `or` alongside the first. Recursing keeps the
+  // result flat: nested conjunctions collapse into this one list, and an `and`
+  // can never sit inside an `or` (which holds only criteria).
+  for (const nested of (where[AND_KEY] as
+    readonly Record<string, unknown>[] | null) ?? []) {
+    filters.push(...whereToFilters(nested, searchType));
+  }
+  return filters;
+}
+
+/**
+ * The criteria a keyed object carries, in declaration order. A `Criterion` is
+ * `@oneOf`, so it yields exactly one; a `Where`/`Clause` yields one per field
+ * key it sets. `id` is read first: no type declares it, so the field loop below
+ * never sees it.
+ */
+function criteriaOf(
+  keyed: Record<string, unknown>,
+  searchType: SearchType,
+): Criterion[] {
+  const criteria: Criterion[] = [];
+  const id = keyed[ID_FIELD] as { in?: string[] } | undefined | null;
   if (id !== undefined && id !== null) {
-    filters.push({ field: ID_FIELD, in: id.in ?? [] });
+    criteria.push({ field: ID_FIELD, in: id.in ?? [] });
   }
   for (const field of filterableFields(searchType)) {
-    const value = where[field.name];
+    const value = keyed[field.name];
     if (value === undefined || value === null) {
       continue;
     }
     switch (filterOperatorFor(field.kind)) {
       case 'in':
-        filters.push({
+        criteria.push({
           field: field.name,
           in: (value as { in?: string[] }).in ?? [],
         });
         break;
       case 'range': {
         const range = value as { min?: number | string; max?: number | string };
-        filters.push({
+        criteria.push({
           field: field.name,
           range: { min: range.min, max: range.max },
         });
         break;
       }
       default:
-        filters.push({ field: field.name, is: value as boolean });
+        criteria.push({ field: field.name, is: value as boolean });
     }
   }
-  return filters;
+  return criteria;
 }
 
 function rangeInput(

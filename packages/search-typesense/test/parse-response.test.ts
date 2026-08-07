@@ -636,12 +636,12 @@ describe('createTypesenseSearchEngine searchFacets (multi_search batching)', () 
       engine.searchFacets(schema, [
         {
           ...facetBrowse,
-          where: [{ field: 'id', in: [] }],
+          where: [{ or: [{ field: 'id', in: [] }] }],
           facets: ['status'],
         },
         {
           ...facetBrowse,
-          where: [{ field: 'id', in: [] }],
+          where: [{ or: [{ field: 'id', in: [] }] }],
           facets: ['keyword'],
         },
       ]),
@@ -815,7 +815,7 @@ describe('createTypesenseSearchEngine searchFacets (multi_search batching)', () 
       { ...facetBrowse, facets: ['publisher'] },
       {
         ...facetBrowse,
-        where: [{ field: 'status', in: ['valid'] }],
+        where: [{ or: [{ field: 'status', in: ['valid'] }] }],
         facets: ['publisher'],
       },
     ]);

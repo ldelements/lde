@@ -230,7 +230,7 @@ describe('createTypesenseSearchEngine (integration)', () => {
   it('filters by status, sorts by the localized title key, and resolves reference labels', async () => {
     const result = await engine.search(datasetSchema, {
       ...baseQuery,
-      where: [{ field: 'status', in: ['valid'] }],
+      where: [{ or: [{ field: 'status', in: ['valid'] }] }],
       orderBy: [
         { field: 'title', direction: 'asc' },
         { field: 'statusRank', direction: 'asc' },
@@ -262,7 +262,7 @@ describe('createTypesenseSearchEngine (integration)', () => {
     // Document per referent – `id` only on the referent that had one.
     const result = await engine.search(datasetSchema, {
       ...baseQuery,
-      where: [{ field: 'id', in: ['d1'] }],
+      where: [{ or: [{ field: 'id', in: ['d1'] }] }],
     });
 
     expect(result.hits[0].document.media).toEqual([
@@ -276,7 +276,7 @@ describe('createTypesenseSearchEngine (integration)', () => {
     // A document without referents nests nothing rather than an empty list.
     const others = await engine.search(datasetSchema, {
       ...baseQuery,
-      where: [{ field: 'id', in: ['d2'] }],
+      where: [{ or: [{ field: 'id', in: ['d2'] }] }],
     });
     expect(others.hits[0].document.media).toBeUndefined();
   });
@@ -284,7 +284,7 @@ describe('createTypesenseSearchEngine (integration)', () => {
   it('looks documents up by `id`, the field no type declares', async () => {
     const result = await engine.search(datasetSchema, {
       ...baseQuery,
-      where: [{ field: 'id', in: ['d3', 'd1'] }],
+      where: [{ or: [{ field: 'id', in: ['d3', 'd1'] }] }],
       orderBy: [{ field: 'statusRank', direction: 'asc' }],
     });
 
@@ -307,7 +307,7 @@ describe('createTypesenseSearchEngine (integration)', () => {
     );
     const result = await engine.search(datasetSchema, {
       ...baseQuery,
-      where: [{ field: 'id', in: [...iris, 'd2'] }],
+      where: [{ or: [{ field: 'id', in: [...iris, 'd2'] }] }],
     });
 
     // Only the one real id matches; the rest simply are not there.
@@ -320,7 +320,7 @@ describe('createTypesenseSearchEngine (integration)', () => {
     // asked for no document; the whole collection would be the wrong answer.
     const result = await engine.search(datasetSchema, {
       ...baseQuery,
-      where: [{ field: 'id', in: [] }],
+      where: [{ or: [{ field: 'id', in: [] }] }],
     });
 
     expect(result.total).toBe(0);
@@ -332,7 +332,7 @@ describe('createTypesenseSearchEngine (integration)', () => {
       {
         ...baseQuery,
         limit: 0,
-        where: [{ field: 'id', in: [] }],
+        where: [{ or: [{ field: 'id', in: [] }] }],
         facets: ['status'],
       },
       { ...baseQuery, limit: 0, facets: ['status'] },
@@ -398,7 +398,7 @@ describe('createTypesenseSearchEngine (integration)', () => {
       {
         ...baseQuery,
         limit: 0,
-        where: [{ field: 'status', in: ['valid'] }],
+        where: [{ or: [{ field: 'status', in: ['valid'] }] }],
         facets: ['keyword'],
       },
     ]);
@@ -447,7 +447,7 @@ describe('createTypesenseSearchEngine (integration)', () => {
     await expect(
       engine.search(datasetSchema, {
         ...baseQuery,
-        where: [{ field: 'nonexistent', in: ['x'] }],
+        where: [{ or: [{ field: 'nonexistent', in: ['x'] }] }],
       }),
     ).rejects.toThrow(/Invalid search query for “Dataset”/);
     await expect(
@@ -468,10 +468,10 @@ describe('createTypesenseSearchEngine (integration)', () => {
 
     const result = await reporting.search(datasetSchema, {
       ...baseQuery,
-      where: [{ field: 'status', in: [] }],
+      where: [{ or: [{ field: 'status', in: [] }] }],
     });
 
     expect(result.total).toBeGreaterThan(0); // empty membership = no constraint
-    expect(ignored).toEqual([{ field: 'status', in: [] }]);
+    expect(ignored).toEqual([{ or: [{ field: 'status', in: [] }] }]);
   });
 });

@@ -1,6 +1,7 @@
 import type { SearchParams } from 'typesense/lib/Typesense/Documents.js';
 import { fold } from '@lde/text-normalization';
 import {
+  type Criterion,
   type FacetRange,
   type Filter,
   type SearchField,
@@ -183,38 +184,93 @@ function compileFilterBy(
     .join(' && ');
 }
 
+/**
+ * One `where` clause: each of its criteria compiled and OR-joined with `||`,
+ * parenthesised so the disjunction binds tighter than the `&&` between clauses.
+ * A one-criterion clause – the ordinary single-field filter – compiles to a bare
+ * term: the parentheses would be harmless but would make every ordinary
+ * `filter_by` noisier to read and to assert on.
+ *
+ * A criterion that yields no term is dropped or voids the clause depending on
+ * **why**, because the two readings differ under `||`:
+ *
+ * - a **vacuous** criterion states no constraint (an empty `in` on a value
+ *   field – a facet UI with nothing selected – or a `range` with no usable
+ *   bound). It is therefore *true*, and `true || X` is true, so the whole clause
+ *   constrains nothing and is skipped. Dropping only the criterion would
+ *   NARROW the result to its siblings, the opposite of what an unset filter
+ *   means;
+ * - an **unsatisfiable** or malformed criterion (an empty `id` membership, an
+ *   unknown field, an operator that mismatches the field’s kind) is *false*, and
+ *   `false || X` is X, so it drops out and its siblings still stand.
+ *
+ * A clause left with no terms either way is skipped and reported to
+ * `onIgnoredFilter`.
+ */
 function compileFilter(
   filter: Filter,
   searchType: SearchType,
 ): string | undefined {
+  const terms: string[] = [];
+  for (const criterion of filter.or) {
+    const outcome = compileCriterion(criterion, searchType);
+    if (outcome === VACUOUS) {
+      return undefined;
+    }
+    if (outcome !== UNUSABLE) {
+      terms.push(outcome);
+    }
+  }
+  if (terms.length === 0) {
+    return undefined;
+  }
+  return terms.length === 1 ? terms[0] : `(${terms.join(' || ')})`;
+}
+
+/** A criterion that states **no constraint** – true for every document. */
+const VACUOUS = Symbol('vacuous');
+/** A criterion that matches nothing, or cannot be compiled at all – false. */
+const UNUSABLE = Symbol('unusable');
+
+/**
+ * What one criterion contributes: a Typesense term, or which of the two ways it
+ * yields none. The distinction is load-bearing under `||` ({@link compileFilter})
+ * and cannot be recovered from a bare `undefined`, so it is returned rather than
+ * re-derived by a second pass over the same rules.
+ */
+function compileCriterion(
+  criterion: Criterion,
+  searchType: SearchType,
+): string | typeof VACUOUS | typeof UNUSABLE {
   // `id` is the Typesense document key, not a declared field. Exact `:=`
   // membership, like a non-facet field ({@link compileMembership}), so an IRI
   // cannot partial-match on a shared path segment. (`fetchLabels` resolves
   // labels with the looser `id:[…]`; these are deliberately not the same
-  // clause.)
-  if (filter.field === ID_FIELD) {
-    return 'in' in filter && filter.in.length > 0
-      ? `${ID_FIELD}:=[${filter.in.map(escapeFilterValue).join(',')}]`
-      : undefined;
+  // clause.) An empty identity membership enumerates NO document, so it is
+  // unusable rather than vacuous – the one place the two readings diverge.
+  if (criterion.field === ID_FIELD) {
+    return 'in' in criterion && criterion.in.length > 0
+      ? `${ID_FIELD}:=[${criterion.in.map(escapeFilterValue).join(',')}]`
+      : UNUSABLE;
   }
-  const field = fieldNamed(searchType, filter.field);
+  const field = fieldNamed(searchType, criterion.field);
   if (field === undefined) {
-    return undefined;
+    return UNUSABLE;
   }
-  // A clause whose operator does not match the field's kind (e.g. `range` on a
-  // keyword) would reach the engine as garbage syntax – skip it instead.
-  if (filterOperatorFor(field.kind) !== filterOperator(filter)) {
-    return undefined;
+  // A criterion whose operator does not match the field's kind (e.g. `range` on
+  // a keyword) would reach the engine as garbage syntax – skip it instead.
+  if (filterOperatorFor(field.kind) !== filterOperator(criterion)) {
+    return UNUSABLE;
   }
-  if ('in' in filter) {
-    return filter.in.length > 0
-      ? compileMembership(field, filter.in)
-      : undefined;
+  if ('in' in criterion) {
+    return criterion.in.length > 0
+      ? compileMembership(field, criterion.in)
+      : VACUOUS;
   }
-  if ('range' in filter) {
-    return compileRange(field, filter.range);
+  if ('range' in criterion) {
+    return compileRange(field, criterion.range) ?? VACUOUS;
   }
-  return `${field.name}:=${filter.is}`;
+  return `${field.name}:=${criterion.is}`;
 }
 
 /**

@@ -28,6 +28,8 @@ export {
   fieldNamed,
   datasetField,
   ID_FIELD,
+  AND_KEY,
+  OR_KEY,
   labelFieldOf,
   isRangeFacet,
   isoToUnixSeconds,
@@ -38,6 +40,7 @@ export { physicalNameTokens } from './physical-name.js';
 export {
   filterOperatorFor,
   filterOperator,
+  filterOn,
   isUnsatisfiable,
   validateQuery,
   assertValidQuery,
