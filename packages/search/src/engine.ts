@@ -207,6 +207,11 @@ export interface FacetBucket {
    * For a boolean-facet bucket: the value as a real boolean, so it round-trips
    * straight into the `is` filter that selects it rather than leaving a
    * consumer to parse `value` back. Absent on every other kind of facet.
+   *
+   * Optional only because one bucket type serves every kind: an adapter MUST
+   * set it on every bucket of a `boolean` facet, and the engine conformance
+   * suite checks that it does. A surface types it non-null, so omitting it
+   * fails the whole response rather than degrading the one facet.
    */
   readonly is?: boolean;
 }

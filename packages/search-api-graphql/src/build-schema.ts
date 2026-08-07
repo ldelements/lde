@@ -434,7 +434,8 @@ export function buildGraphQLSchema(
     });
 
     // Keyed facets object: one field per facetable field, typed by its kind
-    // (range fields → [RangeBucket!], else [ValueBucket!]). Only the selected
+    // (range fields → [RangeBucket!], boolean fields → [BooleanBucket!], else
+    // [ValueBucket!]). Only the selected
     // fields are resolved (GraphQL prunes the rest), so the selection IS the
     // request; how they are computed – skip-own-filter, batched into one
     // engine dispatch – lives in facet-batch.ts.

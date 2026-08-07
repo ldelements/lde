@@ -88,6 +88,7 @@ const datasetSchema: SearchType = {
     },
     { name: 'status', kind: 'keyword', facetable: true, filterable: true },
     { name: 'statusRank', kind: 'integer', sortable: true },
+    { name: 'iiif', kind: 'boolean', facetable: true, filterable: true },
   ],
 };
 
@@ -117,6 +118,7 @@ const documents = [
     ],
     status: 'valid',
     statusRank: 0,
+    iiif: true,
   },
   {
     id: 'd2',
@@ -128,6 +130,8 @@ const documents = [
     publisher: ['https://org/2'],
     status: 'valid',
     statusRank: 0,
+    // The negative case, so the facet reports both buckets.
+    iiif: false,
   },
   {
     id: 'd3',
@@ -139,6 +143,7 @@ const documents = [
     publisher: ['https://org/1'],
     status: 'invalid',
     statusRank: 3,
+    iiif: true,
   },
 ];
 

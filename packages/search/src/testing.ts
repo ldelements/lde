@@ -173,10 +173,21 @@ export function describeSearchEngineContract(
             continue;
           }
           expect(outcome.facets).toBeTypeOf('object');
-          for (const buckets of Object.values(outcome.facets)) {
+          const booleanFacets = new Set(
+            facetableFields(searchType)
+              .filter((field) => field.kind === 'boolean')
+              .map((field) => field.name),
+          );
+          for (const [name, buckets] of Object.entries(outcome.facets)) {
             for (const bucket of buckets ?? []) {
               expect(typeof bucket.value).toBe('string');
               expect(typeof bucket.count).toBe('number');
+              // A boolean facet MUST carry `is`: a surface types it non-null
+              // (GraphQL `Boolean!`), so an adapter that omits it nulls the
+              // whole response rather than degrading one facet.
+              if (booleanFacets.has(name)) {
+                expect(typeof bucket.is).toBe('boolean');
+              }
             }
           }
         }
