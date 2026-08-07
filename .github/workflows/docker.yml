@@ -80,7 +80,7 @@ jobs:
       - name: Build and smoke-test the image
         run: npx nx run "@lde/${{ steps.version.outputs.package }}:docker:smoke"
 
-      - uses: docker/login-action@v4.5.2
+      - uses: docker/login-action@v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -109,7 +109,7 @@ jobs:
           echo "package=${package%@*}" >> "$GITHUB_OUTPUT"
           echo "version=${REF##*@}" >> "$GITHUB_OUTPUT"
 
-      - uses: docker/login-action@v4.5.2
+      - uses: docker/login-action@v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
