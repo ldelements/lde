@@ -23,6 +23,12 @@ export interface DistributionAnalysisResult {
 export interface ProgressReporter {
   pipelineStart?(name: string): void;
   datasetsSelected?(count: number, duration: number): void;
+  /**
+   * Called when the run is abandoned because the selection was empty – no
+   * commit, destination unchanged. Distinct from a completed run that indexed
+   * nothing: the writers were told to abort, so nothing was swept or swapped.
+   */
+  selectionEmpty?(reason: string): void;
   datasetStart?(dataset: Dataset): void;
   /** Called each time a single distribution probe completes. */
   distributionProbed?(result: DistributionAnalysisResult): void;
@@ -67,7 +73,7 @@ export interface ProgressReporter {
   /**
    * Called once per (dataset, validator) pair after all stages for a dataset
    * have run. Fires regardless of whether any stage actually invoked
-   * `validate()` — the report reflects the validator’s accumulated state.
+   * `validate()` – the report reflects the validator’s accumulated state.
    * When no stage produced data, the report typically carries
    * `quadsValidated: 0` and `conforms: true` (the SHACL vacuous-truth
    * default); consumers that want to distinguish ‘not tested’ from ‘tested

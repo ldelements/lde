@@ -100,6 +100,22 @@ A run degrades per dataset rather than failing as a whole:
 - A probe or resolve failure skips the dataset (`datasetSkipped`); the run continues.
 - A per-dataset writer `flush` failure is likewise isolated to that dataset.
 - Only failures outside per-dataset processing abort the run – the dataset selector’s iteration and the writer’s `commit` – in which case the pipeline calls `writer.abort(error)` and rethrows.
+- An [empty selection](#empty-selections) also aborts the run, but does **not** rethrow: the run is abandoned rather than failed.
+
+#### Empty selections
+
+A run whose selector produces no datasets is **abandoned**, not committed: the pipeline calls `writer.abort(new EmptySelection())`, reports `selectionEmpty`, and returns normally.
+
+Every writer reads the run’s selection as the authoritative membership of its destination – that is what lets an In-place writer sweep departed sources and a Blue/green writer ship a fresh collection. An empty selection would make that reading catastrophic: the In-place sweep classifies every indexed source as departed and deletes the lot, and the Blue/green swap makes an empty collection live and drops the one that held the data. Since an empty result is indistinguishable from a registry outage, a store mid-reload or a mistyped `DATASET_CRITERIA`, it is never treated as membership.
+
+The run does not throw, because an empty registry is a legitimate state rather than a failure, and it still reports `pipelineComplete`: it completed, it simply applied nothing. A consumer that needs to tell the two apart keys on `selectionEmpty`, which precedes it.
+
+To empty a destination deliberately, drop it.
+
+Two consequences worth knowing:
+
+- **A partial collapse is not covered.** A selector returning 3 of 2731 datasets sweeps the other 2728, exactly as before. Any “suspiciously fewer than last time” threshold would be arbitrary, so only the all-or-nothing case is guarded.
+- **A Blue/green destination is not created by an abandoned run.** The alias is upserted on `commit`, so a first-ever run against an empty registry leaves no collection and no alias behind, and a reader querying the alias meets a missing collection rather than an empty result. The alias appears as soon as one run selects something.
 
 ### Stage
 
@@ -321,7 +337,7 @@ Stages can optionally validate their output quads against a `Validator`. The uni
 
 ### Writer
 
-Writes generated quads to a destination. A `Writer` is transactional: each pipeline run opens one run on it (`openRun(context)`), writes every dataset through the resulting `RunWriter`, and ends with exactly one `commit()` (on success) or `abort(error)` (on failure). The run lifecycle is the home of destination-level concerns such as atomic swaps, deletion sweeps and cross-pod locks; the pipeline drives `openRun → write* → commit/abort` uniformly and never branches on the writer’s update mode. After a dataset’s stages complete, its `flush(dataset, outcome)` says whether the dataset succeeded, so a writer can gate destructive finalization (e.g. an In-place stale-document sweep) on `'success'`.
+Writes generated quads to a destination. A `Writer` is transactional: each pipeline run opens one run on it (`openRun(context)`), writes every dataset through the resulting `RunWriter`, and ends with exactly one `commit()` or `abort(error)`. A run commits when it processed a selection; it aborts on failure **and on an [empty selection](#empty-selections)**, so `abort` means “this run’s output must not be applied”, not necessarily “this run failed”. A writer that alerts or exits non-zero on `abort` should distinguish the two by the error it receives (`EmptySelection`). The run lifecycle is the home of destination-level concerns such as atomic swaps, deletion sweeps and cross-pod locks; the pipeline drives `openRun → write* → commit/abort` uniformly and never branches on the writer’s update mode. After a dataset’s stages complete, its `flush(dataset, outcome)` says whether the dataset succeeded, so a writer can gate destructive finalization (e.g. an In-place stale-document sweep) on `'success'`.
 
 A `RunWriter` may also implement the optional `reset(dataset)`, which discards a dataset’s already-written output. The pipeline invokes it before re-running all stages against a fallback dump ([reactive fallback](#distribution-resolver)); a custom writer without `reset` appends the re-run’s output to the endpoint-sourced partial output instead of replacing it.
 
@@ -405,6 +421,7 @@ The full event set, in rough lifecycle order:
 | ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | `pipelineStart(name)`                                                                       | Once, when the run starts.                                                                                                                |
 | `datasetsSelected(count, duration)`                                                         | After the dataset selector returns, with the selection size and duration (ms).                                                            |
+| `selectionEmpty(reason)`                                                                    | When the run is abandoned because the selection was empty – no commit, destination unchanged (see [Empty selections](#empty-selections)). |
 | `datasetStart(dataset)`                                                                     | When a dataset’s processing begins; datasets are processed one at a time, so it precedes all of that dataset’s later events.              |
 | `distributionProbed(result)`                                                                | Each time a single distribution probe completes, with a `DistributionAnalysisResult`.                                                     |
 | `importStarted()`                                                                           | When a data-dump import begins.                                                                                                           |

@@ -15,6 +15,7 @@ function makeDataset(iri = 'http://example.org/dataset'): Dataset {
 const REPORTER_METHODS = [
   'pipelineStart',
   'datasetsSelected',
+  'selectionEmpty',
   'datasetStart',
   'distributionProbed',
   'importStarted',
