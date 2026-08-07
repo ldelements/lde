@@ -12,6 +12,15 @@ export interface IndexerConfig {
   /** SPARQL endpoint of the DCAT dataset registry the selection queries
    *  (`REGISTRY_ENDPOINT`). */
   readonly registryEndpoint: URL;
+  /**
+   * Root types extracted from {@link registryEndpoint} instead of from each
+   * dataset’s own distribution (`REGISTRY_ROOT_TYPES`, whitespace- or
+   * comma-separated {@link SearchType.name}s) – the dataset’s own description
+   * and what hangs off it, which live in the register rather than in the data a
+   * publisher ships. Empty when unset: every type reads the distribution, the
+   * behaviour before this setting existed.
+   */
+  readonly registryRootTypes: readonly string[];
   /** Dataset selection within the registry: explicit IRIs (`DATASETS`),
    *  search criteria (`DATASET_CRITERIA`), or every dataset when neither is
    *  set. */
@@ -145,6 +154,7 @@ export function configFromEnvironment(
     schemaModulePath:
       environment['SCHEMA_MODULE'] ?? '/config/search-schema.mjs',
     registryEndpoint,
+    registryRootTypes: names(environment['REGISTRY_ROOT_TYPES']),
     datasetCriteria,
     typesense: {
       host: required('TYPESENSE_HOST'),
@@ -163,6 +173,17 @@ export function configFromEnvironment(
     );
   }
   return config;
+}
+
+/**
+ * A whitespace- or comma-separated list variable, as a list. The names
+ * themselves are validated against the mounted schema when the pipeline is
+ * wired – config has no schema to check them against.
+ */
+function names(value: string | undefined): readonly string[] {
+  return value === undefined
+    ? []
+    : value.split(/[\s,]+/).filter((name) => name.length > 0);
 }
 
 /** `DATASETS` (whitespace-separated IRIs) or `DATASET_CRITERIA` (a JSON

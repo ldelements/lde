@@ -171,6 +171,8 @@ const pipeline = new Pipeline<TypedSearchDocument>({
       },
     ],
   }),
+  // A stage reads the dataset’s own distribution unless `sourceFor` says
+  // otherwise – see “Registry-sourced root types” below.
   // Each type gets its own collection – an independent blue/green rebuild –
   // named by the adapter from the type itself (`Dataset` → `datasets`,
   // `Organization` → `organizations`), so no naming map is passed here and the
@@ -223,6 +225,74 @@ type’s `class` really is the source class), **not** a default. It excludes
 blank-node subjects (`FILTER(!isBlank(?root))`): a blank node has no stable
 document key, so it can never become a search document – a custom selector
 should exclude them too.
+
+## Registry-sourced root types
+
+A stage reads the dataset’s own distribution. That holds while a root type is
+described by the data the dataset publishes, and it breaks for the dataset
+itself: a dataset’s description is governed by a different application profile
+from the objects it contains, and it lives in the **dataset registry**.
+Registering a dataset is submitting a description, so the register covers every
+dataset a pipeline can select – while nothing obliges a publisher to describe
+its own dataset inside its dump.
+
+`registrySource` points a stage at the register instead, scoped to the graph the
+dataset in hand names:
+
+```typescript
+import {
+  registrySource,
+  searchStages,
+  selectByClass,
+} from '@lde/search-pipeline';
+
+searchStages({
+  schema,
+  types: [
+    {
+      searchType: dataset,
+      rootVariable: 'root',
+      itemSelector: selectByClass(dataset),
+      sourceFor: registrySource(new URL('https://registry.example.org/sparql')),
+    },
+    // …the object-grain types keep reading the dataset’s distribution.
+  ],
+});
+```
+
+`searchIndexerPipeline` exposes the same routing as `registryTypes`, by type
+name:
+
+```typescript
+searchIndexerPipeline({
+  schema,
+  datasets,
+  writerFor,
+  registryTypes: {
+    endpoint: new URL('https://registry.example.org/sparql'),
+    names: ['Dataset', 'Publisher'],
+  },
+});
+```
+
+Same CONSTRUCT generator, same framing, same projection, same writers – only
+the source differs. Two properties make it work:
+
+- **The scoping is what keeps the stage per-dataset.** A register holds every
+  registration, so an unscoped stage would index the whole catalogue once per
+  dataset processed. `registrySource` scopes selection _and_ extraction to the
+  dataset’s graph, so one pass sees exactly one registration. It presumes the
+  register names each registration’s graph after the dataset IRI, which is how
+  a DCAT register that crawls per registration stores it.
+- **The hops come from the declared paths.** No CBD rule and no hardcoded
+  predicate list: a `Publisher` root type with `label` at
+  `<http://xmlns.com/foaf/0.1/name>` resolves through the same mechanism as any
+  other type, because a registration describes its publisher inside its own
+  graph.
+
+Routing is deployment topology, deliberately kept out of the `SearchType`: a
+type is defined by its `class`, not by where its triples come from, so the same
+declaration serves a deployment that sources it differently.
 
 ## Per-stage tuning
 

@@ -13,6 +13,7 @@ describe('configFromEnvironment', () => {
     expect(config).toEqual({
       schemaModulePath: '/config/search-schema.mjs',
       registryEndpoint: new URL('https://registry.example.org/sparql'),
+      registryRootTypes: [],
       datasetCriteria: {},
       typesense: {
         host: 'typesense.internal',
@@ -35,6 +36,7 @@ describe('configFromEnvironment', () => {
       TYPESENSE_PROTOCOL: 'https',
       REBUILD_MODE: 'blue-green',
       COLLECTION_PREFIX: 'staging_',
+      REGISTRY_ROOT_TYPES: 'Dataset, Publisher',
       QLEVER_IMAGE: 'adfreiburg/qlever:latest',
       IMPORT_STRATEGY: 'import',
       DATA_DIR: '/mnt/data',
@@ -42,6 +44,7 @@ describe('configFromEnvironment', () => {
     expect(config).toEqual({
       schemaModulePath: '/mnt/schema.mjs',
       registryEndpoint: new URL('https://registry.example.org/sparql'),
+      registryRootTypes: ['Dataset', 'Publisher'],
       datasetCriteria: {},
       typesense: {
         host: 'typesense.internal',

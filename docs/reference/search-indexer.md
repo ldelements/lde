@@ -64,24 +64,25 @@ images.
 
 ## Configuration
 
-| Variable             | Default                     | Meaning                                                                                                                                               |
-| -------------------- | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SCHEMA_MODULE`      | `/config/search-schema.mjs` | Path of the mounted schema-declaration module                                                                                                         |
-| `REGISTRY_ENDPOINT`  | **required**                | SPARQL endpoint of the DCAT dataset registry                                                                                                          |
-| `DATASETS`           | all registry datasets       | Dataset IRIs to index (whitespace- or comma-separated)                                                                                                |
-| `DATASET_CRITERIA`   | all registry datasets       | Search criteria as a JSON object, in [`@lde/dataset-registry-client`](./dataset-registry-client)’s criteria format (mutually exclusive w/ `DATASETS`) |
-| `TYPESENSE_HOST`     | **required**                | Typesense host                                                                                                                                        |
-| `TYPESENSE_PORT`     | `8108`                      | Typesense port                                                                                                                                        |
-| `TYPESENSE_PROTOCOL` | `http`                      | `http` or `https`                                                                                                                                     |
-| `TYPESENSE_API_KEY`  | **required**                | An admin key: the indexer creates, writes and swaps collections                                                                                       |
-| `REBUILD_MODE`       | `in-place`                  | `in-place` (update the live collection) or `blue-green` (swap on commit)                                                                              |
-| `COLLECTION_PREFIX`  | none                        | Prefix for every derived collection name (configure the read side to match)                                                                           |
-| `PROVENANCE_FILE`    | none                        | JSON file remembering per-dataset processing, to skip unchanged datasets                                                                              |
-| `PIPELINE_VERSION`   | none                        | Version keying the skip decisions; required with `PROVENANCE_FILE`                                                                                    |
-| `QLEVER_IMAGE`       | none                        | Enables the QLever import path (see below), e.g. `adfreiburg/qlever:latest`                                                                           |
-| `IMPORT_STRATEGY`    | `sparql`                    | `sparql`, `sparqlWithImportFallback` or `import`; requires `QLEVER_IMAGE`                                                                             |
-| `DATA_DIR`           | `/data`                     | Directory for downloaded dumps and QLever index caches                                                                                                |
-| `QLEVER_NETWORK`     | none                        | Docker network the spawned QLever joins; set when the indexer itself runs containerized (see below)                                                   |
+| Variable              | Default                     | Meaning                                                                                                                                               |
+| --------------------- | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SCHEMA_MODULE`       | `/config/search-schema.mjs` | Path of the mounted schema-declaration module                                                                                                         |
+| `REGISTRY_ENDPOINT`   | **required**                | SPARQL endpoint of the DCAT dataset registry                                                                                                          |
+| `REGISTRY_ROOT_TYPES` | none                        | Root types extracted from the registry instead of the dataset’s distribution (see below), by schema type name                                         |
+| `DATASETS`            | all registry datasets       | Dataset IRIs to index (whitespace- or comma-separated)                                                                                                |
+| `DATASET_CRITERIA`    | all registry datasets       | Search criteria as a JSON object, in [`@lde/dataset-registry-client`](./dataset-registry-client)’s criteria format (mutually exclusive w/ `DATASETS`) |
+| `TYPESENSE_HOST`      | **required**                | Typesense host                                                                                                                                        |
+| `TYPESENSE_PORT`      | `8108`                      | Typesense port                                                                                                                                        |
+| `TYPESENSE_PROTOCOL`  | `http`                      | `http` or `https`                                                                                                                                     |
+| `TYPESENSE_API_KEY`   | **required**                | An admin key: the indexer creates, writes and swaps collections                                                                                       |
+| `REBUILD_MODE`        | `in-place`                  | `in-place` (update the live collection) or `blue-green` (swap on commit)                                                                              |
+| `COLLECTION_PREFIX`   | none                        | Prefix for every derived collection name (configure the read side to match)                                                                           |
+| `PROVENANCE_FILE`     | none                        | JSON file remembering per-dataset processing, to skip unchanged datasets                                                                              |
+| `PIPELINE_VERSION`    | none                        | Version keying the skip decisions; required with `PROVENANCE_FILE`                                                                                    |
+| `QLEVER_IMAGE`        | none                        | Enables the QLever import path (see below), e.g. `adfreiburg/qlever:latest`                                                                           |
+| `IMPORT_STRATEGY`     | `sparql`                    | `sparql`, `sparqlWithImportFallback` or `import`; requires `QLEVER_IMAGE`                                                                             |
+| `DATA_DIR`            | `/data`                     | Directory for downloaded dumps and QLever index caches                                                                                                |
+| `QLEVER_NETWORK`      | none                        | Docker network the spawned QLever joins; set when the indexer itself runs containerized (see below)                                                   |
 
 A misconfigured boot reports **all** problems in one error, not one per crash
 loop. `PROVENANCE_FILE` must sit on a durable volume, and cannot be combined
@@ -91,6 +92,40 @@ image’s runtime user (uid 1000) – the image pre-creates `/provenance` with
 that ownership, so a named volume mounted there just works, while a bind
 mount must be `chown`ed on the host. A run fails at start when the file is
 not writable, instead of silently never skipping.
+
+## Registry-sourced root types
+
+Every root type is extracted from the dataset’s **distribution** by default –
+its live SPARQL endpoint, or a dump imported into QLever. That holds while a
+type is described by the data the dataset publishes, and it breaks for the
+dataset itself: a dataset’s description is governed by a different application
+profile from the objects it contains, and it lives in the register. Nothing
+obliges a publisher to describe its own dataset inside its dump, so a `Dataset`
+type extracted from the distribution yields documents for the few publishers
+that self-describe and nothing for the rest.
+
+`REGISTRY_ROOT_TYPES` names the root types to extract from `REGISTRY_ENDPOINT`
+instead:
+
+```sh
+--env REGISTRY_ROOT_TYPES="Dataset Publisher"
+```
+
+Same CONSTRUCT generator, same framing, same projection, same writers – only
+the source differs. Each such stage is **scoped to the graph the dataset in
+hand names**: a register holds every registration, so an unscoped stage would
+re-index the whole catalogue once per dataset processed. Scoped, one pass sees
+exactly one registration, and a `selectByClass` finds that dataset’s own roots
+inside it – its `dcat:Dataset` node, and the `foaf:Organization` its
+`dcterms:publisher` points at. This presumes the register names each
+registration’s graph after the dataset IRI, which is how a DCAT register that
+crawls per registration stores it.
+
+Routing is deployment topology, so it is configuration and not part of the
+schema: a `SearchType` is defined by its `class`, never by where its triples
+come from, and the same declaration serves a deployment that sources it
+differently. A name that the mounted schema does not declare fails the boot,
+rather than shipping an empty collection.
 
 ## The QLever import path
 

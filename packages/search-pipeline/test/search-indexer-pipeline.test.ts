@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { Dataset } from '@lde/dataset';
+import nock from 'nock';
+import { Dataset, Distribution } from '@lde/dataset';
 import {
   ManualDatasetSelection,
   Pipeline,
@@ -92,5 +93,97 @@ describe('searchIndexerPipeline', () => {
         provenanceStore,
       }),
     ).toThrow(/pipelineVersion is required/);
+  });
+
+  describe('registryTypes', () => {
+    const registry = {
+      endpoint: new URL('http://registry.example.org/sparql'),
+      names: ['Dataset'],
+    };
+
+    it('routes only the named types to the registry endpoint', async () => {
+      // Observable end to end: the routed type selects and extracts against the
+      // registry, scoped to the dataset’s graph, while the unrouted one stays on
+      // the dataset’s own distribution.
+      const endpoints: string[] = [];
+      const queries: string[] = [];
+      for (const host of [
+        'http://registry.example.org',
+        'http://data.example.org',
+      ]) {
+        nock(host)
+          .post('/sparql')
+          .times(4)
+          .reply(
+            200,
+            (_uri, body) => {
+              endpoints.push(host);
+              queries.push(
+                decodeURIComponent(String(body).replace(/\+/g, ' ')),
+              );
+              return { head: { vars: ['root'] }, results: { bindings: [] } };
+            },
+            { 'Content-Type': 'application/sparql-results+json' },
+          );
+      }
+
+      const dataset = new Dataset({
+        iri: new URL('http://example.org/dataset/1'),
+        distributions: [
+          Distribution.sparql(new URL('http://data.example.org/sparql')),
+        ],
+      });
+      await searchIndexerPipeline({
+        schema,
+        datasets: [dataset],
+        writerFor: () => engineWriter,
+        registryTypes: registry,
+      }).run();
+
+      const registryQueries = queries.filter(
+        (_query, index) => endpoints[index] === 'http://registry.example.org',
+      );
+      expect(registryQueries).toHaveLength(1);
+      expect(registryQueries[0]).toContain(DATASET);
+      // Scoped to the registration’s own graph, so a per-dataset pass never
+      // walks the whole register.
+      expect(registryQueries[0]).toContain(
+        'FROM <http://example.org/dataset/1>',
+      );
+
+      const dataQueries = queries.filter(
+        (_query, index) => endpoints[index] === 'http://data.example.org',
+      );
+      expect(dataQueries.some((query) => query.includes(ORGANIZATION))).toBe(
+        true,
+      );
+      // The dataset’s own endpoint is never asked for the registry-sourced
+      // type, and nothing sent there is graph-scoped.
+      expect(dataQueries.some((query) => query.includes(DATASET))).toBe(false);
+      expect(dataQueries.some((query) => query.includes('FROM'))).toBe(false);
+    });
+
+    it('leaves every type on the distribution when unset', () => {
+      expect(() =>
+        searchIndexerPipeline({
+          schema,
+          datasets: [],
+          writerFor: () => engineWriter,
+        }),
+      ).not.toThrow();
+    });
+
+    it('rejects a name the schema does not declare', () => {
+      // Otherwise silent: the type would read the dataset’s distribution, find
+      // no dataset description there and ship an empty collection.
+      expect(() =>
+        searchIndexerPipeline({
+          schema,
+          datasets: [],
+          writerFor: () => engineWriter,
+          registryTypes: { ...registry, names: ['Datasets'] },
+        }),
+      ).toThrow(/Unknown registry root type\(s\) “Datasets”/);
+    });
   });
 });

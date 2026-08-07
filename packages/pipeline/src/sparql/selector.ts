@@ -9,6 +9,7 @@ import {
   type TermVariable,
 } from '@traqula/rules-sparql-1-1';
 import type { ItemSelector, SelectOptions } from '../stage.js';
+import { withDefaultGraph } from './graph.js';
 import type { VariableBindings } from './reader.js';
 import {
   ConstantTimeoutPolicy,
@@ -34,7 +35,7 @@ export interface SparqlItemSelectorOptions {
    * SELECT query projecting at least one named variable.
    *
    * A `LIMIT` clause in the query overrides the stage's `batchSize` as the
-   * page size — use this when the SPARQL endpoint enforces a result limit.
+   * page size – use this when the SPARQL endpoint enforces a result limit.
    * It does **not** cap the total number of bindings the selector yields;
    * pagination continues with `OFFSET` until the source is exhausted. Use
    * {@link maxResults} to cap the total.
@@ -42,7 +43,7 @@ export interface SparqlItemSelectorOptions {
   query: string;
   /**
    * Maximum number of bindings the selector yields across all pages.
-   * Use this for sampling — “give me at most N items, don’t walk the full
+   * Use this for sampling – “give me at most N items, don’t walk the full
    * source”. Independent of {@link query}’s `LIMIT`, which controls page
    * size. Pagination stops as soon as `maxResults` bindings have been
    * yielded. Must not be negative.
@@ -64,8 +65,12 @@ export interface SparqlItemSelectorOptions {
  * pagination early. Dropped rows are still fetched; to skip them at the
  * endpoint, filter in the query itself (e.g. `FILTER(isIRI(?s))`).
  *
- * The endpoint URL comes from the {@link Distribution} passed to {@link select}.
- * Pagination is an internal detail — consumers iterate binding rows directly.
+ * The endpoint URL comes from the {@link Distribution} passed to {@link select},
+ * as does the graph to scope to: a distribution declaring a `namedGraph` selects
+ * within that graph (a `FROM` clause), the same scoping `SparqlConstructReader`
+ * applies to the extraction. The two must scope alike, or the roots come from a
+ * wider source than the quads read for them.
+ * Pagination is an internal detail – consumers iterate binding rows directly.
  *
  * The page size (results per SPARQL request) is determined by, in order:
  * 1. A `LIMIT` clause in the selector query (for endpoints with hard result limits)
@@ -129,6 +134,12 @@ export class SparqlItemSelector implements ItemSelector {
       );
     }
     const endpoint = distribution.accessUrl!;
+    // Per call, so concurrent selections over different datasets cannot see
+    // each other's graph scope or page window.
+    const query = structuredClone(this.parsed);
+    if (distribution.namedGraph) {
+      withDefaultGraph(query, distribution.namedGraph);
+    }
     const policy = options?.timeout ?? defaultTimeoutPolicy;
     let offset = 0;
     let totalFetched = 0;
@@ -148,12 +159,12 @@ export class SparqlItemSelector implements ItemSelector {
         offset === 0 || totalFetched > totalYielded
           ? basePageSize
           : Math.min(basePageSize, remaining);
-      this.parsed.solutionModifiers.limitOffset = F.solutionModifierLimitOffset(
+      query.solutionModifiers.limitOffset = F.solutionModifierLimitOffset(
         effectivePageSize,
         offset,
         F.gen(),
       );
-      const paginatedQuery = generator.generate(this.parsed);
+      const paginatedQuery = generator.generate(query);
 
       const stream = await this.fetchBindingsWithPolicy(
         endpoint,

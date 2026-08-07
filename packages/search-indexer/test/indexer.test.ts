@@ -34,6 +34,31 @@ describe('createSearchIndexer', () => {
     expect(pipeline).toBeInstanceOf(Pipeline);
   });
 
+  it('routes the configured root types to the registry endpoint', async () => {
+    const pipeline = await createSearchIndexer(
+      configFromEnvironment({
+        ...minimal,
+        SCHEMA_MODULE: fixture,
+        REGISTRY_ROOT_TYPES: 'Dataset',
+      }),
+    );
+    expect(pipeline).toBeInstanceOf(Pipeline);
+  });
+
+  it('fails the boot on a registry root type the schema does not declare', async () => {
+    // At boot, not per dataset: the type would otherwise read the dataset’s
+    // distribution and ship an empty collection.
+    await expect(
+      createSearchIndexer(
+        configFromEnvironment({
+          ...minimal,
+          SCHEMA_MODULE: fixture,
+          REGISTRY_ROOT_TYPES: 'Publisher',
+        }),
+      ),
+    ).rejects.toThrowError(/Unknown registry root type\(s\) “Publisher”/);
+  });
+
   it('fails the boot on an unloadable schema module, naming the path', async () => {
     await expect(
       createSearchIndexer(

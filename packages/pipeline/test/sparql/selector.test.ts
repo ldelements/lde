@@ -649,7 +649,7 @@ describe('SparqlItemSelector', () => {
         fetcher: mockFetcher as never,
       });
 
-      // No policy supplied at construction or per call — pagination still
+      // No policy supplied at construction or per call – pagination still
       // works against the module-level default policy.
       const rows: VariableBindings[] = [];
       for await (const row of selector.select(distribution, 10)) {
@@ -657,6 +657,100 @@ describe('SparqlItemSelector', () => {
       }
       expect(rows).toHaveLength(0);
       expect(mockFetcher.fetchBindings).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('graph scoping', () => {
+    /** A distribution scoped to one named graph, as a registry-sourced stage
+     *  builds per dataset. */
+    function scopedTo(graph: string): Distribution {
+      const scoped = Distribution.sparql(new URL('http://example.com/sparql'));
+      scoped.namedGraph = graph;
+      return scoped;
+    }
+
+    it('selects within the distribution’s named graph', async () => {
+      const { fetcher, queries } = pagedFetcher([
+        [{ uri: namedNode('http://example.com/1') }],
+      ]);
+      const selector = new SparqlItemSelector({
+        query,
+        fetcher: fetcher as never,
+      });
+
+      const rows: VariableBindings[] = [];
+      for await (const row of selector.select(
+        scopedTo('http://example.com/graph'),
+        10,
+      )) {
+        rows.push(row);
+      }
+
+      expect(rows).toHaveLength(1);
+      expect(queries[0]).toContain('FROM <http://example.com/graph>');
+    });
+
+    it('leaves the query unscoped when the distribution names no graph', async () => {
+      const { fetcher, queries } = pagedFetcher([[]]);
+      const selector = new SparqlItemSelector({
+        query,
+        fetcher: fetcher as never,
+      });
+
+      await selectAll(selector, 10);
+
+      expect(queries[0]).not.toContain('FROM');
+    });
+
+    it('keeps the scope on every page, not just the first', async () => {
+      // Pagination rewrites the query per page; were the scope applied to the
+      // page rather than the selection, page 2 onwards would silently widen to
+      // the whole endpoint.
+      const { fetcher, queries } = pagedFetcher([
+        [
+          { uri: namedNode('http://example.com/1') },
+          { uri: namedNode('http://example.com/2') },
+        ],
+        [{ uri: namedNode('http://example.com/3') }],
+      ]);
+      const selector = new SparqlItemSelector({
+        query,
+        fetcher: fetcher as never,
+      });
+
+      for await (const _row of selector.select(
+        scopedTo('http://example.com/graph'),
+        2,
+      )) {
+        // consume
+      }
+
+      expect(queries).toHaveLength(2);
+      expect(queries[1]).toContain('FROM <http://example.com/graph>');
+      expect(queries[1]).toMatch(/OFFSET\s+2/);
+    });
+
+    it('scopes each selection independently', async () => {
+      // One selector instance serves every dataset, so a per-call scope must
+      // not leak into the next call – nor stay behind once a call is unscoped.
+      const { fetcher, queries } = pagedFetcher([[], [], []]);
+      const selector = new SparqlItemSelector({
+        query,
+        fetcher: fetcher as never,
+      });
+
+      await selectAll(selector, 10);
+      for await (const _row of selector.select(scopedTo('urn:graph:1'), 10)) {
+        // consume
+      }
+      for await (const _row of selector.select(scopedTo('urn:graph:2'), 10)) {
+        // consume
+      }
+
+      expect(queries[0]).not.toContain('FROM');
+      expect(queries[1]).toContain('FROM <urn:graph:1>');
+      expect(queries[2]).toContain('FROM <urn:graph:2>');
+      expect(queries[2]).not.toContain('urn:graph:1');
     });
   });
 });
