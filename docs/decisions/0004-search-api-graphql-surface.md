@@ -8,6 +8,10 @@ Accepted
 
 Builds on [ADR 3 (Search API core query model)](./0003-search-api-core-query-model.md).
 
+Amended 2026-08-10: a `labelOnly` reference serves its resolved label as
+`label`, not `name` – the word the label source declares and a reference
+facet’s bucket already carries. The `name` below is historical.
+
 ## Context
 
 Given the engine-neutral core of [ADR 3](./0003-search-api-core-query-model.md), the first

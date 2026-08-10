@@ -148,7 +148,9 @@ const gqlSchema = buildGraphQLSchema(searchSchema(DATASET, PERSON));
 
 - **Output type** (the `SearchType`’s `name`): localized text → best-first `[LanguageString!]!`
   (`[0].language` is the language actually served); references → named per-shape
-  types (`Organization`, `Term`) with a `name` – a reference whose `typeName`
+  types (`Organization`, `Term`) with an `id` and a `label` – the same word the
+  [label source](./search#field-model) declares, so a reference reads like the
+  collection it points at – a reference whose `typeName`
   names a root type (`creator` → `Person`) is served under a derived name
   (`PersonReference`), since GraphQL type names must be unique; a **surfaced
   inline reference** instead gets a type built from its Reference Type’s own
