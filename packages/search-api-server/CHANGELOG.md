@@ -1,3 +1,9 @@
+## 0.8.0 (2026-08-10)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.20.0
+
 ## 0.7.0 (2026-08-07)
 
 ### 🧱 Updated Dependencies

@@ -1,3 +1,21 @@
+## 0.20.0 (2026-08-10)
+
+### 🚀 Features
+
+- ⚠️  **search-api-graphql:** serve a reference’s label as label, not name ([#718](https://github.com/ldelements/lde/pull/718))
+
+### ⚠️  Breaking Changes
+
+- **search-api-graphql:** serve a reference’s label as label, not name  ([#718](https://github.com/ldelements/lde/pull/718))
+  a labelOnly reference serves its label as `label`.
+  Clients selecting `name` on a reference type must select `label` instead."
+  M	docs/decisions/0004-search-api-graphql-surface.md
+  M	docs/reference/search-api-graphql.md
+  M	docs/reference/search.md
+  M	packages/search-api-graphql/src/build-schema.ts
+  M	packages/search-api-graphql/test/__snapshots__/generator-stability.test.ts.snap
+  M	packages/search-api-graphql/test/build-schema.test.ts
+
 ## 0.19.0 (2026-08-07)
 
 ### 🚀 Features
