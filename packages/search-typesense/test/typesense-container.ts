@@ -18,16 +18,14 @@ export class TypesenseContainer {
   private readonly port = 8108;
 
   async start(): Promise<Client> {
-    this.container = await new GenericContainer('typesense/typesense:30.0')
+    this.container = await new GenericContainer('typesense/typesense:30.2')
       .withExposedPorts(this.port)
       .withCommand([
         '--data-dir=/tmp',
         `--api-key=${this.apiKey}`,
         '--enable-cors',
       ])
-      .withWaitStrategy(
-        Wait.forHttp('/health', this.port).forStatusCode(200),
-      )
+      .withWaitStrategy(Wait.forHttp('/health', this.port).forStatusCode(200))
       .start();
     return this.client();
   }

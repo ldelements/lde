@@ -49,7 +49,7 @@ Create `compose.yaml` with the engine, the one-shot indexer, and the API server:
 ```yaml
 services:
   typesense:
-    image: typesense/typesense:30.0
+    image: typesense/typesense:30.2
     command: --data-dir /data --api-key=local-admin-key
     volumes:
       - typesense-data:/data
