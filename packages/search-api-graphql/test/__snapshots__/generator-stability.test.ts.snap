@@ -32,7 +32,7 @@ type LanguageString {
 
 type Agent {
   id: String!
-  name: [LanguageString!]!
+  label: [LanguageString!]!
 }
 
 type Pagination {

@@ -347,6 +347,12 @@ type must declare an `output`, `searchable` text field called `label` –
 `searchSchema` validates this schema-wide, so a dangling or unsuitable label
 source fails at startup. A reference without a `labelSource` stays id-only.
 
+The resolved label is called **`label`** wherever it surfaces: on the label
+source’s own type, on the reference that resolves against it (`dataset { id
+label }`), and on a reference facet’s bucket. One word, one meaning – so a
+collection reads the same whether you arrive at it directly or through a
+reference.
+
 ### Facet buckets
 
 A `FacetBucket` always carries its `value` and `count`; what else it carries is

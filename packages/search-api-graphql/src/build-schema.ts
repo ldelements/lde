@@ -278,7 +278,10 @@ export function buildGraphQLSchema(
           nested === undefined
             ? {
                 id: { type: new GraphQLNonNull(GraphQLString) },
-                name: labelList(
+                // `label`, the same word the label source declares and a
+                // reference facet’s bucket carries: one resolved label, one
+                // name for it wherever it surfaces.
+                label: labelList(
                   (source) => source.label as LocalizedValue | undefined,
                 ),
               }

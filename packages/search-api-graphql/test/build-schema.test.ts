@@ -168,8 +168,8 @@ describe('buildGraphQLSchema', () => {
             id
             title { language value }
             keyword
-            publisher { id name { language value } }
-            terminologySource { id name { language value } }
+            publisher { id label { language value } }
+            terminologySource { id label { language value } }
             size
             datePosted
             score
@@ -194,13 +194,13 @@ describe('buildGraphQLSchema', () => {
     expect(item.keyword).toEqual(['kaarten']);
     expect(item.publisher).toEqual({
       id: 'https://org/1',
-      name: [{ language: 'nl', value: 'Het Utrechts Archief' }],
+      label: [{ language: 'nl', value: 'Het Utrechts Archief' }],
     });
     expect(item.size).toBe(1234);
     expect(item.datePosted).toBe('2023-11-14T22:13:20.000Z');
     expect(item.score).toBe(4.5);
     expect(item.terminologySource).toEqual([
-      { id: 'https://term/1', name: [{ language: 'nl', value: 'Kaarten' }] },
+      { id: 'https://term/1', label: [{ language: 'nl', value: 'Kaarten' }] },
     ]);
     expect(item.iiif).toBe(true);
     expect(data.facets).toEqual({
@@ -957,7 +957,7 @@ describe('buildGraphQLSchema', () => {
       expect(sdl.match(/^type Person /gm)).toHaveLength(1);
       expect(sdl).toMatch(/author: PersonReference/);
       expect(sdl).toMatch(
-        /type PersonReference \{\s+id: String!\s+name: \[LanguageString!\]!\s+\}/,
+        /type PersonReference \{\s+id: String!\s+label: \[LanguageString!\]!\s+\}/,
       );
     });
 
