@@ -76,7 +76,7 @@ describe('buildCollectionDefinition', () => {
 
   it('lets an explicit name override the derived one', () => {
     const definition = buildCollectionDefinition(typeNamed('CreativeWork'), {
-      name: 'staging_creative_works',
+      collectionNameFor: () => 'staging_creative_works',
     });
     expect(definition.name).toBe('staging_creative_works');
   });
@@ -105,7 +105,7 @@ describe('the writers and the engine agree on a type’s collection', () => {
     const engine = createTypesenseSearchEngine(noClient, schema, {
       collections: { CreativeWork: 'staging_works' },
     });
-    const options = { name: 'staging_works' };
+    const options = { collectionNameFor: () => 'staging_works' };
 
     expect(
       new InPlaceRebuild(noClient, creativeWork, options).collectionName,

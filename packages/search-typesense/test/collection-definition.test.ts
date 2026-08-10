@@ -65,7 +65,7 @@ const schema: SearchType = {
 
 describe('buildCollectionDefinition', () => {
   const collection = buildCollectionDefinition(schema, {
-    name: 'datasets',
+    collectionNameFor: () => 'datasets',
     defaultLocale: 'nl',
     defaultSortingField: 'statusRank',
     synonymSets: ['dataset-synonyms'],
@@ -191,7 +191,7 @@ describe('buildCollectionDefinition', () => {
 
   it('assumes no language: without defaultLocale the companion is folded but unstemmed', () => {
     const withoutLocale = buildCollectionDefinition(schema, {
-      name: 'datasets',
+      collectionNameFor: () => 'datasets',
     });
     expect(withoutLocale.fields).toContainEqual({
       name: 'keyword_search',
@@ -222,7 +222,7 @@ describe('und-locale text', () => {
           },
         ],
       },
-      { name: 'docs', defaultLocale: 'en' },
+      { collectionNameFor: () => 'docs', defaultLocale: 'en' },
     );
     expect(schema.fields).toEqual([
       { name: 'summary_[^_]+', type: 'string', index: false, optional: true },
@@ -251,7 +251,7 @@ describe('und-locale text', () => {
           },
         ],
       },
-      { name: 'docs' },
+      { collectionNameFor: () => 'docs' },
     );
     // Display is gated on `output`; a search-only field emits only its folded
     // search companion, no `${name}_<lang>` regex field.
@@ -282,7 +282,7 @@ describe('internal fields', () => {
           { name: 'note', path: 'urn:ex:note', kind: 'text', locales: ['nl'] },
         ],
       },
-      { name: 'docs' },
+      { collectionNameFor: () => 'docs' },
     );
     // Every field declares no role, so it is internal – a projection-time
     // reading device, pruned before the writer. The collection stores nothing
@@ -305,7 +305,7 @@ describe('internal fields', () => {
           },
         ],
       },
-      { name: 'docs' },
+      { collectionNameFor: () => 'docs' },
     );
     // Only the field carrying a role reaches the collection.
     expect(collection.fields).toEqual([
@@ -368,7 +368,7 @@ describe('surfaced inline references', () => {
   const definitionFor = (media: Record<string, unknown>) => {
     const creativeWork = creativeWorkWith(media);
     return buildCollectionDefinition(creativeWork, {
-      name: 'works',
+      collectionNameFor: () => 'works',
       schema: searchSchema(creativeWork, mediaObject),
     });
   };
@@ -452,7 +452,7 @@ describe('surfaced inline references', () => {
     });
     const creativeWork = creativeWorkWith({});
     const collection = buildCollectionDefinition(creativeWork, {
-      name: 'works',
+      collectionNameFor: () => 'works',
       schema: searchSchema(creativeWork, media, thumbnail),
     });
     expect(collection.fields).toEqual([
@@ -477,7 +477,9 @@ describe('surfaced inline references', () => {
     // the reference as a string the projection never writes, and every document
     // would fail to import. Fail where the collection is built instead.
     expect(() =>
-      buildCollectionDefinition(creativeWorkWith({}), { name: 'works' }),
+      buildCollectionDefinition(creativeWorkWith({}), {
+        collectionNameFor: () => 'works',
+      }),
     ).toThrow(/needs the search schema.*“media”/);
   });
 
@@ -497,7 +499,7 @@ describe('surfaced inline references', () => {
       ],
     });
     const collection = buildCollectionDefinition(creativeWork, {
-      name: 'works',
+      collectionNameFor: () => 'works',
       schema: searchSchema(creativeWork, mediaObject),
     });
     expect(collection.fields).toEqual([]);

@@ -660,6 +660,41 @@ describe('validateSearchType', () => {
       ),
     ).toEqual([{ field: 'size', reason: 'transform-not-allowed' }]);
   });
+
+  it('allows joinable on a reference field that declares a label source', () => {
+    expect(
+      validateSearchType(
+        typeWith({
+          name: 'publisher',
+          kind: 'reference',
+          filterable: true,
+          labelSource: 'Organization',
+          joinable: true,
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  it('rejects joinable without a label source, and on a non-reference', () => {
+    // A join addresses the referent’s COLLECTION, which is the one the label
+    // source names; without one the flag states an edge to nowhere.
+    expect(
+      validateSearchType(
+        typeWith({ name: 'publisher', kind: 'reference', joinable: true }),
+      ),
+    ).toEqual([
+      { field: 'publisher', reason: 'joinable-without-label-source' },
+    ]);
+    expect(
+      validateSearchType(
+        typeWith({
+          name: 'format',
+          kind: 'keyword',
+          joinable: true,
+        } as never),
+      ),
+    ).toEqual([{ field: 'format', reason: 'joinable-not-allowed' }]);
+  });
 });
 
 describe('assertTypeInSchema', () => {

@@ -29,6 +29,7 @@ import {
   isInlineReference,
   isRangeFacet,
   isUnsatisfiable,
+  joinGraph,
   labelFieldOf,
   nestedReferenceType,
   outputFields,
@@ -49,7 +50,10 @@ import { deriveCollectionName } from './collection-name.js';
  *  just another type, so it is named the same way. */
 export interface TypesenseSearchEngineOptions<
   TypeName extends string = string,
-> extends BuildSearchParamsOptions {
+  // `joinTargetFor` is not a deployment knob: the engine already knows both
+  // halves of it – the schema’s join graph and every type’s collection – so it
+  // supplies the mapping itself rather than asking for it twice.
+> extends Omit<BuildSearchParamsOptions, 'joinTargetFor'> {
   /**
    * Overrides the collection (or alias) a search type reads, keyed by the
    * type’s `name`. Every type not named here reads the collection derived from
@@ -154,6 +158,25 @@ export function createTypesenseSearchEngine<
       collection,
     ]),
   );
+  // The schema's join graph, built once (it is cached per schema anyway), plus
+  // the collection half the graph deliberately leaves to the adapter. Together
+  // they are what lets a `where` criterion carry an `on` path: validation
+  // resolves the path to a type, the compiler turns each hop into
+  // `$collection(…)`.
+  const joins = joinGraph(schema);
+  const searchParamsOptions: BuildSearchParamsOptions = {
+    ...options,
+    joinTargetFor: (from, path) => {
+      // Both lookups always hit: `assertValidQuery` runs first and rejects
+      // every path this could not resolve, and each type resolved a collection
+      // above.
+      const target = joins.resolve(from, path) as RootType;
+      return {
+        searchType: target,
+        collection: collections.get(target.class) as string,
+      };
+    },
+  };
   // Resolve every reference field's label source ONCE at construction. The
   // schema already guarantees the named type exists and serves labels
   // (`searchSchema`/`labelFieldOf`), and every type resolved a collection
@@ -344,14 +367,14 @@ export function createTypesenseSearchEngine<
       // invalid query (unknown field, wrong operator, unknown facet) are both
       // rejected up front, for EVERY caller.
       assertTypeInSchema(schema, searchType);
-      assertValidQuery(query, searchType);
+      assertValidQuery(query, searchType, joins);
       // Asks for no document (an empty `id` membership): answer it without a
       // round-trip rather than dispatching a query whose only filter compiles
       // away, which would hand back the whole collection.
       if (isUnsatisfiable(query)) {
         return { total: 0, hits: [], facets: {} };
       }
-      const params = buildSearchParams(query, searchType, options);
+      const params = buildSearchParams(query, searchType, searchParamsOptions);
       const cachedLabelsPromise = startCachedLabels(searchType);
       // ONE search, but through `multi_search` (POST) like the facet batch and
       // the label lookup: `documents().search()` is a GET, so a long
@@ -379,7 +402,7 @@ export function createTypesenseSearchEngine<
     ): Promise<readonly FacetsOutcome[]> {
       assertTypeInSchema(schema, searchType);
       for (const query of queries) {
-        assertValidQuery(query, searchType);
+        assertValidQuery(query, searchType, joins);
       }
       if (queries.length === 0) {
         return [];
@@ -407,7 +430,7 @@ export function createTypesenseSearchEngine<
           ...buildSearchParams(
             { ...query, orderBy: [], limit: 0, offset: 0 },
             searchType,
-            options,
+            searchParamsOptions,
           ),
         })),
       })) as {

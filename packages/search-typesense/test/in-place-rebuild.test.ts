@@ -77,7 +77,7 @@ describe('InPlaceRebuild', () => {
     const writer = new InPlaceRebuild<{ id: string; title: string }>(
       client,
       objectType,
-      { name: NAME },
+      { collectionNameFor: () => NAME },
     );
 
     const run = await writer.openRun(makeRunContext([datasetA.iri.toString()]));
@@ -100,7 +100,7 @@ describe('InPlaceRebuild', () => {
     const writer = new InPlaceRebuild<{ id: string; title: string }>(
       client,
       objectType,
-      { name: NAME },
+      { collectionNameFor: () => NAME },
     );
     await seed(
       writer,
@@ -137,7 +137,7 @@ describe('InPlaceRebuild', () => {
     const writer = new InPlaceRebuild<{ id: string; title: string }>(
       client,
       objectType,
-      { name: NAME },
+      { collectionNameFor: () => NAME },
     );
     await seed(
       writer,
@@ -167,7 +167,7 @@ describe('InPlaceRebuild', () => {
     const writer = new InPlaceRebuild<{ id: string; title: string }>(
       client,
       objectType,
-      { name: NAME },
+      { collectionNameFor: () => NAME },
     );
     await seed(
       writer,
@@ -190,7 +190,7 @@ describe('InPlaceRebuild', () => {
     const writer = new InPlaceRebuild<{ id: string; title: string }>(
       client,
       objectType,
-      { name: NAME },
+      { collectionNameFor: () => NAME },
     );
     await seed(
       writer,
@@ -217,7 +217,7 @@ describe('InPlaceRebuild', () => {
     const writer = new InPlaceRebuild<{ id: string; title: string }>(
       client,
       objectType,
-      { name: NAME },
+      { collectionNameFor: () => NAME },
     );
 
     await expect(
@@ -231,7 +231,7 @@ describe('InPlaceRebuild', () => {
     const writer = new InPlaceRebuild<{ id: string; title: string }>(
       client,
       objectType,
-      { name: NAME, batchSize: 1 },
+      { collectionNameFor: () => NAME, batchSize: 1 },
     );
     await seed(writer, new Map([[datasetA, [{ id: 'a1', title: 'One' }]]]));
 
@@ -262,7 +262,7 @@ describe('InPlaceRebuild', () => {
     const writer = new InPlaceRebuild<{ id: string; title: string }>(
       client,
       objectType,
-      { name: NAME, batchSize: 1 },
+      { collectionNameFor: () => NAME, batchSize: 1 },
     );
     await seed(
       writer,
@@ -312,9 +312,10 @@ describe('InPlaceRebuild', () => {
       fields: [{ name: 'source', kind: 'keyword' }],
     };
 
-    expect(() => new InPlaceRebuild(client, clashing, { name: NAME })).toThrow(
-      /source/,
-    );
+    expect(
+      () =>
+        new InPlaceRebuild(client, clashing, { collectionNameFor: () => NAME }),
+    ).toThrow(/source/);
   });
 
   describe('a type declaring the indexed dataset', () => {
@@ -339,7 +340,7 @@ describe('InPlaceRebuild', () => {
       const writer = new InPlaceRebuild<{ id: string; title: string }>(
         client,
         withDataset,
-        { name: NAME },
+        { collectionNameFor: () => NAME },
       );
 
       const run = await writer.openRun(
@@ -366,7 +367,7 @@ describe('InPlaceRebuild', () => {
       const writer = new InPlaceRebuild<{ id: string; title: string }>(
         client,
         withDataset,
-        { name: NAME },
+        { collectionNameFor: () => NAME },
       );
       await seed(
         writer,
@@ -404,7 +405,10 @@ describe('InPlaceRebuild', () => {
       };
 
       expect(
-        () => new InPlaceRebuild(client, notFacetable, { name: NAME }),
+        () =>
+          new InPlaceRebuild(client, notFacetable, {
+            collectionNameFor: () => NAME,
+          }),
       ).toThrow(/facetable/);
     });
   });

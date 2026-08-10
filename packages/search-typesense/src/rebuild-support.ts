@@ -25,26 +25,28 @@ export interface RebuildOptions extends CollectionDefinitionOptions {
 export interface ResolvedRebuildOptions {
   readonly batchSize: number;
   readonly lockTtlMs: number;
-  /** The collection-definition options with the `name` resolved – the one place
-   *  the resolved name lives, so the collection a writer talks to and the
-   *  definition it creates cannot say different things. */
+  /** The collection-definition options with `collectionNameFor` resolved to a
+   *  total function – the one place the naming convention lives, so the
+   *  collection a writer talks to, the definition it creates and the peer
+   *  collections its references name cannot say different things. */
   readonly definitionOptions: CollectionDefinitionOptions & {
-    readonly name: string;
+    readonly collectionNameFor: (searchType: SearchType) => string;
   };
 }
 
 /**
  * Apply the shared defaults, once, so neither writer restates them – including
- * the collection name, derived from the type ({@link deriveCollectionName})
+ * the collection naming, derived from each type ({@link deriveCollectionName})
  * when the deployment supplies none.
  *
  * Writers resolve at construction rather than per run, so an underivable name
  * throws when the writer is built, not on the first rebuild. The collection
  * definition is built here and discarded for the same reason: every way a
  * declaration can fail to describe a collection – an unresolvable surfaced
- * inline reference, whose nesting needs the schema – then fails at construction
- * rather than inside the first run, after a lock is held and a whole extraction
- * has been paid for.
+ * inline reference, whose nesting needs the schema, or a joinable reference
+ * whose target it resolves the same way – then fails at construction rather
+ * than inside the first run, after a lock is held and a whole extraction has
+ * been paid for.
  */
 export function resolveRebuildOptions(
   searchType: SearchType,
@@ -60,7 +62,8 @@ export function resolveRebuildOptions(
     lockTtlMs,
     definitionOptions: {
       ...definitionOptions,
-      name: definitionOptions.name ?? deriveCollectionName(searchType),
+      collectionNameFor:
+        definitionOptions.collectionNameFor ?? deriveCollectionName,
     },
   };
   buildCollectionDefinition(searchType, resolved.definitionOptions);

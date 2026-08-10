@@ -4,6 +4,7 @@ import {
   type Criterion,
   type FacetRange,
   type Filter,
+  type RootType,
   type SearchField,
   type SearchQuery,
   type SearchType,
@@ -21,12 +22,40 @@ import {
   searchableFields,
 } from '@lde/search/adapter';
 
+/** One hop of a join path, resolved: the Root Type it reaches and the
+ *  Typesense collection that type is stored in. */
+export interface JoinTarget {
+  readonly searchType: RootType;
+  readonly collection: string;
+}
+
 /**
  * Options for {@link buildSearchParams} – the query half of the engine
  * adapter. {@link TypesenseSearchEngineOptions} extends this, so each knob is
  * declared once and the engine forwards its options wholesale.
  */
 export interface BuildSearchParamsOptions {
+  /**
+   * Resolves a criterion’s {@link CriterionBase.on} join path to the collection
+   * it constrains – the one thing the engine-neutral {@link JoinGraph}
+   * deliberately does not answer, because collection naming is engine- and
+   * deployment-specific.
+   *
+   * Called once per **prefix** of a path, so a two-hop
+   * `['dataset', 'publisher']` yields the collection of each hop and compiles
+   * to the nested `$datasets($publishers(…))`. The declaration comes back with
+   * it, because the leaf term is compiled against the *target* type’s field
+   * (its kind, its facet flag), not the searched one.
+   *
+   * Left unset – or returning `undefined` for a path – a joined criterion
+   * compiles to nothing and drops out of its clause. Through the engine it can
+   * never get that far: `assertValidQuery` rejects an unresolvable path up
+   * front.
+   */
+  readonly joinTargetFor?: (
+    from: SearchType,
+    path: readonly string[],
+  ) => JoinTarget | undefined;
   /**
    * Cap on the number of buckets returned per facet (`max_facet_values`). Left
    * unset, Typesense defaults to 10 – too few for high-cardinality facets
@@ -53,6 +82,11 @@ export interface BuildSearchParamsOptions {
  * so the mapping is asserted directly in unit tests. Field names come from
  * {@link physicalFields}, the same convention the projection and the collection
  * schema use, so a query can never reference a field the index does not carry.
+ *
+ * A criterion carrying a {@link CriterionBase.on} join path compiles to a
+ * nested `$collection(…)` clause – one per hop – which is why the compiler
+ * takes {@link BuildSearchParamsOptions.joinTargetFor}: the join graph names
+ * the type, the deployment names the collection.
  */
 export function buildSearchParams(
   query: SearchQuery,
@@ -64,11 +98,7 @@ export function buildSearchParams(
       ? fold(query.text)
       : undefined;
   const { names, weights } = queryFields(searchType, query.locale);
-  const filterBy = compileFilterBy(
-    query.where,
-    searchType,
-    options.onIgnoredFilter,
-  );
+  const filterBy = compileFilterBy(query.where, searchType, options);
   const sortBy = query.orderBy
     .map((sort) => compileSort(sort, searchType, query.locale))
     .join(',');
@@ -170,13 +200,13 @@ function queryFields(
 function compileFilterBy(
   where: readonly Filter[],
   searchType: SearchType,
-  onIgnoredFilter: ((filter: Filter) => void) | undefined,
+  options: BuildSearchParamsOptions,
 ): string {
   return where
     .map((filter) => {
-      const clause = compileFilter(filter, searchType);
+      const clause = compileFilter(filter, searchType, options);
       if (clause === undefined) {
-        onIgnoredFilter?.(filter);
+        options.onIgnoredFilter?.(filter);
       }
       return clause;
     })
@@ -210,10 +240,11 @@ function compileFilterBy(
 function compileFilter(
   filter: Filter,
   searchType: SearchType,
+  options: BuildSearchParamsOptions,
 ): string | undefined {
   const terms: string[] = [];
   for (const criterion of filter.or) {
-    const outcome = compileCriterion(criterion, searchType);
+    const outcome = compileCriterion(criterion, searchType, options);
     if (outcome === VACUOUS) {
       return undefined;
     }
@@ -239,6 +270,47 @@ const UNUSABLE = Symbol('unusable');
  * re-derived by a second pass over the same rules.
  */
 function compileCriterion(
+  criterion: Criterion,
+  searchType: SearchType,
+  options: BuildSearchParamsOptions,
+): string | typeof VACUOUS | typeof UNUSABLE {
+  const on = criterion.on ?? [];
+  if (on.length === 0) {
+    return compileLeaf(criterion, searchType);
+  }
+  // A joined criterion constrains a document in ANOTHER collection, so the leaf
+  // is compiled against the type that path reaches and then wrapped, one
+  // `$collection(…)` per hop, outermost hop first:
+  // `['dataset', 'publisher']` → `$datasets($publishers(id:=…))`.
+  const collections: string[] = [];
+  let target = searchType;
+  for (let hop = 1; hop <= on.length; hop++) {
+    const resolved = options.joinTargetFor?.(searchType, on.slice(0, hop));
+    if (resolved === undefined) {
+      // An unresolvable path is a criterion that cannot be compiled at all –
+      // false, so it drops out and its siblings still stand. Through the
+      // engine, `assertValidQuery` has already rejected it.
+      return UNUSABLE;
+    }
+    collections.push(resolved.collection);
+    target = resolved.searchType;
+  }
+  const leaf = compileLeaf(criterion, target);
+  // A vacuous leaf states no constraint on the referent, so the join as a whole
+  // states none either – the reading, and so the outcome, passes straight
+  // through the hops.
+  if (leaf === VACUOUS || leaf === UNUSABLE) {
+    return leaf;
+  }
+  return collections.reduceRight(
+    (inner, collection) => `$${collection}(${inner})`,
+    leaf,
+  );
+}
+
+/** The criterion’s own term, against the type it actually constrains – the
+ *  searched type, or the one its join path reaches. */
+function compileLeaf(
   criterion: Criterion,
   searchType: SearchType,
 ): string | typeof VACUOUS | typeof UNUSABLE {

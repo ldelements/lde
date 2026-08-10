@@ -40,12 +40,14 @@ import {
   isAbsoluteIri,
   OR_KEY,
   isRangeFacet,
+  joinGraph,
   labelFieldNameOf,
   nestedReferenceType,
   outputFields,
   pageForOffset,
   sortableFields,
   unixSecondsToIso,
+  type JoinGraph,
 } from '@lde/search/adapter';
 import {
   defaultLanguageOrder,
@@ -412,6 +414,13 @@ export function buildGraphQLSchema(
       : labelFieldNameOf(rootTypesByName.get(field.labelSource)!);
   }
 
+  // The declared joins, and the input types they make shareable. Each map is
+  // keyed by the SearchType `name`, so a type reached as a join target and the
+  // same type queried in its own right meet exactly one `‹Name›Where`.
+  const joins = joinGraph(schema);
+  const whereInputs = new Map<string, GraphQLInputObjectType>();
+  const referenceFilters = new Map<string, GraphQLInputObjectType>();
+
   /**
    * Register the GraphQL type one reference field is served as, once per
    * referenced shape. A **surfaced inline** reference is served as the nested
@@ -595,10 +604,26 @@ export function buildGraphQLSchema(
     }
   }
 
+  function whereFieldType(
+    field: SearchField,
+    owner: RootType,
+  ): GraphQLInputType {
+    // A joinable reference is filterable in two ways at once – by the ids it
+    // holds, and by a condition on the referent – so it earns a richer input
+    // than the plain membership every other reference gets. Making the
+    // difference visible in the schema is the point: a consumer sees which
+    // references can be filtered through, instead of discovering it from a
+    // runtime error.
+    const target = joins.resolve(owner, [field.name]);
+    return target !== undefined
+      ? referenceFilterFor(target)
+      : plainWhereFieldType(field);
+  }
+
   /** The filter input one field accepts, fixed by what the field keys on: a
    *  `reference` keys on identity (its target’s filter, or `IRIFilter` when it
    *  names no target), a `keyword` on literals. */
-  function whereFieldType(field: SearchField): GraphQLInputType {
+  function plainWhereFieldType(field: SearchField): GraphQLInputType {
     switch (filterOperatorFor(field.kind)) {
       case 'in':
         if (field.kind !== 'reference') {
@@ -616,6 +641,118 @@ export function buildGraphQLSchema(
       default:
         return GraphQLBoolean;
     }
+  }
+
+  /**
+   * The filter input a joinable reference to `target` takes, created once per
+   * target type and shared by EVERY field pointing at it – `publisher` and
+   * `creator` both resolving to `Organization` take the same
+   * `OrganizationReferenceFilter`, because what it can express is a property of
+   * the referenced type, not of the referring field.
+   *
+   * `@oneOf`, so a criterion stays an atom: filter by the ids the field holds,
+   * **or** by a condition on the referent, never both in one term.
+   */
+  function referenceFilterFor(target: RootType): GraphQLInputObjectType {
+    const existing = referenceFilters.get(target.name);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const created = new GraphQLInputObjectType({
+      name: `${target.name}ReferenceFilter`,
+      description: `A condition on a joinable reference to ${target.name}: the ids it holds, or a condition on the referenced ${target.name} itself.`,
+      isOneOf: true,
+      // A thunk: the target’s own `where` may point back through further
+      // joinable references (the join graph is acyclic, so this terminates).
+      fields: () => ({
+        in: { type: new GraphQLList(new GraphQLNonNull(GraphQLString)) },
+        where: { type: whereInputFor(target) },
+      }),
+    });
+    referenceFilters.set(target.name, created);
+    return created;
+  }
+
+  /**
+   * One key per filterable field (plus the undeclared `id`), each typed by its
+   * OWN kind – so the operator a key accepts is fixed by the field it names,
+   * and a range on a keyword field cannot be written at all. This is the
+   * single vocabulary every level of `where` is built from: the same keys
+   * appear on the clause and on a criterion, so a field is never named a
+   * second way.
+   */
+  function fieldKeys(
+    searchType: RootType,
+  ): Record<string, GraphQLInputFieldConfig> {
+    const fields: Record<string, GraphQLInputFieldConfig> = {
+      // Typed self-referentially – `TermWhere.id: TermFilter` – so a consumer
+      // can resolve “the collection I am browsing” to “the filter type that
+      // accepts its IRIs”, which is what makes the refined discovery strategy
+      // work without hardcoding a single domain name.
+      [ID_FIELD]: { type: targetFilter(searchType.name) },
+    };
+    for (const field of filterableFields(searchType)) {
+      fields[field.name] = {
+        type: whereFieldType(field, searchType),
+        description: field.description,
+      };
+    }
+    return fields;
+  }
+
+  /**
+   * The `where` input of one root type, created once and shared: it is both the
+   * argument of that type’s own query field and – through a
+   * {@link referenceFilterFor} – the shape a *joined* condition on it takes
+   * from another type. One input either way, so the vocabulary a consumer
+   * learns for `datasets(where: …)` is the same one they write inside
+   * `creativeWorks(where: { dataset: { where: … } })`.
+   */
+  function whereInputFor(searchType: RootType): GraphQLInputObjectType {
+    const existing = whereInputs.get(searchType.name);
+    if (existing !== undefined) {
+      return existing;
+    }
+    // A criterion is an ATOM: exactly one field, enforced by `@oneOf`. That is
+    // what keeps `where` a flat conjunction of disjunctions – a criterion that
+    // could carry two keys would be a conjunction nested inside an `or`, and
+    // skip-own-filter (ADR 5) has no answer for a clause buried inside another.
+    // Created here rather than on its own, because it exists for exactly one
+    // `where` and shares its memoization.
+    const criterionInput = new GraphQLInputObjectType({
+      name: `${searchType.name}Criterion`,
+      description:
+        'A condition on exactly one field. Used inside `or`, where the criteria are alternatives.',
+      isOneOf: true,
+      fields: () => fieldKeys(searchType),
+    });
+    const orKey: GraphQLInputFieldConfig = {
+      type: new GraphQLList(new GraphQLNonNull(criterionInput)),
+      description:
+        'A disjunction: a document matches when ANY of these criteria holds. Combined with the sibling keys by AND, so it widens across fields without widening the query as a whole.',
+    };
+    // `and` carries further `Where`s rather than a separate clause type. Safe to
+    // be recursive: a conjunction inside a conjunction FLATTENS, and the one
+    // shape that would not – an `and` inside an `or` – is unreachable, because
+    // `or` holds only `@oneOf` criteria. So `where` stays a flat conjunction of
+    // disjunctions at any nesting depth, and a reader meets one input type
+    // instead of two near-identical ones.
+    const created: GraphQLInputObjectType = new GraphQLInputObjectType({
+      name: `${searchType.name}Where`,
+      description:
+        'Sibling keys are combined with AND. Use `or` for a disjunction, and `and` when a query needs more than one of them.',
+      fields: () => ({
+        ...fieldKeys(searchType),
+        [OR_KEY]: orKey,
+        [AND_KEY]: {
+          type: new GraphQLList(new GraphQLNonNull(created)),
+          description:
+            'Further groups of conditions, all of which apply. The way to carry a second `or` disjunction alongside the first.',
+        },
+      }),
+    });
+    whereInputs.set(searchType.name, created);
+    return created;
   }
 
   /** The root query field for one {@link RootType}, with its derived types. */
@@ -643,69 +780,9 @@ export function buildGraphQLSchema(
 
     // Every type is filterable on `id`, so the input always has at least one
     // field and always exists – no type is unaddressable by IRI, whatever it
-    // declares.
-    const filterable = filterableFields(searchType);
-    /**
-     * One key per filterable field (plus the undeclared `id`), each typed by its
-     * OWN kind – so the operator a key accepts is fixed by the field it names,
-     * and a range on a keyword field cannot be written at all. This is the
-     * single vocabulary every level of `where` is built from: the same keys
-     * appear on the clause and on a criterion, so a field is never named a
-     * second way.
-     */
-    const fieldKeys = (): Record<string, GraphQLInputFieldConfig> => {
-      const fields: Record<string, GraphQLInputFieldConfig> = {
-        // Typed self-referentially – `TermWhere.id: TermFilter` – so a consumer
-        // can resolve “the collection I am browsing” to “the filter type that
-        // accepts its IRIs”, which is what makes the refined discovery strategy
-        // work without hardcoding a single domain name.
-        [ID_FIELD]: { type: targetFilter(typeName) },
-      };
-      for (const field of filterable) {
-        fields[field.name] = {
-          type: whereFieldType(field),
-          description: field.description,
-        };
-      }
-      return fields;
-    };
-
-    // A criterion is an ATOM: exactly one field, enforced by `@oneOf`. That is
-    // what keeps `where` a flat conjunction of disjunctions – a criterion that
-    // could carry two keys would be a conjunction nested inside an `or`, and
-    // skip-own-filter (ADR 5) has no answer for a clause buried inside another.
-    const criterionInput = new GraphQLInputObjectType({
-      name: `${typeName}Criterion`,
-      description:
-        'A condition on exactly one field. Used inside `or`, where the criteria are alternatives.',
-      isOneOf: true,
-      fields: fieldKeys,
-    });
-    const orKey: GraphQLInputFieldConfig = {
-      type: new GraphQLList(new GraphQLNonNull(criterionInput)),
-      description:
-        'A disjunction: a document matches when ANY of these criteria holds. Combined with the sibling keys by AND, so it widens across fields without widening the query as a whole.',
-    };
-    // `and` carries further `Where`s rather than a separate clause type. Safe to
-    // be recursive: a conjunction inside a conjunction FLATTENS, and the one
-    // shape that would not – an `and` inside an `or` – is unreachable, because
-    // `or` holds only `@oneOf` criteria. So `where` stays a flat conjunction of
-    // disjunctions at any nesting depth, and a reader meets one input type
-    // instead of two near-identical ones.
-    const whereInput: GraphQLInputObjectType = new GraphQLInputObjectType({
-      name: `${typeName}Where`,
-      description:
-        'Sibling keys are combined with AND. Use `or` for a disjunction, and `and` when a query needs more than one of them.',
-      fields: () => ({
-        ...fieldKeys(),
-        [OR_KEY]: orKey,
-        [AND_KEY]: {
-          type: new GraphQLList(new GraphQLNonNull(whereInput)),
-          description:
-            'Further groups of conditions, all of which apply. The way to carry a second `or` disjunction alongside the first.',
-        },
-      }),
-    });
+    // declares. It may already have been created as a joined type’s filter
+    // shape; `whereInputFor` hands back the same instance either way.
+    const whereInput = whereInputFor(searchType);
 
     const sortValues: GraphQLEnumValueConfigMap = {
       RELEVANCE: { value: 'relevance' },
@@ -792,6 +869,7 @@ export function buildGraphQLSchema(
           context,
           searchType,
           maxPerPage,
+          joins,
         );
         const finalQuery = typeOptions?.queryDefaults
           ? typeOptions.queryDefaults(built, context)
@@ -908,8 +986,9 @@ interface QueryArgs {
 function argsToQuery(
   args: QueryArgs,
   context: SearchContext,
-  searchType: SearchType,
+  searchType: RootType,
   maxPerPage: number,
+  joins: JoinGraph,
 ): SearchQuery {
   const perPage = args.perPage ?? 20;
   const page = args.page ?? 1;
@@ -924,7 +1003,7 @@ function argsToQuery(
   }
   return {
     text: args.query,
-    where: whereToFilters(args.where, searchType),
+    where: whereToFilters(args.where, searchType, joins),
     orderBy: args.orderBy
       ? [{ field: args.orderBy.field, direction: args.orderBy.direction }]
       : [],
@@ -936,23 +1015,46 @@ function argsToQuery(
   };
 }
 
+/**
+ * Compile one `Where` input into the flat conjunction of disjunctions the IR
+ * holds, at `on` hops out from the searched type (`[]` at the top level).
+ *
+ * A **joined** key carrying `where` recurses with the path extended by that
+ * key, and its clauses join this list – exactly how `and` already flattens. The
+ * result is still flat: the nesting lives in each criterion’s `on` path, never
+ * in the clause structure, so skip-own-filter (ADR 5) still scans one level.
+ */
 function whereToFilters(
   where: Record<string, unknown> | undefined,
-  searchType: SearchType,
+  searchType: RootType,
+  joins: JoinGraph,
+  on: readonly string[] = [],
 ): Filter[] {
   // `== null` deliberately: an explicit `where: null` is as absent as an omitted
   // one, and reading keys off it would throw.
   if (where == null) {
     return [];
   }
-  const filters = criteriaOf(where, searchType).map(filterOn);
+  const filters: Filter[] = [];
   // Sibling field keys AND, so each becomes a one-criterion filter of its own,
   // while `or` becomes a SINGLE filter carrying every alternative. That is the
   // whole AND/OR mapping: which bucket a criterion lands in, never a combinator
   // inferred from how deeply it is nested.
+  for (const entry of keyEntriesOf(where, searchType, joins)) {
+    if ('nested' in entry) {
+      filters.push(
+        ...whereToFilters(entry.nested, entry.target, joins, [
+          ...on,
+          entry.name,
+        ]),
+      );
+      continue;
+    }
+    filters.push(filterOn(withPath(entry.criterion, on)));
+  }
   const alternatives = (
     (where[OR_KEY] as readonly Record<string, unknown>[] | null) ?? []
-  ).flatMap((criterion) => criteriaOf(criterion, searchType));
+  ).flatMap((criterion) => criteriaOf(criterion, searchType, joins, on));
   if (alternatives.length > 0) {
     filters.push({ or: alternatives });
   }
@@ -962,51 +1064,123 @@ function whereToFilters(
   // can never sit inside an `or` (which holds only criteria).
   for (const nested of (where[AND_KEY] as
     readonly Record<string, unknown>[] | null) ?? []) {
-    filters.push(...whereToFilters(nested, searchType));
+    filters.push(...whereToFilters(nested, searchType, joins, on));
   }
   return filters;
 }
 
+/** A criterion with its join path attached, or unchanged at the top level –
+ *  so an ordinary query’s IR is byte-for-byte what it was. */
+function withPath(criterion: Criterion, on: readonly string[]): Criterion {
+  return on.length === 0 ? criterion : { ...criterion, on };
+}
+
 /**
- * The criteria a keyed object carries, in declaration order. A `Criterion` is
- * `@oneOf`, so it yields exactly one; a `Where`/`Clause` yields one per field
- * key it sets. `id` is read first: no type declares it, so the field loop below
- * never sees it.
+ * The criteria a keyed object carries, in declaration order, `on` hops out. A
+ * `Criterion` is `@oneOf`, so it yields exactly one; a `Where` yields one per
+ * field key it sets.
+ *
+ * A joined key carrying `where` is compiled through {@link whereToFilters} and
+ * must come back as exactly ONE one-criterion clause. Anything else – two field
+ * keys, an `or`, an `and` – is a conjunction, and a conjunction cannot sit
+ * inside the `or` this feeds (ADR 18’s flat IR has nowhere to put it), so it is
+ * rejected with the rewrite that expresses it instead.
  */
 function criteriaOf(
   keyed: Record<string, unknown>,
-  searchType: SearchType,
+  searchType: RootType,
+  joins: JoinGraph,
+  on: readonly string[] = [],
 ): Criterion[] {
   const criteria: Criterion[] = [];
+  for (const entry of keyEntriesOf(keyed, searchType, joins)) {
+    if (!('nested' in entry)) {
+      criteria.push(withPath(entry.criterion, on));
+      continue;
+    }
+    const path = [...on, entry.name];
+    const nested = whereToFilters(entry.nested, entry.target, joins, path);
+    const [only] = nested;
+    if (nested.length !== 1 || only.or.length !== 1) {
+      throw new Error(
+        `The joined condition on “${entry.name}” states more than one criterion, so it is a conjunction – which cannot sit inside an “or”. Write one “or” alternative per criterion, or move the conjunction into “and”.`,
+      );
+    }
+    criteria.push(only.or[0]);
+  }
+  return criteria;
+}
+
+/** One key of a `Where`/`Criterion` input, compiled: either a leaf criterion or
+ *  a joined `where` to recurse into. */
+type KeyEntry =
+  | { readonly criterion: Criterion }
+  | {
+      readonly name: string;
+      readonly nested: Record<string, unknown>;
+      readonly target: RootType;
+    };
+
+/**
+ * The field keys a keyed input sets, in declaration order. `id` is read first:
+ * no type declares it, so the field loop never sees it.
+ *
+ * A joinable reference takes a `‹Target›ReferenceFilter` rather than a plain
+ * `StringFilter`, and its two `@oneOf` arms mean different things: `in` filters
+ * by the ids the field itself holds – no join, the same membership every other
+ * reference gets – while `where` states a condition on the referent and yields
+ * a nested entry the caller walks into.
+ */
+function keyEntriesOf(
+  keyed: Record<string, unknown>,
+  searchType: RootType,
+  joins: JoinGraph,
+): KeyEntry[] {
+  const entries: KeyEntry[] = [];
   const id = keyed[ID_FIELD] as { in?: string[] } | undefined | null;
   if (id !== undefined && id !== null) {
-    criteria.push({ field: ID_FIELD, in: id.in ?? [] });
+    entries.push({ criterion: { field: ID_FIELD, in: id.in ?? [] } });
   }
   for (const field of filterableFields(searchType)) {
     const value = keyed[field.name];
     if (value === undefined || value === null) {
       continue;
     }
+    const target = joins.resolve(searchType, [field.name]);
+    if (target !== undefined) {
+      const nested = (value as { where?: Record<string, unknown> | null })
+        .where;
+      if (nested !== undefined && nested !== null) {
+        entries.push({ name: field.name, nested, target });
+        continue;
+      }
+    }
     switch (filterOperatorFor(field.kind)) {
       case 'in':
-        criteria.push({
-          field: field.name,
-          in: (value as { in?: string[] }).in ?? [],
+        entries.push({
+          criterion: {
+            field: field.name,
+            in: (value as { in?: string[] }).in ?? [],
+          },
         });
         break;
       case 'range': {
         const range = value as { min?: number | string; max?: number | string };
-        criteria.push({
-          field: field.name,
-          range: { min: range.min, max: range.max },
+        entries.push({
+          criterion: {
+            field: field.name,
+            range: { min: range.min, max: range.max },
+          },
         });
         break;
       }
       default:
-        criteria.push({ field: field.name, is: value as boolean });
+        entries.push({
+          criterion: { field: field.name, is: value as boolean },
+        });
     }
   }
-  return criteria;
+  return entries;
 }
 
 function rangeInput(

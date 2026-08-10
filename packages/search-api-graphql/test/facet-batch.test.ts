@@ -138,6 +138,21 @@ describe('groupFacetQueries', () => {
     ]);
   });
 
+  it('keeps a joined clause: a hop out is a different axis', () => {
+    // Ownership is keyed by (path, field), so a condition on the publisher of a
+    // work’s dataset is not a selection on the work’s OWN publisher facet.
+    // Dropping it would count a corpus the sidebar is not showing.
+    const joined: SearchQuery = {
+      ...baseQuery,
+      where: [
+        { or: [{ on: ['dataset'], field: 'publisher', in: ['urn:vg'] }] },
+      ],
+    };
+    expect(groupFacetQueries(joined, ['publisher'])).toEqual([
+      { ...joined, facets: ['publisher'], limit: 0, offset: 0 },
+    ]);
+  });
+
   it('drops a facet’s own single-field clause while keeping a multi-field one', () => {
     const both: SearchQuery = {
       ...baseQuery,

@@ -55,7 +55,7 @@ describe('collection-definition generator stability', () => {
   it('derives a stable Typesense collection for a representative schema', () => {
     expect(
       buildCollectionDefinition(THING, {
-        name: 'things',
+        collectionNameFor: () => 'things',
         defaultSortingField: 'size',
         defaultLocale: 'nl',
         synonymSets: ['things-synonyms'],

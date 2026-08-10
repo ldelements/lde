@@ -1,4 +1,5 @@
 import type { ProjectedNode, ProjectionContext } from './project.js';
+import { joinGraph } from './join-graph.js';
 
 /**
  * The engine-neutral kind of a queryable field. It drives every downstream
@@ -216,6 +217,28 @@ export interface ReferenceField extends SearchFieldBase, Searchable {
    * resolution.
    */
   readonly labelSource?: string;
+  /**
+   * Turn this reference into an **engine-level join**, so a query can filter
+   * this type by a condition on the referent – `“every object published by
+   * institution X”` in one round-trip instead of two. Valid only alongside
+   * {@link ReferenceField.labelSource}, which already asserts that this
+   * field’s values are ids of documents in that type’s collection – exactly
+   * the fact a join needs.
+   *
+   * A capability flag in the vocabulary of `filterable`/`facetable`/`sortable`,
+   * and deliberately not derived from `labelSource`: an engine may refuse to
+   * index a mutual reference, so auto-deriving would make an existing schema
+   * silently lose a field. A `labelSource` added for display therefore costs
+   * nothing it does not cost today; only a `joinable` edge pays the
+   * component-scoped rebuild coupling.
+   *
+   * Never on an `inline` reference: that carries its referent as a nested
+   * object rather than as an id an engine can point a reference field at.
+   *
+   * At most ONE joinable field per (type, label source) – see
+   * {@link joinGraph}.
+   */
+  readonly joinable?: boolean;
   /**
    * The referenced entity’s shape and how much of it to carry. Required when
    * the field is `output` – the strategy is what decides the output shape, so
@@ -444,7 +467,8 @@ function isRootType(searchType: SearchType): searchType is RootType {
  *
  * Every declaration is validated ({@link assertValidSearchType}) – the
  * declaration-time counterpart of the port’s `assertValidQuery` – and the
- * schema-wide invariants are enforced: no two Root Types may share a `class` IRI
+ * schema-wide invariants are enforced – including the join rules, by building
+ * the {@link joinGraph} eagerly: no two Root Types may share a `class` IRI
  * (they would silently overwrite each other in the map) and no two types may
  * share a `name` (names key the API surfaces, across Root and Reference Types
  * alike). Every inline reference must resolve to a declared Reference Type, and
@@ -489,6 +513,12 @@ export function searchSchema<const Types extends readonly SearchType[]>(
       .map((searchType) => [searchType.class, searchType]),
   ) as unknown as SearchSchema<Types>;
   referenceTypesBySchema.set(schema, referenceTypes);
+  // Build the join graph eagerly and discard it: it is cached per schema, and
+  // building it is what enforces the schema-wide join rules (one joinable
+  // reference per target, every target an indexed Root Type, no cycles). A
+  // schema whose joins do not hold up therefore fails HERE, not on the first
+  // query or – worse – halfway through the first rebuild.
+  joinGraph(schema);
   return schema;
 }
 
@@ -815,6 +845,8 @@ export interface SearchTypeIssue {
     | 'duplicate-projection-value'
     | 'text-not-filterable'
     | 'text-not-facetable'
+    | 'joinable-not-allowed'
+    | 'joinable-without-label-source'
     | 'reserved-field-name';
 }
 
@@ -900,6 +932,11 @@ const LOCALE_PATTERN = /^[A-Za-z0-9]+(-[A-Za-z0-9]+)*$/;
  *   reserved name↔locale separator);
  * - a `reference` field that is `output` declares `ref` (the API surfaces
  *   need the reference type name); `ref` on any other kind is meaningless;
+ * - `joinable` only on a `reference` field, and only alongside a `labelSource`
+ *   – the join addresses the referent’s collection, which is the one the label
+ *   source names, so without it the flag states an edge to nowhere. The
+ *   schema-wide half of the rule (at most one joinable field per (type, label
+ *   source), no cycles) is {@link joinGraph}’s;
  * - a `text` field declares at least one locale (`und` = untagged; projection and
  *   result reconstruction have no representation for unlocalized text – use
  *   `keyword` for untagged strings); `locales` on any other kind is
@@ -962,8 +999,18 @@ export function validateSearchType(
       if (field.output === true && field.ref === undefined) {
         issue('missing-ref');
       }
-    } else if (field.ref !== undefined) {
-      issue('ref-not-allowed');
+      // A join addresses the referent’s collection, which is the collection the
+      // label source names: without one the flag states an edge to nowhere.
+      if (field.joinable === true && field.labelSource === undefined) {
+        issue('joinable-without-label-source');
+      }
+    } else {
+      if (field.ref !== undefined) {
+        issue('ref-not-allowed');
+      }
+      if (field.joinable === true) {
+        issue('joinable-not-allowed');
+      }
     }
     if (field.kind === 'text') {
       if ((field.locales ?? []).length === 0) {
@@ -1056,6 +1103,8 @@ interface FlatField extends SearchFieldBase, Searchable, RangeFacetable {
   readonly ref?: ReferenceField['ref'];
   readonly transform?: (value: string) => string;
   readonly from?: ProjectionValue;
+  readonly labelSource?: string;
+  readonly joinable?: boolean;
 }
 
 /**

@@ -193,18 +193,18 @@ describe('createTypesenseSearchEngine (integration)', () => {
     // Typesense accepts the generated schema (stemming, locales, int64, …).
     await client.collections().create(
       buildCollectionDefinition(datasetSchema, {
-        name: 'datasets',
+        collectionNameFor: () => 'datasets',
         defaultSortingField: 'statusRank',
         defaultLocale: 'nl',
         schema: fullSchema,
       }),
     );
     // The label source's collection comes from the same declarative source.
-    await client
-      .collections()
-      .create(
-        buildCollectionDefinition(organizationSchema, { name: 'labels' }),
-      );
+    await client.collections().create(
+      buildCollectionDefinition(organizationSchema, {
+        collectionNameFor: () => 'labels',
+      }),
+    );
     await client
       .collections('datasets')
       .documents()

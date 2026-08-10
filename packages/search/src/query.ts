@@ -4,6 +4,7 @@ import {
   ID_FIELD,
   type SearchType,
 } from './schema.js';
+import { MAX_JOIN_DEPTH, type JoinGraph } from './join-graph.js';
 
 /**
  * The engine- and protocol-neutral query IR. Every API surface compiles its
@@ -28,6 +29,36 @@ export interface SearchQuery {
 }
 
 /**
+ * What every {@link Criterion} carries, whatever its operator: the field it
+ * constrains, and – for a criterion that constrains a *joined* document rather
+ * than this one – the path of joinable references to walk to reach it.
+ */
+export interface CriterionBase {
+  /** The logical field name, on the type the {@link CriterionBase.on} path
+   *  reaches (or on the searched type when there is none). */
+  readonly field: string;
+  /**
+   * A **join path**: the names of the {@link ReferenceField.joinable}
+   * references to follow, in order, to the type this criterion constrains.
+   * `['dataset', 'publisher']` on a `CreativeWork` criterion means *the
+   * publisher of the dataset this work belongs to*. Omitted (or empty) for the
+   * ordinary case: the criterion constrains the searched type itself.
+   *
+   * A path, deliberately, and not boolean structure – so the criterion stays an
+   * **atom** and `where` stays the flat conjunction of disjunctions
+   * [ADR 18](../../docs/decisions/0018-filter-across-several-fields-with-one-clause.md)
+   * made it. `on` sits on the criterion rather than on the {@link Filter} for
+   * the same reason a criterion carries its own operator: a `Filter`-level
+   * `on` would scope the whole disjunction and make
+   * `“published by X, or titled Y”` inexpressible.
+   *
+   * Capped at {@link MAX_JOIN_DEPTH} hops and resolved by
+   * {@link validateQuery} against the schema’s {@link JoinGraph}.
+   */
+  readonly on?: readonly string[];
+}
+
+/**
  * One criterion on one field. The operator is fixed by that field’s
  * {@link FieldKind} ({@link filterOperatorFor}): keyword/reference use `in` (OR
  * within the value list), the numeric/date kinds use an inclusive `range`,
@@ -36,18 +67,19 @@ export interface SearchQuery {
  * Criteria are the atoms a {@link Filter} is built from, so each carries its own
  * field AND its own operator: one clause may range over a `reference` and a
  * `keyword` field at once, and each field is constrained the way its kind
- * allows.
+ * allows. Each equally carries its own {@link CriterionBase.on} join path, so
+ * one clause may mix a condition on this document with one on a joined
+ * document.
  */
 export type Criterion =
-  | { readonly field: string; readonly in: readonly string[] }
-  | {
-      readonly field: string;
+  | (CriterionBase & { readonly in: readonly string[] })
+  | (CriterionBase & {
       readonly range: {
         readonly min?: number | string;
         readonly max?: number | string;
       };
-    }
-  | { readonly field: string; readonly is: boolean };
+    })
+  | (CriterionBase & { readonly is: boolean });
 
 /**
  * One `where` clause: a disjunction, matching a document that satisfies **any**
@@ -109,6 +141,10 @@ export function filterOn(criterion: Criterion): Filter {
  * is a disjunction that happens to include identity, not an enumeration of
  * wanted documents, so it stays the vacuous no-op every other empty `in` is.
  *
+ * A joined identity clause (`{ on: […], field: 'id', in: [] }`) reads the same
+ * way one hop out: it enumerates the *referents* wanted, and no referent means
+ * no document can match through that edge.
+ *
  * An adapter MUST answer an unsatisfiable query with an empty result rather
  * than dispatching it.
  */
@@ -138,7 +174,23 @@ export interface QueryIssue {
   readonly part: 'where' | 'facets' | 'orderBy';
   readonly field: string;
   readonly reason:
-    'unknown-field' | 'not-filterable' | 'operator-mismatch' | 'not-facetable';
+    | 'unknown-field'
+    | 'not-filterable'
+    | 'operator-mismatch'
+    | 'not-facetable'
+    /** The criterion’s `on` path is longer than {@link MAX_JOIN_DEPTH}. */
+    | 'join-too-deep'
+    /** The `on` path does not resolve: a name that is not a field, a reference
+     *  that is not `joinable`, or no join graph to resolve it against. */
+    | 'unknown-join';
+}
+
+/** The `field` a joined issue is reported under: the path and the leaf name
+ *  together, so a message says which hop and which field, not just which
+ *  field. `dataset.publisher.id` reads the way the criterion was written. */
+function issueField(criterion: Criterion): string {
+  const on = criterion.on ?? [];
+  return on.length === 0 ? criterion.field : [...on, criterion.field].join('.');
 }
 
 /**
@@ -152,6 +204,15 @@ export interface QueryIssue {
  * checks declaration only, not the `sortable` flag: that flag means *publicly
  * selectable*, and a deployment policy may sort on a private tie-break field.
  *
+ * A criterion carrying an {@link CriterionBase.on} join path is checked against
+ * the type that path reaches instead: the path must be at most
+ * {@link MAX_JOIN_DEPTH} hops (`join-too-deep`) and must resolve through
+ * `joins` (`unknown-join`), and the leaf field must then be filterable on the
+ * *target* type. The cap lives here, in the IR, rather than in an adapter or a
+ * surface, so every surface inherits it. `joins` is optional because a query
+ * with no join path needs none; a joined criterion validated without one is an
+ * `unknown-join`, never a silently unchecked filter.
+ *
  * This is the port’s always-on guard: every {@link SearchEngine} adapter MUST
  * reject a query with issues ({@link assertValidQuery}) instead of passing
  * garbage to its engine, so validation holds for every caller – including
@@ -160,6 +221,7 @@ export interface QueryIssue {
 export function validateQuery(
   query: SearchQuery,
   searchType: SearchType,
+  joins?: JoinGraph,
 ): readonly QueryIssue[] {
   const issues: QueryIssue[] = [];
   for (const filter of query.where) {
@@ -170,6 +232,25 @@ export function validateQuery(
     // a `reference` membership with a `date` range without either being wrong.
     for (const criterion of filter.or) {
       const name = criterion.field;
+      const field = issueField(criterion);
+      // A criterion may constrain a JOINED document, and then every rule below
+      // is about the type its `on` path reaches, not about the searched one.
+      // Resolving the path needs the schema’s join graph, so a caller that
+      // supplied none cannot serve a joined criterion at all.
+      const on = criterion.on ?? [];
+      let constrained = searchType;
+      if (on.length > 0) {
+        if (on.length > MAX_JOIN_DEPTH) {
+          issues.push({ part: 'where', field, reason: 'join-too-deep' });
+          continue;
+        }
+        const target = joins?.resolve(searchType, on);
+        if (target === undefined) {
+          issues.push({ part: 'where', field, reason: 'unknown-join' });
+          continue;
+        }
+        constrained = target;
+      }
       // `id` is filterable on every type without being declared by any: it is
       // the document’s IRI, so the lookup exists wherever documents do.
       // Membership only – an IRI has no range and no truth value.
@@ -177,21 +258,23 @@ export function validateQuery(
         if (filterOperator(criterion) !== 'in') {
           issues.push({
             part: 'where',
-            field: name,
+            field,
             reason: 'operator-mismatch',
           });
         }
         continue;
       }
-      const field = fieldNamed(searchType, name);
-      if (field === undefined) {
-        issues.push({ part: 'where', field: name, reason: 'unknown-field' });
-      } else if (field.filterable !== true) {
-        issues.push({ part: 'where', field: name, reason: 'not-filterable' });
-      } else if (filterOperatorFor(field.kind) !== filterOperator(criterion)) {
+      const declared = fieldNamed(constrained, name);
+      if (declared === undefined) {
+        issues.push({ part: 'where', field, reason: 'unknown-field' });
+      } else if (declared.filterable !== true) {
+        issues.push({ part: 'where', field, reason: 'not-filterable' });
+      } else if (
+        filterOperatorFor(declared.kind) !== filterOperator(criterion)
+      ) {
         issues.push({
           part: 'where',
-          field: name,
+          field,
           reason: 'operator-mismatch',
         });
       }
@@ -225,8 +308,9 @@ export function validateQuery(
 export function assertValidQuery(
   query: SearchQuery,
   searchType: SearchType,
+  joins?: JoinGraph,
 ): void {
-  const issues = validateQuery(query, searchType);
+  const issues = validateQuery(query, searchType, joins);
   if (issues.length > 0) {
     const detail = issues
       .map((issue) => `${issue.part}: “${issue.field}” (${issue.reason})`)

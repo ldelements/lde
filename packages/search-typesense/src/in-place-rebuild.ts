@@ -74,7 +74,10 @@ export interface InPlaceRebuildOptions extends RebuildOptions {
  * `openRun` takes the single-flight cross-pod lock (throwing
  * `RebuildAlreadyRunning` when another rebuild holds it) and creates
  * the collection on demand from the {@link SearchType} plus the two
- * bookkeeping fields.
+ * bookkeeping fields. A collection that already exists is used as it is, with
+ * one exception: it must carry every reference field the declaration asks for,
+ * or the run fails with the drop-and-rebuild that fixes it
+ * ({@link assertReferencesPresent}).
  *
  * Document ids must be unique per (source, entity) – the caller keys them –
  * or documents from different sources overwrite each other.
@@ -114,7 +117,8 @@ export class InPlaceRebuild<
     } = options;
     this.maxSweepableSources = maxSweepableSources;
     this.resolved = resolveRebuildOptions(searchType, rebuildOptions);
-    this.collectionName = this.resolved.definitionOptions.name;
+    this.collectionName =
+      this.resolved.definitionOptions.collectionNameFor(searchType);
   }
 
   async openRun(context: RunContext): Promise<RunWriter<TDocument>> {
@@ -129,11 +133,12 @@ export class InPlaceRebuild<
       // field of its own; when it does, that declared field already carries the
       // IRI (and its own `facet: true`), and a second column would be the same
       // value twice, free to drift.
-      await ensureCollectionExists(this.client, name, () => {
-        const definition = buildCollectionDefinition(
-          this.searchType,
-          definitionOptions,
-        );
+      const definition = buildCollectionDefinition(
+        this.searchType,
+        definitionOptions,
+      );
+      const declaredFields = definition.fields ?? [];
+      const created = await ensureCollectionExists(this.client, name, () => {
         const bookkeeping: CollectionFieldSchema[] = [
           ...(sourceField === SOURCE_FIELD
             ? [{ name: SOURCE_FIELD, type: 'string', facet: true } as const]
@@ -142,9 +147,14 @@ export class InPlaceRebuild<
         ];
         return {
           ...definition,
-          fields: [...(definition.fields ?? []), ...bookkeeping],
+          fields: [...declaredFields, ...bookkeeping],
         };
       });
+      // A collection this run did NOT create may predate a `joinable` being
+      // declared, and a reference cannot be added to it here.
+      if (!created) {
+        await assertReferencesPresent(this.client, name, declaredFields);
+      }
 
       const importer = new BatchImporter<TDocument & Record<string, string>>(
         this.client,
@@ -258,5 +268,52 @@ export class InPlaceRebuild<
       );
     }
     return counts.map((count) => count.value);
+  }
+}
+
+/**
+ * Fail loudly when an EXISTING collection does not carry every reference field
+ * the declaration asks for, naming the drop-and-rebuild that fixes it. Never
+ * alters: an In-place rebuild creates a collection on demand and otherwise
+ * leaves its shape alone, and a reference field is the one difference that is
+ * not self-correcting.
+ *
+ * Without this a deployment that added `joinable` to an existing schema would
+ * index and commit perfectly happily, and then 400 on every join query – the
+ * collection has the *values*, it just has no reference to join through.
+ * Failing here keeps the invariant a component-scoped rebuild rests on: a
+ * component’s collections come into existence WITH their references, and never
+ * acquire them later.
+ *
+ * Deliberately scoped to reference fields only. Every other schema difference
+ * is self-correcting (a new plain field simply starts being written) or
+ * harmless, and general drift detection is a feature of its own.
+ */
+async function assertReferencesPresent(
+  client: Client,
+  name: string,
+  fields: readonly CollectionFieldSchema[],
+): Promise<void> {
+  const declared = fields.filter((field) => field.reference !== undefined);
+  if (declared.length === 0) {
+    return;
+  }
+  const existing = new Map(
+    (await client.collections(name).retrieve()).fields.map((field) => [
+      field.name,
+      field.reference,
+    ]),
+  );
+  const missing = declared.filter(
+    (field) => existing.get(field.name) !== field.reference,
+  );
+  if (missing.length > 0) {
+    throw new Error(
+      `Typesense collection “${name}” exists without the reference field(s) ${missing
+        .map((field) => `“${field.name}” → “${field.reference as string}”`)
+        .join(
+          ', ',
+        )} its search type declares. A reference cannot be added to a live collection here: drop “${name}” (and the collections that join to it) and let the next run rebuild them.`,
+    );
   }
 }

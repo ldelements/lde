@@ -97,15 +97,20 @@ export async function releaseLock(client: Client, name: string): Promise<void> {
 /**
  * Create a collection on demand: retrieve it, and only on a 404 create it
  * from the lazily built `schema`, tolerating a concurrent creator (409).
+ *
+ * Returns whether the collection was **brought into existence** by this call –
+ * which is what tells a caller that everything the definition declares is
+ * actually in the collection. An existing one may predate a declaration
+ * change, and some of those differences an engine cannot correct in place.
  */
 export async function ensureCollectionExists(
   client: Client,
   name: string,
   schema: () => CollectionCreateSchema,
-): Promise<void> {
+): Promise<boolean> {
   try {
     await client.collections(name).retrieve();
-    return;
+    return false;
   } catch (error) {
     if (httpStatus(error) !== 404) {
       throw error;
@@ -113,10 +118,13 @@ export async function ensureCollectionExists(
   }
   try {
     await client.collections().create(schema());
+    return true;
   } catch (error) {
     if (httpStatus(error) !== 409) {
       throw error;
     }
+    // A concurrent caller won the race; the collection exists, but not by us.
+    return false;
   }
 }
 
@@ -133,7 +141,7 @@ async function reclaimIfStale(
       .documents(name)
       .retrieve()) as { acquired_at: number };
   } catch (error) {
-    // Released between our create and this read — leave it for the next try.
+    // Released between our create and this read – leave it for the next try.
     if (httpStatus(error) === 404) {
       return false;
     }

@@ -1,0 +1,31 @@
+@prefix schema: <https://schema.org/> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix dcat: <http://www.w3.org/ns/dcat#> .
+
+# The Linked Open Limburg shape the join feature exists for:
+# CreativeWork → Dataset → Publisher, two hops of joinable references.
+# Declared with CreativeWork FIRST, so the indexer writes the referring
+# documents before the referents they point at – the ordering an
+# `async_reference` must back-fill.
+
+<https://ex/cw/1> a schema:CreativeWork ;
+  schema:name "Het meisje met de parel"@nl ;
+  dcterms:isPartOf <https://ex/ds/limburg> .
+
+<https://ex/cw/2> a schema:CreativeWork ;
+  schema:name "De nachtwacht"@nl ;
+  dcterms:isPartOf <https://ex/ds/amsterdam> .
+
+<https://ex/ds/limburg> a dcat:Dataset ;
+  dcterms:title "Collectie Limburg"@nl ;
+  dcterms:publisher <https://ex/pub/limburg> .
+
+<https://ex/ds/amsterdam> a dcat:Dataset ;
+  dcterms:title "Collectie Amsterdam"@nl ;
+  dcterms:publisher <https://ex/pub/amsterdam> .
+
+<https://ex/pub/limburg> a schema:Organization ;
+  schema:name "Limburgs Museum"@nl .
+
+<https://ex/pub/amsterdam> a schema:Organization ;
+  schema:name "Rijksmuseum"@nl .

@@ -81,7 +81,7 @@ describe('BlueGreenRebuild error paths', () => {
       createDataCollection: () => Promise.reject(typesenseError(500)),
     });
     const writer = new BlueGreenRebuild(client, searchType, {
-      name: 'datasets',
+      collectionNameFor: () => 'datasets',
     });
 
     await expect(writer.openRun(makeRunContext())).rejects.toThrow('HTTP 500');
@@ -94,7 +94,7 @@ describe('BlueGreenRebuild error paths', () => {
     // post-swap lock release then fails.
     releasedLocks.mockRejectedValue(typesenseError(500));
     const writer = new BlueGreenRebuild(client, searchType, {
-      name: 'datasets',
+      collectionNameFor: () => 'datasets',
     });
 
     const run = await writer.openRun(makeRunContext());
@@ -111,7 +111,9 @@ describe('InPlaceRebuild error paths', () => {
     const { client, releasedLocks } = fakeClient({
       retrieveDataCollection: () => Promise.reject(typesenseError(500)),
     });
-    const writer = new InPlaceRebuild(client, searchType, { name: 'objects' });
+    const writer = new InPlaceRebuild(client, searchType, {
+      collectionNameFor: () => 'objects',
+    });
 
     await expect(writer.openRun(makeRunContext())).rejects.toThrow('HTTP 500');
     expect(releasedLocks).toHaveBeenCalledOnce();
@@ -130,7 +132,7 @@ describe('InPlaceRebuild error paths', () => {
   it('sweeps when the source count is exactly the cap (not truncated)', async () => {
     const { client, deletedFilters } = fakeClient({ facetCounts: sources(2) });
     const writer = new InPlaceRebuild(client, searchType, {
-      name: 'objects',
+      collectionNameFor: () => 'objects',
       maxSweepableSources: 2,
     });
 
@@ -143,7 +145,7 @@ describe('InPlaceRebuild error paths', () => {
   it('refuses a membership sweep when the facet is truncated (one over the cap)', async () => {
     const { client, deletedFilters } = fakeClient({ facetCounts: sources(3) });
     const writer = new InPlaceRebuild(client, searchType, {
-      name: 'objects',
+      collectionNameFor: () => 'objects',
       maxSweepableSources: 2,
     });
 

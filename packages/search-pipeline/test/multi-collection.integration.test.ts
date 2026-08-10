@@ -130,7 +130,7 @@ function blueGreenFor(
 ): (searchType: RootType) => Writer<SearchDocument> {
   return (searchType) =>
     new BlueGreenRebuild(client, searchType, {
-      name: COLLECTION[searchType.class],
+      collectionNameFor: (type) => COLLECTION[type.class as string],
     });
 }
 

@@ -543,4 +543,106 @@ describe('searchIndexWriter', () => {
     expect(contexts).toHaveLength(2);
     expect(contexts.every((seen) => seen === context)).toBe(true);
   });
+
+  describe('with a join component', () => {
+    // work → dataset → publisher: three types that reference one another, so
+    // they come into existence and go live together.
+    const label = {
+      name: 'label',
+      kind: 'text',
+      locales: ['nl'],
+      output: true,
+      searchable: { weight: 5 },
+    } as const;
+    const joinable = (name: string, source: string) =>
+      ({
+        name,
+        kind: 'reference',
+        filterable: true,
+        labelSource: source,
+        joinable: true,
+      }) as const;
+    const joined = searchSchema(
+      { name: 'Work', class: WORK, fields: [label, joinable('in', 'Set')] },
+      {
+        name: 'Set',
+        class: 'https://example.org/Set',
+        fields: [label, joinable('by', 'Publisher')],
+      },
+      {
+        name: 'Publisher',
+        class: 'https://example.org/Publisher',
+        fields: [label],
+      },
+      // Outside the component: unaffected by any of it.
+      { name: 'Loose', class: PERSON, fields: [label] },
+    );
+
+    /** The order lifecycle calls reached the per-type writers. */
+    function orderRecorder(failOn?: string) {
+      const opened: string[] = [];
+      const committed: string[] = [];
+      const writerFor = (searchType: RootType): Writer<SearchDocument> => ({
+        openRun: async () => {
+          opened.push(searchType.name);
+          return {
+            write: () => Promise.resolve(),
+            commit: () => {
+              if (searchType.name === failOn) {
+                return Promise.reject(new Error(`no commit for ${failOn}`));
+              }
+              committed.push(searchType.name);
+              return Promise.resolve();
+            },
+            abort: () => Promise.resolve(),
+          };
+        },
+      });
+      return { opened, committed, writerFor };
+    }
+
+    it('opens referenced collections first', async () => {
+      // An engine cannot create a collection whose reference names one that
+      // does not exist yet.
+      const { opened, writerFor } = orderRecorder();
+
+      await searchIndexWriter({ schema: joined, writerFor }).openRun(
+        makeRunContext(),
+      );
+
+      expect(opened.indexOf('Publisher')).toBeLessThan(opened.indexOf('Set'));
+      expect(opened.indexOf('Set')).toBeLessThan(opened.indexOf('Work'));
+      expect(opened).toContain('Loose');
+    });
+
+    it('commits referrers first, so a superseded referent is dropped last', async () => {
+      const { committed, writerFor } = orderRecorder();
+
+      const run = await searchIndexWriter({
+        schema: joined,
+        writerFor,
+      }).openRun(makeRunContext());
+      await run.commit();
+
+      expect(committed.indexOf('Work')).toBeLessThan(committed.indexOf('Set'));
+      expect(committed.indexOf('Set')).toBeLessThan(
+        committed.indexOf('Publisher'),
+      );
+    });
+
+    it('stops a component at its first failed commit, leaving others alone', async () => {
+      // The component is the unit: `Set` failing must not let `Publisher` swap
+      // and drop the collection the still-live `Set` documents point at. The
+      // unrelated singleton commits regardless.
+      const { committed, writerFor } = orderRecorder('Set');
+
+      const run = await searchIndexWriter({
+        schema: joined,
+        writerFor,
+      }).openRun(makeRunContext());
+
+      await expect(run.commit()).rejects.toThrow(AggregateError);
+      expect(committed).toEqual(['Work', 'Loose']);
+    });
+  });
 });

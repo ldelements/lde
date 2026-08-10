@@ -375,6 +375,13 @@ label }`), and on a reference facet’s bucket. One word, one meaning – so a
 collection reads the same whether you arrive at it directly or through a
 reference.
 
+A reference with a label source may additionally declare **`joinable: true`**,
+which turns it into an engine-level edge a query can filter across – see
+[Filtering across collections](#filtering-across-collections). It is a
+capability flag like `filterable` or `facetable`, not something derived from
+`labelSource`: a label source added for display costs exactly what it costs
+today.
+
 #### Naming the label field
 
 That word is `label` by default, but a type may name its own display field with
@@ -804,6 +811,87 @@ Keep `id` distinct from a domain identifier. `id` is _what the thing is_; a
 declared field like `identifier` (`schema:identifier`) is _what a source system
 calls it_ – an inventory or catalogue number. Both may exist on one type; they
 answer different questions.
+
+### Filtering across collections
+
+Each root type has its own collection, so “every object published by institution
+X” used to mean two queries: list the institution’s datasets, then ask for the
+objects of each – losing a correct `total`, ranking and facet counts on the way.
+
+Declare the edge and it becomes one query. A `reference` with a `labelSource`
+already asserts that its values are ids of documents in that type’s collection;
+`joinable: true` lets the engine use that assertion:
+
+```ts
+{ name: 'dataset',   kind: 'reference', filterable: true,
+  labelSource: 'Dataset',   joinable: true },   // on CreativeWork
+{ name: 'publisher', kind: 'reference', filterable: true,
+  labelSource: 'Publisher', joinable: true },   // on Dataset
+```
+
+A joinable reference then takes a richer filter on the surface – its ids, **or**
+a condition on the referent, nested as deep as the edges go:
+
+```graphql
+{
+  creativeWorks(
+    where: {
+      dataset: {
+        where: { publisher: { where: { id: { in: [$institution] } } } }
+      }
+    }
+  ) {
+    pagination {
+      total
+    }
+  }
+}
+```
+
+That is one engine round-trip (`filter_by: $datasets($publishers(id:=X))`), with
+a correct `total`, ranking and facet counts. `in` on the same key keeps its
+ordinary meaning – the ids the field itself holds, no hop – so the capability is
+additive.
+
+In the IR each nested `where` becomes an `on` **path** on the criterion it
+produces, never extra clause structure:
+
+```ts
+{
+  or: [{ on: ['dataset', 'publisher'], field: 'id', in: [institution] }];
+}
+```
+
+so `where` stays the flat conjunction of disjunctions it was, a joined criterion
+can sit inside an `or` beside a local one, and skip-own-filter still works.
+Paths are capped at **three hops**.
+
+Four rules come with declaring one, all enforced when the schema is built:
+
+- **`joinable` needs a `labelSource`.** The join addresses the referent’s
+  collection, which is the one the label source names.
+- **At most one joinable reference per (type, target type).** An engine
+  addresses a join by _collection_, not by field, so a second reference to the
+  same collection would be indexed and then unreachable. `publisher` and
+  `creator` both resolving to `Organization` is the ordinary case, so it is a
+  declaration error naming both fields. Drop `joinable` from one – it keeps its
+  labels, facets and id filtering.
+- **No cycles.** The types a joinable edge connects form a **join component**,
+  and a component’s collections must have an order to be created in.
+- **A component rebuilds together.** That is the one real cost: see
+  [component-scoped rebuilds](./search-typesense#the-join-component-is-the-unit-of-rebuild).
+  A type with no joinable edge is a singleton component and is unaffected.
+
+`joinGraph(schema)` is where all of that lives – `components` for a writer,
+`resolve(from, path)` for a query compiler. `searchSchema` builds it eagerly, so
+a schema whose joins do not hold up fails at startup.
+
+Not yet supported through a join: facets, sorting, free-text search, and the
+reverse direction. And one engine-level caveat worth knowing before you deploy:
+a component built from scratch needs its **indexer run twice** before its joins
+resolve – see
+[ADR 19](../decisions/0019-filter-across-collections-through-declared-joins.md)
+for that and the other limitations.
 
 Sorting has two deliberate wrinkles. `orderBy` accepts the sentinel field
 **`relevance`** – text-match ranking, not a declared field (Typesense compiles

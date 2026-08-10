@@ -10,7 +10,12 @@ import {
   type DistributionResolver,
   type Writer,
 } from '@lde/pipeline';
-import type { RootType, SearchDocument, SearchSchema } from '@lde/search';
+import type {
+  RootType,
+  SearchDocument,
+  SearchSchema,
+  SearchType,
+} from '@lde/search';
 import {
   BlueGreenRebuild,
   deriveCollectionName,
@@ -50,7 +55,11 @@ export function writerFactoryFrom(
       schema,
       ...(config.collectionPrefix
         ? {
-            name: `${config.collectionPrefix}${deriveCollectionName(searchType)}`,
+            // The prefix applies to EVERY type the writer names – its own and
+            // the peers its joins reference – so a prefixed deployment’s
+            // reference fields point at prefixed collections.
+            collectionNameFor: (type: SearchType) =>
+              `${config.collectionPrefix}${deriveCollectionName(type)}`,
           }
         : {}),
     };
