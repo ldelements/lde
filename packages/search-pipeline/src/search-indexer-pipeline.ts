@@ -6,6 +6,8 @@ import {
   type DistributionResolver,
   type ProgressReporter,
   type ProvenanceStore,
+  type QuadTransform,
+  type ReaderContext,
   type Writer,
 } from '@lde/pipeline';
 import type { RootType, SearchDocument, SearchSchema } from '@lde/search';
@@ -73,6 +75,26 @@ export interface SearchIndexerPipelineOptions {
     names: readonly string[];
   };
   /**
+   * {@link QuadTransform}(s) attached to a root type’s reader, keyed by
+   * {@link SearchType.name} – the extension point a deployment reaches for
+   * when the data needs correcting, enriching or pruning before projection.
+   *
+   * This is what keeps a deployment with one bespoke transform on this
+   * convenience instead of hand-composing a {@link Pipeline}: composing by hand
+   * to reach the reader means restating dataset selection, registry sourcing,
+   * provenance and reporting, and silently losing whichever is forgotten.
+   *
+   * Named by `name` rather than by class IRI, like {@link registryTypes}; a
+   * name the schema does not declare throws at wiring time rather than
+   * attaching nothing and shipping an unenriched collection.
+   */
+  transforms?: Readonly<
+    Record<
+      string,
+      QuadTransform<ReaderContext> | QuadTransform<ReaderContext>[]
+    >
+  >;
+  /**
    * Optional per-dataset processing memory: skip a dataset whose source
    * fingerprint and {@link pipelineVersion} both match the stored record.
    * Requires {@link pipelineVersion}.
@@ -118,17 +140,22 @@ export interface SearchIndexerPipelineOptions {
  * await pipeline.run();
  * ```
  *
+ * Domain behaviour on top of the standard wiring is {@link transforms}, so
+ * adding it costs the behaviour rather than this whole composition.
+ *
  * A deployment that needs more – a bespoke root selector (the entry point is a
  * domain fact, not a class), per-stage tuning (`batchSize`, `maxConcurrency`),
  * non-SPARQL readers, or quad-level plugins – composes {@link searchStages},
- * {@link searchIndexWriter} and {@link Pipeline} directly; this convenience
- * owns no capability of its own.
+ * {@link searchIndexWriter} and {@link Pipeline} directly, restating the
+ * registry sourcing, provenance and reporting this function wires; beyond
+ * those, this convenience owns no capability of its own.
  */
 export function searchIndexerPipeline(
   options: SearchIndexerPipelineOptions,
 ): Pipeline<TypedSearchDocument> {
-  const { schema, datasets, registryTypes } = options;
+  const { schema, datasets, registryTypes, transforms } = options;
   const fromRegistry = registryTypeNames(schema, registryTypes?.names);
+  assertDeclaredTypeNames(schema, Object.keys(transforms ?? {}), 'transform');
   const sourceFor =
     registryTypes === undefined
       ? undefined
@@ -145,6 +172,7 @@ export function searchIndexerPipeline(
         rootVariable: 'root',
         itemSelector: selectByClass(searchType),
         sourceFor: fromRegistry.has(searchType.name) ? sourceFor : undefined,
+        transform: transforms?.[searchType.name],
       })),
     }),
     writers: searchIndexWriter({ schema, writerFor: options.writerFor }),
@@ -165,18 +193,32 @@ function registryTypeNames(
   declaredNames: readonly string[] | undefined,
 ): ReadonlySet<string> {
   const names = new Set(declaredNames ?? []);
+  assertDeclaredTypeNames(schema, [...names], 'registry root');
+  return names;
+}
+
+/**
+ * Every name must be one the schema declares. Shared by the options that key
+ * behaviour by {@link SearchType.name}: naming a type the schema does not have
+ * is a configuration mistake whose only other symptom is an option that
+ * silently does nothing.
+ */
+function assertDeclaredTypeNames(
+  schema: SearchSchema,
+  names: readonly string[],
+  label: string,
+): void {
   const declared = new Set(
     [...schema.values()].map((searchType) => searchType.name),
   );
-  const unknown = [...names].filter((name) => !declared.has(name));
+  const unknown = names.filter((name) => !declared.has(name));
   if (unknown.length > 0) {
     throw new Error(
-      `Unknown registry root type(s) ${unknown
+      `Unknown ${label} type(s) ${unknown
         .map((name) => `“${name}”`)
         .join(', ')}; the schema declares ${[...declared]
         .map((name) => `“${name}”`)
         .join(', ')}.`,
     );
   }
-  return names;
 }

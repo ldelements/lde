@@ -3,7 +3,10 @@ import {
   SparqlConstructReader,
   SparqlItemSelector,
   Stage,
+  type AttachedReader,
   type ItemSelector,
+  type QuadTransform,
+  type ReaderContext,
   type StageOptions,
   type StageReaders,
 } from '@lde/pipeline';
@@ -40,10 +43,27 @@ export interface SearchStageType {
    * from `searchType` ({@link extractionQuery}), with `rootVariable` as the free
    * subject the batch’s roots bind to – the schema-derived reader the projection
    * is guaranteed to agree with (they share the {@link irAlias} convention).
-   * Supply your own only to read from a non-SPARQL source, merge several
-   * readers, or attach transforms.
+   * Supply your own only to read from a non-SPARQL source or merge several
+   * readers; to enrich the default reader’s quads, use {@link transform}.
    */
   readers?: StageReaders;
+  /**
+   * {@link QuadTransform}(s) attached to the **default** reader – the usual way
+   * to add behaviour to this stage: correct the data, mint a quad the source
+   * does not ship, drop one it should not.
+   *
+   * Attaching here rather than building the reader yourself is what keeps the
+   * reader’s `subjectVariable` and this stage’s {@link rootVariable} in
+   * agreement: nothing cross-checks them, and a mismatch extracts nothing.
+   * Mutually exclusive with {@link readers} – a caller supplying its own
+   * reader(s) attaches transforms to them directly ({@link AttachedReader}),
+   * since only that caller knows which of several readers each belongs to.
+   *
+   * A field a transform fills must still declare a `path`: projection skips a
+   * field with neither a `path` nor a `derive`, so a transform-minted IR Alias
+   * is otherwise never read.
+   */
+  transform?: QuadTransform<ReaderContext> | QuadTransform<ReaderContext>[];
   /**
    * Where this type’s stage reads, when that is not the dataset’s own
    * distribution – see {@link StageOptions.sourceFor}. {@link registrySource}
@@ -107,16 +127,28 @@ export function searchStages(
       );
     }
     const { rootVariable } = type;
+    if (type.readers !== undefined && type.transform !== undefined) {
+      // Which of the caller’s readers the transform belongs to is knowable only
+      // to that caller, so guessing (all of them? the first?) would be a silent
+      // wrong answer. Attach it as an AttachedReader instead.
+      throw new Error(
+        `Search type “${searchType.name}”: “transform” attaches to the default reader, so it cannot be combined with “readers” – attach the transform to your own reader instead ({ reader, transform }).`,
+      );
+    }
     // Default to the Extraction CONSTRUCT generated from the schema, its subject
     // left free for the batch’s VALUES injection. The reader and the projection
-    // then agree by construction: both key off the same IR Aliases.
-    const readers =
+    // then agree by construction: both key off the same IR Aliases – which is
+    // also why an attached transform never has to restate the subject variable.
+    const readers: StageReaders =
       type.readers ??
-      new SparqlConstructReader({
-        query: extractionQueryString(searchType, schema, {
-          subjectVariable: rootVariable,
+      ({
+        reader: new SparqlConstructReader({
+          query: extractionQueryString(searchType, schema, {
+            subjectVariable: rootVariable,
+          }),
         }),
-      });
+        transform: type.transform,
+      } satisfies AttachedReader);
     return new Stage<TypedSearchDocument>({
       name: searchType.name,
       readers,

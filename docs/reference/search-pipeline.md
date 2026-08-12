@@ -92,10 +92,30 @@ Each role in that wiring maps to a package:
 | Provenance (skip-unchanged)            | [`@lde/pipeline`](./pipeline) – `FileProvenanceStore`, or a triplestore-backed store                                                                                                                               |
 | Reporting                              | [`@lde/pipeline-console-reporter`](./pipeline-console-reporter) `ConsoleReporter`                                                                                                                                  |
 
+Domain behaviour on top of that wiring – correcting the data, minting a quad the
+source does not ship, dropping one it should not – is the `transforms` option,
+one or more `QuadTransform`s per root type keyed by the type’s `name`:
+
+```ts
+searchIndexerPipeline({
+  schema,
+  datasets,
+  writerFor,
+  transforms: { Object: [dropSelfReferences] },
+});
+```
+
+The transform is attached to the type’s generated reader, so the reader’s
+subject variable and the stage’s root variable stay in step; a key the schema
+does not declare throws at wiring time. Note that a field a transform fills must
+still declare a `path` – projection skips a field with neither a `path` nor a
+`derive`.
+
 A deployment that needs more – a bespoke root selector (where the entry point
 is a domain fact, not a class), per-stage tuning, non-SPARQL readers, or
-quad-level plugins – composes the parts directly, as below; the convenience
-owns no capability of its own.
+quad-level plugins – composes the parts directly, as below, restating the
+registry sourcing, provenance and reporting this convenience wires; beyond
+those it owns no capability of its own.
 
 ## Usage
 
