@@ -60,6 +60,30 @@ export async function loadSchemaModule(
   }
 }
 
+/**
+ * Read an optional object-shaped export of a loaded schema module, rejecting
+ * anything that is not a plain object with the module path and the export name
+ * in the message. Which optional exports a module may carry is the consumer’s
+ * business – {@link loadSchemaModule} hands back the raw exports for exactly
+ * that reason – but every consumer rejects a malformed one the same way.
+ */
+export function optionalObjectExport<Options>(
+  moduleExports: Record<string, unknown>,
+  name: string,
+  modulePath: string,
+): Options | undefined {
+  const value = moduleExports[name];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error(
+      `Schema module “${modulePath}” export “${name}” must be an object.`,
+    );
+  }
+  return value as Options;
+}
+
 function messageOf(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }

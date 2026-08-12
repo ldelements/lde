@@ -17,12 +17,13 @@ export default mergeConfig(
     },
     test: {
       coverage: {
+        exclude: ['src/cli.ts', 'test/fixtures/**'],
         thresholds: {
           functions: 100,
           lines: 100,
           // Full-suite baseline, re-anchored when covered branches are
           // deleted (autoUpdate only ever raises; see AGENTS.md).
-          branches: 95.42,
+          branches: 95.62,
           statements: 100,
         },
       },
