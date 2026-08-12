@@ -323,7 +323,9 @@ Types connected by a [joinable reference](#joins-across-collections) form a
 referenced first – an engine cannot create a collection whose reference names
 one that does not exist yet – and commits per component, referrers first, so a
 blue/green build never drops a collection the still-live referrer points at. The
-first failure stops the rest of its component from going live.
+first failure stops the rest of its component from going live, and the abort
+that follows leaves that component’s collections alone – dropping an uncommitted
+peer would delete exactly what the member that did commit now references.
 
 Two consequences worth planning for:
 

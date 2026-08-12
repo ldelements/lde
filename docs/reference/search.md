@@ -380,7 +380,10 @@ which turns it into an engine-level edge a query can filter across – see
 [Filtering across collections](#filtering-across-collections). It is a
 capability flag like `filterable` or `facetable`, not something derived from
 `labelSource`: a label source added for display costs exactly what it costs
-today.
+today. Never on an `inline` reference, though: that carries its referent as a
+nested object rather than as an id an engine can point a reference at, so the
+two are mutually exclusive (`searchSchema` rejects the pair). Carry the referent
+inline, or join to its collection – not both.
 
 #### Naming the label field
 

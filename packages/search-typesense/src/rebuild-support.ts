@@ -1,6 +1,11 @@
 import type { Client } from 'typesense';
 import type { SearchType } from '@lde/search';
-import { datasetField, isInternalField } from '@lde/search/adapter';
+import {
+  datasetField,
+  isInternalField,
+  joinGraph,
+  referenceFields,
+} from '@lde/search/adapter';
 import {
   buildCollectionDefinition,
   type CollectionDefinitionOptions,
@@ -66,8 +71,45 @@ export function resolveRebuildOptions(
         definitionOptions.collectionNameFor ?? deriveCollectionName,
     },
   };
+  assertDistinctJoinTargetNames(searchType, resolved.definitionOptions);
   buildCollectionDefinition(searchType, resolved.definitionOptions);
   return resolved;
+}
+
+/**
+ * Reject a `collectionNameFor` that gives a join target the same name as the
+ * type doing the joining.
+ *
+ * The trap is the obvious migration from the `name` option this replaced:
+ * `name: 'staging_works'` reads as `collectionNameFor: () => 'staging_works'`,
+ * a constant function – which now also names every peer, so the emitted
+ * reference points the collection at ITSELF. Nothing downstream complains:
+ * Typesense accepts the self-reference and every join through it then answers
+ * nothing.
+ *
+ * Only the (type, target) pairs this type actually joins to are checked, so a
+ * deployment deliberately sharing one collection between unrelated types – the
+ * several-label-sources-in-one-`labels` case – stays allowed.
+ */
+function assertDistinctJoinTargetNames(
+  searchType: SearchType,
+  options: CollectionDefinitionOptions & {
+    readonly collectionNameFor: (searchType: SearchType) => string;
+  },
+): void {
+  const { schema, collectionNameFor } = options;
+  if (schema === undefined) {
+    return;
+  }
+  const own = collectionNameFor(searchType);
+  for (const field of referenceFields(searchType)) {
+    const target = joinGraph(schema).resolve(searchType, [field.name]);
+    if (target !== undefined && collectionNameFor(target) === own) {
+      throw new Error(
+        `The collection naming for “${searchType.name}” gives its join target “${target.name}” the same collection “${own}”, so the reference on “${field.name}” would point the collection at itself and every join through it would answer nothing. A constant “collectionNameFor” does this – derive the name from the type it is given (e.g. \`(type) => \`prefix_\${deriveCollectionName(type)}\`\`).`,
+      );
+    }
+  }
 }
 
 /**

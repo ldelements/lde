@@ -187,4 +187,15 @@ describe('the GraphQL surface of a declared join', () => {
       /joined condition on “dataset” states more than one criterion/,
     );
   });
+
+  it('rejects an empty joined condition inside an `or` on its own terms', async () => {
+    // The opposite mistake, and it used to crash on the missing clause rather
+    // than say anything: an alternative that constrains nothing would make the
+    // whole disjunction match everything.
+    await expect(
+      whereOf('{ or: [{ dataset: { where: {} } }] }'),
+    ).rejects.toThrow(
+      /joined condition on “dataset” states no criterion, so it constrains nothing/,
+    );
+  });
 });

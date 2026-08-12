@@ -695,6 +695,25 @@ describe('validateSearchType', () => {
       ),
     ).toEqual([{ field: 'format', reason: 'joinable-not-allowed' }]);
   });
+
+  it('rejects joinable on an inline reference', () => {
+    // An inline reference is stored as a nested object, not as an id a
+    // reference field can point at: the collection definition would emit the
+    // nesting and silently drop the reference, so the join would validate,
+    // compile, and only then fail at the engine.
+    expect(
+      validateSearchType(
+        typeWith({
+          name: 'media',
+          kind: 'reference',
+          output: true,
+          labelSource: 'MediaObject',
+          joinable: true,
+          ref: { typeName: 'MediaObject', strategy: 'inline' },
+        }),
+      ),
+    ).toEqual([{ field: 'media', reason: 'joinable-with-inline-ref' }]);
+  });
 });
 
 describe('assertTypeInSchema', () => {

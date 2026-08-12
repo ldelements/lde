@@ -129,9 +129,12 @@ export function searchIndexWriter(
         throw error;
       }
 
-      // The collections that have gone live, so `abort` never re-finalizes one
-      // (a committed blue/green rebuild’s abort drops its now-live collection).
-      const committed = new Set<string>();
+      // The components with at least one collection live, so `abort` never
+      // re-finalizes one: a committed blue/green rebuild’s abort would drop its
+      // now-live collection, and an uncommitted PEER’s abort would drop the
+      // collection that live one references. Tracked per component rather than
+      // per type because that is the unit the second hazard lives at.
+      const live = new Set<readonly RootType[]>();
 
       return {
         write: async (
@@ -238,19 +241,39 @@ export function searchIndexWriter(
                   searchType.class,
                 ) as RunWriter<SearchDocument>;
                 await run.commit();
-                committed.add(searchType.class);
+                // Note the component as touched BEFORE the next member’s
+                // commit can throw, so the abort that follows knows this
+                // component has something live in it.
+                live.add(component);
               }
             },
           );
         },
 
         abort: async (error: unknown) => {
-          // Finalize only the collections that have not gone live: aborting a
-          // committed blue/green rebuild would drop its now-live collection.
+          // Finalize only the collections that have not gone live – and, for a
+          // component that went PARTLY live, none of its members at all.
+          //
+          // Aborting a committed blue/green rebuild would drop its now-live
+          // collection; aborting an uncommitted member of a partly-committed
+          // component is the same mistake one edge out. Its half-built
+          // collection is precisely what the member that DID commit now
+          // references by concrete name, so dropping it leaves the live
+          // referrer with a dangling reference and every join through it
+          // failing – permanently, since the next run builds new collections
+          // rather than repairing that one. Leaving it costs an orphaned
+          // collection until an operator reclaims it; dropping it costs a
+          // broken live index, so the leak is the lesser evil.
+          //
           // Best-effort – cleanup failures must not mask the original error.
+          const partlyLive = new Set(
+            [...live].flatMap((component) =>
+              component.map((searchType) => searchType.class),
+            ),
+          );
           await Promise.allSettled(
             [...runs]
-              .filter(([typeIri]) => !committed.has(typeIri))
+              .filter(([typeIri]) => !partlyLive.has(typeIri))
               .map(([, run]) => run.abort(error)),
           );
         },

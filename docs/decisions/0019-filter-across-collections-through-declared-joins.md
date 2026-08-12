@@ -150,7 +150,15 @@ run, so this is an ordering and commit change, not new orchestration:
   order, referrers first: a blue/green commit drops the collection it
   supersedes, so committing the referent first would delete a collection the
   still-live referrer’s documents point at. The first failure stops the rest of
-  its component from going live, so a component ships whole or not at all.
+  its component from going live, so a component ships whole or not at all;
+- **abort** leaves a component that went _partly_ live alone entirely. Aborting
+  a committed rebuild would drop its now-live collection; aborting an
+  uncommitted **peer** of one is the same mistake one edge out, because the
+  half-built collection it would drop is exactly what the member that did
+  commit now references by concrete name. Dropping it would break every join
+  through the live index permanently – the next run builds fresh collections
+  rather than repairing that one – so the collection is left orphaned instead,
+  for an operator to reclaim.
 
 Locking needs no change: this is still the single deterministic pass that takes
 every lock in a fixed order, which is what makes lock-ordering deadlock
@@ -194,6 +202,9 @@ general drift detection is a separate feature.
 - A deployment that adds `joinable` to a live In-place index must drop the
   affected collections once. That is stated by an error, not discovered from
   failing queries.
+- A run whose commit fails partway through a component can leave an orphaned
+  blue/green collection behind (see `abort` above). Preferred over the
+  alternative, which is a live index whose joins are permanently broken.
 
 ### Out of scope, deliberately
 

@@ -361,9 +361,13 @@ isolation:
   the still-live referrer points at – and stop at the first failure, so a
   component ships whole or not at all;
 - because the pipeline aborts a run whose `commit` throws, `abort` finalizes only
-  the collections that did **not** already go live (aborting a committed
-  blue/green rebuild would drop its now-live collection), dropping the half-built
-  ones and releasing their locks.
+  the components that did **not** already go live, dropping the half-built
+  collections and releasing their locks. A component that went _partly_ live is
+  left alone entirely: aborting a committed blue/green rebuild would drop its
+  now-live collection, and aborting an uncommitted **peer** of one would drop
+  exactly the collection that live member references by name – breaking every
+  join through it permanently. The orphaned collection that leaves behind is the
+  lesser evil.
 
 See [ADR 9](../decisions/0009-route-a-whole-schema-projection-to-per-type-collections)
 and [ADR 19](../decisions/0019-filter-across-collections-through-declared-joins).

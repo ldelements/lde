@@ -1101,6 +1101,14 @@ function criteriaOf(
     const path = [...on, entry.name];
     const nested = whereToFilters(entry.nested, entry.target, joins, path);
     const [only] = nested;
+    // An `or` alternative must be exactly one criterion. Empty and
+    // more-than-one are opposite mistakes, so they are named separately rather
+    // than sharing a message that fits only one of them.
+    if (only === undefined) {
+      throw new Error(
+        `The joined condition on “${entry.name}” states no criterion, so it constrains nothing – and an “or” alternative that constrains nothing would make the whole disjunction match everything. Give it a condition, or leave the alternative out.`,
+      );
+    }
     if (nested.length !== 1 || only.or.length !== 1) {
       throw new Error(
         `The joined condition on “${entry.name}” states more than one criterion, so it is a conjunction – which cannot sit inside an “or”. Write one “or” alternative per criterion, or move the conjunction into “and”.`,

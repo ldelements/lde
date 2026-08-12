@@ -582,6 +582,7 @@ describe('searchIndexWriter', () => {
     function orderRecorder(failOn?: string) {
       const opened: string[] = [];
       const committed: string[] = [];
+      const aborted: string[] = [];
       const writerFor = (searchType: RootType): Writer<SearchDocument> => ({
         openRun: async () => {
           opened.push(searchType.name);
@@ -594,11 +595,14 @@ describe('searchIndexWriter', () => {
               committed.push(searchType.name);
               return Promise.resolve();
             },
-            abort: () => Promise.resolve(),
+            abort: () => {
+              aborted.push(searchType.name);
+              return Promise.resolve();
+            },
           };
         },
       });
-      return { opened, committed, writerFor };
+      return { opened, committed, aborted, writerFor };
     }
 
     it('opens referenced collections first', async () => {
@@ -643,6 +647,42 @@ describe('searchIndexWriter', () => {
 
       await expect(run.commit()).rejects.toThrow(AggregateError);
       expect(committed).toEqual(['Work', 'Loose']);
+    });
+
+    it('never aborts a member of a partly-committed component', async () => {
+      // `Work` went live pointing at `Publisher`’s and `Set`’s FRESH
+      // collections by concrete name. Aborting those uncommitted peers would
+      // drop exactly the collections the live `Work` references, breaking
+      // every join through it permanently – the same mistake as aborting a
+      // committed rebuild, one edge out. An orphaned collection is the lesser
+      // evil, so the whole component is left alone.
+      const { committed, aborted, writerFor } = orderRecorder('Set');
+
+      const run = await searchIndexWriter({
+        schema: joined,
+        writerFor,
+      }).openRun(makeRunContext());
+      await expect(run.commit()).rejects.toThrow(AggregateError);
+      await run.abort(new Error('run failed'));
+
+      expect(committed).toEqual(['Work', 'Loose']);
+      expect(aborted).toEqual([]);
+    });
+
+    it('still aborts a component that committed nothing', async () => {
+      // Nothing in the component is live, so there is no reference to protect
+      // and the half-built collections must be dropped as before.
+      const { committed, aborted, writerFor } = orderRecorder('Work');
+
+      const run = await searchIndexWriter({
+        schema: joined,
+        writerFor,
+      }).openRun(makeRunContext());
+      await expect(run.commit()).rejects.toThrow(AggregateError);
+      await run.abort(new Error('run failed'));
+
+      expect(committed).toEqual(['Loose']);
+      expect(aborted.sort()).toEqual(['Publisher', 'Set', 'Work']);
     });
   });
 });

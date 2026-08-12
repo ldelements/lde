@@ -264,6 +264,30 @@ describe('buildCollectionDefinition over a joinable reference', () => {
     );
   });
 
+  it('refuses a naming that gives a join target this type’s own collection', () => {
+    // The trap in migrating off the old `name` option: `name: 'staging_works'`
+    // reads as a CONSTANT function, which now also names every peer – so the
+    // reference would point the collection at itself, Typesense would accept
+    // it, and every join through it would answer nothing.
+    expect(
+      () =>
+        new InPlaceRebuild(undefined as never, DATASET, {
+          schema: SCHEMA,
+          collectionNameFor: () => 'staging_datasets',
+        }),
+    ).toThrow(
+      /gives its join target “Publisher” the same collection “staging_datasets”/,
+    );
+    // Derived from the type it is given, the same prefix is fine.
+    expect(
+      () =>
+        new InPlaceRebuild(undefined as never, DATASET, {
+          schema: SCHEMA,
+          collectionNameFor: (type) => `staging_${deriveCollectionName(type)}`,
+        }),
+    ).not.toThrow();
+  });
+
   it('refuses to build a joinable reference with no schema to resolve it', () => {
     // Silently omitting it would build a collection that indexes and commits
     // happily and then 400s on every join query.

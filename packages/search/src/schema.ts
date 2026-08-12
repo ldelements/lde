@@ -847,6 +847,7 @@ export interface SearchTypeIssue {
     | 'text-not-facetable'
     | 'joinable-not-allowed'
     | 'joinable-without-label-source'
+    | 'joinable-with-inline-ref'
     | 'reserved-field-name';
 }
 
@@ -934,9 +935,11 @@ const LOCALE_PATTERN = /^[A-Za-z0-9]+(-[A-Za-z0-9]+)*$/;
  *   need the reference type name); `ref` on any other kind is meaningless;
  * - `joinable` only on a `reference` field, and only alongside a `labelSource`
  *   – the join addresses the referent’s collection, which is the one the label
- *   source names, so without it the flag states an edge to nowhere. The
- *   schema-wide half of the rule (at most one joinable field per (type, label
- *   source), no cycles) is {@link joinGraph}’s;
+ *   source names, so without it the flag states an edge to nowhere – and never
+ *   on an `inline` reference, which is stored as a nested object rather than as
+ *   an id a reference field can point at. The schema-wide half of the rule (at
+ *   most one joinable field per (type, label source), no cycles) is
+ *   {@link joinGraph}’s;
  * - a `text` field declares at least one locale (`und` = untagged; projection and
  *   result reconstruction have no representation for unlocalized text – use
  *   `keyword` for untagged strings); `locales` on any other kind is
@@ -1003,6 +1006,14 @@ export function validateSearchType(
       // label source names: without one the flag states an edge to nowhere.
       if (field.joinable === true && field.labelSource === undefined) {
         issue('joinable-without-label-source');
+      }
+      // An inline reference is stored as a NESTED OBJECT, not as an id an
+      // engine can point a reference field at, so the two cannot both hold:
+      // the collection definition would emit the nesting and silently drop the
+      // reference, leaving a schema whose joins validate, compile and then fail
+      // at the engine. Carry the referent inline or join to it, not both.
+      if (field.joinable === true && field.ref?.strategy === 'inline') {
+        issue('joinable-with-inline-ref');
       }
     } else {
       if (field.ref !== undefined) {
