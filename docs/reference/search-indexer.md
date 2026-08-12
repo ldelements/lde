@@ -14,9 +14,9 @@ that binds the engine-agnostic `searchIndexerPipeline` to the
 [`@lde/search-typesense`](./search-typesense) rebuild writers. Mount the
 **same schema module** into both images and point both at the same
 `TYPESENSE_*` coordinates, and the write and the read side cannot disagree
-about the schema. A deployment that needs more – a bespoke root selector,
-per-stage tuning, another engine – composes `searchStages`,
-`searchIndexWriter` and `Pipeline` directly instead.
+about the schema. A deployment that needs domain behaviour on top passes a
+[transform](#add-a-transform); one that needs a bespoke root selector, per-stage
+tuning or another engine [composes it yourself](#compose-it-yourself).
 
 ## Installation
 
@@ -77,6 +77,7 @@ images.
 | `TYPESENSE_API_KEY`   | **required**                | An admin key: the indexer creates, writes and swaps collections                                                                                       |
 | `REBUILD_MODE`        | `in-place`                  | `in-place` (update the live collection) or `blue-green` (swap on commit)                                                                              |
 | `COLLECTION_PREFIX`   | none                        | Prefix for every derived collection name (configure the read side to match)                                                                           |
+| `DEFAULT_LOCALE`      | none                        | Stemming language for untagged text, e.g. `nl`. Unset, untagged text is folded but **unstemmed** – `fietsen` will not match `fiets`                   |
 | `PROVENANCE_FILE`     | none                        | JSON file remembering per-dataset processing, to skip unchanged datasets                                                                              |
 | `PIPELINE_VERSION`    | none                        | Version keying the skip decisions; required with `PROVENANCE_FILE`                                                                                    |
 | `QLEVER_IMAGE`        | none                        | Enables the QLever import path (see below), e.g. `adfreiburg/qlever:latest`                                                                           |
@@ -203,3 +204,115 @@ The configuration types are exported too: `IndexerConfig` (what
 `configFromEnvironment` produces) and its parts `TypesenseConnection`,
 `ProvenanceConfig` (`PROVENANCE_FILE` + `PIPELINE_VERSION`) and `QleverConfig`
 (the QLever import path).
+
+## Add a transform
+
+The one thing configuration cannot express is domain behaviour: correcting the
+data a publisher ships, minting a quad it does not, dropping one it should not.
+Pass it as a `QuadTransform` per root type, keyed by the type’s `name`:
+
+```ts
+import {
+  configFromEnvironment,
+  createSearchIndexer,
+} from '@lde/search-indexer';
+
+const pipeline = await createSearchIndexer(configFromEnvironment(process.env), {
+  transforms: { Object: [dropSelfReferences] },
+});
+await pipeline.run();
+```
+
+That is the whole cost of adding behaviour. Dataset selection, the QLever
+import path, registry-sourced root types, collection naming, provenance and the
+console reporter stay wired, and the transform is attached to the type’s
+generated reader – so the reader’s subject variable and the stage’s root
+variable cannot fall out of step. A key the mounted schema does not declare
+throws at boot rather than attaching nothing and shipping an unenriched
+collection.
+
+One rule the type system cannot state: **a field a transform fills must still
+declare a `path`.** Projection skips a field with neither a `path` nor a
+`derive`, so a transform-minted IR Alias is otherwise never read and the field
+ships empty.
+
+## Compose it yourself
+
+Reach for this only when the deployment needs something `createSearchIndexer`
+has no answer for – a non-SPARQL reader, a root selector that is not by class,
+another engine – and compose `searchStages`, `searchIndexWriter` and `Pipeline`
+directly. Adding a transform is **not** such a case; that is `transforms` above.
+
+The three pieces `createSearchIndexer` composes are exported, so this route
+costs the bespoke part rather than a copy of the wiring:
+
+- `datasetSelectorFrom(config)` – the registry-backed dataset selection;
+- `distributionResolverFrom(config)` – the QLever import path when
+  `QLEVER_IMAGE` is set, `undefined` otherwise (the pipeline’s endpoint-only
+  default);
+- `writerFactoryFrom(client, config)` – the rebuild writer per root type, its
+  collection named and prefixed as configured and its untagged text stemmed in
+  `DEFAULT_LOCALE`.
+
+```ts
+import { Pipeline, SparqlConstructReader } from '@lde/pipeline';
+import { ConsoleReporter } from '@lde/pipeline-console-reporter';
+import { loadSchemaModule } from '@lde/search/module';
+import { searchIndexWriter, searchStages } from '@lde/search-pipeline';
+import {
+  configFromEnvironment,
+  datasetSelectorFrom,
+  distributionResolverFrom,
+  writerFactoryFrom,
+} from '@lde/search-indexer';
+import { Client } from 'typesense';
+
+const config = configFromEnvironment(process.env);
+const { schema } = await loadSchemaModule(config.schemaModulePath);
+const client = new Client({
+  nodes: [
+    {
+      host: config.typesense.host,
+      port: config.typesense.port,
+      protocol: config.typesense.protocol,
+    },
+  ],
+  apiKey: config.typesense.apiKey,
+});
+const objectType = schema.get('https://example.org/Object')!;
+
+const pipeline = new Pipeline({
+  datasetSelector: datasetSelectorFrom(config),
+  distributionResolver: distributionResolverFrom(config),
+  stages: searchStages({
+    schema,
+    types: [
+      {
+        searchType: objectType,
+        rootVariable: 'root',
+        itemSelector: myBespokeSelector,
+        // Own reader: attach transforms to it as data, `{ reader, transform }`.
+        readers: { reader: myNonSparqlReader, transform: [myTransform] },
+      },
+    ],
+  }),
+  writers: searchIndexWriter({
+    schema,
+    writerFor: writerFactoryFrom(client, config),
+  }),
+  // Composing by hand means restating these: they are wired by
+  // `searchIndexerPipeline`, which this route bypasses, and silently absent if
+  // forgotten.
+  reporter: new ConsoleReporter(),
+});
+await pipeline.run();
+```
+
+Note what the last argument buys back. `createSearchIndexer` also passes
+`registryTypes` (from `REGISTRY_ROOT_TYPES`), `provenanceStore` and
+`pipelineVersion` (from `PROVENANCE_FILE` + `PIPELINE_VERSION`) into
+`searchIndexerPipeline`. This route bypasses that function, so each is absent
+until restated – with no error, just a run that reports nothing, skips nothing
+and reads registry types from the wrong place. That is the cost of leaving the
+convenience, and the reason `transforms` exists rather than sending every
+deployment here.

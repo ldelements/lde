@@ -1,5 +1,6 @@
-// Internal composition pieces of createSearchIndexer, split out so each can
-// be tested without running a pipeline (Pipeline keeps its wiring private).
+// The composition pieces of createSearchIndexer, each usable on its own so a
+// deployment that needs one bespoke stage keeps the rest of the wiring
+// (Pipeline keeps its own wiring private).
 import { Client as RegistryClient } from '@lde/dataset-registry-client';
 import {
   ImportResolver,
@@ -31,7 +32,8 @@ export function datasetSelectorFrom(config: IndexerConfig): DatasetSelector {
  * The engine-writer factory the configuration describes: an
  * {@link InPlaceRebuild} or {@link BlueGreenRebuild} per root type, its
  * collection name derived from the type – prefixed when the deployment says
- * so, so the read side must be configured with the same prefix.
+ * so, so the read side must be configured with the same prefix – and its
+ * untagged text stemmed in the configured {@link IndexerConfig.defaultLocale}.
  *
  * The mounted schema the pipeline hands each call travels into the writer: a
  * type that surfaces an inline reference builds its collection from the
@@ -43,7 +45,8 @@ export function writerFactoryFrom(
   config: IndexerConfig,
 ): (searchType: RootType, schema: SearchSchema) => Writer<SearchDocument> {
   return (searchType, schema) => {
-    const options = {
+    const writerOptions = {
+      defaultLocale: config.defaultLocale,
       schema,
       ...(config.collectionPrefix
         ? {
@@ -52,8 +55,8 @@ export function writerFactoryFrom(
         : {}),
     };
     return config.rebuildMode === 'blue-green'
-      ? new BlueGreenRebuild(client, searchType, options)
-      : new InPlaceRebuild(client, searchType, options);
+      ? new BlueGreenRebuild(client, searchType, writerOptions)
+      : new InPlaceRebuild(client, searchType, writerOptions);
   };
 }
 

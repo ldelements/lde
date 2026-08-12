@@ -59,6 +59,46 @@ describe('createSearchIndexer', () => {
     ).rejects.toThrowError(/Unknown registry root type\(s\) “Publisher”/);
   });
 
+  it('attaches a deployment’s transform without giving up the wiring', async () => {
+    // The whole cost of adding behaviour: one option. Everything
+    // createSearchIndexer wires – provenance, the reporter, registry types,
+    // collection naming – stays wired, which hand-composing a Pipeline to reach
+    // the reader silently gives up.
+    const pipeline = await createSearchIndexer(
+      configFromEnvironment({
+        ...minimal,
+        SCHEMA_MODULE: fixture,
+        PROVENANCE_FILE: '/state/provenance.json',
+        PIPELINE_VERSION: '1',
+      }),
+      {
+        transforms: {
+          Dataset: async function* (quads) {
+            yield* quads;
+          },
+        },
+      },
+    );
+    expect(pipeline).toBeInstanceOf(Pipeline);
+  });
+
+  it('fails the boot on a transform naming a type the schema does not declare', async () => {
+    // At boot, not per dataset: the transform would otherwise attach to nothing
+    // and the collection would ship unenriched.
+    await expect(
+      createSearchIndexer(
+        configFromEnvironment({ ...minimal, SCHEMA_MODULE: fixture }),
+        {
+          transforms: {
+            Datasets: async function* (quads) {
+              yield* quads;
+            },
+          },
+        },
+      ),
+    ).rejects.toThrowError(/Unknown transform type\(s\) “Datasets”/);
+  });
+
   it('fails the boot on an unloadable schema module, naming the path', async () => {
     await expect(
       createSearchIndexer(
