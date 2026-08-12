@@ -1,3 +1,9 @@
+## 0.18.1 (2026-08-12)
+
+### 🚀 Features
+
+- **search-indexer:** add a transform without forking the composition ([#720](https://github.com/ldelements/lde/pull/720))
+
 ## 0.18.0 (2026-08-07)
 
 ### 🧱 Updated Dependencies
