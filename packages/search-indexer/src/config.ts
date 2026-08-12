@@ -33,6 +33,13 @@ export interface IndexerConfig {
   /** Prefix prepended to every derived collection name
    *  (`COLLECTION_PREFIX`), e.g. for a shared multi-tenant engine. */
   readonly collectionPrefix?: string;
+  /**
+   * Stemming language for text that carries no language tag (`DEFAULT_LOCALE`,
+   * e.g. `nl`). Unset, such text is folded but **unstemmed** – no language is
+   * ever assumed – so `fietsen` does not match `fiets`. Text declaring a real
+   * locale always stems in its own language, whatever this says.
+   */
+  readonly defaultLocale?: string;
   /** Per-dataset processing memory: skip unchanged datasets
    *  (`PROVENANCE_FILE` + `PIPELINE_VERSION`). */
   readonly provenance?: ProvenanceConfig;
@@ -164,6 +171,7 @@ export function configFromEnvironment(
     },
     rebuildMode: rebuildMode as 'in-place' | 'blue-green',
     collectionPrefix: environment['COLLECTION_PREFIX'],
+    defaultLocale: environment['DEFAULT_LOCALE'],
     provenance,
     qlever,
   };

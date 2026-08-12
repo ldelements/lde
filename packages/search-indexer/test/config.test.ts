@@ -23,6 +23,7 @@ describe('configFromEnvironment', () => {
       },
       rebuildMode: 'in-place',
       collectionPrefix: undefined,
+      defaultLocale: undefined,
       provenance: undefined,
       qlever: undefined,
     });
@@ -36,6 +37,7 @@ describe('configFromEnvironment', () => {
       TYPESENSE_PROTOCOL: 'https',
       REBUILD_MODE: 'blue-green',
       COLLECTION_PREFIX: 'staging_',
+      DEFAULT_LOCALE: 'nl',
       REGISTRY_ROOT_TYPES: 'Dataset, Publisher',
       QLEVER_IMAGE: 'adfreiburg/qlever:latest',
       IMPORT_STRATEGY: 'import',
@@ -54,6 +56,7 @@ describe('configFromEnvironment', () => {
       },
       rebuildMode: 'blue-green',
       collectionPrefix: 'staging_',
+      defaultLocale: 'nl',
       provenance: undefined,
       qlever: {
         image: 'adfreiburg/qlever:latest',

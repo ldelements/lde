@@ -225,6 +225,27 @@ describe('searchStages', () => {
     ).toThrow(/not in the schema/);
   });
 
+  it('refuses a transform alongside the caller’s own readers', () => {
+    // Which of several readers the transform belongs to is knowable only to the
+    // caller, so this is a mistake to name rather than a default to guess.
+    expect(() =>
+      searchStages({
+        schema,
+        types: [
+          {
+            searchType: person,
+            rootVariable: 'root',
+            itemSelector: rootsSelector([]),
+            readers: nameReader,
+            transform: async function* (quads) {
+              yield* quads;
+            },
+          },
+        ],
+      }),
+    ).toThrow(/cannot be combined with “readers”/);
+  });
+
   it('fails clearly when the selector does not bind the stage’s rootVariable', async () => {
     // The stage reads ?subject, but `rootsSelector` binds ?root – a config
     // mismatch. The batch deref must throw a named error, not an opaque

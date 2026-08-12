@@ -8,6 +8,7 @@ import {
   type Writer,
 } from '@lde/pipeline';
 import { searchSchema, type RootType, type SearchDocument } from '@lde/search';
+import type { Quad } from '@rdfjs/types';
 import { searchIndexerPipeline } from '../src/search-indexer-pipeline.js';
 
 const DATASET = 'https://example.org/Dataset';
@@ -184,6 +185,88 @@ describe('searchIndexerPipeline', () => {
           registryTypes: { ...registry, names: ['Datasets'] },
         }),
       ).toThrow(/Unknown registry root type\(s\) “Datasets”/);
+    });
+  });
+
+  describe('transforms', () => {
+    it('attaches a transform to the named type’s reader only', async () => {
+      // End to end: the transform sees the type’s extracted quads, and the
+      // other type’s stage runs untouched – so a deployment adds behaviour
+      // without hand-composing a Pipeline and losing everything else this
+      // convenience wires.
+      const seen: { stage: string; subjects: string[] }[] = [];
+      const transform = async function* (
+        quads: AsyncIterable<Quad>,
+        context: { stage: string },
+      ) {
+        const subjects: string[] = [];
+        for await (const quad of quads) {
+          subjects.push(quad.subject.value);
+          yield quad;
+        }
+        seen.push({ stage: context.stage, subjects });
+      };
+
+      nock('http://data.example.org')
+        .post('/sparql')
+        .times(10)
+        .reply((_uri, body) => {
+          const query = decodeURIComponent(String(body).replace(/\+/g, ' '));
+          if (query.includes('CONSTRUCT')) {
+            return [
+              200,
+              '<http://example.org/org/1> <https://example.org/name> "ACME" .\n',
+              { 'Content-Type': 'application/n-triples' },
+            ];
+          }
+          // One root per type, so each stage forms a batch and runs its reader.
+          return [
+            200,
+            {
+              head: { vars: ['root'] },
+              results: {
+                bindings: [
+                  { root: { type: 'uri', value: 'http://example.org/org/1' } },
+                ],
+              },
+            },
+            { 'Content-Type': 'application/sparql-results+json' },
+          ];
+        });
+
+      await searchIndexerPipeline({
+        schema,
+        datasets: [
+          new Dataset({
+            iri: new URL('http://example.org/dataset/1'),
+            distributions: [
+              Distribution.sparql(new URL('http://data.example.org/sparql')),
+            ],
+          }),
+        ],
+        writerFor: () => engineWriter,
+        transforms: { Organization: transform },
+      }).run();
+
+      expect(seen.map((each) => each.stage)).toEqual(['Organization']);
+      expect(seen[0]?.subjects).toContain('http://example.org/org/1');
+    });
+
+    it('rejects a name the schema does not declare', () => {
+      // Otherwise silent: the transform would attach to nothing and the
+      // collection would ship unenriched.
+      expect(() =>
+        searchIndexerPipeline({
+          schema,
+          datasets: [],
+          writerFor: () => engineWriter,
+          transforms: {
+            Organisation: async function* (quads) {
+              yield* quads;
+            },
+          },
+        }),
+      ).toThrow(/Unknown transform type\(s\) “Organisation”/);
     });
   });
 });
