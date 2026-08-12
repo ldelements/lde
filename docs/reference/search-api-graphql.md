@@ -260,3 +260,45 @@ or a new version of this library emitting different GraphQL for the same
 declaration – fails the test and shows the SDL diff, until you consciously
 accept it (`vitest -u`) and the reviewer sees the contract change spelled out
 in the PR.
+
+### Committing the contract as a file
+
+A snapshot guards the contract inside the test suite. A deployment that mounts
+a [schema-declaration module](./search-api-server#the-schema-module) usually
+wants the contract as a **published file** instead – `schema.graphql`, the
+thing its consumers read and its pull requests diff. The `search-print-sdl`
+bin writes it:
+
+```sh
+search-print-sdl --module ./dist/module.js --out ./schema.graphql
+```
+
+It loads the module the way the indexer and the served API load it (same
+validation, same `schemaOptions` forwarding), so the file cannot describe a
+different API from the one served. Regenerate it in CI and commit the
+difference; a pull request that moves the surface then shows the move.
+
+Without `--out` the SDL goes to standard output. The same thing from code – a
+separate entry point, because it reads the filesystem and the main one stays
+runtime-agnostic:
+
+```ts
+import { printSchemaModuleSdl } from '@lde/search-api-graphql/print-sdl';
+
+await printSchemaModuleSdl({
+  modulePath: './dist/module.js',
+  outputPath: './schema.graphql',
+});
+```
+
+#### Formatting
+
+The output is formatted with the **Prettier configuration that applies to the
+output path**, because a repository whose pre-commit hook formats every staged
+file would otherwise have the hook and this writer spell the same schema
+differently and overwrite each other in turn. It also keeps a surface move
+readable: one field argument per line, so adding an argument is one added line.
+
+Prettier is an **optional peer dependency** – your own version formats the
+file, which is the point. Pass `--no-format` (or `format: false`) to write the
+SDL exactly as GraphQL prints it, and Prettier is never loaded.
