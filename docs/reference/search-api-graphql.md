@@ -146,6 +146,11 @@ const gqlSchema = buildGraphQLSchema(searchSchema(DATASET, PERSON));
 
 ## What it builds (per root type)
 
+A field’s [`description`](./search#describing-a-field) is carried onto both the
+output field and the `where` key of the same name, so an explanation written on
+the declaration reaches a consumer in the playground, in introspection and in an
+editor.
+
 - **Output type** (the `SearchType`’s `name`): localized text → best-first `[LanguageString!]!`
   (`[0].language` is the language actually served); references → named per-shape
   types (`Organization`, `Term`) with an `id` and a `label` – the same word the

@@ -1225,3 +1225,81 @@ describe('nested inline references', () => {
     );
   });
 });
+
+describe('field descriptions', () => {
+  // A declaration is the only place a schema author can speak: the module is
+  // plain data, mounted, with no hook to decorate the built schema afterwards.
+  // So `description` has to reach every surface the field appears on, or it
+  // reaches the reader in some places and not others.
+  const described = {
+    name: 'CreativeWork',
+    class: 'https://schema.org/CreativeWork',
+    fields: [
+      {
+        name: 'creator',
+        kind: 'reference',
+        description:
+          'Creators identified by URI. Absent where the publisher named one inline; see creatorName.',
+        filterable: true,
+        output: true,
+        ref: { typeName: 'Person', strategy: 'labelOnly' },
+        labelSource: 'Person',
+      },
+      {
+        name: 'creatorName',
+        kind: 'text',
+        description:
+          'Every creator’s name as published, including those with no URI. Free text, not a facet.',
+        locales: ['nl'],
+        output: true,
+        searchable: { weight: 3 },
+      },
+      {
+        name: 'label',
+        kind: 'text',
+        locales: ['nl'],
+        output: true,
+        searchable: { weight: 5 },
+      },
+    ],
+  } satisfies SearchType;
+
+  // A label source must exist and expose an `output`, `searchable` `label`.
+  const person = {
+    name: 'Person',
+    class: 'https://schema.org/Person',
+    fields: [
+      {
+        name: 'label',
+        kind: 'text',
+        locales: ['nl'],
+        output: true,
+        searchable: { weight: 5 },
+      },
+    ],
+  } satisfies SearchType;
+
+  const sdl = () =>
+    printSchema(buildGraphQLSchema(searchSchema(described, person)));
+
+  it('describes an output field', () => {
+    expect(sdl()).toMatch(
+      /"""\s+Every creator’s name as published[^"]*"""\s+creatorName:/,
+    );
+  });
+
+  it('describes the same field where it is filtered on', () => {
+    // The `where` input names the field a second time; a reader filtering by it
+    // is the one most likely to need telling what it covers.
+    expect(sdl()).toMatch(
+      /"""\s+Creators identified by URI[^"]*"""\s+creator: StringFilter/,
+    );
+  });
+
+  it('leaves a field without one undescribed', () => {
+    // Not merely “the field is there”: assert no description block precedes it,
+    // or this would pass whether or not one had been emitted.
+    expect(sdl()).not.toMatch(/"""[^"]*"""\s+label: \[LanguageString/);
+    expect(sdl()).toMatch(/\n {2}label: \[LanguageString!\]!/);
+  });
+});

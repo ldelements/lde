@@ -353,6 +353,41 @@ label }`), and on a reference facet’s bucket. One word, one meaning – so a
 collection reads the same whether you arrive at it directly or through a
 reference.
 
+### Describing a field
+
+A field may carry a `description`, which surfaces wherever an API has somewhere
+to put it – in GraphQL as the field’s description, so it reaches a consumer in
+the playground, in introspection and in an editor rather than in documentation
+they would have to know to look for. It appears on the output field and again on
+the `where` key of the same name, since a reader filtering by a field is the one
+most likely to need telling what it covers.
+
+```ts
+{
+  name: 'creatorName',
+  kind: 'text',
+  path: '<https://schema.org/creator>/<https://schema.org/name>',
+  locales: ['nl'],
+  output: true,
+  searchable: { weight: 3 },
+  description:
+    'Every creator’s name as published, including creators the source names ' +
+    'inline without a URI. Free text rather than a facet, and not always a ' +
+    'personal name.',
+}
+```
+
+Worth declaring wherever the name is not the whole story. The case it exists for
+is two fields over one property that differ in what they can see: a `creator`
+reference keyed by URI can be faceted but is empty where the source named a
+creator inline, while a `creatorName` read through the graph sees every creator
+but cannot be faceted. Neither is a superset of the other, and a consumer reading
+only the field names will reasonably conclude that one duplicates the other.
+
+The declaration is the only place to say so. The module a served API mounts is
+plain data, and there is no hook to annotate the built schema afterwards – so the
+sentence written here is the one that reaches the reader.
+
 ### Facet buckets
 
 A `FacetBucket` always carries its `value` and `count`; what else it carries is
