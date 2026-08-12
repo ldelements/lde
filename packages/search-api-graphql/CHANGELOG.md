@@ -1,3 +1,13 @@
+## 0.20.1 (2026-08-12)
+
+### 🚀 Features
+
+- **search:** let a field carry a description to the API surface ([#721](https://github.com/ldelements/lde/pull/721))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.18.1
+
 ## 0.20.0 (2026-08-10)
 
 ### 🚀 Features
