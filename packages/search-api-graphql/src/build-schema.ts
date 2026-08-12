@@ -312,7 +312,16 @@ export function buildGraphQLSchema(
     }
   }
 
+  /** A field's config, plus the declared {@link SearchFieldBase.description}
+   *  wherever the field surfaces – so one sentence written on the declaration
+   *  reaches the playground, introspection and an editor alike. */
   function outputFieldConfig(
+    field: SearchField,
+  ): GraphQLFieldConfig<Source, SearchContext> {
+    return { ...outputFieldType(field), description: field.description };
+  }
+
+  function outputFieldType(
     field: SearchField,
   ): GraphQLFieldConfig<Source, SearchContext> {
     switch (field.kind) {
@@ -419,7 +428,10 @@ export function buildGraphQLSchema(
         [ID_FIELD]: { type: stringFilter },
       };
       for (const field of filterable) {
-        fields[field.name] = { type: whereFieldType(field) };
+        fields[field.name] = {
+          type: whereFieldType(field),
+          description: field.description,
+        };
       }
       return fields;
     };

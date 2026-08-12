@@ -80,6 +80,18 @@ export interface SearchFieldBase {
   /** Logical API name; the physical fanout derives from it. Declare camelCase
    *  where it surfaces in GraphQL. */
   readonly name: string;
+  /**
+   * What this field means, for whoever queries it. Carried to every API surface
+   * with somewhere to put it – GraphQL renders it as the field’s description, so
+   * it reaches a consumer in the playground, in introspection and in an editor,
+   * rather than in documentation they would have to know to look for.
+   *
+   * Worth declaring wherever the name is not the whole story: two fields over
+   * one property that differ in what they can see, a value that is not what its
+   * name suggests, a facet that covers only part of a corpus. Prose, not a type
+   * – the shape is already in the declaration.
+   */
+  readonly description?: string;
   /** Framed-IR predicate IRI to project from. Omit for a field populated by
    *  {@link SearchFieldBase.derive} (or outside the projection entirely). */
   readonly path?: string;
