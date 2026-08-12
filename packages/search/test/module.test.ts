@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { loadSchemaModule } from '../src/module.js';
+import { loadSchemaModule, optionalObjectExport } from '../src/module.js';
 
 const fixture = (name: string): string =>
   fileURLToPath(new URL(`./fixtures/module/${name}`, import.meta.url));
@@ -44,5 +44,41 @@ describe('loadSchemaModule', () => {
     await expect(
       loadSchemaModule(fixture('invalid-declaration.mjs')),
     ).rejects.toThrowError(/declares an invalid schema/);
+  });
+});
+
+describe('optionalObjectExport', () => {
+  const modulePath = '/mounted/module.mjs';
+
+  it('returns the export', () => {
+    expect(
+      optionalObjectExport(
+        { schemaOptions: { maxPerPage: 50 } },
+        'schemaOptions',
+        modulePath,
+      ),
+    ).toEqual({ maxPerPage: 50 });
+  });
+
+  it('returns undefined when the module does not carry the export', () => {
+    expect(
+      optionalObjectExport({}, 'schemaOptions', modulePath),
+    ).toBeUndefined();
+  });
+
+  it.each([
+    ['a string', 'nope'],
+    ['null', null],
+    ['an array', []],
+  ])('rejects %s, naming the module and the export', (_, value) => {
+    expect(() =>
+      optionalObjectExport(
+        { schemaOptions: value },
+        'schemaOptions',
+        modulePath,
+      ),
+    ).toThrowError(
+      /Schema module “\/mounted\/module\.mjs” export “schemaOptions” must be an object/,
+    );
   });
 });

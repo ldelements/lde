@@ -1,4 +1,7 @@
-import { loadSchemaModule as loadDeclarations } from '@lde/search/module';
+import {
+  loadSchemaModule as loadDeclarations,
+  optionalObjectExport,
+} from '@lde/search/module';
 import type { SearchSchema } from '@lde/search';
 import type { BuildGraphQLSchemaOptions } from '@lde/search-api-graphql';
 import type { TypesenseSearchEngineOptions } from '@lde/search-typesense';
@@ -39,24 +42,15 @@ export async function loadSchemaModule(
   const { schema, moduleExports } = await loadDeclarations(modulePath);
   return {
     searchSchema: schema,
-    schemaOptions: optionalObject(moduleExports, 'schemaOptions', modulePath),
-    engineOptions: optionalObject(moduleExports, 'engineOptions', modulePath),
+    schemaOptions: optionalObjectExport(
+      moduleExports,
+      'schemaOptions',
+      modulePath,
+    ),
+    engineOptions: optionalObjectExport(
+      moduleExports,
+      'engineOptions',
+      modulePath,
+    ),
   };
-}
-
-function optionalObject<Options>(
-  moduleExports: Record<string, unknown>,
-  name: string,
-  modulePath: string,
-): Options | undefined {
-  const value = moduleExports[name];
-  if (value === undefined) {
-    return undefined;
-  }
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new Error(
-      `Schema module “${modulePath}” export “${name}” must be an object.`,
-    );
-  }
-  return value as Options;
 }
