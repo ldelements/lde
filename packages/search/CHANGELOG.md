@@ -1,3 +1,9 @@
+## 0.18.2 (2026-08-12)
+
+### 🚀 Features
+
+- **search-api-graphql:** write the GraphQL contract of a schema module to a file ([#722](https://github.com/ldelements/lde/pull/722))
+
 ## 0.18.1 (2026-08-12)
 
 ### 🚀 Features
