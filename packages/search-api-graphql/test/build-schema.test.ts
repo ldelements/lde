@@ -961,6 +961,29 @@ describe('buildGraphQLSchema', () => {
       );
     });
 
+    it('serves the resolved label under the label source’s own label field name', () => {
+      const namedLabel: SearchType = { ...PERSON, labelField: 'name' };
+      const withReferenceToRoot: SearchType = {
+        name: 'CreativeWork',
+        class: 'https://schema.org/CreativeWork',
+        fields: [
+          {
+            name: 'author',
+            kind: 'reference',
+            output: true,
+            labelSource: 'Person',
+            ref: { typeName: 'Person', strategy: 'labelOnly' },
+          },
+        ],
+      };
+      const sdl = printSchema(
+        buildGraphQLSchema(searchSchema(namedLabel, withReferenceToRoot)),
+      );
+      expect(sdl).toMatch(
+        /type PersonReference \{\s+id: String!\s+name: \[LanguageString!\]!\s+\}/,
+      );
+    });
+
     it('throws when the derived reference name is itself taken', () => {
       const takenDerivedName: SearchType = {
         name: 'PersonReference',

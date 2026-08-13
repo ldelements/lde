@@ -116,8 +116,13 @@ is an Internal Field; a type without a `class` is a Reference Type.**
 
 **Label Source**:
 The Search Type whose collection resolves a reference’s labels. Must declare an
-`output`, `searchable` text field named `label`.
+`output`, `searchable` text field named by its **Label Field**.
 _Avoid_: labels collection, lookup table
+
+**Label Field**:
+The name a Label Source serves its label under, and so the word every surface
+resolving against it uses. Declared as `labelField`; `label` by default.
+_Avoid_: display field, title field
 
 **Reference Strategy**:
 How much of a referenced entity a reference carries: `idOnly` (the IRI),

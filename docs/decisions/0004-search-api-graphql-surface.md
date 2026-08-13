@@ -12,6 +12,13 @@ Amended 2026-08-10: a `labelOnly` reference serves its resolved label as
 `label`, not `name` – the word the label source declares and a reference
 facet’s bucket already carries. The `name` below is historical.
 
+Amended 2026-08-13: that word is the label source’s own – its
+`labelField`, `label` by default (see
+[ADR 8](./0008-resolve-reference-labels-from-per-reference-label-sources.md)),
+so a source declaring `labelField: 'name'` is served as `{ id, name }`. A
+`ValueBucket`’s `label` is unchanged: it is per-facet-field, and a per-type name
+would make the bucket type non-uniform.
+
 ## Context
 
 Given the engine-neutral core of [ADR 3](./0003-search-api-core-query-model.md), the first

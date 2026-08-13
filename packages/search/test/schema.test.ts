@@ -1083,6 +1083,51 @@ describe('searchSchema validation', () => {
       ).toThrow(/label source/);
     });
 
+    it('accepts a label source that names its own label field', () => {
+      expect(() =>
+        searchSchema(
+          {
+            name: 'Term',
+            class: 'https://example.org/DefinedTerm',
+            labelField: 'name',
+            fields: [
+              {
+                name: 'name',
+                kind: 'text',
+                locales: ['und', 'nl'],
+                output: true,
+                searchable: { weight: 1 },
+              },
+            ],
+          },
+          {
+            name: 'Dataset',
+            class: DATASET,
+            fields: [{ name: 'theme', kind: 'reference', labelSource: 'Term' }],
+          },
+        ),
+      ).not.toThrow();
+    });
+
+    it('rejects a label source whose declared label field is missing, naming it', () => {
+      expect(() =>
+        searchSchema(
+          { ...organization, labelField: 'name' },
+          {
+            name: 'Dataset',
+            class: DATASET,
+            fields: [
+              {
+                name: 'publisher',
+                kind: 'reference',
+                labelSource: 'Organization',
+              },
+            ],
+          },
+        ),
+      ).toThrow(/must declare an output, searchable text field “name”/);
+    });
+
     it('rejects a labelSource on a non-reference field', () => {
       expect(() =>
         searchSchema(organization, {

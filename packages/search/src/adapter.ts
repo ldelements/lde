@@ -31,6 +31,8 @@ export {
   AND_KEY,
   OR_KEY,
   labelFieldOf,
+  labelFieldNameOf,
+  DEFAULT_LABEL_FIELD,
   isRangeFacet,
   isoToUnixSeconds,
   unixSecondsToIso,

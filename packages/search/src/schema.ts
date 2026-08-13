@@ -209,7 +209,8 @@ export interface ReferenceField extends SearchFieldBase, Searchable {
   /**
    * The `name` of the {@link SearchType} whose collection resolves this
    * reference’s labels – its ‘label source’. The named type must declare an
-   * `output`, `searchable` text field called `label` (validated by
+   * `output`, `searchable` text field under its
+   * {@link SearchTypeBase.labelField} name (`label` by default; validated by
    * {@link searchSchema}), so an engine can both reconstruct the label and
    * search it (typeahead). Omit for an id-only reference: no label
    * resolution.
@@ -290,6 +291,14 @@ export interface SearchTypeBase {
    *  than derived from the `class` IRI, so re-modelling the vocabulary cannot
    *  silently rename the public contract. */
   readonly name: string;
+  /** The `name` of this type’s display field, when it serves as a
+   *  {@link ReferenceField.labelSource} – the word the API surfaces a resolved
+   *  label under. Defaults to `label`; declare another (e.g. `name`, for a
+   *  profile that models display names as `schema:name`) so the surface word is
+   *  the profile’s, not a role the type happens to play internally. The named
+   *  field must be an `output`, `searchable` text field ({@link labelFieldOf}).
+   *  Ignored for a type nothing resolves labels from. */
+  readonly labelField?: string;
   readonly fields: readonly SearchField[];
 }
 
@@ -680,16 +689,26 @@ const UNSERVICEABLE_NESTED_ROLES = [
   'sortable',
 ] as const;
 
+/** The label field name a type falls back to when it declares no
+ *  {@link SearchTypeBase.labelField}. */
+export const DEFAULT_LABEL_FIELD = 'label';
+
+/** The `name` the type serves its label under: its declared
+ *  {@link SearchTypeBase.labelField}, else `label`. */
+export function labelFieldNameOf(searchType: SearchType): string {
+  return searchType.labelField ?? DEFAULT_LABEL_FIELD;
+}
+
 /**
- * The text field a label source serves labels from – the ‘label’ convention
- * in one place: an `output` (something to reconstruct a label from),
- * `searchable` (something to type ahead against) text field called `label`.
- * Returns `undefined` when the type declares no such field; a schema built by
- * {@link searchSchema} guarantees it for every type named as a
- * {@link ReferenceField.labelSource}.
+ * The text field a label source serves labels from – the label convention in
+ * one place: an `output` (something to reconstruct a label from), `searchable`
+ * (something to type ahead against) text field named by
+ * {@link labelFieldNameOf}. Returns `undefined` when the type declares no such
+ * field; a schema built by {@link searchSchema} guarantees it for every type
+ * named as a {@link ReferenceField.labelSource}.
  */
 export function labelFieldOf(searchType: SearchType): TextField | undefined {
-  const field = fieldNamed(searchType, 'label');
+  const field = fieldNamed(searchType, labelFieldNameOf(searchType));
   return field !== undefined &&
     field.kind === 'text' &&
     field.output === true &&
@@ -727,7 +746,7 @@ function assertResolvableLabelSources(types: readonly SearchType[]): void {
       }
       if (labelFieldOf(source) === undefined) {
         throw new Error(
-          `Reference “${searchType.name}.${field.name}” uses label source “${field.labelSource}”, which must declare an output, searchable text field “label”.`,
+          `Reference “${searchType.name}.${field.name}” uses label source “${field.labelSource}”, which must declare an output, searchable text field “${labelFieldNameOf(source)}”.`,
         );
       }
     }

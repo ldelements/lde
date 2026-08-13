@@ -29,6 +29,7 @@ import {
 } from '@lde/search';
 import {
   AND_KEY,
+  DEFAULT_LABEL_FIELD,
   facetableFields,
   filterableFields,
   filterOn,
@@ -36,6 +37,7 @@ import {
   ID_FIELD,
   OR_KEY,
   isRangeFacet,
+  labelFieldNameOf,
   nestedReferenceType,
   outputFields,
   pageForOffset,
@@ -126,9 +128,10 @@ export function buildGraphQLSchema(
 ): GraphQLSchema {
   const languageOrder = options.languageOrder ?? defaultLanguageOrder;
   const maxPerPage = options.maxPerPage ?? 100;
-  const rootTypeNames = new Set(
-    [...schema.values()].map((searchType) => searchType.name),
+  const rootTypesByName = new Map(
+    [...schema.values()].map((searchType) => [searchType.name, searchType]),
   );
+  const rootTypeNames = new Set(rootTypesByName.keys());
   for (const name of Object.keys(options.types ?? {})) {
     if (!rootTypeNames.has(name)) {
       throw new Error(
@@ -237,6 +240,19 @@ export function buildGraphQLSchema(
   const referenceTypes = new Map<string, GraphQLObjectType>();
   const takenTypeNames = new Set(rootTypeNames);
 
+  /** The key a reference serves its resolved label under: the name its label
+   *  source declares that label field with, so the reference and the type it
+   *  resolves against agree on the word. */
+  function labelKeyOf(field: SearchField & { readonly kind: 'reference' }) {
+    const source =
+      field.labelSource === undefined
+        ? undefined
+        : rootTypesByName.get(field.labelSource);
+    return source === undefined
+      ? DEFAULT_LABEL_FIELD
+      : labelFieldNameOf(source);
+  }
+
   /**
    * Register the GraphQL type one reference field is served as, once per
    * referenced shape. A **surfaced inline** reference is served as the nested
@@ -277,11 +293,11 @@ export function buildGraphQLSchema(
         > =>
           nested === undefined
             ? {
+                // The same word the label source declares its label field
+                // under (`label` by default): one resolved label, one name for
+                // it wherever it surfaces.
                 id: { type: new GraphQLNonNull(GraphQLString) },
-                // `label`, the same word the label source declares and a
-                // reference facet’s bucket carries: one resolved label, one
-                // name for it wherever it surfaces.
-                label: labelList(
+                [labelKeyOf(field)]: labelList(
                   (source) => source.label as LocalizedValue | undefined,
                 ),
               }
