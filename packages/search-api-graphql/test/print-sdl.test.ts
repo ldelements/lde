@@ -16,6 +16,7 @@ beforeEach(async () => {
 
 afterEach(() => {
   vi.doUnmock('prettier');
+  vi.resetModules();
 });
 
 describe('printSchemaModuleSdl', () => {
@@ -119,12 +120,17 @@ describe('printSchemaModuleSdl', () => {
   });
 
   it('names the optional Prettier peer when it cannot be loaded', async () => {
+    // Reset first: the tests above have already pulled the real Prettier into
+    // the module graph, and a mock only applies to a module imported after it.
+    vi.resetModules();
     vi.doMock('prettier', () => {
       throw new Error('Cannot find package ‘prettier’');
     });
+    const { printSchemaModuleSdl: printWithoutPrettier } =
+      await import('../src/print-sdl.js');
 
     await expect(
-      printSchemaModuleSdl({ modulePath: fixture('no-options.mjs') }),
+      printWithoutPrettier({ modulePath: fixture('no-options.mjs') }),
     ).rejects.toThrowError(
       /Formatting the SDL requires “prettier”, an optional peer dependency .*, which could not be loaded: /,
     );
