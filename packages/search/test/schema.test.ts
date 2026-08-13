@@ -11,6 +11,7 @@ import {
   filterableFields,
   inlineFramingDepth,
   irAlias,
+  isAbsoluteIri,
   isoToUnixSeconds,
   isRangeFacet,
   nestedFieldName,
@@ -326,6 +327,43 @@ describe('isRangeFacet', () => {
     expect(isRangeFacet(size)).toBe(true);
     expect(isRangeFacet({ ...size, facetRanges: [] })).toBe(false);
     expect(isRangeFacet({ ...size, facetRanges: undefined })).toBe(false);
+  });
+});
+
+describe('isAbsoluteIri', () => {
+  it('accepts any scheme, not only http(s)', () => {
+    // Restricting to http(s) would reject conformant Linked Data: URNs, DOIs,
+    // ARKs and a deployment’s own minted scheme are all ordinary here.
+    for (const iri of [
+      'https://sws.geonames.org/2756308/',
+      'http://example.org/x',
+      'urn:uuid:0b7a1e1e-0000-4000-8000-000000000000',
+      'urn:nbn:nl:ui:13-abcdef',
+      'urn:lde:Dataset/publisherName',
+      'doi:10.1234/5678',
+      'ark:/61567/dataset',
+      'tag:example.org,2026:x',
+      'mailto:someone@example.org',
+      'thing:abc123',
+      'https://example.org/café', // an IRI is not restricted to ASCII
+    ]) {
+      expect(isAbsoluteIri(iri)).toBe(true);
+    }
+  });
+
+  it('rejects what a reference must never hold', () => {
+    for (const value of [
+      '_:b0', // a blank node label – a scheme must start with a letter
+      'boerenbont', // a bare token: the mistake this check exists to catch
+      '/relative/path',
+      '//example.org/x',
+      'http://example.org/a b', // unencoded space
+      'http://example.org/a\nb',
+      '1nvalid:scheme',
+      '',
+    ]) {
+      expect(isAbsoluteIri(value)).toBe(false);
+    }
   });
 });
 

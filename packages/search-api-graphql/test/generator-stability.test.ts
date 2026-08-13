@@ -3,7 +3,7 @@ import { searchSchema, type SearchType } from '@lde/search';
 import { printGraphQLSchema } from '../src/build-schema.js';
 
 /**
- * A neutral fixture exercising every kind + capability — NOT a real domain. Its
+ * A neutral fixture exercising every kind + capability – NOT a real domain. Its
  * SDL is snapshotted purely to pin the **generator**: any change to how
  * `buildGraphQLSchema` maps the field model (nullability, type names, enums,
  * reference reuse) surfaces as a snapshot diff before this library is published,
@@ -55,6 +55,27 @@ const THING: SearchType = {
       filterable: true,
       output: true,
       ref: { typeName: 'Agent', strategy: 'labelOnly' },
+    },
+    // An idOnly reference naming no target: a bare IRI in, a bare IRI out, and
+    // an IRIFilter to select it by – the shape a canonical vocabulary URI or a
+    // licence takes, whose referent this deployment describes nowhere.
+    {
+      name: 'sameAs',
+      kind: 'reference',
+      array: true,
+      facetable: true,
+      filterable: true,
+      output: true,
+      ref: { strategy: 'idOnly' },
+    },
+    // An idOnly reference that DOES name its target, so its IRIs are told apart
+    // from IRIs at large even though no collection serves them.
+    {
+      name: 'license',
+      kind: 'reference',
+      filterable: true,
+      output: true,
+      ref: { typeName: 'License', strategy: 'idOnly' },
     },
     {
       name: 'size',

@@ -129,6 +129,16 @@ How much of a referenced entity a reference carries: `idOnly` (the IRI),
 `labelOnly` (+ its Label Source’s label, resolved at query time), `inline`
 (+ its Reference Type’s projected fields).
 
+**Referent Identity**:
+The referent’s IRI – what a reference filters and facets on, always, and never
+its label. A label is for display and for free-text search: two datasets spell
+one concept differently, and one spelling covers concepts that are not the same
+thing, so it is not a selection key. A referent carrying no IRI therefore has
+nothing to select on, and only an **Inline Reference** – which carries fields,
+not identity – can hold it at all. The rule is what makes a facet count mean
+something: one bucket, one thing.
+_Avoid_: term key, facet value, reference id
+
 **Inline Reference**:
 A reference carrying its referent’s projected fields. Serves two jobs, told
 apart only by Roles:

@@ -165,9 +165,12 @@ editor.
   object’s fields directly and renders one referent at a time; scalars/booleans
   per kind; `date` → ISO 8601 string; nullability from `required` / `array` /
   `kind`.
-- **`where`** one input per `filterable` field (`StringFilter`, `IntRange` /
-  `FloatRange` / `DateRange`, or `Boolean`), plus **`id: StringFilter`** on every
-  type – the document’s IRI, declared by no type and filterable on all of them
+- **`where`** one input per `filterable` field, typed by what the field keys on:
+  a `keyword` holds literals (`KeywordFilter`), a `reference` holds identity
+  (`‹Target›Filter`, or `IRIFilter` when it names no target), and the numeric
+  kinds take `IntRange` / `FloatRange` / `DateRange`, a `boolean` a plain
+  `Boolean`. Every type also gets **`id: ‹Type›Filter`** – the document’s IRI,
+  declared by no type and filterable on all of them
   ([Lookup by IRI](./search#lookup-by-iri)). So the input always exists, even for
   a type that declares no filterable field of its own. Keys you write side by
   side all apply; two more keys combine them explicitly, so neither AND nor OR is
@@ -186,10 +189,13 @@ editor.
   defaults to `DESC`.
 - **Facets**: a keyed object with one field per `facetable` field, typed by
   the field’s declaration:
-  - a plain value facet returns `[ValueBucket!]!` – `value` + `count` + a
-    nullable `label`, the resolved data label for **reference** facets and
-    `null` for token/free-string facets whose display the consumer owns (its
-    own i18n, or the value itself);
+  - a **reference** facet returns `[IriBucket!]!` – `value` (an `IRI`) +
+    `count` + the resolved data `label`. `value` is typed as the
+    `‹Target›Filter` that selects it takes, so a bucket feeds that filter
+    back without a cast;
+  - a plain value facet returns `[ValueBucket!]!` – the same shape with a
+    `String` `value` and a `null` `label`, for token/free-string facets whose
+    display the consumer owns (its own i18n, or the value itself);
   - a numeric field with [`facetRanges`](./search#range-facets) returns
     `[RangeBucket!]!` instead – one bucket per declared half-open
     `[min, max)` bin, carrying `min`/`max` (null on an open end) and
@@ -226,6 +232,73 @@ first (in request order), then the remaining tagged languages, then untagged
 (`und`) last, so `[0]` is always the best available value. Override with the
 `languageOrder` schema option; the default ordering is exported as
 `defaultLanguageOrder` for composing your own.
+
+## Finding which fields accept an IRI
+
+In Linked Data one conceptual filter maps to several predicates, so a consumer
+building “everything referencing this IRI” has to know which of a type’s fields
+hold identity and which hold literals. The **filter input types answer that by
+introspection**, so nothing has to be hardcoded per deployment and nothing drifts
+when a field is added:
+
+```graphql
+scalar IRI
+
+input KeywordFilter {
+  in: [String!]
+} # literals
+input IRIFilter {
+  in: [IRI!]
+} # IRIs belonging to no collection
+input TermFilter {
+  in: [IRI!]
+} # IRIs of Term
+```
+
+There are two strategies, both answered by one cached introspection round-trip
+of the kind a client already sends – no metadata endpoint, and no directives
+(applied directives are absent from standard introspection anyway).
+
+**Coarse** – _“I hold an IRI and do not know where it came from.”_ Select every
+`‹Type›Criterion` field whose filter’s `in` element type is the `IRI` scalar.
+That yields the complete reference-field set for each collection.
+
+**Refined** – _“which fields could reference the collection I am browsing?”_ The
+`id` of every type is typed **self-referentially** (`TermWhere.id: TermFilter`),
+which is what connects a collection to the filter type accepting its IRIs:
+
+1. you queried some root field – an opaque string to you;
+2. follow its `where` argument to `‹Type›Where`, and its `id` key to a filter
+   type name;
+3. select the criterion fields of every collection whose filter is **that same
+   type**;
+4. build `or: [{ about: { in: [iri] } }, { material: { in: [iri] } }, …]`.
+
+The type name is **compared, never parsed** – a generic client needs no more
+knowledge of `TermFilter` than it already needs of the root field `terms`.
+
+**The two strategies do not carry the same guarantee.** Coarse is complete: every
+field keying on identity takes an `IRI`, so it returns all of them. Refined is a
+**narrowing** – it keys on the target a deployment _declares_, which need not be
+the only type the data admits there. A profile may allow a Person as the referent
+of a field declared `‹Term›`, and that field will not appear when you resolve
+through `PersonWhere.id`. What refined returns is correct; it is not necessarily
+everything. Use coarse whenever missing a reference would be wrong, and refined
+when a shorter, higher-precision list is what you want.
+
+**Known limit**: the refined strategy resolves only when the target is itself a
+root collection. A `ref` to a type no collection serves has no `‹Type›Where.id`
+to match against, so fall back to the coarse strategy – which is also the right
+one for a reference declared with no target at all (`IRIFilter`).
+
+Two further notes. `IRI` is wire-compatible with `String`, but GraphQL checks
+variable usage **nominally**, so a variable must be declared `[IRI!]` rather than
+`[String!]`. And a value with no scheme is rejected at coercion – so
+`where: { material: { in: ["boerenbont"] } }` is a coercion error explaining that
+the value is not an IRI, instead of a silently empty result, while the same value
+is perfectly valid on a `KeywordFilter` beside it. Passed through a variable it
+also carries the offending path (`where.material.in[0]`); written inline, GraphQL
+reports a source location instead.
 
 ## Pagination
 

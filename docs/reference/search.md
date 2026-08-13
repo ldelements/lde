@@ -294,13 +294,34 @@ for every kind alike, so the projection, the engine collection definition
 differently. Declare `array: true` wherever the source may carry several values
 you want to keep, including on an internal field a `derive` counts.
 
-A `reference` carries one of two strategies today: `labelOnly` (id + display
-label, resolved at query time from a label source) and `inline` (the referent’s
-own projected fields, carried inline). `idOnly` stays a forward declaration. A
-`labelOnly` reference’s `ref.typeName` is a name, not a key: it may name an
+A `reference` carries one of three strategies, which decide how much of the
+referent it carries and therefore what it surfaces as:
+
+| Strategy    | Carries                                                       | Surfaces as                               |
+| ----------- | ------------------------------------------------------------- | ----------------------------------------- |
+| `idOnly`    | the IRI                                                       | a bare `IRI`                              |
+| `labelOnly` | + a display label, resolved at query time from a label source | `{ id: IRI!, label: [LanguageString!]! }` |
+| `inline`    | + the referent’s own projected fields                         | a nested object                           |
+
+Reach for **`idOnly`** when the referent is not an entity this deployment
+describes – a canonical vocabulary URI, a licence, a content URL. It is the only
+strategy whose `ref.typeName` is optional, because it emits no type of its own to
+need a name for; declare one anyway where the IRIs form a nameable set, and an
+API surface can then tell them apart from IRIs at large. A `labelSource` is still
+honoured for facet bucket labels: the strategy governs the output shape, not
+whether a bucket can be labelled.
+
+A `labelOnly` reference’s `ref.typeName` is a name, not a key: it may name an
 indexed root type (`creator` → `Person`, with `labelSource: 'Person'`) – the
 standard way to reference entities of another collection; only an `inline`
 reference must resolve to a declared Reference Type.
+
+Note what this makes true of `kind`: **a `reference` holds identity, a `keyword`
+holds a literal.** A field over an IRI-valued property is a `reference` whatever
+shape you want it to surface as, so no declaration has to launder one through the
+other. The projection enforces the same rule from below – a reference value that
+is not an absolute IRI (a blank node label, a bare token) is dropped rather than
+indexed, since what a `labelOnly`/`idOnly` reference stores is a selection key.
 
 An **inline reference** resolves `ref.typeName` to a declared **Reference Type**
 and projects the referent through it – a nested `SearchDocument`, or an array
@@ -676,7 +697,7 @@ related to Van Gogh”, where the link may be recorded as `creator`, `about` or
 `contentLocation` depending on the source:
 
 ```graphql
-query Related($iri: StringFilter!) {
+query Related($iri: PersonFilter!) {
   heritageObjects(
     where: {
       material: { in: ["oil"] }

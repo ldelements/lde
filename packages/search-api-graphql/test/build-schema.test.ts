@@ -313,6 +313,28 @@ describe('buildGraphQLSchema', () => {
     ]);
   });
 
+  it('refuses to serve a non-IRI under IRI, naming the index rather than the query', async () => {
+    // An index written before the projection dropped blank-node referents. The
+    // field is typed `IRI`, and the coarse discovery strategy reads that as the
+    // promise that the value is a selection key – serving `_:b0` under it would
+    // make the promise false exactly where a consumer acts on it.
+    const { engine } = fakeEngine({
+      total: 0,
+      hits: [],
+      facets: { publisher: [{ value: '_:b0', count: 1 }] },
+    });
+    const result = await run(
+      `{ datasets { facets { publisher { value } } } }`,
+      {
+        engine,
+        acceptLanguage: ['nl'],
+      },
+    );
+    expect(result.errors?.[0]?.message).toMatch(
+      /IRI cannot serialize “_:b0”.*reindex/is,
+    );
+  });
+
   it('exposes range-facet bucket bounds, null for value facets and open ends', async () => {
     const { engine } = fakeEngine({
       total: 0,
@@ -552,7 +574,7 @@ describe('buildGraphQLSchema', () => {
     expect(query.where).toContainEqual({
       or: [{ field: 'status', in: ['valid'] }],
     });
-    // An empty StringFilter compiles to an empty membership.
+    // An empty filter compiles to an empty membership.
     expect(query.where).toContainEqual({ or: [{ field: 'keyword', in: [] }] });
     expect(query.where).toContainEqual({
       or: [{ field: 'size', range: { min: 1, max: 9 } }],
@@ -580,7 +602,7 @@ describe('buildGraphQLSchema', () => {
       { or: [{ field: 'id', in: ['https://id.example.org/a', 'urn:b'] }] },
     ]);
 
-    // An empty StringFilter compiles to an empty membership, as for any field.
+    // An empty filter compiles to an empty membership, as for any field.
     const empty = fakeEngine(canned);
     await run(`{ datasets(where: { id: {} }) { pagination { total } } }`, {
       engine: empty.engine,
@@ -804,8 +826,23 @@ describe('buildGraphQLSchema', () => {
     expect(sdl).toMatch(/size: \[RangeBucket!\]!/);
     expect(sdl).toMatch(/iiif: \[BooleanBucket!\]!/);
     expect(sdl).toMatch(/input DatasetWhere/);
-    expect(sdl).toMatch(/status: StringFilter/);
+    expect(sdl).toMatch(/status: KeywordFilter/);
     expect(sdl).toMatch(/size: IntRange/);
+  });
+
+  it('buckets a reference facet on IRI, so a bucket feeds the filter that selects it', () => {
+    const sdl = printSchema(
+      buildGraphQLSchema(searchSchema(schema), datasetOptions),
+    );
+    // The round trip a consumer actually makes: read `publisher`’s bucket
+    // `value`, send it back as `where: { publisher: { in: [...] } }`. Both sides
+    // are `IRI`, so no `String`-to-`IRI` boundary sits in the middle – the same
+    // contract BooleanBucket keeps for `is`.
+    expect(sdl).toMatch(/publisher: \[IriBucket!\]!/);
+    expect(sdl).toMatch(/type IriBucket \{\s+value: IRI!/);
+    expect(sdl).toMatch(/publisher: OrganizationFilter/);
+    // A literal-keyed facet keeps the literal-keyed bucket.
+    expect(sdl).toMatch(/type ValueBucket \{\s+value: String!/);
   });
 
   it('gives a boolean facet a real boolean value and no label to interpret', () => {
@@ -886,7 +923,7 @@ describe('buildGraphQLSchema', () => {
       // criteria then offer `id` alone.
       const personWhere = sdl.slice(sdl.indexOf('input PersonWhere {'));
       expect(personWhere.slice(0, personWhere.indexOf('\n}'))).toContain(
-        'id: StringFilter',
+        'id: PersonFilter',
       );
       expect(sdl).toMatch(/input PersonWhere \{[^}]*or: \[PersonCriterion!\]/);
       // `and` carries further `Where`s, so there is no second clause type.
@@ -895,7 +932,7 @@ describe('buildGraphQLSchema', () => {
       // A criterion is an atom, and for a type with no filterable field the
       // only atom available is the IRI lookup.
       expect(sdl).toMatch(
-        /input PersonCriterion @oneOf \{\s*id: StringFilter\s*\}/,
+        /input PersonCriterion @oneOf \{\s*id: PersonFilter\s*\}/,
       );
       // The shared reference shape is emitted once, reused by both types.
       expect(sdl.match(/^type Agent /gm)).toHaveLength(1);
@@ -957,7 +994,7 @@ describe('buildGraphQLSchema', () => {
       expect(sdl.match(/^type Person /gm)).toHaveLength(1);
       expect(sdl).toMatch(/author: PersonReference/);
       expect(sdl).toMatch(
-        /type PersonReference \{\s+id: String!\s+label: \[LanguageString!\]!\s+\}/,
+        /type PersonReference \{\s+id: IRI!\s+label: \[LanguageString!\]!\s+\}/,
       );
     });
 
@@ -980,7 +1017,7 @@ describe('buildGraphQLSchema', () => {
         buildGraphQLSchema(searchSchema(namedLabel, withReferenceToRoot)),
       );
       expect(sdl).toMatch(
-        /type PersonReference \{\s+id: String!\s+name: \[LanguageString!\]!\s+\}/,
+        /type PersonReference \{\s+id: IRI!\s+name: \[LanguageString!\]!\s+\}/,
       );
     });
 
@@ -1185,7 +1222,7 @@ describe('nested inline references', () => {
     // get. `id` is nullable: a referent needs no identity, so a blank-node one
     // nests without one.
     expect(sdl).toMatch(
-      /type MediaObject \{\s+id: String\s+contentUrl: \[String!\]!\s+width: Int\s+caption: \[LanguageString!\]!\s+\}/,
+      /type MediaObject \{\s+id: IRI\s+contentUrl: \[String!\]!\s+width: Int\s+caption: \[LanguageString!\]!\s+\}/,
     );
     // An Internal Field inside a Reference Type stays out of the API.
     expect(sdl).not.toMatch(/rawWidth/);
@@ -1285,10 +1322,10 @@ describe('nested inline references', () => {
       ),
     );
     expect(sdl).toMatch(
-      /type MediaObject \{\s+id: String\s+thumbnail: Thumbnail\s+\}/,
+      /type MediaObject \{\s+id: IRI\s+thumbnail: Thumbnail\s+\}/,
     );
     expect(sdl).toMatch(
-      /type Thumbnail \{\s+id: String\s+contentUrl: \[String!\]!\s+\}/,
+      /type Thumbnail \{\s+id: IRI\s+contentUrl: \[String!\]!\s+\}/,
     );
   });
 });
@@ -1359,7 +1396,7 @@ describe('field descriptions', () => {
     // The `where` input names the field a second time; a reader filtering by it
     // is the one most likely to need telling what it covers.
     expect(sdl()).toMatch(
-      /"""\s+Creators identified by URI[^"]*"""\s+creator: StringFilter/,
+      /"""\s+Creators identified by URI[^"]*"""\s+creator: PersonFilter/,
     );
   });
 
@@ -1368,5 +1405,336 @@ describe('field descriptions', () => {
     // or this would pass whether or not one had been emitted.
     expect(sdl()).not.toMatch(/"""[^"]*"""\s+label: \[LanguageString/);
     expect(sdl()).toMatch(/\n {2}label: \[LanguageString!\]!/);
+  });
+});
+
+describe('discovering which fields accept an IRI', () => {
+  // Two collections, plus the fields a consumer has to be able to tell apart:
+  // references to an indexed target (`about`, `material`, `creator`), a
+  // reference to a target no collection serves (`license`), and a literal field
+  // whose values look nothing like IRIs (`identifier`).
+  const term: RootType = {
+    name: 'Term',
+    class: 'https://schema.org/DefinedTerm',
+    fields: [
+      {
+        name: 'label',
+        kind: 'text',
+        locales: ['nl'],
+        output: true,
+        searchable: { weight: 5 },
+      },
+    ],
+  };
+  const person: RootType = {
+    name: 'Person',
+    class: 'https://schema.org/Person',
+    fields: [
+      {
+        name: 'label',
+        kind: 'text',
+        locales: ['nl'],
+        output: true,
+        searchable: { weight: 5 },
+      },
+    ],
+  };
+  const work: RootType = {
+    name: 'CreativeWork',
+    class: 'https://schema.org/CreativeWork',
+    fields: [
+      { name: 'identifier', kind: 'keyword', filterable: true, output: true },
+      {
+        name: 'about',
+        kind: 'reference',
+        array: true,
+        filterable: true,
+        output: true,
+        labelSource: 'Term',
+        ref: { typeName: 'Term', strategy: 'labelOnly' },
+      },
+      {
+        name: 'material',
+        kind: 'reference',
+        array: true,
+        filterable: true,
+        output: true,
+        labelSource: 'Term',
+        ref: { typeName: 'Term', strategy: 'labelOnly' },
+      },
+      {
+        name: 'creator',
+        kind: 'reference',
+        array: true,
+        filterable: true,
+        output: true,
+        labelSource: 'Person',
+        ref: { typeName: 'Person', strategy: 'labelOnly' },
+      },
+      {
+        name: 'license',
+        kind: 'reference',
+        array: true,
+        filterable: true,
+        output: true,
+        ref: { strategy: 'idOnly' },
+      },
+      // Single-valued, so the flat IRI is the value rather than a list of them.
+      {
+        name: 'iiifManifest',
+        kind: 'reference',
+        output: true,
+        ref: { strategy: 'idOnly' },
+      },
+    ],
+  };
+  const built = buildGraphQLSchema(searchSchema(term, person, work));
+
+  /**
+   * ONE introspection round-trip, of the kind a consumer already sends – no
+   * bespoke endpoint, no metadata query, no directives (applied directives are
+   * absent from standard introspection anyway). Everything below is derived
+   * from this result; not one domain name is written into the traversal.
+   */
+  const INTROSPECTION = `{
+    __schema {
+      queryType { fields { name args { name type { name ofType { name } } } } }
+      types {
+        name
+        inputFields { name type { name ofType { name kind ofType { name ofType { name } } } } }
+      }
+    }
+  }`;
+
+  interface TypeRef {
+    readonly name: string | null;
+    readonly kind?: string;
+    readonly ofType?: TypeRef | null;
+  }
+  interface InputType {
+    readonly name: string;
+    readonly inputFields:
+      readonly { readonly name: string; readonly type: TypeRef }[] | null;
+  }
+
+  /** The innermost named type of a possibly wrapped reference. */
+  const named = (type: TypeRef | null | undefined): string | undefined =>
+    type == null ? undefined : (type.name ?? named(type.ofType));
+
+  async function introspect() {
+    const result = await graphql({ schema: built, source: INTROSPECTION });
+    expect(result.errors).toBeUndefined();
+    const data = result.data as unknown as {
+      __schema: {
+        queryType: {
+          fields: readonly {
+            name: string;
+            args: readonly { name: string; type: TypeRef }[];
+          }[];
+        };
+        types: readonly InputType[];
+      };
+    };
+    const byName = new Map(
+      data.__schema.types.map((type) => [type.name, type]),
+    );
+    /** The `‹Type›Criterion` a root field reaches through its `where` argument:
+     *  `where` → the Where input → its `or` key → the criterion element type.
+     *  Structural throughout; no name is pattern-matched. */
+    const criterionOf = (
+      rootField:
+        { args: readonly { name: string; type: TypeRef }[] } | undefined,
+    ) => {
+      const whereType = byName.get(
+        named(rootField?.args.find((arg) => arg.name === 'where')?.type) ?? '',
+      );
+      const or = whereType?.inputFields?.find((field) => field.name === 'or');
+      return byName.get(named(or?.type) ?? '');
+    };
+    /** The element type of a filter input's `in` key, or undefined when the
+     *  filter has none (a range or a boolean). */
+    const elementOf = (filterName: string | undefined) =>
+      named(
+        byName
+          .get(filterName ?? '')
+          ?.inputFields?.find((field) => field.name === 'in')?.type,
+      );
+    return { data, byName, criterionOf, elementOf };
+  }
+
+  it('answers the coarse strategy: every field that accepts an IRI, with no origin collection', async () => {
+    // What a consumer holding an IRI of unknown provenance needs: select every
+    // criterion field whose filter takes IRIs. No knowledge of the domain, and
+    // no idea which collection the IRI came from.
+    const { data, criterionOf, elementOf } = await introspect();
+    const iriFields = new Map<string, string[]>();
+    for (const rootField of data.__schema.queryType.fields) {
+      const criterion = criterionOf(rootField);
+      iriFields.set(
+        rootField.name,
+        (criterion?.inputFields ?? [])
+          .filter((field) => elementOf(named(field.type)) === 'IRI')
+          .map((field) => field.name),
+      );
+    }
+
+    // Every reference field is found – whether or not its target is a
+    // collection – and `identifier`, which keys on a literal, is not.
+    expect(iriFields.get('creativeWorks')).toEqual([
+      'id',
+      'about',
+      'material',
+      'creator',
+      'license',
+    ]);
+    expect(iriFields.get('terms')).toEqual(['id']);
+  });
+
+  it('answers the refined strategy: the fields that could reference the collection being browsed', async () => {
+    // The consumer knows only which root field it queried – an opaque string to
+    // it. It resolves that collection to its filter type through `‹Type›Where.id`,
+    // then selects the criterion fields of every collection whose filter is the
+    // SAME type. The type name is compared, never parsed.
+    const { data, criterionOf } = await introspect();
+    const browsing = data.__schema.queryType.fields.find(
+      (field) => field.name === 'terms',
+    );
+    const idFilter = named(
+      criterionOf(browsing)?.inputFields?.find((field) => field.name === 'id')
+        ?.type,
+    );
+
+    const referencing = new Map<string, string[]>();
+    for (const rootField of data.__schema.queryType.fields) {
+      referencing.set(
+        rootField.name,
+        (criterionOf(rootField)?.inputFields ?? [])
+          .filter((field) => named(field.type) === idFilter)
+          .map((field) => field.name),
+      );
+    }
+
+    // Only the Term-valued references – `creator` points at Person and
+    // `license` at a target no collection serves, so neither is offered.
+    expect(referencing.get('creativeWorks')).toEqual(['about', 'material']);
+    // The collection's own identity is the other half of the entity-page query:
+    // `or: [{ id: $iri }, { about: $iri }, { material: $iri }]`.
+    expect(referencing.get('terms')).toEqual(['id']);
+  });
+
+  it('rejects a value that is not an IRI, instead of matching nothing', async () => {
+    // The mistake this exists to catch: a readable token pasted into a field
+    // that keys on identity. Previously valid against the schema, and silently
+    // empty.
+    const engine: SearchEngine = {
+      schema: searchSchema(term, person, work),
+      async search() {
+        throw new Error('the engine must never be reached');
+      },
+      searchFacets: noFacets,
+    };
+    const result = await graphql({
+      schema: built,
+      source: `{ creativeWorks(where: { material: { in: ["boerenbont"] } }) { pagination { total } } }`,
+      contextValue: { engine, acceptLanguage: ['nl'] },
+    });
+    expect(result.errors?.[0]?.message).toMatch(
+      /IRI cannot represent “boerenbont”/,
+    );
+    // …while the literal-keyed field beside it takes the very same value.
+    const ok = await graphql({
+      schema: built,
+      source: `{ creativeWorks(where: { identifier: { in: ["boerenbont"] } }) { pagination { total } } }`,
+      contextValue: { engine, acceptLanguage: ['nl'] },
+    });
+    expect(ok.errors?.[0]?.message).not.toMatch(/IRI cannot represent/);
+  });
+
+  it('carries IRIs through variables and back out as a flat list', async () => {
+    // The other half of the round-trip: a consumer declares `[IRI!]` (not
+    // `[String!]` – GraphQL checks variable usage nominally), and an idOnly
+    // reference comes back as the bare IRIs it holds rather than as objects
+    // wrapping them.
+    const engine: SearchEngine = {
+      schema: searchSchema(term, person, work),
+      async search(): Promise<SearchResult> {
+        return {
+          total: 2,
+          hits: [
+            {
+              id: 'https://works/1',
+              document: {
+                license: [
+                  { id: 'https://creativecommons.org/licenses/by/4.0/' },
+                  // A referent carrying no IRI drops out, rather than nulling
+                  // the non-null list and with it the whole hit.
+                  {},
+                ],
+                iiifManifest: { id: 'https://works/1/manifest.json' },
+              },
+            },
+            // A work asserting no licence: the list is empty, never null.
+            { id: 'https://works/2', document: {} },
+          ],
+          facets: {},
+        };
+      },
+      searchFacets: noFacets,
+    };
+    const result = await graphql({
+      schema: built,
+      source: `query ($iris: [IRI!]) {
+        creativeWorks(where: { material: { in: $iris } }) {
+          items { id license iiifManifest }
+        }
+      }`,
+      variableValues: { iris: ['https://id.example.org/term/1'] },
+      contextValue: { engine, acceptLanguage: ['nl'] },
+    });
+    expect(result.errors).toBeUndefined();
+    expect(result.data).toEqual({
+      creativeWorks: {
+        items: [
+          {
+            id: 'https://works/1',
+            license: ['https://creativecommons.org/licenses/by/4.0/'],
+            iiifManifest: 'https://works/1/manifest.json',
+          },
+          // A work asserting neither: an empty list, and a null scalar.
+          { id: 'https://works/2', license: [], iiifManifest: null },
+        ],
+      },
+    });
+  });
+
+  it('refuses a type whose filter name would collide with a built-in one', async () => {
+    // graphql-js would reject the duplicate too, but only once the whole schema
+    // is assembled and without naming the declaration that caused it.
+    const keyword: RootType = {
+      name: 'Keyword',
+      class: 'https://example.org/Keyword',
+      fields: [],
+    };
+    expect(() => buildGraphQLSchema(searchSchema(keyword))).toThrow(
+      /“Keyword” would be filtered through “KeywordFilter”/,
+    );
+
+    // …and equally when the clash is with a type the declaration itself emits:
+    // a reference served as `TermFilter` beside a root type `Term`.
+    const clashing: RootType = {
+      name: 'Term',
+      class: 'https://example.org/Term',
+      fields: [
+        {
+          name: 'seeAlso',
+          kind: 'reference',
+          output: true,
+          ref: { typeName: 'TermFilter', strategy: 'labelOnly' },
+        },
+      ],
+    };
+    expect(() => buildGraphQLSchema(searchSchema(clashing))).toThrow(
+      /“Term” would be filtered through “TermFilter”/,
+    );
   });
 });
