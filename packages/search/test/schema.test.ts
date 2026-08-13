@@ -1128,6 +1128,38 @@ describe('searchSchema validation', () => {
       ).toThrow(/must declare an output, searchable text field “name”/);
     });
 
+    it('rejects a Reference Type as a label source: it cannot be searchable', () => {
+      // Why a label source is always a Root Type, and so always has a
+      // collection to resolve from: a Reference Type carries `output` only.
+      expect(() =>
+        searchSchema(
+          {
+            name: 'Agent',
+            fields: [
+              {
+                name: 'label',
+                kind: 'text',
+                locales: ['und'],
+                output: true,
+                searchable: { weight: 1 },
+              },
+            ],
+          },
+          {
+            name: 'Dataset',
+            class: DATASET,
+            fields: [
+              {
+                name: 'publisher',
+                kind: 'reference',
+                labelSource: 'Agent',
+              },
+            ],
+          },
+        ),
+      ).toThrow(/Nested field “Agent.label” declares “searchable”/);
+    });
+
     it('rejects a labelSource on a non-reference field', () => {
       expect(() =>
         searchSchema(organization, {

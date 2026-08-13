@@ -721,6 +721,11 @@ export function labelFieldOf(searchType: SearchType): TextField | undefined {
  * Every {@link ReferenceField.labelSource} must name a declared type that can
  * actually serve labels ({@link labelFieldOf}). Checked schema-wide, because
  * a single declaration cannot see its siblings.
+ *
+ * That leaves only a {@link RootType}, without naming one: a label field is
+ * `searchable`, and {@link assertServiceableNestedFields} already rejects a
+ * `searchable` field on a Reference Type – so a Reference Type can never serve
+ * labels, and a resolved label always has a collection to come from.
  */
 function assertResolvableLabelSources(types: readonly SearchType[]): void {
   const byName = new Map(

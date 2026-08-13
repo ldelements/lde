@@ -984,6 +984,50 @@ describe('buildGraphQLSchema', () => {
       );
     });
 
+    it('throws when fields sharing a reference type disagree on the label word', () => {
+      // One emitted type cannot serve two words, and which one won would
+      // otherwise come down to declaration order.
+      const namedLabel: SearchType = { ...PERSON, labelField: 'name' };
+      const organization: SearchType = {
+        name: 'Organization',
+        class: 'https://schema.org/Organization',
+        fields: [
+          {
+            name: 'label',
+            kind: 'text',
+            locales: ['nl'],
+            output: true,
+            searchable: { weight: 1 },
+          },
+        ],
+      };
+      const twoSources: SearchType = {
+        name: 'CreativeWork',
+        class: 'https://schema.org/CreativeWork',
+        fields: [
+          {
+            name: 'creator',
+            kind: 'reference',
+            output: true,
+            labelSource: 'Person',
+            ref: { typeName: 'Agent', strategy: 'labelOnly' },
+          },
+          {
+            name: 'publisher',
+            kind: 'reference',
+            output: true,
+            labelSource: 'Organization',
+            ref: { typeName: 'Agent', strategy: 'labelOnly' },
+          },
+        ],
+      };
+      expect(() =>
+        buildGraphQLSchema(searchSchema(namedLabel, organization, twoSources)),
+      ).toThrow(
+        /“CreativeWork.creator” serves its label as “name”, but “Agent” is already served with “label”/,
+      );
+    });
+
     it('throws when the derived reference name is itself taken', () => {
       const takenDerivedName: SearchType = {
         name: 'PersonReference',

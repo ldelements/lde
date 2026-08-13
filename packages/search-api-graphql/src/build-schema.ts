@@ -239,18 +239,21 @@ export function buildGraphQLSchema(
   // and rejects duplicate names schema-wide.
   const referenceTypes = new Map<string, GraphQLObjectType>();
   const takenTypeNames = new Set(rootTypeNames);
+  /** The label key each id-plus-label reference type was registered with; no
+   *  entry for a surfaced inline one, which carries fields instead of a label. */
+  const labelKeys = new Map<string, string>();
 
   /** The key a reference serves its resolved label under: the name its label
    *  source declares that label field with, so the reference and the type it
-   *  resolves against agree on the word. */
-  function labelKeyOf(field: SearchField & { readonly kind: 'reference' }) {
-    const source =
-      field.labelSource === undefined
-        ? undefined
-        : rootTypesByName.get(field.labelSource);
-    return source === undefined
+   *  resolves against agree on the word. An id-only reference resolves no
+   *  label, so it keeps the default. `searchSchema` guarantees the source is a
+   *  declared Root Type. */
+  function labelKeyOf(
+    field: SearchField & { readonly kind: 'reference' },
+  ): string {
+    return field.labelSource === undefined
       ? DEFAULT_LABEL_FIELD
-      : labelFieldNameOf(source);
+      : labelFieldNameOf(rootTypesByName.get(field.labelSource)!);
   }
 
   /**
@@ -263,11 +266,19 @@ export function buildGraphQLSchema(
    * stays the id-plus-label pair its strategy carries.
    */
   function registerReferenceType(field: SearchField, owner: SearchType): void {
-    if (
-      field.kind !== 'reference' ||
-      field.ref === undefined ||
-      referenceTypes.has(field.ref.typeName)
-    ) {
+    if (field.kind !== 'reference' || field.ref === undefined) {
+      return;
+    }
+    if (referenceTypes.has(field.ref.typeName)) {
+      // Fields sharing a `ref.typeName` share one emitted type, so they must
+      // agree on the word it serves its label under – otherwise which one wins
+      // would come down to declaration order.
+      const registered = labelKeys.get(field.ref.typeName);
+      if (registered !== undefined && registered !== labelKeyOf(field)) {
+        throw new Error(
+          `Reference “${owner.name}.${field.name}” serves its label as “${labelKeyOf(field)}”, but “${field.ref.typeName}” is already served with “${registered}”; fields sharing a reference type must resolve labels from sources that agree on their labelField.`,
+        );
+      }
       return;
     }
     const { typeName } = field.ref;
@@ -281,6 +292,9 @@ export function buildGraphQLSchema(
     }
     takenTypeNames.add(graphQLName);
     const nested = nestedReferenceType(schema, field);
+    if (nested === undefined) {
+      labelKeys.set(typeName, labelKeyOf(field));
+    }
     referenceTypes.set(
       typeName,
       new GraphQLObjectType({

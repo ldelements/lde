@@ -342,8 +342,9 @@ way that depth could be unbounded – so it stays a bounded property of the
 declaration.
 
 A reference resolves its label from a **label source**: `labelSource` names
-the `SearchType` whose collection holds the referenced entities. The named
-type must declare an `output`, `searchable` text field called `label` –
+the Root Type whose collection holds the referenced entities – a Root Type
+specifically, since the labels are read from that collection. It must declare
+an `output`, `searchable` text field named by its label field (below) –
 `searchSchema` validates this schema-wide, so a dangling or unsuitable label
 source fails at startup. A reference without a `labelSource` stays id-only.
 
