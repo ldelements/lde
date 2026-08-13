@@ -1,12 +1,14 @@
 import {
   GraphQLBoolean,
   GraphQLEnumType,
+  GraphQLError,
   GraphQLFloat,
   GraphQLInputObjectType,
   GraphQLInt,
   GraphQLList,
   GraphQLNonNull,
   GraphQLObjectType,
+  GraphQLScalarType,
   GraphQLSchema,
   GraphQLString,
   printSchema,
@@ -35,6 +37,7 @@ import {
   filterOn,
   filterOperatorFor,
   ID_FIELD,
+  isAbsoluteIri,
   OR_KEY,
   isRangeFacet,
   labelFieldNameOf,
@@ -107,6 +110,67 @@ const scalarOutput = (
 ): GraphQLOutputType =>
   field.required === true ? new GraphQLNonNull(scalar) : scalar;
 
+/**
+ * The IRI scalar: an absolute IRI, serialized as a string.
+ *
+ * Its job is to make a filter’s **element type** tell a consumer what the filter
+ * keys on, so “which of this type’s fields accept an IRI” is answerable by
+ * introspection instead of by a hardcoded, per-deployment list of predicates
+ * that drifts whenever a field is added. Wire-compatible with `String` – but
+ * deliberately NOT the same type, since the whole point is that the two are
+ * distinguishable. Consequence for consumers: a variable must be declared
+ * `[IRI!]`, not `[String!]`, because GraphQL checks variable usage nominally.
+ *
+ * **Input coercion validates; output serialization does not.** Rejecting a bare
+ * token on the way in is what turns `where: { material: { in: ["boerenbont"] } }`
+ * from a silent empty result into an error saying why – the same job
+ * `argsToQuery` already does for an out-of-range `perPage`.
+ *
+ * It validates on the way **out** too, and deliberately: a type that is enforced
+ * in one direction only is not a type a consumer can rely on, and the coarse
+ * discovery strategy reads `IRI` as the promise that a value is a selection key.
+ * Serving a non-IRI under it would make the promise false exactly where a
+ * consumer acts on it. The projection applies the same rule at the source, so
+ * the only way to reach this error is an index written before it existed – which
+ * a reindex fixes, and which failing names instead of hiding.
+ *
+ * What counts as an IRI is {@link isAbsoluteIri} – shared with the projection,
+ * so the surface cannot promise something the index contradicts.
+ */
+const iriScalar = new GraphQLScalarType<string, string>({
+  name: 'IRI',
+  description:
+    'An absolute IRI (RFC 3987), serialized as a string. Any scheme – `https:`, `urn:`, `doi:`, `ark:` – not only HTTP. A field or filter typed `IRI` keys on identity, never on a literal.',
+  specifiedByURL: 'https://www.rfc-editor.org/rfc/rfc3987',
+  serialize: (value: unknown) =>
+    assertIriOut(
+      (GraphQLString.serialize as (value: unknown) => string)(value),
+    ),
+  parseValue: (value: unknown) => assertIri(GraphQLString.parseValue(value)),
+  parseLiteral: (node, variables) =>
+    assertIri(GraphQLString.parseLiteral(node, variables)),
+});
+
+function assertIri(value: string): string {
+  if (!isAbsoluteIri(value)) {
+    throw new GraphQLError(
+      `IRI cannot represent “${value}”: an IRI needs a scheme (for example “https:”, “urn:” or “doi:”) and no whitespace. A value like this is usually a label or a token, which selects nothing on a field that keys on identity.`,
+    );
+  }
+  return value;
+}
+
+/** Outbound the fault is the index, not the caller, so the message points at
+ *  the fix rather than at the query. */
+function assertIriOut(value: string): string {
+  if (!isAbsoluteIri(value)) {
+    throw new GraphQLError(
+      `IRI cannot serialize “${value}”: the index holds a value that is not an absolute IRI on a field that keys on identity. The projection drops such values at the source, so this document predates that rule – reindex it.`,
+    );
+  }
+  return value;
+}
+
 /** SCREAMING_SNAKE_CASE for an enum value name, e.g. `datePosted` → `DATE_POSTED`. */
 function screamingSnake(name: string): string {
   return name.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toUpperCase();
@@ -147,24 +211,38 @@ export function buildGraphQLSchema(
       value: { type: new GraphQLNonNull(GraphQLString) },
     },
   });
-  // A plain value facet bucket: a selection key, its count, and (for reference
-  // facets) the engine-resolved data label; null for token/free-string facets
-  // whose display the consumer owns.
-  const valueBucket = new GraphQLObjectType({
-    name: 'ValueBucket',
-    fields: {
-      value: { type: new GraphQLNonNull(GraphQLString) },
-      count: { type: new GraphQLNonNull(GraphQLInt) },
-      label: {
-        type: new GraphQLList(new GraphQLNonNull(languageString)),
-        resolve: (bucket: Source, _args: unknown, context: SearchContext) => {
-          const label = bucket.label as LocalizedValue | undefined;
-          return label
-            ? toLanguageStrings(label, context.acceptLanguage, languageOrder)
-            : null;
-        },
+  // A value facet bucket: a selection key, its count, and (for reference facets)
+  // the engine-resolved data label; null for token/free-string facets whose
+  // display the consumer owns. Only the key’s type varies between the two – a
+  // facet keys on whatever its field keys on – so both are built from here and
+  // cannot drift apart.
+  const valueBucketFields = (
+    keyType: GraphQLScalarType,
+  ): Record<string, GraphQLFieldConfig<Source, SearchContext>> => ({
+    value: { type: new GraphQLNonNull(keyType) },
+    count: { type: new GraphQLNonNull(GraphQLInt) },
+    label: {
+      type: new GraphQLList(new GraphQLNonNull(languageString)),
+      resolve: (bucket: Source, _args: unknown, context: SearchContext) => {
+        const label = bucket.label as LocalizedValue | undefined;
+        return label
+          ? toLanguageStrings(label, context.acceptLanguage, languageOrder)
+          : null;
       },
     },
+  });
+  const valueBucket = new GraphQLObjectType({
+    name: 'ValueBucket',
+    fields: valueBucketFields(GraphQLString),
+  });
+  // A reference facet’s bucket, whose `value` is an `IRI` because the field it
+  // buckets keys on identity. This is what makes the round trip typed end to
+  // end: the bucket a consumer selects feeds straight into the ‹Target›Filter
+  // that selects it, with no `String`-to-`IRI` boundary in between – the
+  // contract BooleanBucket already keeps for `is`.
+  const iriBucket = new GraphQLObjectType({
+    name: 'IriBucket',
+    fields: valueBucketFields(iriScalar),
   });
   // A numeric range-facet bin: half-open `[min, max)` bounds (max null on an
   // open-ended top bin) and the count of documents in it.
@@ -204,12 +282,68 @@ export function buildGraphQLSchema(
     name: 'SortDirection',
     values: { ASC: { value: 'asc' }, DESC: { value: 'desc' } },
   });
-  const stringFilter = new GraphQLInputObjectType({
-    name: 'StringFilter',
+  // Membership filters, split by what the field keys on. A `keyword` field
+  // holds literals (an accession number, an ISO 8601 string, a token); a
+  // `reference` holds identity. One shared `StringFilter` said neither, which
+  // left `where: { material: { in: ["boerenbont"] } }` valid, silent and empty.
+  const keywordFilter = new GraphQLInputObjectType({
+    name: 'KeywordFilter',
+    description: 'Matches a field holding literal values.',
     fields: {
       in: { type: new GraphQLList(new GraphQLNonNull(GraphQLString)) },
     },
   });
+  // The fallback for a reference whose referent is nameable as no type: a
+  // canonical vocabulary URI, a licence, a content URL. Its `in` element type is
+  // what the COARSE discovery strategy matches on – select every criterion field
+  // whose filter takes IRIs, and you have the complete reference-field set with
+  // no origin collection at all.
+  const iriFilter = new GraphQLInputObjectType({
+    name: 'IRIFilter',
+    description:
+      'Matches a field holding IRIs that belong to no collection this API serves.',
+    fields: { in: { type: new GraphQLList(new GraphQLNonNull(iriScalar)) } },
+  });
+  /**
+   * The filter input for IRIs of one named target, `‹TypeName›Filter` – created
+   * once per target and shared by every field pointing at it, INCLUDING the
+   * target’s own `id`. That sharing is the whole mechanism: a consumer resolves
+   * the collection it is browsing to its filter type through `‹Type›Where.id`,
+   * then selects the criterion fields of every other type whose filter is that
+   * same type. The name is COMPARED, never parsed – a generic consumer needs no
+   * more knowledge of `TermFilter` than it already needs of `terms`.
+   */
+  const targetFilters = new Map<string, GraphQLInputObjectType>();
+  function targetFilter(typeName: string): GraphQLInputObjectType {
+    const existing = targetFilters.get(typeName);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const name = `${typeName}Filter`;
+    // graphql-js would reject the duplicate too, but only once the whole schema
+    // is assembled and without saying which declaration caused it. Checked
+    // against every name already claimed – the built-in filters, the `IRI`
+    // scalar, and every root/reference type – since a declaration is free to
+    // name a type `TermFilter` beside a root type `Term`.
+    if (
+      name === keywordFilter.name ||
+      name === iriFilter.name ||
+      name === iriScalar.name ||
+      takenTypeNames.has(name)
+    ) {
+      throw new Error(
+        `Type “${typeName}” would be filtered through “${name}”, which is already the name of another type; rename one of them.`,
+      );
+    }
+    takenTypeNames.add(name);
+    const filter = new GraphQLInputObjectType({
+      name,
+      description: `Matches a field holding IRIs of ${typeName}.`,
+      fields: { in: { type: new GraphQLList(new GraphQLNonNull(iriScalar)) } },
+    });
+    targetFilters.set(typeName, filter);
+    return filter;
+  }
   const intRange = rangeInput('IntRange', GraphQLInt);
   const floatRange = rangeInput('FloatRange', GraphQLFloat);
   const dateRange = rangeInput('DateRange', GraphQLString);
@@ -266,7 +400,15 @@ export function buildGraphQLSchema(
    * stays the id-plus-label pair its strategy carries.
    */
   function registerReferenceType(field: SearchField, owner: SearchType): void {
-    if (field.kind !== 'reference' || field.ref === undefined) {
+    if (
+      field.kind !== 'reference' ||
+      field.ref === undefined ||
+      // An `idOnly` reference carries the IRI and nothing else, so it surfaces
+      // as the IRI itself rather than as an object – there is no type to
+      // register, and no name needed to register one under.
+      field.ref.strategy === 'idOnly' ||
+      field.ref.typeName === undefined
+    ) {
       return;
     }
     if (referenceTypes.has(field.ref.typeName)) {
@@ -307,16 +449,18 @@ export function buildGraphQLSchema(
         > =>
           nested === undefined
             ? {
+                id: { type: new GraphQLNonNull(iriScalar) },
                 // The same word the label source declares its label field
                 // under (`label` by default): one resolved label, one name for
                 // it wherever it surfaces.
-                id: { type: new GraphQLNonNull(GraphQLString) },
                 [labelKeyOf(field)]: labelList(
                   (source) => source.label as LocalizedValue | undefined,
                 ),
               }
             : {
-                id: { type: GraphQLString },
+                // Nullable, and load-bearing: a referent needs no identity, so
+                // a blank-node one nests exactly like a named one, minus this.
+                id: { type: iriScalar },
                 ...Object.fromEntries(
                   outputFields(nested).map((nestedField) => [
                     nestedField.name,
@@ -367,6 +511,32 @@ export function buildGraphQLSchema(
             }
           : { type: scalarOutput(GraphQLString, field) };
       case 'reference': {
+        // `idOnly`: the IRI itself, not an object wrapping it – so a field whose
+        // referent this deployment does not describe (a vocabulary URI, a
+        // licence, a content URL) reads as the flat list of IRIs it is, while
+        // still declaring what it holds.
+        //
+        // The IR still carries a `Reference` here, as it does for every
+        // non-inline reference (see `SearchValue`): the strategy is a statement
+        // about the SURFACE, not about the port, so the flattening belongs on
+        // this side rather than in each adapter’s result reconstruction. A
+        // referent carrying no IRI drops out instead of nulling the field.
+        if (field.ref?.strategy === 'idOnly') {
+          const iriOf = (value: unknown): string | undefined =>
+            (value as { readonly id?: string } | null | undefined)?.id;
+          return field.array === true
+            ? {
+                type: nonNullListOf(iriScalar),
+                resolve: (source) =>
+                  ((source[field.name] as readonly unknown[] | undefined) ?? [])
+                    .map(iriOf)
+                    .filter((iri): iri is string => iri !== undefined),
+              }
+            : {
+                type: scalarOutput(iriScalar, field),
+                resolve: (source) => iriOf(source[field.name]) ?? null,
+              };
+        }
         const referenceType = referenceTypes.get(field.ref?.typeName ?? '')!;
         return field.array === true
           ? {
@@ -403,10 +573,18 @@ export function buildGraphQLSchema(
     }
   }
 
+  /** The filter input one field accepts, fixed by what the field keys on: a
+   *  `reference` keys on identity (its target’s filter, or `IRIFilter` when it
+   *  names no target), a `keyword` on literals. */
   function whereFieldType(field: SearchField): GraphQLInputType {
     switch (filterOperatorFor(field.kind)) {
       case 'in':
-        return stringFilter;
+        if (field.kind !== 'reference') {
+          return keywordFilter;
+        }
+        return field.ref?.typeName === undefined
+          ? iriFilter
+          : targetFilter(field.ref.typeName);
       case 'range':
         return field.kind === 'integer'
           ? intRange
@@ -432,7 +610,7 @@ export function buildGraphQLSchema(
           string,
           GraphQLFieldConfig<Source, SearchContext>
         > = {
-          id: { type: new GraphQLNonNull(GraphQLString) },
+          id: { type: new GraphQLNonNull(iriScalar) },
         };
         for (const field of outputFields(searchType)) {
           fields[field.name] = outputFieldConfig(field);
@@ -455,7 +633,11 @@ export function buildGraphQLSchema(
      */
     const fieldKeys = (): Record<string, GraphQLInputFieldConfig> => {
       const fields: Record<string, GraphQLInputFieldConfig> = {
-        [ID_FIELD]: { type: stringFilter },
+        // Typed self-referentially – `TermWhere.id: TermFilter` – so a consumer
+        // can resolve “the collection I am browsing” to “the filter type that
+        // accepts its IRIs”, which is what makes the refined discovery strategy
+        // work without hardcoding a single domain name.
+        [ID_FIELD]: { type: targetFilter(typeName) },
       };
       for (const field of filterable) {
         fields[field.name] = {
@@ -525,8 +707,8 @@ export function buildGraphQLSchema(
     });
 
     // Keyed facets object: one field per facetable field, typed by its kind
-    // (range fields → [RangeBucket!], boolean fields → [BooleanBucket!], else
-    // [ValueBucket!]). Only the selected
+    // (range fields → [RangeBucket!], boolean fields → [BooleanBucket!],
+    // reference fields → [IriBucket!], else [ValueBucket!]). Only the selected
     // fields are resolved (GraphQL prunes the rest), so the selection IS the
     // request; how they are computed – skip-own-filter, batched into one
     // engine dispatch – lives in facet-batch.ts.
@@ -596,10 +778,14 @@ export function buildGraphQLSchema(
   }
 
   /** The bucket type a facet’s kind earns: bins for a range facet, a real
-   *  boolean for a boolean one, a keyed value otherwise. */
+   *  boolean for a boolean one, an `IRI` key for a reference, a literal key
+   *  otherwise. The reference test is the one {@link whereFieldType} applies, so
+   *  a bucket and the filter it feeds cannot disagree about what the field keys
+   *  on. */
   function bucketTypeFor(field: SearchField): GraphQLObjectType {
     if (isRangeFacet(field)) return rangeBucket;
-    return field.kind === 'boolean' ? booleanBucket : valueBucket;
+    if (field.kind === 'boolean') return booleanBucket;
+    return field.kind === 'reference' ? iriBucket : valueBucket;
   }
 
   /** The keyed facets object for one type (only called with ≥ 1 facetable field). */

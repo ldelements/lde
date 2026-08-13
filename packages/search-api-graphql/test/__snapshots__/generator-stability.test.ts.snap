@@ -12,12 +12,14 @@ type ThingSearchResult {
 }
 
 type Thing {
-  id: String!
+  id: IRI!
   title: [LanguageString!]!
   description: [LanguageString!]!
   keyword: [String!]!
   creator: [Agent!]!
   publisher: Agent
+  sameAs: [IRI!]!
+  license: IRI
   size: Int
   score: Float
   created: String
@@ -25,13 +27,18 @@ type Thing {
   open: Boolean!
 }
 
+"""
+An absolute IRI (RFC 3987), serialized as a string. Any scheme – \`https:\`, \`urn:\`, \`doi:\`, \`ark:\` – not only HTTP. A field or filter typed \`IRI\` keys on identity, never on a literal.
+"""
+scalar IRI @specifiedBy(url: "https://www.rfc-editor.org/rfc/rfc3987")
+
 type LanguageString {
   language: String
   value: String!
 }
 
 type Agent {
-  id: String!
+  id: IRI!
   label: [LanguageString!]!
 }
 
@@ -43,14 +50,21 @@ type Pagination {
 
 type ThingFacets {
   keyword: [ValueBucket!]!
-  creator: [ValueBucket!]!
-  publisher: [ValueBucket!]!
+  creator: [IriBucket!]!
+  publisher: [IriBucket!]!
+  sameAs: [IriBucket!]!
   status: [ValueBucket!]!
   open: [BooleanBucket!]!
 }
 
 type ValueBucket {
   value: String!
+  count: Int!
+  label: [LanguageString!]
+}
+
+type IriBucket {
+  value: IRI!
   count: Int!
   label: [LanguageString!]
 }
@@ -64,14 +78,16 @@ type BooleanBucket {
 Sibling keys are combined with AND. Use \`or\` for a disjunction, and \`and\` when a query needs more than one of them.
 """
 input ThingWhere {
-  id: StringFilter
-  keyword: StringFilter
-  creator: StringFilter
-  publisher: StringFilter
+  id: ThingFilter
+  keyword: KeywordFilter
+  creator: AgentFilter
+  publisher: AgentFilter
+  sameAs: IRIFilter
+  license: LicenseFilter
   size: IntRange
   score: FloatRange
   created: DateRange
-  status: StringFilter
+  status: KeywordFilter
   open: Boolean
 
   """
@@ -85,8 +101,31 @@ input ThingWhere {
   and: [ThingWhere!]
 }
 
-input StringFilter {
+"""Matches a field holding IRIs of Thing."""
+input ThingFilter {
+  in: [IRI!]
+}
+
+"""Matches a field holding literal values."""
+input KeywordFilter {
   in: [String!]
+}
+
+"""Matches a field holding IRIs of Agent."""
+input AgentFilter {
+  in: [IRI!]
+}
+
+"""
+Matches a field holding IRIs that belong to no collection this API serves.
+"""
+input IRIFilter {
+  in: [IRI!]
+}
+
+"""Matches a field holding IRIs of License."""
+input LicenseFilter {
+  in: [IRI!]
 }
 
 input IntRange {
@@ -108,14 +147,16 @@ input DateRange {
 A condition on exactly one field. Used inside \`or\`, where the criteria are alternatives.
 """
 input ThingCriterion @oneOf {
-  id: StringFilter
-  keyword: StringFilter
-  creator: StringFilter
-  publisher: StringFilter
+  id: ThingFilter
+  keyword: KeywordFilter
+  creator: AgentFilter
+  publisher: AgentFilter
+  sameAs: IRIFilter
+  license: LicenseFilter
   size: IntRange
   score: FloatRange
   created: DateRange
-  status: StringFilter
+  status: KeywordFilter
   open: Boolean
 }
 

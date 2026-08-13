@@ -10,6 +10,7 @@ import {
   displayFieldName,
   inlineFramingDepth,
   irAlias,
+  isAbsoluteIri,
   isInternalField,
   isInlineReference,
   isoToUnixSeconds,
@@ -80,7 +81,7 @@ export function projectDocument(
 ): SearchDocument {
   if (documentKey(node) === undefined) {
     throw new Error(
-      `Cannot project a “${searchType.name}” node without an @id (a blank node label is not one): every search document needs a stable key, and an empty one would collide with other keyless nodes.`,
+      `Cannot project a “${searchType.name}” node whose @id is not an absolute IRI (got ${JSON.stringify(node['@id']) ?? 'none'}; a blank node label or a relative reference is not one): every search document needs a stable key, and an empty one would collide with other keyless nodes.`,
     );
   }
   // The guard above is what makes this a SearchDocument: projectFields sets `id`
@@ -155,15 +156,17 @@ function projectFields(
 }
 
 /**
- * The document key a framed node carries, if any. A blank node label (`_:b0`) is
- * not one: framing mints it per call, so it recurs across documents and can
- * change when unrelated triples do. A node bearing one is therefore projected as
- * if framing had pruned its `@id` – which it does whenever the label occurs only
- * once in the framing results.
+ * The document key a framed node carries, if any – an {@link isAbsoluteIri
+ * absolute IRI}, the same rule {@link iriString} applies to a referent, so a
+ * root and a reference cannot disagree about what counts as identity. A blank
+ * node label (`_:b0`) is not one: framing mints it per call, so it recurs across
+ * documents and can change when unrelated triples do. A node bearing one is
+ * therefore projected as if framing had pruned its `@id` – which it does
+ * whenever the label occurs only once in the framing results.
  */
 function documentKey(node: FramedNode): string | undefined {
   const id = node['@id'];
-  return typeof id === 'string' && !id.startsWith('_:') ? id : undefined;
+  return typeof id === 'string' && isAbsoluteIri(id) ? id : undefined;
 }
 
 /**
@@ -520,14 +523,25 @@ function literalString(value: unknown): string | undefined {
   return undefined;
 }
 
+/**
+ * The IRI a reference value carries, or `undefined` when it carries none. A
+ * value may arrive as a bare string – `schema:sameAs`, `contentUrl`,
+ * `thumbnailUrl` and `landingPage` all range on `schema:URL`, which a source may
+ * emit as a literal rather than a node – or as a node object.
+ *
+ * **A referent with no IRI yields nothing**, the same rule {@link documentKey}
+ * applies to a root and for the same reason: what a `labelOnly`/`idOnly`
+ * reference stores is a selection key, and a blank node label is not one.
+ * Framing mints it per call, so it recurs across documents and changes when
+ * unrelated triples do – indexing it would key a facet bucket on a value that
+ * neither groups what is equal nor separates what is not. An **inline**
+ * reference is untouched by this: it carries the referent’s fields rather than
+ * its identity ({@link applyInlineReference}), so a blank-node referent nests
+ * exactly as before.
+ */
 function iriString(value: unknown): string | undefined {
-  if (typeof value === 'string') {
-    return value;
-  }
-  if (isObject(value) && typeof value['@id'] === 'string') {
-    return value['@id'];
-  }
-  return undefined;
+  const iri = isObject(value) ? value['@id'] : value;
+  return typeof iri === 'string' && isAbsoluteIri(iri) ? iri : undefined;
 }
 
 function toInteger(literal: string | undefined): number | undefined {

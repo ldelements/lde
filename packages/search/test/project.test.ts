@@ -267,6 +267,45 @@ describe('projectDocument', () => {
     ]);
   });
 
+  it('drops a reference value that is not an absolute IRI', () => {
+    // What a labelOnly/idOnly reference stores is a SELECTION KEY, and a blank
+    // node label is not one: framing mints it per call, so it recurs across
+    // documents and changes when unrelated triples do – a facet bucket keyed on
+    // it would neither group what is equal nor separate what is not. The same
+    // rule documentKey applies to a root, so the two cannot disagree about what
+    // counts as identity.
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/d/blank-referent',
+        [dsKey('class')]: [
+          { '@id': 'http://schema.org/Person' },
+          { '@id': '_:b0' },
+          { '@id': '/relative' },
+          'boerenbont',
+          { '@id': 'urn:example:ok' },
+        ],
+      },
+      {
+        name: 'Dataset',
+        class: DATASET,
+        fields: [
+          {
+            name: 'class',
+            path: `${DR}class`,
+            kind: 'reference',
+            array: true,
+            facetable: true,
+          },
+        ],
+      },
+    );
+
+    expect(document.class).toEqual([
+      'http://schema.org/Person',
+      'urn:example:ok',
+    ]);
+  });
+
   it('folds the transformed values (not the raw ones) for a facet search field', () => {
     const document = projectDocument(
       { '@id': 'https://ex/d/4', [dsKey('format')]: [`${IANA}text/turtle`] },
@@ -1060,7 +1099,7 @@ describe('projectDocument', () => {
         { [dsKey('title')]: { '@value': 'No id' } },
         { name: 'Dataset', class: DATASET, fields },
       ),
-    ).toThrow(/without an @id/);
+    ).toThrow(/@id is not an absolute IRI/);
   });
 
   it('throws when the framed node is keyed by a blank node label', () => {
@@ -1076,7 +1115,7 @@ describe('projectDocument', () => {
           fields,
         },
       ),
-    ).toThrow(/without an @id/);
+    ).toThrow(/@id is not an absolute IRI/);
   });
 
   it('projects nothing for a localized field with no locales (rejected at declaration time)', () => {

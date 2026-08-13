@@ -34,6 +34,7 @@ export {
   labelFieldNameOf,
   DEFAULT_LABEL_FIELD,
   isRangeFacet,
+  isAbsoluteIri,
   isoToUnixSeconds,
   unixSecondsToIso,
 } from './schema.js';

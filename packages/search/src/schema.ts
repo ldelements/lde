@@ -216,29 +216,57 @@ export interface ReferenceField extends SearchFieldBase, Searchable {
    * resolution.
    */
   readonly labelSource?: string;
-  /** The referenced entity’s shape and how much of it to carry. Required when
-   *  the field is `output` (the API surfaces need the reference type name);
-   *  optional for a facet- or filter-only reference. */
-  readonly ref?: {
-    /** Logical API type name of the referenced entity (PascalCase, e.g.
-     *  `Organization`) – names the reference’s type in the API surfaces, the
-     *  way {@link SearchType.name} names a root type; fields sharing it share
-     *  one emitted type. For a `labelOnly`/`idOnly` reference it is a name,
-     *  not a key: it need not correspond to any indexed root type, and it may
-     *  name one (`creator` → `Person`, with the labels resolved from that
-     *  root’s collection via `labelSource`) – an API surface then serves the
-     *  reference under a derived name (GraphQL: `‹Name›Reference`) to keep
-     *  type names unique. An `inline` reference’s typeName instead resolves to
-     *  a declared {@link ReferenceType}, so it can never name a root type. */
-    readonly typeName: string;
-    /** How much of the referenced entity the reference carries. `labelOnly`
-     *  (id + display label, resolved from a label source) and `inline` (the
-     *  referent’s own projected fields, carried inline through a declared
-     *  {@link ReferenceType} – see {@link isInlineReference}) are implemented;
-     *  `idOnly` is a forward declaration, so that declarations (and the SHACL
-     *  `search:nestedStrategy` mapping) keep their shape when it lands. */
-    readonly strategy: 'labelOnly' | 'idOnly' | 'inline';
-  };
+  /**
+   * The referenced entity’s shape and how much of it to carry. Required when
+   * the field is `output` – the strategy is what decides the output shape, so
+   * a surfaced reference must state it; optional for a facet- or filter-only
+   * reference.
+   *
+   * A **discriminated union by `strategy`**, because `typeName` is load-bearing
+   * for two of the three and meaningless for the third: a `labelOnly` reference
+   * needs a name to emit its id-plus-label type under, an `inline` one needs a
+   * name that resolves to a declared {@link ReferenceType}, and an `idOnly` one
+   * carries a bare IRI that may belong to no declared type at all (`sameAs`
+   * points at a vocabulary nobody indexes). Declaring `typeName` on an `idOnly`
+   * reference is still useful where a target *is* nameable – an API surface can
+   * then tell IRIs of that target apart from IRIs at large.
+   */
+  readonly ref?:
+    | {
+        /** Logical API type name of the referenced entity (PascalCase, e.g.
+         *  `Organization`) – names the reference’s type in the API surfaces,
+         *  the way {@link SearchType.name} names a root type; fields sharing it
+         *  share one emitted type. For a `labelOnly` reference it is a name,
+         *  not a key: it need not correspond to any indexed root type, and it
+         *  may name one (`creator` → `Person`, with the labels resolved from
+         *  that root’s collection via `labelSource`) – an API surface then
+         *  serves the reference under a derived name (GraphQL:
+         *  `‹Name›Reference`) to keep type names unique. An `inline`
+         *  reference’s typeName instead resolves to a declared
+         *  {@link ReferenceType}, so it can never name a root type. */
+        readonly typeName: string;
+        /** `labelOnly` carries the id plus a display label resolved from a
+         *  label source; `inline` carries the referent’s own projected fields
+         *  through a declared {@link ReferenceType} (see
+         *  {@link isInlineReference}). */
+        readonly strategy: 'labelOnly' | 'inline';
+      }
+    | {
+        /** Optional here, unlike the other strategies: an `idOnly` reference
+         *  emits no type of its own, so a name is not needed to emit one under.
+         *  Declare it when the referent’s IRIs form a nameable set an API
+         *  surface should distinguish; omit it for IRIs that belong to no such
+         *  set. */
+        readonly typeName?: string;
+        /** The IRI, and nothing else – no label resolution, no nested fields.
+         *  Surfaces as a bare IRI rather than an object, which is what makes it
+         *  the right strategy for a reference whose referent is not an entity
+         *  this deployment describes: a canonical vocabulary URI, a licence, a
+         *  content URL. A {@link ReferenceField.labelSource} is still honoured
+         *  for facet bucket labels – the strategy governs the output shape, not
+         *  whether a bucket can be labelled. */
+        readonly strategy: 'idOnly';
+      };
 }
 
 /**
@@ -1265,6 +1293,32 @@ export function isRangeFacet(
 ): field is NumericField & { readonly facetRanges: readonly FacetRange[] } {
   return field.facetRanges !== undefined && field.facetRanges.length > 0;
 }
+
+/**
+ * Whether a value is an **absolute IRI**: a scheme, then anything with no
+ * whitespace. The single definition the projection (which
+ * drops a reference value failing it) and an API surface (which types such a
+ * value as an IRI, and rejects one that is not) both read, so the two cannot
+ * disagree about what a reference holds – the argument {@link physicalFields}
+ * makes for the physical fanout.
+ *
+ * Deliberately a **scheme check, not an `http(s)` one**. `urn:`, `doi:`, `ark:`,
+ * `tag:`, `mailto:` and a deployment’s own minted scheme (`urn:lde:…`) are
+ * ordinary Linked Data, and rejecting them would make this package refuse
+ * conformant data. What the check does exclude is what a reference must never
+ * hold: a blank node label (`_:b0` – a scheme must start with a letter), a bare
+ * token (`boerenbont`), and a relative reference. Full RFC 3987 parsing would
+ * buy nothing over that while starting to reject real data with a character
+ * someone forgot to percent-encode.
+ */
+export function isAbsoluteIri(value: string): boolean {
+  return ABSOLUTE_IRI.test(value);
+}
+
+/** Scheme (RFC 3986 `ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )`), then any
+ *  run of non-whitespace. Non-ASCII is deliberately allowed: an IRI is not
+ *  restricted to ASCII. */
+const ABSOLUTE_IRI = /^[A-Za-z][A-Za-z0-9+.-]*:\S*$/;
 
 /**
  * The engine storage codec for `date` fields: stored as Unix seconds (a

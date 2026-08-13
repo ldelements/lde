@@ -16,8 +16,17 @@ Amended 2026-08-13: that word is the label source’s own – its
 `labelField`, `label` by default (see
 [ADR 8](./0008-resolve-reference-labels-from-per-reference-label-sources.md)),
 so a source declaring `labelField: 'name'` is served as `{ id, name }`. A
-`ValueBucket`’s `label` is unchanged: it is per-facet-field, and a per-type name
-would make the bucket type non-uniform.
+bucket’s `label` is unchanged: it is per-facet-field, and a per-type name would
+make the bucket type non-uniform.
+
+Amended by [ADR 19](./0019-type-a-filter-by-what-its-field-keys-on.md): the
+single `StringFilter` is replaced by filter inputs typed by what the field keys
+on (`KeywordFilter`, `IRIFilter`, `‹Target›Filter` over a new `IRI` scalar),
+`id` is filtered per type, and `idOnly` is implemented – so a reference surfaces
+as a bare `IRI` rather than being forward-declared. A reference facet’s bucket
+is `IriBucket`, whose `value` is an `IRI`, so the round trip from bucket to
+filter is typed end to end. The `StringFilter`, `ValueBucket` and `idOnly` rows
+below are historical.
 
 ## Context
 

@@ -6,6 +6,13 @@ Date: 2026-08-07
 
 Accepted
 
+Amended by [ADR 19](./0019-type-a-filter-by-what-its-field-keys-on.md), which
+answers the question this ADR left to the client – _which_ fields belong in an
+`or` list – by typing each filter input by what its field keys on. The
+`StringFilter` in the sketches below no longer exists: `id` is filtered through a
+per-type `‹Type›Filter`, and the other keys through `KeywordFilter`,
+`IRIFilter` or a per-target filter. The combinator shape is unchanged.
+
 Amends [ADR 3 (Search API core query model)](./0003-search-api-core-query-model.md)
 and [ADR 4 (Search API GraphQL surface)](./0004-search-api-graphql-surface.md);
 settles the facet interaction left open by
