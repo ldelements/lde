@@ -213,6 +213,17 @@ export default withMermaid({
     ],
     search: {
       provider: 'local',
+      options: {
+        miniSearch: {
+          searchOptions: {
+            // Architecture decision records document how we got here, so they
+            // rank below the guide and reference pages that explain how to use
+            // the packages.
+            boostDocument: (documentId: string) =>
+              documentId.startsWith('/decisions/') ? 0.3 : 1,
+          },
+        },
+      },
     },
     editLink: {
       pattern: 'https://github.com/ldelements/lde/edit/main/docs/:path',
