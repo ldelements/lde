@@ -29,6 +29,7 @@ import {
 } from '@lde/search';
 import {
   AND_KEY,
+  DEFAULT_LABEL_FIELD,
   facetableFields,
   filterableFields,
   filterOn,
@@ -36,6 +37,7 @@ import {
   ID_FIELD,
   OR_KEY,
   isRangeFacet,
+  labelFieldNameOf,
   nestedReferenceType,
   outputFields,
   pageForOffset,
@@ -126,9 +128,10 @@ export function buildGraphQLSchema(
 ): GraphQLSchema {
   const languageOrder = options.languageOrder ?? defaultLanguageOrder;
   const maxPerPage = options.maxPerPage ?? 100;
-  const rootTypeNames = new Set(
-    [...schema.values()].map((searchType) => searchType.name),
+  const rootTypesByName = new Map(
+    [...schema.values()].map((searchType) => [searchType.name, searchType]),
   );
+  const rootTypeNames = new Set(rootTypesByName.keys());
   for (const name of Object.keys(options.types ?? {})) {
     if (!rootTypeNames.has(name)) {
       throw new Error(
@@ -236,6 +239,22 @@ export function buildGraphQLSchema(
   // and rejects duplicate names schema-wide.
   const referenceTypes = new Map<string, GraphQLObjectType>();
   const takenTypeNames = new Set(rootTypeNames);
+  /** The label key each id-plus-label reference type was registered with; no
+   *  entry for a surfaced inline one, which carries fields instead of a label. */
+  const labelKeys = new Map<string, string>();
+
+  /** The key a reference serves its resolved label under: the name its label
+   *  source declares that label field with, so the reference and the type it
+   *  resolves against agree on the word. An id-only reference resolves no
+   *  label, so it keeps the default. `searchSchema` guarantees the source is a
+   *  declared Root Type. */
+  function labelKeyOf(
+    field: SearchField & { readonly kind: 'reference' },
+  ): string {
+    return field.labelSource === undefined
+      ? DEFAULT_LABEL_FIELD
+      : labelFieldNameOf(rootTypesByName.get(field.labelSource)!);
+  }
 
   /**
    * Register the GraphQL type one reference field is served as, once per
@@ -247,11 +266,19 @@ export function buildGraphQLSchema(
    * stays the id-plus-label pair its strategy carries.
    */
   function registerReferenceType(field: SearchField, owner: SearchType): void {
-    if (
-      field.kind !== 'reference' ||
-      field.ref === undefined ||
-      referenceTypes.has(field.ref.typeName)
-    ) {
+    if (field.kind !== 'reference' || field.ref === undefined) {
+      return;
+    }
+    if (referenceTypes.has(field.ref.typeName)) {
+      // Fields sharing a `ref.typeName` share one emitted type, so they must
+      // agree on the word it serves its label under – otherwise which one wins
+      // would come down to declaration order.
+      const registered = labelKeys.get(field.ref.typeName);
+      if (registered !== undefined && registered !== labelKeyOf(field)) {
+        throw new Error(
+          `Reference “${owner.name}.${field.name}” serves its label as “${labelKeyOf(field)}”, but “${field.ref.typeName}” is already served with “${registered}”; fields sharing a reference type must resolve labels from sources that agree on their labelField.`,
+        );
+      }
       return;
     }
     const { typeName } = field.ref;
@@ -265,6 +292,9 @@ export function buildGraphQLSchema(
     }
     takenTypeNames.add(graphQLName);
     const nested = nestedReferenceType(schema, field);
+    if (nested === undefined) {
+      labelKeys.set(typeName, labelKeyOf(field));
+    }
     referenceTypes.set(
       typeName,
       new GraphQLObjectType({
@@ -277,11 +307,11 @@ export function buildGraphQLSchema(
         > =>
           nested === undefined
             ? {
+                // The same word the label source declares its label field
+                // under (`label` by default): one resolved label, one name for
+                // it wherever it surfaces.
                 id: { type: new GraphQLNonNull(GraphQLString) },
-                // `label`, the same word the label source declares and a
-                // reference facet’s bucket carries: one resolved label, one
-                // name for it wherever it surfaces.
-                label: labelList(
+                [labelKeyOf(field)]: labelList(
                   (source) => source.label as LocalizedValue | undefined,
                 ),
               }

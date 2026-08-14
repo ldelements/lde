@@ -11,6 +11,14 @@ Amends the reference model of
 part of search as a Configurable Pipeline instance
 ([#534](https://github.com/ldelements/lde/issues/534)).
 
+Amended 2026-08-13: a type may name its own label field with
+`SearchTypeBase.labelField`, defaulting to `label`. The rules below are the
+label field’s, not the word’s – so a schema declaring to a profile that models
+display names as `schema:name` can serve `name` without the surface word being
+decided by the internal role of being a label source. The one-word invariant is
+untouched: whichever word the source declares, the reference resolving against
+it and the label field itself use that word.
+
 ## Context
 
 Reference labels resolved from one global sidecar `labels` collection,

@@ -92,8 +92,8 @@ Exports are stratified by audience:
     (`media.contentUrl`), the nested counterpart of `physicalFields`;
   - `inlineFramingDepth` – the framing depth a Root Type’s inline reference
     graph needs;
-  - `labelFieldOf` – the `label` text field a label source serves labels
-    from;
+  - `labelFieldOf`, `labelFieldNameOf` – the text field a label source serves
+    labels from, and the name it serves it under (`label` by default);
   - `filterOperatorFor`, `filterOperator`, `FilterOperator` – the kind→operator
     table and the operator a `Filter` value carries;
   - `validateQuery` / `QueryIssue`, `assertValidQuery` – query validation
@@ -342,16 +342,50 @@ way that depth could be unbounded – so it stays a bounded property of the
 declaration.
 
 A reference resolves its label from a **label source**: `labelSource` names
-the `SearchType` whose collection holds the referenced entities. The named
-type must declare an `output`, `searchable` text field called `label` –
+the Root Type whose collection holds the referenced entities – a Root Type
+specifically, since the labels are read from that collection. It must declare
+an `output`, `searchable` text field named by its label field (below) –
 `searchSchema` validates this schema-wide, so a dangling or unsuitable label
 source fails at startup. A reference without a `labelSource` stays id-only.
 
-The resolved label is called **`label`** wherever it surfaces: on the label
+The resolved label carries **one word** wherever it surfaces: on the label
 source’s own type, on the reference that resolves against it (`dataset { id
 label }`), and on a reference facet’s bucket. One word, one meaning – so a
 collection reads the same whether you arrive at it directly or through a
 reference.
+
+#### Naming the label field
+
+That word is `label` by default, but a type may name its own display field with
+`labelField`, so the surface word is the profile’s rather than one an internal
+role imposes. [SCHEMA-AP-NDE](https://docs.nde.nl/schema-profile/), for
+instance, models display names as `schema:name` on `Person`, `Organization`,
+`Place` and `DefinedTerm`, and consumers expect them served as `name`:
+
+```ts
+const term = defineSearchType({
+  name: 'Term',
+  class: `${SCHEMA}DefinedTerm`,
+  labelField: 'name',
+  fields: [
+    {
+      name: 'name',
+      kind: 'text',
+      locales: ['nl', 'und'],
+      path: [`${SCHEMA}name`],
+      output: true,
+      searchable: { weight: 4 },
+    },
+  ],
+});
+```
+
+The named field must still be an `output`, `searchable` text field – the rules
+are the label field’s, not the word’s – and a reference resolving against this
+type serves `theme { id name }`. `labelField` is ignored for a type nothing
+resolves labels from; without it, everything keeps serving `label`. A facet
+bucket’s `label` is unaffected: it is per-facet-field, and a per-type name would
+make the bucket shape non-uniform.
 
 ### Describing a field
 

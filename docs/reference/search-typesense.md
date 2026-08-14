@@ -122,7 +122,9 @@ down.
   reimplementing it.
 
 A label source is just another `SearchType` in the schema (with an `output`,
-`searchable` text field called `label`), so its collection is named by the same
+`searchable` text field under its
+[`labelField`](./search#naming-the-label-field) name, `label` by default), so
+its collection is named by the same
 convention as any other type’s – a typed entity collection and a ‘labels
 collection’ are the same kind of thing.
 
