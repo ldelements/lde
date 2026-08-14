@@ -665,7 +665,12 @@ export function buildGraphQLSchema(
       // A thunk: the target’s own `where` may point back through further
       // joinable references (the join graph is acyclic, so this terminates).
       fields: () => ({
-        in: { type: new GraphQLList(new GraphQLNonNull(GraphQLString)) },
+        // `IRI`, exactly as `‹Target›Filter` types it: this arm asks the same
+        // question that filter asks – which of the target’s ids the field
+        // holds – so it must accept the same variable a consumer declares
+        // `[IRI!]` for. Typing it `String` here would make the join arm the
+        // one place identity is not `IRI`-keyed.
+        in: { type: new GraphQLList(new GraphQLNonNull(iriScalar)) },
         where: { type: whereInputFor(target) },
       }),
     });

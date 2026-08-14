@@ -186,14 +186,15 @@ editor.
     filters it is equivalent to writing them side by side.
 
   A reference declaring [`joinable`](./search#filtering-across-collections)
-  takes a **`‹Target›ReferenceFilter`** instead of `StringFilter` – `@oneOf`
-  over `in` (the ids the field itself holds, unchanged) and `where` (a condition
-  on the referent, typed by the target’s own `‹Target›Where`, so the vocabulary
-  is the same one its query field takes). One filter type per **target**, shared
-  by every field pointing at it, since what it can express is a property of the
-  referenced type. A non-joinable reference keeps `StringFilter`, so the
-  capability difference is visible in the schema rather than being a runtime
-  error.
+  takes a **`‹Target›ReferenceFilter`** instead of its plain identity filter –
+  `@oneOf` over `in` (the ids the field itself holds, unchanged, and typed
+  `[IRI!]` exactly as `‹Target›Filter` types it) and `where` (a condition on the
+  referent, typed by the target’s own `‹Target›Where`, so the vocabulary is the
+  same one its query field takes). One filter type per **target**, shared by
+  every field pointing at it, since what it can express is a property of the
+  referenced type. A non-joinable reference keeps `‹Target›Filter` /
+  `IRIFilter`, so the capability difference is visible in the schema rather than
+  being a runtime error.
 
   A nested `where` flattens into a join path on each criterion it produces, so
   its own `or` and `and` work one hop out too. The one shape it cannot take is a

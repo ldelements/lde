@@ -106,7 +106,7 @@ Per joinable target, one shared input:
 
 ```graphql
 input PublisherReferenceFilter @oneOf {
-  in: [String!]
+  in: [IRI!]
   where: PublisherWhere
 }
 ```
@@ -117,7 +117,10 @@ the ids the field itself holds, no hop – while `where` states a condition on t
 referent. `‹Target›Where` is the same input the target’s own query field takes,
 so a consumer learns one vocabulary.
 
-A non-joinable reference keeps plain `StringFilter`, so the difference is
+The `in` arm is typed `[IRI!]`, the same as the target’s own identity filter –
+it asks the same question, so it must take the same variable.
+
+A non-joinable reference keeps its plain identity filter, so the difference is
 visible in the schema rather than discovered from a runtime error.
 `whereToFilters` flattens a nested `where` into an `on` path exactly as it
 already flattens `and`.

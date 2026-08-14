@@ -96,23 +96,33 @@ describe('the GraphQL surface of a declared join', () => {
     // One filter type per TARGET, not per field: what it can express is a
     // property of the referenced type, so every field pointing there shares it.
     expect(sdl).toContain(
-      'input PublisherReferenceFilter @oneOf {\n  in: [String!]\n  where: PublisherWhere\n}',
+      'input PublisherReferenceFilter @oneOf {\n  in: [IRI!]\n  where: PublisherWhere\n}',
     );
     expect(sdl).toContain('publisher: PublisherReferenceFilter');
     expect(sdl).toContain('dataset: DatasetReferenceFilter');
   });
 
-  it('leaves a non-joinable reference the plain membership filter', () => {
+  it('leaves a non-joinable reference the plain identity filter', () => {
     // The capability difference is visible in the schema rather than being a
-    // runtime error: `sponsor` points at Publisher too, but states no join.
-    expect(sdl).toContain('sponsor: StringFilter');
+    // runtime error: `sponsor` points at Publisher too, but states no join, so
+    // it keeps the ordinary identity filter every reference gets.
+    expect(sdl).toContain('sponsor: IRIFilter');
+  });
+
+  it('keys the join’s `in` arm on IRI, like every other identity filter', () => {
+    // The arm asks what `‹Target›Filter` asks – which of the target’s ids the
+    // field holds – so it must accept the same `[IRI!]` variable. Typing it
+    // `String` would make the join the one place identity is not IRI-keyed.
+    expect(sdl).toContain(
+      'input DatasetReferenceFilter @oneOf {\n  in: [IRI!]\n  where: DatasetWhere\n}',
+    );
   });
 
   it('serves one ‹Type›Where whether the type is queried or joined to', () => {
     // `DatasetWhere` is both the argument of `datasets(where: …)` and the shape
     // of a joined condition on it, so a consumer learns one vocabulary.
     expect(sdl.match(/input DatasetWhere /g)).toHaveLength(1);
-    expect(sdl).toContain('datasets(query: String, where: DatasetWhere');
+    expect(sdl).toMatch(/datasets\([\s\S]*?where: DatasetWhere/);
   });
 
   it('flattens a nested `where` into an `on` path', async () => {
