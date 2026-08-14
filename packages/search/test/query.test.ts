@@ -111,6 +111,12 @@ describe('validateQuery', () => {
       { name: 'statusRank', kind: 'integer', sortable: true },
       { name: 'creator', kind: 'reference', filterable: true },
       { name: 'about', kind: 'reference', filterable: true },
+      {
+        name: 'dataset',
+        kind: 'reference',
+        output: true,
+        ref: { strategy: 'lookup', target: 'Dataset' },
+      },
     ],
   };
   const base: SearchQuery = {
@@ -180,6 +186,36 @@ describe('validateQuery', () => {
       { part: 'facets', field: 'nonexistent', reason: 'unknown-field' },
       { part: 'facets', field: 'size', reason: 'not-facetable' },
       { part: 'orderBy', field: 'nonexistent', reason: 'unknown-field' },
+    ]);
+  });
+
+  it('accepts a projection naming a lookup reference, at this type’s level', () => {
+    // The referent's own fields are checked by the engine, which is bound to
+    // the whole schema and so can resolve the target this names.
+    expect(
+      validateQuery(
+        {
+          ...base,
+          resolve: {
+            dataset: { fields: ['license'], resolve: { publisher: {} } },
+          },
+        },
+        searchType,
+      ),
+    ).toEqual([]);
+  });
+
+  it('reports a projection on an undeclared or non-lookup field', () => {
+    expect(
+      validateQuery(
+        { ...base, resolve: { nonexistent: {}, creator: {}, status: {} } },
+        searchType,
+      ),
+    ).toEqual([
+      { part: 'resolve', field: 'nonexistent', reason: 'unknown-field' },
+      // Declared references, but neither is a lookup: nothing to resolve from.
+      { part: 'resolve', field: 'creator', reason: 'not-resolvable' },
+      { part: 'resolve', field: 'status', reason: 'not-resolvable' },
     ]);
   });
 
