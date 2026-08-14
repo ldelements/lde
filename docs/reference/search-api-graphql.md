@@ -310,6 +310,39 @@ option (default 100); a request outside `1 ≤ perPage ≤ maxPerPage` or with
 are fetched (and `page` pins to 1), so a filter UI can refresh its facet
 counts without paying for a page of results.
 
+Both bounds are stated in the arguments’ SDL descriptions, so the playground’s
+own documentation answers “how large may a page be?” before a request has to
+fail to say it.
+
+## Errors the caller can fix
+
+An invalid argument comes back as an ordinary GraphQL error carrying the
+sentence that says what was wrong, plus the conventional code:
+
+```json
+{
+  "errors": [
+    {
+      "message": "perPage must be between 0 and 100; got 150.",
+      "path": ["datasets"],
+      "extensions": { "code": "BAD_USER_INPUT" }
+    }
+  ]
+}
+```
+
+The code is what lets a client tell “fix your query” from “retry later” without
+matching on prose. Everything reported that way is **caller-fixable**: the
+paging bounds above, and a value rejected by the [`IRI`
+scalar](#finding-which-fields-accept-an-iri).
+
+Anything else is masked to `"Unexpected error."` – graphql-yoga’s default, and
+the right one for a fault the consumer can do nothing about (an unreachable
+engine, a bug here). Those are logged server-side with their stack; the caller
+gets no detail, because there is no detail they could act on. So a
+presentation-layer developer building against a hosted endpoint never has to
+read the API container’s log to learn that they sent something invalid.
+
 ## Guarding the contract
 
 Why the API, the index and a future REST surface cannot drift apart is the

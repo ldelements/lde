@@ -153,7 +153,7 @@ const iriScalar = new GraphQLScalarType<string, string>({
 
 function assertIri(value: string): string {
   if (!isAbsoluteIri(value)) {
-    throw new GraphQLError(
+    throw userError(
       `IRI cannot represent “${value}”: an IRI needs a scheme (for example “https:”, “urn:” or “doi:”) and no whitespace. A value like this is usually a label or a token, which selects nothing on a field that keys on identity.`,
     );
   }
@@ -161,7 +161,8 @@ function assertIri(value: string): string {
 }
 
 /** Outbound the fault is the index, not the caller, so the message points at
- *  the fix rather than at the query. */
+ *  the fix rather than at the query – and it carries no `BAD_USER_INPUT`,
+ *  since there is nothing the query could have done differently. */
 function assertIriOut(value: string): string {
   if (!isAbsoluteIri(value)) {
     throw new GraphQLError(
@@ -169,6 +170,27 @@ function assertIriOut(value: string): string {
     );
   }
   return value;
+}
+
+/**
+ * An error the CALLER can fix, marked as such: a `GraphQLError` carrying
+ * `extensions.code = 'BAD_USER_INPUT'`.
+ *
+ * Both halves matter, and both are about the consumer rather than about us. A
+ * plain `Error` thrown from a resolver is a server fault as far as the
+ * transport is concerned, so graphql-yoga masks it to `“Unexpected error.”`;
+ * the message then survives only in the API container’s log, where a
+ * presentation-layer developer building against a hosted endpoint cannot read
+ * it. Throwing a `GraphQLError` keeps the sentence that says what was wrong.
+ * The `code` says whose fault it is, so a client can distinguish “fix your
+ * query” from “retry later” without matching on prose – the convention every
+ * major GraphQL server shares. `“Unexpected error.”` is left for what the name
+ * says: faults we did not anticipate.
+ */
+function userError(message: string): GraphQLError {
+  return new GraphQLError(message, {
+    extensions: { code: 'BAD_USER_INPUT' },
+  });
 }
 
 /** SCREAMING_SNAKE_CASE for an enum value name, e.g. `datePosted` → `DATE_POSTED`. */
@@ -737,11 +759,32 @@ export function buildGraphQLSchema(
     return {
       type: new GraphQLNonNull(resultType),
       args: {
-        query: { type: GraphQLString },
-        where: { type: whereInput },
-        orderBy: { type: orderByInput },
-        page: { type: GraphQLInt, defaultValue: 1 },
-        perPage: { type: GraphQLInt, defaultValue: 20 },
+        query: {
+          type: GraphQLString,
+          description: 'Free-text query. Omit it to browse by filter alone.',
+        },
+        where: {
+          type: whereInput,
+          description: 'Conditions every result must satisfy.',
+        },
+        orderBy: {
+          type: orderByInput,
+          description:
+            'Sort order. Defaults to relevance for a free-text query.',
+        },
+        page: {
+          type: GraphQLInt,
+          defaultValue: 1,
+          // The bound in the SDL, so the playground’s own documentation
+          // answers “how large may a page be?” before a request has to fail
+          // to say it.
+          description: '1-based page number; at least 1.',
+        },
+        perPage: {
+          type: GraphQLInt,
+          defaultValue: 20,
+          description: `Results per page, between 0 and ${maxPerPage}. Use 0 for a facet-only query: no results are fetched, and the facet counts still come back.`,
+        },
       },
       resolve: async (_source, args, context: SearchContext) => {
         const built = argsToQuery(
@@ -871,11 +914,11 @@ function argsToQuery(
   const perPage = args.perPage ?? 20;
   const page = args.page ?? 1;
   if (page < 1) {
-    throw new Error(`page must be at least 1; got ${page}.`);
+    throw userError(`page must be at least 1; got ${page}.`);
   }
   // perPage: 0 is a legitimate facet-only query (no hits, page pins to 1).
   if (perPage < 0 || perPage > maxPerPage) {
-    throw new Error(
+    throw userError(
       `perPage must be between 0 and ${maxPerPage}; got ${perPage}.`,
     );
   }
