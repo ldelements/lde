@@ -1,3 +1,9 @@
+## 0.21.1 (2026-08-14)
+
+### 🩹 Fixes
+
+- **search-api-graphql:** tell the caller which argument they got wrong ([0c72131](https://github.com/ldelements/lde/commit/0c72131))
+
 ## 0.21.0 (2026-08-14)
 
 ### 🚀 Features
