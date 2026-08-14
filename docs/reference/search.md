@@ -198,7 +198,7 @@ const DATASET = defineSearchType({
       kind: 'reference',
       facetable: true,
       output: true,
-      ref: { typeName: 'Organization', strategy: 'labelOnly' },
+      ref: { strategy: 'lookup', target: 'Organization' },
     },
     // → size (int)
     { name: 'size', path: 'urn:dr:size', kind: 'integer', sortable: true },
@@ -299,11 +299,11 @@ you want to keep, including on an internal field a `derive` counts.
 A `reference` carries one of three strategies, which decide how much of the
 referent it carries and therefore what it surfaces as:
 
-| Strategy    | Carries                                                       | Surfaces as                               |
-| ----------- | ------------------------------------------------------------- | ----------------------------------------- |
-| `idOnly`    | the IRI                                                       | a bare `IRI`                              |
-| `labelOnly` | + a display label, resolved at query time from a label source | `{ id: IRI!, label: [LanguageString!]! }` |
-| `inline`    | + the referent’s own projected fields                         | a nested object                           |
+| Strategy | Carries                                                  | Surfaces as     |
+| -------- | -------------------------------------------------------- | --------------- |
+| `idOnly` | the IRI                                                  | a bare `IRI`    |
+| `lookup` | + fields read from the **target’s own indexed document** | a nested object |
+| `inline` | + fields denormalised from the **parent’s** framing      | a nested object |
 
 Reach for **`idOnly`** when the referent is not an entity this deployment
 describes – a canonical vocabulary URI, a licence, a content URL. It is the only
@@ -313,17 +313,20 @@ API surface can then tell them apart from IRIs at large. A `labelSource` is stil
 honoured for facet bucket labels: the strategy governs the output shape, not
 whether a bucket can be labelled.
 
-A `labelOnly` reference’s `ref.typeName` is a name, not a key: it may name an
-indexed root type (`creator` → `Person`, with `labelSource: 'Person'`) – the
-standard way to reference entities of another collection; only an `inline`
-reference must resolve to a declared Reference Type.
+A **`lookup`** names its `target` once – the Root Type whose collection its
+fields are read from, and the name its emitted type derives from (GraphQL:
+`‹Target›Reference`, since type names must be unique). What it _fetches_ is
+named per query rather than per declaration, by a
+[projection](#projecting-what-a-lookup-carries); asked for nothing in
+particular, it carries the target's label. Only an `inline` reference’s
+`ref.typeName` resolves to a declared Reference Type.
 
 Note what this makes true of `kind`: **a `reference` holds identity, a `keyword`
 holds a literal.** A field over an IRI-valued property is a `reference` whatever
 shape you want it to surface as, so no declaration has to launder one through the
 other. The projection enforces the same rule from below – a reference value that
 is not an absolute IRI (a blank node label, a bare token) is dropped rather than
-indexed, since what a `labelOnly`/`idOnly` reference stores is a selection key.
+indexed, since what a `lookup`/`idOnly` reference stores is a selection key.
 
 An **inline reference** resolves `ref.typeName` to a declared **Reference Type**
 and projects the referent through it – a nested `SearchDocument`, or an array
@@ -364,12 +367,13 @@ Measurement` is two hops), and `searchSchema` rejects inline cycles – the one
 way that depth could be unbounded – so it stays a bounded property of the
 declaration.
 
-A reference resolves its label from a **label source**: `labelSource` names
-the Root Type whose collection holds the referenced entities – a Root Type
-specifically, since the labels are read from that collection. It must declare
-an `output`, `searchable` text field named by its label field (below) –
-`searchSchema` validates this schema-wide, so a dangling or unsuitable label
-source fails at startup. A reference without a `labelSource` stays id-only.
+A reference resolves labels from the Root Type whose collection holds the
+referenced entities – a `lookup`'s `target`, or an `idOnly`'s `labelSource`,
+which is the one place that declaration survives (an idOnly reference emits no
+type, but its facet buckets are still labelled). A Root Type specifically, since
+the labels are read from that collection: it must declare an `output`,
+`searchable` text field named by its label field (below), and `searchSchema`
+validates this schema-wide, so a dangling or unsuitable source fails at startup.
 
 The resolved label carries **one word** wherever it surfaces: on the label
 source’s own type, on the reference that resolves against it (`dataset { id
@@ -419,6 +423,25 @@ type serves `theme { id name }`. `labelField` is ignored for a type nothing
 resolves labels from; without it, everything keeps serving `label`. A facet
 bucket’s `label` is unaffected: it is per-facet-field, and a per-type name would
 make the bucket shape non-uniform.
+
+### Projecting what a lookup carries
+
+A `lookup` declares no field list. What it _fetches_ is named per query, by a
+projection on `SearchQuery`, and the GraphQL surface builds that from the
+client's selection set – so a lookup fetches what was asked for and no more:
+
+```graphql
+creativeWorks { items { dataset { license publisher { label } } } }
+```
+
+becomes `resolve: { dataset: { fields: ['license'], resolve: { publisher: {…} } } }`,
+which the engine answers with **one batched round-trip per level**: the page's
+dataset IRIs are deduped and fetched together, then the publisher IRIs those
+name. Omitted, a lookup carries its target's label alone – what every reference
+carried before. See [ADR 20](../decisions/0020-resolve-a-references-fields-from-the-targets-own-collection).
+
+Facet buckets are unaffected: a bucket is a value, a count and one label, so it
+keeps reading the single field the type designates as its label.
 
 ### Describing a field
 
@@ -572,7 +595,7 @@ const PERSON = defineSearchType({
       filterable: true,
       facetable: true,
       labelSource: 'Dataset',
-      ref: { typeName: 'Dataset', strategy: 'labelOnly' },
+      ref: { strategy: 'lookup', target: 'Dataset' },
     },
   ],
 });
@@ -591,7 +614,7 @@ merely points back at the containing dataset, say:
   kind: 'reference',
   array: true,
   output: true,
-  ref: { typeName: 'CreativeWork', strategy: 'labelOnly' },
+  ref: { strategy: 'lookup', target: 'CreativeWork' },
   // `partOfRaw` is an internal field over schema:isPartOf
   derive: (document, context) =>
     (document.partOfRaw as string[] | undefined)?.filter(
