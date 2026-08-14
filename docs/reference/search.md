@@ -65,7 +65,9 @@ npm install @lde/search
 Exports are stratified by audience:
 
 - **`@lde/search`** – the authoring surface: `defineSearchType`,
-  `searchSchema`, `projectRoots`, validation, and every model/query/result type.
+  `searchSchema`, `projectRoots`, validation, every model/query/result type,
+  and `isoToUnixSeconds` / `unixSecondsToIso` (the `date` storage codec, for a
+  value the projection does not convert itself).
 - **`@lde/search/adapter`** – plumbing for engine adapters and API surfaces:
   - `assertTypeInSchema` – the port membership guard (the exact declaration
     object must be in the schema);

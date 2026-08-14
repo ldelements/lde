@@ -25,6 +25,13 @@ export {
   ID_FIELD,
   AND_KEY,
   OR_KEY,
+  // The `date` storage codec. A schema author needs it whenever a value
+  // bypasses the projection’s own conversion – a `date` populated outside the
+  // projection, or a derive that computes seconds from something other than an
+  // ISO string – so it belongs on the authoring surface, not only the adapter
+  // one.
+  isoToUnixSeconds,
+  unixSecondsToIso,
 } from './schema.js';
 export type {
   FieldKind,

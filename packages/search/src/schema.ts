@@ -133,6 +133,12 @@ export interface SearchFieldBase {
    * dataset being indexed). It is what lets a derive relate a projected value
    * to its provenance: dropping a polymorphic `isPartOf` value that merely
    * points back at the containing dataset, say.
+   *
+   * The returned value goes through the same storage conversion a read one
+   * does, so a derive states its value in the field’s own terms: a `date`
+   * derive may return an ISO 8601 string ({@link isoToUnixSeconds} is applied
+   * for it) or the stored Unix seconds directly, and a `reference` derive is
+   * held to absolute IRIs.
    */
   readonly derive?: (
     document: ProjectedNode,

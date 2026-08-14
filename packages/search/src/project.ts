@@ -228,7 +228,13 @@ function applyField(
     const value =
       field.kind === 'reference' && derived !== undefined
         ? derivedIris(derived)
-        : derived;
+        : // A derived `date` goes through the same storage codec as a read one:
+          // the field is stored as Unix seconds, so an ISO string returned here
+          // would otherwise land as a string in an int64 field. A derive that
+          // already computed seconds returns a number and passes through.
+          field.kind === 'date' && typeof derived === 'string'
+          ? isoToUnixSeconds(derived)
+          : derived;
     if (value !== undefined) {
       document[field.name] = value;
     }
