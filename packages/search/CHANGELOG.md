@@ -1,3 +1,9 @@
+## 0.21.1 (2026-08-14)
+
+### 🩹 Fixes
+
+- **search:** apply the date storage codec to a derived date, and export the codec ([#741](https://github.com/ldelements/lde/pull/741))
+
 ## 0.21.0 (2026-08-14)
 
 ### 🩹 Fixes
