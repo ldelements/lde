@@ -2,6 +2,7 @@ import {
   fieldNamed,
   filterOperatorFor,
   ID_FIELD,
+  type SearchSchema,
   type SearchType,
 } from './schema.js';
 import { MAX_JOIN_DEPTH, type JoinGraph } from './join-graph.js';
@@ -243,6 +244,11 @@ function issueField(criterion: Criterion): string {
  * with no join path needs none; a joined criterion validated without one is an
  * `unknown-join`, never a silently unchecked filter.
  *
+ * A `resolve` projection is checked at every level, which is why the whole
+ * `schema` is passed alongside the type being queried: each level’s fields
+ * belong to the `target` the level above names, and only the schema resolves a
+ * target to its type.
+ *
  * This is the port’s always-on guard: every {@link SearchEngine} adapter MUST
  * reject a query with issues ({@link assertValidQuery}) instead of passing
  * garbage to its engine, so validation holds for every caller – including
@@ -251,6 +257,7 @@ function issueField(criterion: Criterion): string {
 export function validateQuery(
   query: SearchQuery,
   searchType: SearchType,
+  schema: SearchSchema,
   joins?: JoinGraph,
 ): readonly QueryIssue[] {
   const issues: QueryIssue[] = [];
@@ -318,17 +325,7 @@ export function validateQuery(
       issues.push({ part: 'facets', field: name, reason: 'not-facetable' });
     }
   }
-  // Only this type’s own level is checkable here: the referent’s fields live on
-  // the target type, which a bare searchType cannot resolve. The engine – which
-  // is bound to the whole schema – checks the levels below as it walks them.
-  for (const name of Object.keys(query.resolve ?? {})) {
-    const field = fieldNamed(searchType, name);
-    if (field === undefined) {
-      issues.push({ part: 'resolve', field: name, reason: 'unknown-field' });
-    } else if (field.kind !== 'reference' || field.ref?.strategy !== 'lookup') {
-      issues.push({ part: 'resolve', field: name, reason: 'not-resolvable' });
-    }
-  }
+  collectProjectionIssues(query.resolve, searchType, schema, issues);
   for (const sort of query.orderBy) {
     if (
       sort.field !== 'relevance' &&
@@ -344,14 +341,63 @@ export function validateQuery(
   return issues;
 }
 
+/**
+ * Walk a projection level by level: each key names a `lookup` reference on the
+ * type that level belongs to, each `fields` entry an `output` field of the
+ * target it resolves against, and each nested `resolve` repeats against that
+ * target. A level whose reference is unresolvable stops there – its subtree
+ * belongs to a target that does not exist, so reporting it too would bury the
+ * one mistake under its consequences.
+ */
+function collectProjectionIssues(
+  projection: ReferenceProjection | undefined,
+  searchType: SearchType,
+  schema: SearchSchema,
+  issues: QueryIssue[],
+): void {
+  for (const [name, level] of Object.entries(projection ?? {})) {
+    const field = fieldNamed(searchType, name);
+    if (field === undefined) {
+      issues.push({ part: 'resolve', field: name, reason: 'unknown-field' });
+      continue;
+    }
+    if (field.kind !== 'reference' || field.ref?.strategy !== 'lookup') {
+      issues.push({ part: 'resolve', field: name, reason: 'not-resolvable' });
+      continue;
+    }
+    const targetName = field.ref.target;
+    const target = [...schema.values()].find(
+      (rootType) => rootType.name === targetName,
+    );
+    if (target === undefined) {
+      // searchSchema rejects a lookup whose target it cannot resolve, so this
+      // is a query built against a different schema than the engine serves.
+      issues.push({ part: 'resolve', field: name, reason: 'not-resolvable' });
+      continue;
+    }
+    for (const wanted of level.fields ?? []) {
+      const targetField = fieldNamed(target, wanted);
+      if (targetField === undefined || targetField.output !== true) {
+        issues.push({
+          part: 'resolve',
+          field: `${name}.${wanted}`,
+          reason: 'unknown-field',
+        });
+      }
+    }
+    collectProjectionIssues(level.resolve, target, schema, issues);
+  }
+}
+
 /** Throw on the first structurally invalid query part ({@link validateQuery}),
  *  naming every issue. The always-on entry point for engine adapters. */
 export function assertValidQuery(
   query: SearchQuery,
   searchType: SearchType,
+  schema: SearchSchema,
   joins?: JoinGraph,
 ): void {
-  const issues = validateQuery(query, searchType, joins);
+  const issues = validateQuery(query, searchType, schema, joins);
   if (issues.length > 0) {
     const detail = issues
       .map((issue) => `${issue.part}: “${issue.field}” (${issue.reason})`)
