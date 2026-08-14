@@ -40,6 +40,7 @@ export type {
   TextField,
   KeywordField,
   ReferenceField,
+  ReferenceStrategy,
   NumericField,
   BooleanField,
   SearchType,
@@ -67,6 +68,7 @@ export type { JoinGraph } from './join-graph.js';
 export { filterOn } from './query.js';
 export type {
   SearchQuery,
+  ReferenceProjection,
   Filter,
   Criterion,
   CriterionBase,

@@ -26,6 +26,16 @@ export interface SearchQuery {
   readonly facets: readonly string[];
   /** Selects the per-locale fields to query/sort on (from `Accept-Language`). */
   readonly locale: string;
+  /**
+   * Which `lookup` references to resolve on the hits, and how much of each
+   * referent to carry. Omitted (or a field left out of it), a lookup resolves
+   * its target’s label alone – what every reference carried before.
+   *
+   * A surface builds this from what its caller asked for (GraphQL: the
+   * selection set), so the engine fetches neither less nor more. See
+   * [ADR 20](../../docs/decisions/0020-resolve-a-references-fields-from-the-targets-own-collection.md).
+   */
+  readonly resolve?: ReferenceProjection;
 }
 
 /**
@@ -57,6 +67,25 @@ export interface CriterionBase {
    */
   readonly on?: readonly string[];
 }
+
+/**
+ * What to carry for each resolved reference, keyed by the reference field’s
+ * name. `fields` names the referent’s own output fields; `resolve` nests, for a
+ * referent whose own references are wanted in turn – an engine answers one
+ * batched lookup per level, never one per document.
+ *
+ * Deliberately the shape of a selection set rather than a second vocabulary: a
+ * per-level option (a `limit` here, a `where` there) would multiply with depth.
+ */
+export type ReferenceProjection = Readonly<
+  Record<
+    string,
+    {
+      readonly fields?: readonly string[];
+      readonly resolve?: ReferenceProjection;
+    }
+  >
+>;
 
 /**
  * One criterion on one field. The operator is fixed by that field’s
@@ -171,7 +200,7 @@ export function isUnsatisfiable(query: SearchQuery): boolean {
  * clause with no criteria) are NOT issues – a compiler skips those as no-ops.
  */
 export interface QueryIssue {
-  readonly part: 'where' | 'facets' | 'orderBy';
+  readonly part: 'where' | 'facets' | 'orderBy' | 'resolve';
   readonly field: string;
   readonly reason:
     | 'unknown-field'
@@ -182,7 +211,9 @@ export interface QueryIssue {
     | 'join-too-deep'
     /** The `on` path does not resolve: a name that is not a field, a reference
      *  that is not `joinable`, or no join graph to resolve it against. */
-    | 'unknown-join';
+    | 'unknown-join'
+    /** A projected reference is not a `lookup`, so nothing resolves it. */
+    | 'not-resolvable';
 }
 
 /** The `field` a joined issue is reported under: the path and the leaf name
@@ -191,7 +222,6 @@ export interface QueryIssue {
 function issueField(criterion: Criterion): string {
   const on = criterion.on ?? [];
   return on.length === 0 ? criterion.field : [...on, criterion.field].join('.');
-}
 
 /**
  * Structurally validate a query against its search type: **every criterion of
@@ -286,6 +316,17 @@ export function validateQuery(
       issues.push({ part: 'facets', field: name, reason: 'unknown-field' });
     } else if (field.facetable !== true) {
       issues.push({ part: 'facets', field: name, reason: 'not-facetable' });
+    }
+  }
+  // Only this type’s own level is checkable here: the referent’s fields live on
+  // the target type, which a bare searchType cannot resolve. The engine – which
+  // is bound to the whole schema – checks the levels below as it walks them.
+  for (const name of Object.keys(query.resolve ?? {})) {
+    const field = fieldNamed(searchType, name);
+    if (field === undefined) {
+      issues.push({ part: 'resolve', field: name, reason: 'unknown-field' });
+    } else if (field.kind !== 'reference' || field.ref?.strategy !== 'lookup') {
+      issues.push({ part: 'resolve', field: name, reason: 'not-resolvable' });
     }
   }
   for (const sort of query.orderBy) {
