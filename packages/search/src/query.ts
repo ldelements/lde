@@ -223,6 +223,7 @@ export interface QueryIssue {
 function issueField(criterion: Criterion): string {
   const on = criterion.on ?? [];
   return on.length === 0 ? criterion.field : [...on, criterion.field].join('.');
+}
 
 /**
  * Structurally validate a query against its search type: **every criterion of

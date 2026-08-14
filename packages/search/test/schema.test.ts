@@ -1354,26 +1354,6 @@ describe('searchSchema validation', () => {
       ).toBeUndefined();
     });
 
-    it('rejects an output idOnly reference that names no emitted type', () => {
-      // A lookup derives its name from `target` and an inline from its
-      // reference type; only idOnly can leave the surface with nothing to
-      // serve the reference under.
-      expect(
-        validateSearchType({
-          name: 'Dataset',
-          class: DATASET,
-          fields: [
-            {
-              name: 'license',
-              kind: 'reference',
-              output: true,
-              ref: { strategy: 'idOnly' },
-            },
-          ],
-        }).map((found) => found.reason),
-      ).toContain('missing-ref-type-name');
-    });
-
     it('rejects a labelSource on anything but an idOnly reference', () => {
       expect(() =>
         searchSchema(organization, {

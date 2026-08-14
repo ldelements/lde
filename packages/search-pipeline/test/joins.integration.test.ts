@@ -52,9 +52,8 @@ const dataset = defineSearchType({
       path: `<${DCTERMS}publisher>`,
       filterable: true,
       output: true,
-      labelSource: 'Publisher',
       joinable: true,
-      ref: { typeName: 'PublisherRef', strategy: 'labelOnly' },
+      ref: { strategy: 'lookup', target: 'Publisher' },
     },
   ],
 });
@@ -70,9 +69,8 @@ const creativeWork = defineSearchType({
       path: `<${DCTERMS}isPartOf>`,
       filterable: true,
       output: true,
-      labelSource: 'Dataset',
       joinable: true,
-      ref: { typeName: 'DatasetRef', strategy: 'labelOnly' },
+      ref: { strategy: 'lookup', target: 'Dataset' },
     },
   ],
 });

@@ -451,7 +451,8 @@ describe('validateQuery', () => {
     const publisher = label('Publisher');
     const dataset = label('Dataset', [joinable('publisher', 'Publisher')]);
     const work = label('CreativeWork', [joinable('dataset', 'Dataset')]);
-    const joins = joinGraph(searchSchema(publisher, dataset, work));
+    const joinedSchema = searchSchema(publisher, dataset, work);
+    const joins = joinGraph(joinedSchema);
 
     it('validates the leaf against the type the path reaches', () => {
       expect(
@@ -468,6 +469,7 @@ describe('validateQuery', () => {
             ],
           },
           work,
+          joinedSchema,
           joins,
         ),
       ).toEqual([]);
@@ -487,6 +489,7 @@ describe('validateQuery', () => {
             ],
           },
           work,
+          joinedSchema,
           joins,
         ),
       ).toEqual([
@@ -512,6 +515,7 @@ describe('validateQuery', () => {
             where: [{ or: [{ on: ['dataset'], field: 'id', is: true }] }],
           },
           work,
+          joinedSchema,
           joins,
         ),
       ).toEqual([
@@ -531,6 +535,7 @@ describe('validateQuery', () => {
             where: [{ or: [{ on: tooDeep, field: 'id', in: ['x'] }] }],
           },
           work,
+          joinedSchema,
           joins,
         ),
       ).toEqual([
@@ -551,6 +556,7 @@ describe('validateQuery', () => {
             where: [{ or: [{ on: ['label'], field: 'id', in: ['x'] }] }],
           },
           work,
+          joinedSchema,
           joins,
         ),
       ).toEqual([{ part: 'where', field: 'label.id', reason: 'unknown-join' }]);
@@ -563,6 +569,7 @@ describe('validateQuery', () => {
             where: [{ or: [{ on: ['dataset'], field: 'id', in: ['x'] }] }],
           },
           work,
+          joinedSchema,
         ),
       ).toEqual([
         { part: 'where', field: 'dataset.id', reason: 'unknown-join' },
@@ -574,6 +581,7 @@ describe('validateQuery', () => {
         validateQuery(
           { ...base, where: [{ or: [{ on: [], field: 'label', in: ['x'] }] }] },
           work,
+          joinedSchema,
           joins,
         ),
       ).toEqual([{ part: 'where', field: 'label', reason: 'not-filterable' }]);

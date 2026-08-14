@@ -33,8 +33,8 @@ type Thing {
   title: [LanguageString!]!
   description: [LanguageString!]!
   keyword: [String!]!
-  creator: [Agent!]!
-  publisher: Agent
+  creator: [IRI!]!
+  publisher: IRI
   sameAs: [IRI!]!
   license: IRI
   size: Int
@@ -52,11 +52,6 @@ scalar IRI @specifiedBy(url: "https://www.rfc-editor.org/rfc/rfc3987")
 type LanguageString {
   language: String
   value: String!
-}
-
-type Agent {
-  id: IRI!
-  label: [LanguageString!]!
 }
 
 type Pagination {

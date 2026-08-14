@@ -11,6 +11,29 @@ import {
 } from '@lde/search';
 import { buildGraphQLSchema, type SearchContext } from '../src/build-schema.js';
 
+/** The lookup targets the Dataset references resolve against. A labelled
+ *  reference reads its fields from a target's own collection, so the target
+ *  has to be an indexed root type – there is no id-plus-label shape for a
+ *  referent nothing indexes. */
+const labelledTarget = (name: string, iri: string): SearchType => ({
+  name,
+  class: iri,
+  fields: [
+    {
+      name: 'label',
+      kind: 'text',
+      locales: ['nl', 'en'],
+      output: true,
+      searchable: { weight: 1 },
+    },
+  ],
+});
+const organization = labelledTarget(
+  'Organization',
+  'https://example.org/Organization',
+);
+const term = labelledTarget('Term', 'https://example.org/Term');
+
 const schema: SearchType = {
   name: 'Dataset',
   class: 'http://www.w3.org/ns/dcat#Dataset',
@@ -37,7 +60,7 @@ const schema: SearchType = {
       facetable: true,
       filterable: true,
       output: true,
-      ref: { strategy: 'idOnly', typeName: 'Organization' },
+      ref: { strategy: 'lookup', target: 'Organization' },
     },
     {
       name: 'size',
@@ -59,7 +82,7 @@ const schema: SearchType = {
       array: true,
       facetable: true,
       output: true,
-      ref: { strategy: 'idOnly', typeName: 'Term' },
+      ref: { strategy: 'lookup', target: 'Term' },
     },
     {
       name: 'status',
@@ -91,7 +114,7 @@ function fakeEngine(result: SearchResult): {
   const batches: (readonly SearchQuery[])[] = [];
   return {
     engine: {
-      schema: searchSchema(schema),
+      schema: searchSchema(schema, organization, term),
       async search(_searchType, query) {
         captured = query;
         return result;
@@ -146,7 +169,10 @@ async function run(
   variables?: Record<string, unknown>,
 ) {
   return graphql({
-    schema: buildGraphQLSchema(searchSchema(schema), datasetOptions),
+    schema: buildGraphQLSchema(
+      searchSchema(schema, organization, term),
+      datasetOptions,
+    ),
     source,
     contextValue: context,
     variableValues: variables,
@@ -537,7 +563,7 @@ describe('buildGraphQLSchema', () => {
     // untouched.
     const failedFacets: string[] = [];
     const engine: SearchEngine = {
-      schema: searchSchema(schema),
+      schema: searchSchema(schema, organization, term),
       async search() {
         return canned;
       },
@@ -796,27 +822,30 @@ describe('buildGraphQLSchema', () => {
   it('applies queryDefaults before calling the engine', async () => {
     let captured: SearchQuery | undefined;
     const engine: SearchEngine = {
-      schema: searchSchema(schema),
+      schema: searchSchema(schema, organization, term),
       async search(_searchType, query) {
         captured = query;
         return canned;
       },
       searchFacets: noFacets,
     };
-    const gqlSchema = buildGraphQLSchema(searchSchema(schema), {
-      types: {
-        [schema.name]: {
-          queryDefaults: (query) => ({
-            ...query,
-            where: [
-              ...query.where,
-              { or: [{ field: 'status', in: ['valid'] }] },
-            ],
-            orderBy: [{ field: 'relevance', direction: 'desc' }],
-          }),
+    const gqlSchema = buildGraphQLSchema(
+      searchSchema(schema, organization, term),
+      {
+        types: {
+          [schema.name]: {
+            queryDefaults: (query) => ({
+              ...query,
+              where: [
+                ...query.where,
+                { or: [{ field: 'status', in: ['valid'] }] },
+              ],
+              orderBy: [{ field: 'relevance', direction: 'desc' }],
+            }),
+          },
         },
       },
-    });
+    );
     await graphql({
       schema: gqlSchema,
       source: `{ datasets { pagination { total } } }`,
@@ -832,19 +861,25 @@ describe('buildGraphQLSchema', () => {
 
   it('derives nullability: required scalar non-null, optional scalar nullable, arrays/booleans non-null', () => {
     const sdl = printSchema(
-      buildGraphQLSchema(searchSchema(schema), datasetOptions),
+      buildGraphQLSchema(
+        searchSchema(schema, organization, term),
+        datasetOptions,
+      ),
     );
     expect(sdl).toMatch(/status: String!/); // required
     expect(sdl).toMatch(/size: Int\b(?!!)/); // optional → nullable
     expect(sdl).toMatch(/title: \[LanguageString!\]!/);
     expect(sdl).toMatch(/keyword: \[String!\]!/);
     expect(sdl).toMatch(/iiif: Boolean!/);
-    expect(sdl).toMatch(/publisher: Organization\b(?!!)/); // optional reference
+    expect(sdl).toMatch(/publisher: OrganizationReference\b(?!!)/); // optional reference
   });
 
   it('builds the where, orderBy enum and keyed facets object from the field model', () => {
     const sdl = printSchema(
-      buildGraphQLSchema(searchSchema(schema), datasetOptions),
+      buildGraphQLSchema(
+        searchSchema(schema, organization, term),
+        datasetOptions,
+      ),
     );
     expect(sdl).toMatch(/enum DatasetSortField/);
     expect(sdl).toMatch(/RELEVANCE/);
@@ -861,7 +896,10 @@ describe('buildGraphQLSchema', () => {
 
   it('buckets a reference facet on IRI, so a bucket feeds the filter that selects it', () => {
     const sdl = printSchema(
-      buildGraphQLSchema(searchSchema(schema), datasetOptions),
+      buildGraphQLSchema(
+        searchSchema(schema, organization, term),
+        datasetOptions,
+      ),
     );
     // The round trip a consumer actually makes: read `publisher`’s bucket
     // `value`, send it back as `where: { publisher: { in: [...] } }`. Both sides
@@ -876,7 +914,10 @@ describe('buildGraphQLSchema', () => {
 
   it('gives a boolean facet a real boolean value and no label to interpret', () => {
     const sdl = printSchema(
-      buildGraphQLSchema(searchSchema(schema), datasetOptions),
+      buildGraphQLSchema(
+        searchSchema(schema, organization, term),
+        datasetOptions,
+      ),
     );
     expect(sdl).toContain(
       ['type BooleanBucket {', '  value: Boolean!', '  count: Int!', '}'].join(
@@ -889,6 +930,9 @@ describe('buildGraphQLSchema', () => {
     const PERSON: SearchType = {
       name: 'Person',
       class: 'https://schema.org/Person',
+      // Its display field is `name`, which is what makes it a usable lookup
+      // target: a lookup resolves labels from the target's own collection.
+      labelField: 'name',
       fields: [
         {
           name: 'name',
@@ -903,7 +947,7 @@ describe('buildGraphQLSchema', () => {
           kind: 'reference',
           facetable: true,
           output: true,
-          ref: { strategy: 'idOnly', typeName: 'Agent' },
+          ref: { strategy: 'lookup', target: 'Person' },
         },
       ],
     };
@@ -923,7 +967,7 @@ describe('buildGraphQLSchema', () => {
           kind: 'reference',
           facetable: true,
           output: true,
-          ref: { strategy: 'idOnly', typeName: 'Agent' },
+          ref: { strategy: 'lookup', target: 'Person' },
         },
         { name: 'pageCount', kind: 'integer', filterable: true, output: true },
       ],
@@ -964,7 +1008,7 @@ describe('buildGraphQLSchema', () => {
         /input PersonCriterion @oneOf \{\s*id: PersonFilter\s*\}/,
       );
       // The shared reference shape is emitted once, reused by both types.
-      expect(sdl.match(/^type Agent /gm)).toHaveLength(1);
+      expect(sdl.match(/^type PersonReference /gm)).toHaveLength(1);
       // One shared Pagination type across every ‹Type›SearchResult, so a
       // client pager fragment on Pagination serves all root types.
       expect(sdl.match(/^type Pagination /gm)).toHaveLength(1);
@@ -1000,7 +1044,7 @@ describe('buildGraphQLSchema', () => {
       );
     });
 
-    it('serves a labelOnly reference to a root type under ‹Name›Reference', () => {
+    it('serves a lookup to a root type under ‹Name›Reference', () => {
       const withReferenceToRoot: SearchType = {
         name: 'CreativeWork',
         class: 'https://schema.org/CreativeWork',
@@ -1009,9 +1053,9 @@ describe('buildGraphQLSchema', () => {
             name: 'author',
             kind: 'reference',
             output: true,
-            // Person is also a root type in this schema – the labelOnly way to
-            // carry an id plus a label resolved from the Person collection.
-            ref: { strategy: 'idOnly', typeName: 'Person' },
+            // A lookup always targets a root type – that collection is where
+            // the fields are read from.
+            ref: { strategy: 'lookup', target: 'Person' },
           },
         ],
       };
@@ -1022,31 +1066,11 @@ describe('buildGraphQLSchema', () => {
       // name, since GraphQL type names must be unique.
       expect(sdl.match(/^type Person /gm)).toHaveLength(1);
       expect(sdl).toMatch(/author: PersonReference/);
+      // Carrying the target's own output fields, under the target's own names:
+      // Person's display field is `name`, so no `label` appears anywhere.
       expect(sdl).toMatch(
-        /type PersonReference \{\s+id: IRI!\s+label: \[LanguageString!\]!\s+\}/,
+        /type PersonReference \{\s+id: IRI!\s+name: \[LanguageString!\]!/,
       );
-    });
-
-    it('serves the resolved label under the label source’s own label field name', () => {
-      const namedLabel: SearchType = { ...PERSON, labelField: 'name' };
-      const withReferenceToRoot: SearchType = {
-        name: 'CreativeWork',
-        class: 'https://schema.org/CreativeWork',
-        fields: [
-          {
-            name: 'author',
-            kind: 'reference',
-            output: true,
-            ref: { strategy: 'lookup', target: 'Person' },
-          },
-        ],
-      };
-      const sdl = printSchema(
-        buildGraphQLSchema(searchSchema(namedLabel, withReferenceToRoot)),
-      );
-      // A lookup carries the target's own output fields, under the target's
-      // own names – so the label arrives as `name`, with no `label` anywhere.
-      expect(sdl).toMatch(/type PersonReference \{\s+id: String!\s+name:/);
       expect(sdl).not.toMatch(/type PersonReference \{[^}]*\blabel:/);
     });
 
@@ -1098,51 +1122,6 @@ describe('buildGraphQLSchema', () => {
       );
       expect(sdl).toMatch(
         /type OrganizationReference \{[^}]*members: \[PersonReference!\]!/,
-      );
-    });
-
-    it('throws when two idOnly references share a type but not a label word', () => {
-      // Only reachable through idOnly, which names its emitted type and its
-      // label source separately. A lookup cannot disagree: one target names
-      // both, so every field pointing there reads the same word.
-      const namedLabel: SearchType = { ...PERSON, labelField: 'name' };
-      const organization: SearchType = {
-        name: 'Organization',
-        class: 'https://schema.org/Organization',
-        fields: [
-          {
-            name: 'label',
-            kind: 'text',
-            locales: ['nl'],
-            output: true,
-            searchable: { weight: 1 },
-          },
-        ],
-      };
-      const twoSources: SearchType = {
-        name: 'CreativeWork',
-        class: 'https://schema.org/CreativeWork',
-        fields: [
-          {
-            name: 'creator',
-            kind: 'reference',
-            output: true,
-            labelSource: 'Person',
-            ref: { strategy: 'idOnly', typeName: 'Agent' },
-          },
-          {
-            name: 'publisher',
-            kind: 'reference',
-            output: true,
-            labelSource: 'Organization',
-            ref: { strategy: 'idOnly', typeName: 'Agent' },
-          },
-        ],
-      };
-      expect(() =>
-        buildGraphQLSchema(searchSchema(namedLabel, organization, twoSources)),
-      ).toThrow(
-        /“CreativeWork.creator” serves its label as “name”, but “Agent” is already served with “label”/,
       );
     });
 
@@ -1530,8 +1509,7 @@ describe('discovering which fields accept an IRI', () => {
         array: true,
         filterable: true,
         output: true,
-        labelSource: 'Term',
-        ref: { typeName: 'Term', strategy: 'labelOnly' },
+        ref: { strategy: 'lookup', target: 'Term' },
       },
       {
         name: 'material',
@@ -1539,8 +1517,7 @@ describe('discovering which fields accept an IRI', () => {
         array: true,
         filterable: true,
         output: true,
-        labelSource: 'Term',
-        ref: { typeName: 'Term', strategy: 'labelOnly' },
+        ref: { strategy: 'lookup', target: 'Term' },
       },
       {
         name: 'creator',
@@ -1548,8 +1525,7 @@ describe('discovering which fields accept an IRI', () => {
         array: true,
         filterable: true,
         output: true,
-        labelSource: 'Person',
-        ref: { typeName: 'Person', strategy: 'labelOnly' },
+        ref: { strategy: 'lookup', target: 'Person' },
       },
       {
         name: 'license',
@@ -1800,7 +1776,11 @@ describe('discovering which fields accept an IRI', () => {
     );
 
     // …and equally when the clash is with a type the declaration itself emits:
-    // a reference served as `TermFilter` beside a root type `Term`.
+    // an inline referent served as `TermFilter` beside a root type `Term`.
+    const referent: SearchType = {
+      name: 'TermFilter',
+      fields: [{ name: 'note', kind: 'keyword', output: true }],
+    };
     const clashing: RootType = {
       name: 'Term',
       class: 'https://example.org/Term',
@@ -1809,11 +1789,11 @@ describe('discovering which fields accept an IRI', () => {
           name: 'seeAlso',
           kind: 'reference',
           output: true,
-          ref: { typeName: 'TermFilter', strategy: 'labelOnly' },
+          ref: { strategy: 'inline', typeName: 'TermFilter' },
         },
       ],
     };
-    expect(() => buildGraphQLSchema(searchSchema(clashing))).toThrow(
+    expect(() => buildGraphQLSchema(searchSchema(clashing, referent))).toThrow(
       /“Term” would be filtered through “TermFilter”/,
     );
   });
