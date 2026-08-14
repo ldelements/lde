@@ -1040,8 +1040,9 @@ export function validateSearchType(
       // field's type, publishing a contract that is not a schema.
       if (
         field.output === true &&
-        field.ref?.strategy === 'inline' &&
-        field.ref.typeName === undefined
+        ((field.ref?.strategy === 'inline' &&
+          field.ref.typeName === undefined) ||
+          (field.ref?.strategy === 'lookup' && field.ref.target === undefined))
       ) {
         issue('missing-ref-type-name');
       }

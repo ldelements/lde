@@ -489,6 +489,19 @@ describe('validateSearchType', () => {
       ),
     ).toEqual([{ field: 'media', reason: 'missing-ref-type-name' }]);
 
+    // A lookup names its referent too – as `target`, the collection it reads
+    // from. Without one it has nothing to read and nothing to emit.
+    expect(
+      validateSearchType(
+        typeWith({
+          name: 'creator',
+          kind: 'reference',
+          output: true,
+          ref: { strategy: 'lookup' },
+        } as never),
+      ),
+    ).toEqual([{ field: 'creator', reason: 'missing-ref-type-name' }]);
+
     expect(
       validateSearchType(
         typeWith({

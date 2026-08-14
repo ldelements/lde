@@ -58,49 +58,65 @@ export async function resolveProjection(
   const targetsByName = new Map(
     [...schema.values()].map((rootType) => [rootType.name, rootType]),
   );
-  for (const [name, level] of Object.entries(projection)) {
-    const field = fieldNamed(searchType, name);
-    if (
-      field === undefined ||
-      field.kind !== 'reference' ||
-      field.ref?.strategy !== 'lookup'
-    ) {
-      // `assertValidQuery` rejects this for every caller; skipping keeps a
-      // hand-built query from throwing here rather than at the port’s guard.
-      continue;
-    }
-    const target = targetsByName.get(field.ref.target);
-    const collection =
-      target === undefined ? undefined : collections.get(target.class);
-    if (target === undefined || collection === undefined) {
-      continue;
-    }
-    const iris = distinctIris(parents, name);
-    if (iris.length === 0) {
-      continue;
-    }
-    const documents = await fetchReferents(
-      client,
-      collection,
-      iris,
-      includeFields(target, level.fields, level.resolve),
-      onError,
-    );
-    resolved.set(name, {
-      target,
-      documents,
-      // The level below reads the IRIs off the documents this one just
-      // fetched – one more round-trip for the whole page, whatever its size.
-      children: await resolveProjection(
+  // The level's fields resolve CONCURRENTLY: they read from different
+  // collections and nothing links them, so running them in turn would make the
+  // stated bound – one round-trip per level – one per field instead.
+  const levels = await Promise.all(
+    Object.entries(projection).map(async ([name, level]) => {
+      const field = fieldNamed(searchType, name);
+      if (
+        field === undefined ||
+        field.kind !== 'reference' ||
+        field.ref?.strategy !== 'lookup'
+      ) {
+        // `assertValidQuery` rejects this for every caller; skipping keeps a
+        // hand-built query from throwing here rather than at the port’s guard.
+        return undefined;
+      }
+      const target = targetsByName.get(field.ref.target);
+      const collection =
+        target === undefined ? undefined : collections.get(target.class);
+      if (target === undefined || collection === undefined) {
+        return undefined;
+      }
+      const include = includeFields(target, level.fields, level.resolve);
+      const iris = distinctIris(parents, name);
+      // Nothing to read: no referent named, or the selection reduced to the
+      // `id` the referring document already carries.
+      if (iris.length === 0 || include.length <= 1) {
+        return undefined;
+      }
+      const documents = await fetchReferents(
         client,
-        level.resolve,
-        target,
-        schema,
-        collections,
-        [...documents.values()],
+        collection,
+        iris,
+        include,
         onError,
-      ),
-    });
+      );
+      return [
+        name,
+        {
+          target,
+          documents,
+          // The level below reads the IRIs off the documents this one just
+          // fetched – one more round-trip for the page, whatever its size.
+          children: await resolveProjection(
+            client,
+            level.resolve,
+            target,
+            schema,
+            collections,
+            [...documents.values()],
+            onError,
+          ),
+        },
+      ] as const;
+    }),
+  );
+  for (const level of levels) {
+    if (level !== undefined) {
+      resolved.set(level[0], level[1]);
+    }
   }
   return resolved;
 }

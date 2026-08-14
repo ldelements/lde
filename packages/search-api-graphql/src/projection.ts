@@ -89,6 +89,41 @@ function fieldsOf(
   });
 }
 
+/** Whether a type serves this field name – what a projection may ask for. */
+function servesField(searchType: SearchType, name: string): boolean {
+  return fieldNamed(searchType, name)?.output === true;
+}
+
+/** Union two projections level by level, so neither loses what it asked for. */
+function mergeProjections(
+  left: ReferenceProjection | undefined,
+  right: ReferenceProjection,
+): ReferenceProjection {
+  if (left === undefined) {
+    return right;
+  }
+  const merged: Record<
+    string,
+    { fields?: readonly string[]; resolve?: ReferenceProjection }
+  > = { ...left };
+  for (const [name, level] of Object.entries(right)) {
+    const existing = merged[name];
+    merged[name] =
+      existing === undefined
+        ? level
+        : {
+            fields: [
+              ...new Set([...(existing.fields ?? []), ...(level.fields ?? [])]),
+            ],
+            resolve:
+              level.resolve === undefined
+                ? existing.resolve
+                : mergeProjections(existing.resolve, level.resolve),
+          };
+  }
+  return merged;
+}
+
 /** One level: which lookups were selected, and what each asked for. */
 function fromSelections(
   selectionSets: readonly SelectionSetNode[],
@@ -113,9 +148,15 @@ function fromSelections(
       // The target's own declaration decides what its selections mean, so the
       // level below is read against it rather than against this type.
       const target = targetOf(field.ref.target);
+      // Only what the target actually serves. A selection carries more than
+      // that: `id` is on the referring document already, and every GraphQL
+      // client worth the name injects `__typename` into every selection set –
+      // asking the engine for either would fail the query at the port's guard.
       const wanted = fieldsOf(selected.selectionSet, fragments)
         .map((node) => node.name.value)
-        .filter((name) => name !== 'id');
+        .filter((name) =>
+          target === undefined ? false : servesField(target, name),
+        );
       const entry = (projection[selected.name.value] ??= {});
       entry.fields = [...new Set([...(entry.fields ?? []), ...wanted])];
       if (target !== undefined && selected.selectionSet !== undefined) {
@@ -126,7 +167,11 @@ function fromSelections(
           targetOf,
         );
         if (Object.keys(below).length > 0) {
-          entry.resolve = { ...entry.resolve, ...below };
+          // Merged level by level, not key by key: one lookup selected twice –
+          // two fragments each spreading it – must union what each asked for,
+          // or the second selection silently replaces the first and a field
+          // the client asked for is never fetched.
+          entry.resolve = mergeProjections(entry.resolve, below);
         }
       }
     }

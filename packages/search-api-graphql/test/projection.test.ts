@@ -26,6 +26,12 @@ const person: SearchType = {
       output: true,
       ref: { strategy: 'lookup', target: 'Organization' },
     },
+    {
+      name: 'mentor',
+      kind: 'reference',
+      output: true,
+      ref: { strategy: 'lookup', target: 'Person' },
+    },
   ],
 };
 const organization: SearchType = {
@@ -40,6 +46,12 @@ const organization: SearchType = {
       searchable: { weight: 1 },
     },
     { name: 'homepage', kind: 'keyword', output: true },
+    {
+      name: 'parent',
+      kind: 'reference',
+      output: true,
+      ref: { strategy: 'lookup', target: 'Organization' },
+    },
   ],
 };
 const work: SearchType = {
@@ -99,6 +111,150 @@ describe('projectionFor', () => {
     expect(
       project(`{ creativeWorks { items { title author { id name } } } }`),
     ).toEqual({ author: { fields: ['name'] } });
+  });
+
+  it('asks for no meta-field, so a client that injects __typename still works', () => {
+    // Apollo Client and urql add `__typename` to every selection set. Carried
+    // into the projection it would reach `assertValidQuery` as an unknown
+    // field of the target and fail the whole search.
+    expect(
+      project(`{ creativeWorks { items { author { name __typename } } } }`),
+    ).toEqual({ author: { fields: ['name'] } });
+  });
+
+  it('asks for nothing the target does not declare', () => {
+    expect(
+      project(`{ creativeWorks { items { author { name nonexistent } } } }`),
+    ).toEqual({ author: { fields: ['name'] } });
+  });
+
+  it('merges the level below when one lookup is selected twice', () => {
+    // Two fragments each spreading `author` is idiomatic; the deeper levels
+    // must union, not replace, or a field the client asked for is never
+    // fetched and comes back null.
+    expect(
+      project(`
+        {
+          creativeWorks {
+            items {
+              author { employer { label } }
+              author { employer { homepage } }
+            }
+          }
+        }
+      `),
+    ).toEqual({
+      author: {
+        fields: ['employer'],
+        resolve: { employer: { fields: ['label', 'homepage'] } },
+      },
+    });
+  });
+
+  it('reads what it can from a query naming what it cannot resolve', () => {
+    // An undefined fragment and a target this schema does not hold: both parse,
+    // neither validates. Projecting what remains keeps this a reading of the
+    // query rather than a second validator.
+    expect(
+      project(`{ creativeWorks { items { author { name } ...missing } } }`),
+    ).toEqual({ author: { fields: ['name'] } });
+    expect(
+      projectionFor(
+        infoFor(`{ creativeWorks { items { author { name } } } }`) as never,
+        work,
+        () => undefined,
+      ),
+    ).toEqual({ author: { fields: [] } });
+  });
+
+  it('keeps both deeper lookups when two selections name different ones', () => {
+    expect(
+      project(`
+        {
+          creativeWorks {
+            items {
+              author { employer { label } }
+              author { mentor { name } }
+            }
+          }
+        }
+      `),
+    ).toEqual({
+      author: {
+        fields: ['employer', 'mentor'],
+        resolve: {
+          employer: { fields: ['label'] },
+          mentor: { fields: ['name'] },
+        },
+      },
+    });
+  });
+
+  it('merges recursively, so a repeated middle level keeps both subtrees', () => {
+    expect(
+      project(`
+        {
+          creativeWorks {
+            items {
+              author { employer { parent { label } } }
+              author { employer { parent { homepage } } }
+            }
+          }
+        }
+      `),
+    ).toEqual({
+      author: {
+        fields: ['employer'],
+        resolve: {
+          employer: {
+            fields: ['parent'],
+            resolve: { parent: { fields: ['label', 'homepage'] } },
+          },
+        },
+      },
+    });
+  });
+
+  it('keeps a deeper level a second selection of the same lookup omits', () => {
+    // The second `employer` carries no sub-selection, so it asks for nothing
+    // deeper – but it must not erase what the first one asked for.
+    expect(
+      project(`
+        {
+          creativeWorks {
+            items {
+              author { employer { label } }
+              author { employer }
+            }
+          }
+        }
+      `),
+    ).toEqual({
+      author: {
+        fields: ['employer'],
+        resolve: { employer: { fields: ['label'] } },
+      },
+    });
+  });
+
+  it('keeps a deeper level when the second selection of a lookup has none', () => {
+    expect(
+      project(`
+        {
+          creativeWorks {
+            items {
+              author { employer { label } }
+              author { name }
+            }
+          }
+        }
+      `),
+    ).toEqual({
+      author: {
+        fields: ['employer', 'name'],
+        resolve: { employer: { fields: ['label'] } },
+      },
+    });
   });
 
   it('nests, so each level fetches what that level selected', () => {
