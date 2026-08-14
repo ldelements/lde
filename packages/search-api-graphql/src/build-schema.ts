@@ -54,6 +54,7 @@ import {
   type LanguageOrder,
 } from './language.js';
 import { createFacetLoader, type FacetLoader } from './facet-batch.js';
+import { projectionFor } from './projection.js';
 
 /** Populated per request by the transport; no framework type appears here. */
 export interface SearchContext {
@@ -402,6 +403,7 @@ export function buildGraphQLSchema(
   // collide: searchSchema resolves its typeName to a declared Reference Type
   // and rejects duplicate names schema-wide.
   const referenceTypes = new Map<string, GraphQLObjectType>();
+<<<<<<< HEAD
   // Seeded with the shared types every schema carries, not just the root type
   // names: a declaration is free to name a type `IRI` or `ValueBucket`, and
   // without this it would pass both collision checks and fail at
@@ -425,6 +427,9 @@ export function buildGraphQLSchema(
     dateRange.name,
   ]);
 
+=======
+  const takenTypeNames = new Set(rootTypeNames);
+>>>>>>> 1368bfb (feat(search-typesense)!: fetch a lookup's fields from its target's collection)
   // The declared joins, and the input types they make shareable. Each map is
   // keyed by the SearchType `name`, so a type reached as a join target and the
   // same type queried in its own right meet exactly one `‹Name›Where`.
@@ -891,7 +896,7 @@ export function buildGraphQLSchema(
           description: `Results per page, between 0 and ${maxPerPage}. Use 0 for a facet-only query: no results are fetched, and the facet counts still come back.`,
         },
       },
-      resolve: async (_source, args, context: SearchContext) => {
+      resolve: async (_source, args, context: SearchContext, info) => {
         const built = argsToQuery(
           args as QueryArgs,
           context,
@@ -899,12 +904,20 @@ export function buildGraphQLSchema(
           maxPerPage,
           joins,
         );
+        // What the client selected decides what each lookup fetches, so the
+        // engine carries the referent fields this query asked for and no more.
+        const resolve = projectionFor(info, searchType, (target) =>
+          rootTypesByName.get(target),
+        );
         const finalQuery = typeOptions?.queryDefaults
           ? typeOptions.queryDefaults(built, context)
           : built;
         // Items + total only; facets are resolved lazily per selected key.
         const result = await context.engine.search(searchType, {
           ...finalQuery,
+          // A `queryDefaults` policy may add its own projection; the selection
+          // set is what the caller actually asked for, so it wins.
+          resolve: resolve ?? finalQuery.resolve,
           facets: [],
         });
         return {
