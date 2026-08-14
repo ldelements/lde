@@ -525,6 +525,82 @@ describe('projectDocument', () => {
     expect(document).not.toHaveProperty('external');
   });
 
+  it('holds a reference to absolute IRIs on every route a value can arrive by', () => {
+    // `iriString` guards the graph path, but three routes bypass it: a
+    // `derive`, a `from` projection value, and a `transform` that runs after
+    // the path was checked. The surface types all of them `IRI`, so all of them
+    // are guarded – otherwise the API promises identity over a value the
+    // projection let through, and the outbound error blames a stale index for
+    // something a live declaration produced.
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/d/12',
+        [dsKey('title')]: { '@id': 'https://ex/term/1' },
+      },
+      {
+        name: 'Dataset',
+        class: DATASET,
+        fields: [
+          // ADR 19 sends IRI-valued keyword derives here; a returned non-IRI is
+          // dropped, exactly as the graph path drops one.
+          {
+            name: 'derived',
+            kind: 'reference',
+            array: true,
+            filterable: true,
+            // A bare token, a blank-node label and a non-string all fail the
+            // rule; only the IRI is a selection key.
+            derive: () => ['https://ex/org/1', 'boerenbont', '_:b0', 42],
+          },
+          {
+            name: 'derivedSingle',
+            kind: 'reference',
+            filterable: true,
+            derive: () => 'not-an-iri',
+          },
+          {
+            name: 'derivedNonString',
+            kind: 'reference',
+            filterable: true,
+            derive: () => 42,
+          },
+          {
+            name: 'derivedSingleValid',
+            kind: 'reference',
+            filterable: true,
+            derive: () => 'https://ex/org/2',
+          },
+          // A `from` projection value never passes `iriString` at all.
+          {
+            name: 'fromContext',
+            kind: 'reference',
+            filterable: true,
+            from: 'dataset',
+          },
+          // A transform runs after the path was validated, so it can undo it.
+          {
+            name: 'sameAs',
+            kind: 'reference',
+            array: true,
+            path: dcterms.title.value,
+            filterable: true,
+            transform: (value) => value.replace('https://ex/term/', ''),
+          },
+        ],
+      },
+      undefined,
+      { dataset: 'not-an-iri' },
+    );
+    expect(document.derived).toEqual(['https://ex/org/1']);
+    expect(document).not.toHaveProperty('derivedSingle');
+    expect(document).not.toHaveProperty('derivedNonString');
+    expect(document.derivedSingleValid).toBe('https://ex/org/2');
+    expect(document.fromContext).toBeUndefined();
+    // Every transformed value fails the rule, so the field is left absent –
+    // the same outcome the graph path gives a reference it cannot key on.
+    expect(document).not.toHaveProperty('sameAs');
+  });
+
   it('prunes an internal (zero-role) field of every non-text kind from the document', () => {
     const document = projectDocument(
       {

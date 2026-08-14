@@ -698,20 +698,20 @@ inline on every referring document.
 Filters you write side by side must **all** match:
 
 ```graphql
-where: { material: { in: ["oil"] }, status: { in: ["valid"] } }
+where: { material: { in: ["https://vocab.getty.edu/aat/300015050"] }, status: { in: ["valid"] } }
 ```
 
 When you want a value matched in **any** of several fields instead, put those
 alternatives under `or`. This is the query behind an entity page – “everything
-related to Van Gogh”, where the link may be recorded as `creator`, `about` or
-`contentLocation` depending on the source:
+related to Van Gogh”, where the link may be recorded as `creator`, `contributor`
+or `publisher` depending on the source:
 
 ```graphql
-query Related($iri: PersonFilter!) {
+query Related($agent: PersonFilter!) {
   heritageObjects(
     where: {
-      material: { in: ["oil"] }
-      or: [{ creator: $iri }, { about: $iri }, { contentLocation: $iri }]
+      material: { in: ["https://vocab.getty.edu/aat/300015050"] }
+      or: [{ creator: $agent }, { contributor: $agent }, { publisher: $agent }]
     }
   ) {
     pagination {
@@ -732,12 +732,21 @@ You get one search, so `total`, the ranking and the facet counts are all correct
 each of them.
 
 Add `id` to the alternatives to include the entity’s **own** record alongside
-everything referring to it: `or: [{ id: $iri }, { creator: $iri }, …]`.
+everything referring to it – `or: [{ id: $work }, { isPartOf: $work }]` asks for a
+work together with its parts.
+
+Note what the alternatives have in common: they all accept IRIs **of the same
+type**, so one variable serves them all. That is not a coincidence – it is what
+[the GraphQL surface](./search-api-graphql#finding-which-fields-accept-an-iri)
+lets a consumer discover: given a collection, which fields of which collections
+accept its IRIs. Fields pointing at _different_ targets carry different filter
+types, and since GraphQL checks variable usage nominally, each needs its own
+variable.
 
 Three things to know when writing `or`:
 
 - **It sits alongside your other filters**, which still all apply. Above, every
-  hit is an oil painting _and_ related to the IRI.
+  hit is an oil painting _and_ related to the agent.
 - **Each alternative names one field.** `{ creator: $a, about: $b }` in a single
   entry is rejected by the schema – write it as two entries.
 - **A field may appear more than once**, which is how you ask for two ranges on
@@ -765,8 +774,8 @@ That is the only thing `and` is needed for. For plain filters it changes nothing
 since side-by-side keys already all apply – these are the same query:
 
 ```graphql
-where: { status: { in: ["valid"] }, material: { in: ["oil"] } }
-where: { and: [{ status: { in: ["valid"] } }, { material: { in: ["oil"] } }] }
+where: { status: { in: ["valid"] }, material: { in: ["https://vocab.getty.edu/aat/300015050"] } }
+where: { and: [{ status: { in: ["valid"] } }, { material: { in: ["https://vocab.getty.edu/aat/300015050"] } }] }
 ```
 
 #### Facet counts under an `or`

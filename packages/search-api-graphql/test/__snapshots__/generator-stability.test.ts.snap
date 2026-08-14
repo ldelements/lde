@@ -67,9 +67,9 @@ type Pagination {
 
 type ThingFacets {
   keyword: [ValueBucket!]!
-  creator: [IriBucket!]!
-  publisher: [IriBucket!]!
-  sameAs: [IriBucket!]!
+  creator: [IRIBucket!]!
+  publisher: [IRIBucket!]!
+  sameAs: [IRIBucket!]!
   status: [ValueBucket!]!
   open: [BooleanBucket!]!
 }
@@ -80,7 +80,7 @@ type ValueBucket {
   label: [LanguageString!]
 }
 
-type IriBucket {
+type IRIBucket {
   value: IRI!
   count: Int!
   label: [LanguageString!]
