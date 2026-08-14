@@ -467,6 +467,49 @@ describe('validateSearchType', () => {
     ).toEqual([]);
   });
 
+  it('requires a ref typeName on every surfaced strategy but idOnly', () => {
+    // An `idOnly` reference emits no type of its own, so it needs no name to
+    // emit one under – `sameAs` points at a vocabulary nobody indexes. Every
+    // other surfaced strategy IS served as a named type, and without a name the
+    // GraphQL surface prints `undefined` as the field's type: a published
+    // contract that is not a schema. TypeScript's union already forbids it, so
+    // this guards a declaration built outside it (plain JS, a generator).
+    expect(
+      validateSearchType(
+        typeWith({
+          name: 'creator',
+          kind: 'reference',
+          output: true,
+          ref: { strategy: 'labelOnly' },
+        } as never),
+      ),
+    ).toEqual([{ field: 'creator', reason: 'missing-ref-type-name' }]);
+
+    expect(
+      validateSearchType(
+        typeWith({
+          name: 'sameAs',
+          kind: 'reference',
+          output: true,
+          ref: { strategy: 'idOnly' },
+        }),
+      ),
+    ).toEqual([]);
+
+    // Not surfaced, so nothing has to be emitted for it: a filter-only
+    // reference falls back to the target-less IRI filter.
+    expect(
+      validateSearchType(
+        typeWith({
+          name: 'seeAlso',
+          kind: 'reference',
+          filterable: true,
+          ref: { strategy: 'labelOnly' },
+        } as never),
+      ),
+    ).toEqual([]);
+  });
+
   it('rejects ref on a non-reference kind', () => {
     const type = typeWith({
       name: 'format',

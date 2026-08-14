@@ -830,6 +830,7 @@ export interface SearchTypeIssue {
     | 'unknown-kind'
     | 'invalid-locale'
     | 'missing-ref'
+    | 'missing-ref-type-name'
     | 'ref-not-allowed'
     | 'text-requires-locales'
     | 'locales-not-allowed'
@@ -932,7 +933,9 @@ const LOCALE_PATTERN = /^[A-Za-z0-9]+(-[A-Za-z0-9]+)*$/;
  * - a `text` field’s declared locales are BCP-47-shaped (no `_`, which is the
  *   reserved name↔locale separator);
  * - a `reference` field that is `output` declares `ref` (the API surfaces
- *   need the reference type name); `ref` on any other kind is meaningless;
+ *   need the reference type name), and – unless its strategy is `idOnly`, which
+ *   emits no type of its own – that `ref` declares a `typeName`; `ref` on any
+ *   other kind is meaningless;
  * - `joinable` only on a `reference` field, and only alongside a `labelSource`
  *   – the join addresses the referent’s collection, which is the one the label
  *   source names, so without it the flag states an edge to nowhere – and never
@@ -1001,6 +1004,19 @@ export function validateSearchType(
     if (field.kind === 'reference') {
       if (field.output === true && field.ref === undefined) {
         issue('missing-ref');
+      }
+      // `typeName` is optional only for `idOnly`, which emits no type and so
+      // needs no name to emit one under. Every other surfaced strategy is
+      // served AS a named type, and without a name an API surface has nothing
+      // to emit – the GraphQL one silently prints `undefined` as the field’s
+      // type, publishing a contract that is not a schema.
+      if (
+        field.output === true &&
+        field.ref !== undefined &&
+        field.ref.strategy !== 'idOnly' &&
+        field.ref.typeName === undefined
+      ) {
+        issue('missing-ref-type-name');
       }
       // A join addresses the referent’s collection, which is the collection the
       // label source names: without one the flag states an edge to nowhere.
