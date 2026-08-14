@@ -97,9 +97,10 @@ describe('printSchemaModuleSdl', () => {
       modulePath: fixture('no-options.mjs'),
     });
 
-    // Prettier breaks the multi-argument root field over several lines, so a
-    // surface move stays one added line in the committed diff.
-    expect(unformatted).toContain('  datasets(query: String');
+    // Prettier expands every one-line description into a block, so a wording
+    // change stays one changed line in the committed diff.
+    expect(unformatted).toContain('"""1-based page number; at least 1."""');
+    expect(formatted).toContain('    1-based page number; at least 1.\n');
     expect(formatted).not.toBe(unformatted);
   });
 

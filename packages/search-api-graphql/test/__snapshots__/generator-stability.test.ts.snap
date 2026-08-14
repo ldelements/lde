@@ -2,7 +2,24 @@
 
 exports[`GraphQL generator stability > emits a stable SDL for a representative schema 1`] = `
 "type Query {
-  things(query: String, where: ThingWhere, orderBy: ThingOrderBy, page: Int = 1, perPage: Int = 20): ThingSearchResult!
+  things(
+    """Free-text query. Omit it to browse by filter alone."""
+    query: String
+
+    """Conditions every result must satisfy."""
+    where: ThingWhere
+
+    """Sort order. Defaults to relevance for a free-text query."""
+    orderBy: ThingOrderBy
+
+    """1-based page number; at least 1."""
+    page: Int = 1
+
+    """
+    Results per page, between 0 and 100. Use 0 for a facet-only query: no results are fetched, and the facet counts still come back.
+    """
+    perPage: Int = 20
+  ): ThingSearchResult!
 }
 
 type ThingSearchResult {

@@ -103,6 +103,49 @@ describe('createSearchGraphQLHandler', () => {
     expect(received().text).toBe('kaart');
   });
 
+  // The regression the unit tests cannot catch: argument validation runs inside
+  // a resolver, and the transport masks a resolver throw as “Unexpected error.”
+  // unless it is a GraphQLError. Asserted through the handler, since masking is
+  // exactly what the direct-execution tests bypass.
+  it('reports an invalid argument to the caller instead of masking it', async () => {
+    const { engine } = fakeEngine();
+    const handler = createSearchGraphQLHandler({
+      searchSchema: searchSchema(schema),
+      engine,
+    });
+
+    const response = await post(
+      handler,
+      '{ datasets(perPage: 150) { pagination { total } } }',
+    );
+    const { errors } = await response.json();
+
+    expect(errors[0].message).toBe(
+      'perPage must be between 0 and 100; got 150.',
+    );
+    expect(errors[0].extensions.code).toBe('BAD_USER_INPUT');
+  });
+
+  it('masks an engine failure, which the caller cannot fix', async () => {
+    const { engine } = fakeEngine();
+    const handler = createSearchGraphQLHandler({
+      searchSchema: searchSchema(schema),
+      engine: {
+        ...engine,
+        search: () => Promise.reject(new Error('connect ECONNREFUSED')),
+      },
+    });
+
+    const response = await post(
+      handler,
+      '{ datasets { pagination { total } } }',
+    );
+    const { errors } = await response.json();
+
+    expect(errors[0].message).toBe('Unexpected error.');
+    expect(errors[0].message).not.toContain('ECONNREFUSED');
+  });
+
   it('orders output languages by the Accept-Language header', async () => {
     const { engine, received } = fakeEngine();
     const handler = createSearchGraphQLHandler({

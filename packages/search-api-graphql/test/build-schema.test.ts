@@ -225,6 +225,11 @@ describe('buildGraphQLSchema', () => {
     expect(badPerPage.errors?.[0]?.message).toMatch(
       /perPage must be between 0 and 100/,
     );
+    // Marked caller-fixable, so a transport keeps the message rather than
+    // masking it as a server fault (see handler.test.ts).
+    for (const error of [badPage.errors?.[0], badPerPage.errors?.[0]]) {
+      expect(error?.extensions.code).toBe('BAD_USER_INPUT');
+    }
   });
 
   it('orders the output list best-first for the requested language', async () => {
