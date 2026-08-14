@@ -57,10 +57,10 @@ const creativeWork = defineSearchType({
       name: 'creator',
       kind: 'reference',
       path: `<${SCHEMA}creator>`,
-      labelSource: 'Person',
+
       facetable: true,
       output: true,
-      ref: { typeName: 'Person', strategy: 'labelOnly' },
+      ref: { strategy: 'lookup', target: 'Person' },
     },
   ],
 });
