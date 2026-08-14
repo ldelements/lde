@@ -1,3 +1,25 @@
+## 0.21.0 (2026-08-14)
+
+### 🚀 Features
+
+- ⚠️  **search:** type a filter by what its field keys on ([7926e44](https://github.com/ldelements/lde/commit/7926e44))
+
+### ⚠️  Breaking Changes
+
+- **search:** type a filter by what its field keys on  ([7926e44](https://github.com/ldelements/lde/commit/7926e44))
+  StringFilter is replaced by KeywordFilter, IRIFilter and
+  per-target filter inputs, and `id` is filtered per type. A variable must
+  be declared [IRI!] rather than [String!] - GraphQL checks variable usage
+  nominally, though the two are identical on the wire. Type.id and
+  <Type>Reference.id are IRI!. A reference facet returns IriBucket rather
+  than ValueBucket. A labelOnly/idOnly reference to a blank node is no
+  longer indexed, and a non-IRI already in an index now fails on read
+  instead of being served as an IRI.
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.19.0
+
 ## 0.20.3 (2026-08-14)
 
 ### 🚀 Features

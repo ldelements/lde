@@ -1,3 +1,11 @@
+## 0.9.0 (2026-08-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.21.0
+- Updated @lde/search-typesense to 0.22.0
+- Updated @lde/search to 0.19.0
+
 ## 0.8.3 (2026-08-14)
 
 ### 🧱 Updated Dependencies
