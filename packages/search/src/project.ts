@@ -228,8 +228,18 @@ function applyField(
     const value =
       field.kind === 'reference' && derived !== undefined
         ? derivedIris(derived)
-        : derived;
-    if (value !== undefined) {
+        : // A derived `date` goes through the same storage codec as a read one:
+          // the field is stored as Unix seconds, so an ISO string returned here
+          // would otherwise land as a string in an int64 field. A derive that
+          // already computed seconds returns a number and passes through.
+          field.kind === 'date' && typeof derived === 'string'
+          ? isoToUnixSeconds(derived)
+          : derived;
+    // NaN is not a value any kind stores, and a derive is the only route that
+    // can produce one (`setNumber` guards the read route). It serializes as
+    // `null`, which an engine rejects for a numeric field – so drop it, leaving
+    // the field absent as an unparseable string already does.
+    if (value !== undefined && !Number.isNaN(value)) {
       document[field.name] = value;
     }
     return;

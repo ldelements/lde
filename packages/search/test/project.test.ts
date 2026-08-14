@@ -525,6 +525,47 @@ describe('projectDocument', () => {
     expect(document).not.toHaveProperty('external');
   });
 
+  it('applies the date storage codec to a derived date, as it does to a read one', () => {
+    const document = projectDocument(
+      { '@id': 'https://ex/d/12' },
+      {
+        name: 'Dataset',
+        class: DATASET,
+        fields: [
+          // A derive returning an ISO string is converted, so it cannot land a
+          // string in a field the collection declares int64.
+          {
+            name: 'issued',
+            kind: 'date',
+            sortable: true,
+            derive: () => '2024-01-01T00:00:00.000Z',
+          },
+          // A derive that already computed seconds passes through untouched.
+          {
+            name: 'modified',
+            kind: 'date',
+            sortable: true,
+            derive: () => 1_704_067_200,
+          },
+          // An unparseable string leaves the field absent, exactly as a derive
+          // returning `undefined` does.
+          { name: 'created', kind: 'date', derive: () => 'not-a-date' },
+          // …and so does a derive that computed its own seconds from an
+          // unparseable input, rather than shipping NaN into an int64 field.
+          {
+            name: 'available',
+            kind: 'date',
+            derive: () => Date.parse('not-a-date') / 1000,
+          },
+        ],
+      },
+    );
+    expect(document.issued).toBe(1_704_067_200);
+    expect(document.modified).toBe(1_704_067_200);
+    expect(document).not.toHaveProperty('created');
+    expect(document).not.toHaveProperty('available');
+  });
+
   it('holds a reference to absolute IRIs on every route a value can arrive by', () => {
     // `iriString` guards the graph path, but three routes bypass it: a
     // `derive`, a `from` projection value, and a `transform` that runs after
