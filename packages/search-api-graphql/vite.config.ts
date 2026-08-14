@@ -26,7 +26,7 @@ export default mergeConfig(
           // Re-anchored for the selection-set projection: a lookup selected
           // without sub-fields parses but never validates, so that branch is
           // reachable only from a direct caller.
-          branches: 96.83,
+          branches: 96.88,
           statements: 100,
         },
       },

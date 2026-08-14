@@ -403,7 +403,6 @@ export function buildGraphQLSchema(
   // collide: searchSchema resolves its typeName to a declared Reference Type
   // and rejects duplicate names schema-wide.
   const referenceTypes = new Map<string, GraphQLObjectType>();
-<<<<<<< HEAD
   // Seeded with the shared types every schema carries, not just the root type
   // names: a declaration is free to name a type `IRI` or `ValueBucket`, and
   // without this it would pass both collision checks and fail at
@@ -427,9 +426,6 @@ export function buildGraphQLSchema(
     dateRange.name,
   ]);
 
-=======
-  const takenTypeNames = new Set(rootTypeNames);
->>>>>>> 1368bfb (feat(search-typesense)!: fetch a lookup's fields from its target's collection)
   // The declared joins, and the input types they make shareable. Each map is
   // keyed by the SearchType `name`, so a type reached as a join target and the
   // same type queried in its own right meet exactly one `‹Name›Where`.

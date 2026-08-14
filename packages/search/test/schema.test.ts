@@ -469,23 +469,25 @@ describe('validateSearchType', () => {
     ).toEqual([]);
   });
 
-  it('requires a ref typeName on every surfaced strategy but idOnly', () => {
+  it('requires a ref typeName on an inline reference alone', () => {
     // An `idOnly` reference emits no type of its own, so it needs no name to
-    // emit one under – `sameAs` points at a vocabulary nobody indexes. Every
-    // other surfaced strategy IS served as a named type, and without a name the
-    // GraphQL surface prints `undefined` as the field's type: a published
-    // contract that is not a schema. TypeScript's union already forbids it, so
-    // this guards a declaration built outside it (plain JS, a generator).
+    // emit one under – `sameAs` points at a vocabulary nobody indexes – and a
+    // `lookup` derives its name from the `target` it already names. Only an
+    // `inline` reference IS served as a separately named type, and without a
+    // name the GraphQL surface prints `undefined` as the field's type: a
+    // published contract that is not a schema. TypeScript's union already
+    // forbids it, so this guards a declaration built outside it (plain JS, a
+    // generator).
     expect(
       validateSearchType(
         typeWith({
-          name: 'creator',
+          name: 'media',
           kind: 'reference',
           output: true,
-          ref: { strategy: 'labelOnly' },
+          ref: { strategy: 'inline' },
         } as never),
       ),
-    ).toEqual([{ field: 'creator', reason: 'missing-ref-type-name' }]);
+    ).toEqual([{ field: 'media', reason: 'missing-ref-type-name' }]);
 
     expect(
       validateSearchType(
