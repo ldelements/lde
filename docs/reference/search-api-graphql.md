@@ -208,7 +208,7 @@ editor.
   defaults to `DESC`.
 - **Facets**: a keyed object with one field per `facetable` field, typed by
   the field’s declaration:
-  - a **reference** facet returns `[IriBucket!]!` – `value` (an `IRI`) +
+  - a **reference** facet returns `[IRIBucket!]!` – `value` (an `IRI`) +
     `count` + the resolved data `label`. `value` is typed as the
     `‹Target›Filter` that selects it takes, so a bucket feeds that filter
     back without a cast;

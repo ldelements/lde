@@ -95,11 +95,32 @@ It validates on the way **out** too. A type enforced in one direction only is no
 a type a consumer can rely on, and the coarse discovery strategy reads `IRI` as
 precisely the promise that a value is a selection key: serving a non-IRI under it
 would falsify the promise exactly where a consumer acts on it, by feeding a
-facet bucket back into the filter that is supposed to select it. The projection
-applies the same rule at the source, so the only way to reach the outbound error
-is an index written before that rule existed – which a reindex fixes, and which
-failing names instead of hiding. The cost is real and accepted: one such value
-fails the response rather than reading back as a visibly odd string.
+facet bucket back into the filter that is supposed to select it.
+
+**What a bad value costs depends on what it is.** Where the value is the
+document’s identity – `id`, a reference’s `id` – raising is right: the document
+cannot be selected at all, so serving it hands back something unusable. Where it
+is a facet bucket, raising is wrong, and not by a little: `value: IRI!` sits
+inside `[IRIBucket!]!` inside `Facets!` inside `‹Type›SearchResult!` inside a
+non-null root field, so a raising coercion nulls the **whole response** and takes
+`items` and `pagination` with it.
+[ADR 5](./0005-batch-facet-queries-through-the-engine-port.md)’s degradation
+contract exists to stop a supplementary sidebar count doing exactly that – it
+degrades a failed facet to an empty list precisely so the response survives. So
+the facet resolvers filter
+unselectable buckets out instead – a bucket that cannot be sent back as the
+filter selecting it is not a bucket worth serving, and dropping it keeps the
+promise without the collateral.
+
+That leaves the outbound error reachable only from an index written before the
+projection guard existed – which a reindex fixes. For that to be true the guard
+has to cover **every** route a reference value can take, not just the graph path:
+`iriString` covers the path, and `applyFacet` and the `derive` branch of
+`applyField` cover `from` projection values, `transform` results and derived
+values. Missing any of them would leave the surface promising `IRI` over
+something the projection had let through – and the conversion this ADR
+prescribes, `keyword` `derive` → `kind: 'reference'`, routes straight through
+the busiest of them.
 
 The check is a **scheme check, not an `http(s)` one**. `urn:`, `doi:`, `ark:`,
 `tag:`, `mailto:` and a deployment’s own minted scheme are ordinary Linked Data;
@@ -167,5 +188,5 @@ make typed: a consumer reads a bucket `value` and sends it straight back as the
 `‹Target›Filter` that selects it, and GraphQL checks variable usage nominally,
 so the two halves would not compose without a cast. `BooleanBucket` already
 resolves this the other way – it serves a real boolean so the bucket feeds `is`
-directly – and a reference facet has the same claim. Hence `IriBucket`, built
+directly – and a reference facet has the same claim. Hence `IRIBucket`, built
 from the same field factory as `ValueBucket` so the two cannot drift.

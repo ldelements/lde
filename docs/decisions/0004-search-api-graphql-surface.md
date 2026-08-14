@@ -24,7 +24,7 @@ single `StringFilter` is replaced by filter inputs typed by what the field keys
 on (`KeywordFilter`, `IRIFilter`, `‹Target›Filter` over a new `IRI` scalar),
 `id` is filtered per type, and `idOnly` is implemented – so a reference surfaces
 as a bare `IRI` rather than being forward-declared. A reference facet’s bucket
-is `IriBucket`, whose `value` is an `IRI`, so the round trip from bucket to
+is `IRIBucket`, whose `value` is an `IRI`, so the round trip from bucket to
 filter is typed end to end. The `StringFilter`, `ValueBucket` and `idOnly` rows
 below are historical.
 

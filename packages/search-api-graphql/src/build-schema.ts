@@ -123,21 +123,28 @@ const scalarOutput = (
  * distinguishable. Consequence for consumers: a variable must be declared
  * `[IRI!]`, not `[String!]`, because GraphQL checks variable usage nominally.
  *
- * **Input coercion validates; output serialization does not.** Rejecting a bare
- * token on the way in is what turns `where: { material: { in: ["boerenbont"] } }`
- * from a silent empty result into an error saying why – the same job
- * `argsToQuery` already does for an out-of-range `perPage`.
+ * **It validates in both directions.** Rejecting a bare token on the way in is
+ * what turns `where: { material: { in: ["boerenbont"] } }` from a silent empty
+ * result into an error saying why – the same job `argsToQuery` already does for
+ * an out-of-range `perPage`. Outbound matters for the same reason: a type
+ * enforced in one direction only is not one a consumer can rely on, and the
+ * coarse discovery strategy reads `IRI` as the promise that a value is a
+ * selection key.
  *
- * It validates on the way **out** too, and deliberately: a type that is enforced
- * in one direction only is not a type a consumer can rely on, and the coarse
- * discovery strategy reads `IRI` as the promise that a value is a selection key.
- * Serving a non-IRI under it would make the promise false exactly where a
- * consumer acts on it. The projection applies the same rule at the source, so
- * the only way to reach this error is an index written before it existed – which
- * a reindex fixes, and which failing names instead of hiding.
+ * **Where a bad value is dropped rather than raised.** Raising is right where
+ * the value IS the document’s identity (`id`, a reference’s `id`): such a
+ * document cannot be selected, so serving it would hand back something
+ * unusable. It is wrong for a facet bucket – `value: IRI!` sits inside a chain
+ * of non-nulls up to the root field, so raising there nulls the WHOLE response
+ * and discards `items`, which is precisely what facet-batch.ts’s degradation
+ * contract forbids a supplementary sidebar count from doing. The facet
+ * resolvers therefore filter unselectable buckets out instead.
  *
  * What counts as an IRI is {@link isAbsoluteIri} – shared with the projection,
- * so the surface cannot promise something the index contradicts.
+ * which applies it on every route a reference value can take (graph path,
+ * `derive`, `from`, `transform`), so the surface cannot promise something the
+ * index contradicts and the outbound error is reachable only from an index
+ * written before that rule existed.
  */
 const iriScalar = new GraphQLScalarType<string, string>({
   name: 'IRI',
@@ -265,7 +272,7 @@ export function buildGraphQLSchema(
   // that selects it, with no `String`-to-`IRI` boundary in between – the
   // contract BooleanBucket already keeps for `is`.
   const iriBucket = new GraphQLObjectType({
-    name: 'IriBucket',
+    name: 'IRIBucket',
     fields: valueBucketFields(iriScalar),
   });
   // A numeric range-facet bin: half-open `[min, max)` bounds (max null on an
@@ -396,7 +403,28 @@ export function buildGraphQLSchema(
   // collide: searchSchema resolves its typeName to a declared Reference Type
   // and rejects duplicate names schema-wide.
   const referenceTypes = new Map<string, GraphQLObjectType>();
-  const takenTypeNames = new Set(rootTypeNames);
+  // Seeded with the shared types every schema carries, not just the root type
+  // names: a declaration is free to name a type `IRI` or `ValueBucket`, and
+  // without this it would pass both collision checks and fail at
+  // `new GraphQLSchema` with graphql-js’s “Schema must contain uniquely named
+  // types” – naming neither the declaration nor the field, which is the opaque
+  // failure these checks exist to replace.
+  const takenTypeNames = new Set([
+    ...rootTypeNames,
+    iriScalar.name,
+    keywordFilter.name,
+    iriFilter.name,
+    languageString.name,
+    valueBucket.name,
+    iriBucket.name,
+    rangeBucket.name,
+    booleanBucket.name,
+    paginationType.name,
+    sortDirection.name,
+    intRange.name,
+    floatRange.name,
+    dateRange.name,
+  ]);
   /** The label key each id-plus-label reference type was registered with; no
    *  entry for a surfaced inline one, which carries fields instead of a label. */
   const labelKeys = new Map<string, string>();
@@ -812,7 +840,7 @@ export function buildGraphQLSchema(
 
     // Keyed facets object: one field per facetable field, typed by its kind
     // (range fields → [RangeBucket!], boolean fields → [BooleanBucket!],
-    // reference fields → [IriBucket!], else [ValueBucket!]). Only the selected
+    // reference fields → [IRIBucket!], else [ValueBucket!]). Only the selected
     // fields are resolved (GraphQL prunes the rest), so the selection IS the
     // request; how they are computed – skip-own-filter, batched into one
     // engine dispatch – lives in facet-batch.ts.
@@ -927,13 +955,33 @@ export function buildGraphQLSchema(
           GraphQLFieldConfig<Source, SearchContext>
         > = {};
         for (const field of facetable) {
+          const bucketType = bucketTypeFor(field);
           fields[field.name] = {
-            type: nonNullListOf(bucketTypeFor(field)),
+            type: nonNullListOf(bucketType),
             // The skip-own-filter query building, the batching into one
             // engine dispatch and the degrade-to-[] error handling all live
             // in the loader (facet-batch.ts).
-            resolve: (source: Source) =>
-              (source.loadFacet as FacetLoader)(field.name),
+            resolve: async (source: Source) => {
+              const buckets = await (source.loadFacet as FacetLoader)(
+                field.name,
+              );
+              if (bucketType !== iriBucket) {
+                return buckets;
+              }
+              // A bucket keyed on something that is not an IRI is not a
+              // selection key – it cannot be sent back as the filter that
+              // selects it – so it is dropped rather than served under `IRI`.
+              // Dropping, not throwing: `value: IRI!` sits inside a chain of
+              // non-nulls up to the root field, so a raising coercion here
+              // would null the WHOLE response and take `items` with it, which
+              // is exactly what facet-batch.ts’s degradation contract forbids
+              // a supplementary sidebar count from doing.
+              return buckets.filter(
+                (bucket) =>
+                  typeof bucket.value === 'string' &&
+                  isAbsoluteIri(bucket.value),
+              );
+            },
           };
         }
         return fields;

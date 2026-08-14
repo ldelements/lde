@@ -318,23 +318,47 @@ describe('buildGraphQLSchema', () => {
     ]);
   });
 
-  it('refuses to serve a non-IRI under IRI, naming the index rather than the query', async () => {
-    // An index written before the projection dropped blank-node referents. The
-    // field is typed `IRI`, and the coarse discovery strategy reads that as the
-    // promise that the value is a selection key – serving `_:b0` under it would
-    // make the promise false exactly where a consumer acts on it.
+  it('drops an unselectable bucket rather than nulling the response around it', async () => {
+    // A stale bucket from an index written before the projection guard. Its
+    // `value: IRI!` is non-null all the way up to the root field, so raising
+    // here would take `items` and `pagination` with it – the collateral ADR 5’s
+    // degradation contract exists to prevent. It is dropped instead: a bucket
+    // that cannot be sent back as the filter selecting it is not worth serving.
     const { engine } = fakeEngine({
-      total: 0,
-      hits: [],
-      facets: { publisher: [{ value: '_:b0', count: 1 }] },
+      total: 1,
+      hits: canned.hits,
+      facets: {
+        publisher: [
+          { value: '_:b0', count: 1 },
+          { value: 'https://org/1', count: 2 },
+        ],
+      },
     });
     const result = await run(
-      `{ datasets { facets { publisher { value } } } }`,
-      {
-        engine,
-        acceptLanguage: ['nl'],
-      },
+      `{ datasets { pagination { total } items { id } facets { publisher { value count } } } }`,
+      { engine, acceptLanguage: ['nl'] },
     );
+    expect(result.errors).toBeUndefined();
+    const data = result.data?.datasets as Record<string, unknown>;
+    expect(data.pagination).toEqual({ total: 1 });
+    expect(data.items).toEqual([{ id: 'https://d/1' }]);
+    expect((data.facets as Record<string, unknown>).publisher).toEqual([
+      { value: 'https://org/1', count: 2 },
+    ]);
+  });
+
+  it('refuses to serve a non-IRI as a document’s identity, naming the index rather than the query', async () => {
+    // Identity is the case where raising is right: a document keyed on `_:b0`
+    // cannot be selected at all, so serving it hands back something unusable.
+    const { engine } = fakeEngine({
+      total: 1,
+      facets: {},
+      hits: [{ id: '_:b0', document: { status: 'valid' } }],
+    });
+    const result = await run(`{ datasets { items { id } } }`, {
+      engine,
+      acceptLanguage: ['nl'],
+    });
     expect(result.errors?.[0]?.message).toMatch(
       /IRI cannot serialize “_:b0”.*reindex/is,
     );
@@ -843,8 +867,8 @@ describe('buildGraphQLSchema', () => {
     // `value`, send it back as `where: { publisher: { in: [...] } }`. Both sides
     // are `IRI`, so no `String`-to-`IRI` boundary sits in the middle – the same
     // contract BooleanBucket keeps for `is`.
-    expect(sdl).toMatch(/publisher: \[IriBucket!\]!/);
-    expect(sdl).toMatch(/type IriBucket \{\s+value: IRI!/);
+    expect(sdl).toMatch(/publisher: \[IRIBucket!\]!/);
+    expect(sdl).toMatch(/type IRIBucket \{\s+value: IRI!/);
     expect(sdl).toMatch(/publisher: OrganizationFilter/);
     // A literal-keyed facet keeps the literal-keyed bucket.
     expect(sdl).toMatch(/type ValueBucket \{\s+value: String!/);

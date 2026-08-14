@@ -218,7 +218,17 @@ function applyField(
     return applyProjectionValue(document, field, field.from, context);
   }
   if (field.derive !== undefined) {
-    const value = field.derive(document, context);
+    const derived = field.derive(document, context);
+    // A derived `reference` is held to the same rule as a read one: what it
+    // stores is a selection key, and the surface types it `IRI`. ADR 19 sends
+    // an IRI-valued `keyword` derive here by converting it to `reference`, so
+    // this is the busiest way a non-IRI could otherwise reach the index. A
+    // value that survives nothing leaves the field absent, exactly as a derive
+    // returning `undefined` does.
+    const value =
+      field.kind === 'reference' && derived !== undefined
+        ? derivedIris(derived)
+        : derived;
     if (value !== undefined) {
       document[field.name] = value;
     }
@@ -360,7 +370,16 @@ function applyFacet(
   raw: readonly string[],
   field: KeywordField | ReferenceField,
 ): void {
-  const values = dedupe(field.transform ? raw.map(field.transform) : raw);
+  // A `reference` stores identity, so what it stores must be an IRI whatever
+  // route the value arrived by. {@link iriString} guards the graph path, but a
+  // `transform` runs after it and a `from` projection value never passes it at
+  // all – so both are checked here, at the one point they share. Without this
+  // the surface would promise `IRI` over a value the projection let through.
+  const referenced = field.kind === 'reference';
+  const transformed = field.transform ? raw.map(field.transform) : raw;
+  const values = dedupe(
+    referenced ? transformed.filter(isAbsoluteIri) : transformed,
+  );
   const folded = dedupe(values.map((value) => fold(value)));
   const searchField = physicalFields(field).search[0];
   if (field.array === true) {
@@ -542,6 +561,21 @@ function literalString(value: unknown): string | undefined {
 function iriString(value: unknown): string | undefined {
   const iri = isObject(value) ? value['@id'] : value;
   return typeof iri === 'string' && isAbsoluteIri(iri) ? iri : undefined;
+}
+
+/** What a `derive` on a `reference` field is allowed to have produced: the
+ *  absolute IRIs among its return value, keeping the shape the declaration
+ *  promises (a list stays a list, a single value stays single) so `array` still
+ *  decides the stored shape. A lone non-IRI becomes `undefined`, i.e. absent –
+ *  the same outcome the graph path gives it. */
+function derivedIris(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.filter(
+      (entry): entry is string =>
+        typeof entry === 'string' && isAbsoluteIri(entry),
+    );
+  }
+  return typeof value === 'string' && isAbsoluteIri(value) ? value : undefined;
 }
 
 function toInteger(literal: string | undefined): number | undefined {
