@@ -235,7 +235,11 @@ function applyField(
           field.kind === 'date' && typeof derived === 'string'
           ? isoToUnixSeconds(derived)
           : derived;
-    if (value !== undefined) {
+    // NaN is not a value any kind stores, and a derive is the only route that
+    // can produce one (`setNumber` guards the read route). It serializes as
+    // `null`, which an engine rejects for a numeric field – so drop it, leaving
+    // the field absent as an unparseable string already does.
+    if (value !== undefined && !Number.isNaN(value)) {
       document[field.name] = value;
     }
     return;

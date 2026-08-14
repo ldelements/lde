@@ -550,12 +550,20 @@ describe('projectDocument', () => {
           // An unparseable string leaves the field absent, exactly as a derive
           // returning `undefined` does.
           { name: 'created', kind: 'date', derive: () => 'not-a-date' },
+          // …and so does a derive that computed its own seconds from an
+          // unparseable input, rather than shipping NaN into an int64 field.
+          {
+            name: 'available',
+            kind: 'date',
+            derive: () => Date.parse('not-a-date') / 1000,
+          },
         ],
       },
     );
     expect(document.issued).toBe(1_704_067_200);
     expect(document.modified).toBe(1_704_067_200);
     expect(document).not.toHaveProperty('created');
+    expect(document).not.toHaveProperty('available');
   });
 
   it('holds a reference to absolute IRIs on every route a value can arrive by', () => {
