@@ -980,7 +980,7 @@ describe('und-locale text reconstruction', () => {
         name: 'publisher',
         kind: 'reference',
         output: true,
-        ref: { strategy: 'idOnly' },
+        ref: { strategy: 'idOnly', typeName: 'Organization' },
       },
     ],
   });

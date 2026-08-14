@@ -24,6 +24,7 @@ import {
   type LocalizedValue,
   type RootType,
   type SearchEngine,
+  type ReferenceField,
   type SearchField,
   type SearchQuery,
   type SearchSchema,
@@ -426,13 +427,13 @@ export function buildGraphQLSchema(
     dateRange.name,
   ]);
   /** The label key each id-plus-label reference type was registered with; no
-   *  entry for a surfaced inline one, which carries fields instead of a label. */
+   *  entry for a lookup or a surfaced inline one, which carry fields instead. */
   const labelKeys = new Map<string, string>();
 
-  /** The key a reference serves its resolved label under: the name its label
-   *  source declares that label field with, so the reference and the type it
-   *  resolves against agree on the word. An id-only reference resolves no
-   *  label, so it keeps the default. `searchSchema` guarantees the source is a
+  /** The key an `idOnly` reference serves its resolved facet-bucket label
+   *  under: the name its label source declares that label field with, so the
+   *  reference and the type it resolves against agree on the word. Resolving
+   *  nothing keeps the default. `searchSchema` guarantees the source is a
    *  declared Root Type. */
   function labelKeyOf(
     field: SearchField & { readonly kind: 'reference' },
@@ -442,12 +443,24 @@ export function buildGraphQLSchema(
       : labelFieldNameOf(rootTypesByName.get(field.labelSource)!);
   }
 
+<<<<<<< HEAD
   // The declared joins, and the input types they make shareable. Each map is
   // keyed by the SearchType `name`, so a type reached as a join target and the
   // same type queried in its own right meet exactly one `‹Name›Where`.
   const joins = joinGraph(schema);
   const whereInputs = new Map<string, GraphQLInputObjectType>();
   const referenceFilters = new Map<string, GraphQLInputObjectType>();
+=======
+  /** The name a reference’s emitted type is keyed under: a `lookup`’s target,
+   *  an `inline`’s reference type, an `idOnly`’s declared name. `undefined`
+   *  means no object type – an `idOnly` that named none is served as its bare
+   *  IRI. */
+  function referencedTypeName(
+    ref: NonNullable<ReferenceField['ref']>,
+  ): string | undefined {
+    return ref.strategy === 'lookup' ? ref.target : ref.typeName;
+  }
+>>>>>>> ff76113 (feat(search-api-graphql)!: serve a lookup reference as its target's fields)
 
   /**
    * Register the GraphQL type one reference field is served as, once per
@@ -470,19 +483,22 @@ export function buildGraphQLSchema(
     ) {
       return;
     }
-    if (referenceTypes.has(field.ref.typeName)) {
-      // Fields sharing a `ref.typeName` share one emitted type, so they must
-      // agree on the word it serves its label under – otherwise which one wins
-      // would come down to declaration order.
-      const registered = labelKeys.get(field.ref.typeName);
+    // Guaranteed for an output reference: searchSchema rejects an idOnly one
+    // that names no type, and the other strategies derive their name.
+    const typeName = referencedTypeName(field.ref) as string;
+    if (referenceTypes.has(typeName)) {
+      // Fields sharing an emitted type must agree on the word it serves its
+      // label under – otherwise which one wins would come down to declaration
+      // order. A lookup cannot disagree: its word comes from the target that
+      // names the type, so every field pointing there reads the same one.
+      const registered = labelKeys.get(typeName);
       if (registered !== undefined && registered !== labelKeyOf(field)) {
         throw new Error(
-          `Reference “${owner.name}.${field.name}” serves its label as “${labelKeyOf(field)}”, but “${field.ref.typeName}” is already served with “${registered}”; fields sharing a reference type must resolve labels from sources that agree on their labelField.`,
+          `Reference “${owner.name}.${field.name}” serves its label as “${labelKeyOf(field)}”, but “${typeName}” is already served with “${registered}”; fields sharing a reference type must resolve labels from sources that agree on their labelField.`,
         );
       }
       return;
     }
-    const { typeName } = field.ref;
     const graphQLName = rootTypeNames.has(typeName)
       ? `${typeName}Reference`
       : typeName;
@@ -492,7 +508,14 @@ export function buildGraphQLSchema(
       );
     }
     takenTypeNames.add(graphQLName);
-    const nested = nestedReferenceType(schema, field);
+    // What the emitted type carries: a surfaced inline reference nests its
+    // declared Reference Type, a lookup carries its target’s own output fields
+    // (the same rule, read off the root type), and everything else is the
+    // id-plus-label pair.
+    const nested =
+      field.ref.strategy === 'lookup'
+        ? rootTypesByName.get(field.ref.target)
+        : nestedReferenceType(schema, field);
     if (nested === undefined) {
       labelKeys.set(typeName, labelKeyOf(field));
     }
@@ -517,9 +540,16 @@ export function buildGraphQLSchema(
                 ),
               }
             : {
-                // Nullable, and load-bearing: a referent needs no identity, so
-                // a blank-node one nests exactly like a named one, minus this.
-                id: { type: iriScalar },
+                // A lookup resolves a document by IRI, so its `id` is always
+                // there. An inline referent’s is nullable, and load-bearing:
+                // a referent needs no identity, so a blank-node one nests
+                // exactly like a named one, minus this.
+                id: {
+                  type:
+                    field.ref?.strategy === 'lookup'
+                      ? new GraphQLNonNull(iriScalar)
+                      : iriScalar,
+                },
                 ...Object.fromEntries(
                   outputFields(nested).map((nestedField) => [
                     nestedField.name,
@@ -596,7 +626,11 @@ export function buildGraphQLSchema(
                 resolve: (source) => iriOf(source[field.name]) ?? null,
               };
         }
-        const referenceType = referenceTypes.get(field.ref?.typeName ?? '')!;
+        const referenceType = referenceTypes.get(
+          (field.ref === undefined
+            ? undefined
+            : referencedTypeName(field.ref)) ?? '',
+        )!;
         return field.array === true
           ? {
               type: nonNullListOf(referenceType),

@@ -370,11 +370,7 @@ export function createTypesenseSearchEngine<
       // invalid query (unknown field, wrong operator, unknown facet) are both
       // rejected up front, for EVERY caller.
       assertTypeInSchema(schema, searchType);
-<<<<<<< HEAD
-      assertValidQuery(query, searchType, joins);
-=======
-      assertValidQuery(query, searchType, schema);
->>>>>>> 9338164 (refactor(search)!: validate a query's projection at every level)
+      assertValidQuery(query, searchType, schema, joins);
       // Asks for no document (an empty `id` membership): answer it without a
       // round-trip rather than dispatching a query whose only filter compiles
       // away, which would hand back the whole collection.
@@ -409,11 +405,7 @@ export function createTypesenseSearchEngine<
     ): Promise<readonly FacetsOutcome[]> {
       assertTypeInSchema(schema, searchType);
       for (const query of queries) {
-<<<<<<< HEAD
-        assertValidQuery(query, searchType, joins);
-=======
-        assertValidQuery(query, searchType, schema);
->>>>>>> 9338164 (refactor(search)!: validate a query's projection at every level)
+        assertValidQuery(query, searchType, schema, joins);
       }
       if (queries.length === 0) {
         return [];

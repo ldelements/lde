@@ -37,7 +37,7 @@ const schema: SearchType = {
       facetable: true,
       filterable: true,
       output: true,
-      ref: { typeName: 'Organization', strategy: 'labelOnly' },
+      ref: { strategy: 'idOnly', typeName: 'Organization' },
     },
     {
       name: 'size',
@@ -59,7 +59,7 @@ const schema: SearchType = {
       array: true,
       facetable: true,
       output: true,
-      ref: { typeName: 'Term', strategy: 'labelOnly' },
+      ref: { strategy: 'idOnly', typeName: 'Term' },
     },
     {
       name: 'status',
@@ -903,7 +903,7 @@ describe('buildGraphQLSchema', () => {
           kind: 'reference',
           facetable: true,
           output: true,
-          ref: { typeName: 'Agent', strategy: 'labelOnly' },
+          ref: { strategy: 'idOnly', typeName: 'Agent' },
         },
       ],
     };
@@ -923,7 +923,7 @@ describe('buildGraphQLSchema', () => {
           kind: 'reference',
           facetable: true,
           output: true,
-          ref: { typeName: 'Agent', strategy: 'labelOnly' },
+          ref: { strategy: 'idOnly', typeName: 'Agent' },
         },
         { name: 'pageCount', kind: 'integer', filterable: true, output: true },
       ],
@@ -1011,7 +1011,7 @@ describe('buildGraphQLSchema', () => {
             output: true,
             // Person is also a root type in this schema – the labelOnly way to
             // carry an id plus a label resolved from the Person collection.
-            ref: { typeName: 'Person', strategy: 'labelOnly' },
+            ref: { strategy: 'idOnly', typeName: 'Person' },
           },
         ],
       };
@@ -1037,22 +1037,74 @@ describe('buildGraphQLSchema', () => {
             name: 'author',
             kind: 'reference',
             output: true,
-            labelSource: 'Person',
-            ref: { typeName: 'Person', strategy: 'labelOnly' },
+            ref: { strategy: 'lookup', target: 'Person' },
           },
         ],
       };
       const sdl = printSchema(
         buildGraphQLSchema(searchSchema(namedLabel, withReferenceToRoot)),
       );
+      // A lookup carries the target's own output fields, under the target's
+      // own names – so the label arrives as `name`, with no `label` anywhere.
+      expect(sdl).toMatch(/type PersonReference \{\s+id: String!\s+name:/);
+      expect(sdl).not.toMatch(/type PersonReference \{[^}]*\blabel:/);
+    });
+
+    it('registers the reference types a lookup target declares of its own', () => {
+      // The target's output fields become the emitted type's, so ITS references
+      // need types too – and a cycle between two targets must terminate.
+      const organization: SearchType = {
+        name: 'Organization',
+        class: 'https://schema.org/Organization',
+        fields: [
+          {
+            name: 'label',
+            kind: 'text',
+            locales: ['nl'],
+            output: true,
+            searchable: { weight: 1 },
+          },
+          {
+            name: 'members',
+            kind: 'reference',
+            array: true,
+            output: true,
+            ref: { strategy: 'lookup', target: 'Person' },
+          },
+        ],
+      };
+      const person: SearchType = {
+        ...PERSON,
+        // Its label field is `name`, so it can serve as a lookup target.
+        labelField: 'name',
+        fields: [
+          PERSON.fields[0],
+          {
+            name: 'employer',
+            kind: 'reference',
+            output: true,
+            required: true,
+            ref: { strategy: 'lookup', target: 'Organization' },
+          },
+        ],
+      };
+      const sdl = printSchema(
+        buildGraphQLSchema(searchSchema(person, organization)),
+      );
+      // Each target's own lookup is served as a type in turn, and the cycle
+      // Person → Organization → Person terminates.
       expect(sdl).toMatch(
-        /type PersonReference \{\s+id: IRI!\s+name: \[LanguageString!\]!\s+\}/,
+        /type PersonReference \{[^}]*employer: OrganizationReference/,
+      );
+      expect(sdl).toMatch(
+        /type OrganizationReference \{[^}]*members: \[PersonReference!\]!/,
       );
     });
 
-    it('throws when fields sharing a reference type disagree on the label word', () => {
-      // One emitted type cannot serve two words, and which one won would
-      // otherwise come down to declaration order.
+    it('throws when two idOnly references share a type but not a label word', () => {
+      // Only reachable through idOnly, which names its emitted type and its
+      // label source separately. A lookup cannot disagree: one target names
+      // both, so every field pointing there reads the same word.
       const namedLabel: SearchType = { ...PERSON, labelField: 'name' };
       const organization: SearchType = {
         name: 'Organization',
@@ -1076,14 +1128,14 @@ describe('buildGraphQLSchema', () => {
             kind: 'reference',
             output: true,
             labelSource: 'Person',
-            ref: { typeName: 'Agent', strategy: 'labelOnly' },
+            ref: { strategy: 'idOnly', typeName: 'Agent' },
           },
           {
             name: 'publisher',
             kind: 'reference',
             output: true,
             labelSource: 'Organization',
-            ref: { typeName: 'Agent', strategy: 'labelOnly' },
+            ref: { strategy: 'idOnly', typeName: 'Agent' },
           },
         ],
       };
@@ -1108,7 +1160,7 @@ describe('buildGraphQLSchema', () => {
             name: 'author',
             kind: 'reference',
             output: true,
-            ref: { typeName: 'Person', strategy: 'labelOnly' },
+            ref: { strategy: 'idOnly', typeName: 'Person' },
           },
         ],
       };
@@ -1375,8 +1427,7 @@ describe('field descriptions', () => {
           'Creators identified by URI. Absent where the publisher named one inline; see creatorName.',
         filterable: true,
         output: true,
-        ref: { typeName: 'Person', strategy: 'labelOnly' },
-        labelSource: 'Person',
+        ref: { strategy: 'lookup', target: 'Person' },
       },
       {
         name: 'creatorName',

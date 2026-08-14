@@ -65,7 +65,7 @@ const dataset: SearchType = {
       array: true,
       facetable: true,
       output: true,
-      ref: { strategy: 'idOnly' },
+      ref: { strategy: 'idOnly', typeName: 'License' },
     },
   ],
 };
@@ -456,7 +456,7 @@ describe('per-reference label sources', () => {
           kind: 'reference',
           array: true,
           output: true,
-          ref: { strategy: 'idOnly' },
+          ref: { strategy: 'idOnly', typeName: 'License' },
         },
       ],
     });

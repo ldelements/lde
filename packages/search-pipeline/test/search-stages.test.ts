@@ -119,7 +119,7 @@ describe('searchStages', () => {
           output: true,
           facetable: true,
           // No label source: the dataset IRI travels as itself.
-          ref: { strategy: 'idOnly' },
+          ref: { strategy: 'idOnly', typeName: 'Dataset' },
         },
         {
           name: 'fromDataset',

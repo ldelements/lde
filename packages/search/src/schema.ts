@@ -220,9 +220,10 @@ export type ReferenceStrategy =
   | {
       readonly strategy: 'idOnly';
       /** Optional, unlike the other strategies: an `idOnly` reference emits no
-       *  type of its own. Declare it where the referent’s IRIs form a nameable
-       *  set an API surface should distinguish; omit it for IRIs that belong to
-       *  no such set. */
+       *  type of its own, and resolves against no collection. Declare it where
+       *  the referent’s IRIs form a nameable set an API surface should
+       *  distinguish; omit it for IRIs that belong to no such set. Required
+       *  once the field is `output`, which needs a name to serve it under. */
       readonly typeName?: string;
       readonly target?: never;
     }

@@ -1048,7 +1048,10 @@ describe('searchSchema validation', () => {
         nestedReferenceType(schema, readingDevice.fields[0]),
       ).toBeUndefined();
       // An idOnly reference carries the bare IRI, never the referent’s fields.
-      const idOnly = datasetNesting({ strategy: 'idOnly' });
+      const idOnly = datasetNesting({
+        strategy: 'idOnly',
+        typeName: 'MediaObject',
+      });
       expect(
         nestedReferenceType(
           searchSchema(idOnly, mediaObjectWith({})),
@@ -1349,6 +1352,26 @@ describe('searchSchema validation', () => {
       expect(
         labelSourceNameOf({ name: 'license', kind: 'reference' }),
       ).toBeUndefined();
+    });
+
+    it('rejects an output idOnly reference that names no emitted type', () => {
+      // A lookup derives its name from `target` and an inline from its
+      // reference type; only idOnly can leave the surface with nothing to
+      // serve the reference under.
+      expect(
+        validateSearchType({
+          name: 'Dataset',
+          class: DATASET,
+          fields: [
+            {
+              name: 'license',
+              kind: 'reference',
+              output: true,
+              ref: { strategy: 'idOnly' },
+            },
+          ],
+        }).map((found) => found.reason),
+      ).toContain('missing-ref-type-name');
     });
 
     it('rejects a labelSource on anything but an idOnly reference', () => {

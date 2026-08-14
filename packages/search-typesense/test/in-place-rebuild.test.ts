@@ -331,7 +331,7 @@ describe('InPlaceRebuild', () => {
           output: true,
           filterable: true,
           facetable: true,
-          ref: { strategy: 'idOnly' },
+          ref: { strategy: 'idOnly', typeName: 'Dataset' },
         },
       ],
     };
@@ -399,7 +399,7 @@ describe('InPlaceRebuild', () => {
             kind: 'reference',
             from: 'dataset',
             output: true,
-            ref: { strategy: 'idOnly' },
+            ref: { strategy: 'idOnly', typeName: 'Dataset' },
           },
         ],
       };
