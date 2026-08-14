@@ -1,3 +1,9 @@
+## 0.18.3 (2026-08-14)
+
+### 🚀 Features
+
+- **search:** let a search type name its label field ([#729](https://github.com/ldelements/lde/pull/729))
+
 ## 0.18.2 (2026-08-12)
 
 ### 🚀 Features
