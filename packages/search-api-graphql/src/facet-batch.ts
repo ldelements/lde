@@ -1,5 +1,6 @@
 import DataLoader from 'dataloader';
 import type {
+  Criterion,
   FacetBucket,
   Filter,
   RootType,
@@ -141,7 +142,22 @@ function ownedField(filter: Filter): string | undefined {
   if (first === undefined) {
     return undefined;
   }
-  return rest.every((criterion) => criterion.field === first.field)
-    ? first.field
-    : undefined;
+  const key = axisOf(first);
+  return rest.every((criterion) => axisOf(criterion) === key) ? key : undefined;
+}
+
+/**
+ * The axis one criterion constrains: its field, qualified by the join path it
+ * reaches that field through. Two criteria are the same axis only when both
+ * agree – `dataset.publisher` and a local `publisher` are different questions,
+ * so a selection on one is no selection on the other.
+ *
+ * Facets are not yet offered on joined fields, so a joined clause’s key can
+ * never equal a requested facet name and such a clause simply never drops. That
+ * falls out of the key rather than being a rule of its own, and stays right if
+ * joined facets land later.
+ */
+function axisOf(criterion: Criterion): string {
+  const on = criterion.on ?? [];
+  return on.length === 0 ? criterion.field : [...on, criterion.field].join('.');
 }

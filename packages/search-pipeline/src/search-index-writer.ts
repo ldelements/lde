@@ -6,7 +6,12 @@ import {
   type RunWriter,
   type Writer,
 } from '@lde/pipeline';
-import type { RootType, SearchDocument, SearchSchema } from '@lde/search';
+import {
+  joinGraph,
+  type RootType,
+  type SearchDocument,
+  type SearchSchema,
+} from '@lde/search';
 import type { TypedSearchDocument } from './typed-search-document.js';
 
 /** Options for {@link searchIndexWriter}. */
@@ -50,17 +55,27 @@ export interface SearchIndexWriterOptions {
  * made it.
  *
  * Each root type is an independent engine run (its own collection, alias and
- * lock), so the collections commit, sweep and fail in isolation:
+ * lock), and the unit those runs are isolated **by** is the join component –
+ * the group of types that reference one another through a
+ * {@link ReferenceField.joinable} reference and therefore cannot go live apart
+ * ([ADR 19](https://github.com/ldelements/lde/blob/main/docs/decisions/0019-filter-across-collections-through-declared-joins.md)).
+ * A type with no joinable reference is a singleton component, so a schema
+ * without joins behaves exactly as it did:
  *
  * - a type whose projection is empty this run affects only its own collection,
  *   never another’s – in particular the `datasets` index still goes live;
- * - `commit` finalizes every collection independently and, if any fails, throws
+ * - runs are **opened** in join order, referenced first: an engine cannot
+ *   create a collection whose reference names a collection that does not exist
+ *   yet;
+ * - `commit` finalizes every component independently and, if any fails, throws
  *   an `AggregateError` *after* attempting them all, so a non-critical
- *   label-collection failure never blocks the collections that did commit,
+ *   label-collection failure never blocks the components that did commit,
  *   while the failure is still surfaced (the pipeline marks the run failed).
- *   Because the pipeline then calls {@link RunWriter.abort}, `abort` finalizes
- *   only the collections that did **not** already go live – aborting a
- *   committed blue/green rebuild would drop its now-live collection;
+ *   Within a component the commits are sequential, referrers first, and stop
+ *   at the first failure – so a component ships whole or not at all. Because
+ *   the pipeline then calls {@link RunWriter.abort}, `abort` finalizes only the
+ *   collections that did **not** already go live – aborting a committed
+ *   blue/green rebuild would drop its now-live collection;
  * - `abort` (a run failure, or a partial commit) drops every half-built
  *   collection that has not committed and leaves the live ones untouched.
  *
@@ -80,6 +95,13 @@ export function searchIndexWriter(
       writerFor(searchType, schema),
     ]),
   );
+  // The declared join components – the unit a rebuild opens and commits by.
+  // A type with no joinable reference is a singleton here, so a schema without
+  // joins keeps per-collection isolation exactly as before.
+  const components = joinGraph(schema).components;
+  // Referenced first, across every component: the order the collections may be
+  // created in.
+  const openOrder = components.flat();
 
   return {
     async openRun(
@@ -87,8 +109,16 @@ export function searchIndexWriter(
     ): Promise<RunWriter<TypedSearchDocument>> {
       const runs = new Map<string, RunWriter<SearchDocument>>();
       try {
-        for (const [typeIri, writer] of writers) {
-          runs.set(typeIri, await writer.openRun(context));
+        // Open in join order: a collection whose reference names a peer’s
+        // collection cannot be created before that peer’s exists, so a
+        // component’s referenced types open first. Locking needs no change –
+        // this is still the single deterministic pass that takes every lock in
+        // a fixed order, which is what keeps lock-ordering deadlock impossible.
+        for (const searchType of openOrder) {
+          const writer = writers.get(
+            searchType.class,
+          ) as Writer<SearchDocument>;
+          runs.set(searchType.class, await writer.openRun(context));
         }
       } catch (error) {
         // One engine run failed to open (e.g. its lock is held); roll the
@@ -102,6 +132,11 @@ export function searchIndexWriter(
       // The collections that have gone live, so `abort` never re-finalizes one
       // (a committed blue/green rebuild’s abort drops its now-live collection).
       const committed = new Set<string>();
+      // The components with at least one collection live. Their UNCOMMITTED
+      // members are the ones whose build the live collection references, so
+      // they are abandoned rather than aborted. Tracked per component because
+      // that is the unit that hazard lives at.
+      const live = new Set<readonly RootType[]>();
 
       return {
         write: async (
@@ -164,7 +199,7 @@ export function searchIndexWriter(
           // have rolled back or swept. Every collection is flushed, not just the
           // ones that received documents this dataset: a collection an earlier
           // run held documents for still needs its sweep to reconcile.
-          await settleAll(runs.values(), 'flush', (run) =>
+          await settleAll(runs.values(), 'flush', 'collection', (run) =>
             run.flush?.(dataset, outcome),
           );
         },
@@ -173,30 +208,85 @@ export function searchIndexWriter(
           // Let every collection’s run discard whatever it already holds for the
           // dataset – independently, so one collection’s reset failure never
           // leaves another holding the discarded documents into the re-run.
-          await settleAll(runs.values(), 'reset', (run) =>
+          await settleAll(runs.values(), 'reset', 'collection', (run) =>
             run.reset?.(dataset),
           );
         },
 
         commit: async () => {
-          // Commit every collection independently, so one failure neither
-          // blocks nor wipes another – the `datasets` index goes live even if a
-          // label collection cannot. Record each collection that went live, so
-          // the abort that follows a failed commit never drops it.
-          await settleAll(runs, 'commit', async ([typeIri, run]) => {
-            await run.commit();
-            committed.add(typeIri);
-          });
+          // Commit every join COMPONENT independently, so one failure neither
+          // blocks nor wipes another – the `datasets` index goes live even if
+          // an unrelated label collection cannot. Record each collection that
+          // went live, so the abort that follows a failed commit never drops
+          // it.
+          //
+          // Within a component the commits are sequential and in REVERSE join
+          // order – referrers before the types they reference. A blue/green
+          // commit drops the collection it supersedes, so committing the
+          // referent first would delete a collection the still-live referrer’s
+          // documents point at. Going the other way, the referrer swaps onto
+          // the fresh build (whose references already name the peer’s fresh
+          // collection) before the peer’s old collection is dropped, and the
+          // only inconsistency left is the alias-flip window Typesense gives no
+          // way to close.
+          //
+          // Sequential, and stopping at the first failure, is what makes the
+          // component the unit: a member that cannot commit leaves the rest of
+          // its component un-swapped rather than shipping half a rebuild.
+          await settleAll(
+            components,
+            'commit',
+            'join component',
+            async (component) => {
+              for (const searchType of [...component].reverse()) {
+                const run = runs.get(
+                  searchType.class,
+                ) as RunWriter<SearchDocument>;
+                await run.commit();
+                committed.add(searchType.class);
+                // Note the component as touched BEFORE the next member’s
+                // commit can throw, so the abort that follows knows this
+                // component has something live in it.
+                live.add(component);
+              }
+            },
+          );
         },
 
         abort: async (error: unknown) => {
-          // Finalize only the collections that have not gone live: aborting a
-          // committed blue/green rebuild would drop its now-live collection.
+          // Three outcomes, not two, because a join component makes “undo”
+          // destructive in a way it never was per collection:
+          //
+          // - a collection that WENT LIVE is left alone: aborting a committed
+          //   blue/green rebuild would drop its now-live collection;
+          // - a collection in a component that went PARTLY live is
+          //   `abandon`ed – finalized WITHOUT dropping what it built. Its
+          //   half-built collection is precisely what the member that did
+          //   commit now references by concrete name, so dropping it would
+          //   leave the live referrer with a dangling reference and every join
+          //   through it failing, permanently. Abandoning keeps the collection
+          //   (orphaned until a later run supersedes it) while still releasing
+          //   the cross-pod lock – skipping it entirely would hold that lock
+          //   for its whole TTL and fail the NEXT run before it starts;
+          // - everything else is aborted as before: nothing in its component is
+          //   live, so there is no reference to protect.
+          //
           // Best-effort – cleanup failures must not mask the original error.
+          const partlyLive = new Set(
+            [...live].flatMap((component) =>
+              component.map((searchType) => searchType.class),
+            ),
+          );
           await Promise.allSettled(
             [...runs]
               .filter(([typeIri]) => !committed.has(typeIri))
-              .map(([, run]) => run.abort(error)),
+              .map(([typeIri, run]) =>
+                partlyLive.has(typeIri)
+                  ? // A writer that does not implement `abandon` has an `abort`
+                    // that keeps what it built anyway – that is the contract.
+                    (run.abandon ?? run.abort).call(run, error)
+                  : run.abort(error),
+              ),
           );
         },
       };
@@ -205,15 +295,19 @@ export function searchIndexWriter(
 }
 
 /**
- * Run `operation` on every collection concurrently and independently, so one
- * collection’s failure never skips another’s (a flush’s rollback, a reset’s
- * discard, a commit’s alias swap). Surface the failures together once all have
- * been attempted, as an `AggregateError` – the run is still marked failed, but
- * every collection got its chance to reconcile or go live first.
+ * Run `operation` on every item concurrently and independently, so one
+ * failure never skips another’s work (a flush’s rollback, a reset’s discard, a
+ * commit’s alias swap). Surface the failures together once all have been
+ * attempted, as an `AggregateError` – the run is still marked failed, but every
+ * item got its chance to reconcile or go live first.
+ *
+ * `unit` names what was iterated, because that differs by phase: a flush and a
+ * reset are per collection, a commit is per join component.
  */
 async function settleAll<Item>(
   items: Iterable<Item>,
   verb: string,
+  unit: string,
   operation: (item: Item) => Promise<void> | undefined,
 ): Promise<void> {
   const targets = [...items];
@@ -226,7 +320,7 @@ async function settleAll<Item>(
   if (failures.length > 0) {
     throw new AggregateError(
       failures,
-      `${failures.length} of ${targets.length} search collections failed to ${verb}`,
+      `${failures.length} of ${targets.length} search ${unit}s failed to ${verb}`,
     );
   }
 }

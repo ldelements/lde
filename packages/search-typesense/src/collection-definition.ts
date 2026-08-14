@@ -8,8 +8,10 @@ import {
 } from '@lde/search';
 import {
   displayFieldPattern,
+  ID_FIELD,
   isInlineReference,
   isInternalField,
+  joinGraph,
   nestedFieldName,
   nestedReferenceType,
   physicalFields,
@@ -18,17 +20,30 @@ import { deriveCollectionName } from './collection-name.js';
 
 /** Deployment-specific options the generic field model does not carry. */
 export interface CollectionDefinitionOptions {
-  /** The Typesense collection (or alias) name. Omit to derive it from the
-   *  type’s `name` ({@link deriveCollectionName}); supply one to override that
-   *  (an env prefix, a multi-tenant name, an existing collection). */
-  readonly name?: string;
   /**
-   * The Search Schema the type belongs to – required only when the type
-   * surfaces an inline reference, whose nested fields are declared from the
-   * {@link ReferenceType} the schema resolves. A type without one needs no
-   * schema, so a caller that declares no nesting passes none; a type that does
-   * fails here rather than building a collection that silently omits the
-   * nesting.
+   * How a search type is named in Typesense – for **this** type and, where it
+   * declares a {@link ReferenceField.joinable} reference, for the peer type
+   * that reference points at. Omit to derive every name from the type’s own
+   * `name` ({@link deriveCollectionName}); supply one to override that (an env
+   * prefix, a multi-tenant name, an existing collection).
+   *
+   * A function of the type rather than a bare name, because an emitted
+   * reference field must name the peer’s **concrete** collection: a
+   * blue/green writer therefore hands in a function that appends the run’s
+   * version to every name in the component, so a fresh build references its
+   * peer’s fresh collection rather than the live one. No coordinator is
+   * needed – every writer in a run receives the same `RunContext`, so they
+   * derive identical names.
+   */
+  readonly collectionNameFor?: (searchType: SearchType) => string;
+  /**
+   * The Search Schema the type belongs to – required when the type surfaces an
+   * inline reference (whose nested fields are declared from the
+   * {@link ReferenceType} the schema resolves) or declares a joinable
+   * reference (whose target collection the schema’s {@link joinGraph}
+   * resolves). A type doing neither needs no schema, so a caller passes none;
+   * a type that does fails here rather than building a collection that
+   * silently omits the nesting or the reference.
    */
   readonly schema?: SearchSchema;
   /** Snowball stemming locale for non-localized searchable fields (e.g. `en`).
@@ -54,9 +69,15 @@ export interface CollectionDefinitionOptions {
  * stems in `defaultLocale` when one is set, and is left unstemmed (folded
  * only) otherwise.
  *
- * The collection `name` is optional: omitted, it is derived from the type’s own
- * `name` ({@link deriveCollectionName}), so a caller that has no naming opinion
- * states none.
+ * Collection naming is optional: omitted, every name – this type’s and the peer
+ * types its joins point at – is derived from the type’s own `name`
+ * ({@link deriveCollectionName}), so a caller that has no naming opinion states
+ * none.
+ *
+ * A {@link ReferenceField.joinable} reference is emitted as a Typesense
+ * **reference field** pointing at its target collection’s `id`, so a query can
+ * filter this type by a condition on the referent
+ * ({@link referenceDeclaration}).
  *
  * Memory lever: Typesense holds the index in RAM (with a raw copy of each
  * document on disk), so RAM tracks the *indexed* surface – roughly 2–3× the
@@ -84,9 +105,9 @@ export function buildCollectionDefinition(
   searchType: SearchType,
   options: CollectionDefinitionOptions = {},
 ): CollectionCreateSchema {
-  const { defaultLocale } = options;
+  const { defaultLocale, collectionNameFor = deriveCollectionName } = options;
   const collection: CollectionCreateSchema = {
-    name: options.name ?? deriveCollectionName(searchType),
+    name: collectionNameFor(searchType),
     fields: searchType.fields.flatMap((field) =>
       typesenseFields(
         searchType,
@@ -94,6 +115,7 @@ export function buildCollectionDefinition(
         defaultLocale,
         options.defaultSortingField,
         options.schema,
+        collectionNameFor,
       ),
     ),
   };
@@ -135,6 +157,62 @@ function nestedTypeOf(
   return nested;
 }
 
+/**
+ * The Typesense reference declaration a {@link ReferenceField.joinable} field
+ * carries, or `undefined` for every other field. All three keys are forced,
+ * none is a knob:
+ *
+ * - **`reference` always targets `.id`.** A reference match hitting more than
+ *   one document is a 400, and `id` is the only field the schema guarantees
+ *   unique.
+ * - **`async_reference: true`.** Without it, a document whose referent is not
+ *   indexed yet is rejected with a 400 – and the batch import runs
+ *   `throwOnFail: false`, so those would be silently dropped documents.
+ *   Documents stream per dataset ([ADR 13](../../../docs/decisions/0013-project-inside-the-batch-per-root-type.md)),
+ *   so out-of-order arrival is normal rather than exceptional; the engine
+ *   back-fills the reference when the referent lands.
+ * - **`cascade_delete: false`.** It defaults to `true`, so a sweep removing a
+ *   departed source’s referent documents would delete other sources’ referring
+ *   documents with them. Disabling it requires `async_reference`, so the two
+ *   travel together.
+ *
+ * Throws when the type declares a joinable reference the caller gave no schema
+ * to resolve the target of – the collection would otherwise come into existence
+ * without its reference and 400 on every join query.
+ */
+function referenceDeclaration(
+  searchType: SearchType,
+  field: SearchField,
+  schema: SearchSchema | undefined,
+  collectionNameFor: (searchType: SearchType) => string,
+): Record<string, unknown> | undefined {
+  if (field.kind !== 'reference' || field.joinable !== true) {
+    return undefined;
+  }
+  if (schema === undefined) {
+    throw new Error(
+      `Building the collection for “${searchType.name}” needs the search schema its joinable reference “${field.name}” resolves against; pass it as the collection-definition option “schema”.`,
+    );
+  }
+  const target = joinGraph(schema).resolve(searchType, [field.name]);
+  if (target === undefined) {
+    // A schema WAS given and the edge still does not resolve. The rules that
+    // would reject the declaration itself all ran when the schema was built, so
+    // what is left is identity: `joinGraph` resolves from the exact declaration
+    // object the schema holds, and this is a lookalike – a re-declared type, or
+    // one belonging to another schema. Saying “pass the schema” here would send
+    // a caller to do the thing they already did.
+    throw new Error(
+      `Building the collection for “${searchType.name}” cannot resolve its joinable reference “${field.name}”: the given search schema does not declare this exact type. Pass the declaration the schema was built from, not a copy of it.`,
+    );
+  }
+  return {
+    reference: `${collectionNameFor(target)}.${ID_FIELD}`,
+    async_reference: true,
+    cascade_delete: false,
+  };
+}
+
 /** The physical Typesense fields one declaration produces. */
 function typesenseFields(
   searchType: SearchType,
@@ -142,6 +220,7 @@ function typesenseFields(
   defaultLocale: string | undefined,
   defaultSortingField: string | undefined,
   schema: SearchSchema | undefined,
+  collectionNameFor: (searchType: SearchType) => string,
 ): CollectionFieldSchema[] {
   // An internal field (no role) is projected as a reading device for the
   // derives and pruned before the writer, so the collection stores nothing for
@@ -207,6 +286,7 @@ function typesenseFields(
       // A `required` field is non-optional; so is the `default_sorting_field`,
       // which Typesense requires to be present. Everything else may be absent.
       optional: field.required !== true && field.name !== defaultSortingField,
+      ...referenceDeclaration(searchType, field, schema, collectionNameFor),
     },
   ];
   // `names.search` is non-empty exactly when the field projects a folded

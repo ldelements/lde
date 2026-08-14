@@ -219,7 +219,11 @@ import { BlueGreenRebuild, deriveCollectionName } from '@lde/search-typesense';
 writerFor: (searchType, schema) =>
   new BlueGreenRebuild(typesenseClient, searchType, {
     schema,
-    name: `${process.env.INDEX_PREFIX}_${deriveCollectionName(searchType)}`,
+    // A function of the type, not a bare name: a writer names its own
+    // collection AND the peers its joins reference, so the prefix has to apply
+    // to both.
+    collectionNameFor: (type) =>
+      `${process.env.INDEX_PREFIX}_${deriveCollectionName(type)}`,
   });
 ```
 
@@ -328,10 +332,15 @@ readers:
   the stage’s projected documents into the write. A projected document is far
   heavier than a quad, so lower it where documents are large.
 
-## Per-collection isolation
+## Per-component isolation
 
 Each root type is an independent engine run – its own collection, alias and
-cross-pod lock – so the collections commit, sweep and fail in isolation:
+cross-pod lock – and the unit those runs are isolated **by** is the
+[join component](./search#filtering-across-collections): the group of types that
+reference one another through a `joinable` reference, and therefore cannot go
+live apart. A type declaring none is a singleton component, so a schema without
+joins behaves exactly as before, and the collections commit, sweep and fail in
+isolation:
 
 - a type whose projection is empty this run affects only its own collection,
   never another’s – in particular the `datasets` index still goes live;
@@ -339,16 +348,28 @@ cross-pod lock – so the collections commit, sweep and fail in isolation:
   collection an earlier dataset held documents for still needs its sweep or
   discard), with failures aggregated after all have been attempted – one
   collection’s failure never skips another’s;
-- `commit` finalizes every collection independently and, if any fails, throws an
-  `AggregateError` _after_ attempting them all, so a non-critical
-  label-collection failure never blocks the collections that did commit, while
-  the failure is still surfaced (the run is marked failed);
-- because the pipeline aborts a run whose `commit` throws, `abort` finalizes only
-  the collections that did **not** already go live (aborting a committed
-  blue/green rebuild would drop its now-live collection), dropping the half-built
-  ones and releasing their locks.
+- runs are **opened** in join order, referenced first: an engine cannot create a
+  collection whose reference names one that does not exist yet. It is still the
+  single deterministic pass that takes every lock in a fixed order, so
+  lock-ordering deadlock stays impossible;
+- `commit` finalizes every **component** independently and, if any fails, throws
+  an `AggregateError` _after_ attempting them all, so a non-critical
+  label-collection failure never blocks the components that did commit, while
+  the failure is still surfaced (the run is marked failed). Within a component
+  the commits are sequential and referrers first – a blue/green commit drops the
+  collection it supersedes, so committing the referent first would delete one
+  the still-live referrer points at – and stop at the first failure, so a
+  component ships whole or not at all;
+- because the pipeline aborts a run whose `commit` throws, `abort` has three
+  outcomes rather than two. A collection that went live is left alone (aborting
+  a committed blue/green rebuild would drop it); a collection in a component
+  that went _partly_ live is **abandoned** – finalized without dropping what it
+  built, since that is exactly what the live member references by name, while
+  still releasing its cross-pod lock; everything else is aborted as before,
+  dropping the half-built collection and releasing its lock.
 
-See [ADR 9](../decisions/0009-route-a-whole-schema-projection-to-per-type-collections).
+See [ADR 9](../decisions/0009-route-a-whole-schema-projection-to-per-type-collections)
+and [ADR 19](../decisions/0019-filter-across-collections-through-declared-joins).
 
 ## Memory
 

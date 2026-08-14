@@ -543,4 +543,179 @@ describe('searchIndexWriter', () => {
     expect(contexts).toHaveLength(2);
     expect(contexts.every((seen) => seen === context)).toBe(true);
   });
+
+  describe('with a join component', () => {
+    // work → dataset → publisher: three types that reference one another, so
+    // they come into existence and go live together.
+    const label = {
+      name: 'label',
+      kind: 'text',
+      locales: ['nl'],
+      output: true,
+      searchable: { weight: 5 },
+    } as const;
+    const joinable = (name: string, source: string) =>
+      ({
+        name,
+        kind: 'reference',
+        filterable: true,
+        labelSource: source,
+        joinable: true,
+      }) as const;
+    const joined = searchSchema(
+      { name: 'Work', class: WORK, fields: [label, joinable('in', 'Set')] },
+      {
+        name: 'Set',
+        class: 'https://example.org/Set',
+        fields: [label, joinable('by', 'Publisher')],
+      },
+      {
+        name: 'Publisher',
+        class: 'https://example.org/Publisher',
+        fields: [label],
+      },
+      // Outside the component: unaffected by any of it.
+      { name: 'Loose', class: PERSON, fields: [label] },
+    );
+
+    /** The order lifecycle calls reached the per-type writers. */
+    function orderRecorder(
+      failOn?: string,
+      options: { readonly withAbandon?: boolean } = { withAbandon: true },
+    ) {
+      const opened: string[] = [];
+      const committed: string[] = [];
+      const aborted: string[] = [];
+      const abandoned: string[] = [];
+      const writerFor = (searchType: RootType): Writer<SearchDocument> => ({
+        openRun: async () => {
+          opened.push(searchType.name);
+          return {
+            write: () => Promise.resolve(),
+            commit: () => {
+              if (searchType.name === failOn) {
+                return Promise.reject(new Error(`no commit for ${failOn}`));
+              }
+              committed.push(searchType.name);
+              return Promise.resolve();
+            },
+            abort: () => {
+              aborted.push(searchType.name);
+              return Promise.resolve();
+            },
+            ...(options.withAbandon === true && {
+              abandon: () => {
+                abandoned.push(searchType.name);
+                return Promise.resolve();
+              },
+            }),
+          };
+        },
+      });
+      return { opened, committed, aborted, abandoned, writerFor };
+    }
+
+    it('opens referenced collections first', async () => {
+      // An engine cannot create a collection whose reference names one that
+      // does not exist yet.
+      const { opened, writerFor } = orderRecorder();
+
+      await searchIndexWriter({ schema: joined, writerFor }).openRun(
+        makeRunContext(),
+      );
+
+      expect(opened.indexOf('Publisher')).toBeLessThan(opened.indexOf('Set'));
+      expect(opened.indexOf('Set')).toBeLessThan(opened.indexOf('Work'));
+      expect(opened).toContain('Loose');
+    });
+
+    it('commits referrers first, so a superseded referent is dropped last', async () => {
+      const { committed, writerFor } = orderRecorder();
+
+      const run = await searchIndexWriter({
+        schema: joined,
+        writerFor,
+      }).openRun(makeRunContext());
+      await run.commit();
+
+      expect(committed.indexOf('Work')).toBeLessThan(committed.indexOf('Set'));
+      expect(committed.indexOf('Set')).toBeLessThan(
+        committed.indexOf('Publisher'),
+      );
+    });
+
+    it('stops a component at its first failed commit, leaving others alone', async () => {
+      // The component is the unit: `Set` failing must not let `Publisher` swap
+      // and drop the collection the still-live `Set` documents point at. The
+      // unrelated singleton commits regardless.
+      const { committed, writerFor } = orderRecorder('Set');
+
+      const run = await searchIndexWriter({
+        schema: joined,
+        writerFor,
+      }).openRun(makeRunContext());
+
+      await expect(run.commit()).rejects.toThrow(AggregateError);
+      expect(committed).toEqual(['Work', 'Loose']);
+    });
+
+    it('abandons – never aborts – the peers of a committed member', async () => {
+      // `Work` went live pointing at `Publisher`’s and `Set`’s FRESH
+      // collections by concrete name. Aborting those uncommitted peers would
+      // drop exactly the collections the live `Work` references, breaking
+      // every join through it permanently. Abandoning keeps them – and still
+      // releases their cross-pod locks, which skipping them entirely would
+      // hold for a full TTL and fail the next run before it starts.
+      const { committed, aborted, abandoned, writerFor } = orderRecorder('Set');
+
+      const run = await searchIndexWriter({
+        schema: joined,
+        writerFor,
+      }).openRun(makeRunContext());
+      await expect(run.commit()).rejects.toThrow(AggregateError);
+      await run.abort(new Error('run failed'));
+
+      expect(committed).toEqual(['Work', 'Loose']);
+      expect(abandoned.sort()).toEqual(['Publisher', 'Set']);
+      // Neither the live member nor its peers are aborted.
+      expect(aborted).toEqual([]);
+    });
+
+    it('falls back to abort for a writer that implements no abandon', async () => {
+      // The contract: a writer without `abandon` has an `abort` that keeps
+      // what it built (an In-place rebuild releasing its lock), so the
+      // fallback is correct rather than merely tolerable.
+      const { committed, aborted, abandoned, writerFor } = orderRecorder(
+        'Set',
+        { withAbandon: false },
+      );
+
+      const run = await searchIndexWriter({
+        schema: joined,
+        writerFor,
+      }).openRun(makeRunContext());
+      await expect(run.commit()).rejects.toThrow(AggregateError);
+      await run.abort(new Error('run failed'));
+
+      expect(committed).toEqual(['Work', 'Loose']);
+      expect(abandoned).toEqual([]);
+      expect(aborted.sort()).toEqual(['Publisher', 'Set']);
+    });
+
+    it('still aborts a component that committed nothing', async () => {
+      // Nothing in the component is live, so there is no reference to protect
+      // and the half-built collections must be dropped as before.
+      const { committed, aborted, writerFor } = orderRecorder('Work');
+
+      const run = await searchIndexWriter({
+        schema: joined,
+        writerFor,
+      }).openRun(makeRunContext());
+      await expect(run.commit()).rejects.toThrow(AggregateError);
+      await run.abort(new Error('run failed'));
+
+      expect(committed).toEqual(['Loose']);
+      expect(aborted.sort()).toEqual(['Publisher', 'Set', 'Work']);
+    });
+  });
 });

@@ -13,6 +13,7 @@ import {
   irAlias,
   isAbsoluteIri,
   isoToUnixSeconds,
+  isInternalField,
   isRangeFacet,
   nestedFieldName,
   nestedReferenceType,
@@ -659,6 +660,76 @@ describe('validateSearchType', () => {
         }),
       ),
     ).toEqual([{ field: 'size', reason: 'transform-not-allowed' }]);
+  });
+
+  it('allows joinable on a reference field that declares a label source', () => {
+    expect(
+      validateSearchType(
+        typeWith({
+          name: 'publisher',
+          kind: 'reference',
+          filterable: true,
+          labelSource: 'Organization',
+          joinable: true,
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  it('rejects joinable without a label source, and on a non-reference', () => {
+    // A join addresses the referent’s COLLECTION, which is the one the label
+    // source names; without one the flag states an edge to nowhere.
+    expect(
+      validateSearchType(
+        typeWith({ name: 'publisher', kind: 'reference', joinable: true }),
+      ),
+    ).toEqual([
+      { field: 'publisher', reason: 'joinable-without-label-source' },
+    ]);
+    expect(
+      validateSearchType(
+        typeWith({
+          name: 'format',
+          kind: 'keyword',
+          joinable: true,
+        } as never),
+      ),
+    ).toEqual([{ field: 'format', reason: 'joinable-not-allowed' }]);
+  });
+
+  it('counts joinable as a role, so such a field is never internal', () => {
+    // An engine can only join through a value it stores, so a joinable
+    // reference must survive the Internal Field pruning even when it declares
+    // nothing else – otherwise the edge resolves and the query compiles
+    // against a column the collection never had.
+    const joinable: SearchField = {
+      name: 'publisher',
+      kind: 'reference',
+      labelSource: 'Publisher',
+      joinable: true,
+    };
+    expect(isInternalField(joinable)).toBe(false);
+    // Without it, the same declaration is the reading device it looks like.
+    expect(isInternalField({ ...joinable, joinable: false })).toBe(true);
+  });
+
+  it('rejects joinable on an inline reference', () => {
+    // An inline reference is stored as a nested object, not as an id a
+    // reference field can point at: the collection definition would emit the
+    // nesting and silently drop the reference, so the join would validate,
+    // compile, and only then fail at the engine.
+    expect(
+      validateSearchType(
+        typeWith({
+          name: 'media',
+          kind: 'reference',
+          output: true,
+          labelSource: 'MediaObject',
+          joinable: true,
+          ref: { typeName: 'MediaObject', strategy: 'inline' },
+        }),
+      ),
+    ).toEqual([{ field: 'media', reason: 'joinable-with-inline-ref' }]);
   });
 });
 

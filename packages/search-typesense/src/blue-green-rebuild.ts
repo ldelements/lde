@@ -89,7 +89,8 @@ export class BlueGreenRebuild<
     assertSweepableProvenanceField(searchType, { requireFacetable: false });
     this.sourceField = provenanceField(searchType);
     this.resolved = resolveRebuildOptions(searchType, options);
-    this.collectionName = this.resolved.definitionOptions.name;
+    this.collectionName =
+      this.resolved.definitionOptions.collectionNameFor(searchType);
   }
 
   async openRun(context: RunContext): Promise<RunWriter<TDocument>> {
@@ -101,15 +102,26 @@ export class BlueGreenRebuild<
       // Create the fresh (blue) collection up front, so a failure surfaces
       // before any dataset is processed. startedAt orders the versioned names;
       // concurrent same-name runs are excluded by the lock.
-      const collection = `${name}_${Date.parse(context.startedAt)}`;
+      //
+      // The SAME versioning applies to every peer this type joins to, so an
+      // emitted reference field names the peer’s FRESH collection rather than
+      // its live one – Typesense resolves an alias to a concrete collection at
+      // create time and keeps the concrete name, so referencing the alias would
+      // pin the new build to the collection the peer is about to supersede. No
+      // coordinator is needed: every writer in the run gets the same
+      // `RunContext`, so `startedAt` – and therefore every derived name – is
+      // identical across them.
+      const version = Date.parse(context.startedAt);
+      const versioned = (searchType: SearchType) =>
+        `${definitionOptions.collectionNameFor(searchType)}_${version}`;
+      const collection = versioned(this.searchType);
       const previous = await this.aliasTarget(name);
-      const definition = buildCollectionDefinition(
-        this.searchType,
-        definitionOptions,
-      );
+      const definition = buildCollectionDefinition(this.searchType, {
+        ...definitionOptions,
+        collectionNameFor: versioned,
+      });
       await this.client.collections().create({
         ...definition,
-        name: collection,
         // The private `source` only when the type declares no dataset field of
         // its own; a declared one is already in the definition and carries the
         // same IRI.
@@ -185,6 +197,16 @@ export class BlueGreenRebuild<
             .collections(collection)
             .delete()
             .catch(() => undefined);
+          await releaseLock(this.client, name);
+        },
+
+        abandon: async () => {
+          // Everything `abort` does EXCEPT the drop. Asked for when a peer
+          // whose documents reference this collection by concrete name has
+          // already gone live: dropping it would break that live collection’s
+          // joins, so the collection is kept for a later run to supersede.
+          // Releasing the lock is the whole point – without it the index stays
+          // locked for its full TTL and the next run cannot rebuild it.
           await releaseLock(this.client, name);
         },
       };

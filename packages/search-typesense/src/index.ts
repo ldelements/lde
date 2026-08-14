@@ -13,7 +13,7 @@ export { buildCollectionDefinition } from './collection-definition.js';
 export type { CollectionDefinitionOptions } from './collection-definition.js';
 export { deriveCollectionName } from './collection-name.js';
 export { buildSearchParams } from './query-compiler.js';
-export type { BuildSearchParamsOptions } from './query-compiler.js';
+export type { BuildSearchParamsOptions, JoinTarget } from './query-compiler.js';
 export { createTypesenseSearchEngine, parseSearchResponse } from './search.js';
 export type {
   TypesenseSearchEngine,

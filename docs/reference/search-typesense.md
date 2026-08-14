@@ -44,12 +44,12 @@ Elasticsearch/OpenSearch index names are kebab-case and
 bytes), so a future `@lde/search-elasticsearch` formats the same neutral tokens
 (`@lde/search`’s `physicalNameTokens`) its own way. The core stays engine-neutral.
 
-Pass an explicit name to **override** the convention – an env prefix, a
+Pass `collectionNameFor` to **override** the convention – an env prefix, a
 multi-tenant name, a collection that already exists, a migration:
 
 ```ts
 const writer = new BlueGreenRebuild(client, CREATIVE_WORK, {
-  name: 'staging_creative_works',
+  collectionNameFor: (type) => `staging_${deriveCollectionName(type)}`,
 });
 const engine = createTypesenseSearchEngine(client, schema, {
   collections: { CreativeWork: 'staging_creative_works' },
@@ -58,7 +58,14 @@ writer.collectionName; // 'staging_creative_works' – read-only, for logs/healt
 engine.collectionNameFor(CREATIVE_WORK); // the same name, resolved once at construction
 ```
 
-`collections` overrides only the types it names; the rest stay derived.
+It is a function of the type rather than a bare name because a writer names more
+than its own collection: a [joinable reference](#joins-across-collections) is
+emitted as a Typesense reference field naming its **peer’s** collection, and a
+blue/green build has to name the peer’s _fresh_ collection, not its live alias.
+One function covers both.
+
+On the read side, `collections` overrides only the types it names; the rest stay
+derived.
 
 Everything the convention cannot do, it refuses to guess at, when the writer or
 engine is constructed rather than on the first rebuild or search:
@@ -74,7 +81,7 @@ engine is constructed rather than on the first rebuild or search:
 
 ## Collection schema and engine
 
-`buildCollectionDefinition(searchType, { name?, schema?, defaultSortingField, … })`
+`buildCollectionDefinition(searchType, { collectionNameFor?, schema?, defaultSortingField, … })`
 derives a Typesense collection from the unified `SearchField` model – the
 Typesense field type comes from each field’s `kind`, and the physical fanout
 (per-locale search/sort keys, plus one regex display field per output text
@@ -90,6 +97,56 @@ carries `output` only, so it is display weight on disk, like the language
 labels. Pass the `schema` option for a type that surfaces one – it is what
 resolves the Reference Type; a type declaring one without it throws here, rather
 than building a collection whose documents would all fail to import.
+
+### Joins across collections
+
+A reference declaring [`joinable: true`](./search#filtering-across-collections)
+is emitted as a Typesense **reference field**, so a query can filter this
+collection by a condition on the referenced one:
+
+```json
+{
+  "name": "publisher",
+  "type": "string",
+  "reference": "publishers.id",
+  "async_reference": true,
+  "cascade_delete": false
+}
+```
+
+All three are forced, none is a knob:
+
+- **`reference` always targets `.id`.** A reference match hitting more than one
+  document is a 400, and `id` is the only field the schema guarantees unique.
+- **`async_reference: true`.** Without it, a document whose referent has not been
+  indexed yet is rejected with a 400 – and the batch import runs
+  `throwOnFail: false`, so those would be silently dropped documents. Documents
+  stream per dataset, so out-of-order arrival is normal, and the engine
+  back-fills the reference when the referent lands.
+
+  ::: warning First build: run the indexer twice
+  Back-fill is exact when the two collections are written one after the other,
+  but per-type stages write them **concurrently**, and Typesense 30.2 can lose a
+  reference written in that window permanently – the documents all land, the
+  join just finds nothing. A second run meets referents that already exist, so
+  every reference resolves at write time. Steady-state runs over a stable corpus
+  are unaffected; a component built from scratch should be indexed twice. See
+  [ADR 19](../decisions/0019-filter-across-collections-through-declared-joins#documented-limitations).
+  :::
+
+- **`cascade_delete: false`.** It defaults to `true`, so a sweep removing a
+  departed source’s `Publisher` documents would delete other sources’
+  `CreativeWork` documents with them. Disabling it requires `async_reference`, so
+  the two travel together.
+
+A query’s `on` path compiles to one `$collection(…)` wrapper per hop –
+`$datasets($publishers(id:=X))` – with the leaf term compiled against the
+_target_ type’s declaration, so a date bound one hop out is still stored as Unix
+seconds and a facetable keyword still takes the loose membership. The join graph
+names the type; `collections` / `collectionNameFor` names the collection.
+
+The `schema` option is required for a type declaring a joinable reference, as it
+is for a surfaced inline one – it is what resolves the target.
 
 **Memory lever.** Typesense keeps the index in RAM (with a raw copy of each
 document on disk), so RAM tracks the _indexed_ surface – roughly 2–3× the size
@@ -248,6 +305,39 @@ and `last_seen` (the run id); deletion is a sweep, never special-cased:
   stays until the next run reconciles.
 
 Document ids must be unique per (source, entity) – the caller keys them.
+
+`openRun` creates the collection on demand and otherwise leaves an existing one
+alone – with one exception. If the collection exists but does not carry every
+[reference field](#joins-across-collections) the declaration asks for (a
+`joinable` added to a schema whose index predates it), the run **fails**, naming
+the drop-and-rebuild that fixes it. Without that it would index and commit
+happily and then 400 on every join query: the values would be there, the
+reference would not. Scoped to reference fields only – every other schema
+difference is self-correcting.
+
+### The join component is the unit of rebuild
+
+Types connected by a [joinable reference](#joins-across-collections) form a
+**join component**, and a component rebuilds as a unit. `searchIndexWriter`
+([`@lde/search-pipeline`](./search-pipeline)) opens the runs in join order,
+referenced first – an engine cannot create a collection whose reference names
+one that does not exist yet – and commits per component, referrers first, so a
+blue/green build never drops a collection the still-live referrer points at. The
+first failure stops the rest of its component from going live, and the abort
+that follows **abandons** that component’s uncommitted collections rather than
+dropping them – dropping one would delete exactly what the member that did
+commit now references, while abandoning keeps it and still releases the rebuild
+lock, so the next run is not locked out.
+
+Two consequences worth planning for:
+
+- a type with **no** joinable reference is a singleton component and behaves
+  exactly as it did: its collection still commits, sweeps and fails in
+  isolation. The coupling is opt-in, per edge;
+- blue/green has a brief inconsistency window at the alias flip. Typesense
+  stores the concrete collection name in a reference and re-resolves the alias
+  at query time, and there is no atomic multi-alias swap, so a join query can see
+  `400 Failed to join on …` for one round trip.
 
 ### Provenance
 

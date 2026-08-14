@@ -68,7 +68,9 @@ describe('BlueGreenRebuild', () => {
   });
 
   it('publishes a versioned collection and points the index alias at it on commit', async () => {
-    const writer = new BlueGreenRebuild(client, datasetType, { name: NAME });
+    const writer = new BlueGreenRebuild(client, datasetType, {
+      collectionNameFor: () => NAME,
+    });
 
     const run = await writer.openRun(makeRunContext());
     await run.write(
@@ -87,7 +89,9 @@ describe('BlueGreenRebuild', () => {
   });
 
   it('keeps the live collection unswapped until commit', async () => {
-    const writer = new BlueGreenRebuild(client, datasetType, { name: NAME });
+    const writer = new BlueGreenRebuild(client, datasetType, {
+      collectionNameFor: () => NAME,
+    });
 
     const run = await writer.openRun(makeRunContext());
     await run.write(dataset, stream([{ id: 'a', title: 'A', year: 2024 }]));
@@ -99,7 +103,9 @@ describe('BlueGreenRebuild', () => {
   });
 
   it('swaps the alias to the new collection and drops the previous one', async () => {
-    const writer = new BlueGreenRebuild(client, datasetType, { name: NAME });
+    const writer = new BlueGreenRebuild(client, datasetType, {
+      collectionNameFor: () => NAME,
+    });
 
     const first = await writer.openRun(makeRunContext());
     await first.write(dataset, stream([{ id: 'a', title: 'Old', year: 2023 }]));
@@ -122,7 +128,7 @@ describe('BlueGreenRebuild', () => {
 
   it('batches documents within and across write calls', async () => {
     const writer = new BlueGreenRebuild(client, datasetType, {
-      name: NAME,
+      collectionNameFor: () => NAME,
       batchSize: 2,
     });
 
@@ -140,7 +146,9 @@ describe('BlueGreenRebuild', () => {
 
   it('refuses to open a run while another rebuild holds the index lock', async () => {
     await seedLock(client, NAME, Date.now());
-    const writer = new BlueGreenRebuild(client, datasetType, { name: NAME });
+    const writer = new BlueGreenRebuild(client, datasetType, {
+      collectionNameFor: () => NAME,
+    });
 
     await expect(writer.openRun(makeRunContext())).rejects.toThrow(
       RebuildAlreadyRunning,
@@ -151,7 +159,7 @@ describe('BlueGreenRebuild', () => {
   it('reclaims a stale lock and rebuilds', async () => {
     await seedLock(client, NAME, Date.now() - 10_000);
     const writer = new BlueGreenRebuild(client, datasetType, {
-      name: NAME,
+      collectionNameFor: () => NAME,
       lockTtlMs: 1_000,
     });
 
@@ -163,7 +171,9 @@ describe('BlueGreenRebuild', () => {
   });
 
   it('abort drops the half-built collection and leaves the live alias intact', async () => {
-    const writer = new BlueGreenRebuild(client, datasetType, { name: NAME });
+    const writer = new BlueGreenRebuild(client, datasetType, {
+      collectionNameFor: () => NAME,
+    });
 
     const first = await writer.openRun(makeRunContext());
     await first.write(
@@ -191,8 +201,47 @@ describe('BlueGreenRebuild', () => {
     expect(await aliasTarget(client)).not.toBe(live);
   });
 
+  it('abandon keeps the half-built collection but still releases the lock', async () => {
+    // The half-way house between commit and abort, for the one case where
+    // undoing is the more destructive choice: a peer that already went live
+    // references this fresh collection by its concrete name, so dropping it
+    // would break that peer’s joins. The lock must still go, or the next run
+    // cannot rebuild the index at all (ADR 19).
+    const writer = new BlueGreenRebuild(client, datasetType, {
+      collectionNameFor: () => NAME,
+    });
+
+    const first = await writer.openRun(makeRunContext());
+    await first.write(
+      dataset,
+      stream([{ id: 'a', title: 'Live', year: 2024 }]),
+    );
+    await first.commit();
+    const live = await aliasTarget(client);
+    const collectionCount = (await client.collections().retrieve()).length;
+
+    const second = await writer.openRun(makeRunContext());
+    await second.write(dataset, stream([{ id: 'b', title: 'B', year: 2025 }]));
+    await second.abandon?.(new Error('a peer went live already'));
+
+    // The alias never moved, and – unlike abort – the fresh collection stays.
+    expect(await aliasTarget(client)).toBe(live);
+    expect((await client.collections().retrieve()).length).toBe(
+      collectionCount + 1,
+    );
+
+    // And the lock was released, so the next run proceeds rather than
+    // throwing RebuildAlreadyRunning for the whole TTL.
+    const third = await writer.openRun(makeRunContext());
+    await third.write(dataset, stream([{ id: 'c', title: 'C', year: 2026 }]));
+    await third.commit();
+    expect(await aliasTarget(client)).not.toBe(live);
+  });
+
   it('surfaces per-document import failures from write', async () => {
-    const writer = new BlueGreenRebuild(client, datasetType, { name: NAME });
+    const writer = new BlueGreenRebuild(client, datasetType, {
+      collectionNameFor: () => NAME,
+    });
 
     const run = await writer.openRun(makeRunContext());
     // `year` must be an int; a string is a hard validation failure.
@@ -211,7 +260,9 @@ describe('BlueGreenRebuild', () => {
   });
 
   it('publishes an empty collection for an empty run', async () => {
-    const writer = new BlueGreenRebuild(client, datasetType, { name: NAME });
+    const writer = new BlueGreenRebuild(client, datasetType, {
+      collectionNameFor: () => NAME,
+    });
 
     const run = await writer.openRun(makeRunContext());
     await run.commit();
@@ -220,7 +271,9 @@ describe('BlueGreenRebuild', () => {
   });
 
   it('rolls a failed dataset out of the collection so the swap never ships it', async () => {
-    const writer = new BlueGreenRebuild(client, datasetType, { name: NAME });
+    const writer = new BlueGreenRebuild(client, datasetType, {
+      collectionNameFor: () => NAME,
+    });
     const datasetB = new Dataset({
       iri: new URL('http://example.org/dataset/2'),
       distributions: [],
@@ -247,7 +300,9 @@ describe('BlueGreenRebuild', () => {
   });
 
   it('reset discards a dataset’s documents before a re-run', async () => {
-    const writer = new BlueGreenRebuild(client, datasetType, { name: NAME });
+    const writer = new BlueGreenRebuild(client, datasetType, {
+      collectionNameFor: () => NAME,
+    });
 
     const run = await writer.openRun(makeRunContext());
     // First pass (e.g. endpoint-sourced) writes a3 that the re-run will drop.
@@ -284,7 +339,7 @@ describe('BlueGreenRebuild', () => {
             class: 'https://example.org/Dataset',
             fields: [{ name: 'source', kind: 'keyword' }],
           },
-          { name: NAME },
+          { collectionNameFor: () => NAME },
         ),
     ).toThrow(/source/);
   });
@@ -309,7 +364,7 @@ describe('BlueGreenRebuild', () => {
     const writer = new BlueGreenRebuild<{ id: string; title: string }>(
       client,
       withDataset,
-      { name: NAME },
+      { collectionNameFor: () => NAME },
     );
 
     const failing = new Dataset({

@@ -46,13 +46,25 @@ export type {
   ProjectionValue,
 } from './schema.js';
 
+// The declared join edges between root types: which types a query can filter
+// across, and which collections must be rebuilt together. Built eagerly by
+// `searchSchema`, so declaring a schema is what validates the joins.
+export { joinGraph, MAX_JOIN_DEPTH } from './join-graph.js';
+export type { JoinGraph } from './join-graph.js';
+
 // Engine- and protocol-neutral query IR (what a `queryDefaults` policy or an
 // in-process caller writes).
 // `filterOn` builds the ordinary one-criterion clause – the shape a consumer
 // policy (`queryDefaults`) appends to `where`, so it belongs on the authoring
 // surface and not only on the adapter one.
 export { filterOn } from './query.js';
-export type { SearchQuery, Filter, Criterion, Sort } from './query.js';
+export type {
+  SearchQuery,
+  Filter,
+  Criterion,
+  CriterionBase,
+  Sort,
+} from './query.js';
 
 // Engine port + the logical result document returned across it. An engine is
 // bound to the whole SearchSchema at construction by its adapter factory.

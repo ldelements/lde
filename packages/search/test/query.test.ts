@@ -9,7 +9,12 @@ import {
   validateQuery,
   type SearchQuery,
 } from '../src/query.js';
-import type { SearchType } from '../src/schema.js';
+import { joinGraph, MAX_JOIN_DEPTH } from '../src/join-graph.js';
+import {
+  defineSearchType,
+  searchSchema,
+  type SearchType,
+} from '../src/schema.js';
 
 describe('filterOperator', () => {
   it('reads the operator off a criterion’s discriminating key', () => {
@@ -299,6 +304,165 @@ describe('validateQuery', () => {
     expect(validateQuery({ ...base, where: [{ or: [] }] }, searchType)).toEqual(
       [],
     );
+  });
+
+  describe('a criterion carrying a join path', () => {
+    // A three-type chain, so a path of every allowed depth is expressible.
+    const label = (name: string, fields: SearchType['fields'] = []) =>
+      defineSearchType({
+        name,
+        class: `https://example.org/${name}`,
+        fields: [
+          {
+            name: 'label',
+            kind: 'text',
+            locales: ['nl'],
+            output: true,
+            searchable: { weight: 5 },
+          },
+          { name: 'country', kind: 'keyword', filterable: true },
+          { name: 'note', kind: 'keyword' },
+          ...fields,
+        ],
+      });
+    const joinable = (name: string, source: string) =>
+      ({
+        name,
+        kind: 'reference',
+        filterable: true,
+        labelSource: source,
+        joinable: true,
+      }) as const;
+    const publisher = label('Publisher');
+    const dataset = label('Dataset', [joinable('publisher', 'Publisher')]);
+    const work = label('CreativeWork', [joinable('dataset', 'Dataset')]);
+    const joins = joinGraph(searchSchema(publisher, dataset, work));
+
+    it('validates the leaf against the type the path reaches', () => {
+      expect(
+        validateQuery(
+          {
+            ...base,
+            where: [
+              {
+                or: [
+                  { on: ['dataset', 'publisher'], field: 'id', in: ['urn:x'] },
+                  { on: ['dataset'], field: 'country', in: ['NL'] },
+                ],
+              },
+            ],
+          },
+          work,
+          joins,
+        ),
+      ).toEqual([]);
+    });
+
+    it('reports the leaf’s own issues under the full path', () => {
+      expect(
+        validateQuery(
+          {
+            ...base,
+            where: [
+              // `note` is declared on Publisher but opts into no role, and
+              // `country` is a keyword, so a range mismatches its kind.
+              { or: [{ on: ['dataset', 'publisher'], field: 'note', in: [] }] },
+              { or: [{ on: ['dataset'], field: 'country', range: {} }] },
+              { or: [{ on: ['dataset'], field: 'nonesuch', in: [] }] },
+            ],
+          },
+          work,
+          joins,
+        ),
+      ).toEqual([
+        {
+          part: 'where',
+          field: 'dataset.publisher.note',
+          reason: 'not-filterable',
+        },
+        {
+          part: 'where',
+          field: 'dataset.country',
+          reason: 'operator-mismatch',
+        },
+        { part: 'where', field: 'dataset.nonesuch', reason: 'unknown-field' },
+      ]);
+    });
+
+    it('rejects a path an `id` criterion uses with the wrong operator', () => {
+      expect(
+        validateQuery(
+          {
+            ...base,
+            where: [{ or: [{ on: ['dataset'], field: 'id', is: true }] }],
+          },
+          work,
+          joins,
+        ),
+      ).toEqual([
+        { part: 'where', field: 'dataset.id', reason: 'operator-mismatch' },
+      ]);
+    });
+
+    it('caps the depth, in the IR rather than in a surface', () => {
+      const tooDeep = Array.from(
+        { length: MAX_JOIN_DEPTH + 1 },
+        () => 'dataset',
+      );
+      expect(
+        validateQuery(
+          {
+            ...base,
+            where: [{ or: [{ on: tooDeep, field: 'id', in: ['x'] }] }],
+          },
+          work,
+          joins,
+        ),
+      ).toEqual([
+        {
+          part: 'where',
+          field: `${tooDeep.join('.')}.id`,
+          reason: 'join-too-deep',
+        },
+      ]);
+    });
+
+    it('rejects a path that does not resolve, and one with no graph to resolve it', () => {
+      expect(
+        validateQuery(
+          // `label` is a field, but not a joinable reference.
+          {
+            ...base,
+            where: [{ or: [{ on: ['label'], field: 'id', in: ['x'] }] }],
+          },
+          work,
+          joins,
+        ),
+      ).toEqual([{ part: 'where', field: 'label.id', reason: 'unknown-join' }]);
+      // A joined criterion validated without a join graph is an issue, never a
+      // silently unchecked filter.
+      expect(
+        validateQuery(
+          {
+            ...base,
+            where: [{ or: [{ on: ['dataset'], field: 'id', in: ['x'] }] }],
+          },
+          work,
+        ),
+      ).toEqual([
+        { part: 'where', field: 'dataset.id', reason: 'unknown-join' },
+      ]);
+    });
+
+    it('treats an empty path as no join at all', () => {
+      expect(
+        validateQuery(
+          { ...base, where: [{ or: [{ on: [], field: 'label', in: ['x'] }] }] },
+          work,
+          joins,
+        ),
+      ).toEqual([{ part: 'where', field: 'label', reason: 'not-filterable' }]);
+    });
   });
 
   it('assertValidQuery names the type and every issue', () => {
