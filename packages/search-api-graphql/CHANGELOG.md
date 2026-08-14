@@ -1,3 +1,35 @@
+## 0.23.0 (2026-08-14)
+
+### 🩹 Fixes
+
+- ⚠️  **search:** drop an unselectable bucket instead of failing the response ([#740](https://github.com/ldelements/lde/pull/740))
+
+### ⚠️  Breaking Changes
+
+- **search:** drop an unselectable bucket instead of failing the response  ([#740](https://github.com/ldelements/lde/pull/740))
+  a reference facet’s bucket type is `IRIBucket`, not
+  `IriBucket`. Renaming it needs a second breaking release because 0.21.0
+  published the inconsistent spelling; the three names for one concept
+  (`IRI`, `IRIFilter`, `IRIBucket`) are worth more on a surface ADR 4
+  freezes than the cost of correcting it now, which only grows."
+  M	docs/decisions/0004-search-api-graphql-surface.md
+  M	docs/decisions/0019-type-a-filter-by-what-its-field-keys-on.md
+  M	docs/reference/search-api-graphql.md
+  M	docs/reference/search.md
+  M	packages/search-api-graphql/src/build-schema.ts
+  M	packages/search-api-graphql/test/__snapshots__/generator-stability.test.ts.snap
+  M	packages/search-api-graphql/test/build-schema.test.ts
+  M	packages/search-api-graphql/vite.config.ts
+  M	packages/search/src/project.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/test/project.test.ts
+  M	packages/search/test/schema.test.ts
+  M	packages/search/vite.config.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.21.0
+
 ## 0.22.0 (2026-08-14)
 
 ### 🚀 Features
