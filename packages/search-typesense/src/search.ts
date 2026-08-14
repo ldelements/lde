@@ -31,6 +31,7 @@ import {
   isUnsatisfiable,
   joinGraph,
   labelFieldOf,
+  labelSourceNameOf,
   nestedReferenceType,
   outputFields,
   physicalFields,
@@ -189,9 +190,11 @@ export function createTypesenseSearchEngine<
       searchType.class,
       new Map(
         referenceFields(searchType)
-          .filter((field) => field.labelSource !== undefined)
+          .filter((field) => labelSourceNameOf(field) !== undefined)
           .map((field) => {
-            const source = typesByName.get(field.labelSource!) as RootType;
+            const source = typesByName.get(
+              labelSourceNameOf(field) as string,
+            ) as RootType;
             const labelField = labelFieldOf(source) as TextField;
             return [
               field.name,
@@ -789,7 +792,7 @@ export function parseSearchResponse(
   // its IRIs.
   const referenceFacets = new Set(
     referenceFields(searchType)
-      .filter((field) => field.labelSource !== undefined)
+      .filter((field) => labelSourceNameOf(field) !== undefined)
       .map((field) => field.name),
   );
   const facets: Record<string, FacetBucket[]> = {};
@@ -958,10 +961,11 @@ function referenceValue(
   }
   const iris = Array.isArray(raw) ? (raw as string[]) : [String(raw)];
   const references: Reference[] = iris.map((iri) => {
-    // A reference without a label source is id-only by declaration; never
-    // attach a label, even if the (cached, full-collection) map happens to
-    // hold this IRI from another source.
-    const label = field.labelSource === undefined ? undefined : labels.get(iri);
+    // A reference that resolves nothing is id-only by declaration; never attach
+    // a label, even if the (cached, full-collection) map happens to hold this
+    // IRI from another source.
+    const label =
+      labelSourceNameOf(field) === undefined ? undefined : labels.get(iri);
     return label === undefined ? { id: iri } : { id: iri, label };
   });
   return field.array === true ? references : references[0];

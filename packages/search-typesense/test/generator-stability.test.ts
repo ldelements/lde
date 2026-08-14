@@ -41,7 +41,7 @@ const THING: SearchType = {
       kind: 'reference',
       array: true,
       facetable: true,
-      ref: { typeName: 'Agent', strategy: 'labelOnly' },
+      ref: { strategy: 'idOnly' },
     },
     { name: 'status', kind: 'keyword', facetable: true, required: true },
     { name: 'size', kind: 'integer', facetable: true, sortable: true },

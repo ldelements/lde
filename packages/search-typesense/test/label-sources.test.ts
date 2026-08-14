@@ -48,8 +48,7 @@ const dataset: SearchType = {
       array: true,
       facetable: true,
       output: true,
-      ref: { typeName: 'Agent', strategy: 'labelOnly' },
-      labelSource: 'Organization',
+      ref: { strategy: 'lookup', target: 'Organization' },
     },
     {
       name: 'subject',
@@ -57,8 +56,7 @@ const dataset: SearchType = {
       array: true,
       facetable: true,
       output: true,
-      ref: { typeName: 'Concept', strategy: 'labelOnly' },
-      labelSource: 'Term',
+      ref: { strategy: 'lookup', target: 'Term' },
     },
     // No labelSource: stays id-only, and no lookup is ever issued for it.
     {
@@ -67,7 +65,7 @@ const dataset: SearchType = {
       array: true,
       facetable: true,
       output: true,
-      ref: { typeName: 'License', strategy: 'labelOnly' },
+      ref: { strategy: 'idOnly' },
     },
   ],
 };
@@ -458,7 +456,7 @@ describe('per-reference label sources', () => {
           kind: 'reference',
           array: true,
           output: true,
-          ref: { typeName: 'License', strategy: 'labelOnly' },
+          ref: { strategy: 'idOnly' },
         },
       ],
     });
