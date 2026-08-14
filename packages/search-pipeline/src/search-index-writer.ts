@@ -129,11 +129,13 @@ export function searchIndexWriter(
         throw error;
       }
 
-      // The components with at least one collection live, so `abort` never
-      // re-finalizes one: a committed blue/green rebuild’s abort would drop its
-      // now-live collection, and an uncommitted PEER’s abort would drop the
-      // collection that live one references. Tracked per component rather than
-      // per type because that is the unit the second hazard lives at.
+      // The collections that have gone live, so `abort` never re-finalizes one
+      // (a committed blue/green rebuild’s abort drops its now-live collection).
+      const committed = new Set<string>();
+      // The components with at least one collection live. Their UNCOMMITTED
+      // members are the ones whose build the live collection references, so
+      // they are abandoned rather than aborted. Tracked per component because
+      // that is the unit that hazard lives at.
       const live = new Set<readonly RootType[]>();
 
       return {
@@ -241,6 +243,7 @@ export function searchIndexWriter(
                   searchType.class,
                 ) as RunWriter<SearchDocument>;
                 await run.commit();
+                committed.add(searchType.class);
                 // Note the component as touched BEFORE the next member’s
                 // commit can throw, so the abort that follows knows this
                 // component has something live in it.
@@ -251,19 +254,22 @@ export function searchIndexWriter(
         },
 
         abort: async (error: unknown) => {
-          // Finalize only the collections that have not gone live – and, for a
-          // component that went PARTLY live, none of its members at all.
+          // Three outcomes, not two, because a join component makes “undo”
+          // destructive in a way it never was per collection:
           //
-          // Aborting a committed blue/green rebuild would drop its now-live
-          // collection; aborting an uncommitted member of a partly-committed
-          // component is the same mistake one edge out. Its half-built
-          // collection is precisely what the member that DID commit now
-          // references by concrete name, so dropping it leaves the live
-          // referrer with a dangling reference and every join through it
-          // failing – permanently, since the next run builds new collections
-          // rather than repairing that one. Leaving it costs an orphaned
-          // collection until an operator reclaims it; dropping it costs a
-          // broken live index, so the leak is the lesser evil.
+          // - a collection that WENT LIVE is left alone: aborting a committed
+          //   blue/green rebuild would drop its now-live collection;
+          // - a collection in a component that went PARTLY live is
+          //   `abandon`ed – finalized WITHOUT dropping what it built. Its
+          //   half-built collection is precisely what the member that did
+          //   commit now references by concrete name, so dropping it would
+          //   leave the live referrer with a dangling reference and every join
+          //   through it failing, permanently. Abandoning keeps the collection
+          //   (orphaned until a later run supersedes it) while still releasing
+          //   the cross-pod lock – skipping it entirely would hold that lock
+          //   for its whole TTL and fail the NEXT run before it starts;
+          // - everything else is aborted as before: nothing in its component is
+          //   live, so there is no reference to protect.
           //
           // Best-effort – cleanup failures must not mask the original error.
           const partlyLive = new Set(
@@ -273,8 +279,14 @@ export function searchIndexWriter(
           );
           await Promise.allSettled(
             [...runs]
-              .filter(([typeIri]) => !partlyLive.has(typeIri))
-              .map(([, run]) => run.abort(error)),
+              .filter(([typeIri]) => !committed.has(typeIri))
+              .map(([typeIri, run]) =>
+                partlyLive.has(typeIri)
+                  ? // A writer that does not implement `abandon` has an `abort`
+                    // that keeps what it built anyway – that is the contract.
+                    (run.abandon ?? run.abort).call(run, error)
+                  : run.abort(error),
+              ),
           );
         },
       };

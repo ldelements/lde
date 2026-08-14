@@ -201,6 +201,43 @@ describe('BlueGreenRebuild', () => {
     expect(await aliasTarget(client)).not.toBe(live);
   });
 
+  it('abandon keeps the half-built collection but still releases the lock', async () => {
+    // The half-way house between commit and abort, for the one case where
+    // undoing is the more destructive choice: a peer that already went live
+    // references this fresh collection by its concrete name, so dropping it
+    // would break that peer’s joins. The lock must still go, or the next run
+    // cannot rebuild the index at all (ADR 19).
+    const writer = new BlueGreenRebuild(client, datasetType, {
+      collectionNameFor: () => NAME,
+    });
+
+    const first = await writer.openRun(makeRunContext());
+    await first.write(
+      dataset,
+      stream([{ id: 'a', title: 'Live', year: 2024 }]),
+    );
+    await first.commit();
+    const live = await aliasTarget(client);
+    const collectionCount = (await client.collections().retrieve()).length;
+
+    const second = await writer.openRun(makeRunContext());
+    await second.write(dataset, stream([{ id: 'b', title: 'B', year: 2025 }]));
+    await second.abandon?.(new Error('a peer went live already'));
+
+    // The alias never moved, and – unlike abort – the fresh collection stays.
+    expect(await aliasTarget(client)).toBe(live);
+    expect((await client.collections().retrieve()).length).toBe(
+      collectionCount + 1,
+    );
+
+    // And the lock was released, so the next run proceeds rather than
+    // throwing RebuildAlreadyRunning for the whole TTL.
+    const third = await writer.openRun(makeRunContext());
+    await third.write(dataset, stream([{ id: 'c', title: 'C', year: 2026 }]));
+    await third.commit();
+    expect(await aliasTarget(client)).not.toBe(live);
+  });
+
   it('surfaces per-document import failures from write', async () => {
     const writer = new BlueGreenRebuild(client, datasetType, {
       collectionNameFor: () => NAME,

@@ -13,6 +13,7 @@ import {
   irAlias,
   isAbsoluteIri,
   isoToUnixSeconds,
+  isInternalField,
   isRangeFacet,
   nestedFieldName,
   nestedReferenceType,
@@ -694,6 +695,22 @@ describe('validateSearchType', () => {
         } as never),
       ),
     ).toEqual([{ field: 'format', reason: 'joinable-not-allowed' }]);
+  });
+
+  it('counts joinable as a role, so such a field is never internal', () => {
+    // An engine can only join through a value it stores, so a joinable
+    // reference must survive the Internal Field pruning even when it declares
+    // nothing else – otherwise the edge resolves and the query compiles
+    // against a column the collection never had.
+    const joinable: SearchField = {
+      name: 'publisher',
+      kind: 'reference',
+      labelSource: 'Publisher',
+      joinable: true,
+    };
+    expect(isInternalField(joinable)).toBe(false);
+    // Without it, the same declaration is the reading device it looks like.
+    expect(isInternalField({ ...joinable, joinable: false })).toBe(true);
   });
 
   it('rejects joinable on an inline reference', () => {

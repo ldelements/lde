@@ -341,6 +341,8 @@ Writes generated quads to a destination. A `Writer` is transactional: each pipel
 
 A `RunWriter` may also implement the optional `reset(dataset)`, which discards a dataset’s already-written output. The pipeline invokes it before re-running all stages against a fallback dump ([reactive fallback](#distribution-resolver)); a custom writer without `reset` appends the re-run’s output to the endpoint-sourced partial output instead of replacing it.
 
+The other optional method, `abandon(error)`, is the half-way house between `commit` and `abort`: **finalize, release run-level resources, keep what you built**. The pipeline never calls it – it exists for a caller coordinating several writers whose outputs reference one another, where one has already gone live pointing at what another built, so dropping that half-built output would break the live one ([`@lde/search-pipeline`](./search-pipeline#per-component-isolation) is the case it was added for). It falls back to `abort`, which is already correct for every writer whose abort does not discard built state; a writer whose abort _does_ discard should implement it, or such a caller has to choose between leaking its lock and breaking a live destination.
+
 #### `SparqlUpdateWriter`
 
 Writes to a SPARQL endpoint via SPARQL UPDATE queries (options: `SparqlWriterOptions`):

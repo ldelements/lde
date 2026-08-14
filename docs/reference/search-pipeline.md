@@ -360,14 +360,13 @@ isolation:
   collection it supersedes, so committing the referent first would delete one
   the still-live referrer points at – and stop at the first failure, so a
   component ships whole or not at all;
-- because the pipeline aborts a run whose `commit` throws, `abort` finalizes only
-  the components that did **not** already go live, dropping the half-built
-  collections and releasing their locks. A component that went _partly_ live is
-  left alone entirely: aborting a committed blue/green rebuild would drop its
-  now-live collection, and aborting an uncommitted **peer** of one would drop
-  exactly the collection that live member references by name – breaking every
-  join through it permanently. The orphaned collection that leaves behind is the
-  lesser evil.
+- because the pipeline aborts a run whose `commit` throws, `abort` has three
+  outcomes rather than two. A collection that went live is left alone (aborting
+  a committed blue/green rebuild would drop it); a collection in a component
+  that went _partly_ live is **abandoned** – finalized without dropping what it
+  built, since that is exactly what the live member references by name, while
+  still releasing its cross-pod lock; everything else is aborted as before,
+  dropping the half-built collection and releasing its lock.
 
 See [ADR 9](../decisions/0009-route-a-whole-schema-projection-to-per-type-collections)
 and [ADR 19](../decisions/0019-filter-across-collections-through-declared-joins).

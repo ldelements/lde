@@ -199,6 +199,16 @@ export class BlueGreenRebuild<
             .catch(() => undefined);
           await releaseLock(this.client, name);
         },
+
+        abandon: async () => {
+          // Everything `abort` does EXCEPT the drop. Asked for when a peer
+          // whose documents reference this collection by concrete name has
+          // already gone live: dropping it would break that live collection’s
+          // joins, so the collection is kept for a later run to supersede.
+          // Releasing the lock is the whole point – without it the index stays
+          // locked for its full TTL and the next run cannot rebuild it.
+          await releaseLock(this.client, name);
+        },
       };
     });
   }

@@ -108,6 +108,29 @@ export interface RunWriter<Item = Quad> extends DatasetWriter<Item> {
    * @param error The failure that ended the run
    */
   abort(error: unknown): Promise<void>;
+
+  /**
+   * End the run releasing its run-level resources (locks, connections) but
+   * **keeping** whatever it built – the half-way house between
+   * {@link commit} and {@link abort}.
+   *
+   * It exists for the one case where undoing is the more destructive choice: a
+   * caller coordinating several writers whose outputs reference each other,
+   * where one has already gone live pointing at what another built. Dropping
+   * that half-built output would break the live one, so the caller asks for it
+   * to be kept and reconciled by a later run instead
+   * ([ADR 19](https://github.com/ldelements/lde/blob/main/docs/decisions/0019-filter-across-collections-through-declared-joins.md)).
+   *
+   * Optional: it falls back to {@link abort}, which is already correct for
+   * every writer whose `abort` does not discard built state (an In-place
+   * rebuild releasing its lock, a writer with no run-level state at all). A
+   * writer whose `abort` DOES discard – a Blue/green rebuild dropping its
+   * fresh collection – must implement this, or a coordinating caller has to
+   * choose between leaking its lock and breaking a live destination.
+   *
+   * @param error The failure that ended the run
+   */
+  abandon?(error: unknown): Promise<void>;
 }
 
 /**

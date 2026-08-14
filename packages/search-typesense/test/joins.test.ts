@@ -288,6 +288,40 @@ describe('buildCollectionDefinition over a joinable reference', () => {
     ).not.toThrow();
   });
 
+  it('stores a joinable reference that declares no other role', () => {
+    // `joinable` IS a role: an engine can only join through a value it stores,
+    // so the field must not be pruned as an Internal Field. Otherwise the edge
+    // resolves, the query validates and the compiler emits `$publishers(…)`
+    // against a collection that never had the column.
+    const joinOnly = labelSource('JoinOnly', [
+      {
+        name: 'publisher',
+        path: 'https://example.org/publisher',
+        kind: 'reference',
+        labelSource: 'Publisher',
+        joinable: true,
+      },
+    ]);
+    const definition = buildCollectionDefinition(joinOnly, {
+      schema: searchSchema(PUBLISHER, joinOnly),
+    });
+    expect(
+      definition.fields?.find((field) => field.name === 'publisher'),
+    ).toMatchObject({ reference: 'publishers.id' });
+  });
+
+  it('tells a lookalike type apart from a missing schema', () => {
+    // A schema WAS passed; what is wrong is that this is not the declaration
+    // the schema was built from. Repeating “pass the schema” would send the
+    // caller to do what they already did.
+    expect(() =>
+      buildCollectionDefinition(
+        { ...DATASET, fields: [...DATASET.fields] },
+        { schema: SCHEMA },
+      ),
+    ).toThrow(/does not declare this exact type/);
+  });
+
   it('refuses to build a joinable reference with no schema to resolve it', () => {
     // Silently omitting it would build a collection that indexes and commits
     // happily and then 400s on every join query.

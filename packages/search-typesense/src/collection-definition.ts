@@ -189,13 +189,21 @@ function referenceDeclaration(
   if (field.kind !== 'reference' || field.joinable !== true) {
     return undefined;
   }
-  const target =
-    schema === undefined
-      ? undefined
-      : joinGraph(schema).resolve(searchType, [field.name]);
-  if (target === undefined) {
+  if (schema === undefined) {
     throw new Error(
       `Building the collection for “${searchType.name}” needs the search schema its joinable reference “${field.name}” resolves against; pass it as the collection-definition option “schema”.`,
+    );
+  }
+  const target = joinGraph(schema).resolve(searchType, [field.name]);
+  if (target === undefined) {
+    // A schema WAS given and the edge still does not resolve. The rules that
+    // would reject the declaration itself all ran when the schema was built, so
+    // what is left is identity: `joinGraph` resolves from the exact declaration
+    // object the schema holds, and this is a lookalike – a re-declared type, or
+    // one belonging to another schema. Saying “pass the schema” here would send
+    // a caller to do the thing they already did.
+    throw new Error(
+      `Building the collection for “${searchType.name}” cannot resolve its joinable reference “${field.name}”: the given search schema does not declare this exact type. Pass the declaration the schema was built from, not a copy of it.`,
     );
   }
   return {

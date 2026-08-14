@@ -579,10 +579,14 @@ describe('searchIndexWriter', () => {
     );
 
     /** The order lifecycle calls reached the per-type writers. */
-    function orderRecorder(failOn?: string) {
+    function orderRecorder(
+      failOn?: string,
+      options: { readonly withAbandon?: boolean } = { withAbandon: true },
+    ) {
       const opened: string[] = [];
       const committed: string[] = [];
       const aborted: string[] = [];
+      const abandoned: string[] = [];
       const writerFor = (searchType: RootType): Writer<SearchDocument> => ({
         openRun: async () => {
           opened.push(searchType.name);
@@ -599,10 +603,16 @@ describe('searchIndexWriter', () => {
               aborted.push(searchType.name);
               return Promise.resolve();
             },
+            ...(options.withAbandon === true && {
+              abandon: () => {
+                abandoned.push(searchType.name);
+                return Promise.resolve();
+              },
+            }),
           };
         },
       });
-      return { opened, committed, aborted, writerFor };
+      return { opened, committed, aborted, abandoned, writerFor };
     }
 
     it('opens referenced collections first', async () => {
@@ -649,14 +659,14 @@ describe('searchIndexWriter', () => {
       expect(committed).toEqual(['Work', 'Loose']);
     });
 
-    it('never aborts a member of a partly-committed component', async () => {
+    it('abandons – never aborts – the peers of a committed member', async () => {
       // `Work` went live pointing at `Publisher`’s and `Set`’s FRESH
       // collections by concrete name. Aborting those uncommitted peers would
       // drop exactly the collections the live `Work` references, breaking
-      // every join through it permanently – the same mistake as aborting a
-      // committed rebuild, one edge out. An orphaned collection is the lesser
-      // evil, so the whole component is left alone.
-      const { committed, aborted, writerFor } = orderRecorder('Set');
+      // every join through it permanently. Abandoning keeps them – and still
+      // releases their cross-pod locks, which skipping them entirely would
+      // hold for a full TTL and fail the next run before it starts.
+      const { committed, aborted, abandoned, writerFor } = orderRecorder('Set');
 
       const run = await searchIndexWriter({
         schema: joined,
@@ -666,7 +676,30 @@ describe('searchIndexWriter', () => {
       await run.abort(new Error('run failed'));
 
       expect(committed).toEqual(['Work', 'Loose']);
+      expect(abandoned.sort()).toEqual(['Publisher', 'Set']);
+      // Neither the live member nor its peers are aborted.
       expect(aborted).toEqual([]);
+    });
+
+    it('falls back to abort for a writer that implements no abandon', async () => {
+      // The contract: a writer without `abandon` has an `abort` that keeps
+      // what it built (an In-place rebuild releasing its lock), so the
+      // fallback is correct rather than merely tolerable.
+      const { committed, aborted, abandoned, writerFor } = orderRecorder(
+        'Set',
+        { withAbandon: false },
+      );
+
+      const run = await searchIndexWriter({
+        schema: joined,
+        writerFor,
+      }).openRun(makeRunContext());
+      await expect(run.commit()).rejects.toThrow(AggregateError);
+      await run.abort(new Error('run failed'));
+
+      expect(committed).toEqual(['Work', 'Loose']);
+      expect(abandoned).toEqual([]);
+      expect(aborted.sort()).toEqual(['Publisher', 'Set']);
     });
 
     it('still aborts a component that committed nothing', async () => {

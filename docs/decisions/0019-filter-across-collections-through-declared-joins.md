@@ -151,14 +151,21 @@ run, so this is an ordering and commit change, not new orchestration:
   supersedes, so committing the referent first would delete a collection the
   still-live referrer’s documents point at. The first failure stops the rest of
   its component from going live, so a component ships whole or not at all;
-- **abort** leaves a component that went _partly_ live alone entirely. Aborting
-  a committed rebuild would drop its now-live collection; aborting an
-  uncommitted **peer** of one is the same mistake one edge out, because the
-  half-built collection it would drop is exactly what the member that did
-  commit now references by concrete name. Dropping it would break every join
-  through the live index permanently – the next run builds fresh collections
-  rather than repairing that one – so the collection is left orphaned instead,
-  for an operator to reclaim.
+- **abort** gains a third outcome, because a component makes “undo” destructive
+  in a way it never was per collection. Aborting a committed rebuild would drop
+  its now-live collection; aborting an uncommitted **peer** of one is the same
+  mistake one edge out, since the half-built collection it would drop is
+  exactly what the member that did commit now references by concrete name.
+  Those peers are therefore **abandoned** – a new optional `RunWriter.abandon`
+  meaning _finalize, release run-level resources, keep what you built_.
+
+  Skipping them outright is not enough, and was the first thing tried: `abort`
+  is the only path that releases the cross-pod rebuild lock, so a skipped peer
+  holds its lock for the full TTL and fails the _next_ run before it starts –
+  a worse blast radius than the leak it avoids. `abandon` keeps the collection
+  (orphaned until a later run supersedes it) _and_ releases the lock. It falls
+  back to `abort`, which is already right for every writer whose abort does not
+  discard built state.
 
 Locking needs no change: this is still the single deterministic pass that takes
 every lock in a fixed order, which is what makes lock-ordering deadlock
@@ -197,14 +204,17 @@ general drift detection is a separate feature.
   ranking and facet counts: `filter_by: $datasets($publishers(id:=X))`.
 - Breaking for `@lde/search-typesense`: the rebuild and collection-definition
   options take `collectionNameFor` instead of `name`.
-- Additive for `@lde/search` (`joinable`, `on`, `joinGraph`) and for the GraphQL
-  surface (a joinable reference’s input type widens; nothing narrows).
+- Additive for `@lde/search` (`joinable`, `on`, `joinGraph`), for `@lde/pipeline`
+  (`RunWriter.abandon`, optional and falling back to `abort`) and for the
+  GraphQL surface (a joinable reference’s input type widens; nothing narrows).
 - A deployment that adds `joinable` to a live In-place index must drop the
   affected collections once. That is stated by an error, not discovered from
   failing queries.
-- A run whose commit fails partway through a component can leave an orphaned
-  blue/green collection behind (see `abort` above). Preferred over the
-  alternative, which is a live index whose joins are permanently broken.
+- A run whose commit fails partway through a component leaves the abandoned
+  blue/green collections behind (see `abort` above), for a later run to
+  supersede. Preferred over the alternatives: dropping them breaks the live
+  index’s joins permanently, and skipping them holds the rebuild lock for its
+  whole TTL and fails the next run outright.
 
 ### Out of scope, deliberately
 

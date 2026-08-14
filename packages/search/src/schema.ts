@@ -1264,11 +1264,20 @@ export function outputFields(searchType: SearchType): readonly SearchField[] {
 
 /**
  * Whether a field declares **no** role – none of `output`, `searchable`,
- * `filterable`, `facetable`, `sortable`. Such a field is an **internal field**:
- * the projection populates it (so a later {@link SearchFieldBase.derive} can
- * read it), then prunes it before the document reaches a writer, and the engine
- * collection definition omits it entirely – not stored, not indexed, no RAM.
- * Absence of a role declares that intent; there is no separate marker flag.
+ * `filterable`, `facetable`, `sortable`, `joinable`. Such a field is an
+ * **internal field**: the projection populates it (so a later
+ * {@link SearchFieldBase.derive} can read it), then prunes it before the
+ * document reaches a writer, and the engine collection definition omits it
+ * entirely – not stored, not indexed, no RAM. Absence of a role declares that
+ * intent; there is no separate marker flag.
+ *
+ * {@link ReferenceField.joinable} counts as a role for exactly the reason the
+ * others do: it is a promise about what the *engine* can do with the field, and
+ * an engine can only join through a value it actually stores. Leaving it out
+ * would let a joinable-but-otherwise-role-less reference declare an edge the
+ * schema resolves, the query validates and the compiler emits – against a
+ * collection that never stored the column, so every such query fails at the
+ * engine.
  *
  * The single predicate the projection and the collection definition share, so
  * they cannot disagree on what is internal. See the Search context’s load-bearing
@@ -1280,7 +1289,8 @@ export function isInternalField(field: SearchField): boolean {
     field.searchable === undefined &&
     field.filterable !== true &&
     field.facetable !== true &&
-    field.sortable !== true
+    field.sortable !== true &&
+    (field.kind !== 'reference' || field.joinable !== true)
   );
 }
 
