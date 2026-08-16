@@ -723,6 +723,14 @@ function assertServiceableNestedFields(
           `Nested field “${referenceType.name}.${field.name}” declares a label source, which an inline reference cannot serve; nest the referent through an inline reference instead of resolving a label for it.`,
         );
       }
+      // A lookup is resolved from the hit's own projection, level by level; a
+      // nested document is read back with its referent and never appears in
+      // one. Accepting it would emit a type whose every field serves null.
+      if (field.kind === 'reference' && field.ref?.strategy === 'lookup') {
+        throw new Error(
+          `Nested field “${referenceType.name}.${field.name}” is a lookup, which an inline reference cannot serve: a nested document is read back with its referent, so nothing resolves a lookup inside one. Nest the referent through an inline reference instead.`,
+        );
+      }
     }
   }
 }

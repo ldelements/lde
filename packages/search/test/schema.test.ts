@@ -1160,6 +1160,21 @@ describe('searchSchema validation', () => {
       );
     });
 
+    it('rejects a lookup on a nested field', () => {
+      // A lookup is resolved level by level from the hit's projection, and a
+      // nested document is read back with its referent – so nothing would
+      // resolve it, and every field of the emitted type would serve null.
+      expect(() =>
+        searchSchema(
+          datasetNesting({ strategy: 'inline', typeName: 'MediaObject' }),
+          mediaObjectWith({
+            kind: 'reference',
+            ref: { strategy: 'lookup', target: 'Organization' },
+          }),
+        ),
+      ).toThrow(/Nested field “MediaObject.contentUrl” is a lookup/);
+    });
+
     it('names the nested Physical Field of a referent’s field', () => {
       // The engine addresses a stored nested document by qualifying the
       // referent’s own field name with the reference that carries it.
