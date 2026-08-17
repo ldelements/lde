@@ -202,7 +202,36 @@ export interface KeywordField extends SearchFieldBase, Searchable {
   readonly from?: ProjectionValue;
 }
 
-/** An IRI-valued reference to another entity, label-resolved at the surface. */
+/**
+ * Where a reference’s fields come from – the one axis the three shapes sit on:
+ *
+ * - `idOnly` carries the bare IRI and nothing else. It emits no type, so it
+ *   names none; a {@link ReferenceField.labelSource} still labels its facet
+ *   buckets.
+ * - `lookup` carries fields read from the **target’s own indexed document**,
+ *   resolved at query time from that Root Type’s collection. `target` names it
+ *   once – the collection to read and the emitted type name alike (GraphQL:
+ *   `‹Target›Reference`, since type names must be unique).
+ * - `inline` carries fields denormalised from the **parent’s** RDF framing at
+ *   index time, shaped by the declared {@link ReferenceType} `typeName` names –
+ *   so its typeName can never name a root type.
+ */
+export type ReferenceStrategy =
+  | {
+      readonly strategy: 'idOnly';
+      /** Optional, unlike the other strategies – including when the field is
+       *  `output`: an `idOnly` reference surfaces as its bare IRI, so there is
+       *  no object type to name. It names the reference’s *filter* target
+       *  instead, so declare it where the referent’s IRIs form a nameable set a
+       *  consumer should be able to tell from IRIs at large; omit it for IRIs
+       *  that belong to no such set. */
+      readonly typeName?: string;
+      readonly target?: never;
+    }
+  | { readonly strategy: 'lookup'; readonly target: string }
+  | { readonly strategy: 'inline'; readonly typeName: string };
+
+/** An IRI-valued reference to another entity, resolved at the surface. */
 export interface ReferenceField extends SearchFieldBase, Searchable {
   readonly kind: 'reference';
   /** Projection-time value transform. */
@@ -214,22 +243,23 @@ export interface ReferenceField extends SearchFieldBase, Searchable {
    *  with `path` and `derive`. */
   readonly from?: ProjectionValue;
   /**
-   * The `name` of the {@link SearchType} whose collection resolves this
-   * reference’s labels – its ‘label source’. The named type must declare an
-   * `output`, `searchable` text field under its
-   * {@link SearchTypeBase.labelField} name (`label` by default; validated by
-   * {@link searchSchema}), so an engine can both reconstruct the label and
-   * search it (typeahead). Omit for an id-only reference: no label
-   * resolution.
+   * The `name` of the Root Type whose collection labels this reference’s facet
+   * buckets. Only an `idOnly` reference declares one: a `lookup` reads its
+   * labels from the `target` it already names, and an `inline` reference
+   * carries the referent’s own fields. The named type must declare an `output`,
+   * `searchable` text field under its {@link SearchTypeBase.labelField} name
+   * (`label` by default; validated by {@link searchSchema}), so an engine can
+   * both reconstruct the label and search it (typeahead).
    */
   readonly labelSource?: string;
   /**
    * Turn this reference into an **engine-level join**, so a query can filter
    * this type by a condition on the referent – `“every object published by
-   * institution X”` in one round-trip instead of two. Valid only alongside
-   * {@link ReferenceField.labelSource}, which already asserts that this
-   * field’s values are ids of documents in that type’s collection – exactly
-   * the fact a join needs.
+   * institution X”` in one round-trip instead of two. Valid only where the
+   * reference names the type it resolves against – a `lookup`’s `target` or an
+   * `idOnly`’s {@link ReferenceField.labelSource} ({@link labelSourceNameOf}) –
+   * which already asserts that this field’s values are ids of documents in that
+   * type’s collection, exactly the fact a join needs.
    *
    * A capability flag in the vocabulary of `filterable`/`facetable`/`sortable`,
    * and deliberately not derived from `labelSource`: an engine may refuse to
@@ -246,56 +276,20 @@ export interface ReferenceField extends SearchFieldBase, Searchable {
    */
   readonly joinable?: boolean;
   /**
-   * The referenced entity’s shape and how much of it to carry. Required when
-   * the field is `output` – the strategy is what decides the output shape, so
-   * a surfaced reference must state it; optional for a facet- or filter-only
+   * The referenced entity’s shape and where its fields come from. Required when
+   * the field is `output` – the strategy is what decides the output shape, so a
+   * surfaced reference must state it; optional for a facet- or filter-only
    * reference.
    *
-   * A **discriminated union by `strategy`**, because `typeName` is load-bearing
-   * for two of the three and meaningless for the third: a `labelOnly` reference
-   * needs a name to emit its id-plus-label type under, an `inline` one needs a
-   * name that resolves to a declared {@link ReferenceType}, and an `idOnly` one
-   * carries a bare IRI that may belong to no declared type at all (`sameAs`
-   * points at a vocabulary nobody indexes). Declaring `typeName` on an `idOnly`
-   * reference is still useful where a target *is* nameable – an API surface can
-   * then tell IRIs of that target apart from IRIs at large.
+   * A **discriminated union by `strategy`** ({@link ReferenceStrategy}), because
+   * what names the referent differs per strategy and is meaningless for the
+   * others: a `lookup` names the Root Type it reads from, an `inline` one names
+   * a declared {@link ReferenceType}, and an `idOnly` one carries a bare IRI
+   * that may belong to no declared type at all (`sameAs` points at a vocabulary
+   * nobody indexes). See
+   * [ADR 20](../../docs/decisions/0020-resolve-a-references-fields-from-the-targets-own-collection.md).
    */
-  readonly ref?:
-    | {
-        /** Logical API type name of the referenced entity (PascalCase, e.g.
-         *  `Organization`) – names the reference’s type in the API surfaces,
-         *  the way {@link SearchType.name} names a root type; fields sharing it
-         *  share one emitted type. For a `labelOnly` reference it is a name,
-         *  not a key: it need not correspond to any indexed root type, and it
-         *  may name one (`creator` → `Person`, with the labels resolved from
-         *  that root’s collection via `labelSource`) – an API surface then
-         *  serves the reference under a derived name (GraphQL:
-         *  `‹Name›Reference`) to keep type names unique. An `inline`
-         *  reference’s typeName instead resolves to a declared
-         *  {@link ReferenceType}, so it can never name a root type. */
-        readonly typeName: string;
-        /** `labelOnly` carries the id plus a display label resolved from a
-         *  label source; `inline` carries the referent’s own projected fields
-         *  through a declared {@link ReferenceType} (see
-         *  {@link isInlineReference}). */
-        readonly strategy: 'labelOnly' | 'inline';
-      }
-    | {
-        /** Optional here, unlike the other strategies: an `idOnly` reference
-         *  emits no type of its own, so a name is not needed to emit one under.
-         *  Declare it when the referent’s IRIs form a nameable set an API
-         *  surface should distinguish; omit it for IRIs that belong to no such
-         *  set. */
-        readonly typeName?: string;
-        /** The IRI, and nothing else – no label resolution, no nested fields.
-         *  Surfaces as a bare IRI rather than an object, which is what makes it
-         *  the right strategy for a reference whose referent is not an entity
-         *  this deployment describes: a canonical vocabulary URI, a licence, a
-         *  content URL. A {@link ReferenceField.labelSource} is still honoured
-         *  for facet bucket labels – the strategy governs the output shape, not
-         *  whether a bucket can be labelled. */
-        readonly strategy: 'idOnly';
-      };
+  readonly ref?: ReferenceStrategy;
 }
 
 /**
@@ -729,6 +723,14 @@ function assertServiceableNestedFields(
           `Nested field “${referenceType.name}.${field.name}” declares a label source, which an inline reference cannot serve; nest the referent through an inline reference instead of resolving a label for it.`,
         );
       }
+      // A lookup is resolved from the hit's own projection, level by level; a
+      // nested document is read back with its referent and never appears in
+      // one. Accepting it would emit a type whose every field serves null.
+      if (field.kind === 'reference' && field.ref?.strategy === 'lookup') {
+        throw new Error(
+          `Nested field “${referenceType.name}.${field.name}” is a lookup, which an inline reference cannot serve: a nested document is read back with its referent, so nothing resolves a lookup inside one. Nest the referent through an inline reference instead.`,
+        );
+      }
     }
   }
 }
@@ -782,9 +784,22 @@ export function labelFieldOf(searchType: SearchType): TextField | undefined {
 }
 
 /**
- * Every {@link ReferenceField.labelSource} must name a declared type that can
- * actually serve labels ({@link labelFieldOf}). Checked schema-wide, because
- * a single declaration cannot see its siblings.
+ * The Root Type a reference resolves labels from, by name: a `lookup`’s
+ * `target`, an `idOnly`’s {@link ReferenceField.labelSource}, or `undefined`
+ * when it resolves none. One reading for the two declarations, so a consumer
+ * never branches on the strategy to find the collection.
+ */
+export function labelSourceNameOf(field: ReferenceField): string | undefined {
+  return field.ref?.strategy === 'lookup'
+    ? field.ref.target
+    : field.labelSource;
+}
+
+/**
+ * Every name a reference resolves labels from – a `lookup`’s `target` or an
+ * `idOnly`’s {@link ReferenceField.labelSource} – must be a declared type that
+ * can actually serve labels ({@link labelFieldOf}). Checked schema-wide,
+ * because a single declaration cannot see its siblings.
  *
  * That leaves only a {@link RootType}, without naming one: a label field is
  * `searchable`, and {@link assertServiceableNestedFields} already rejects a
@@ -799,23 +814,37 @@ function assertResolvableLabelSources(types: readonly SearchType[]): void {
     for (const field of searchType.fields) {
       const labelSource = (field as { readonly labelSource?: string })
         .labelSource;
-      if (labelSource === undefined) {
+      if (labelSource !== undefined) {
+        if (field.kind !== 'reference') {
+          throw new Error(
+            `Field “${searchType.name}.${field.name}” declares a label source but is a ${field.kind} field; only reference fields resolve labels from a source.`,
+          );
+        }
+        // A lookup reads its labels from the `target` it already names, and an
+        // inline reference carries the referent’s own fields – so a second name
+        // for the same thing could only disagree with the first.
+        if (field.ref !== undefined && field.ref.strategy !== 'idOnly') {
+          throw new Error(
+            `Reference “${searchType.name}.${field.name}” declares a label source on a ${field.ref.strategy} reference; only an idOnly reference does, for its facet buckets.`,
+          );
+        }
+      }
+      const sourceName =
+        field.kind === 'reference' && field.ref?.strategy === 'lookup'
+          ? field.ref.target
+          : labelSource;
+      if (sourceName === undefined) {
         continue;
       }
-      if (field.kind !== 'reference') {
-        throw new Error(
-          `Field “${searchType.name}.${field.name}” declares a label source but is a ${field.kind} field; only reference fields resolve labels from a source.`,
-        );
-      }
-      const source = byName.get(labelSource);
+      const source = byName.get(sourceName);
       if (source === undefined) {
         throw new Error(
-          `Reference “${searchType.name}.${field.name}” names unknown label source “${field.labelSource}”; declare a SearchType with that name.`,
+          `Reference “${searchType.name}.${field.name}” names unknown label source “${sourceName}”; declare a SearchType with that name.`,
         );
       }
       if (labelFieldOf(source) === undefined) {
         throw new Error(
-          `Reference “${searchType.name}.${field.name}” uses label source “${field.labelSource}”, which must declare an output, searchable text field “${labelFieldNameOf(source)}”.`,
+          `Reference “${searchType.name}.${field.name}” uses label source “${sourceName}”, which must declare an output, searchable text field “${labelFieldNameOf(source)}”.`,
         );
       }
     }
@@ -1011,22 +1040,27 @@ export function validateSearchType(
       if (field.output === true && field.ref === undefined) {
         issue('missing-ref');
       }
-      // `typeName` is optional only for `idOnly`, which emits no type and so
-      // needs no name to emit one under. Every other surfaced strategy is
-      // served AS a named type, and without a name an API surface has nothing
-      // to emit – the GraphQL one silently prints `undefined` as the field’s
-      // type, publishing a contract that is not a schema.
+      // `typeName` names the emitted type, and only an `inline` reference
+      // must declare one: a `lookup` derives its name from the `target` it
+      // already names, and an `idOnly` surfaces as a bare IRI, emitting no
+      // type at all. Without a name where one is needed, an API surface has
+      // nothing to emit – the GraphQL one silently prints `undefined` as the
+      // field's type, publishing a contract that is not a schema.
       if (
         field.output === true &&
-        field.ref !== undefined &&
-        field.ref.strategy !== 'idOnly' &&
-        field.ref.typeName === undefined
+        ((field.ref?.strategy === 'inline' &&
+          field.ref.typeName === undefined) ||
+          (field.ref?.strategy === 'lookup' && field.ref.target === undefined))
       ) {
         issue('missing-ref-type-name');
       }
-      // A join addresses the referent’s collection, which is the collection the
-      // label source names: without one the flag states an edge to nowhere.
-      if (field.joinable === true && field.labelSource === undefined) {
+      // A join addresses the referent's collection – the one a lookup's
+      // `target` or an idOnly's `labelSource` names. With neither, the flag
+      // states an edge to nowhere.
+      if (
+        field.joinable === true &&
+        labelSourceNameOf(field as ReferenceField) === undefined
+      ) {
         issue('joinable-without-label-source');
       }
       // An inline reference is stored as a NESTED OBJECT, not as an id an

@@ -46,7 +46,7 @@ const THING: SearchType = {
       facetable: true,
       filterable: true,
       output: true,
-      ref: { typeName: 'Agent', strategy: 'labelOnly' },
+      ref: { strategy: 'idOnly', typeName: 'Agent' },
     },
     {
       name: 'publisher',
@@ -54,7 +54,7 @@ const THING: SearchType = {
       facetable: true,
       filterable: true,
       output: true,
-      ref: { typeName: 'Agent', strategy: 'labelOnly' },
+      ref: { strategy: 'idOnly', typeName: 'Agent' },
     },
     // An idOnly reference naming no target: a bare IRI in, a bare IRI out, and
     // an IRIFilter to select it by – the shape a canonical vocabulary URI or a

@@ -2,6 +2,7 @@ import {
   fieldNamed,
   filterOperatorFor,
   ID_FIELD,
+  type SearchSchema,
   type SearchType,
 } from './schema.js';
 import { MAX_JOIN_DEPTH, type JoinGraph } from './join-graph.js';
@@ -26,6 +27,16 @@ export interface SearchQuery {
   readonly facets: readonly string[];
   /** Selects the per-locale fields to query/sort on (from `Accept-Language`). */
   readonly locale: string;
+  /**
+   * Which `lookup` references to resolve on the hits, and how much of each
+   * referent to carry. Omitted (or a field left out of it), a lookup resolves
+   * its target’s label alone – what every reference carried before.
+   *
+   * A surface builds this from what its caller asked for (GraphQL: the
+   * selection set), so the engine fetches neither less nor more. See
+   * [ADR 20](../../docs/decisions/0020-resolve-a-references-fields-from-the-targets-own-collection.md).
+   */
+  readonly resolve?: ReferenceProjection;
 }
 
 /**
@@ -57,6 +68,25 @@ export interface CriterionBase {
    */
   readonly on?: readonly string[];
 }
+
+/**
+ * What to carry for each resolved reference, keyed by the reference field’s
+ * name. `fields` names the referent’s own output fields; `resolve` nests, for a
+ * referent whose own references are wanted in turn – an engine answers one
+ * batched lookup per level, never one per document.
+ *
+ * Deliberately the shape of a selection set rather than a second vocabulary: a
+ * per-level option (a `limit` here, a `where` there) would multiply with depth.
+ */
+export type ReferenceProjection = Readonly<
+  Record<
+    string,
+    {
+      readonly fields?: readonly string[];
+      readonly resolve?: ReferenceProjection;
+    }
+  >
+>;
 
 /**
  * One criterion on one field. The operator is fixed by that field’s
@@ -171,7 +201,7 @@ export function isUnsatisfiable(query: SearchQuery): boolean {
  * clause with no criteria) are NOT issues – a compiler skips those as no-ops.
  */
 export interface QueryIssue {
-  readonly part: 'where' | 'facets' | 'orderBy';
+  readonly part: 'where' | 'facets' | 'orderBy' | 'resolve';
   readonly field: string;
   readonly reason:
     | 'unknown-field'
@@ -182,7 +212,9 @@ export interface QueryIssue {
     | 'join-too-deep'
     /** The `on` path does not resolve: a name that is not a field, a reference
      *  that is not `joinable`, or no join graph to resolve it against. */
-    | 'unknown-join';
+    | 'unknown-join'
+    /** A projected reference is not a `lookup`, so nothing resolves it. */
+    | 'not-resolvable';
 }
 
 /** The `field` a joined issue is reported under: the path and the leaf name
@@ -213,6 +245,11 @@ function issueField(criterion: Criterion): string {
  * with no join path needs none; a joined criterion validated without one is an
  * `unknown-join`, never a silently unchecked filter.
  *
+ * A `resolve` projection is checked at every level, which is why the whole
+ * `schema` is passed alongside the type being queried: each level’s fields
+ * belong to the `target` the level above names, and only the schema resolves a
+ * target to its type.
+ *
  * This is the port’s always-on guard: every {@link SearchEngine} adapter MUST
  * reject a query with issues ({@link assertValidQuery}) instead of passing
  * garbage to its engine, so validation holds for every caller – including
@@ -221,6 +258,7 @@ function issueField(criterion: Criterion): string {
 export function validateQuery(
   query: SearchQuery,
   searchType: SearchType,
+  schema: SearchSchema,
   joins?: JoinGraph,
 ): readonly QueryIssue[] {
   const issues: QueryIssue[] = [];
@@ -288,6 +326,7 @@ export function validateQuery(
       issues.push({ part: 'facets', field: name, reason: 'not-facetable' });
     }
   }
+  collectProjectionIssues(query.resolve, searchType, schema, issues);
   for (const sort of query.orderBy) {
     if (
       sort.field !== 'relevance' &&
@@ -303,14 +342,63 @@ export function validateQuery(
   return issues;
 }
 
+/**
+ * Walk a projection level by level: each key names a `lookup` reference on the
+ * type that level belongs to, each `fields` entry an `output` field of the
+ * target it resolves against, and each nested `resolve` repeats against that
+ * target. A level whose reference is unresolvable stops there – its subtree
+ * belongs to a target that does not exist, so reporting it too would bury the
+ * one mistake under its consequences.
+ */
+function collectProjectionIssues(
+  projection: ReferenceProjection | undefined,
+  searchType: SearchType,
+  schema: SearchSchema,
+  issues: QueryIssue[],
+): void {
+  for (const [name, level] of Object.entries(projection ?? {})) {
+    const field = fieldNamed(searchType, name);
+    if (field === undefined) {
+      issues.push({ part: 'resolve', field: name, reason: 'unknown-field' });
+      continue;
+    }
+    if (field.kind !== 'reference' || field.ref?.strategy !== 'lookup') {
+      issues.push({ part: 'resolve', field: name, reason: 'not-resolvable' });
+      continue;
+    }
+    const targetName = field.ref.target;
+    const target = [...schema.values()].find(
+      (rootType) => rootType.name === targetName,
+    );
+    if (target === undefined) {
+      // searchSchema rejects a lookup whose target it cannot resolve, so this
+      // is a query built against a different schema than the engine serves.
+      issues.push({ part: 'resolve', field: name, reason: 'not-resolvable' });
+      continue;
+    }
+    for (const wanted of level.fields ?? []) {
+      const targetField = fieldNamed(target, wanted);
+      if (targetField === undefined || targetField.output !== true) {
+        issues.push({
+          part: 'resolve',
+          field: `${name}.${wanted}`,
+          reason: 'unknown-field',
+        });
+      }
+    }
+    collectProjectionIssues(level.resolve, target, schema, issues);
+  }
+}
+
 /** Throw on the first structurally invalid query part ({@link validateQuery}),
  *  naming every issue. The always-on entry point for engine adapters. */
 export function assertValidQuery(
   query: SearchQuery,
   searchType: SearchType,
+  schema: SearchSchema,
   joins?: JoinGraph,
 ): void {
-  const issues = validateQuery(query, searchType, joins);
+  const issues = validateQuery(query, searchType, schema, joins);
   if (issues.length > 0) {
     const detail = issues
       .map((issue) => `${issue.part}: “${issue.field}” (${issue.reason})`)

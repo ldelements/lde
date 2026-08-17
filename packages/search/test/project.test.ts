@@ -1504,7 +1504,7 @@ describe('projection-time values', () => {
         output: true,
         filterable: true,
         facetable: true,
-        ref: { typeName: 'Dataset', strategy: 'labelOnly' },
+        ref: { strategy: 'lookup', target: 'Dataset' },
       },
     ],
   });
@@ -1574,7 +1574,7 @@ describe('projection-time values', () => {
           kind: 'reference',
           array: true,
           output: true,
-          ref: { typeName: 'CreativeWork', strategy: 'labelOnly' },
+          ref: { strategy: 'lookup', target: 'CreativeWork' },
           derive: (document, context) =>
             (document.partOfRaw as string[] | undefined)?.filter(
               (value) => value !== context.dataset,

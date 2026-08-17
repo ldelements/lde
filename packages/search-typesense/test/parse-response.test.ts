@@ -68,8 +68,7 @@ const schema: SearchType = {
       array: true,
       facetable: true,
       output: true,
-      ref: { typeName: 'Agent', strategy: 'labelOnly' },
-      labelSource: 'Organization',
+      ref: { strategy: 'lookup', target: 'Organization' },
     },
     { name: 'size', kind: 'integer', output: true },
     { name: 'datePosted', kind: 'date', output: true },
@@ -981,7 +980,7 @@ describe('und-locale text reconstruction', () => {
         name: 'publisher',
         kind: 'reference',
         output: true,
-        ref: { typeName: 'Organization', strategy: 'labelOnly' },
+        ref: { strategy: 'idOnly', typeName: 'Organization' },
       },
     ],
   });

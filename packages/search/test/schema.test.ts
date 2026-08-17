@@ -15,6 +15,7 @@ import {
   isoToUnixSeconds,
   isInternalField,
   isRangeFacet,
+  labelSourceNameOf,
   nestedFieldName,
   nestedReferenceType,
   outputFields,
@@ -26,6 +27,7 @@ import {
   sortableFields,
   unixSecondsToIso,
   validateSearchType,
+  type ReferenceStrategy,
   type SearchField,
   type SearchType,
   type TextField,
@@ -155,7 +157,7 @@ describe('physicalFields', () => {
       facetable: true,
       filterable: true,
       output: true,
-      ref: { typeName: 'Agent', strategy: 'labelOnly' },
+      ref: { strategy: 'lookup', target: 'Agent' },
     };
 
     expect(physicalFields(publisher)).toEqual({
@@ -284,7 +286,7 @@ describe('schema selectors', () => {
       name: 'publisher',
       kind: 'reference',
       facetable: true,
-      ref: { typeName: 'Agent', strategy: 'labelOnly' },
+      ref: { strategy: 'lookup', target: 'Agent' },
     };
     const withReference: SearchType = {
       name: 'Dataset',
@@ -302,7 +304,7 @@ describe('schema selectors', () => {
       kind: 'reference',
       from: 'dataset',
       facetable: true,
-      ref: { typeName: 'Dataset', strategy: 'labelOnly' },
+      ref: { strategy: 'lookup', target: 'Dataset' },
     };
     const withDataset: SearchType = {
       name: 'Dataset',
@@ -467,20 +469,35 @@ describe('validateSearchType', () => {
     ).toEqual([]);
   });
 
-  it('requires a ref typeName on every surfaced strategy but idOnly', () => {
+  it('requires a ref typeName on an inline reference alone', () => {
     // An `idOnly` reference emits no type of its own, so it needs no name to
-    // emit one under – `sameAs` points at a vocabulary nobody indexes. Every
-    // other surfaced strategy IS served as a named type, and without a name the
-    // GraphQL surface prints `undefined` as the field's type: a published
-    // contract that is not a schema. TypeScript's union already forbids it, so
-    // this guards a declaration built outside it (plain JS, a generator).
+    // emit one under – `sameAs` points at a vocabulary nobody indexes – and a
+    // `lookup` derives its name from the `target` it already names. Only an
+    // `inline` reference IS served as a separately named type, and without a
+    // name the GraphQL surface prints `undefined` as the field's type: a
+    // published contract that is not a schema. TypeScript's union already
+    // forbids it, so this guards a declaration built outside it (plain JS, a
+    // generator).
+    expect(
+      validateSearchType(
+        typeWith({
+          name: 'media',
+          kind: 'reference',
+          output: true,
+          ref: { strategy: 'inline' },
+        } as never),
+      ),
+    ).toEqual([{ field: 'media', reason: 'missing-ref-type-name' }]);
+
+    // A lookup names its referent too – as `target`, the collection it reads
+    // from. Without one it has nothing to read and nothing to emit.
     expect(
       validateSearchType(
         typeWith({
           name: 'creator',
           kind: 'reference',
           output: true,
-          ref: { strategy: 'labelOnly' },
+          ref: { strategy: 'lookup' },
         } as never),
       ),
     ).toEqual([{ field: 'creator', reason: 'missing-ref-type-name' }]);
@@ -514,7 +531,7 @@ describe('validateSearchType', () => {
     const type = typeWith({
       name: 'format',
       kind: 'keyword',
-      ref: { typeName: 'Format', strategy: 'labelOnly' },
+      ref: { strategy: 'lookup', target: 'Format' },
     });
     expect(validateSearchType(type)).toEqual([
       { field: 'format', reason: 'ref-not-allowed' },
@@ -615,7 +632,7 @@ describe('validateSearchType', () => {
           output: true,
           filterable: true,
           facetable: true,
-          ref: { typeName: 'Dataset', strategy: 'labelOnly' },
+          ref: { strategy: 'lookup', target: 'Dataset' },
         }),
       ),
     ).toEqual([]);
@@ -981,7 +998,7 @@ describe('searchSchema validation', () => {
   });
 
   describe('nested fields', () => {
-    const datasetNesting = (strategy: 'inline' | 'labelOnly') =>
+    const datasetNesting = (ref: ReferenceStrategy) =>
       ({
         name: 'Dataset',
         class: DATASET,
@@ -992,7 +1009,7 @@ describe('searchSchema validation', () => {
             array: true,
             output: true,
             path: 'https://schema.org/associatedMedia',
-            ref: { typeName: 'MediaObject', strategy },
+            ref,
           },
         ],
       }) as const;
@@ -1015,7 +1032,10 @@ describe('searchSchema validation', () => {
       }) as SearchType;
 
     it('resolves the reference type a surfaced inline reference nests', () => {
-      const dataset = datasetNesting('inline');
+      const dataset = datasetNesting({
+        strategy: 'inline',
+        typeName: 'MediaObject',
+      });
       const mediaObject = mediaObjectWith({});
       const schema = searchSchema(dataset, mediaObject);
       expect(nestedReferenceType(schema, dataset.fields[0])).toEqual(
@@ -1042,12 +1062,15 @@ describe('searchSchema validation', () => {
       expect(
         nestedReferenceType(schema, readingDevice.fields[0]),
       ).toBeUndefined();
-      // A labelOnly reference carries an IRI plus a resolved label, not fields.
-      const labelOnly = datasetNesting('labelOnly');
+      // An idOnly reference carries the bare IRI, never the referent’s fields.
+      const idOnly = datasetNesting({
+        strategy: 'idOnly',
+        typeName: 'MediaObject',
+      });
       expect(
         nestedReferenceType(
-          searchSchema(labelOnly, mediaObjectWith({})),
-          labelOnly.fields[0],
+          searchSchema(idOnly, mediaObjectWith({})),
+          idOnly.fields[0],
         ),
       ).toBeUndefined();
     });
@@ -1065,7 +1088,10 @@ describe('searchSchema validation', () => {
         // `output` would be silently ignored per query. Startup is where a
         // schema invariant fails.
         expect(() =>
-          searchSchema(datasetNesting('inline'), mediaObjectWith(declaration)),
+          searchSchema(
+            datasetNesting({ strategy: 'inline', typeName: 'MediaObject' }),
+            mediaObjectWith(declaration),
+          ),
         ).toThrow(
           new RegExp(
             `Nested field “MediaObject.contentUrl” declares “${role}”`,
@@ -1086,9 +1112,18 @@ describe('searchSchema validation', () => {
         expect(() =>
           searchSchema(
             {
-              ...datasetNesting('inline'),
+              ...datasetNesting({
+                strategy: 'inline',
+                typeName: 'MediaObject',
+              }),
               fields: [
-                { ...datasetNesting('inline').fields[0], ...declaration },
+                {
+                  ...datasetNesting({
+                    strategy: 'inline',
+                    typeName: 'MediaObject',
+                  }).fields[0],
+                  ...declaration,
+                },
               ],
             },
             mediaObjectWith({}),
@@ -1102,7 +1137,7 @@ describe('searchSchema validation', () => {
     it('names every unserviceable role a nested field declares', () => {
       expect(() =>
         searchSchema(
-          datasetNesting('inline'),
+          datasetNesting({ strategy: 'inline', typeName: 'MediaObject' }),
           mediaObjectWith({ filterable: true, facetable: true }),
         ),
       ).toThrow(/“filterable”, “facetable”/);
@@ -1113,16 +1148,31 @@ describe('searchSchema validation', () => {
       // source there resolves nothing.
       expect(() =>
         searchSchema(
-          datasetNesting('inline'),
+          datasetNesting({ strategy: 'inline', typeName: 'MediaObject' }),
           mediaObjectWith({
             kind: 'reference',
             labelSource: 'Organization',
-            ref: { typeName: 'Organization', strategy: 'labelOnly' },
+            ref: { strategy: 'lookup', target: 'Organization' },
           }),
         ),
       ).toThrow(
         /Nested field “MediaObject.contentUrl” declares a label source/,
       );
+    });
+
+    it('rejects a lookup on a nested field', () => {
+      // A lookup is resolved level by level from the hit's projection, and a
+      // nested document is read back with its referent – so nothing would
+      // resolve it, and every field of the emitted type would serve null.
+      expect(() =>
+        searchSchema(
+          datasetNesting({ strategy: 'inline', typeName: 'MediaObject' }),
+          mediaObjectWith({
+            kind: 'reference',
+            ref: { strategy: 'lookup', target: 'Organization' },
+          }),
+        ),
+      ).toThrow(/Nested field “MediaObject.contentUrl” is a lookup/);
     });
 
     it('names the nested Physical Field of a referent’s field', () => {
@@ -1310,6 +1360,61 @@ describe('searchSchema validation', () => {
           },
         ),
       ).toThrow(/Nested field “Agent.label” declares “searchable”/);
+    });
+
+    it('reads the label source name off a lookup’s target and an idOnly’s labelSource', () => {
+      expect(
+        labelSourceNameOf({
+          name: 'publisher',
+          kind: 'reference',
+          ref: { strategy: 'lookup', target: 'Organization' },
+        }),
+      ).toBe('Organization');
+      expect(
+        labelSourceNameOf({
+          name: 'license',
+          kind: 'reference',
+          labelSource: 'Term',
+          ref: { strategy: 'idOnly' },
+        }),
+      ).toBe('Term');
+      // Resolves nothing: no target, no label source.
+      expect(
+        labelSourceNameOf({ name: 'license', kind: 'reference' }),
+      ).toBeUndefined();
+    });
+
+    it('rejects a labelSource on anything but an idOnly reference', () => {
+      expect(() =>
+        searchSchema(organization, {
+          name: 'Dataset',
+          class: DATASET,
+          fields: [
+            {
+              name: 'publisher',
+              kind: 'reference',
+              labelSource: 'Organization',
+              ref: { strategy: 'lookup', target: 'Organization' },
+            },
+          ],
+        }),
+      ).toThrow(/declares a label source on a lookup reference/);
+    });
+
+    it('rejects a lookup whose target cannot serve labels', () => {
+      expect(() =>
+        searchSchema({
+          name: 'Dataset',
+          class: DATASET,
+          fields: [
+            {
+              name: 'publisher',
+              kind: 'reference',
+              ref: { strategy: 'lookup', target: 'Organization' },
+            },
+          ],
+        }),
+      ).toThrow(/names unknown label source “Organization”/);
     });
 
     it('rejects a labelSource on a non-reference field', () => {

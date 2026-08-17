@@ -75,8 +75,7 @@ const datasetSchema: SearchType = {
       array: true,
       facetable: true,
       output: true,
-      ref: { typeName: 'Agent', strategy: 'labelOnly' },
-      labelSource: 'Organization',
+      ref: { strategy: 'lookup', target: 'Organization' },
     },
     {
       name: 'media',

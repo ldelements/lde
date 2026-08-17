@@ -32,6 +32,7 @@ export {
   OR_KEY,
   labelFieldOf,
   labelFieldNameOf,
+  labelSourceNameOf,
   DEFAULT_LABEL_FIELD,
   isRangeFacet,
   isAbsoluteIri,

@@ -1,4 +1,5 @@
 import {
+  labelSourceNameOf,
   referenceFields,
   type ReferenceField,
   type RootType,
@@ -170,12 +171,13 @@ function declaredEdges(
     if (field.joinable !== true) {
       continue;
     }
-    // Both lookups always hit: `validateSearchType` rejects `joinable` without
-    // a `labelSource`, and a label source is always an indexed Root Type – it
-    // must declare a `searchable` `label` field, which a Reference Type cannot
-    // carry (a nested field is `output` only). So a joinable edge always has a
-    // collection at the far end without a rule of its own.
-    const target = byName.get(field.labelSource as string) as RootType;
+    // Both lookups always hit: `validateSearchType` rejects `joinable` on a
+    // reference that names no type to resolve against, and such a type is
+    // always an indexed Root Type – it must declare a `searchable` label
+    // field, which a Reference Type cannot carry (a nested field is `output`
+    // only). So a joinable edge always has a collection at the far end without
+    // a rule of its own.
+    const target = byName.get(labelSourceNameOf(field) as string) as RootType;
     const claimed = claimedBy.get(target.name);
     if (claimed !== undefined) {
       throw new Error(

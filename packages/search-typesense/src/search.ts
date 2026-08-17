@@ -31,6 +31,7 @@ import {
   isUnsatisfiable,
   joinGraph,
   labelFieldOf,
+  labelSourceNameOf,
   nestedReferenceType,
   outputFields,
   physicalFields,
@@ -42,6 +43,7 @@ import {
   type BuildSearchParamsOptions,
 } from './query-compiler.js';
 import { deriveCollectionName } from './collection-name.js';
+import { resolveProjection, type ResolvedReferents } from './lookup.js';
 
 /** Where the engine reads documents – plus every query-compiler knob
  *  ({@link BuildSearchParamsOptions}), declared once there and forwarded
@@ -189,9 +191,11 @@ export function createTypesenseSearchEngine<
       searchType.class,
       new Map(
         referenceFields(searchType)
-          .filter((field) => field.labelSource !== undefined)
+          .filter((field) => labelSourceNameOf(field) !== undefined)
           .map((field) => {
-            const source = typesByName.get(field.labelSource!) as RootType;
+            const source = typesByName.get(
+              labelSourceNameOf(field) as string,
+            ) as RootType;
             const labelField = labelFieldOf(source) as TextField;
             return [
               field.name,
@@ -367,7 +371,7 @@ export function createTypesenseSearchEngine<
       // invalid query (unknown field, wrong operator, unknown facet) are both
       // rejected up front, for EVERY caller.
       assertTypeInSchema(schema, searchType);
-      assertValidQuery(query, searchType, joins);
+      assertValidQuery(query, searchType, schema, joins);
       // Asks for no document (an empty `id` membership): answer it without a
       // round-trip rather than dispatching a query whose only filter compiles
       // away, which would hand back the whole collection.
@@ -394,7 +398,25 @@ export function createTypesenseSearchEngine<
           outputReferenceSources.get(searchType.class) ?? [],
         ),
       );
-      return parseSearchResponse(response, searchType, labels, schema);
+      // What the caller asked to resolve, level by level. Independent of the
+      // label lookup above: that one serves facet buckets and unprojected
+      // references, and stays cacheable because a label is one small value.
+      const referents = await resolveProjection(
+        client,
+        query.resolve,
+        searchType,
+        schema,
+        collections,
+        (response.hits ?? []).map((hit) => hit.document),
+        options.onLabelError,
+      );
+      return parseSearchResponse(
+        response,
+        searchType,
+        labels,
+        schema,
+        referents,
+      );
     },
     async searchFacets(
       searchType: RootType,
@@ -402,7 +424,7 @@ export function createTypesenseSearchEngine<
     ): Promise<readonly FacetsOutcome[]> {
       assertTypeInSchema(schema, searchType);
       for (const query of queries) {
-        assertValidQuery(query, searchType, joins);
+        assertValidQuery(query, searchType, schema, joins);
       }
       if (queries.length === 0) {
         return [];
@@ -769,10 +791,17 @@ export function parseSearchResponse(
   searchType: SearchType,
   labels: ReadonlyMap<string, LocalizedValue>,
   schema: SearchSchema,
+  referents?: ReadonlyMap<string, ResolvedReferents>,
 ): SearchResult {
   const hits: SearchHit[] = (response.hits ?? []).map((hit) => ({
     id: String(hit.document.id),
-    document: reconstructDocument(hit.document, searchType, labels, schema),
+    document: reconstructDocument(
+      hit.document,
+      searchType,
+      labels,
+      schema,
+      referents,
+    ),
   }));
   // Reference facets are IRI-keyed; their buckets carry a resolved data label.
   // Plain facets (tokens, free strings) carry no label – the consumer owns display.
@@ -781,7 +810,7 @@ export function parseSearchResponse(
   // its IRIs.
   const referenceFacets = new Set(
     referenceFields(searchType)
-      .filter((field) => field.labelSource !== undefined)
+      .filter((field) => labelSourceNameOf(field) !== undefined)
       .map((field) => field.name),
   );
   const facets: Record<string, FacetBucket[]> = {};
@@ -819,10 +848,11 @@ function reconstructDocument(
   searchType: SearchType,
   labels: ReadonlyMap<string, LocalizedValue>,
   schema: SearchSchema,
+  referents?: ReadonlyMap<string, ResolvedReferents>,
 ): ResultDocument {
   const document: Record<string, SearchValue> = {};
   for (const field of outputFields(searchType)) {
-    const value = logicalValue(flat, field, labels, schema);
+    const value = logicalValue(flat, field, labels, schema, referents);
     if (value !== undefined) {
       document[field.name] = value;
     }
@@ -835,6 +865,7 @@ function logicalValue(
   field: SearchField,
   labels: ReadonlyMap<string, LocalizedValue>,
   schema: SearchSchema,
+  referents?: ReadonlyMap<string, ResolvedReferents>,
 ): SearchValue | undefined {
   switch (field.kind) {
     case 'text':
@@ -847,6 +878,13 @@ function logicalValue(
       const nested = nestedReferenceType(schema, field);
       if (nested !== undefined) {
         return nestedValue(flat[field.name], field, nested, labels, schema);
+      }
+      // A resolved lookup carries the referent's own fields, fetched from the
+      // target's collection. It reconstructs through the SAME path a hit does,
+      // so a consumer cannot tell a projected referent from an inline one.
+      const resolved = referents?.get(field.name);
+      if (resolved !== undefined) {
+        return lookupValue(flat[field.name], field, resolved, labels, schema);
       }
       // A surfaced inline reference stores nested documents, not IRIs, so a
       // schema that does not declare its reference type (a type parsed against
@@ -938,6 +976,43 @@ function nestedValue(
   return field.array === true ? documents : documents[0];
 }
 
+/**
+ * Rebuild a resolved `lookup` reference: each stored IRI becomes the referent’s
+ * own document, read through the **target’s** declaration and carrying whatever
+ * the projection asked for. A referent the lookup did not return – an IRI with
+ * no document in the target’s collection, or a level whose round-trip failed –
+ * degrades to its bare `id` rather than dropping out, so a dangling reference
+ * still says which IRI it pointed at.
+ */
+function lookupValue(
+  raw: unknown,
+  field: ReferenceField,
+  resolved: ResolvedReferents,
+  labels: ReadonlyMap<string, LocalizedValue>,
+  schema: SearchSchema,
+): SearchValue | undefined {
+  if (raw === undefined) {
+    return undefined;
+  }
+  const iris = Array.isArray(raw) ? (raw as string[]) : [String(raw)];
+  const documents: NestedDocument[] = iris.map((iri) => {
+    const referent = resolved.documents.get(iri);
+    return referent === undefined
+      ? { id: iri }
+      : {
+          id: iri,
+          ...reconstructDocument(
+            referent,
+            resolved.target,
+            labels,
+            schema,
+            resolved.children,
+          ),
+        };
+  });
+  return field.array === true ? documents : documents[0];
+}
+
 /** Map stored reference IRIs to labelled references; id-only when no label. */
 function referenceValue(
   flat: Record<string, unknown>,
@@ -950,10 +1025,11 @@ function referenceValue(
   }
   const iris = Array.isArray(raw) ? (raw as string[]) : [String(raw)];
   const references: Reference[] = iris.map((iri) => {
-    // A reference without a label source is id-only by declaration; never
-    // attach a label, even if the (cached, full-collection) map happens to
-    // hold this IRI from another source.
-    const label = field.labelSource === undefined ? undefined : labels.get(iri);
+    // A reference that resolves nothing is id-only by declaration; never attach
+    // a label, even if the (cached, full-collection) map happens to hold this
+    // IRI from another source.
+    const label =
+      labelSourceNameOf(field) === undefined ? undefined : labels.get(iri);
     return label === undefined ? { id: iri } : { id: iri, label };
   });
   return field.array === true ? references : references[0];

@@ -357,7 +357,7 @@ describe('BlueGreenRebuild', () => {
           kind: 'reference',
           from: 'dataset',
           output: true,
-          ref: { typeName: 'Dataset', strategy: 'labelOnly' },
+          ref: { strategy: 'idOnly', typeName: 'Dataset' },
         },
       ],
     } satisfies SearchType;
