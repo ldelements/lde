@@ -103,6 +103,30 @@ describe('createSearchGraphQLHandler', () => {
     expect(received().text).toBe('kaart');
   });
 
+  // Only the real handler shows this: graphql-yoga builds its responses with a
+  // ponyfill whose `Response` is a different class than the platform global, so
+  // a host framework that checks `instanceof Response` nominally – SvelteKit
+  // does – rejects every request. A test double reproduces nothing.
+  it('answers with the platform Response on every route', async () => {
+    const { engine } = fakeEngine();
+    const handler = createSearchGraphQLHandler({
+      searchSchema: searchSchema(schema),
+      engine,
+    });
+
+    const query = await post(handler, '{ datasets { pagination { total } } }');
+    const playground = await handler(
+      new Request('http://localhost/graphql', {
+        headers: { accept: 'text/html' },
+      }),
+    );
+    const sdl = await handler(new Request('http://localhost/graphql?sdl'));
+
+    expect(query).toBeInstanceOf(Response);
+    expect(playground).toBeInstanceOf(Response);
+    expect(sdl).toBeInstanceOf(Response);
+  });
+
   // The regression the unit tests cannot catch: argument validation runs inside
   // a resolver, and the transport masks a resolver throw as “Unexpected error.”
   // unless it is a GraphQLError. Asserted through the handler, since masking is
