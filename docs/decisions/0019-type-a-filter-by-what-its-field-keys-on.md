@@ -38,32 +38,24 @@ what follows is only what the shape cost, and what it was chosen over.
 
 ### The coarse strategy is exhaustive; the refined one narrows
 
-The two strategies do not carry the same guarantee, and a consumer has to know
-which it is holding.
+The two strategies do not carry the same guarantee.
 
-**Coarse is complete.** Every field that keys on identity takes an `IRI`, so
-selecting the criterion fields whose `in` element type is `IRI` returns all of
-them. A consumer that must not miss a reference uses this one.
+**Coarse is complete.** Every field keying on identity takes an `IRI`, so
+selecting the criterion fields whose `in` element is `IRI` returns all of them.
 
-**Refined is a narrowing, not a filter of equal standing.** It keys on
-`ref.typeName`, which is the target a deployment **declares** – not necessarily
-the only type the data admits there. Linked Open Limburg declares
-`about: { typeName: 'Term' }` because SCHEMA-AP-NDE co-types referenced persons
-and organizations as `DefinedTerm`, while the profile also admits a Person or an
-Organization as the referent. So a consumer asking “which fields could hold this
-person IRI?” gets `creator` through `PersonFilter` and does **not** get `about`.
-What it returns is correct; what it returns is not everything.
+**Refined returns a subset.** A reference declares **one** `ref.typeName` and one
+`labelSource` – no list form, since the field emits one reference type and
+resolves labels from one collection. Where the data admits several classes as
+referent, the declaration names one and nothing records the rest. So asking
+“which fields could hold an IRI of type X?” returns the fields that **declare**
+X, not those that may also **hold** one.
 
-Declaring every admissible type per field would fix that and cost more than it
-buys: a field has one `ref.typeName` because it emits one reference type and
-resolves labels from one source, and multiplying the declaration multiplies both.
-The narrowing is worth having as a precision tool, not as a completeness claim.
-
-Refinement is also unavailable where the target is not itself a root type: there
-is no `‹Target›Where.id` to resolve the collection through, so coarse is the only
-strategy. Both limits are stated in
-[the package reference](../reference/search-api-graphql#finding-which-fields-accept-an-iri),
-since a consumer meets them before it meets this ADR.
+Admitting a list of targets would multiply the emitted types and label sources
+for every such field, to answer what coarse already answers. Refinement is a
+precision tool, not a completeness claim – and unavailable where the target is
+not a root type, since there is no `‹Target›Where.id` to resolve through. Both
+limits are in
+[the package reference](../reference/search-api-graphql#finding-which-fields-accept-an-iri).
 
 ### `kind` is the discriminator, because `idOnly` now exists
 
@@ -75,14 +67,27 @@ The reason those fields were `keyword` was never that they held literals. It was
 the **output shape**: `output` on a `reference` requires `ref`, and `ref` gave
 the `{ id, label }` object when what the deployment wanted was a flat list of
 IRIs. So a `reference` internal field laundered the IRIs and a `keyword` `derive`
-surfaced them – seven such pairs in Linked Open Limburg, for `sameAs`, `license`,
-`contentUrl`, `thumbnailUrl` and `landingPage`.
+surfaced them – a pattern the first deployment to hit this carried over half a
+dozen times.
+
+**`idOnly` replaces that pair only where the values are selection keys.** A
+canonical vocabulary URI or a licence is one, and typing it `IRI` states a fact.
+A **locator** is not – a content or thumbnail URL, a landing page, a manifest to
+dereference. Nothing selects on those, they carry no filter or facet, and `IRI`
+would assert a selection key that does not exist. They keep the
+internal-reader-plus-`keyword` pair, still the only declaration yielding a plain
+`String` over an IRI-valued path.
+
+So the split is per property, and the pattern that makes those pairs look alike
+does not decide it – in that deployment they divide about evenly. A reader who
+collapses every pair on sight retypes locators as identity, and a filter typed
+`IRI` over a thumbnail URL is a promise nothing keeps.
 
 Implementing `idOnly` removes the reason instead of working around it. The marker
-would have added a concept to the declaration language every deployment author
-reads, to serve two fields, while leaving all seven pairs standing and `kind` a
-non-discriminator. `idOnly` adds no concept – it was forward-declared in ADR 3
-and already documented as “the IRI” – and deletes fourteen declarations.
+would have added a concept every deployment author reads, to serve two fields,
+while leaving every pair standing and `kind` a non-discriminator. `idOnly` adds
+no concept – it was forward-declared in ADR 3 and already documented as “the
+IRI”.
 
 ### `IRI` validates in both directions
 
