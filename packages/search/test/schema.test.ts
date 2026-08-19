@@ -1340,4 +1340,51 @@ describe('date storage codec', () => {
   it('returns undefined for an unparseable date', () => {
     expect(isoToUnixSeconds('not-a-date')).toBeUndefined();
   });
+
+  it('reads an unpadded BCE year as a year, not as a UTC offset', () => {
+    const seconds = isoToUnixSeconds('-1100');
+    expect(unixSecondsToIso(seconds ?? 0)).toBe('-001100-01-01T00:00:00.000Z');
+    expect(seconds).toBe(isoToUnixSeconds('-001100-01-01T00:00:00.000Z'));
+  });
+
+  it('reads a CE year beyond four digits, independent of the host timezone', () => {
+    expect(unixSecondsToIso(isoToUnixSeconds('25000') ?? 0)).toBe(
+      '+025000-01-01T00:00:00.000Z',
+    );
+    expect(unixSecondsToIso(isoToUnixSeconds('25000-06-01') ?? 0)).toBe(
+      '+025000-06-01T00:00:00.000Z',
+    );
+  });
+
+  it('leaves a plain four-digit year and an expanded one alone', () => {
+    expect(unixSecondsToIso(isoToUnixSeconds('1999') ?? 0)).toBe(
+      '1999-01-01T00:00:00.000Z',
+    );
+    expect(
+      unixSecondsToIso(isoToUnixSeconds('+025000-01-01T00:00:00.000Z') ?? 0),
+    ).toBe('+025000-01-01T00:00:00.000Z');
+  });
+
+  it('reads a deep-time BCE year beyond four digits', () => {
+    expect(unixSecondsToIso(isoToUnixSeconds('-250000') ?? 0)).toBe(
+      '-250000-01-01T00:00:00.000Z',
+    );
+    expect(unixSecondsToIso(isoToUnixSeconds('-38000') ?? 0)).toBe(
+      '-038000-01-01T00:00:00.000Z',
+    );
+  });
+
+  it('expands the year of a fuller BCE date, leaving the rest alone', () => {
+    expect(unixSecondsToIso(isoToUnixSeconds('-1100-05-03') ?? 0)).toBe(
+      '-001100-05-03T00:00:00.000Z',
+    );
+  });
+
+  it('orders BCE before CE, and earlier BCE before later', () => {
+    const deepTime = isoToUnixSeconds('-250000') ?? 0;
+    const bce = isoToUnixSeconds('-1100') ?? 0;
+    const ce = isoToUnixSeconds('1100') ?? 0;
+    expect(deepTime).toBeLessThan(bce);
+    expect(bce).toBeLessThan(ce);
+  });
 });

@@ -413,6 +413,30 @@ describe('buildSearchParams', () => {
     ).toBe(`datePosted:<=${max}`);
   });
 
+  it('reads an unpadded BCE bound as a year, so the range is not inverted', () => {
+    const min = Date.parse('-001100-01-01T00:00:00.000Z') / 1000;
+    const max = Date.parse('-000800-01-01T00:00:00.000Z') / 1000;
+    expect(
+      buildSearchParams(
+        {
+          ...base,
+          where: [
+            {
+              or: [
+                {
+                  field: 'datePosted',
+                  range: { min: '-1100', max: '-0800' },
+                },
+              ],
+            },
+          ],
+        },
+        schema,
+      ).filter_by,
+    ).toBe(`datePosted:[${min}..${max}]`);
+    expect(min).toBeLessThan(max);
+  });
+
   it('compiles orderBy: RELEVANCE → _text_match and a localized field → its sort key', () => {
     expect(
       buildSearchParams(

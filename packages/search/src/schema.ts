@@ -1420,8 +1420,31 @@ const ABSOLUTE_IRI = /^[A-Za-z][A-Za-z0-9+.-]*:\S*$/;
  * unparseable value.
  */
 export function isoToUnixSeconds(iso: string): number | undefined {
-  const millis = new Date(iso).getTime();
+  const millis = new Date(expandYear(iso)).getTime();
   return Number.isNaN(millis) ? undefined : Math.trunc(millis / 1000);
+}
+
+/**
+ * Pad a year outside the plain four-digit form to the signed six digits ISO
+ * 8601 expects, so `Date` reads it as a year at all. Deep time is real data,
+ * not a corner case: SCHEMA-AP-NDE blesses years beyond four digits for
+ * `schema:dateCreated`. Left unexpanded, neither era parses as written and
+ * neither fails loudly – `-1100` is read as a bare UTC offset and lands
+ * around 1100 **CE** (shifted by the host’s offset), `25000` is read as a
+ * legacy local-time date and lands a year early, on a boundary that moves
+ * with the host’s timezone. Either way nothing throws, no field is left
+ * absent, and the value sorts and filters as if it were another date
+ * entirely. A plain four-digit year and an already-expanded one pass through
+ * unchanged, so the form the API itself emits round-trips.
+ */
+function expandYear(iso: string): string {
+  // The year, then the rest: a non-digit stops the run, so a longer digit
+  // string (epoch millis, say) is left alone rather than cut into a year.
+  const year = /^([+-]?)(\d{1,6})(\D.*|)$/.exec(iso);
+  if (year === null || (year[1] === '' && year[2].length === 4)) {
+    return iso;
+  }
+  return `${year[1] || '+'}${year[2].padStart(6, '0')}${year[3]}`;
 }
 
 /** The inverse of {@link isoToUnixSeconds}: stored Unix seconds → ISO 8601. */
