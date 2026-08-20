@@ -1,3 +1,11 @@
+## 0.14.0 (2026-08-20)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.25.0
+- Updated @lde/search-typesense to 0.26.0
+- Updated @lde/search to 0.23.0
+
 ## 0.13.0 (2026-08-20)
 
 This was a version bump only for @lde/search-api-server to align it with other projects, there were no code changes.

@@ -1,3 +1,28 @@
+## 0.26.0 (2026-08-20)
+
+### 🩹 Fixes
+
+- ⚠️  **search:** reject a date range bound the codec cannot read, instead of dropping it ([#751](https://github.com/ldelements/lde/pull/751))
+
+### ⚠️  Breaking Changes
+
+- **search:** reject a date range bound the codec cannot read, instead of dropping it  ([#751](https://github.com/ldelements/lde/pull/751))
+  a query whose date range carries a bound the storage codec
+  cannot read (‘yesterday’, or a year past the ±271,821 window Date covers) now
+  throws from assertValidQuery instead of matching every document. QueryIssue
+  gains the unparseable-bound reason and an optional value."
+  M	docs/reference/search.md
+  M	packages/search-typesense/src/query-compiler.ts
+  M	packages/search-typesense/test/query-compiler.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/src/query.ts
+  M	packages/search/test/query.test.ts
+  M	packages/search/vite.config.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.23.0
+
 ## 0.25.1 (2026-08-20)
 
 ### 🩹 Fixes
