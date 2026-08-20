@@ -1,3 +1,13 @@
+## 0.25.1 (2026-08-20)
+
+### 🩹 Fixes
+
+- **search:** read an out-of-form year as a year, not an offset or local date ([#747](https://github.com/ldelements/lde/pull/747))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.22.1
+
 ## 0.25.0 (2026-08-17)
 
 ### 🚀 Features
