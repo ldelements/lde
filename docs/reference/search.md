@@ -289,6 +289,20 @@ directly.
 | `date`               | `range` (inclusive)  | yes   | yes              | ISO 8601 string (surface)                                                             |
 | `boolean`            | `is`                 | yes   | –                | boolean (absent = false)                                                              |
 
+A **`date`** is stored as Unix seconds – a sortable, range-filterable integer –
+and is ISO 8601 at every edge: the projection converts a value on the way in,
+the query compiler converts a filter bound on the way out, and the surface emits
+a string. A year outside the plain four-digit form is accepted however it is written –
+expanded (`-001100-01-01T00:00:00.000Z`) or not (`-1100`, `-250000`, `25000`):
+the codec pads it to the signed six digits `Date` needs before parsing, so the
+same value indexes and filters alike. Deep time is real data – SCHEMA-AP-NDE
+blesses years beyond four digits for `schema:dateCreated` – and an unpadded year
+would otherwise parse as something else entirely (a BCE year as a UTC offset,
+landing in the wrong era; a five-digit CE year as a legacy local-time date,
+landing a year early and differently per host timezone), without ever failing.
+The window is the one `Date` can represent, ±271,821 years around 1970; a year
+outside it leaves the field absent, as any unparseable value does.
+
 **`array` decides a field’s shape**, whatever the graph carries: a declared
 `array` field stores a list, and a single-valued one stores the first value –
 for every kind alike, so the projection, the engine collection definition

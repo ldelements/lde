@@ -230,11 +230,17 @@ function applyField(
         ? derivedIris(derived)
         : // A derived `date` goes through the same storage codec as a read one:
           // the field is stored as Unix seconds, so an ISO string returned here
-          // would otherwise land as a string in an int64 field. A derive that
-          // already computed seconds returns a number and passes through.
+          // would otherwise land as a string in an int64 field.
           field.kind === 'date' && typeof derived === 'string'
           ? isoToUnixSeconds(derived)
-          : derived;
+          : // A derive that computed seconds itself returns a number, which the
+            // codec never saw and so never range-checked. Seconds outside what
+            // `Date` can represent – reachable now that deep time is – would
+            // store fine and then throw on every read at the surface, where an
+            // unparseable string merely leaves the field absent. Drop it too.
+            field.kind === 'date' && typeof derived === 'number'
+            ? storableSeconds(derived)
+            : derived;
     // NaN is not a value any kind stores, and a derive is the only route that
     // can produce one (`setNumber` guards the read route). It serializes as
     // `null`, which an engine rejects for a numeric field – so drop it, leaving
@@ -586,6 +592,13 @@ function derivedIris(value: unknown): unknown {
     );
   }
   return typeof value === 'string' && isAbsoluteIri(value) ? value : undefined;
+}
+
+/** Stored Unix seconds a `Date` can represent, or `undefined` – the same
+ *  answer {@link isoToUnixSeconds} gives a string it cannot parse, so the two
+ *  routes into a `date` field agree on what is storable. */
+function storableSeconds(seconds: number): number | undefined {
+  return Number.isNaN(new Date(seconds * 1000).getTime()) ? undefined : seconds;
 }
 
 function toInteger(literal: string | undefined): number | undefined {

@@ -557,6 +557,14 @@ describe('projectDocument', () => {
             kind: 'date',
             derive: () => Date.parse('not-a-date') / 1000,
           },
+          // Seconds past what `Date` can represent are dropped too: stored,
+          // they read back as an error at the surface rather than as a value,
+          // where an unparseable string simply leaves the field absent.
+          {
+            name: 'temporal',
+            kind: 'date',
+            derive: () => -8_640_000_000_001,
+          },
         ],
       },
     );
@@ -564,6 +572,7 @@ describe('projectDocument', () => {
     expect(document.modified).toBe(1_704_067_200);
     expect(document).not.toHaveProperty('created');
     expect(document).not.toHaveProperty('available');
+    expect(document).not.toHaveProperty('temporal');
   });
 
   it('holds a reference to absolute IRIs on every route a value can arrive by', () => {
