@@ -703,6 +703,17 @@ policy produced it. A typed surface like GraphQL makes most of these
 unrepresentable; the port enforces them for everyone else (deployment
 `queryDefaults`, in-process callers, weaker-typed surfaces).
 
+One rule is about a **value** rather than a field: a `date` range bound the
+storage codec cannot read (`'yesterday'`, or a year past the ±271,821 window
+`Date` covers) is an `unparseable-bound` issue naming the rejected bound. No
+surface’s type system catches this – `String` is `String` – and it has to be
+caught here because **no compiler can recover from it**: an engine filter
+language has no term meaning “matches nothing”, so a criterion it cannot compile
+either states no constraint (widening the search to everything) or vanishes from
+the query (widening it to whatever the other clauses allow). Both answer a
+question the caller did not ask, and only the caller can fix the bound – so
+validation hands it back to them instead of guessing.
+
 ### Lookup by IRI
 
 Every type is filterable on **`id`** – the document’s IRI – without declaring

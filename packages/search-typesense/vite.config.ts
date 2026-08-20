@@ -24,7 +24,7 @@ export default mergeConfig(
           // projection naming what no lookup reaches are unreachable through
           // the port, since `assertValidQuery` rejects such a query first.
           // They hold for a direct caller, and are exercised as one.
-          branches: 94.54,
+          branches: 94.58,
           statements: 99.33,
         },
       },

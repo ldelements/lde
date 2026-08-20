@@ -71,7 +71,8 @@ export interface BuildSearchParamsOptions {
    * usable bound. Skipping keeps a malformed clause from reaching the engine
    * as garbage; supply this to log it instead of losing it silently. Through
    * the engine, a structurally invalid query throws up front
-   * (`assertValidQuery`), so there only the vacuous clauses reach this.
+   * (`assertValidQuery`), so there only the clauses that state no constraint
+   * reach this.
    */
   readonly onIgnoredFilter?: (filter: Filter) => void;
 }
@@ -234,8 +235,15 @@ function compileFilterBy(
  *   unknown field, an operator that mismatches the field’s kind) is *false*, and
  *   `false || X` is X, so it drops out and its siblings still stand.
  *
- * A clause left with no terms either way is skipped and reported to
- * `onIgnoredFilter`.
+ * Both readings hold **within** a clause. Neither survives a clause left with
+ * no terms: it is skipped and reported to `onIgnoredFilter`, and a clause
+ * missing from the conjunction constrains nothing – so a *false* criterion
+ * alone in its clause still WIDENS the query. `filter_by` has no term meaning
+ * “matches nothing” to compile it to instead. The engine never meets this
+ * (`assertValidQuery` rejects every malformed criterion, and `isUnsatisfiable`
+ * short-circuits the empty `id` membership before a query is dispatched); a
+ * direct caller should read `onIgnoredFilter` firing as “this query no longer
+ * asks what you asked”.
  */
 function compileFilter(
   filter: Filter,
@@ -359,14 +367,24 @@ function compileMembership(
     : `${field.name}:${list}`;
 }
 
-/** An inclusive Typesense range clause, or `undefined` when neither bound is set. */
+/** An inclusive Typesense range clause, or `undefined` when neither bound is
+ *  usable. Which of the two readings that is – the caller set no bounds, or the
+ *  codec rejected the ones they set – is deliberately NOT decided here: a
+ *  criterion dropped from a clause narrows the query while a clause dropped
+ *  from the conjunction widens it, so the same reading cannot be right in both
+ *  positions. `validateQuery` rejects an unreadable bound outright instead,
+ *  which is the only answer that neither widens nor narrows. */
 function compileRange(
   field: SearchField,
   range: { readonly min?: number | string; readonly max?: number | string },
 ): string | undefined {
   const name = field.name;
-  const min = storedBound(field, range.min);
-  const max = storedBound(field, range.max);
+  // A bound a caller sent as `null` – a GraphQL variable left unfilled, which
+  // the surface passes through – is a bound NOT SET, not a bound of `null`.
+  // Read literally it reaches the engine as `datePosted:[null..…]`, which
+  // Typesense rejects outright.
+  const min = storedBound(field, range.min ?? undefined);
+  const max = storedBound(field, range.max ?? undefined);
   if (min !== undefined && max !== undefined) {
     return `${name}:[${min}..${max}]`;
   }

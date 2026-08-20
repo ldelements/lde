@@ -2,6 +2,7 @@ import {
   fieldNamed,
   filterOperatorFor,
   ID_FIELD,
+  isoToUnixSeconds,
   type SearchSchema,
   type SearchType,
 } from './schema.js';
@@ -193,9 +194,10 @@ export function isUnsatisfiable(query: SearchQuery): boolean {
 
 /**
  * One structural problem {@link validateQuery} found: the query references a
- * field the search type does not declare, or uses it in a role it does not
- * opt into. Reported per **criterion**, so a clause carrying two criteria over
- * unknown fields yields two issues, each naming its own field.
+ * field the search type does not declare, uses it in a role it does not opt
+ * into, or constrains it with a value that cannot be read. Reported per
+ * **criterion**, so a clause carrying two criteria over unknown fields yields
+ * two issues, each naming its own field.
  *
  * Vacuous-but-valid clauses (an empty `in` list, a `range` with no bound, a
  * clause with no criteria) are NOT issues – a compiler skips those as no-ops.
@@ -203,6 +205,9 @@ export function isUnsatisfiable(query: SearchQuery): boolean {
 export interface QueryIssue {
   readonly part: 'where' | 'facets' | 'orderBy' | 'resolve';
   readonly field: string;
+  /** The offending literal, on an issue about a **value** rather than a field:
+   *  the bound of an `unparseable-bound`. Absent on every other reason. */
+  readonly value?: string;
   readonly reason:
     | 'unknown-field'
     | 'not-filterable'
@@ -214,7 +219,18 @@ export interface QueryIssue {
      *  that is not `joinable`, or no join graph to resolve it against. */
     | 'unknown-join'
     /** A projected reference is not a `lookup`, so nothing resolves it. */
-    | 'not-resolvable';
+    | 'not-resolvable'
+    /**
+     * A `date` range bound the storage codec ({@link isoToUnixSeconds}) cannot
+     * read, so there is no stored value to compare against – reported per
+     * bound, each issue naming its own {@link QueryIssue.value}.
+     *
+     * Caught here rather than left to a compiler because the alternatives both
+     * lie: a dropped bound answers a *wider* question than the caller asked,
+     * and a rejected criterion answers a narrower one. Neither is the query,
+     * and only the caller can fix the bound.
+     */
+    | 'unparseable-bound';
 }
 
 /** The `field` a joined issue is reported under: the path and the leaf name
@@ -232,7 +248,10 @@ function issueField(criterion: Criterion): string {
  * always-filterable {@link ID_FIELD}, which takes `in`; every requested facet is
  * a declared, `facetable` field; every sort is `relevance` or a declared field.
  * Because each criterion is matched against its own field’s kind, one clause may
- * range over fields of different kinds. Sorting deliberately
+ * range over fields of different kinds. A `date` range is checked one step
+ * further, on its **values**: a bound the storage codec cannot read is an
+ * `unparseable-bound`, the one place a criterion is rejected for what it says
+ * rather than for what it names. Sorting deliberately
  * checks declaration only, not the `sortable` flag: that flag means *publicly
  * selectable*, and a deployment policy may sort on a private tie-break field.
  *
@@ -315,6 +334,24 @@ export function validateQuery(
           field,
           reason: 'operator-mismatch',
         });
+      } else if (declared.kind === 'date' && 'range' in criterion) {
+        // A `date` bound is ISO 8601 at the edge and Unix seconds in storage,
+        // so a bound the codec cannot read has nothing to compare against.
+        // Both bounds are checked, so a caller who wrote two bad ones is told
+        // about both instead of fixing one to be told about the other.
+        for (const bound of [criterion.range.min, criterion.range.max]) {
+          if (
+            typeof bound === 'string' &&
+            isoToUnixSeconds(bound) === undefined
+          ) {
+            issues.push({
+              part: 'where',
+              field,
+              value: bound,
+              reason: 'unparseable-bound',
+            });
+          }
+        }
       }
     }
   }
@@ -401,7 +438,10 @@ export function assertValidQuery(
   const issues = validateQuery(query, searchType, schema, joins);
   if (issues.length > 0) {
     const detail = issues
-      .map((issue) => `${issue.part}: “${issue.field}” (${issue.reason})`)
+      .map((issue) => {
+        const value = issue.value === undefined ? '' : `: “${issue.value}”`;
+        return `${issue.part}: “${issue.field}” (${issue.reason}${value})`;
+      })
       .join(', ');
     throw new Error(
       `Invalid search query for “${searchType.name}”: ${detail}.`,

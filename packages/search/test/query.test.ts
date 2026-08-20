@@ -107,6 +107,7 @@ describe('validateQuery', () => {
     fields: [
       { name: 'status', kind: 'keyword', facetable: true, filterable: true },
       { name: 'size', kind: 'integer', filterable: true },
+      { name: 'datePosted', kind: 'date', filterable: true },
       { name: 'license', kind: 'keyword' }, // declared, but no roles opted into
       { name: 'statusRank', kind: 'integer', sortable: true },
       { name: 'creator', kind: 'reference', filterable: true },
@@ -413,6 +414,68 @@ describe('validateQuery', () => {
     ).toEqual([]);
   });
 
+  describe('a `date` range bound', () => {
+    const dateRange = (range: {
+      min?: number | string;
+      max?: number | string;
+    }) =>
+      validateQuery(
+        { ...base, where: [{ or: [{ field: 'datePosted', range }] }] },
+        searchType,
+        schema,
+      );
+
+    it('accepts every form the storage codec reads', () => {
+      // An expanded and an unexpanded deep-time year, a plain one, a full
+      // timestamp – and a number, which is already the stored Unix seconds.
+      expect(dateRange({ min: '-250000', max: '25000-06-01' })).toEqual([]);
+      expect(
+        dateRange({ min: '1999', max: '2024-01-01T00:00:00.000Z' }),
+      ).toEqual([]);
+      expect(dateRange({ min: -7951405219200, max: 0 })).toEqual([]);
+    });
+
+    it('reports a bound the codec cannot read, naming the bound', () => {
+      // Past the ±271,821-year window `Date` covers…
+      expect(dateRange({ min: '-500000' })).toEqual([
+        {
+          part: 'where',
+          field: 'datePosted',
+          value: '-500000',
+          reason: 'unparseable-bound',
+        },
+      ]);
+      // …and not deep-time-specific: any unreadable literal is the same
+      // mistake. Without this rule the criterion compiled to no constraint and
+      // the search answered with everything.
+      expect(dateRange({ max: 'yesterday' })).toEqual([
+        {
+          part: 'where',
+          field: 'datePosted',
+          value: 'yesterday',
+          reason: 'unparseable-bound',
+        },
+      ]);
+    });
+
+    it('reports both bounds, so one fix does not uncover the next', () => {
+      expect(dateRange({ min: '-500000', max: '-400000' })).toEqual([
+        {
+          part: 'where',
+          field: 'datePosted',
+          value: '-500000',
+          reason: 'unparseable-bound',
+        },
+        {
+          part: 'where',
+          field: 'datePosted',
+          value: '-400000',
+          reason: 'unparseable-bound',
+        },
+      ]);
+    });
+  });
+
   it('treats a clause with no criteria as vacuous, not invalid', () => {
     // Like an empty `in` or a boundless `range`: it constrains nothing, so a
     // compiler skips it as a no-op rather than the query being rejected.
@@ -436,6 +499,7 @@ describe('validateQuery', () => {
             searchable: { weight: 5 },
           },
           { name: 'country', kind: 'keyword', filterable: true },
+          { name: 'issued', kind: 'date', filterable: true },
           { name: 'note', kind: 'keyword' },
           ...fields,
         ],
@@ -504,6 +568,38 @@ describe('validateQuery', () => {
           reason: 'operator-mismatch',
         },
         { part: 'where', field: 'dataset.nonesuch', reason: 'unknown-field' },
+      ]);
+    });
+
+    it('reports an unreadable bound on a joined `date` under the full path', () => {
+      expect(
+        validateQuery(
+          {
+            ...base,
+            where: [
+              {
+                or: [
+                  { on: ['dataset'], field: 'issued', range: { min: '1900' } },
+                  {
+                    on: ['dataset', 'publisher'],
+                    field: 'issued',
+                    range: { max: 'yesterday' },
+                  },
+                ],
+              },
+            ],
+          },
+          work,
+          joinedSchema,
+          joins,
+        ),
+      ).toEqual([
+        {
+          part: 'where',
+          field: 'dataset.publisher.issued',
+          value: 'yesterday',
+          reason: 'unparseable-bound',
+        },
       ]);
     });
 
@@ -597,6 +693,22 @@ describe('validateQuery', () => {
       ),
     ).toThrow(
       'Invalid search query for “Dataset”: where: “nonexistent” (unknown-field).',
+    );
+    // An issue about a value carries the literal that was rejected, so the
+    // caller is told which bound to fix and not just which field.
+    expect(() =>
+      assertValidQuery(
+        {
+          ...base,
+          where: [
+            { or: [{ field: 'datePosted', range: { min: 'yesterday' } }] },
+          ],
+        },
+        searchType,
+        schema,
+      ),
+    ).toThrow(
+      'Invalid search query for “Dataset”: where: “datePosted” (unparseable-bound: “yesterday”).',
     );
     expect(() => assertValidQuery(base, searchType, schema)).not.toThrow();
   });
