@@ -153,6 +153,14 @@ npx nx run @lde/search-api-server:docker:smoke   # boots it and probes /health +
 CI runs `docker:smoke` for affected PRs; each release rebuilds and pushes
 `ghcr.io/ldelements/search-api-server:<version>` (`.github/workflows/docker.yml`).
 
+The runtime stage is `gcr.io/distroless/nodejs24-debian12` – the Node binary
+and the libraries it links, with no shell, no npm and no package manager – and
+the install stage drops npm’s cache and every `*.map` and `*.d.ts` under
+`node_modules`, none of which Node reads. Together they take about a tenth
+off the compressed image. The missing shell is the
+trade: `docker exec <container> sh` no longer works, and the `HEALTHCHECK`
+probes `/health` with `node -e` rather than `wget`.
+
 ## Programmatic use
 
 The bin is a thin wrapper over the exported API, usable in tests or a custom

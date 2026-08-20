@@ -20,7 +20,12 @@ trap cleanup EXIT
 # Typesense client connects lazily, so an unreachable host does not block boot.
 # The schema module ships in the image only for this smoke via the test
 # fixture bind mount.
+# --health-interval shortens the image's 30s probe cycle for the test; the
+# probe command itself is the image's own. It is worth asserting: the runtime
+# stage has no shell, so a HEALTHCHECK that shells out fails silently, leaving
+# a container that serves traffic while orchestrators read it as unhealthy.
 docker run -d --name "$container" -p 4000 \
+  --health-interval=2s \
   -e SCHEMA_MODULE=/config/search-schema.mjs \
   -e TYPESENSE_HOST=localhost \
   -e TYPESENSE_API_KEY=dummy \
@@ -54,7 +59,25 @@ for _ in $(seq 1 30); do
       echo "$sdl" | head -5
       exit 1
     fi
-    echo "PASS: $image reached startup and serves /health and /graphql?sdl"
+    # Wait for `healthy`, not merely for `starting` to end: a probe that times
+    # out on a loaded runner reports `unhealthy` and recovers on the next one.
+    # The `if .State.Health` guard keeps `docker inspect` from failing the
+    # whole script when the image has no HEALTHCHECK at all – which is the
+    # regression this assertion exists to catch.
+    health=""
+    for _ in $(seq 1 30); do
+      health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$container")"
+      if [ "$health" = "healthy" ]; then
+        break
+      fi
+      sleep 1
+    done
+    if [ "$health" != "healthy" ]; then
+      echo "FAIL: $image serves /health but its HEALTHCHECK reports ${health:-none}:"
+      docker inspect -f '{{json .State.Health}}' "$container"
+      exit 1
+    fi
+    echo "PASS: $image reached startup, serves /health and /graphql?sdl, and reports healthy"
     exit 0
   fi
   sleep 1

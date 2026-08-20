@@ -17,13 +17,14 @@ image="$1"
 
 # Dummy values: we test module resolution and startup, not behaviour. Nothing
 # connects during --check. The schema module ships into the container only for
-# this smoke via the test fixture bind mount.
+# this smoke via the test fixture bind mount. The image's entrypoint already
+# names the CLI, so the arguments below are its flags alone.
 if output="$(docker run --rm \
   -e REGISTRY_ENDPOINT=https://registry.invalid/sparql \
   -e TYPESENSE_HOST=localhost \
   -e TYPESENSE_API_KEY=dummy \
   -v "$(pwd)/packages/search-indexer/test/fixtures/search-schema.mjs:/config/search-schema.mjs:ro" \
-  "$image" node dist/cli.js --check 2>&1)"; then
+  "$image" --check 2>&1)"; then
   if echo "$output" | grep -q "configuration and schema module .* are valid"; then
     echo "PASS: $image booted, loaded the schema module and validated configuration"
     exit 0
