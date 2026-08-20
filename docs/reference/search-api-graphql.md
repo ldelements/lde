@@ -94,8 +94,11 @@ createServer(createServerAdapter(handler)).listen(4000);
 ```
 
 Every host that speaks `Request`/`Response` (SvelteKit, Hono, Fastify via a
-bridge, plain Node) mounts it the same way. The endpoint path defaults to
-`/graphql` (`graphqlEndpoint` overrides it). Batteries included:
+bridge, plain Node) mounts it the same way, and can return the response
+untouched: it is an instance of the runtime’s own `Response`, which a host that
+checks `response instanceof Response` – SvelteKit rejects a route result that
+fails this – accepts. The endpoint path defaults to `/graphql`
+(`graphqlEndpoint` overrides it). Batteries included:
 
 - **Facet degradation**: a failed facet computation degrades exactly the
   affected facet fields to empty lists – a supplementary facet must not fail

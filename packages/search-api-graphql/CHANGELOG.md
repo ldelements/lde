@@ -1,3 +1,138 @@
+## 0.24.0 (2026-08-17)
+
+### 🚀 Features
+
+- ⚠️  **search:** replace labelOnly with a lookup strategy naming its target ([#739](https://github.com/ldelements/lde/pull/739))
+
+### 🩹 Fixes
+
+- **search-api-graphql:** answer with the platform Response, not a ponyfilled one ([#744](https://github.com/ldelements/lde/pull/744))
+
+### ⚠️  Breaking Changes
+
+- **search:** replace labelOnly with a lookup strategy naming its target  ([#739](https://github.com/ldelements/lde/pull/739))
+  strategy 'labelOnly' is now 'lookup', taking 'target'
+  instead of 'labelSource' plus 'ref.typeName'.
+  * test(search): cover the lookup strategy and the resolve projection
+  - labelSourceNameOf across lookup, idOnly and a reference resolving none
+  - labelSource rejected on a lookup; a lookup target that serves no labels
+  - projection validated at this type's level: unknown and non-lookup fields
+  * refactor(search)!: validate a query's projection at every level
+  validateQuery and assertValidQuery take the schema, so each projection
+  level is checked against the target the level above names – the guard's
+  promise held a hole exactly where the newest feature is. Both production
+  call sites are schema-bound already.
+  BREAKING CHANGE: validateQuery and assertValidQuery take the SearchSchema
+  as a third argument.
+  * refactor(search-typesense): resolve label sources through labelSourceNameOf
+  One reading for a lookup's target and an idOnly's labelSource, so the
+  adapter never branches on strategy to find a collection. Fixtures that
+  declared a typeName and a labelSource for the same type now name it
+  once; the emitted collection schema is unchanged.
+  * test(search-pipeline): declare lookup targets in the extraction fixtures
+  The reference that resolved no labels becomes idOnly; the rest name the
+  target they already declared twice.
+  * feat(search-api-graphql)!: serve a lookup reference as its target's fields
+  - a lookup's emitted type derives from its target and carries that root
+    type's output fields, the rule inline already followed; its id is
+    non-null, since a lookup resolves a document by IRI
+  - a target's own references are registered in turn, so a cycle between
+    two targets terminates on the memo rather than recursing
+  - an output idOnly reference must name its emitted type: it is the one
+    strategy that derives no name, and graphql-js failed cryptically on it
+  BREAKING CHANGE: a labelOnly reference becomes a lookup naming its
+  target, and is served with the target's output fields rather than a
+  resolved label alone.
+  * refactor(search-api-graphql)!: drop the id-plus-label reference shape
+  Rebasing onto the IRI-typed filters made an idOnly reference a bare IRI,
+  which leaves no reference emitting an id-plus-label object: a lookup
+  carries its target's fields, an inline reference its Reference Type's.
+  So labelKeyOf and the label-word agreement check go, and with them the
+  missing-ref-type-name rule – an idOnly reference names no emitted type
+  because it emits none.
+  Fixtures that declared a labelOnly reference to a type nothing indexes
+  were serving a label no engine could fill; they are bare IRIs now, or
+  lookups where the target really is a root type.
+  * feat(search-typesense)!: fetch a lookup's fields from its target's collection
+  resolveProjection walks a query's projection level by level: the IRIs of
+  each level are deduped across the whole page, grouped by the collection
+  they live in and fetched in one batched multi_search with include_fields
+  holding exactly what the level asked for. One round-trip per level, not
+  per document, and a level that cannot be fetched degrades its references
+  to bare ids rather than failing the search.
+  The referents reconstruct through the same path a hit does, read through
+  the target's own declaration, so a consumer cannot tell a projected
+  referent from an inline one. The facet path is untouched: a bucket
+  carries one label and stays on the cacheable label lookup.
+  * docs(search): describe the lookup strategy and its projection
+  - the strategy table, the reference prose and three examples described the
+    removed labelOnly; copied today they threw
+  - a section on projecting what a lookup carries, since what it fetches is
+    named per query rather than declared
+  - CONTEXT.md gains Target and Reference Projection, and marks labelOnly as
+    a word to avoid
+  - corrects a JSDoc claim that an output idOnly reference must name a type:
+    it surfaces as a bare IRI, so there is no type to name
+  * fix(search): require a ref typeName on an inline reference alone
+  A lookup derives its emitted name from the target it already names, and an
+  idOnly reference is served as a bare IRI, so neither can be nameless.
+  * fix(search-api-graphql): project only the fields a target serves
+  Every GraphQL client injects __typename into each selection set, and it
+  was carried into the projection verbatim: the port's guard then reported
+  it as an unknown field of the target and threw, failing the whole search
+  for any query selecting a lookup. The projection now asks only for what
+  the target declares as output.
+  Two more, from the same review:
+  - one lookup selected twice (two fragments spreading it) merged its
+    deeper levels shallowly, so the second selection replaced the first and
+    a field the client asked for was never fetched
+  - a lookup declaring no target passed validation, since the type-name
+    rule had been narrowed to inline alone
+  * fix(search): reject a lookup declared inside a Reference Type
+  A lookup resolves level by level from the hit's projection, and a nested
+  document is read back with its referent – so nothing resolves a lookup
+  inside one. It was accepted, emitting a type whose every field served
+  null; now it fails at schema construction, naming the field."
+  A	docs/decisions/0020-resolve-a-references-fields-from-the-targets-own-collection.md
+  M	docs/reference/search.md
+  M	packages/search-api-graphql/src/build-schema.ts
+  A	packages/search-api-graphql/src/projection.ts
+  M	packages/search-api-graphql/test/__snapshots__/generator-stability.test.ts.snap
+  M	packages/search-api-graphql/test/build-schema.test.ts
+  M	packages/search-api-graphql/test/generator-stability.test.ts
+  A	packages/search-api-graphql/test/projection.test.ts
+  M	packages/search-api-graphql/vite.config.ts
+  M	packages/search-pipeline/test/extraction-roundtrip.integration.test.ts
+  M	packages/search-pipeline/test/extraction.test.ts
+  M	packages/search-pipeline/test/joins.integration.test.ts
+  M	packages/search-pipeline/test/registry-extraction.integration.test.ts
+  M	packages/search-pipeline/test/search-stages.test.ts
+  A	packages/search-typesense/src/lookup.ts
+  M	packages/search-typesense/src/search.ts
+  M	packages/search-typesense/test/blue-green-rebuild.test.ts
+  M	packages/search-typesense/test/collection-name.test.ts
+  M	packages/search-typesense/test/generator-stability.test.ts
+  M	packages/search-typesense/test/in-place-rebuild.test.ts
+  M	packages/search-typesense/test/label-sources.test.ts
+  M	packages/search-typesense/test/parse-response.test.ts
+  A	packages/search-typesense/test/projected-lookup.test.ts
+  M	packages/search-typesense/test/search-engine.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/CONTEXT.md
+  M	packages/search/src/adapter.ts
+  M	packages/search/src/index.ts
+  M	packages/search/src/join-graph.ts
+  M	packages/search/src/query.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/test/project.test.ts
+  M	packages/search/test/query.test.ts
+  M	packages/search/test/schema.test.ts
+  M	packages/search/vite.config.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.22.0
+
 ## 0.23.1 (2026-08-14)
 
 ### 🧱 Updated Dependencies

@@ -228,8 +228,7 @@ describe('label sources', () => {
         name: 'publisher',
         kind: 'reference',
         output: true,
-        labelSource: 'Organization',
-        ref: { typeName: 'Organization', strategy: 'labelOnly' },
+        ref: { strategy: 'lookup', target: 'Organization' },
       },
     ],
   };

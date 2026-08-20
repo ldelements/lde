@@ -62,11 +62,11 @@ const datasetType = defineSearchType({
       kind: 'reference',
       path: `<${DCTERMS}publisher>`,
       array: true,
-      labelSource: 'Publisher',
+
       output: true,
       filterable: true,
       facetable: true,
-      ref: { typeName: 'Publisher', strategy: 'labelOnly' },
+      ref: { strategy: 'lookup', target: 'Publisher' },
     },
     {
       name: 'license',

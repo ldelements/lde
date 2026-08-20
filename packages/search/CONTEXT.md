@@ -125,9 +125,19 @@ resolving against it uses. Declared as `labelField`; `label` by default.
 _Avoid_: display field, title field
 
 **Reference Strategy**:
-How much of a referenced entity a reference carries: `idOnly` (the IRI),
-`labelOnly` (+ its Label Source’s label, resolved at query time), `inline`
-(+ its Reference Type’s projected fields).
+Where a reference’s fields come from: `idOnly` (the IRI, and nothing else),
+`lookup` (+ fields read from its Target’s own indexed document, at query time),
+`inline` (+ fields denormalised from the parent’s framing, at index time).
+_Avoid_: labelOnly (replaced by `lookup`)
+
+**Target**:
+The Root Type a `lookup` reads from, named once: the collection its fields and
+labels come from, and the name its emitted type derives from.
+_Avoid_: label source (that word survives only on `idOnly`)
+
+**Reference Projection**:
+What a query asks each `lookup` to carry, level by level – built by a surface
+from what its caller selected, never declared on the field.
 
 **Referent Identity**:
 The referent’s IRI – what a reference filters and facets on, always, and never

@@ -19,7 +19,9 @@ import {
  * A framework-agnostic request handler: SvelteKit, Fastify (via a
  * `Request`/`Response` bridge), Hono and plain `node:http` (via
  * `@whatwg-node/server`, which graphql-yoga uses internally) all mount it
- * directly.
+ * directly. On a runtime that has its own Fetch classes, the returned
+ * `Response` is an instance of that runtime’s global, so a host that checks
+ * `instanceof Response` accepts it as is.
  */
 export type SearchGraphQLHandler = (request: Request) => Promise<Response>;
 
@@ -100,6 +102,17 @@ export function createSearchGraphQLHandler(
   const yoga = createYoga({
     schema,
     graphqlEndpoint,
+    // Build responses with the runtime’s own Fetch classes, so the handler’s
+    // `Response` is the class a host framework checks against. graphql-yoga
+    // otherwise uses `@whatwg-node/fetch`, a ponyfill: spec-conformant, but a
+    // different class, which every host that checks `instanceof Response`
+    // nominally – SvelteKit, Hono, Next – rejects. yoga ignores the keys a
+    // runtime leaves `undefined`, so one without them keeps the ponyfill.
+    fetchAPI: {
+      Request: globalThis.Request,
+      Response: globalThis.Response,
+      ReadableStream: globalThis.ReadableStream,
+    },
     landingPage: false,
     graphiql: options.playground !== false,
     renderGraphiQL: options.renderPlayground ?? renderGraphiQL,
