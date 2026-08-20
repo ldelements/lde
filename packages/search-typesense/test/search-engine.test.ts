@@ -9,6 +9,7 @@ import {
 import { describeSearchEngineContract } from '@lde/search/testing';
 import { buildCollectionDefinition } from '../src/collection-definition.js';
 import { createTypesenseSearchEngine } from '../src/search.js';
+import { buildSearchParams } from '../src/query-compiler.js';
 import { TypesenseContainer } from './typesense-container.js';
 
 // The label source `publisher` resolves against: a first-class search type
@@ -472,5 +473,32 @@ describe('createTypesenseSearchEngine (integration)', () => {
 
     expect(result.total).toBeGreaterThan(0); // empty membership = no constraint
     expect(ignored).toEqual([{ or: [{ field: 'status', in: [] }] }]);
+  });
+
+  it('answers a false clause with no hits, against the real engine', async () => {
+    // The compiler’s term for “matches nothing” only works if Typesense
+    // APPLIES it: a filter it rejected would fail the search, and one it
+    // ignored would hand back the whole collection – the bug this replaced.
+    // `search()` never builds this itself (`assertValidQuery` rejects an
+    // unknown field first), so the params go to the engine directly.
+    const everything = await client
+      .collections('datasets')
+      .documents()
+      .search({ q: '*', query_by: 'title_search_nl' });
+    expect(everything.found).toBeGreaterThan(0);
+
+    const params = buildSearchParams(
+      {
+        ...baseQuery,
+        where: [{ or: [{ field: 'nonexistent', in: ['x'] }] }],
+      },
+      datasetSchema,
+    );
+    expect(params.filter_by).toBe('id:=[]');
+    const none = await client
+      .collections('datasets')
+      .documents()
+      .search({ ...params, filter_by: params.filter_by });
+    expect(none.found).toBe(0);
   });
 });

@@ -707,12 +707,24 @@ One rule is about a **value** rather than a field: a `date` range bound the
 storage codec cannot read (`'yesterday'`, or a year past the ±271,821 window
 `Date` covers) is an `unparseable-bound` issue naming the rejected bound. No
 surface’s type system catches this – `String` is `String` – and it has to be
-caught here because **no compiler can recover from it**: an engine filter
-language has no term meaning “matches nothing”, so a criterion it cannot compile
-either states no constraint (widening the search to everything) or vanishes from
-the query (widening it to whatever the other clauses allow). Both answer a
-question the caller did not ask, and only the caller can fix the bound – so
-validation hands it back to them instead of guessing.
+caught here because a compiler cannot recover what the caller meant: a rejected
+bound is indistinguishable from a bound never set, and inside an `or` the two
+readings pull opposite ways – read as unset it widens the range to unbounded,
+dropped it narrows the result to the criterion’s siblings. Only the caller can
+fix the bound, so validation hands it back to them instead of guessing.
+
+Validation is the guard, but it is not the only one: a compiler reached
+directly must not quietly answer a different question either. So a `where`
+clause the Typesense compiler cannot compile is treated by **what it means**,
+not by the fact that it produced no term. A clause that states no constraint
+(an empty `in`, a `range` with no usable bound) is _true_ and leaves the query;
+a clause whose every criterion is malformed or unsatisfiable is _false_ and
+compiles to a term no document matches, so the search comes back empty. The
+difference only shows up in the `&&` between clauses – dropping a false clause
+would delete a conjunct and hand back everything the remaining clauses allow –
+and it is why a filter language needs a way to say “nothing”, which `filter_by`
+spells as the empty identity membership `id:=[]`. Either way the clause is
+reported to `onIgnoredFilter`, since neither compiled as written.
 
 ### Lookup by IRI
 

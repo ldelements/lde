@@ -266,7 +266,10 @@ describe('buildSearchParams', () => {
     ).toBeUndefined();
   });
 
-  it('ignores a clause when no criterion compiles', () => {
+  it('compiles a clause no criterion of which compiles to a term matching nothing', () => {
+    // Every criterion is false, so the clause is false and the query can have
+    // no answer. Leaving it out of `filter_by` would say the opposite – an
+    // absent conjunct constrains nothing – and hand back the whole collection.
     const ignored: unknown[] = [];
     const clause = {
       or: [
@@ -277,7 +280,8 @@ describe('buildSearchParams', () => {
     const params = buildSearchParams({ ...base, where: [clause] }, schema, {
       onIgnoredFilter: (filter) => ignored.push(filter),
     });
-    expect(params.filter_by).toBeUndefined();
+    expect(params.filter_by).toBe('id:=[]');
+    // Still reported: the clause did not compile as written.
     expect(ignored).toEqual([clause]);
   });
 
@@ -300,7 +304,12 @@ describe('buildSearchParams', () => {
     );
   });
 
-  it('skips a vacuous or non-membership `id` clause', () => {
+  it('reads an empty or non-membership `id` clause as matching no document', () => {
+    // An empty `id` membership enumerates NO document, and a range on an IRI
+    // is malformed – both false, so each clause compiles to the term nothing
+    // satisfies. `search()` never sends this: `isUnsatisfiable` answers the
+    // first shape without a round-trip and `assertValidQuery` rejects the
+    // second.
     const ignored: unknown[] = [];
     const params = buildSearchParams(
       {
@@ -313,30 +322,34 @@ describe('buildSearchParams', () => {
       schema,
       { onIgnoredFilter: (filter) => ignored.push(filter) },
     );
-    expect(params.filter_by).toBeUndefined();
+    expect(params.filter_by).toBe('id:=[] && id:=[]');
     expect(ignored).toEqual([
       { or: [{ field: 'id', in: [] }] },
       { or: [{ field: 'id', range: { min: 1 } }] },
     ]);
   });
 
-  it('skips a clause that compiles to nothing and reports it via onIgnoredFilter', () => {
+  it('separates a clause that says nothing from one that can match nothing', () => {
+    // The two ways a clause fails to compile as written are opposites, and the
+    // `&&` between clauses is what makes the difference visible: an unset
+    // filter must LEAVE the query, while a false one must stay and empty it.
+    // Both are reported, because neither says what the caller wrote.
     const ignored: unknown[] = [];
     const params = buildSearchParams(
       {
         ...base,
         where: [
           { or: [{ field: 'status', in: ['valid'] }] }, // fine – kept
-          { or: [{ field: 'nonexistent', in: ['x'] }] }, // unknown field
-          { or: [{ field: 'keyword', range: { min: 1 } }] }, // operator ≠ field kind
-          { or: [{ field: 'status', in: [] }] }, // empty membership
-          { or: [{ field: 'size', range: {} }] }, // no usable bound
+          { or: [{ field: 'nonexistent', in: ['x'] }] }, // unknown field – false
+          { or: [{ field: 'keyword', range: { min: 1 } }] }, // operator ≠ kind – false
+          { or: [{ field: 'status', in: [] }] }, // empty membership – no constraint
+          { or: [{ field: 'size', range: {} }] }, // no usable bound – no constraint
         ],
       },
       schema,
       { onIgnoredFilter: (filter) => ignored.push(filter) },
     );
-    expect(params.filter_by).toBe('status:[`valid`]');
+    expect(params.filter_by).toBe('status:[`valid`] && id:=[] && id:=[]');
     expect(ignored).toEqual([
       { or: [{ field: 'nonexistent', in: ['x'] }] },
       { or: [{ field: 'keyword', range: { min: 1 } }] },
@@ -345,11 +358,20 @@ describe('buildSearchParams', () => {
     ]);
   });
 
-  it('skips a non-compiling clause silently when no onIgnoredFilter is given', () => {
+  it('compiles a false clause the same way when no onIgnoredFilter is given', () => {
+    // The callback is diagnostics, not control flow: what reaches the engine
+    // must not depend on whether anyone is listening.
     const params = buildSearchParams(
       { ...base, where: [{ or: [{ field: 'nonexistent', in: ['x'] }] }] },
       schema,
     );
+    expect(params.filter_by).toBe('id:=[]');
+  });
+
+  it('skips a clause carrying no criteria at all', () => {
+    // `{ or: [] }` states nothing rather than stating false – there is no
+    // criterion to be false – so it stays the vacuous no-op it reads as.
+    const params = buildSearchParams({ ...base, where: [{ or: [] }] }, schema);
     expect(params.filter_by).toBeUndefined();
   });
 
