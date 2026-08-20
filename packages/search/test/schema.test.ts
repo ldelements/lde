@@ -1485,6 +1485,23 @@ describe('date storage codec', () => {
     );
   });
 
+  it('reads a whitespace-padded year as the year it spells', () => {
+    // XSD collapses whitespace around a date literal, so a padded form is legal
+    // and reaches the codec verbatim.
+    for (const padded of [' -1100', '\t-1100', '-1100 ', '  -1100  ']) {
+      expect(isoToUnixSeconds(padded)).toBe(isoToUnixSeconds('-1100'));
+    }
+    expect(isoToUnixSeconds(' 25000 ')).toBe(isoToUnixSeconds('25000'));
+    expect(isoToUnixSeconds('  1999  ')).toBe(isoToUnixSeconds('1999'));
+  });
+
+  it('returns undefined for a year beyond what Date can represent', () => {
+    // ±271,821 years is the edge of the Date range; past it there is no value
+    // to store, so the field is left absent as an unparseable string is.
+    expect(isoToUnixSeconds('-500000')).toBeUndefined();
+    expect(isoToUnixSeconds('-271821')).toBeUndefined();
+  });
+
   it('orders BCE before CE, and earlier BCE before later', () => {
     const deepTime = isoToUnixSeconds('-250000') ?? 0;
     const bce = isoToUnixSeconds('-1100') ?? 0;

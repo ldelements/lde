@@ -1454,7 +1454,12 @@ const ABSOLUTE_IRI = /^[A-Za-z][A-Za-z0-9+.-]*:\S*$/;
  * unparseable value.
  */
 export function isoToUnixSeconds(iso: string): number | undefined {
-  const millis = new Date(expandYear(iso)).getTime();
+  // Trim first: XSD collapses whitespace around a date literal before parsing,
+  // so a padded lexical form is legal and reaches here verbatim. Left in place
+  // it defeats the year expansion below in both directions – a leading space
+  // stops the match, a trailing one survives it into the legacy parser – and
+  // each lands the value in a different year than it reads.
+  const millis = new Date(expandYear(iso.trim())).getTime();
   return Number.isNaN(millis) ? undefined : Math.trunc(millis / 1000);
 }
 
