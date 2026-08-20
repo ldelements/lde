@@ -582,7 +582,7 @@ describe('projectDocument', () => {
         name: 'Dataset',
         class: DATASET,
         fields: [
-          // ADR 19 sends IRI-valued keyword derives here; a returned non-IRI is
+          // ADR 21 sends IRI-valued keyword derives here; a returned non-IRI is
           // dropped, exactly as the graph path drops one.
           {
             name: 'derived',
