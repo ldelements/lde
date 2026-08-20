@@ -19,7 +19,7 @@ so a source declaring `labelField: 'name'` is served as `{ id, name }`. A
 bucket’s `label` is unchanged: it is per-facet-field, and a per-type name would
 make the bucket type non-uniform.
 
-Amended by [ADR 19](./0019-type-a-filter-by-what-its-field-keys-on.md): the
+Amended by [ADR 21](./0021-type-a-filter-by-what-its-field-keys-on.md): the
 single `StringFilter` is replaced by filter inputs typed by what the field keys
 on (`KeywordFilter`, `IRIFilter`, `‹Target›Filter` over a new `IRI` scalar),
 `id` is filtered per type, and `idOnly` is implemented – so a reference surfaces

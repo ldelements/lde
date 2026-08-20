@@ -6,7 +6,7 @@ Date: 2026-08-07
 
 Accepted
 
-Amended by [ADR 19](./0019-type-a-filter-by-what-its-field-keys-on.md), which
+Amended by [ADR 21](./0021-type-a-filter-by-what-its-field-keys-on.md), which
 answers the question this ADR left to the client – _which_ fields belong in an
 `or` list – by typing each filter input by what its field keys on. The
 `StringFilter` in the sketches below no longer exists: `id` is filtered through a

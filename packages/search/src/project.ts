@@ -220,7 +220,7 @@ function applyField(
   if (field.derive !== undefined) {
     const derived = field.derive(document, context);
     // A derived `reference` is held to the same rule as a read one: what it
-    // stores is a selection key, and the surface types it `IRI`. ADR 19 sends
+    // stores is a selection key, and the surface types it `IRI`. ADR 21 sends
     // an IRI-valued `keyword` derive here by converting it to `reference`, so
     // this is the busiest way a non-IRI could otherwise reach the index. A
     // value that survives nothing leaves the field absent, exactly as a derive
