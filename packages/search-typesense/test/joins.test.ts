@@ -199,7 +199,9 @@ describe('buildSearchParams over a join path', () => {
         ],
       }),
     ).toBe('country:[`BE`]');
-    // And with no resolver supplied at all.
+    // And with no resolver supplied at all: the criterion is alone in its
+    // clause, so there is no sibling to fall back to and the clause is simply
+    // false – which must EMPTY the query, not disappear from it.
     expect(
       buildSearchParams(
         {
@@ -208,7 +210,7 @@ describe('buildSearchParams over a join path', () => {
         },
         CREATIVE_WORK,
       ).filter_by,
-    ).toBeUndefined();
+    ).toBe('id:=[]');
   });
 });
 

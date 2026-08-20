@@ -65,12 +65,14 @@ export interface BuildSearchParamsOptions {
    */
   readonly maxFacetValues?: number;
   /**
-   * Called for each `where` clause that compiles to nothing and is therefore
-   * skipped: an unknown field, an operator that does not match the field’s
-   * kind ({@link filterOperatorFor}), an empty `in` list, or a `range` with no
-   * usable bound. Skipping keeps a malformed clause from reaching the engine
-   * as garbage; supply this to log it instead of losing it silently. Through
-   * the engine, a structurally invalid query throws up front
+   * Called for each `where` clause that does not compile as the caller wrote
+   * it – either because it states no constraint (an empty `in` list, a `range`
+   * with no usable bound, no criteria at all) and is skipped, or because every
+   * criterion is malformed (an unknown field, an operator that does not match
+   * the field’s kind – {@link filterOperatorFor}) or unsatisfiable, leaving a
+   * clause no document can match. Supply this to log the clause instead of
+   * losing it silently; the compiled query itself is faithful either way.
+   * Through the engine, a structurally invalid query throws up front
    * (`assertValidQuery`), so there only the clauses that state no constraint
    * reach this.
    */
@@ -196,8 +198,10 @@ function queryFields(
   return { names, weights };
 }
 
-/** AND-join the compiled `where` clauses; a clause that compiles to nothing is
- *  skipped and reported to `onIgnoredFilter`. */
+/** AND-join the compiled `where` clauses. A clause that states no constraint is
+ *  skipped; one that can match nothing compiles to {@link MATCHES_NOTHING}
+ *  rather than being skipped ({@link compileFilter}). Either way it did not
+ *  compile as written, so it is reported to `onIgnoredFilter`. */
 function compileFilterBy(
   where: readonly Filter[],
   searchType: SearchType,
@@ -206,7 +210,7 @@ function compileFilterBy(
   return where
     .map((filter) => {
       const clause = compileFilter(filter, searchType, options);
-      if (clause === undefined) {
+      if (clause === undefined || clause === MATCHES_NOTHING) {
         options.onIgnoredFilter?.(filter);
       }
       return clause;
@@ -235,15 +239,16 @@ function compileFilterBy(
  *   unknown field, an operator that mismatches the field’s kind) is *false*, and
  *   `false || X` is X, so it drops out and its siblings still stand.
  *
- * Both readings hold **within** a clause. Neither survives a clause left with
- * no terms: it is skipped and reported to `onIgnoredFilter`, and a clause
- * missing from the conjunction constrains nothing – so a *false* criterion
- * alone in its clause still WIDENS the query. `filter_by` has no term meaning
- * “matches nothing” to compile it to instead. The engine never meets this
- * (`assertValidQuery` rejects every malformed criterion, and `isUnsatisfiable`
- * short-circuits the empty `id` membership before a query is dispatched); a
- * direct caller should read `onIgnoredFilter` firing as “this query no longer
- * asks what you asked”.
+ * Which reading applies decides what a clause left with **no terms** compiles
+ * to, and the two are opposites: a vacuous clause states no constraint, so it
+ * is skipped; an all-false clause states the query can have no answer, so it
+ * compiles to {@link MATCHES_NOTHING}. Skipping that one instead would drop a
+ * conjunct and widen the query – `false` compiled as `true`. Both are reported
+ * to `onIgnoredFilter`, because neither compiles to what the caller wrote.
+ *
+ * The engine never meets either: `assertValidQuery` rejects every malformed
+ * criterion, and `isUnsatisfiable` short-circuits the empty `id` membership
+ * before a query is dispatched.
  */
 function compileFilter(
   filter: Filter,
@@ -261,10 +266,31 @@ function compileFilter(
     }
   }
   if (terms.length === 0) {
-    return undefined;
+    // Every criterion was unusable, so the clause is FALSE – and `false && X`
+    // is false, however many clauses stand beside it. Leaving it out would drop
+    // a conjunct, and a conjunct missing from `filter_by` constrains nothing:
+    // the query would come back WIDER than the caller wrote, which is how a
+    // misspelled field name used to return the whole collection.
+    //
+    // A clause carrying no criteria at all says nothing rather than saying
+    // false, so it stays the vacuous no-op it reads as.
+    return filter.or.length === 0 ? undefined : MATCHES_NOTHING;
   }
   return terms.length === 1 ? terms[0] : `(${terms.join(' || ')})`;
 }
+
+/**
+ * The term for a clause that can match no document: an **empty identity
+ * membership** – “the document is one of no documents”. Not a sentinel value
+ * but the literal reading, and the same one {@link isUnsatisfiable} gives an
+ * empty `id` membership in the IR; Typesense answers it with zero hits.
+ *
+ * A filter language has no keyword for `false`, so this stands in for one. It
+ * must be a term the engine *applies* rather than ignores – an empty string
+ * (``id:=` ` ``) is rejected outright as a filter value, and an omitted clause
+ * is read as true.
+ */
+const MATCHES_NOTHING = `${ID_FIELD}:=[]`;
 
 /** A criterion that states **no constraint** – true for every document. */
 const VACUOUS = Symbol('vacuous');
