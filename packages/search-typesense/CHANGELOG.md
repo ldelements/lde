@@ -1,3 +1,21 @@
+## 0.27.0 (2026-08-20)
+
+### 🩹 Fixes
+
+- ⚠️  **search-typesense:** compile a where clause that can match nothing to a term matching nothing ([#753](https://github.com/ldelements/lde/pull/753))
+
+### ⚠️  Breaking Changes
+
+- **search-typesense:** compile a where clause that can match nothing to a term matching nothing  ([#753](https://github.com/ldelements/lde/pull/753))
+  buildSearchParams compiles a where clause it cannot compile
+  to “id:=[]” instead of omitting it, so a query that used to come back with
+  every document now comes back empty. onIgnoredFilter still fires for it."
+  M	docs/reference/search.md
+  M	packages/search-typesense/src/query-compiler.ts
+  M	packages/search-typesense/test/joins.test.ts
+  M	packages/search-typesense/test/query-compiler.test.ts
+  M	packages/search-typesense/test/search-engine.test.ts
+
 ## 0.26.0 (2026-08-20)
 
 ### 🩹 Fixes
