@@ -392,7 +392,14 @@ describe('buildSearchParams', () => {
         schema,
       ).filter_by,
     ).toBe(`datePosted:[${min}..${max}]`);
-    // An unparseable bound is dropped rather than compiled into garbage.
+  });
+
+  it('drops a date bound the codec cannot read rather than compiling garbage', () => {
+    // Unreachable through the engine – `assertValidQuery` rejects such a bound
+    // outright, which is the fix for it. What the compiler does when reached
+    // directly is only damage control: it cannot express “matches nothing”, so
+    // whichever bound it keeps, the query it sends is not the one asked for.
+    const max = Date.parse('2025-01-01T00:00:00Z') / 1000;
     expect(
       buildSearchParams(
         {
@@ -404,6 +411,31 @@ describe('buildSearchParams', () => {
                   field: 'datePosted',
                   range: { min: 'not-a-date', max: '2025-01-01T00:00:00Z' },
                 },
+              ],
+            },
+          ],
+        },
+        schema,
+      ).filter_by,
+    ).toBe(`datePosted:<=${max}`);
+  });
+
+  it('reads a null bound as a bound not set, not as the literal null', () => {
+    // A GraphQL variable left unfilled arrives as `null` and the surface passes
+    // it through. Read literally it compiles to `datePosted:[null..…]`, which
+    // Typesense rejects – so the whole search fails on an unset filter.
+    const max = Date.parse('2025-01-01T00:00:00Z') / 1000;
+    expect(
+      buildSearchParams(
+        {
+          ...base,
+          where: [
+            {
+              or: [
+                {
+                  field: 'datePosted',
+                  range: { min: null, max: '2025-01-01T00:00:00Z' },
+                } as never,
               ],
             },
           ],
