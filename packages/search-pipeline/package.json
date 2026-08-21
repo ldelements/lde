@@ -35,7 +35,7 @@
     "@lde/search-typesense": "^0.27.0",
     "@rdfjs/types": "^2.0.1",
     "n3": "^2.1.2",
-    "testcontainers": "^12.0.3",
+    "testcontainers": "^12.1.0",
     "typesense": "^3.0.6"
   },
   "peerDependencies": {
