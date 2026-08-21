@@ -379,6 +379,12 @@ function applyField(
  * field to that hop. A projection run without a `schema` cannot resolve the
  * target, so it leaves the values as they are – exactly as it leaves an inline
  * reference unprojected.
+ *
+ * The referring field’s own {@link ReferenceField.transform} still runs after
+ * this, in {@link applyFacet}: a `transform` transforms what the field stores,
+ * and for a keyed target that is the key. A `transform` written to repair the
+ * referent’s node IRIs therefore sees a key instead, which is why the two are
+ * worth declaring together only deliberately.
  */
 function referenceValues(
   node: FramedNode,

@@ -516,14 +516,22 @@ What LDE deliberately does not know is _why_ one candidate is preferred over
 another, and what a merged document should say. **LDE decides the key; the
 deployment decides the content.**
 
-Two things to keep in mind when declaring one:
+Things to keep in mind when declaring one:
 
 - A transform that **replaces** a root’s quads must re-emit the key field – the
   existing rule that a field the document needs must be in the stream, applied to
-  one more field. A transform that only adds never meets it.
+  one more field. A transform that only adds never meets that rule, but a
+  transform that **supplies** key candidates has a mirror of it: a transform is
+  attached to one type’s reader, and a reference’s key is read in the referring
+  type’s query, so candidates minted on the target alone leave every reference
+  keyed on the node IRI. See
+  [Add a transform](./search-indexer#add-a-transform).
 - The key is assigned **before any `derive` runs**, so a derive sees the key and
   never the node IRI. A deployment that wants the node IRI declares a plain
   `idOnly` reference over the same path.
+- The **referring** field’s own `transform` runs on what it stores, which for a
+  keyed target is the key rather than the referent’s node IRI. Declare the two
+  together only deliberately.
 - A work in dataset A referencing a node **in dataset B** gets no candidates (the
   hop runs against A’s distribution), so it stores the node IRI and does not
   resolve against B’s keyed document. Publishers reference each other through

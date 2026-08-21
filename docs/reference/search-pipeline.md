@@ -416,9 +416,11 @@ guarantees one output triple per genuine value:
   declares a [document key](./search#document-key) gets its branch extended with
   an `OPTIONAL` hop reading the referent’s key field, emitted under the target’s
   own alias – so the projection can store the referent’s key rather than its node
-  IRI. It sits inside that reference’s UNION branch, so it multiplies against
-  nothing, and it is `OPTIONAL` so a referent with no key candidate keeps its
-  row. The root side is unchanged: a key field is a declared field, so its own
+  IRI. It sits inside that reference’s UNION branch, so it never cross-multiplies
+  against another field; like an inline reference’s link triple, the reference’s
+  own template triple then repeats once per key candidate – linearly, and only
+  for a referent that carries several. `OPTIONAL`, so a referent with no key
+  candidate keeps its row. The root side is unchanged: a key field is a declared field, so its own
   branch and template triple are already there.
 
 Because the queries are duplicate-free by construction, correctness and bounded

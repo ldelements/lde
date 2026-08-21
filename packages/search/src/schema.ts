@@ -938,8 +938,14 @@ function assertResolvableLabelSources(
       }
       const source = rootTypeNamed(schema, sourceName);
       if (source === undefined) {
+        // A name that IS declared, just not as a Root Type, is the confusing
+        // case: telling the author to declare a type they already declared
+        // would send them looking in the wrong place. Only a Root Type has a
+        // collection to resolve against, so name that instead.
         throw new Error(
-          `Reference “${searchType.name}.${field.name}” names unknown label source “${sourceName}”; declare a SearchType with that name.`,
+          referenceTypeNamed(schema, sourceName) === undefined
+            ? `Reference “${searchType.name}.${field.name}” names unknown label source “${sourceName}”; declare a SearchType with that name.`
+            : `Reference “${searchType.name}.${field.name}” names label source “${sourceName}”, which is a Reference Type; a label source must be a Root Type, since a resolved label is read from that type’s own collection.`,
         );
       }
       if (labelFieldOf(source) === undefined) {
@@ -1574,7 +1580,11 @@ export function fieldNamed(
  * would key those two differently.
  *
  * @param nodeIri the node’s own IRI – the key it falls back to
- * @param rawValues the key field’s values as the frame carries them, untransformed
+ * @param rawValues the key field’s values **as a reference field reads them** –
+ *   a node’s `@id` or a bare-string value, before the field’s `transform`. A
+ *   caller that reads them itself (a transform working on quads) must apply the
+ *   same rule and skip a literal-valued object, or it will compute a key for a
+ *   value the projection never saw and key the two differently.
  */
 export function documentKeyOf(
   searchType: RootType,

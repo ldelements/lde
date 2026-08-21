@@ -1334,6 +1334,36 @@ describe('searchSchema validation', () => {
       ).toThrow(/must declare an output, searchable text field “name”/);
     });
 
+    it('names a Reference Type label source for what it is, not as unknown', () => {
+      // The name IS declared, just not as a Root Type – so “declare a
+      // SearchType with that name” would send an author looking in the wrong
+      // place. Reachable only through a lookup: `labelSource` on a nested field
+      // is rejected earlier, and a Reference Type carrying a label field is
+      // rejected for being searchable.
+      expect(() =>
+        searchSchema(
+          {
+            name: 'AddressRef',
+            fields: [{ name: 'street', kind: 'keyword', output: true }],
+          },
+          {
+            name: 'Organization',
+            class: 'https://example.org/Organization',
+            fields: [
+              {
+                name: 'address',
+                kind: 'reference',
+                output: true,
+                ref: { strategy: 'lookup', target: 'AddressRef' },
+              },
+            ],
+          },
+        ),
+      ).toThrow(
+        /names label source “AddressRef”, which is a Reference Type; a label source must be a Root Type/,
+      );
+    });
+
     it('rejects a Reference Type as a label source: it cannot be searchable', () => {
       // Why a label source is always a Root Type, and so always has a
       // collection to resolve from: a Reference Type carries `output` only.

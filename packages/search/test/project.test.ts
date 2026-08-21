@@ -1901,6 +1901,48 @@ describe('document keys (a type keyed on a declared field)', () => {
     expect(document.about).toEqual(['https://ex/place/3']);
   });
 
+  it('runs the referring field’s transform on the key, not the node IRI', () => {
+    // A `transform` transforms what the field STORES, and for a keyed target
+    // that is the key – so a transform written against the referent’s node IRIs
+    // sees a key instead. Pinned because the two are only worth declaring
+    // together deliberately.
+    const seen: string[] = [];
+    const withTransform = defineSearchType({
+      ...work,
+      name: 'TransformingWork',
+      class: 'urn:x:TransformingWork',
+      fields: [
+        {
+          name: 'about',
+          kind: 'reference',
+          array: true,
+          path: `<${SCHEMA_ORG}about>`,
+          facetable: true,
+          labelSource: 'Place',
+          transform: (value) => {
+            seen.push(value);
+            return value;
+          },
+        },
+      ],
+    });
+    projectDocument(
+      {
+        '@id': 'https://ex/work/1',
+        [alias('TransformingWork', 'about')]: [
+          {
+            '@id': 'https://ex/place/1',
+            [placeKey('_sameAs')]: [{ '@id': `${GEONAMES}1` }],
+          },
+        ],
+      },
+      withTransform,
+      searchSchema(place, withTransform),
+    );
+
+    expect(seen).toEqual([`${GEONAMES}1`]);
+  });
+
   it('leaves a reference into an unkeyed target alone', () => {
     const unkeyed = defineSearchType({
       name: 'Place',

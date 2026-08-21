@@ -250,8 +250,19 @@ The same rule bites once more where a root type declares a
 quads must re-emit the key field.** The key is read off the projected frame like
 any other field, so a replaced root that drops it is keyed on its node IRI
 instead – and every reference to it, which is keyed independently, then points
-at a document that was never written. A transform that only adds quads (the
-documented use) never meets this.
+at a document that was never written. A transform that only adds quads never
+meets _this_ rule.
+
+An adding transform has its own version of the same trap, because **a transform
+is attached to one type’s reader**, and a reference’s key is read in the
+_referring_ type’s extraction query. Mint key candidates on `Place` – a
+reconciliation step adding `schema:sameAs` – and `Place` documents are keyed on
+them, while the `CreativeWork` stage’s hop still runs against the untransformed
+endpoint, finds nothing, and stores the publisher’s node IRI. Every reference
+then points at a document that was never written. Where a transform supplies key
+candidates rather than repairing them, attach it to **every type that references
+the keyed one** as well, or supply them upstream (in the import, or in a reader
+of your own) so both queries see them.
 
 ## Compose it yourself
 

@@ -103,6 +103,13 @@ nothing rewrites them.
   convention rather than a guarantee: the structural alternative (reading the key
   off the reader’s raw output before transforms run) touches `@lde/pipeline`’s
   runner, the one package this design otherwise leaves alone.
+- **A transform that supplies key candidates must reach every referring type.**
+  A transform is attached to one type’s reader, and a reference’s key is read in
+  the _referring_ type’s extraction query – so candidates minted on the target
+  alone key the target’s own document while every reference to it still stores
+  the node IRI. Repairing candidates the graph already carries is unaffected
+  (a reader transform on the referring type covers its own hop); supplying them
+  is what has to reach both, or be supplied upstream.
 - **The key is assigned before any `derive` runs**, so a derive sees the key and
   never the node IRI. A deployment that wants the node IRI declares a plain
   `idOnly` reference over the same path.
@@ -112,8 +119,9 @@ nothing rewrites them.
   document. Publishers reference other publishers through `sameAs` rather than
   directly, and such a reference is already unresolvable today for every purpose
   but labels.
-- `@lde/pipeline`, `@lde/search-indexer`, `@lde/search-typesense` and the API
-  packages are untouched: the change is a schema member, the projection, and one
+- `@lde/pipeline`, `@lde/search-indexer` and the API packages are untouched, and
+  `@lde/search-typesense` only adopts the shared `rootTypeNamed` in place of a
+  by-name map of its own: the change is a schema member, the projection, and one
   hop in the extraction generator. A schema declaring no `key` extracts,
   projects, indexes and queries exactly as before.
 
