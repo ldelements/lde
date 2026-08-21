@@ -438,6 +438,100 @@ resolves labels from; without it, everything keeps serving `label`. A facet
 bucket’s `label` is unaffected: it is per-facet-field, and a per-type name would
 make the bucket shape non-uniform.
 
+### Document key
+
+A Root Type is keyed on the node’s IRI unless it names a **`key` field** to read
+the key from. `key` has the shape of `labelField` – _which field is the label_ –
+and says _which field holds the key_:
+
+```ts
+const place = defineSearchType({
+  name: 'Place',
+  class: `${SCHEMA}Place`,
+  labelField: 'name',
+  key: {
+    field: '_sameAs',
+    // A preference order, not a filter: GeoNames first, then any other source
+    // an authority can resolve; nothing matched keeps the publisher’s node.
+    pick: (candidates) =>
+      candidates.find(isGeoNames) ?? candidates.find(isCovered),
+  },
+  fields: [
+    {
+      name: 'name',
+      kind: 'text',
+      locales: ['nl', 'und'],
+      path: `<${SCHEMA}name>`,
+      output: true,
+      searchable: { weight: 3 },
+    },
+    {
+      // Internal (no role): read for the key, pruned before the writer.
+      name: '_sameAs',
+      kind: 'reference',
+      array: true,
+      path: `<${SCHEMA}sameAs>`,
+      transform: normaliseIri,
+    },
+  ],
+});
+```
+
+- **`key.field`** names a declared field of the type: a `path`-bearing, `array`
+  reference field that is not `inline`. Its values are the key candidates.
+  Because it is an ordinary field, everything that already applies to fields
+  applies to the candidates – it is extracted like any field, a reader transform
+  that repairs reference values covers it, and the field’s own `transform` is
+  where IRI normalisation lives, so two spellings of one IRI become one
+  candidate before anything chooses between them.
+- **`key.pick`** chooses among the candidates: `(candidates) => key | undefined`,
+  where `undefined` keeps the node’s own IRI. It defaults to the first candidate,
+  and is not consulted for a node whose key field is empty.
+- **The guards.** Candidates reach `pick` transformed, IRI-filtered, deduplicated
+  and **sorted**, so the default is deterministic whatever order the CONSTRUCT
+  returned them in. `pick` must return one of them or `undefined` – anything else
+  throws, naming the node and its candidates – so a key is always an IRI the
+  graph offered for that node. And `pick` must be **pure**: the same function
+  keys the document and every reference to it.
+
+`documentKeyOf` (from `@lde/search/adapter`) is that whole rule in one function,
+for a transform that needs to know a node’s key before the projection runs.
+
+Two consequences are not new rules, only what a document key already means:
+
+- **Several nodes with one key are one document.** The writer upserts by `id`. A
+  deployment that wants the merged document to carry particular content attaches
+  a transform; one that does not gets last-writer-wins, exactly as a shared
+  entity across datasets behaves today.
+- **A reference stores the target’s key.** A `lookup`’s `target` and an
+  `idOnly`’s `labelSource` already mean _this field holds ids of documents in
+  that collection_ – the contract a label lookup and a join rely on – so a
+  reference that names a keyed target stores the referent’s key rather than its
+  node IRI. A reference that names no target is never rewritten: it claimed
+  nothing about a collection. The extraction adds one `OPTIONAL` hop per such
+  reference to read the referent’s key field, so an unaligned referent keeps its
+  row and its own IRI.
+
+What LDE deliberately does not know is _why_ one candidate is preferred over
+another, and what a merged document should say. **LDE decides the key; the
+deployment decides the content.**
+
+Two things to keep in mind when declaring one:
+
+- A transform that **replaces** a root’s quads must re-emit the key field – the
+  existing rule that a field the document needs must be in the stream, applied to
+  one more field. A transform that only adds never meets it.
+- The key is assigned **before any `derive` runs**, so a derive sees the key and
+  never the node IRI. A deployment that wants the node IRI declares a plain
+  `idOnly` reference over the same path.
+- A work in dataset A referencing a node **in dataset B** gets no candidates (the
+  hop runs against A’s distribution), so it stores the node IRI and does not
+  resolve against B’s keyed document. Publishers reference each other through
+  `sameAs` rather than directly, and such a reference is already unresolvable
+  today for every purpose but labels.
+
+See [ADR 22](../decisions/0022-key-a-root-type-on-a-declared-field).
+
 ### Projecting what a lookup carries
 
 A `lookup` declares no field list. What it _fetches_ is named per query, by a
@@ -728,7 +822,8 @@ reported to `onIgnoredFilter`, since neither compiled as written.
 
 ### Lookup by IRI
 
-Every type is filterable on **`id`** – the document’s IRI – without declaring
+Every type is filterable on **`id`** – the document’s key, which is the node’s
+IRI unless the type declares a [`key` field](#document-key) – without declaring
 it, and every surface returns it. It is the one field no `SearchType` declares,
 because every indexed thing already carries it: it is the hit’s identity
 (`SearchHit.id`), not a value in its `ResultDocument`. `searchSchema()` rejects

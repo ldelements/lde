@@ -245,6 +245,14 @@ declare a `path`.** Projection skips a field with neither a `path` nor a
 `derive`, so a transform-minted IR Alias is otherwise never read and the field
 ships empty.
 
+The same rule bites once more where a root type declares a
+[document key](./search#document-key): **a transform that replaces a root’s
+quads must re-emit the key field.** The key is read off the projected frame like
+any other field, so a replaced root that drops it is keyed on its node IRI
+instead – and every reference to it, which is keyed independently, then points
+at a document that was never written. A transform that only adds quads (the
+documented use) never meets this.
+
 ## Compose it yourself
 
 Reach for this only when the deployment needs something `createSearchIndexer`

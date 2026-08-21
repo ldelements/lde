@@ -4,6 +4,7 @@ import {
   assertValidSearchType,
   datasetField,
   displayFieldName,
+  documentKeyOf,
   displayFieldPattern,
   displayLangOf,
   facetableFields,
@@ -22,12 +23,15 @@ import {
   physicalFields,
   referenceFields,
   referenceTypeNamed,
+  rootTypeNamed,
   searchableFields,
   searchSchema,
   sortableFields,
   unixSecondsToIso,
   validateSearchType,
+  type KeyField,
   type ReferenceStrategy,
+  type RootType,
   type SearchField,
   type SearchType,
   type TextField,
@@ -1508,5 +1512,221 @@ describe('date storage codec', () => {
     const ce = isoToUnixSeconds('1100') ?? 0;
     expect(deepTime).toBeLessThan(bce);
     expect(bce).toBeLessThan(ce);
+  });
+});
+
+describe('key fields', () => {
+  const SCHEMA_ORG = 'https://schema.org/';
+  const GEONAMES = 'https://sws.geonames.org/';
+
+  const sameAsField: SearchField = {
+    name: '_sameAs',
+    kind: 'reference',
+    array: true,
+    path: `<${SCHEMA_ORG}sameAs>`,
+  };
+  const nameField: SearchField = {
+    name: 'name',
+    kind: 'text',
+    path: `<${SCHEMA_ORG}name>`,
+    locales: ['und'],
+    output: true,
+    searchable: { weight: 1 },
+  };
+  /** A `Place` keyed on its alignment target, with an overridable key. */
+  const keyedPlace = (key: RootType['key'] = { field: '_sameAs' }) =>
+    ({
+      name: 'Place',
+      class: `${SCHEMA_ORG}Place`,
+      labelField: 'name',
+      key,
+      fields: [nameField, sameAsField],
+    }) as const satisfies SearchType;
+
+  describe('declaration', () => {
+    it('accepts a key naming a path-bearing, array, non-inline reference field', () => {
+      expect(() => searchSchema(keyedPlace())).not.toThrow();
+      expect(validateSearchType(keyedPlace())).toEqual([]);
+    });
+
+    it('rejects a key naming a field the type does not declare', () => {
+      expect(validateSearchType(keyedPlace({ field: 'absent' }))).toEqual([
+        { field: 'absent', reason: 'key-field-unknown' },
+      ]);
+    });
+
+    it('rejects a key on a field that is not a reference', () => {
+      // Candidates are IRIs, and the projection reads them as such.
+      expect(validateSearchType(keyedPlace({ field: 'name' }))).toEqual([
+        { field: 'name', reason: 'key-field-not-reference' },
+      ]);
+    });
+
+    it('rejects a key field with no path: a key is read from the graph', () => {
+      expect(
+        validateSearchType({
+          ...keyedPlace(),
+          fields: [
+            nameField,
+            {
+              name: '_sameAs',
+              kind: 'reference',
+              array: true,
+              derive: () => [],
+            },
+          ],
+        }),
+      ).toEqual([{ field: '_sameAs', reason: 'key-field-without-path' }]);
+    });
+
+    it('rejects a single-valued key field: it would drop candidates unseen', () => {
+      // A node may offer several; a single-valued field keeps the first,
+      // whatever the CONSTRUCT’s order, so `pick` would never see the rest.
+      expect(
+        validateSearchType({
+          ...keyedPlace(),
+          fields: [nameField, { ...sameAsField, array: undefined }],
+        }),
+      ).toEqual([{ field: '_sameAs', reason: 'key-field-not-array' }]);
+    });
+
+    it('rejects an inline key field: it carries fields, not an IRI', () => {
+      const marker: SearchType = {
+        name: 'Marker',
+        fields: [nameField],
+      };
+      const inlineKeyed: SearchType = {
+        ...keyedPlace(),
+        fields: [
+          nameField,
+          { ...sameAsField, ref: { strategy: 'inline', typeName: 'Marker' } },
+        ],
+      };
+      expect(validateSearchType(inlineKeyed)).toEqual([
+        { field: '_sameAs', reason: 'key-field-inline' },
+      ]);
+      expect(() => searchSchema(inlineKeyed, marker)).toThrow(
+        /“_sameAs” \(key-field-inline\)/,
+      );
+    });
+
+    it('rejects a pick that is not a function', () => {
+      // A declaration built outside TypeScript (a generator, plain JS) is what
+      // this guards; a typed one cannot express it.
+      const key = { field: '_sameAs', pick: 'first' } as unknown as KeyField;
+      expect(validateSearchType(keyedPlace(key))).toEqual([
+        { field: '_sameAs', reason: 'key-pick-not-a-function' },
+      ]);
+    });
+
+    it('rejects a key on a Reference Type, which is never keyed at all', () => {
+      // Nested inside its referrer rather than keyed in a collection of its own.
+      const nested = {
+        name: 'Marker',
+        key: { field: '_sameAs' },
+        fields: [sameAsField],
+      } as unknown as SearchType;
+      expect(validateSearchType(nested)).toEqual([
+        { field: '_sameAs', reason: 'key-not-allowed' },
+      ]);
+    });
+  });
+
+  describe('documentKeyOf', () => {
+    it('keys on the node’s own IRI for a type that declares no key', () => {
+      const unkeyed: RootType = {
+        name: 'Place',
+        class: `${SCHEMA_ORG}Place`,
+        fields: [sameAsField],
+      };
+      expect(
+        documentKeyOf(unkeyed, 'https://ex/place/1', [`${GEONAMES}1`]),
+      ).toBe('https://ex/place/1');
+    });
+
+    it('defaults to the first candidate, sorted and deduplicated', () => {
+      // Sorting is what makes the default deterministic whatever order the
+      // CONSTRUCT returned the values in.
+      const place = keyedPlace();
+      expect(
+        documentKeyOf(place, 'https://ex/place/1', [
+          `${GEONAMES}2`,
+          `${GEONAMES}1`,
+          `${GEONAMES}1`,
+        ]),
+      ).toBe(`${GEONAMES}1`);
+    });
+
+    it('applies the key field’s transform, then filters non-IRIs', () => {
+      const place = {
+        ...keyedPlace(),
+        fields: [
+          nameField,
+          {
+            ...sameAsField,
+            transform: (iri: string) => iri.replace(/\/$/, ''),
+          },
+        ],
+      } as const satisfies SearchType;
+      expect(
+        documentKeyOf(place, 'https://ex/place/1', [
+          'boerenbont',
+          `${GEONAMES}1/`,
+        ]),
+      ).toBe(`${GEONAMES}1`);
+    });
+
+    it('keeps the node’s IRI when nothing survives, without consulting pick', () => {
+      let consulted = false;
+      const place = keyedPlace({
+        field: '_sameAs',
+        pick: (candidates) => {
+          consulted = true;
+          return candidates[0];
+        },
+      });
+
+      expect(documentKeyOf(place, 'https://ex/place/1', ['_:b0'])).toBe(
+        'https://ex/place/1',
+      );
+      expect(consulted).toBe(false);
+    });
+
+    it('keeps the node’s IRI when pick declines', () => {
+      const place = keyedPlace({ field: '_sameAs', pick: () => undefined });
+      expect(documentKeyOf(place, 'https://ex/place/1', [`${GEONAMES}1`])).toBe(
+        'https://ex/place/1',
+      );
+    });
+
+    it('throws when pick returns something no candidate offered', () => {
+      const place = keyedPlace({
+        field: '_sameAs',
+        pick: () => 'https://elsewhere/1',
+      });
+      expect(() =>
+        documentKeyOf(place, 'https://ex/place/1', [`${GEONAMES}1`]),
+      ).toThrow(/is not among its candidates/);
+    });
+  });
+});
+
+describe('rootTypeNamed', () => {
+  const place: SearchType = {
+    name: 'Place',
+    class: 'https://schema.org/Place',
+    fields: [],
+  };
+  const marker: SearchType = { name: 'Marker', fields: [] };
+
+  it('resolves a Root Type by the name a declaration points at', () => {
+    expect(rootTypeNamed(searchSchema(place, marker), 'Place')).toBe(place);
+  });
+
+  it('resolves neither a Reference Type nor an undeclared name', () => {
+    // The two name indexes are disjoint: `searchSchema` rejects a name twice.
+    const schema = searchSchema(place, marker);
+    expect(rootTypeNamed(schema, 'Marker')).toBeUndefined();
+    expect(rootTypeNamed(schema, 'Absent')).toBeUndefined();
   });
 });

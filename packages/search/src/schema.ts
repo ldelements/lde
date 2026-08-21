@@ -354,6 +354,57 @@ export interface SearchTypeBase {
 }
 
 /**
+ * Which declared field of a {@link RootType} holds its **document key**, when
+ * that key is not the node’s own IRI. It has the shape of
+ * {@link SearchTypeBase.labelField} – *which field is the label* – and says
+ * *which field holds the key*: a statement about the search document, never
+ * about the world, so the words a deployment reaches for (identity, alignment,
+ * canonical, authority) stay in the deployment’s own schema comments.
+ *
+ * Two things that already hold of keys then hold here too, without a new rule:
+ * several nodes sharing a key are **one document** (the writer upserts by `id`,
+ * so a deployment that wants particular content on the merged document attaches
+ * a transform, and one that does not gets last-writer-wins), and a reference
+ * into a keyed type stores the **target’s key** – a `lookup`/`labelSource`
+ * already means *this field holds ids of documents in that collection*
+ * (ADR 20), which storing the node IRI would break.
+ *
+ * See [ADR 22](../../docs/decisions/0022-key-a-root-type-on-a-declared-field.md).
+ */
+export interface KeyField {
+  /**
+   * The `name` of a declared field of this type whose values are the key
+   * candidates: a path-bearing, `array` {@link ReferenceField} that is not
+   * `inline` ({@link searchSchema} validates all four). Being an ordinary field
+   * is the point – its extraction branch already exists, a reader transform
+   * that repairs reference values covers it the day it is declared, and its own
+   * {@link ReferenceField.transform} is where IRI normalisation lives, so two
+   * spellings of one IRI become one candidate before anything chooses among
+   * them.
+   *
+   * A transform that **replaces** a root’s quads must re-emit this field, the
+   * existing rule that *a field the document needs must be in the stream*
+   * applied to one more field; a transform that only adds never meets it.
+   */
+  readonly field: string;
+  /**
+   * Choose the key among the candidates – the key field’s values after its
+   * `transform`, IRI-filtered, deduplicated and sorted, so the default is
+   * deterministic whatever order the CONSTRUCT returned them in. Return one of
+   * them, or `undefined` to keep the node’s own IRI; anything else throws at
+   * projection. Not consulted for a node whose key field is empty.
+   *
+   * Must be **pure**: the same function keys the document and every reference
+   * to it, so a `pick` that consulted the network or the clock could key the
+   * two differently and leave a reference dangling. LDE never inspects an
+   * IRI’s shape – it asks.
+   *
+   * @default the first candidate
+   */
+  readonly pick?: (candidates: readonly string[]) => string | undefined;
+}
+
+/**
  * A **Root Type**: a {@link SearchType} that is indexed. It declares a `class`,
  * roots are selected for it, a Writer owns a collection for it, and the
  * {@link SearchSchema} is keyed by it. A SHACL generator can emit one per
@@ -365,6 +416,9 @@ export interface RootType extends SearchTypeBase {
    *  key a {@link SearchSchema} maps this type under. Its presence is what makes
    *  a type a Root Type – and so what gives it a collection. */
   readonly class: string;
+  /** Which declared field holds this type’s document key, when it is not the
+   *  node’s own IRI ({@link KeyField}, {@link documentKeyOf}). */
+  readonly key?: KeyField;
 }
 
 /**
@@ -383,6 +437,10 @@ export interface ReferenceType extends SearchTypeBase {
    *  {@link SearchField} discriminates by `kind`: an indexed Reference Type
    *  fails to compile, not at run time. */
   readonly class?: never;
+  /** A Reference Type has no document key to declare: it is nested inside its
+   *  referrer rather than keyed in a collection of its own. `never` for the
+   *  same reason `class` is. */
+  readonly key?: never;
 }
 
 /**
@@ -452,6 +510,21 @@ const referenceTypesBySchema = new WeakMap<
   ReadonlyMap<string, ReferenceType>
 >();
 
+/**
+ * The Root Type name index each {@link SearchSchema} carries alongside its
+ * class-keyed map. A schema is keyed by `class` because that is what a selector
+ * and a Writer address it by, while every declaration that points at another
+ * type – a `lookup`’s `target`, an `idOnly`’s `labelSource`, a join edge –
+ * names it. Kept beside the map rather than rebuilt per consumer, so the
+ * projection, the label-source validation and an adapter’s lookup resolve a
+ * target the same way ({@link rootTypeNamed}) instead of each maintaining a
+ * by-name map of its own.
+ */
+const rootTypesBySchema = new WeakMap<
+  SearchSchema,
+  ReadonlyMap<string, RootType>
+>();
+
 /** Whether a declared type is a {@link RootType} (declares a `class`) rather
  *  than a {@link ReferenceType}. */
 function isRootType(searchType: SearchType): searchType is RootType {
@@ -505,14 +578,21 @@ export function searchSchema<const Types extends readonly SearchType[]>(
   );
   assertResolvableInlineReferences(types, referenceTypes);
   assertServiceableNestedFields(referenceTypes);
-  assertResolvableLabelSources(types);
-  // The one blessed cast: only this validated constructor mints the brand.
+  // The one blessed cast: only this validated constructor mints the brand. Built
+  // BEFORE the schema-wide assertions that resolve a type by name, so they can
+  // use `rootTypeNamed` – the same reading the projection and an adapter's
+  // lookup use – rather than a by-name map of their own. The schema stays local
+  // until every assertion has passed, so an invalid one is never observable.
+  const rootTypes = types.filter(isRootType);
   const schema = new Map(
-    types
-      .filter(isRootType)
-      .map((searchType) => [searchType.class, searchType]),
+    rootTypes.map((searchType) => [searchType.class, searchType]),
   ) as unknown as SearchSchema<Types>;
   referenceTypesBySchema.set(schema, referenceTypes);
+  rootTypesBySchema.set(
+    schema,
+    new Map(rootTypes.map((searchType) => [searchType.name, searchType])),
+  );
+  assertResolvableLabelSources(types, schema);
   // Build the join graph eagerly and discard it: it is cached per schema, and
   // building it is what enforces the schema-wide join rules (one joinable
   // reference per target, every target an indexed Root Type, no cycles). A
@@ -533,6 +613,25 @@ export function referenceTypeNamed(
   name: string,
 ): ReferenceType | undefined {
   return referenceTypesBySchema.get(schema)?.get(name);
+}
+
+/**
+ * The {@link RootType} a declaration names – a `lookup`’s `target`, an
+ * `idOnly`’s {@link ReferenceField.labelSource} ({@link labelSourceNameOf}), a
+ * join edge – or `undefined` when the schema declares no Root Type by that
+ * name. The one reading of *which type does this point at*, so the projection
+ * (which re-keys a reference through its target’s {@link KeyField}), the
+ * label-source validation and an adapter’s lookup cannot resolve a target
+ * differently.
+ *
+ * Complements {@link referenceTypeNamed}: the two name indexes are disjoint,
+ * because {@link searchSchema} rejects a name declared twice.
+ */
+export function rootTypeNamed(
+  schema: SearchSchema,
+  name: string,
+): RootType | undefined {
+  return rootTypesBySchema.get(schema)?.get(name);
 }
 
 /** Whether a field is an inline reference – a {@link ReferenceField} whose
@@ -801,15 +900,16 @@ export function labelSourceNameOf(field: ReferenceField): string | undefined {
  * can actually serve labels ({@link labelFieldOf}). Checked schema-wide,
  * because a single declaration cannot see its siblings.
  *
- * That leaves only a {@link RootType}, without naming one: a label field is
- * `searchable`, and {@link assertServiceableNestedFields} already rejects a
- * `searchable` field on a Reference Type – so a Reference Type can never serve
- * labels, and a resolved label always has a collection to come from.
+ * Resolved through {@link rootTypeNamed}, which is exactly the set that can
+ * serve labels: a label field is `searchable`, and
+ * {@link assertServiceableNestedFields} – which runs first – already rejects a
+ * `searchable` field on a Reference Type, so a resolved label always has a
+ * collection to come from.
  */
-function assertResolvableLabelSources(types: readonly SearchType[]): void {
-  const byName = new Map(
-    types.map((searchType) => [searchType.name, searchType]),
-  );
+function assertResolvableLabelSources(
+  types: readonly SearchType[],
+  schema: SearchSchema,
+): void {
   for (const searchType of types) {
     for (const field of searchType.fields) {
       const labelSource = (field as { readonly labelSource?: string })
@@ -836,7 +936,7 @@ function assertResolvableLabelSources(types: readonly SearchType[]): void {
       if (sourceName === undefined) {
         continue;
       }
-      const source = byName.get(sourceName);
+      const source = rootTypeNamed(schema, sourceName);
       if (source === undefined) {
         throw new Error(
           `Reference “${searchType.name}.${field.name}” names unknown label source “${sourceName}”; declare a SearchType with that name.`,
@@ -884,7 +984,14 @@ export interface SearchTypeIssue {
     | 'joinable-not-allowed'
     | 'joinable-without-label-source'
     | 'joinable-with-inline-ref'
-    | 'reserved-field-name';
+    | 'reserved-field-name'
+    | 'key-field-unknown'
+    | 'key-field-not-reference'
+    | 'key-field-without-path'
+    | 'key-field-not-array'
+    | 'key-field-inline'
+    | 'key-pick-not-a-function'
+    | 'key-not-allowed';
 }
 
 /**
@@ -996,7 +1103,10 @@ const LOCALE_PATTERN = /^[A-Za-z0-9]+(-[A-Za-z0-9]+)*$/;
  *   field has exactly one), is not an `inline` reference (a projection value is
  *   a bare IRI, with no referent to carry fields from), and no two fields
  *   declare the same projection value – which would leave a consumer reading
- *   the dataset off a declaration no rule picks between.
+ *   the dataset off a declaration no rule picks between;
+ * - a {@link RootType.key} names a declared, `path`-bearing, `array`,
+ *   non-`inline` `reference` field of this type, and its `pick` is a function
+ *   ({@link keyIssues}); a {@link ReferenceType} declares no key at all.
  *
  * Pure and total: returns every issue rather than throwing;
  * {@link assertValidSearchType} is the throwing entry point.
@@ -1158,6 +1268,59 @@ export function validateSearchType(
         issue('from-with-inline-ref');
       }
     }
+  }
+  issues.push(...keyIssues(searchType));
+  return issues;
+}
+
+/**
+ * The issues a type’s {@link RootType.key} declaration carries, each filed
+ * under the field name the declaration names – so a message reads like every
+ * other one, naming the field the rule is about rather than a member.
+ *
+ * The key field must be an ordinary declared field the extraction already
+ * reads and the projection already applies a `transform` to: a `reference`
+ * (candidates are IRIs), with a `path` (a key read from the graph, not one
+ * derived from a document that is keyed already), `array` (a node may offer
+ * several candidates, and a single-valued field would drop all but the first
+ * before `pick` ever saw them), and not `inline` (which carries the referent’s
+ * fields rather than its IRI, so it offers no candidate at all).
+ */
+function keyIssues(searchType: SearchType): readonly SearchTypeIssue[] {
+  const key = (searchType as RootType).key;
+  if (key === undefined) {
+    return [];
+  }
+  const issue = (reason: SearchTypeIssue['reason']) => ({
+    field: key.field,
+    reason,
+  });
+  // A Reference Type is nested inside its referrer, never keyed in a collection
+  // of its own – so a key on one states a rule nothing could apply.
+  if (searchType.class === undefined) {
+    return [issue('key-not-allowed')];
+  }
+  const issues: SearchTypeIssue[] = [];
+  if (key.pick !== undefined && typeof key.pick !== 'function') {
+    issues.push(issue('key-pick-not-a-function'));
+  }
+  const field = fieldNamed(searchType, key.field);
+  if (field === undefined) {
+    issues.push(issue('key-field-unknown'));
+    return issues;
+  }
+  if (field.kind !== 'reference') {
+    issues.push(issue('key-field-not-reference'));
+    return issues;
+  }
+  if (field.path === undefined) {
+    issues.push(issue('key-field-without-path'));
+  }
+  if (field.array !== true) {
+    issues.push(issue('key-field-not-array'));
+  }
+  if (field.ref?.strategy === 'inline') {
+    issues.push(issue('key-field-inline'));
   }
   return issues;
 }
@@ -1384,6 +1547,76 @@ export function fieldNamed(
   name: string,
 ): SearchField | undefined {
   return searchType.fields.find((field) => field.name === name);
+}
+
+/**
+ * The **document key** of one node of `searchType`: what the projection writes
+ * as the document’s `id`, and what a reference into this type stores.
+ *
+ * The whole rule, in one place, so the projection and any transform that needs
+ * to know a node’s key read the same answer:
+ *
+ * 1. a type declaring no {@link RootType.key} keys on `nodeIri` – the node’s own
+ *    IRI, as every type does today;
+ * 2. otherwise the key field’s `rawValues` become **candidates**: its
+ *    {@link ReferenceField.transform} (where IRI normalisation lives, so two
+ *    spellings of one IRI become one candidate), then the
+ *    {@link isAbsoluteIri} filter, then dedupe and sort – so the default is
+ *    deterministic whatever order the CONSTRUCT returned them in;
+ * 3. no candidate keys on `nodeIri`, without consulting {@link KeyField.pick};
+ * 4. otherwise {@link KeyField.pick} chooses (defaulting to the first
+ *    candidate), and `undefined` keeps `nodeIri`.
+ *
+ * So a key is always either the node’s own IRI or an IRI the graph offered for
+ * that node – never one invented in between. A `pick` returning anything else
+ * throws, naming the node and the candidates: it is a bug in a pure function
+ * that keys both the document and every reference to it, and letting it through
+ * would key those two differently.
+ *
+ * @param nodeIri the node’s own IRI – the key it falls back to
+ * @param rawValues the key field’s values as the frame carries them, untransformed
+ */
+export function documentKeyOf(
+  searchType: RootType,
+  nodeIri: string,
+  rawValues: readonly string[],
+): string {
+  const key = searchType.key;
+  if (key === undefined) {
+    return nodeIri;
+  }
+  // Guaranteed a declared reference field by `searchSchema`, which is what
+  // validates a `key` at all.
+  const { transform } = fieldNamed(searchType, key.field) as ReferenceField;
+  const candidates = [
+    ...new Set(
+      (transform === undefined ? rawValues : rawValues.map(transform)).filter(
+        isAbsoluteIri,
+      ),
+    ),
+  ].sort();
+  if (candidates.length === 0) {
+    return nodeIri;
+  }
+  const picked = (key.pick ?? firstCandidate)(candidates);
+  if (picked === undefined) {
+    return nodeIri;
+  }
+  if (!candidates.includes(picked)) {
+    throw new Error(
+      `The “pick” of “${searchType.name}.key” returned “${picked}” for <${nodeIri}>, which is not among its candidates (${candidates
+        .map((candidate) => `<${candidate}>`)
+        .join(
+          ', ',
+        )}); a key must be one of them, or “undefined” to keep the node’s own IRI.`,
+    );
+  }
+  return picked;
+}
+
+/** The {@link KeyField.pick} a type that declares none falls back to. */
+function firstCandidate(candidates: readonly string[]): string {
+  return candidates[0];
 }
 
 /**
