@@ -1,3 +1,9 @@
+## 0.9.2 (2026-08-21)
+
+### 🩹 Fixes
+
+- **dataset-registry-client:** type the IRI-valued schema properties as IRIs ([#762](https://github.com/ldelements/lde/pull/762))
+
 ## 0.9.1 (2026-07-24)
 
 ### 🧱 Updated Dependencies

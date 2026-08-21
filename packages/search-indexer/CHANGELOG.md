@@ -1,3 +1,13 @@
+## 0.13.1 (2026-08-21)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline-console-reporter to 0.27.1
+- Updated @lde/dataset-registry-client to 0.9.2
+- Updated @lde/search-typesense to 0.27.1
+- Updated @lde/search-pipeline to 0.24.1
+- Updated @lde/pipeline to 0.36.1
+
 ## 0.13.0 (2026-08-20)
 
 ### 🧱 Updated Dependencies
