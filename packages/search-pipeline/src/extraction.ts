@@ -11,11 +11,20 @@ import {
 import { Parser } from '@traqula/parser-sparql-1-1';
 import { Generator } from '@traqula/generator-sparql-1-1';
 import {
+  fieldNamed,
   irAlias,
   isInlineReference,
+  labelSourceNameOf,
   referenceTypeNamed,
+  rootTypeNamed,
 } from '@lde/search/adapter';
-import type { SearchSchema, SearchType } from '@lde/search';
+import type {
+  ReferenceField,
+  RootType,
+  SearchField,
+  SearchSchema,
+  SearchType,
+} from '@lde/search';
 
 const factory = new AstFactory();
 const parser = new Parser();
@@ -55,6 +64,13 @@ export interface ExtractionOptions {
  *   nested template (`{ ?root <…/ref> ?r . ?r <…/field> ?v }`), recursing into
  *   the reference type to the schema’s declared depth. The referent-binding hop
  *   uses the source `path`; the emitted triples use the minted aliases.
+ * - **references into a keyed type**: a reference naming a target that declares
+ *   a `key` gets its branch extended with an `OPTIONAL` hop reading the
+ *   referent’s key field, emitted under the **target’s** alias for it – so the
+ *   projection can store the referent’s document key rather than its node IRI.
+ *   `OPTIONAL`, so a referent with no key candidate keeps its row. The root side
+ *   needs nothing: a key field is a declared field, so its own branch and
+ *   template triple are already there.
  *
  * Wire the result into a `SparqlConstructReader` (see `searchStages`), which
  * runs it per batch with the roots injected as VALUES.
@@ -155,20 +171,89 @@ function buildFor(
     } else {
       const value = factory.termVariable(`v${counter.next++}`, factory.gen());
       template.push(factory.triple(subject, alias, value));
-      branches.push(
-        factory.patternGroup(
-          [
-            factory.patternBgp(
-              [factory.triple(subject, sourcePath, value)],
-              factory.gen(),
-            ),
-          ],
+      const patterns: Pattern[] = [
+        factory.patternBgp(
+          [factory.triple(subject, sourcePath, value)],
           factory.gen(),
         ),
-      );
+      ];
+      const keyed = keyedTargetOf(field, schema);
+      if (keyed !== undefined) {
+        const built = buildKeyHop(keyed.target, keyed.keyField, value, counter);
+        template.push(built.triple);
+        patterns.push(built.pattern);
+      }
+      branches.push(factory.patternGroup(patterns, factory.gen()));
     }
   }
   return { template, branches };
+}
+
+/**
+ * The keyed Root Type a reference points at, with the field its key is read
+ * from: a `lookup`’s `target` or an `idOnly`’s `labelSource`
+ * ({@link labelSourceNameOf}) that declares a {@link RootType.key}, or
+ * `undefined` for every other field. Naming the target is exactly the boundary
+ * the projection re-keys along, so the extraction reads the same declarations
+ * rather than a rule of its own: a reference that names no target keeps the
+ * node IRI, and needs no hop.
+ */
+function keyedTargetOf(
+  field: SearchField,
+  schema: SearchSchema,
+): { readonly target: RootType; readonly keyField: KeyedField } | undefined {
+  if (field.kind !== 'reference') {
+    return undefined;
+  }
+  const targetName = labelSourceNameOf(field as ReferenceField);
+  const target =
+    targetName === undefined ? undefined : rootTypeNamed(schema, targetName);
+  if (target?.key === undefined) {
+    return undefined;
+  }
+  // `searchSchema` guarantees a declared, path-bearing key field, so the target
+  // – which came out of the schema – always has one.
+  const keyField = fieldNamed(target, target.key.field) as KeyedField;
+  return { target, keyField };
+}
+
+/** A key field as the schema guarantees it: path-bearing. */
+type KeyedField = SearchField & { readonly path: string };
+
+/**
+ * The one-field hop that reads a referent’s key: a template triple emitting the
+ * key field under the **target’s** IR Alias, and an `OPTIONAL` branch binding
+ * it. The referent recursion an inline reference already performs, for a single
+ * field and wrapped in `OPTIONAL` rather than conjoined – so a referent with no
+ * key candidate keeps its row and still stores its own IRI, instead of the
+ * whole reference dropping out of the CONSTRUCT.
+ *
+ * It sits inside its own UNION branch (the one the reference contributes), so it
+ * multiplies against nothing.
+ */
+function buildKeyHop(
+  target: RootType,
+  keyField: KeyedField,
+  referent: TermVariable,
+  counter: VariableCounter,
+): { readonly triple: TripleNesting; readonly pattern: Pattern } {
+  const key = factory.termVariable(`k${counter.next++}`, factory.gen());
+  return {
+    triple: factory.triple(
+      referent,
+      factory.termNamed(factory.gen(), irAlias(target, keyField)),
+      key,
+    ),
+    pattern: factory.patternOptional(
+      [
+        factory.patternBgp(
+          [factory.triple(referent, liftPath(keyField.path), key)],
+          factory.gen(),
+        ),
+      ],
+      factory.gen(),
+    ),
+  };
 }
 
 /**

@@ -8,7 +8,13 @@ import {
   type TripleNesting,
 } from '@traqula/rules-sparql-1-1';
 import { defineSearchType, searchSchema } from '@lde/search';
-import { irAlias, referenceTypeNamed } from '@lde/search/adapter';
+import {
+  fieldNamed,
+  irAlias,
+  labelSourceNameOf,
+  referenceTypeNamed,
+  rootTypeNamed,
+} from '@lde/search/adapter';
 import type { SearchSchema, SearchType } from '@lde/search';
 import { extractionQuery, extractionQueryString } from '../src/extraction.js';
 
@@ -296,6 +302,121 @@ describe('inline references (nested template)', () => {
   });
 });
 
+describe('references into a keyed type', () => {
+  // A SCHEMA-AP-NDE-shaped place: keyed on its alignment target, so a work
+  // referencing it must store that key rather than the publisher’s node IRI.
+  const place = defineSearchType({
+    name: 'Place',
+    class: `${SCHEMA}Place`,
+    labelField: 'name',
+    key: { field: '_sameAs' },
+    fields: [
+      {
+        name: 'name',
+        kind: 'text',
+        path: `<${SCHEMA}name>`,
+        locales: ['nl', 'und'],
+        output: true,
+        searchable: { weight: 3 },
+      },
+      {
+        name: '_sameAs',
+        kind: 'reference',
+        array: true,
+        path: `<${SCHEMA}sameAs>`,
+      },
+    ],
+  });
+  const work = defineSearchType({
+    name: 'CreativeWork',
+    class: `${SCHEMA}CreativeWork`,
+    fields: [
+      {
+        name: 'locationCreated',
+        kind: 'reference',
+        path: `<${SCHEMA}locationCreated>`,
+        facetable: true,
+        output: true,
+        ref: { strategy: 'lookup', target: 'Place' },
+      },
+    ],
+  });
+  const keyedSchema = searchSchema(work, place);
+
+  it('extends the reference branch with an OPTIONAL hop under the target’s alias', () => {
+    const query = extractionQuery(work, keyedSchema);
+
+    // ?root <…/locationCreated> ?v ; ?v <urn:lde:Place/_sameAs> ?k – the
+    // referent’s key is minted against PLACE, the type that declares the field.
+    expect(templatePredicates(query)).toEqual([
+      irAlias(work, work.fields[0]),
+      irAlias(place, place.fields[1]),
+    ]);
+    const [referenceTriple, keyTriple] = templateTriples(query);
+    expect(keyTriple.subject).toEqual(referenceTriple.object);
+
+    // One branch, with the hop OPTIONAL inside it: an unaligned referent keeps
+    // its row (and so its own IRI) instead of dropping out of the CONSTRUCT.
+    const [group] = unionBranches(query);
+    expect(group.patterns).toHaveLength(2);
+    expect(group.patterns[0]).toMatchObject({ subType: 'bgp' });
+    expect(group.patterns[1]).toMatchObject({ subType: 'optional' });
+    expect(extractionQueryString(work, keyedSchema)).toContain('OPTIONAL');
+  });
+
+  it('leaves the keyed type’s own extraction unchanged', () => {
+    // The key field is an ordinary declared field, so its branch and template
+    // triple are already there; keying adds nothing on the root side.
+    expect(templatePredicates(extractionQuery(place, keyedSchema))).toEqual([
+      irAlias(place, place.fields[0]),
+      irAlias(place, place.fields[1]),
+    ]);
+    expect(unionBranches(extractionQuery(place, keyedSchema))).toHaveLength(2);
+  });
+
+  it('adds no hop for a reference that names no target', () => {
+    // An idOnly reference with no label source never claimed to hold a
+    // collection’s ids, so nothing re-keys it and nothing is extracted for it.
+    const unnamed = defineSearchType({
+      name: 'Other',
+      class: 'urn:x:Other',
+      fields: [
+        {
+          name: 'sameAs',
+          kind: 'reference',
+          array: true,
+          path: `<${SCHEMA}sameAs>`,
+          facetable: true,
+        },
+      ],
+    });
+    const query = extractionQuery(unnamed, searchSchema(unnamed, place));
+    expect(templatePredicates(query)).toEqual([
+      irAlias(unnamed, unnamed.fields[0]),
+    ]);
+    const [group] = unionBranches(query);
+    expect(group.patterns).toHaveLength(1);
+  });
+
+  it('adds no hop for a target the given schema does not declare', () => {
+    // Generated against a foreign schema that omits `Place` – the same graceful
+    // degradation an unresolvable inline reference makes.
+    const foreignSchema = searchSchema({
+      name: 'Other',
+      class: 'urn:x:Other',
+      fields: [],
+    });
+    const [group] = unionBranches(extractionQuery(work, foreignSchema));
+    expect(group.patterns).toHaveLength(1);
+  });
+
+  it('adds no hop for a reference into a target that declares no key', () => {
+    const query = extractionQuery(creativeWork, drapoSchema);
+    const [, , creatorBranch] = unionBranches(query);
+    expect(creatorBranch.patterns).toHaveLength(1);
+  });
+});
+
 describe('extraction ⟷ projection contract', () => {
   // The drift guard: every IR Alias the generator mints is one the projection
   // reads, and vice versa. Both derive from the same rule – a path-bearing field,
@@ -311,13 +432,31 @@ describe('extraction ⟷ projection contract', () => {
         continue;
       }
       aliases.add(irAlias(searchType, field));
-      if (field.kind === 'reference' && field.ref?.strategy === 'inline') {
+      if (field.kind !== 'reference') {
+        continue;
+      }
+      if (field.ref?.strategy === 'inline') {
         const referenceType = referenceTypeNamed(schema, field.ref.typeName);
         if (referenceType !== undefined) {
           for (const alias of projectionReads(referenceType, schema)) {
             aliases.add(alias);
           }
         }
+        continue;
+      }
+      // A reference into a keyed type: the projection reads the referent’s key
+      // candidates off the frame, under the TARGET’s alias for its key field.
+      const targetName = labelSourceNameOf(field);
+      const target =
+        targetName === undefined
+          ? undefined
+          : rootTypeNamed(schema, targetName);
+      const keyField =
+        target?.key === undefined
+          ? undefined
+          : fieldNamed(target, target.key.field);
+      if (target !== undefined && keyField !== undefined) {
+        aliases.add(irAlias(target, keyField));
       }
     }
     return aliases;
@@ -355,5 +494,46 @@ describe('extraction ⟷ projection contract', () => {
       templatePredicates(extractionQuery(dataset, schema)),
     );
     expect(minted).toEqual(projectionReads(dataset, schema));
+  });
+
+  it('mints exactly the aliases the projection reads, into a keyed target', () => {
+    const place = defineSearchType({
+      name: 'Place',
+      class: `${SCHEMA}Place`,
+      labelField: 'name',
+      key: { field: '_sameAs' },
+      fields: [
+        {
+          name: 'name',
+          kind: 'text',
+          path: `<${SCHEMA}name>`,
+          locales: ['und'],
+          output: true,
+          searchable: { weight: 1 },
+        },
+        {
+          name: '_sameAs',
+          kind: 'reference',
+          array: true,
+          path: `<${SCHEMA}sameAs>`,
+        },
+      ],
+    });
+    const work = defineSearchType({
+      name: 'CreativeWork',
+      class: `${SCHEMA}CreativeWork`,
+      fields: [
+        {
+          name: 'locationCreated',
+          kind: 'reference',
+          path: `<${SCHEMA}locationCreated>`,
+          facetable: true,
+          ref: { strategy: 'lookup', target: 'Place' },
+        },
+      ],
+    });
+    const schema = searchSchema(work, place);
+    const minted = new Set(templatePredicates(extractionQuery(work, schema)));
+    expect(minted).toEqual(projectionReads(work, schema));
   });
 });
