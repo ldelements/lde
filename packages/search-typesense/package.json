@@ -31,7 +31,7 @@
     "typesense": "^3.0.6"
   },
   "devDependencies": {
-    "testcontainers": "^12.0.4"
+    "testcontainers": "^12.1.0"
   },
   "peerDependencies": {
     "@lde/dataset": "^0.7.9",
