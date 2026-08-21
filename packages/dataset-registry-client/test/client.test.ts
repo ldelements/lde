@@ -100,6 +100,26 @@ describe('Client', () => {
       expect(count).toEqual(1);
     });
 
+    it('reads back a distribution that declares no media type', async () => {
+      // Only reachable without media-type criteria: those narrow a dataset’s
+      // distributions to the matching ones, so a filtered query never returns
+      // this distribution.
+      const results = await client.query({
+        $id: 'http://bar.org/id/dataset/bar',
+      });
+
+      const mediaTypes = [];
+      for await (const dataset of results) {
+        mediaTypes.push(
+          ...dataset.distributions.map(
+            (distribution) => distribution.mediaType,
+          ),
+        );
+      }
+
+      expect(mediaTypes).toContain(undefined);
+    });
+
     it('throws an error for non-CONSTRUCT queries', async () => {
       const query = `
         PREFIX dcat: <http://www.w3.org/ns/dcat#>
