@@ -121,6 +121,7 @@ describe('physicalFields', () => {
     expect(physicalFields(keyword)).toEqual({
       search: ['keyword_search'],
       sort: [],
+      facet: 'keyword',
     });
   });
 
@@ -167,7 +168,104 @@ describe('physicalFields', () => {
     expect(physicalFields(publisher)).toEqual({
       search: [],
       sort: [],
+      facet: 'publisher',
     });
+  });
+
+  it('facets a reference on its `_facet` companion only when the type it names declares a policy', () => {
+    const agent: SearchType = {
+      name: 'Agent',
+      class: 'urn:x:Agent',
+      labelField: 'label',
+      facetKeys: { only: (id) => id.startsWith('https://viaf.org/') },
+      fields: [
+        {
+          name: 'label',
+          kind: 'text',
+          locales: ['und'],
+          output: true,
+          searchable: { weight: 1 },
+        },
+      ],
+    };
+    const publisher: SearchField = {
+      name: 'publisher',
+      kind: 'reference',
+      facetable: true,
+      ref: { strategy: 'lookup', target: 'Agent' },
+    };
+    const creator: SearchField = {
+      name: 'creator',
+      kind: 'reference',
+      facetable: true,
+      labelSource: 'Agent',
+    };
+    const mentions: SearchField = {
+      // Names no type, so it inherits nothing – whatever its values point at.
+      name: 'mentions',
+      kind: 'reference',
+      facetable: true,
+    };
+    const derived: SearchField = {
+      // Produces its own values rather than reading a referent: re-keyed by
+      // nothing, narrowed by nothing.
+      name: 'derived',
+      kind: 'reference',
+      facetable: true,
+      labelSource: 'Agent',
+      derive: () => 'https://viaf.org/1',
+    };
+    const schema = searchSchema(agent, {
+      name: 'Dataset',
+      class: 'urn:x:Dataset',
+      fields: [publisher, creator, mentions, derived],
+    });
+
+    expect(physicalFields(publisher, schema).facet).toBe('publisher_facet');
+    expect(physicalFields(creator, schema).facet).toBe('creator_facet');
+    expect(physicalFields(mentions, schema).facet).toBe('mentions');
+    expect(physicalFields(derived, schema).facet).toBe('derived');
+    // Without the schema the target cannot be resolved – the same reading the
+    // projection makes without one.
+    expect(physicalFields(publisher).facet).toBe('publisher');
+    // A facet companion is a role’s fanout, like a search companion: none
+    // without the role.
+    expect(
+      physicalFields({ ...publisher, facetable: undefined }, schema).facet,
+    ).toBeUndefined();
+  });
+});
+
+describe('facet policy', () => {
+  const place = (facetKeys: unknown) =>
+    ({
+      name: 'Place',
+      class: 'urn:x:Place',
+      facetKeys,
+      fields: [],
+    }) as unknown as SearchType;
+
+  it('accepts a policy whose `only` is a function', () => {
+    expect(validateSearchType(place({ only: () => true }))).toEqual([]);
+  });
+
+  it('rejects an `only` that is not a function', () => {
+    // A declaration built outside TypeScript (a generator, plain JS) is what
+    // this guards; a typed one cannot express it.
+    expect(validateSearchType(place({ only: 'covered' }))).toEqual([
+      { field: 'facetKeys', reason: 'facet-keys-only-not-a-function' },
+    ]);
+  });
+
+  it('rejects a policy on a Reference Type, which nothing references by id', () => {
+    const nested = {
+      name: 'Marker',
+      facetKeys: { only: () => true },
+      fields: [],
+    } as unknown as SearchType;
+    expect(validateSearchType(nested)).toEqual([
+      { field: 'facetKeys', reason: 'facet-keys-not-allowed' },
+    ]);
   });
 });
 

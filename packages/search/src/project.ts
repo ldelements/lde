@@ -10,6 +10,7 @@ import {
   displayFieldName,
   documentKeyOf,
   fieldNamed,
+  inheritedFacetKeys,
   inlineFramingDepth,
   irAlias,
   isAbsoluteIri,
@@ -262,7 +263,7 @@ function applyField(
     (field.kind === 'keyword' || field.kind === 'reference') &&
     field.from !== undefined
   ) {
-    return applyProjectionValue(document, field, field.from, context);
+    return applyProjectionValue(document, field, field.from, context, schema);
   }
   if (field.derive !== undefined) {
     const derived = field.derive(document, context);
@@ -322,12 +323,13 @@ function applyField(
     case 'text':
       return applyText(document, langValuesOf(node, alias), field);
     case 'keyword':
-      return applyFacet(document, literalsOf(node, alias), field);
+      return applyFacet(document, literalsOf(node, alias), field, schema);
     case 'reference':
       return applyFacet(
         document,
         referenceValues(node, alias, field, schema),
         field,
+        schema,
       );
     case 'integer':
       return setNumber(
@@ -479,6 +481,16 @@ function foldedSearchValue(values: readonly string[]): string {
  * `keyword` reads literals; `reference` reads IRIs (the caller passes the
  * already-read raw values).
  *
+ * A reference inheriting a {@link FacetKeys facet policy} from the type it
+ * names ({@link inheritedFacetKeys}) also writes the `${name}_facet` companion
+ * the engine facets instead of the field: the subset of **what the field
+ * stores** that the policy admits. So it is written after the field’s own
+ * `transform` and the IRI filter, from the same `values` – for a keyed target
+ * those are already keys ({@link referenceValues}), which is what makes a
+ * predicate over document keys the right shape. The field itself keeps every
+ * value; only the facet narrows. An empty subset writes nothing, exactly as a
+ * path that matched nothing does.
+ *
  * **`array` decides the shape**, as it does for every other kind: a declared
  * `array` field stores a list, and a single-valued one stores the first value –
  * the graph may still carry several, exactly as it may carry several literals
@@ -493,6 +505,7 @@ function applyFacet(
   document: ProjectedNode,
   raw: readonly string[],
   field: KeywordField | ReferenceField,
+  schema: SearchSchema | undefined,
 ): void {
   // A `reference` stores identity, so what it stores must be an IRI whatever
   // route the value arrived by. {@link iriString} guards the graph path, but a
@@ -505,17 +518,33 @@ function applyFacet(
     referenced ? transformed.filter(isAbsoluteIri) : transformed,
   );
   const folded = dedupe(values.map((value) => fold(value)));
-  const searchField = physicalFields(field).search[0];
+  const names = physicalFields(field, schema);
+  const searchField = names.search[0];
+  const policy = inheritedFacetKeys(field, schema);
+  // `names.facet` is the companion exactly when a policy is inherited –
+  // physicalFields reads the same `inheritedFacetKeys`.
+  const facetField = names.facet as string;
+  // The companion is a subset of what the field STORES – for a single-valued
+  // field its first value, not the first admitted of all of them, or the facet
+  // would count a value no filter on the field can reproduce.
+  const stored = field.array === true ? values : values.slice(0, 1);
+  const admitted = policy === undefined ? [] : stored.filter(policy.only);
   if (field.array === true) {
-    setArray(document, field.name, values);
+    setArray(document, field.name, stored);
     if (field.searchable) {
       setArray(document, searchField, folded);
     }
+    if (policy !== undefined) {
+      setArray(document, facetField, admitted);
+    }
     return;
   }
-  setString(document, field.name, values[0]);
+  setString(document, field.name, stored[0]);
   if (field.searchable) {
     setString(document, searchField, folded[0]);
+  }
+  if (policy !== undefined) {
+    setString(document, facetField, admitted[0]);
   }
 }
 
@@ -535,13 +564,14 @@ function applyProjectionValue(
   field: KeywordField | ReferenceField,
   from: ProjectionValue,
   context: ProjectionContext,
+  schema: SearchSchema | undefined,
 ): void {
   // `ProjectionContext` is keyed by `ProjectionValue`, so the declaration reads
   // the context directly: a projection value that has no context key, or a
   // context key no declaration can name, is a compile error rather than a
   // silently unpopulated field.
   const value = context[from];
-  applyFacet(document, value === undefined ? [] : [value], field);
+  applyFacet(document, value === undefined ? [] : [value], field, schema);
 }
 
 /**

@@ -25,6 +25,7 @@ import {
   assertTypeInSchema,
   assertValidQuery,
   displayLangOf,
+  facetableFields,
   fieldNamed,
   isInlineReference,
   isRangeFacet,
@@ -168,6 +169,7 @@ export function createTypesenseSearchEngine<
   const joins = joinGraph(schema);
   const searchParamsOptions: BuildSearchParamsOptions = {
     ...options,
+    schema,
     joinTargetFor: (from, path) => {
       // Both lookups always hit: `assertValidQuery` runs first and rejects
       // every path this could not resolve, and each type resolved a collection
@@ -206,6 +208,26 @@ export function createTypesenseSearchEngine<
               },
             ];
           }),
+      ),
+    ]),
+  );
+  // Typesense reports a facet under the field it faceted, which for a reference
+  // inheriting a facet policy is the `${name}_facet` companion, not the
+  // declared field. Resolved back to the declared name per type ONCE, from the
+  // same `physicalFields` that named it, and applied to every response at the
+  // boundary – before `labelLookupGroups` (which finds a facet’s label source
+  // by declared name) and `parseSearchResponse` (which files its counts under
+  // it). Either consumer meeting the engine name would silently lose the
+  // facet’s labels, or its counts, or both.
+  const declaredFacetNames = new Map<string, ReadonlyMap<string, string>>(
+    [...schema.values()].map((searchType) => [
+      searchType.class,
+      new Map(
+        facetableFields(searchType).map((field) => [
+          // A facetable field always has a facet field.
+          physicalFields(field, schema).facet as string,
+          field.name,
+        ]),
       ),
     ]),
   );
@@ -386,10 +408,13 @@ export function createTypesenseSearchEngine<
       // would overflow Typesense's 4000-char query-string limit. POST puts it
       // in the body, so the filter is bounded by the caller's request, not by
       // the URL.
-      const response = await performSingleSearch(
-        client,
-        collections.get(searchType.class) as string,
-        params,
+      const response = withDeclaredFacetNames(
+        await performSingleSearch(
+          client,
+          collections.get(searchType.class) as string,
+          params,
+        ),
+        declaredFacetNames.get(searchType.class) as ReadonlyMap<string, string>,
       );
       const labels = await resolveLabels(cachedLabelsPromise, () =>
         labelLookupGroups(
@@ -446,7 +471,7 @@ export function createTypesenseSearchEngine<
       // compiles as facet-only regardless of what it carries: no hits
       // (per_page 0) and no ordering – nothing is transferred or sorted that
       // this method cannot return.
-      const { results } = (await client.multiSearch.perform({
+      const { results: rawResults } = (await client.multiSearch.perform({
         searches: dispatched.map(({ query }) => ({
           collection,
           ...buildSearchParams(
@@ -458,6 +483,14 @@ export function createTypesenseSearchEngine<
       })) as {
         results: readonly (TypesenseSearchResponse | TypesenseErrorEntry)[];
       };
+      const declaredNames = declaredFacetNames.get(
+        searchType.class,
+      ) as ReadonlyMap<string, string>;
+      const results = rawResults.map((result) =>
+        'error' in result
+          ? result
+          : withDeclaredFacetNames(result, declaredNames),
+      );
       // One label lookup serves every successful facet result in the batch.
       const responses = results.filter(
         (result): result is TypesenseSearchResponse => !('error' in result),
@@ -633,6 +666,29 @@ function labelLookupGroups(
 }
 
 /**
+ * The response with each facet filed under the declared field name its engine
+ * facet field stands for – the one place an engine facet name is translated,
+ * so that nothing downstream of it meets one.
+ */
+function withDeclaredFacetNames(
+  response: TypesenseSearchResponse,
+  declaredNames: ReadonlyMap<string, string>,
+): TypesenseSearchResponse {
+  if (response.facet_counts === undefined) {
+    return response;
+  }
+  return {
+    ...response,
+    facet_counts: response.facet_counts.map((facet) => ({
+      ...facet,
+      // Every facet the engine reports was asked for by a declared, facetable
+      // field (`assertValidQuery`), and the map holds each of those.
+      field_name: declaredNames.get(facet.field_name) as string,
+    })),
+  };
+}
+
+/**
  * Dispatch one search as a single-entry `multi_search` (POST). `multi_search`
  * reports a failed entry inline instead of rejecting the call, so the entry is
  * translated back into a throw: `search()` rejects on engine failure, and that
@@ -765,6 +821,9 @@ export interface TypesenseSearchResponse {
   readonly found: number;
   readonly hits?: readonly { readonly document: Record<string, unknown> }[];
   readonly facet_counts?: readonly {
+    /** The field faceted – by the time a response reaches
+     *  {@link parseSearchResponse}, the **declared** field name: the engine
+     *  maps a facet companion’s name back at the response boundary. */
     readonly field_name: string;
     readonly counts: readonly {
       readonly value: string;

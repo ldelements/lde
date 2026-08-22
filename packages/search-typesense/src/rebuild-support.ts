@@ -1,9 +1,10 @@
 import type { Client } from 'typesense';
-import type { SearchType } from '@lde/search';
+import type { SearchSchema, SearchType } from '@lde/search';
 import {
   datasetField,
   isInternalField,
   joinGraph,
+  physicalFields,
   referenceFields,
 } from '@lde/search/adapter';
 import {
@@ -148,14 +149,22 @@ export function assertNoReservedFields(
  *   selection, which carries raw dataset IRIs, so a transformed value would
  *   match nothing and the sweep would silently stop deleting;
  * - **`facetable`** where the writer enumerates the indexed sources by faceting
- *   it (the In-place writer does; Blue/green only ever filters by a known IRI).
+ *   it (the In-place writer does; Blue/green only ever filters by a known IRI)
+ *   – and faceted **on its own name**: a reference inheriting a facet policy
+ *   from the type it names facets a companion holding only the admitted keys
+ *   (`physicalFields(field, schema).facet`), so enumerating the sources
+ *   through it would miss every dataset the policy excludes. `schema` is what
+ *   resolves that; without one no policy is visible, as nowhere else.
  *
  * Thrown at writer construction, so a declaration that cannot be swept fails
  * before a run touches the index rather than at the sweep, after the writes.
  */
 export function assertSweepableProvenanceField(
   searchType: SearchType,
-  options: { readonly requireFacetable: boolean },
+  options: {
+    readonly requireFacetable: boolean;
+    readonly schema?: SearchSchema;
+  },
 ): void {
   const field = datasetField(searchType);
   if (field === undefined || isInternalField(field)) {
@@ -175,6 +184,13 @@ export function assertSweepableProvenanceField(
   if (options.requireFacetable && field.facetable !== true) {
     problems.push(
       'it is not facetable, and the membership sweep enumerates the indexed datasets by faceting it',
+    );
+  } else if (
+    options.requireFacetable &&
+    physicalFields(field, options.schema).facet !== field.name
+  ) {
+    problems.push(
+      'it inherits a facet policy from the type it names, so the engine facets only the datasets the policy admits, and the membership sweep enumerates the indexed datasets by faceting it',
     );
   }
   if (problems.length > 0) {

@@ -98,6 +98,21 @@ labels. Pass the `schema` option for a type that surfaces one – it is what
 resolves the Reference Type; a type declaring one without it throws here, rather
 than building a collection whose documents would all fail to import.
 
+A **reference inheriting a [facet policy](./search#facet-policy)** – a facetable
+`lookup`/`labelSource` reference to a type declaring `facetKeys` – is declared
+as a plain stored field (`facet: false`) plus a `${name}_facet` companion
+(`facet: true`, optional) holding the admitted subset, and the query compiler
+facets the companion and filters the field itself with the exact `:=`
+operator. Only the `schema` option can resolve the policy: built without it,
+the field itself is declared the facet and no companion is – the projection
+makes the same reading without a schema – so a deployment declaring a policy
+passes the schema to its writers, as `createSearchIndexer` does.
+
+An `InPlaceRebuild` additionally refuses a type whose declared
+[dataset field](#provenance) inherits a policy: it enumerates the indexed
+datasets by faceting that field, and a facet narrowed to the admitted keys
+would hide every dataset the policy excludes from the membership sweep.
+
 ### Joins across collections
 
 A reference declaring [`joinable: true`](./search#filtering-across-collections)
@@ -309,10 +324,14 @@ Document ids must be unique per (source, entity) – the caller keys them.
 `openRun` creates the collection on demand and otherwise leaves an existing one
 alone – with one exception. If the collection exists but does not carry every
 [reference field](#joins-across-collections) the declaration asks for (a
-`joinable` added to a schema whose index predates it), the run **fails**, naming
-the drop-and-rebuild that fixes it. Without that it would index and commit
-happily and then 400 on every join query: the values would be there, the
-reference would not. Scoped to reference fields only – every other schema
+`joinable` added to a schema whose index predates it), or every
+[facet companion](#collection-schema-and-engine) its facets read (a `facetKeys`
+policy added to a type this one references), the run **fails** at open – after
+the lock, before any write – naming the drop-and-rebuild that fixes it. Without
+that it would index and commit happily and then fail on every join query, or
+on every facet over that reference: the values would be there, the reference
+or the facet field would not. Rotating a pipeline version reprocesses datasets;
+it does not recreate collections. Scoped to those two – every other schema
 difference is self-correcting.
 
 ### The join component is the unit of rebuild

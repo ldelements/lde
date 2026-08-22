@@ -405,6 +405,41 @@ export interface KeyField {
 }
 
 /**
+ * A {@link RootType}’s **facet policy**: which of its documents get a facet
+ * bucket, as a predicate over the document key. Declared once, on the type,
+ * and inherited by every facetable reference that *names* the type – a
+ * `lookup`’s `target`, an `idOnly`’s `labelSource` ({@link labelSourceNameOf})
+ * – because *which of a type’s ids deserve a bucket* is a fact about the type,
+ * not about each field that points at it. A per-field policy would be one rule
+ * declared N times, and forgetting one would silently reintroduce the buckets
+ * on that facet alone.
+ *
+ * Only the facet narrows. The referring field keeps **every** value: a
+ * document still displays the excluded referent, and a `where` filter on its
+ * IRI still matches exactly. *Facets are discovery, filters are exact.*
+ *
+ * The mechanism is a second physical field per inheriting facet –
+ * `${name}_facet`, holding the admitted subset ({@link physicalFields}) – which
+ * the engine facets instead of the field itself, so the facet is exact under
+ * any bucket cap: the engine never sees an excluded value. Declaring a policy
+ * therefore changes the collection definition of every type that references
+ * this one; an engine adapter that reuses a live collection must notice.
+ *
+ * **The failure mode is silence.** A predicate that admits none of a type’s
+ * keys – a type whose alignments are not what it tests for, or stored values
+ * that are still node IRIs because the type was keyed after its references
+ * were indexed – empties every facet referencing the type without an error.
+ * Give each type its own predicate rather than reuse another’s, and key a type
+ * ({@link RootType.key}) before declaring a policy over its keys.
+ */
+export interface FacetKeys {
+  /** Whether a document key gets a bucket. Must be **pure**: it is applied per
+   *  document at projection time, so an impure one would bucket one document
+   *  and not its twin. */
+  readonly only: (id: string) => boolean;
+}
+
+/**
  * A **Root Type**: a {@link SearchType} that is indexed. It declares a `class`,
  * roots are selected for it, a Writer owns a collection for it, and the
  * {@link SearchSchema} is keyed by it. A SHACL generator can emit one per
@@ -419,6 +454,10 @@ export interface RootType extends SearchTypeBase {
   /** Which declared field holds this type’s document key, when it is not the
    *  node’s own IRI ({@link KeyField}, {@link documentKeyOf}). */
   readonly key?: KeyField;
+  /** Which of this type’s documents get a facet bucket, on every facetable
+   *  reference that names this type ({@link FacetKeys}). Unset, every
+   *  document does. */
+  readonly facetKeys?: FacetKeys;
 }
 
 /**
@@ -441,6 +480,9 @@ export interface ReferenceType extends SearchTypeBase {
    *  referrer rather than keyed in a collection of its own. `never` for the
    *  same reason `class` is. */
   readonly key?: never;
+  /** Nothing references a Reference Type by id, so there is no facet for a
+   *  policy to narrow. `never` for the same reason `key` is. */
+  readonly facetKeys?: never;
 }
 
 /**
@@ -997,7 +1039,9 @@ export interface SearchTypeIssue {
     | 'key-field-not-array'
     | 'key-field-inline'
     | 'key-pick-not-a-function'
-    | 'key-not-allowed';
+    | 'key-not-allowed'
+    | 'facet-keys-only-not-a-function'
+    | 'facet-keys-not-allowed';
 }
 
 /**
@@ -1112,7 +1156,10 @@ const LOCALE_PATTERN = /^[A-Za-z0-9]+(-[A-Za-z0-9]+)*$/;
  *   the dataset off a declaration no rule picks between;
  * - a {@link RootType.key} names a declared, `path`-bearing, `array`,
  *   non-`inline` `reference` field of this type, and its `pick` is a function
- *   ({@link keyIssues}); a {@link ReferenceType} declares no key at all.
+ *   ({@link keyIssues}); a {@link ReferenceType} declares no key at all;
+ * - a {@link RootType.facetKeys} policy’s `only` is a function
+ *   ({@link facetKeysIssues}); a {@link ReferenceType} declares no policy at
+ *   all.
  *
  * Pure and total: returns every issue rather than throwing;
  * {@link assertValidSearchType} is the throwing entry point.
@@ -1275,7 +1322,7 @@ export function validateSearchType(
       }
     }
   }
-  issues.push(...keyIssues(searchType));
+  issues.push(...keyIssues(searchType), ...facetKeysIssues(searchType));
   return issues;
 }
 
@@ -1329,6 +1376,31 @@ function keyIssues(searchType: SearchType): readonly SearchTypeIssue[] {
     issues.push(issue('key-field-inline'));
   }
   return issues;
+}
+
+/**
+ * The issues a type’s {@link RootType.facetKeys} declaration carries, filed
+ * under the member’s name: the policy names no field – it is a rule about the
+ * type’s own keys, applied through other types’ fields – so there is no field
+ * name to file it under.
+ */
+function facetKeysIssues(searchType: SearchType): readonly SearchTypeIssue[] {
+  const facetKeys = (searchType as RootType).facetKeys;
+  if (facetKeys === undefined) {
+    return [];
+  }
+  const issue = (reason: SearchTypeIssue['reason']) => ({
+    field: 'facetKeys',
+    reason,
+  });
+  // Nothing references a Reference Type by id, so a policy on one narrows no
+  // facet – it states a rule nothing could apply.
+  if (searchType.class === undefined) {
+    return [issue('facet-keys-not-allowed')];
+  }
+  return typeof facetKeys.only === 'function'
+    ? []
+    : [issue('facet-keys-only-not-a-function')];
 }
 
 /** The union flattened to every possible member – the uniform shape runtime
@@ -1389,6 +1461,11 @@ export interface PhysicalFields {
   /** Per-locale folded sort keys `${name}_sort_${locale}` (localized text,
    *  `sortable`); a non-localized field sorts on its own `name` field. */
   readonly sort: readonly string[];
+  /** The field a facet on this field reads, when `facetable`: the field’s own
+   *  `name`, or the `${name}_facet` companion holding the subset its target’s
+   *  {@link FacetKeys facet policy} admits. `undefined` for a field that is
+   *  not facetable. */
+  readonly facet: string | undefined;
 }
 
 /**
@@ -1736,11 +1813,21 @@ export function unixSecondsToIso(seconds: number): string {
 
 /**
  * Derive the **indexed** physical engine field names a declaration produces:
- * the per-locale `search`/`sort` fanout. A localized `text` field’s display
- * fields are pattern-based and not enumerated here – see {@link displayFieldName}
- * and its siblings.
+ * the per-locale `search`/`sort` fanout, and the field a `facet` reads. A
+ * localized `text` field’s display fields are pattern-based and not enumerated
+ * here – see {@link displayFieldName} and its siblings.
+ *
+ * The facet is the one member that depends on more than the declaration: a
+ * facetable reference whose target declares a {@link FacetKeys facet policy}
+ * facets a `${name}_facet` companion rather than itself, and only the `schema`
+ * can resolve that target ({@link inheritedFacetKeys}). Without one the field
+ * facets on its own name – the same reading the projection makes without a
+ * schema, where it cannot re-key a reference either.
  */
-export function physicalFields(field: SearchField): PhysicalFields {
+export function physicalFields(
+  field: SearchField,
+  schema?: SearchSchema,
+): PhysicalFields {
   if (field.kind === 'text') {
     const locales = field.locales;
     return {
@@ -1750,10 +1837,47 @@ export function physicalFields(field: SearchField): PhysicalFields {
       sort: field.sortable
         ? locales.map((locale) => `${field.name}_sort_${locale}`)
         : [],
+      // Text is never facetable (`validateSearchType`).
+      facet: undefined,
     };
   }
   return {
     search: field.searchable !== undefined ? [`${field.name}_search`] : [],
     sort: [],
+    facet:
+      field.facetable !== true
+        ? undefined
+        : inheritedFacetKeys(field, schema) === undefined
+          ? field.name
+          : `${field.name}_facet`,
   };
+}
+
+/**
+ * The {@link FacetKeys facet policy} a field inherits: the `facetKeys` of the
+ * Root Type it names ({@link labelSourceNameOf}), when the field is a facetable
+ * reference and the schema resolves that type. The boundary is *naming the
+ * target* – the same line along which a reference is re-keyed and a join is
+ * drawn – so a reference that names no type inherits nothing, whatever type
+ * its values happen to point at; and a `derive`d reference, which produces its
+ * own values rather than reading a referent, is re-keyed by nothing and so
+ * narrowed by nothing either. The one reading the projection (which writes the
+ * companion) and {@link physicalFields} (which names it) share.
+ */
+export function inheritedFacetKeys(
+  field: SearchField,
+  schema: SearchSchema | undefined,
+): FacetKeys | undefined {
+  if (
+    schema === undefined ||
+    field.kind !== 'reference' ||
+    field.facetable !== true ||
+    field.derive !== undefined
+  ) {
+    return undefined;
+  }
+  const targetName = labelSourceNameOf(field);
+  return targetName === undefined
+    ? undefined
+    : rootTypeNamed(schema, targetName)?.facetKeys;
 }
