@@ -1646,3 +1646,392 @@ describe('projection-time values', () => {
     });
   });
 });
+
+describe('document keys (a type keyed on a declared field)', () => {
+  const SCHEMA_ORG = 'https://schema.org/';
+  const GEONAMES = 'https://sws.geonames.org/';
+  const WIKIDATA = 'https://www.wikidata.org/entity/';
+
+  /** A deployment’s IRI normalisation: one spelling per alignment target, so two
+   *  publishers writing the same place alike key it alike. */
+  const normaliseIri = (iri: string) =>
+    iri.replace(/^http:/, 'https:').replace(/\/$/, '');
+
+  const place = defineSearchType({
+    name: 'Place',
+    class: `${SCHEMA_ORG}Place`,
+    labelField: 'name',
+    // A preference order, not a filter: GeoNames first, then any other covered
+    // source; nothing matched keeps the publisher’s own node.
+    key: {
+      field: '_sameAs',
+      pick: (candidates) =>
+        candidates.find((iri) => iri.startsWith(GEONAMES)) ??
+        candidates.find((iri) => iri.startsWith(WIKIDATA)),
+    },
+    fields: [
+      {
+        name: 'name',
+        kind: 'text',
+        path: `<${SCHEMA_ORG}name>`,
+        locales: ['und'],
+        output: true,
+        searchable: { weight: 1 },
+      },
+      {
+        // Internal: extracted and read for the key, then pruned before the writer.
+        name: '_sameAs',
+        kind: 'reference',
+        array: true,
+        path: `<${SCHEMA_ORG}sameAs>`,
+        transform: normaliseIri,
+      },
+    ],
+  });
+
+  const work = defineSearchType({
+    name: 'CreativeWork',
+    class: `${SCHEMA_ORG}CreativeWork`,
+    fields: [
+      {
+        name: 'locationCreated',
+        kind: 'reference',
+        path: `<${SCHEMA_ORG}locationCreated>`,
+        facetable: true,
+        output: true,
+        ref: { strategy: 'lookup', target: 'Place' },
+      },
+      {
+        name: 'about',
+        kind: 'reference',
+        array: true,
+        path: `<${SCHEMA_ORG}about>`,
+        facetable: true,
+        labelSource: 'Place',
+      },
+      {
+        // Names no target, so it never claimed to hold a collection’s ids.
+        name: 'unnamed',
+        kind: 'reference',
+        array: true,
+        path: `<${SCHEMA_ORG}mentions>`,
+        facetable: true,
+      },
+    ],
+  });
+
+  const keyedSchema = searchSchema(place, work);
+  const placeKey = (field: string) => alias('Place', field);
+  const workKey = (field: string) => alias('CreativeWork', field);
+
+  /** A framed place node, with the raw values the CONSTRUCT emitted for it. */
+  const placeNode = (id: string, ...sameAs: string[]) => ({
+    '@id': id,
+    [placeKey('name')]: [{ '@value': 'Kessel' }],
+    ...(sameAs.length === 0
+      ? {}
+      : { [placeKey('_sameAs')]: sameAs.map((iri) => ({ '@id': iri })) }),
+  });
+
+  it('keys a root on the field’s value, not on the node IRI', () => {
+    const document = projectDocument(
+      placeNode('https://ex/place/1', `${GEONAMES}2751283`),
+      place,
+      keyedSchema,
+    );
+
+    expect(document.id).toBe(`${GEONAMES}2751283`);
+    // The key field itself is internal, so it never reaches the writer.
+    expect(document).not.toHaveProperty('_sameAs');
+  });
+
+  it('keeps the node’s own IRI when the key field is empty', () => {
+    expect(
+      projectDocument(placeNode('https://ex/place/1'), place, keyedSchema).id,
+    ).toBe('https://ex/place/1');
+  });
+
+  it('keeps the node’s own IRI when pick declines every candidate', () => {
+    // A candidate in no source `pick` prefers: the publisher keeps its node.
+    expect(
+      projectDocument(
+        placeNode('https://ex/place/1', 'https://ex/other/1'),
+        place,
+        keyedSchema,
+      ).id,
+    ).toBe('https://ex/place/1');
+  });
+
+  it('applies the key field’s transform before pick, so spellings merge', () => {
+    // Two publishers spelling one GeoNames IRI differently – `http://` and a
+    // trailing slash – project to ONE document key, which is what makes the
+    // writer’s upsert merge them.
+    const first = projectDocument(
+      placeNode('https://a/place/1', 'http://sws.geonames.org/2751283/'),
+      place,
+      keyedSchema,
+    );
+    const second = projectDocument(
+      placeNode('https://b/place/9', `${GEONAMES}2751283`),
+      place,
+      keyedSchema,
+    );
+
+    expect(first.id).toBe(`${GEONAMES}2751283`);
+    expect(second.id).toBe(first.id);
+  });
+
+  it('sorts and dedupes the candidates, whatever order the CONSTRUCT returned', () => {
+    // `pick` here takes the FIRST candidate (the default), so the answer is
+    // stable only because the candidates are sorted before it sees them.
+    const unordered = defineSearchType({
+      ...place,
+      name: 'AnyPlace',
+      class: 'urn:x:AnyPlace',
+      key: { field: '_sameAs' },
+    });
+    const anySchema = searchSchema(unordered);
+    const candidates = [`${WIKIDATA}Q1`, `${GEONAMES}1`, `${WIKIDATA}Q1`];
+    const forward = {
+      '@id': 'https://ex/place/1',
+      [alias('AnyPlace', '_sameAs')]: candidates.map((iri) => ({ '@id': iri })),
+    };
+    const reversed = {
+      '@id': 'https://ex/place/1',
+      [alias('AnyPlace', '_sameAs')]: [...candidates]
+        .reverse()
+        .map((iri) => ({ '@id': iri })),
+    };
+
+    expect(projectDocument(forward, unordered, anySchema).id).toBe(
+      `${GEONAMES}1`,
+    );
+    expect(projectDocument(reversed, unordered, anySchema).id).toBe(
+      `${GEONAMES}1`,
+    );
+  });
+
+  it('throws when pick returns a value that is not a candidate', () => {
+    // A key must be an IRI the graph offered for that node – the same pure
+    // function keys the document AND every reference to it, so a `pick` that
+    // invents one would key the two differently.
+    const invented = defineSearchType({
+      ...place,
+      name: 'Invented',
+      class: 'urn:x:Invented',
+      key: { field: '_sameAs', pick: () => 'https://elsewhere/1' },
+    });
+
+    expect(() =>
+      projectDocument(
+        {
+          '@id': 'https://ex/place/1',
+          [alias('Invented', '_sameAs')]: [{ '@id': `${GEONAMES}1` }],
+        },
+        invented,
+        searchSchema(invented),
+      ),
+    ).toThrow(
+      /returned “https:\/\/elsewhere\/1” for <https:\/\/ex\/place\/1>, which is not among its candidates \(<https:\/\/sws\.geonames\.org\/1>\)/,
+    );
+  });
+
+  it('stores a referent’s key on a lookup and on a labelSource reference', () => {
+    // Both name their target, which is what a `lookup`/`labelSource` already
+    // means: this field holds ids of documents in that collection.
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/work/1',
+        [workKey('locationCreated')]: {
+          '@id': 'https://ex/place/1',
+          [placeKey('_sameAs')]: [{ '@id': `${GEONAMES}2751283` }],
+        },
+        [workKey('about')]: [
+          {
+            '@id': 'https://ex/place/2',
+            [placeKey('_sameAs')]: [{ '@id': `${WIKIDATA}Q1` }],
+          },
+        ],
+      },
+      work,
+      keyedSchema,
+    );
+
+    expect(document.locationCreated).toBe(`${GEONAMES}2751283`);
+    expect(document.about).toEqual([`${WIKIDATA}Q1`]);
+  });
+
+  it('stores the referent’s own IRI when it offers no key', () => {
+    // An unaligned place: the reference still resolves, against the document
+    // that place is written under.
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/work/1',
+        [workKey('locationCreated')]: { '@id': 'https://ex/place/1' },
+        // A reference naming no target is never re-keyed, even into a keyed type.
+        [workKey('unnamed')]: [
+          {
+            '@id': 'https://ex/place/2',
+            [placeKey('_sameAs')]: [{ '@id': `${GEONAMES}1` }],
+          },
+        ],
+      },
+      work,
+      keyedSchema,
+    );
+
+    expect(document.locationCreated).toBe('https://ex/place/1');
+    expect(document.unnamed).toEqual(['https://ex/place/2']);
+  });
+
+  it('re-keys a referent given as a bare IRI, and drops a value that is none', () => {
+    // `schema:sameAs` and friends range on `schema:URL`, which a source may emit
+    // as a literal – so a reference value may arrive as a bare string, carrying
+    // no candidates of its own; a value that is no IRI at all yields nothing,
+    // exactly as it does for an unkeyed reference.
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/work/1',
+        [workKey('about')]: ['https://ex/place/3', { '@value': 'Kessel' }],
+      },
+      work,
+      keyedSchema,
+    );
+
+    expect(document.about).toEqual(['https://ex/place/3']);
+  });
+
+  it('runs the referring field’s transform on the key, not the node IRI', () => {
+    // A `transform` transforms what the field STORES, and for a keyed target
+    // that is the key – so a transform written against the referent’s node IRIs
+    // sees a key instead. Pinned because the two are only worth declaring
+    // together deliberately.
+    const seen: string[] = [];
+    const withTransform = defineSearchType({
+      ...work,
+      name: 'TransformingWork',
+      class: 'urn:x:TransformingWork',
+      fields: [
+        {
+          name: 'about',
+          kind: 'reference',
+          array: true,
+          path: `<${SCHEMA_ORG}about>`,
+          facetable: true,
+          labelSource: 'Place',
+          transform: (value) => {
+            seen.push(value);
+            return value;
+          },
+        },
+      ],
+    });
+    projectDocument(
+      {
+        '@id': 'https://ex/work/1',
+        [alias('TransformingWork', 'about')]: [
+          {
+            '@id': 'https://ex/place/1',
+            [placeKey('_sameAs')]: [{ '@id': `${GEONAMES}1` }],
+          },
+        ],
+      },
+      withTransform,
+      searchSchema(place, withTransform),
+    );
+
+    expect(seen).toEqual([`${GEONAMES}1`]);
+  });
+
+  it('leaves a reference into an unkeyed target alone', () => {
+    const unkeyed = defineSearchType({
+      name: 'Place',
+      class: `${SCHEMA_ORG}Place`,
+      labelField: 'name',
+      fields: place.fields,
+    });
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/work/1',
+        [workKey('locationCreated')]: {
+          '@id': 'https://ex/place/1',
+          [placeKey('_sameAs')]: [{ '@id': `${GEONAMES}1` }],
+        },
+      },
+      work,
+      searchSchema(unkeyed, work),
+    );
+
+    expect(document.locationCreated).toBe('https://ex/place/1');
+  });
+
+  it('leaves references as they are when projected without a schema', () => {
+    // No schema, no way to resolve the target – the same graceful degradation
+    // an inline reference makes.
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/work/1',
+        [workKey('locationCreated')]: {
+          '@id': 'https://ex/place/1',
+          [placeKey('_sameAs')]: [{ '@id': `${GEONAMES}1` }],
+        },
+      },
+      work,
+    );
+
+    expect(document.locationCreated).toBe('https://ex/place/1');
+  });
+
+  it('assigns the key before any derive runs', () => {
+    const withDerive = defineSearchType({
+      ...place,
+      name: 'DerivedPlace',
+      class: 'urn:x:DerivedPlace',
+      key: { field: '_sameAs' },
+      fields: [
+        ...place.fields,
+        {
+          name: 'keyedOn',
+          kind: 'keyword',
+          output: true,
+          derive: (document) => document.id,
+        },
+      ],
+    });
+
+    expect(
+      projectDocument(
+        {
+          '@id': 'https://ex/place/1',
+          [alias('DerivedPlace', '_sameAs')]: [{ '@id': `${GEONAMES}1` }],
+        },
+        withDerive,
+        searchSchema(withDerive),
+      ).keyedOn,
+    ).toBe(`${GEONAMES}1`);
+  });
+
+  it('lets two distinct roots project to one document key', async () => {
+    // Two publishers’ nodes for one place. The projection emits both documents,
+    // under one `id`; folding them is the writer’s upsert, not the projection’s.
+    const quads = new Parser({ format: 'N-Triples' }).parse(`
+      <https://a/place/1> <${placeKey('_sameAs')}> <${GEONAMES}2751283> .
+      <https://b/place/9> <${placeKey('_sameAs')}> <${GEONAMES}2751283> .
+    `);
+
+    const documents: SearchDocument[] = [];
+    for await (const document of projectRoots(
+      quads,
+      ['https://a/place/1', 'https://b/place/9'],
+      keyedSchema,
+      place,
+    )) {
+      documents.push(document);
+    }
+
+    expect(documents.map((document) => document.id)).toEqual([
+      `${GEONAMES}2751283`,
+      `${GEONAMES}2751283`,
+    ]);
+  });
+});

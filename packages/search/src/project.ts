@@ -8,14 +8,18 @@ import {
 import {
   assertTypeInSchema,
   displayFieldName,
+  documentKeyOf,
+  fieldNamed,
   inlineFramingDepth,
   irAlias,
   isAbsoluteIri,
   isInternalField,
   isInlineReference,
   isoToUnixSeconds,
+  labelSourceNameOf,
   physicalFields,
   referenceTypeNamed,
+  rootTypeNamed,
   type KeywordField,
   type ProjectionValue,
   type ReferenceField,
@@ -147,7 +151,7 @@ function projectFields(
   schema: SearchSchema | undefined,
   context: ProjectionContext,
 ): ProjectedNode {
-  const id = documentKey(node);
+  const id = documentIdOf(node, searchType);
   const document: ProjectedNode = id === undefined ? {} : { id };
   for (const field of searchType.fields) {
     applyField(document, node, field, searchType, schema, context);
@@ -167,6 +171,46 @@ function projectFields(
 function documentKey(node: FramedNode): string | undefined {
   const id = node['@id'];
   return typeof id === 'string' && isAbsoluteIri(id) ? id : undefined;
+}
+
+/**
+ * The `id` a node is projected under: its own IRI, unless its type declares a
+ * {@link RootType.key} – then the key its key field carries
+ * ({@link documentKeyOf}). The candidates are read off the frame like any other
+ * field value, under the key field’s own {@link irAlias IR Alias}, because the
+ * key field *is* an ordinary declared field: the extraction already emits it,
+ * and a reader transform that repairs reference values has already run on it.
+ *
+ * The key is assigned before any `derive` runs, so a derive sees the key and
+ * never the node IRI; a deployment that wants the node IRI declares a plain
+ * `idOnly` reference over the same path.
+ */
+function documentIdOf(
+  node: FramedNode,
+  searchType: SearchType,
+): string | undefined {
+  const nodeIri = documentKey(node);
+  if (nodeIri === undefined || searchType.key === undefined) {
+    return nodeIri;
+  }
+  return documentKeyOf(
+    searchType,
+    nodeIri,
+    keyCandidatesOf(node, searchType, searchType.key.field),
+  );
+}
+
+/** The raw values a node carries under a type’s key field – untransformed, as
+ *  {@link documentKeyOf} expects them. Empty for a node the key field matched
+ *  nothing on. The field itself is guaranteed declared by `searchSchema`, which
+ *  is what validates a `key` at all. */
+function keyCandidatesOf(
+  node: FramedNode,
+  searchType: SearchType,
+  name: string,
+): readonly string[] {
+  const keyField = fieldNamed(searchType, name) as SearchField;
+  return irisOf(node, irAlias(searchType, keyField));
 }
 
 /**
@@ -193,8 +237,11 @@ export async function* projectRoots(
   const index = buildSubjectIndex(quads);
   // Distinct roots only. A selector may return an IRI more than once – a
   // non-`DISTINCT` `SELECT` over a one-to-many join yields the same subject per
-  // matched row – and a repeated root would otherwise frame and emit a
-  // duplicate document under the same `id`.
+  // matched row – and framing a root twice would do the same work twice for one
+  // node. Distinct roots may still legitimately share an `id`, where the type
+  // declares a `key` two of them carry: that is what a document key means, and
+  // it is the writer’s upsert – not the projection – that folds them into one
+  // document.
   const depth = inlineFramingDepth(schema, searchType);
   for await (const node of frameSubjects(index, [...new Set(roots)], depth)) {
     yield projectDocument(node, searchType, schema, context);
@@ -277,7 +324,11 @@ function applyField(
     case 'keyword':
       return applyFacet(document, literalsOf(node, alias), field);
     case 'reference':
-      return applyFacet(document, irisOf(node, alias), field);
+      return applyFacet(
+        document,
+        referenceValues(node, alias, field, schema),
+        field,
+      );
     case 'integer':
       return setNumber(
         document,
@@ -307,6 +358,63 @@ function applyField(
       return;
     }
   }
+}
+
+/**
+ * The values a non-inline reference stores: the referents’ IRIs, **or their
+ * document keys** when the type the reference names declares a
+ * {@link RootType.key}. A `lookup`’s `target` and an `idOnly`’s `labelSource`
+ * both mean *this field holds ids of documents in that collection* (ADR 20) –
+ * the fact a label lookup and a join rely on – so storing the node IRI where
+ * the target keys on something else would break an invariant the schema already
+ * has. Rewriting a reference is LDE keeping it, not a new rule.
+ *
+ * That is also why the boundary is *naming the target*: a reference that names
+ * none ({@link labelSourceNameOf} → `undefined`) never claimed to hold a
+ * collection’s ids, and a `derive`d one produces its own values rather than
+ * reading a referent, so neither is re-keyed.
+ *
+ * The referent’s candidates are in the frame because framing already embeds a
+ * referenced node’s own triples at one hop, and the extraction adds the key
+ * field to that hop. A projection run without a `schema` cannot resolve the
+ * target, so it leaves the values as they are – exactly as it leaves an inline
+ * reference unprojected.
+ *
+ * The referring field’s own {@link ReferenceField.transform} still runs after
+ * this, in {@link applyFacet}: a `transform` transforms what the field stores,
+ * and for a keyed target that is the key. A `transform` written to repair the
+ * referent’s node IRIs therefore sees a key instead, which is why the two are
+ * worth declaring together only deliberately.
+ */
+function referenceValues(
+  node: FramedNode,
+  alias: string,
+  field: ReferenceField,
+  schema: SearchSchema | undefined,
+): readonly string[] {
+  const targetName = labelSourceNameOf(field);
+  if (schema === undefined || targetName === undefined) {
+    return irisOf(node, alias);
+  }
+  // Guaranteed declared: `searchSchema` validates that every named target
+  // resolves, and the projection only ever runs against a type of its schema.
+  const target = rootTypeNamed(schema, targetName) as RootType;
+  if (target.key === undefined) {
+    return irisOf(node, alias);
+  }
+  const keyFieldName = target.key.field;
+  return valuesOf(node, alias)
+    .map((value) => {
+      const iri = iriString(value);
+      return iri === undefined
+        ? undefined
+        : documentKeyOf(
+            target,
+            iri,
+            isObject(value) ? keyCandidatesOf(value, target, keyFieldName) : [],
+          );
+    })
+    .filter((value): value is string => value !== undefined);
 }
 
 /**

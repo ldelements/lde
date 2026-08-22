@@ -9,6 +9,7 @@ import {
   displayFieldName,
   fieldNamed,
   labelFieldOf,
+  rootTypeNamed,
 } from '@lde/search/adapter';
 import { escapeFilterValue } from './query-compiler.js';
 
@@ -55,9 +56,6 @@ export async function resolveProjection(
   if (projection === undefined || parents.length === 0) {
     return resolved;
   }
-  const targetsByName = new Map(
-    [...schema.values()].map((rootType) => [rootType.name, rootType]),
-  );
   // The level's fields resolve CONCURRENTLY: they read from different
   // collections and nothing links them, so running them in turn would make the
   // stated bound – one round-trip per level – one per field instead.
@@ -73,7 +71,7 @@ export async function resolveProjection(
         // hand-built query from throwing here rather than at the port’s guard.
         return undefined;
       }
-      const target = targetsByName.get(field.ref.target);
+      const target = rootTypeNamed(schema, field.ref.target);
       const collection =
         target === undefined ? undefined : collections.get(target.class);
       if (target === undefined || collection === undefined) {

@@ -412,6 +412,16 @@ guarantees one output triple per genuine value:
   fields are UNION’d off the referent variable, so even a multi-hop nested
   template never conjoins independent multi-valued fields – only the intermediate
   link triple repeats, and only linearly.
+- **A key hop stays inside its branch.** A reference naming a target that
+  declares a [document key](./search#document-key) gets its branch extended with
+  an `OPTIONAL` hop reading the referent’s key field, emitted under the target’s
+  own alias – so the projection can store the referent’s key rather than its node
+  IRI. It sits inside that reference’s UNION branch, so it never cross-multiplies
+  against another field; like an inline reference’s link triple, the reference’s
+  own template triple then repeats once per key candidate – linearly, and only
+  for a referent that carries several. `OPTIONAL`, so a referent with no key
+  candidate keeps its row. The root side is unchanged: a key field is a declared field, so its own
+  branch and template triple are already there.
 
 Because the queries are duplicate-free by construction, correctness and bounded
 output volume do **not** depend on a client-side **post-processing deduplication

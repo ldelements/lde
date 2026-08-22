@@ -49,6 +49,7 @@ export type {
   ReferenceType,
   RootTypeOf,
   SearchTypeIssue,
+  KeyField,
   SearchSchema,
   FacetRange,
   ProjectionValue,
