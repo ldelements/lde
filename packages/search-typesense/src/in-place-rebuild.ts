@@ -1,6 +1,7 @@
 import type { Client } from 'typesense';
 import type { CollectionFieldSchema } from 'typesense/lib/Typesense/Collection.js';
-import type { SearchType } from '@lde/search';
+import type { SearchSchema, SearchType } from '@lde/search';
+import { facetableFields, physicalFields } from '@lde/search/adapter';
 import type { Dataset } from '@lde/dataset';
 import type {
   DatasetOutcome,
@@ -75,9 +76,10 @@ export interface InPlaceRebuildOptions extends RebuildOptions {
  * `RebuildAlreadyRunning` when another rebuild holds it) and creates
  * the collection on demand from the {@link SearchType} plus the two
  * bookkeeping fields. A collection that already exists is used as it is, with
- * one exception: it must carry every reference field the declaration asks for,
- * or the run fails with the drop-and-rebuild that fixes it
- * ({@link assertReferencesPresent}).
+ * one exception: it must carry every reference field the declaration asks for
+ * and every facet companion its facets read, or the run fails with the
+ * drop-and-rebuild that fixes it
+ * ({@link assertReferencesAndFacetCompanionsPresent}).
  *
  * Document ids must be unique per (source, entity) – the caller keys them –
  * or documents from different sources overwrite each other.
@@ -109,7 +111,10 @@ export class InPlaceRebuild<
     options: InPlaceRebuildOptions = {},
   ) {
     assertNoReservedFields(searchType, [SOURCE_FIELD, LAST_SEEN_FIELD]);
-    assertSweepableProvenanceField(searchType, { requireFacetable: true });
+    assertSweepableProvenanceField(searchType, {
+      requireFacetable: true,
+      schema: options.schema,
+    });
     this.sourceField = provenanceField(searchType);
     const {
       maxSweepableSources = DEFAULT_MAX_SWEEPABLE_SOURCES,
@@ -151,9 +156,15 @@ export class InPlaceRebuild<
         };
       });
       // A collection this run did NOT create may predate a `joinable` being
-      // declared, and a reference cannot be added to it here.
+      // declared, or a facet policy on a type this one references – and
+      // neither a reference nor a facet companion can be added to it here.
       if (!created) {
-        await assertReferencesPresent(this.client, name, declaredFields);
+        await assertReferencesAndFacetCompanionsPresent(
+          this.client,
+          name,
+          declaredFields,
+          facetCompanionsOf(this.searchType, definitionOptions.schema),
+        );
       }
 
       const importer = new BatchImporter<TDocument & Record<string, string>>(
@@ -285,35 +296,71 @@ export class InPlaceRebuild<
  * component’s collections come into existence WITH their references, and never
  * acquire them later.
  *
- * Deliberately scoped to reference fields only. Every other schema difference
- * is self-correcting (a new plain field simply starts being written) or
+ * The facet companion of a reference inheriting a facet policy
+ * (`RootType.facetKeys` on the type it names) is the other field a live
+ * collection cannot acquire: the documents carry `${name}_facet`, the
+ * collection does not declare it, and every facet on the field fails with
+ * *could not find a facet field* – on every type referencing the policy’s
+ * type, until someone drops the collection by hand. Rotating a pipeline
+ * version reprocesses datasets; it does not recreate collections. So it is
+ * checked here too, with the same instruction.
+ *
+ * Deliberately scoped to those two. Every other schema difference is
+ * self-correcting (a new plain field simply starts being written) or
  * harmless, and general drift detection is a feature of its own.
  */
-async function assertReferencesPresent(
+async function assertReferencesAndFacetCompanionsPresent(
   client: Client,
   name: string,
   fields: readonly CollectionFieldSchema[],
+  facetCompanions: readonly string[],
 ): Promise<void> {
-  const declared = fields.filter((field) => field.reference !== undefined);
-  if (declared.length === 0) {
+  const references = fields.filter((field) => field.reference !== undefined);
+  if (references.length === 0 && facetCompanions.length === 0) {
     return;
   }
   const existing = new Map(
     (await client.collections(name).retrieve()).fields.map((field) => [
       field.name,
-      field.reference,
+      field,
     ]),
   );
-  const missing = declared.filter(
-    (field) => existing.get(field.name) !== field.reference,
+  const missingReferences = references.filter(
+    (field) => existing.get(field.name)?.reference !== field.reference,
   );
-  if (missing.length > 0) {
+  if (missingReferences.length > 0) {
     throw new Error(
-      `Typesense collection “${name}” exists without the reference field(s) ${missing
+      `Typesense collection “${name}” exists without the reference field(s) ${missingReferences
         .map((field) => `“${field.name}” → “${field.reference as string}”`)
         .join(
           ', ',
         )} its search type declares. A reference cannot be added to a live collection here: drop “${name}” (and the collections that join to it) and let the next run rebuild them.`,
     );
   }
+  const missingCompanions = facetCompanions.filter(
+    (companion) => existing.get(companion)?.facet !== true,
+  );
+  if (missingCompanions.length > 0) {
+    throw new Error(
+      `Typesense collection “${name}” exists without the facet field(s) ${missingCompanions
+        .map((companion) => `“${companion}”`)
+        .join(
+          ', ',
+        )} its search type facets on – the companion of a reference to a type that declares a facet policy (“facetKeys”). A facet field cannot be added to a live collection here: drop “${name}” (and the collections that join to it) and let the next run rebuild them.`,
+    );
+  }
+}
+
+/** The `${name}_facet` companions a type’s facets read instead of the fields
+ *  themselves – one per facetable reference inheriting a facet policy
+ *  ({@link physicalFields}). */
+function facetCompanionsOf(
+  searchType: SearchType,
+  schema: SearchSchema | undefined,
+): readonly string[] {
+  return facetableFields(searchType).flatMap((field) => {
+    // A facetable field always has a facet field.
+    const facet = physicalFields(field, schema).facet as string;
+    return facet === field.name ? [] : [facet];
+  });
 }

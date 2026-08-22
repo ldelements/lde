@@ -31,6 +31,7 @@
     "typesense": "^3.0.6"
   },
   "devDependencies": {
+    "n3": "^2.1.2",
     "testcontainers": "^12.1.0"
   },
   "peerDependencies": {

@@ -533,6 +533,16 @@ describe('buildSearchParams', () => {
     ).toBe('keyword,format');
   });
 
+  it('passes a facet it cannot resolve through by name, as it does a where field', () => {
+    // The compiler does not validate: `assertValidQuery` rejects an unknown or
+    // non-facetable facet before a query is dispatched, so here the name
+    // simply travels as written rather than being dropped or re-derived.
+    expect(
+      buildSearchParams({ ...base, facets: ['nope', 'title'] }, schema)
+        .facet_by,
+    ).toBe('nope,title');
+  });
+
   it('facets a range field into its declared half-open bins, open ends blank', () => {
     // Typesense range syntax is start-inclusive/end-exclusive, so the declared
     // `[min, max)` bounds pass straight through; the open-ended bin leaves the
