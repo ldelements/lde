@@ -50,6 +50,7 @@ export type {
   RootTypeOf,
   SearchTypeIssue,
   KeyField,
+  FacetKeys,
   SearchSchema,
   FacetRange,
   ProjectionValue,

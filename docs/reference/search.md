@@ -72,7 +72,9 @@ Exports are stratified by audience:
   - `assertTypeInSchema` – the port membership guard (the exact declaration
     object must be in the schema);
   - `physicalFields` / `PhysicalFields` – the indexed physical fanout a field
-    produces (per-locale search/sort keys);
+    produces (per-locale search/sort keys, and the field a facet reads – the
+    field itself, or the companion of a reference inheriting a
+    [facet policy](#facet-policy), which is why it takes the schema);
   - `physicalNameTokens` – the neutral name tokens an engine formats its own
     collection/index names from;
   - `irAlias` – the minted extraction predicate
@@ -170,9 +172,9 @@ graph. A field that
 declares **no** role is an **internal field**: projected so a later `derive` can
 read it, then pruned before the writer and absent from the collection definition
 – not stored, not indexed, no RAM. The physical field names a declaration fans
-out to (per-locale search/sort keys) come from `physicalFields`, the single
-convention projection, the collection definition and the query compiler all
-share.
+out to (per-locale search/sort keys, the field a facet reads) come from
+`physicalFields`, the single convention projection, the collection definition
+and the query compiler all share.
 
 ```ts
 import { defineSearchType, projectRoots, searchSchema } from '@lde/search';
@@ -613,6 +615,62 @@ later:
   additionally carries **`is`**, the value as a real boolean, so it round-trips
   straight into the `is` filter that selects it;
 - a range-facet bin carries `min`/`max` instead – see below.
+
+### Facet policy
+
+A Root Type may declare **`facetKeys`**: which of its documents get a facet
+bucket, as a predicate over the [document key](#document-key). It is declared
+once, on the type, and inherited by every facetable reference that _names_ it –
+a `lookup`’s `target`, an `idOnly`’s `labelSource` – the same boundary along
+which a reference is re-keyed and a join is drawn (so a `derive`d reference,
+which reads no referent, is narrowed by nothing either):
+
+```ts
+const place = defineSearchType({
+  name: 'Place',
+  class: `${SCHEMA}Place`,
+  key: { field: '_sameAs', pick: (candidates) => candidates.find(isCovered) },
+  // Cross-dataset index: only a key in a covered source gets a bucket, on every
+  // facet that references Place – a publisher’s local place is never one.
+  facetKeys: { only: isCovered },
+  fields: [/* … */],
+});
+```
+
+_Which `Place` ids deserve a bucket_ is a fact about `Place`, not about each of
+the fields that point at it (`CreativeWork.locationCreated`, `Person.birthPlace`,
+`Organization.location`, …), so the policy lives on the target: a per-field
+declaration would state one rule several times, and forgetting one would
+silently reintroduce the buckets on that facet alone. The typical reason is a
+**cross-dataset index**: two publishers who both left the same-named place
+unaligned yield two buckets with one label, which a consumer cannot tell apart –
+while a single-dataset app on its own index wants every bucket. The deployment
+knows which it is building, so the choice is an indexing policy, not a query
+option; a consumer sees one facet that simply has no local buckets.
+
+**Only the facet narrows.** The referring field keeps every value: a document
+still displays the excluded place, and `where: { locationCreated: { in:
+[kessel] } }` still matches it exactly. _Facets are discovery, filters are
+exact_ – the one place the two deliberately disagree, so state it where your
+consumers read.
+
+How it works: for a reference inheriting a policy, the projection writes a
+`${name}_facet` companion holding the admitted subset of the field’s values –
+taken after the field’s own `transform`, so the policy sees what the field
+stores, which for a keyed target is the key – and the engine facets the
+companion instead of the field (`physicalFields(field, schema).facet`). The
+facet is therefore exact under any bucket cap: the engine never sees an
+excluded value. Declaring a policy changes the collection definition of every
+type that references the policy’s type; see the
+[Typesense adapter](./search-typesense#collection-schema-and-engine) for what
+that means for a live collection.
+
+**The failure mode is silence.** A predicate that admits none of a type’s keys
+empties every facet referencing that type, with no error: a `Term` aligned to
+AAT given the places’ `isCovered`, or – the likelier trap – a type that was
+`key`ed _after_ its references were indexed, so the stored values are still
+node IRIs. Key a type before declaring a policy over its keys, and give each
+type its own predicate rather than reuse another’s.
 
 ### Range facets
 

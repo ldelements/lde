@@ -2035,3 +2035,240 @@ describe('document keys (a type keyed on a declared field)', () => {
     ]);
   });
 });
+
+describe('facet policy (a type narrowing the facets that reference it)', () => {
+  const SCHEMA_ORG = 'https://schema.org/';
+  const GEONAMES = 'https://sws.geonames.org/';
+  /** The deployment’s one predicate: is this key in a source an authority can
+   *  resolve? Built into `pick` and the policy alike, so they cannot disagree. */
+  const isCovered = (iri: string) => iri.startsWith(GEONAMES);
+  const normaliseIri = (iri: string) =>
+    iri.replace(/^http:/, 'https:').replace(/\/$/, '');
+
+  const place = defineSearchType({
+    name: 'Place',
+    class: `${SCHEMA_ORG}Place`,
+    labelField: 'name',
+    key: { field: '_sameAs', pick: (candidates) => candidates.find(isCovered) },
+    // Cross-dataset index: only a key in a covered source gets a bucket, on
+    // every facet that references Place.
+    facetKeys: { only: isCovered },
+    fields: [
+      {
+        name: 'name',
+        kind: 'text',
+        path: `<${SCHEMA_ORG}name>`,
+        locales: ['und'],
+        output: true,
+        searchable: { weight: 1 },
+      },
+      {
+        name: '_sameAs',
+        kind: 'reference',
+        array: true,
+        path: `<${SCHEMA_ORG}sameAs>`,
+        transform: normaliseIri,
+      },
+    ],
+  });
+
+  const work = defineSearchType({
+    name: 'CreativeWork',
+    class: `${SCHEMA_ORG}CreativeWork`,
+    fields: [
+      {
+        name: 'locationCreated',
+        kind: 'reference',
+        path: `<${SCHEMA_ORG}locationCreated>`,
+        facetable: true,
+        filterable: true,
+        output: true,
+        ref: { strategy: 'lookup', target: 'Place' },
+      },
+      {
+        name: 'about',
+        kind: 'reference',
+        array: true,
+        path: `<${SCHEMA_ORG}about>`,
+        facetable: true,
+        labelSource: 'Place',
+        transform: normaliseIri,
+      },
+      {
+        // Names no type, so it inherits no policy – whatever it points at.
+        name: 'unnamed',
+        kind: 'reference',
+        array: true,
+        path: `<${SCHEMA_ORG}mentions>`,
+        facetable: true,
+      },
+      {
+        name: 'genre',
+        kind: 'keyword',
+        array: true,
+        path: `<${SCHEMA_ORG}genre>`,
+        facetable: true,
+      },
+    ],
+  });
+
+  const schema = searchSchema(place, work);
+  const workKey = (field: string) => alias('CreativeWork', field);
+  const placeKey = (field: string) => alias('Place', field);
+
+  /** A referenced place as the frame embeds it: its node IRI, with the key
+   *  candidates the extraction hop read for it. */
+  const placeRef = (id: string, ...sameAs: string[]) => ({
+    '@id': id,
+    ...(sameAs.length === 0
+      ? {}
+      : { [placeKey('_sameAs')]: sameAs.map((iri) => ({ '@id': iri })) }),
+  });
+  const aligned = placeRef('https://a/place/1', `${GEONAMES}2751283`);
+  const kessel = placeRef('https://a/place/2');
+  const otherKessel = placeRef('https://b/place/7');
+
+  it('writes the admitted keys to the `_facet` companion and keeps every value on the field', () => {
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/work/1',
+        [workKey('about')]: [kessel, aligned, otherKessel],
+      },
+      work,
+      schema,
+    );
+
+    // The field stays whole: the local places still display and still filter.
+    expect(document.about).toEqual([
+      'https://a/place/2',
+      `${GEONAMES}2751283`,
+      'https://b/place/7',
+    ]);
+    // The policy is applied to the KEY the reference stores, never to the
+    // referent’s node IRI – the aligned place’s node is as local as Kessel’s.
+    expect(document.about_facet).toEqual([`${GEONAMES}2751283`]);
+  });
+
+  it('narrows a single-valued reference to a string companion, absent when excluded', () => {
+    const withAligned = projectDocument(
+      { '@id': 'https://ex/work/1', [workKey('locationCreated')]: aligned },
+      work,
+      schema,
+    );
+    const withLocal = projectDocument(
+      { '@id': 'https://ex/work/2', [workKey('locationCreated')]: kessel },
+      work,
+      schema,
+    );
+
+    expect(withAligned.locationCreated_facet).toBe(`${GEONAMES}2751283`);
+    expect(withLocal.locationCreated).toBe('https://a/place/2');
+    expect(withLocal).not.toHaveProperty('locationCreated_facet');
+  });
+
+  it('narrows a single-valued reference from the value it stores, not from every value the graph offered', () => {
+    // The graph carries two values for a single-valued field; the field stores
+    // the first. A companion holding the admitted SECOND would count a bucket
+    // no filter on the field can reproduce.
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/work/1',
+        [workKey('locationCreated')]: [kessel, aligned],
+      },
+      work,
+      schema,
+    );
+
+    expect(document.locationCreated).toBe('https://a/place/2');
+    expect(document).not.toHaveProperty('locationCreated_facet');
+  });
+
+  it('leaves a derived reference naming a policy type without a companion', () => {
+    // A derive produces its own values rather than reading a referent, so it
+    // is re-keyed by nothing and narrowed by nothing – the engine facets the
+    // field itself (physicalFields agrees), never an unwritten companion.
+    const derived = defineSearchType({
+      name: 'Derived',
+      class: 'urn:x:Derived',
+      fields: [
+        {
+          name: 'place',
+          kind: 'reference',
+          facetable: true,
+          labelSource: 'Place',
+          derive: () => `${GEONAMES}2751283`,
+        },
+      ],
+    });
+    const derivedSchema = searchSchema(place, derived);
+
+    const document = projectDocument(
+      { '@id': 'https://ex/thing/1' },
+      derived,
+      derivedSchema,
+    );
+
+    expect(document.place).toBe(`${GEONAMES}2751283`);
+    expect(document).not.toHaveProperty('place_facet');
+  });
+
+  it('writes no companion when the policy admits nothing', () => {
+    // Absent rather than empty – exactly as a path that matched nothing.
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/work/1',
+        [workKey('about')]: [kessel, otherKessel],
+      },
+      work,
+      schema,
+    );
+
+    expect(document.about).toHaveLength(2);
+    expect(document).not.toHaveProperty('about_facet');
+  });
+
+  it('applies the policy to what the field stores: after the field’s own transform', () => {
+    // A place whose own node already lies in a covered source, spelled the
+    // way the publisher spelled it. Its key is the node IRI (no candidates);
+    // the referring field’s `transform` normalises it, and THAT is what the
+    // policy sees – a policy over the stored value, not over the raw one.
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/work/1',
+        [workKey('about')]: [placeRef('http://sws.geonames.org/1/')],
+      },
+      work,
+      schema,
+    );
+
+    expect(document.about).toEqual([`${GEONAMES}1`]);
+    expect(document.about_facet).toEqual([`${GEONAMES}1`]);
+  });
+
+  it('leaves a reference naming no type, and a keyword facet, without a companion', () => {
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/work/1',
+        [workKey('unnamed')]: [aligned],
+        [workKey('genre')]: [{ '@value': 'map' }],
+      },
+      work,
+      schema,
+    );
+
+    expect(document.unnamed).toEqual(['https://a/place/1']);
+    expect(document.genre).toEqual(['map']);
+    expect(document).not.toHaveProperty('unnamed_facet');
+    expect(document).not.toHaveProperty('genre_facet');
+  });
+
+  it('writes no companion without a schema, which cannot resolve the policy', () => {
+    const document = projectDocument(
+      { '@id': 'https://ex/work/1', [workKey('about')]: [aligned] },
+      work,
+    );
+
+    expect(document.about).toEqual(['https://a/place/1']);
+    expect(document).not.toHaveProperty('about_facet');
+  });
+});
