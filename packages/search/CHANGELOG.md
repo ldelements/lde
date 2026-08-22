@@ -1,3 +1,9 @@
+## 0.23.1 (2026-08-22)
+
+### 🚀 Features
+
+- **search:** key a root type on a declared field ([#764](https://github.com/ldelements/lde/pull/764))
+
 ## 0.23.0 (2026-08-20)
 
 ### 🩹 Fixes

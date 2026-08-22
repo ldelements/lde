@@ -1,3 +1,14 @@
+## 0.24.2 (2026-08-22)
+
+### 🚀 Features
+
+- **search:** key a root type on a declared field ([#764](https://github.com/ldelements/lde/pull/764))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.27.2
+- Updated @lde/search to 0.23.1
+
 ## 0.24.1 (2026-08-21)
 
 ### 🧱 Updated Dependencies
