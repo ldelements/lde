@@ -1,3 +1,9 @@
+## 0.15.5 (2026-08-24)
+
+### 🩹 Fixes
+
+- **sparql-qlever:** detect gzip by magic bytes when preprocessing ([99ce67b](https://github.com/ldelements/lde/commit/99ce67b))
+
 ## 0.15.4 (2026-08-24)
 
 ### 🧱 Updated Dependencies
