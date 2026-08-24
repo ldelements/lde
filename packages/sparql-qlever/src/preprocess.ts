@@ -3,7 +3,7 @@ import { rdfParser } from 'rdf-parse';
 import { rdfSerializer } from 'rdf-serialize';
 import { createGunzip } from 'node:zlib';
 import { createReadStream, createWriteStream, WriteStream } from 'node:fs';
-import { rm, stat } from 'node:fs/promises';
+import { open, rm, stat } from 'node:fs/promises';
 import { Readable } from 'node:stream';
 import { finished } from 'node:stream/promises';
 import { promisify } from 'node:util';
@@ -13,8 +13,6 @@ const JSONLD_MIME = 'application/ld+json';
 const RDFXML_MIME = 'application/rdf+xml';
 const TRIG_MIME = 'application/trig';
 const ZIP_MIME = 'application/zip';
-const GZIP_MIME = 'application/gzip';
-const GZIP_MIME_LEGACY = 'application/x-gzip';
 
 /**
  * RDF media types `qlever-index` cannot read natively, keyed by `rdf-parse`
@@ -41,8 +39,8 @@ export interface PreprocessResult {
  * JSON-LD, RDF/XML and TriG distributions return `true`: `qlever-index` cannot
  * parse any of them, so we stream them through `rdf-parse` into N-Quads first.
  *
- * Native RDF formats (`nt`, `nq`, `ttl`) — including when wrapped in
- * `application/gzip` or `application/zip` — go straight through the shell
+ * Native RDF formats (`nt`, `nq`, `ttl`) – including when wrapped in
+ * `application/gzip` or `application/zip` – go straight through the shell
  * pipeline in `index()`, which uses `gunzip -c` or `unzip -p` as appropriate.
  * Standalone `mediaType=application/zip` is rejected upstream: the inner
  * format must be declared.
@@ -60,8 +58,8 @@ export function needsPreprocessing(distribution: Distribution): boolean {
  *
  * Streams the source through `rdf-parse` → `rdf-serialize` so memory use
  * stays bounded regardless of input size. Handles gzip transparently
- * (declared `compressFormat` or `.gz` filename) and zip containers (folds
- * every parseable entry into the output stream in order).
+ * (detected from the file’s magic bytes, not from declared metadata) and zip
+ * containers (folds every parseable entry into the output stream in order).
  *
  * Cached: if the output is newer than the input, it is reused as-is.
  */
@@ -89,7 +87,7 @@ export async function preprocess(
   if (distribution.compressMimeType === ZIP_MIME) {
     await streamRdfZip(localFile, outputFile, contentType, label, warnings);
   } else {
-    await streamRdfFile(localFile, outputFile, contentType, distribution);
+    await streamRdfFile(localFile, outputFile, contentType);
   }
 
   return { path: outputFile, format: 'nq', warnings };
@@ -140,19 +138,35 @@ async function streamRdfFile(
   localFile: string,
   outputFile: string,
   contentType: string,
-  distribution: Distribution,
 ): Promise<void> {
-  const isGzipped =
-    distribution.compressMimeType === GZIP_MIME ||
-    distribution.compressMimeType === GZIP_MIME_LEGACY ||
-    localFile.toLowerCase().endsWith('.gz');
   const source = createReadStream(localFile);
-  const input = isGzipped ? source.pipe(createGunzip()) : source;
+  const input = (await isGzipFile(localFile))
+    ? source.pipe(createGunzip())
+    : source;
   const output = createWriteStream(outputFile);
   try {
     await pipeRdfToWritable(input, output, contentType);
   } finally {
     await closeWritable(output);
+  }
+}
+
+/**
+ * Whether the file begins with the gzip magic number (RFC 1952 §2.3.1).
+ *
+ * Sniffing the bytes is the only reliable signal for a downloaded dump.
+ * `dcat:compressFormat` is frequently absent, and the local filename is derived
+ * from the access URL, so a dump behind a query string (`…/download.trig.gz?graph=…`)
+ * carries no `.gz` suffix. Conversely, a `.gz` name says nothing once the server
+ * declared a real `Content-Encoding: gzip` and `fetch` already inflated the body.
+ */
+async function isGzipFile(path: string): Promise<boolean> {
+  const file = await open(path);
+  try {
+    const { buffer, bytesRead } = await file.read(Buffer.alloc(2), 0, 2, 0);
+    return bytesRead === 2 && buffer[0] === 0x1f && buffer[1] === 0x8b;
+  } finally {
+    await file.close();
   }
 }
 

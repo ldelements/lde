@@ -84,7 +84,7 @@ describe('needsPreprocessing', () => {
     ).toBe(false);
   });
 
-  it('returns false for native RDF wrapped in a zip — handled by the shell pipeline', () => {
+  it('returns false for native RDF wrapped in a zip – handled by the shell pipeline', () => {
     expect(
       needsPreprocessing(
         makeDistribution('application/n-quads', 'application/zip'),
@@ -183,6 +183,31 @@ describe('preprocess', () => {
       file,
       makeDistribution('application/ld+json'),
     );
+
+    const nquads = await readFile(result.path, 'utf-8');
+    expect(nquads).toContain('<https://example.org/utrecht/story/1>');
+  });
+
+  it('gunzips by magic bytes when neither compressFormat nor the filename says so', async () => {
+    // The KB case: the dump is gzip, the register carries no compressFormat,
+    // and the access URL’s query string leaves the local filename without a
+    // `.gz` suffix – so only the bytes themselves reveal the compression.
+    const file = join(tempDir, 'download.trig.gz!graph=http%3A%2F%2Fnta');
+    await copyFile(resolve('test/fixtures/preprocess/data.trig.gz'), file);
+
+    const result = await preprocess(file, makeDistribution('application/trig'));
+
+    const nquads = await readFile(result.path, 'utf-8');
+    expect(nquads).toContain('<https://example.org/utrecht/story/1>');
+    expect(nquads).toContain('<https://example.org/utrecht/graph> .');
+  });
+
+  it('leaves an uncompressed file alone even when its name ends in .gz', async () => {
+    // A misleading suffix must not send plain TriG through gunzip.
+    const file = join(tempDir, 'data.trig.gz');
+    await copyFile(resolve('test/fixtures/preprocess/data.trig'), file);
+
+    const result = await preprocess(file, makeDistribution('application/trig'));
 
     const nquads = await readFile(result.path, 'utf-8');
     expect(nquads).toContain('<https://example.org/utrecht/story/1>');
