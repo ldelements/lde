@@ -1,6 +1,6 @@
 {
   "name": "@lde/resolver",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "Resolve external references with a durable fact store, bounded outbound work, timeouts, retry, failure isolation and a per-run volume cap",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
@@ -25,7 +25,7 @@
     "!**/*.tsbuildinfo"
   ],
   "dependencies": {
-    "@lde/host-limiter": "^0.0.0",
+    "@lde/host-limiter": "^0.0.1",
     "tslib": "^2.3.0"
   },
   "engines": {

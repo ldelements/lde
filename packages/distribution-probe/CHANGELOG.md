@@ -1,3 +1,13 @@
+## 0.2.9 (2026-08-24)
+
+### 🚀 Features
+
+- **resolver:** resolve external references with bounds, persistence and isolation ([4ee5cb84b](https://github.com/ldelements/lde/commit/4ee5cb84b))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/host-limiter to 0.0.1
+
 ## 0.2.8 (2026-08-24)
 
 This was a version bump only for @lde/distribution-probe to align it with other projects, there were no code changes.

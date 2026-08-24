@@ -1,6 +1,6 @@
 {
   "name": "@lde/host-limiter",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "Zero-dependency concurrent map bounded by a global and a per-host cap, without head-of-line blocking",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
