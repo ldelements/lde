@@ -1,3 +1,8 @@
+import {
+  hostKeyOf,
+  mapHostLimited,
+  positiveIntOrDefault,
+} from '@lde/host-limiter';
 import { compressionMediaTypes, Distribution } from '@lde/dataset';
 import { rdfParser } from 'rdf-parse';
 import { Readable } from 'node:stream';
@@ -244,9 +249,7 @@ export class DataDumpProbeResult extends ProbeResult {
 }
 
 export type ProbeResultType =
-  | SparqlProbeResult
-  | DataDumpProbeResult
-  | NetworkError;
+  SparqlProbeResult | DataDumpProbeResult | NetworkError;
 
 type SparqlQueryType = 'ASK' | 'SELECT' | 'CONSTRUCT' | 'DESCRIBE';
 
@@ -348,12 +351,11 @@ export async function probeMany(
     options?.perHostConcurrency,
     DEFAULT_PROBE_PER_HOST_CONCURRENCY,
   );
-  // Probes contend per host. An authority-less URL (e.g. urn:, file:) has an
-  // empty host, so it falls back to its full href and never shares a budget with
-  // an unrelated one.
-  const hostKeys = distributions.map(
-    (distribution) =>
-      distribution.accessUrl.host || distribution.accessUrl.href,
+  // Probes contend per host, by the shared rule: an authority-less URL (e.g.
+  // urn:, file:) has an empty host, so it falls back to its full href and never
+  // shares a budget with an unrelated one.
+  const hostKeys = distributions.map((distribution) =>
+    hostKeyOf(distribution.accessUrl),
   );
   // Report progress as each probe settles. mapHostLimited resolves results in
   // input order, but tasks complete out of order, so count completions here
@@ -373,80 +375,6 @@ export async function probeMany(
       return result;
     },
   );
-}
-
-/**
- * Coerce an optional concurrency budget to a usable value: a positive integer is
- * taken as-is; undefined, zero, negative, fractional, or NaN falls back to the
- * default. Matches probe()’s treatment of an invalid retries value.
- */
-function positiveIntOrDefault(
-  value: number | undefined,
-  fallback: number,
-): number {
-  return value !== undefined && Number.isInteger(value) && value >= 1
-    ? value
-    : fallback;
-}
-
-/**
- * Run `task` over `items` with two concurrency caps — a global cap and a per-host
- * cap keyed by `hostKeys[index]` — resolving to results in input order. When the
- * next queued item’s host is at the per-host cap it is skipped for a later item on
- * a different host, so a saturated host never idles the global pool (no head-of-line
- * blocking); the skipped host always has a task in flight, whose completion re-runs
- * the scheduler, so the queue always drains. `task` must not reject — callers wrap
- * failures into a result value — as a rejection would leave the promise pending.
- */
-function mapHostLimited<TItem, TResult>(
-  items: readonly TItem[],
-  hostKeys: readonly string[],
-  globalLimit: number,
-  perHostLimit: number,
-  task: (item: TItem) => Promise<TResult>,
-): Promise<TResult[]> {
-  const results: TResult[] = new Array(items.length);
-  const perHostInFlight = new Map<string, number>();
-  const pending = items.map((_unused, index) => index);
-  let globalInFlight = 0;
-  let settledCount = 0;
-
-  const adjustHost = (host: string, delta: number): void => {
-    perHostInFlight.set(host, (perHostInFlight.get(host) ?? 0) + delta);
-  };
-
-  return new Promise((resolve) => {
-    const schedule = (): void => {
-      let cursor = 0;
-      while (cursor < pending.length && globalInFlight < globalLimit) {
-        const index = pending[cursor];
-        const host = hostKeys[index];
-        if ((perHostInFlight.get(host) ?? 0) >= perHostLimit) {
-          cursor++; // Host saturated; leave it queued and try a later, different host.
-          continue;
-        }
-        pending.splice(cursor, 1);
-        globalInFlight++;
-        adjustHost(host, 1);
-        void task(items[index]).then((result) => {
-          results[index] = result;
-          globalInFlight--;
-          adjustHost(host, -1);
-          settledCount++;
-          if (settledCount === items.length) {
-            resolve(results);
-          } else {
-            schedule();
-          }
-        });
-        // pending[cursor] now holds the next queued item; do not advance cursor.
-      }
-    };
-    schedule();
-    // Resolve immediately when there is nothing to settle (empty input); a
-    // non-empty run resolves via the task completion above.
-    if (settledCount === items.length) resolve(results);
-  });
 }
 
 function delay(milliseconds: number): Promise<void> {

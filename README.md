@@ -115,6 +115,10 @@ await pipeline.run();
   <td>Validate that a URL resolves to a valid IIIF Presentation Manifest</td>
 </tr>
 <tr>
+  <td><a href="packages/resolver">@lde/resolver</a><br><a href="https://www.npmjs.com/package/@lde/resolver"><img src="https://img.shields.io/npm/v/@lde/resolver" alt="npm"></a></td>
+  <td>Resolve external references with a durable store, bounds, retry and isolation</td>
+</tr>
+<tr>
   <td><a href="packages/sparql-importer">@lde/sparql-importer</a><br><a href="https://www.npmjs.com/package/@lde/sparql-importer"><img src="https://img.shields.io/npm/v/@lde/sparql-importer" alt="npm"></a></td>
   <td>Import data dumps to a local SPARQL endpoint for querying</td>
 </tr>
@@ -165,6 +169,10 @@ await pipeline.run();
   <td>Console progress reporter for pipelines</td>
 </tr>
 <tr><th colspan="2" align="left">Infrastructure – Manage SPARQL servers and run tasks</th></tr>
+<tr>
+  <td><a href="packages/host-limiter">@lde/host-limiter</a><br><a href="https://www.npmjs.com/package/@lde/host-limiter"><img src="https://img.shields.io/npm/v/@lde/host-limiter" alt="npm"></a></td>
+  <td>Concurrent map bounded by a global and a per-host cap</td>
+</tr>
 <tr>
   <td><a href="packages/local-sparql-endpoint">@lde/local-sparql-endpoint</a><br><a href="https://www.npmjs.com/package/@lde/local-sparql-endpoint"><img src="https://img.shields.io/npm/v/@lde/local-sparql-endpoint" alt="npm"></a></td>
   <td>Quickly start a local SPARQL endpoint for testing and development</td>

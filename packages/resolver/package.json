@@ -1,9 +1,10 @@
 {
-  "name": "@lde/distribution-probe",
-  "version": "0.2.8",
+  "name": "@lde/resolver",
+  "version": "0.0.0",
+  "description": "Resolve external references with a durable fact store, bounded outbound work, timeouts, retry, failure isolation and a per-run volume cap",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
-    "directory": "packages/distribution-probe"
+    "directory": "packages/resolver"
   },
   "license": "MIT",
   "type": "module",
@@ -24,9 +25,10 @@
     "!**/*.tsbuildinfo"
   ],
   "dependencies": {
-    "@lde/dataset": "^0.7.9",
     "@lde/host-limiter": "^0.0.0",
-    "rdf-parse": "^5.0.0",
     "tslib": "^2.3.0"
+  },
+  "engines": {
+    "node": ">=24"
   }
 }
