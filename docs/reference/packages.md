@@ -25,6 +25,7 @@ Transform, enrich and analyse datasets with SPARQL pipelines.
 | [@lde/distribution-health](./distribution-health)           | Derive distribution usability from reachability and RDF validity   |
 | [@lde/distribution-probe](./distribution-probe)             | Probe distributions for availability and metadata                  |
 | [@lde/iiif-validator](./iiif-validator)                     | Validate that a URL resolves to a valid IIIF Presentation Manifest |
+| [@lde/resolver](./resolver)                                 | Resolve external references with a durable store, bounds and retry |
 | [@lde/sparql-importer](./sparql-importer)                   | Import data dumps to a local SPARQL endpoint for querying          |
 
 ## Publication
@@ -58,6 +59,7 @@ Manage SPARQL servers and run tasks.
 
 | Package                                               | Description                                                       |
 | ----------------------------------------------------- | ----------------------------------------------------------------- |
+| [@lde/host-limiter](./host-limiter)                   | Concurrent map bounded by a global and a per-host cap             |
 | [@lde/local-sparql-endpoint](./local-sparql-endpoint) | Quickly start a local SPARQL endpoint for testing and development |
 | [@lde/sparql-server](./sparql-server)                 | Start, stop and control SPARQL servers                            |
 | [@lde/sparql-qlever](./sparql-qlever)                 | QLever SPARQL adapter for importing and serving data              |

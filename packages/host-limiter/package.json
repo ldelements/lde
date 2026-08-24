@@ -1,9 +1,10 @@
 {
-  "name": "@lde/distribution-probe",
-  "version": "0.2.8",
+  "name": "@lde/host-limiter",
+  "version": "0.0.0",
+  "description": "Zero-dependency concurrent map bounded by a global and a per-host cap, without head-of-line blocking",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
-    "directory": "packages/distribution-probe"
+    "directory": "packages/host-limiter"
   },
   "license": "MIT",
   "type": "module",
@@ -24,9 +25,9 @@
     "!**/*.tsbuildinfo"
   ],
   "dependencies": {
-    "@lde/dataset": "^0.7.9",
-    "@lde/host-limiter": "^0.0.0",
-    "rdf-parse": "^5.0.0",
     "tslib": "^2.3.0"
+  },
+  "engines": {
+    "node": ">=24"
   }
 }

@@ -13,8 +13,11 @@ export default mergeConfig(
           autoUpdate: true,
           lines: 100,
           functions: 100,
-          branches: 96.75,
-          statements: 99.64,
+          // Re-anchored when the host-limited map moved to @lde/host-limiter:
+          // fully covered code leaving the file lowers the ratio without
+          // uncovering a line of what stayed.
+          branches: 96.38,
+          statements: 99.6,
         },
       },
     },
