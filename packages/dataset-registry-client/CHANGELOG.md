@@ -1,3 +1,7 @@
+## 0.9.3 (2026-08-24)
+
+This was a version bump only for @lde/dataset-registry-client to align it with other projects, there were no code changes.
+
 ## 0.9.2 (2026-08-21)
 
 ### 🩹 Fixes

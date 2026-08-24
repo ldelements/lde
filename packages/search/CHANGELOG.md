@@ -1,3 +1,9 @@
+## 0.23.2 (2026-08-24)
+
+### 🚀 Features
+
+- **search:** narrow a reference’s facet to the keys its target admits ([#765](https://github.com/ldelements/lde/pull/765))
+
 ## 0.23.1 (2026-08-22)
 
 ### 🚀 Features
