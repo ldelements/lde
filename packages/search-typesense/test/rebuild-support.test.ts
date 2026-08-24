@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { SearchType } from '@lde/search';
+import { defineSearchType, searchSchema, type SearchType } from '@lde/search';
 import {
   assertNoReservedFields,
   assertSweepableProvenanceField,
@@ -181,6 +181,52 @@ describe('assertSweepableProvenanceField', () => {
     // Blue/green only ever filters by a known IRI, so it needs no facet.
     expect(() =>
       assertSweepableProvenanceField(notFacetable, { requireFacetable: false }),
+    ).not.toThrow();
+  });
+
+  it('rejects a dataset field whose facet a policy narrows, where the writer enumerates by it', () => {
+    // The engine would facet only the admitted datasets, so the sweep would
+    // never see – and never reconcile – the ones the policy excludes.
+    const dataset = defineSearchType({
+      name: 'Dataset',
+      class: 'https://example.org/Dataset',
+      facetKeys: { only: (id) => id.startsWith('https://registry/') },
+      fields: [
+        {
+          name: 'label',
+          kind: 'text',
+          locales: ['und'],
+          output: true,
+          searchable: { weight: 1 },
+        },
+      ],
+    });
+    const object = defineSearchType({
+      name: 'Object',
+      class: 'https://example.org/Object',
+      fields: [
+        {
+          name: 'dataset',
+          kind: 'reference',
+          from: 'dataset',
+          facetable: true,
+          ref: { strategy: 'lookup', target: 'Dataset' },
+        },
+      ],
+    });
+    const schema = searchSchema(dataset, object);
+
+    expect(() =>
+      assertSweepableProvenanceField(object, {
+        requireFacetable: true,
+        schema,
+      }),
+    ).toThrow(/inherits a facet policy/);
+    expect(() =>
+      assertSweepableProvenanceField(object, {
+        requireFacetable: false,
+        schema,
+      }),
     ).not.toThrow();
   });
 });

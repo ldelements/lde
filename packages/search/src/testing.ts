@@ -11,6 +11,7 @@ import {
   facetableFields,
   filterableFields,
   ID_FIELD,
+  inheritedFacetKeys,
   nestedReferenceType,
   outputFields,
   type RootType,
@@ -256,6 +257,54 @@ export function describeSearchEngineContract(
       }
     });
 
+    it('buckets a facet inheriting a policy on admitted keys only, labelled, while filtering stays exact', async () => {
+      // A facet policy (`RootType.facetKeys`) narrows the FACET and nothing
+      // else. Two things an adapter can get wrong, each silently: facet the
+      // companion field but report its buckets under the engine’s name, which
+      // loses every label and files the counts under a key no consumer asked
+      // for; and pick the filter operator off the declaration, so a `where`
+      // on an excluded value – still `facetable` in the schema, no longer a
+      // facet in the engine – partial-matches on a shared path prefix. The
+      // adapter’s fixture should carry two IRIs sharing a prefix so the
+      // second assertion bites.
+      for (const searchType of types()) {
+        for (const field of facetableFields(searchType)) {
+          const policy = inheritedFacetKeys(field, engine().schema);
+          if (policy === undefined) {
+            continue;
+          }
+          const result = await engine().search(searchType, {
+            ...browse(searchType),
+            limit: 20,
+            facets: [field.name],
+          });
+          const buckets = result.facets[field.name] ?? [];
+          for (const bucket of buckets) {
+            expect(policy.only(bucket.value)).toBe(true);
+            expect(bucket.label).toBeDefined();
+          }
+          if (field.output !== true || field.filterable !== true) {
+            continue; // Nothing to read the stored values back from.
+          }
+          const excluded = result.hits
+            .flatMap((hit) => referenceIds(hit.document[field.name]))
+            .find((id) => !policy.only(id));
+          if (excluded === undefined) {
+            continue;
+          }
+          const filtered = await engine().search(searchType, {
+            ...browse(searchType),
+            limit: 20,
+            where: [filterOn({ field: field.name, in: [excluded] })],
+          });
+          expect(filtered.total).toBeGreaterThan(0);
+          for (const hit of filtered.hits) {
+            expect(referenceIds(hit.document[field.name])).toContain(excluded);
+          }
+        }
+      }
+    });
+
     it('answers a browse query with hits, a total and facets', async () => {
       for (const searchType of types()) {
         const result = await engine().search(searchType, browse(searchType));
@@ -279,6 +328,19 @@ function mismatchedFilter(
   return operator === 'in'
     ? filterOn({ field, range: { min: 0 } })
     : filterOn({ field, in: ['x'] });
+}
+
+/** The ids a reconstructed reference value carries – one labelled reference
+ *  or a list of them – read the way a consumer reads them. */
+function referenceIds(value: unknown): readonly string[] {
+  const references = Array.isArray(value) ? value : [value];
+  return references
+    .map((reference: unknown) =>
+      typeof reference === 'object' && reference !== null && 'id' in reference
+        ? String(reference.id)
+        : undefined,
+    )
+    .filter((id): id is string => id !== undefined);
 }
 
 /** The locale a query against this type may select (any is contract-valid). */

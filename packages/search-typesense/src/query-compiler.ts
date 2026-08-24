@@ -7,6 +7,7 @@ import {
   type RootType,
   type SearchField,
   type SearchQuery,
+  type SearchSchema,
   type SearchType,
   type Sort,
 } from '@lde/search';
@@ -65,6 +66,16 @@ export interface BuildSearchParamsOptions {
    */
   readonly maxFacetValues?: number;
   /**
+   * The Search Schema the searched type belongs to – what resolves the facet
+   * policy a reference inherits from the type it names
+   * (`physicalFields(field, schema).facet`): the `${name}_facet` companion a
+   * facet on such a field reads, and the membership operator a filter on it
+   * compiles to. Left unset, a facet reads the field itself – which, against a
+   * collection built with the schema, is a field the engine does not facet.
+   * Through the engine it is always set.
+   */
+  readonly schema?: SearchSchema;
+  /**
    * Called for each `where` clause that does not compile as the caller wrote
    * it – either because it states no constraint (an empty `in` list, a `range`
    * with no usable bound, no criteria at all) and is skipped, or because every
@@ -119,7 +130,7 @@ export function buildSearchParams(
     params.sort_by = sortBy;
   }
   if (query.facets.length > 0) {
-    params.facet_by = compileFacetBy(query.facets, searchType);
+    params.facet_by = compileFacetBy(query.facets, searchType, options.schema);
     if (options.maxFacetValues !== undefined) {
       params.max_facet_values = options.maxFacetValues;
     }
@@ -130,20 +141,26 @@ export function buildSearchParams(
 /**
  * The `facet_by` clause. A facet on a numeric field that declares
  * {@link SearchField.facetRanges} faceted into those fixed half-open `[min, max)`
- * bins (a histogram); every other facet is a plain per-value facet on its field
- * name. Typesense range syntax is already start-inclusive/end-exclusive, so the
+ * bins (a histogram); every other facet is a plain per-value facet on the
+ * field the declaration facets ({@link physicalFields} – the field itself, or
+ * the `${name}_facet` companion of a reference inheriting a facet policy).
+ * Typesense range syntax is already start-inclusive/end-exclusive, so the
  * declared bounds pass straight through with no boundary fix-up.
  */
 function compileFacetBy(
   facets: readonly string[],
   searchType: SearchType,
+  schema: SearchSchema | undefined,
 ): string {
   return facets
     .map((name) => {
       const field = fieldNamed(searchType, name);
-      return field !== undefined && isRangeFacet(field)
+      if (field === undefined) {
+        return name;
+      }
+      return isRangeFacet(field)
         ? compileRangeFacet(field.name, field.facetRanges)
-        : name;
+        : (physicalFields(field, schema).facet ?? name);
     })
     .join(',');
 }
@@ -310,7 +327,7 @@ function compileCriterion(
 ): string | typeof VACUOUS | typeof UNUSABLE {
   const on = criterion.on ?? [];
   if (on.length === 0) {
-    return compileLeaf(criterion, searchType);
+    return compileLeaf(criterion, searchType, options.schema);
   }
   // A joined criterion constrains a document in ANOTHER collection, so the leaf
   // is compiled against the type that path reaches and then wrapped, one
@@ -329,7 +346,7 @@ function compileCriterion(
     collections.push(resolved.collection);
     target = resolved.searchType;
   }
-  const leaf = compileLeaf(criterion, target);
+  const leaf = compileLeaf(criterion, target, options.schema);
   // A vacuous leaf states no constraint on the referent, so the join as a whole
   // states none either – the reading, and so the outcome, passes straight
   // through the hops.
@@ -347,6 +364,7 @@ function compileCriterion(
 function compileLeaf(
   criterion: Criterion,
   searchType: SearchType,
+  schema: SearchSchema | undefined,
 ): string | typeof VACUOUS | typeof UNUSABLE {
   // `id` is the Typesense document key, not a declared field. Exact `:=`
   // membership, like a non-facet field ({@link compileMembership}), so an IRI
@@ -370,7 +388,7 @@ function compileLeaf(
   }
   if ('in' in criterion) {
     return criterion.in.length > 0
-      ? compileMembership(field, criterion.in)
+      ? compileMembership(field, criterion.in, schema)
       : VACUOUS;
   }
   if ('range' in criterion) {
@@ -382,15 +400,22 @@ function compileLeaf(
 /**
  * A membership clause. A non-facet (tokenized) field uses the exact `:=`
  * operator so an IRI cannot partial-match on a shared path segment.
+ *
+ * *Non-facet* is the **engine’s** facet status, not the declaration’s: a
+ * reference inheriting a facet policy is `facetable` in the schema while the
+ * engine facets its companion and stores the field itself plain – and a
+ * filter on such a field is exactly what the policy promises stays whole, so
+ * it must compile exact, not tokenized.
  */
 function compileMembership(
   field: SearchField,
   values: readonly string[],
+  schema: SearchSchema | undefined,
 ): string {
   const list = `[${values.map(escapeFilterValue).join(',')}]`;
-  return field.facetable !== true
-    ? `${field.name}:=${list}`
-    : `${field.name}:${list}`;
+  return physicalFields(field, schema).facet === field.name
+    ? `${field.name}:${list}`
+    : `${field.name}:=${list}`;
 }
 
 /** An inclusive Typesense range clause, or `undefined` when neither bound is

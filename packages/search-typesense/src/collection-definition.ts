@@ -39,11 +39,19 @@ export interface CollectionDefinitionOptions {
   /**
    * The Search Schema the type belongs to – required when the type surfaces an
    * inline reference (whose nested fields are declared from the
-   * {@link ReferenceType} the schema resolves) or declares a joinable
+   * {@link ReferenceType} the schema resolves), declares a joinable
    * reference (whose target collection the schema’s {@link joinGraph}
    * resolves). A type doing neither needs no schema, so a caller passes none;
    * a type that does fails here rather than building a collection that
    * silently omits the nesting or the reference.
+   *
+   * Also what resolves the facet policy a facetable reference inherits from
+   * the type it names ({@link physicalFields}): without the schema the field
+   * itself is declared the facet and no `${name}_facet` companion is, the same
+   * reading the projection makes without one. Whether a policy applies cannot
+   * be told without the schema, so this is not guarded: a deployment that
+   * declares one and builds its collections schema-less meets the engine’s own
+   * error on the first facet query, not a silently narrowed-to-nothing facet.
    */
   readonly schema?: SearchSchema;
   /** Snowball stemming locale for non-localized searchable fields (e.g. `en`).
@@ -233,7 +241,7 @@ function typesenseFields(
   if (nested !== undefined) {
     return nestedFields(field.name, field, nested, schema as SearchSchema);
   }
-  const names = physicalFields(field);
+  const names = physicalFields(field, schema);
   if (field.kind === 'text') {
     const locales = field.locales;
     const displayPattern = displayFieldPattern(field);
@@ -281,7 +289,10 @@ function typesenseFields(
     {
       name: field.name,
       type: valueType,
-      facet: field.facetable ?? false,
+      // A reference inheriting a facet policy facets its companion below, and
+      // the field itself stays a plain stored value – which is also what keeps
+      // a membership filter on it exact (`compileMembership`).
+      facet: names.facet === field.name,
       sort: field.sortable ?? false,
       // A `required` field is non-optional; so is the `default_sorting_field`,
       // which Typesense requires to be present. Everything else may be absent.
@@ -300,6 +311,18 @@ function typesenseFields(
         stem: true,
         locale: defaultLocale,
       }),
+    });
+  }
+  // The `${name}_facet` companion of a reference inheriting a facet policy:
+  // the admitted subset of the field’s values, and the only one of the two
+  // the engine facets. Optional, because a document none of whose values the
+  // policy admits carries no companion at all.
+  if (names.facet !== undefined && names.facet !== field.name) {
+    fields.push({
+      name: names.facet,
+      type: valueType,
+      facet: true,
+      optional: true,
     });
   }
   return fields;

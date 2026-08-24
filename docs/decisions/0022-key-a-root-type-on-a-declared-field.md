@@ -6,6 +6,11 @@ Date: 2026-08-21
 
 Accepted
 
+Amended 2026-08-22: gains the **facet policy** – `facetKeys` on a Root Type,
+inherited by every facetable reference that names it, along the same boundary
+as re-keying – as the index-side half of the same design. See “The facet
+policy” under Decision and the two consequences it adds.
+
 Extends [ADR 20](./0020-resolve-a-references-fields-from-the-targets-own-collection.md),
 whose contract – a reference holds ids of documents in the target’s collection –
 is what makes reference rewriting a consequence rather than a new rule. Relates
@@ -71,14 +76,30 @@ reference dangling.
 needs a node’s key before the projection runs reads the same answer the
 projection will.
 
-### The boundary, for keys and for joins alike
+### The boundary, for keys, facets and joins alike
 
 Only a reference that **names** its target – a `lookup`’s `target`, an
-`idOnly`’s `labelSource` – is re-keyed. That is the same line a join draws, and
-for the same reason: naming the target is what asserts that the field holds ids
-of that collection’s documents. An `idOnly` reference with no label source, and
-a `derive`d reference over a raw internal path, never claimed as much, so
-nothing rewrites them.
+`idOnly`’s `labelSource` – is re-keyed, and only such a reference inherits the
+target’s facet policy. That is the same line a join draws, and for the same
+reason: naming the target is what asserts that the field holds ids of that
+collection’s documents. An `idOnly` reference with no label source, and a
+`derive`d reference over a raw internal path, never claimed as much, so nothing
+rewrites them and no policy narrows them.
+
+### The facet policy
+
+A Root Type may declare which of its documents get a facet bucket –
+`facetKeys: { only: isCovered }`, a predicate over the document key – and every
+facetable reference naming the type inherits it. _Which ids deserve a bucket_
+is a fact about the target, not about each field pointing at it, so it is
+declared once; the alternative, a query-time facet variant, adds a facets entry
+type, a validation rule and a surface enum for a choice the deployment already
+made when it built a cross-dataset index. Only the facet narrows: the field
+keeps every value, so a local place still displays and still filters exactly.
+The mechanism is a second physical field per inheriting facet – `${name}_facet`,
+the admitted subset, written by the projection from the already-keyed values –
+which the engine facets instead of the field, so the facet is exact under any
+bucket cap.
 
 ## Consequences
 
@@ -113,16 +134,40 @@ nothing rewrites them.
 - **The key is assigned before any `derive` runs**, so a derive sees the key and
   never the node IRI. A deployment that wants the node IRI declares a plain
   `idOnly` reference over the same path.
+- **A facet policy is a second physical field in the engine** – a subset of the
+  same ids stored twice – and a collection-definition change for every type
+  referencing the policy’s type. Under a blue-green rebuild that is the next
+  run; under an in-place rebuild it is a loud failure at run open, after the
+  lock and before any write, asking for the collection to be dropped once:
+  rotating a pipeline version reprocesses datasets, it does not recreate
+  collections. The Typesense adapter keys facet results off the engine’s
+  physical field name, so the companion’s name is mapped back to the declared
+  field once, at the response boundary, before labels are resolved and counts
+  filed; and a membership filter follows the field’s _engine_ facet status
+  rather than its declaration, or a filter on an excluded value – the very case
+  the policy promises stays whole – would compile to the tokenised operator and
+  partial-match on a shared path prefix.
+- **An over-strict predicate empties a facet instead of erroring.** Applied to
+  a type whose keys are not what it tests for – or to one keyed after its
+  references were indexed, so the stored values are still node IRIs – it admits
+  nothing and every facet referencing the type comes back empty, silently. A
+  documented footgun on `facetKeys` for now; a writer noticing a companion that
+  stayed empty across a run while its field did not is a cheap tell to add
+  later.
 - **A cross-dataset node reference does not resolve.** A work in dataset A
   pointing at a local node in dataset B gets no candidates – the hop runs against
   A’s distribution – so it stores the node IRI and dangles against B’s keyed
   document. Publishers reference other publishers through `sameAs` rather than
   directly, and such a reference is already unresolvable today for every purpose
   but labels.
-- `@lde/pipeline`, `@lde/search-indexer` and the API packages are untouched, and
-  `@lde/search-typesense` only adopts the shared `rootTypeNamed` in place of a
-  by-name map of its own: the change is a schema member, the projection, and one
-  hop in the extraction generator. A schema declaring no `key` extracts,
+- `@lde/pipeline`, `@lde/search-indexer` and the API packages are untouched.
+  The key is a schema member, the projection, and one hop in the extraction
+  generator, with `@lde/search-typesense` only adopting the shared
+  `rootTypeNamed` in place of a by-name map of its own; the facet policy is a
+  second schema member, the companion in the projection, and – in the adapter –
+  the companion in the collection definition, the facet and membership clauses
+  in the query compiler, the name mapping at the response boundary and the
+  in-place check. A schema declaring neither `key` nor `facetKeys` extracts,
   projects, indexes and queries exactly as before.
 
 ## Rejected
