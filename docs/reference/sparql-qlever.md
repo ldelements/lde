@@ -72,7 +72,7 @@ N-Quads, N-Triples and Turtle are QLever’s native index formats and are fed to
 
 Compression:
 
-- **gzip** is handled transparently, whether declared as the distribution’s `compressFormat` or implied by a `.gz` filename.
+- **gzip** is handled transparently, detected from the file’s magic bytes rather than from declared metadata. Publishers routinely omit `compressFormat`, and a dump served behind a query string leaves the downloaded file without a `.gz` suffix – so the bytes are the only signal that always holds.
 - **zip** requires the inner RDF format to be declared as the distribution’s `mediaType`, with `application/zip` appearing only as its `compressFormat`. A distribution whose `mediaType` is `application/zip` alone is rejected as `NotSupported` – the importer cannot know what is inside. Every parseable zip entry is folded into the output; entries that fail to parse (sidecars, OS metadata) are skipped with a warning.
 
 For native formats, the actual `qlever-index` format flag is resolved by priority: the server’s `Content-Type` response header first, then the file extension, then the declared media type as a last resort. A mismatch between these produces a warning on `ImportSuccessful.warnings`.
