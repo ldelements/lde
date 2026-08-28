@@ -28,7 +28,7 @@
     "@traqula/generator-sparql-1-1": "^1.2.0",
     "@traqula/parser-sparql-1-1": "^1.2.0",
     "@traqula/rules-sparql-1-1": "^1.2.0",
-    "ldkit": "^2.7.1",
+    "ldkit": "^2.7.2",
     "tslib": "^2.3.0"
   },
   "devDependencies": {
