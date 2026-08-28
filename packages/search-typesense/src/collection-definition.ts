@@ -1,7 +1,6 @@
 import type { CollectionCreateSchema } from 'typesense';
 import type { CollectionFieldSchema } from 'typesense/lib/Typesense/Collection.js';
 import {
-  type ReferenceType,
   type SearchField,
   type SearchSchema,
   type SearchType,
@@ -12,6 +11,7 @@ import {
   isInlineReference,
   isInternalField,
   joinGraph,
+  localLookupTypeOf,
   nestedFieldName,
   nestedReferenceType,
   physicalFields,
@@ -37,11 +37,11 @@ export interface CollectionDefinitionOptions {
    */
   readonly collectionNameFor?: (searchType: SearchType) => string;
   /**
-   * The Search Schema the type belongs to – required when the type surfaces an
-   * inline reference (whose nested fields are declared from the
-   * {@link ReferenceType} the schema resolves), declares a joinable
-   * reference (whose target collection the schema’s {@link joinGraph}
-   * resolves). A type doing neither needs no schema, so a caller passes none;
+   * The Search Schema the type belongs to – required when the type carries an
+   * inline reference (whose nested fields are declared from the reference type
+   * the schema resolves), or declares a joinable reference (whose target
+   * collection the schema’s {@link joinGraph} resolves).
+   * A type doing neither needs no schema, so a caller passes none;
    * a type that does fails here rather than building a collection that
    * silently omits the nesting or the reference.
    *
@@ -101,13 +101,18 @@ export interface CollectionDefinitionOptions {
  * entirely: they exist only as a projection-time reading device for the
  * derives, so the collection stores nothing for them.
  *
- * A surfaced (`output`) inline reference is stored as a **nested object** –
- * `object` or `object[]` – with one nested Physical Field per output field of
- * its {@link ReferenceType} ({@link nestedFieldName}), which turns on
- * `enable_nested_fields` for the collection. Nested fields carry `output` only
- * (enforced by `searchSchema`), so they are declared `index: false`: each
- * referent’s values stay grouped on disk and cost no RAM, exactly like the
- * display labels.
+ * An inline reference is stored as a **nested object** – `object` or
+ * `object[]` – with one nested Physical Field per field of the type it nests
+ * ({@link nestedFieldName}), which turns on `enable_nested_fields` for the
+ * collection. A nested field is `index: false` unless it declares a query Role,
+ * so a display-only nesting stays disk weight and costs no RAM, exactly like
+ * the display labels; one that opts into `filterable` or `searchable` is
+ * indexed, and its parent object with it (see {@link nestedFields}).
+ *
+ * An inline reference declaring `filterable` or `facetable` also emits its
+ * {@link ReferenceStrategy.identity identity companion} – a flat id field the
+ * engine can filter and facet, which a nested object is not
+ * ({@link identityCompanionFields}).
  */
 export function buildCollectionDefinition(
   searchType: SearchType,
@@ -142,21 +147,24 @@ export function buildCollectionDefinition(
 }
 
 /**
- * The {@link ReferenceType} a field nests, or `undefined` when it nests
- * nothing. Throws when the type surfaces an inline reference the caller gave no
- * schema to resolve: the collection would silently store the reference as a
- * string the projection never writes, so every document would fail to import.
+ * The type a field nests, or `undefined` when it nests nothing. Throws when the
+ * type carries an inline reference the caller gave no schema to resolve: the
+ * collection would silently store the reference as a string the projection
+ * never writes, so every document would fail to import.
  */
 function nestedTypeOf(
   searchType: SearchType,
   field: SearchField,
   schema: SearchSchema | undefined,
-): ReferenceType | undefined {
+): SearchType | undefined {
   const nested =
-    schema === undefined ? undefined : nestedReferenceType(schema, field);
-  // Reached only for a field carrying a Role, so an inline reference here is a
-  // surfaced one: `searchSchema` allows an inline reference no Role but
-  // `output`.
+    schema === undefined
+      ? undefined
+      : (nestedReferenceType(schema, field) ??
+        localLookupTypeOf(field, schema));
+  // Reached only for a field carrying a Role, so an inline reference here
+  // stores entries: a Role-less one is an internal reading device, pruned
+  // before the writer.
   if (nested === undefined && isInlineReference(field)) {
     throw new Error(
       `Building the collection for “${searchType.name}” needs the search schema its surfaced inline reference “${field.name}” resolves against; pass it as the collection-definition option “schema”.`,
@@ -239,7 +247,16 @@ function typesenseFields(
   }
   const nested = nestedTypeOf(searchType, field, schema);
   if (nested !== undefined) {
-    return nestedFields(field.name, field, nested, schema as SearchSchema);
+    return [
+      ...nestedFields(
+        field.name,
+        field,
+        nested,
+        schema as SearchSchema,
+        defaultLocale,
+      ),
+      ...identityCompanionFields(field, schema as SearchSchema),
+    ];
   }
   const names = physicalFields(field, schema);
   if (field.kind === 'text') {
@@ -329,66 +346,205 @@ function typesenseFields(
 }
 
 /**
- * The nested object one surfaced inline reference stores, plus one nested
- * Physical Field per output field of its {@link ReferenceType} – recursing for
- * a reference type that itself surfaces an inline reference, to the depth the
- * schema declares (`searchSchema` rejects inline cycles, so the recursion
- * terminates).
+ * The nested object one inline reference stores, plus one nested Physical Field
+ * per field of the type it nests – recursing for a nested field that itself
+ * nests (another inline reference, or a
+ * {@link ReferenceStrategy.local local} lookup, which stores its endpoint
+ * shaped by the target’s own declaration). `searchSchema` rejects inline
+ * cycles, so the recursion terminates.
  *
- * Everything nested is `index: false`: a nested field carries `output` only, so
- * it is stored with its referent and read back with it, never searched, faceted
- * or sorted on. That keeps the RAM lever intact – a nested document is display
- * weight, like the per-language labels – and lets the declared child types be
- * exactly what the projection writes without an indexing contract to satisfy.
- * Declaring the children rather than only the object is what makes the nesting
- * legible in the collection, and what keeps an {@link isInternalField Internal
- * Field} inside a Reference Type visibly contributing nothing.
+ * **A nested field is indexed exactly when it declares a query Role.** One that
+ * declares only `output` keeps `index: false`: stored with its referent, read
+ * back with it, costing disk rather than RAM – the same lever the per-language
+ * display labels use. `filterable` or `searchable` turns indexing on for that
+ * one field, and nothing else.
+ *
+ * **The parent object must be indexed whenever any descendant is.** Typesense
+ * silently ignores an indexed child under an `index: false` parent: no error,
+ * no match, every query answering empty. So the parent’s flag is computed from
+ * the children rather than declared, and this is the one place that invariant
+ * can be got wrong.
  */
 function nestedFields(
   prefix: string,
   reference: SearchField,
-  referenceType: ReferenceType,
+  nestedType: SearchType,
   schema: SearchSchema,
+  defaultLocale: string | undefined,
+  withinArray = false,
 ): CollectionFieldSchema[] {
   const array = reference.array === true;
-  const fields: CollectionFieldSchema[] = [
-    {
-      name: prefix,
-      type: array ? 'object[]' : 'object',
+  // Typesense flattens a nested object, so a value under a multi-valued
+  // ancestor arrives as an array however single-valued the declaration is.
+  // That only matters for an INDEXED field, whose declared type is checked
+  // against what is stored; an unindexed one is stored as-is.
+  const flattensToArray = withinArray || array;
+  const children: CollectionFieldSchema[] = [];
+  // A `local` lookup nests its endpoint’s own document, which carries the `id`
+  // that identifies it. The target type does not declare `id` – no type
+  // declares its own key – so it is added here or it would be the one stored
+  // value the collection never mentions.
+  if (nestedType.class !== undefined) {
+    children.push({
+      name: nestedFieldName(prefix, 'id'),
+      type: flattensToArray ? 'string[]' : 'string',
       index: false,
-      optional: reference.required !== true,
-    },
-  ];
-  for (const field of referenceType.fields) {
+      optional: true,
+    });
+  }
+  for (const field of nestedType.fields) {
     if (isInternalField(field)) {
       continue;
     }
-    const nested = nestedReferenceType(schema, field);
-    if (nested !== undefined) {
-      fields.push(
+    const deeper = nestedTypeOfNestedField(field, schema);
+    if (deeper !== undefined) {
+      children.push(
         ...nestedFields(
           nestedFieldName(prefix, field.name),
           field,
-          nested,
+          deeper,
           schema,
+          defaultLocale,
+          flattensToArray,
         ),
       );
       continue;
     }
-    // A nested text field stores its display values exactly as a root one does
-    // – one `${name}_<lang>` per present language, matched by one pattern
-    // field – only under the referent’s prefix. It has no search or sort
-    // companions: those are Roles a nested field cannot declare.
-    const pattern =
-      field.kind === 'text' ? displayFieldPattern(field) : undefined;
+    children.push(
+      ...nestedLeafFields(prefix, field, defaultLocale, flattensToArray),
+    );
+  }
+  return [
+    {
+      name: prefix,
+      // Flattening applies to an object exactly as it does to a value: a
+      // single-valued nesting inside a multi-valued one arrives as a list of
+      // objects, so it is only declared `object` where nothing above it is an
+      // `object[]`.
+      type: flattensToArray ? 'object[]' : 'object',
+      // Never hard-coded: see the parent-object rule above.
+      index: children.some((child) => child.index !== false),
+      optional: reference.required !== true,
+    },
+    ...children,
+  ];
+}
+
+/**
+ * The **identity companion** of an inline reference: the flat field holding the
+ * ids its entries reference, which the engine filters and facets in place of
+ * the nested object it cannot. Empty for an inline reference declaring no
+ * `identity` – a display-only nesting keeps costing no RAM.
+ *
+ * A second, narrowed field joins it where the target declares a facet policy,
+ * exactly as it does for a top-level facetable reference: the facet then reads
+ * the admitted subset, so an excluded id is never seen by the engine rather
+ * than merely unlabelled.
+ */
+function identityCompanionFields(
+  field: SearchField,
+  schema: SearchSchema,
+): CollectionFieldSchema[] {
+  const names = physicalFields(field, schema);
+  if (names.identity === undefined) {
+    return [];
+  }
+  const fields: CollectionFieldSchema[] = [
+    {
+      name: names.identity,
+      type: 'string[]',
+      facet: names.facet === names.identity,
+      optional: true,
+    },
+  ];
+  if (names.facet !== undefined && names.facet !== names.identity) {
     fields.push({
-      name: nestedFieldName(prefix, pattern ?? field.name),
-      type: field.kind === 'text' ? 'string' : typesenseValueType(field),
-      index: false,
-      // Always optional: `required` is a promise about the *referent* (this
-      // value is on every referent), while Typesense’s flag is about the
-      // document. Under a multi-valued reference those are different claims,
-      // and only the referent-level one is the declaration’s.
+      name: names.facet,
+      type: 'string[]',
+      facet: true,
+      optional: true,
+    });
+  }
+  return fields;
+}
+
+/** The type a *nested* field itself nests: another inline reference’s type, or
+ *  the Root Type a {@link ReferenceStrategy.local local} lookup projects its
+ *  endpoint through. */
+function nestedTypeOfNestedField(
+  field: SearchField,
+  schema: SearchSchema,
+): SearchType | undefined {
+  return nestedReferenceType(schema, field) ?? localLookupTypeOf(field, schema);
+}
+
+/**
+ * The Physical Fields one non-nesting nested field contributes: exactly what
+ * the projection writes under the referent’s prefix, so the collection and the
+ * document cannot disagree.
+ *
+ * A nested `text` field stores its display values as a root one does – one
+ * `${name}_<lang>` per present language, matched by a single pattern field,
+ * never indexed – plus a folded search companion per locale when it is
+ * `searchable`. Anything undeclared here would still arrive in the document,
+ * and Typesense indexes what it is not told to leave alone, so the fanout is
+ * enumerated rather than left to inference.
+ */
+function nestedLeafFields(
+  prefix: string,
+  field: SearchField,
+  defaultLocale: string | undefined,
+  flattensToArray: boolean,
+): CollectionFieldSchema[] {
+  const names = physicalFields(field);
+  const searchString = flattensToArray ? 'string[]' : 'string';
+  const fields: CollectionFieldSchema[] = [];
+  if (field.kind === 'text') {
+    const pattern = displayFieldPattern(field);
+    if (pattern !== undefined) {
+      // Display values are never indexed, whatever Roles the field declares:
+      // search hits the folded companions below, so the display copies stay on
+      // disk with every language they carry.
+      fields.push({
+        name: nestedFieldName(prefix, pattern),
+        type: 'string',
+        index: false,
+        optional: true,
+      });
+    }
+    fields.push(
+      ...names.search.map((name, index): CollectionFieldSchema => {
+        const locale =
+          field.locales[index] === 'und' ? defaultLocale : field.locales[index];
+        return {
+          name: nestedFieldName(prefix, name),
+          type: searchString,
+          optional: true,
+          ...(locale !== undefined && { stem: true, locale }),
+        };
+      }),
+    );
+    return fields;
+  }
+  // A nested field can be `filterable` or `searchable`, never `facetable` or
+  // `sortable` (`searchSchema`), so `filterable` is what indexes the value
+  // itself – its search companion below indexes on its own account.
+  const indexed = field.filterable === true;
+  const valueType = typesenseValueType(field);
+  fields.push({
+    name: nestedFieldName(prefix, field.name),
+    type: indexed && flattensToArray ? arrayValueType(valueType) : valueType,
+    index: indexed,
+    // Always optional: `required` is a promise about the *referent* (this value
+    // is on every referent), while Typesense’s flag is about the document.
+    // Under a multi-valued reference those are different claims, and only the
+    // referent-level one is the declaration’s.
+    optional: true,
+  });
+  for (const name of names.search) {
+    fields.push({
+      name: nestedFieldName(prefix, name),
+      type: searchString,
       optional: true,
     });
   }
@@ -397,7 +553,40 @@ function nestedFields(
 
 /** The Typesense field type for a non-localized field, from its `kind`. 64-bit
  *  integers (and dates, stored as Unix seconds) so large counts never overflow. */
-function typesenseValueType(field: SearchField): CollectionFieldSchema['type'] {
+/**
+ * The array form of a value type, for a nested field that an ancestor’s
+ * `object[]` flattens into a list. Only an **indexed** field needs it: Typesense
+ * checks a declared type against what is stored, and a value under a
+ * multi-valued ancestor arrives as an array however single-valued its own
+ * declaration is. Enumerated rather than string-appended so an invalid
+ * combination cannot be built.
+ */
+function arrayValueType(type: ValueType): CollectionFieldSchema['type'] {
+  switch (type) {
+    case 'string':
+      return 'string[]';
+    case 'int64':
+      return 'int64[]';
+    case 'float':
+      return 'float[]';
+    case 'bool':
+      return 'bool[]';
+    // Already a list: a multi-valued declaration under a multi-valued ancestor
+    // flattens no further.
+    case 'string[]':
+      return 'string[]';
+  }
+}
+
+/**
+ * The value types a declaration can produce. Narrower than Typesense’s whole
+ * vocabulary on purpose: it makes {@link arrayValueType} exhaustive, so a kind
+ * added later fails to compile rather than falling through a default that
+ * silently returns the scalar type for an indexed list.
+ */
+type ValueType = 'string' | 'string[]' | 'int64' | 'float' | 'bool';
+
+function typesenseValueType(field: SearchField): ValueType {
   switch (field.kind) {
     case 'integer':
     case 'date':

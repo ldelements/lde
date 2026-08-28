@@ -18,8 +18,10 @@ import {
   ID_FIELD,
   isoToUnixSeconds,
   isRangeFacet,
+  joinGraph,
   pageForOffset,
   physicalFields,
+  resolvePath,
   searchableFields,
 } from '@lde/search/adapter';
 
@@ -329,14 +331,31 @@ function compileCriterion(
   if (on.length === 0) {
     return compileLeaf(criterion, searchType, options.schema);
   }
+  // The path carries two kinds of hop, and they compile differently: a JOIN
+  // crosses into another collection and wraps the leaf in `$collection(…)`; a
+  // NESTING stays in this document and qualifies the leaf’s field name. The
+  // schema is what tells them apart, so without one every hop is read as a
+  // join – exactly the behaviour before nesting existed.
+  const resolvedPath =
+    options.schema === undefined
+      ? undefined
+      : resolvePath(searchType, on, options.schema, joinGraph(options.schema));
+  if (typeof resolvedPath === 'string') {
+    return UNUSABLE;
+  }
+  const joinHops = resolvedPath?.joinPath ?? on;
+  const nestedHops = resolvedPath?.nestedPath ?? [];
   // A joined criterion constrains a document in ANOTHER collection, so the leaf
   // is compiled against the type that path reaches and then wrapped, one
   // `$collection(…)` per hop, outermost hop first:
   // `['dataset', 'publisher']` → `$datasets($publishers(id:=…))`.
   const collections: string[] = [];
   let target = searchType;
-  for (let hop = 1; hop <= on.length; hop++) {
-    const resolved = options.joinTargetFor?.(searchType, on.slice(0, hop));
+  for (let hop = 1; hop <= joinHops.length; hop++) {
+    const resolved = options.joinTargetFor?.(
+      searchType,
+      joinHops.slice(0, hop),
+    );
     if (resolved === undefined) {
       // An unresolvable path is a criterion that cannot be compiled at all –
       // false, so it drops out and its siblings still stand. Through the
@@ -346,7 +365,12 @@ function compileCriterion(
     collections.push(resolved.collection);
     target = resolved.searchType;
   }
-  const leaf = compileLeaf(criterion, target, options.schema);
+  const leaf = compileLeaf(
+    criterion,
+    resolvedPath?.leafType ?? target,
+    options.schema,
+    nestedHops.join('.'),
+  );
   // A vacuous leaf states no constraint on the referent, so the join as a whole
   // states none either – the reading, and so the outcome, passes straight
   // through the hops.
@@ -359,12 +383,20 @@ function compileCriterion(
   );
 }
 
-/** The criterion’s own term, against the type it actually constrains – the
- *  searched type, or the one its join path reaches. */
+/**
+ * The criterion’s own term, against the type it actually constrains – the
+ * searched type, the one its join path reaches, or the reference type its
+ * nesting path walks into.
+ *
+ * `prefix` is that nesting path, dotted: an engine addresses a stored nested
+ * document by qualifying the field name, so `role` inside `creator` becomes
+ * `creator.role`. Empty for every unnested criterion.
+ */
 function compileLeaf(
   criterion: Criterion,
   searchType: SearchType,
   schema: SearchSchema | undefined,
+  prefix = '',
 ): string | typeof VACUOUS | typeof UNUSABLE {
   // `id` is the Typesense document key, not a declared field. Exact `:=`
   // membership, like a non-facet field ({@link compileMembership}), so an IRI
@@ -373,7 +405,12 @@ function compileLeaf(
   // clause.) An empty identity membership enumerates NO document, so it is
   // unusable rather than vacuous – the one place the two readings diverge.
   if (criterion.field === ID_FIELD) {
-    return 'in' in criterion && criterion.in.length > 0
+    // `id` names the DOCUMENT key, which exists only at the top level: inside a
+    // nested reference there is no document to key. Compiling it under a prefix
+    // would filter the root collection's `id` instead – a different question,
+    // silently answered. `assertValidQuery` rejects it first; this is the guard
+    // for a hand-built query.
+    return prefix === '' && 'in' in criterion && criterion.in.length > 0
       ? `${ID_FIELD}:=[${criterion.in.map(escapeFilterValue).join(',')}]`
       : UNUSABLE;
   }
@@ -388,13 +425,19 @@ function compileLeaf(
   }
   if ('in' in criterion) {
     return criterion.in.length > 0
-      ? compileMembership(field, criterion.in, schema)
+      ? compileMembership(field, criterion.in, schema, prefix)
       : VACUOUS;
   }
   if ('range' in criterion) {
-    return compileRange(field, criterion.range) ?? VACUOUS;
+    return compileRange(field, criterion.range, prefix) ?? VACUOUS;
   }
-  return `${field.name}:=${criterion.is}`;
+  return `${qualify(prefix, field.name)}:=${criterion.is}`;
+}
+
+/** A field name under its nesting path, if any – the one place the dotted
+ *  addressing an engine uses for a stored nested document is spelled. */
+function qualify(prefix: string, name: string): string {
+  return prefix === '' ? name : `${prefix}.${name}`;
 }
 
 /**
@@ -411,11 +454,16 @@ function compileMembership(
   field: SearchField,
   values: readonly string[],
   schema: SearchSchema | undefined,
+  prefix = '',
 ): string {
   const list = `[${values.map(escapeFilterValue).join(',')}]`;
-  return physicalFields(field, schema).facet === field.name
-    ? `${field.name}:${list}`
-    : `${field.name}:=${list}`;
+  const names = physicalFields(field, schema);
+  // An inline reference stores a nested object, which an engine cannot filter.
+  // Its identity companion is the flat id field standing in for it – so the
+  // logical name a consumer writes and the physical name the engine reads
+  // differ here, and only here.
+  const name = qualify(prefix, names.identity ?? field.name);
+  return names.facet === name ? `${name}:${list}` : `${name}:=${list}`;
 }
 
 /** An inclusive Typesense range clause, or `undefined` when neither bound is
@@ -428,8 +476,9 @@ function compileMembership(
 function compileRange(
   field: SearchField,
   range: { readonly min?: number | string; readonly max?: number | string },
+  prefix = '',
 ): string | undefined {
-  const name = field.name;
+  const name = qualify(prefix, field.name);
   // A bound a caller sent as `null` – a GraphQL variable left unfilled, which
   // the surface passes through – is a bound NOT SET, not a bound of `null`.
   // Read literally it reaches the engine as `datePosted:[null..…]`, which

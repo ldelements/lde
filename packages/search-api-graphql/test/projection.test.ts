@@ -76,9 +76,6 @@ const work: SearchType = {
   ],
 };
 const schema = searchSchema(person, organization, work);
-const byName = new Map(
-  [...schema.values()].map((rootType) => [rootType.name, rootType]),
-);
 
 /** The `{ fieldNodes, fragments }` a resolver would receive for `query`. */
 function infoFor(query: string) {
@@ -104,7 +101,7 @@ function infoFor(query: string) {
 }
 
 const project = (query: string) =>
-  projectionFor(infoFor(query) as never, work, (target) => byName.get(target));
+  projectionFor(infoFor(query) as never, work, schema);
 
 describe('projectionFor', () => {
   it('asks for the fields a selection names, per lookup', () => {
@@ -158,13 +155,9 @@ describe('projectionFor', () => {
     expect(
       project(`{ creativeWorks { items { author { name } ...missing } } }`),
     ).toEqual({ author: { fields: ['name'] } });
-    expect(
-      projectionFor(
-        infoFor(`{ creativeWorks { items { author { name } } } }`) as never,
-        work,
-        () => undefined,
-      ),
-    ).toEqual({ author: { fields: [] } });
+    // An unresolvable TARGET is deliberately not tested beside it: the
+    // projection reads the schema itself now, and `searchSchema` rejects a
+    // lookup whose target it cannot resolve – so that case cannot be built.
   });
 
   it('keeps both deeper lookups when two selections name different ones', () => {

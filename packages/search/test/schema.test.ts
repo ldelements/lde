@@ -1116,6 +1116,22 @@ describe('searchSchema validation', () => {
         ],
       }) as const;
 
+    // A Root Type a nested lookup can name: it has a collection, and a label
+    // field to resolve from it.
+    const organizationWithLabel = {
+      name: 'Organization',
+      class: 'https://example.org/Organization',
+      fields: [
+        {
+          name: 'label',
+          kind: 'text',
+          locales: ['und'],
+          output: true,
+          searchable: { weight: 1 },
+        },
+      ],
+    } as const;
+
     // The declaration under test is deliberately malformed in some cases, so
     // the overriding members are applied untyped and the whole cast back.
     const mediaObjectWith = (field: Record<string, unknown>): SearchType =>
@@ -1178,17 +1194,15 @@ describe('searchSchema validation', () => {
     });
 
     it.each([
-      ['searchable', { searchable: { weight: 1 } }],
-      ['filterable', { filterable: true }],
       ['facetable', { facetable: true }],
       ['sortable', { sortable: true }],
     ])(
       'rejects a nested field declaring %s, naming the field',
       (role, declaration) => {
-        // A nested field is stored with its referent and read back with it; it
-        // never becomes an addressable field of its own, so any Role but
-        // `output` would be silently ignored per query. Startup is where a
-        // schema invariant fails.
+        // The two Roles nesting cannot serve, for measured reasons (ADR 24):
+        // an engine's facet counts over a nested field are document-level, so
+        // a bucket counts entries that did not satisfy the filter; and there
+        // is no sorting *into* an element of an array.
         expect(() =>
           searchSchema(
             datasetNesting({ strategy: 'inline', typeName: 'MediaObject' }),
@@ -1204,13 +1218,28 @@ describe('searchSchema validation', () => {
 
     it.each([
       ['searchable', { searchable: { weight: 1 } }],
-      ['facetable', { facetable: true }],
+      ['filterable', { filterable: true }],
+    ])('accepts a nested field declaring %s', (_role, declaration) => {
+      // Both are served exactly on a nested field: free text reaches it, and
+      // exact membership constrains it. This is what lets one field carry an
+      // edge's own values rather than needing a flat twin beside it.
+      expect(() =>
+        searchSchema(
+          datasetNesting({ strategy: 'inline', typeName: 'MediaObject' }),
+          mediaObjectWith(declaration),
+        ),
+      ).not.toThrow();
+    });
+
+    it.each([
+      ['searchable', { searchable: { weight: 1 } }],
+      ['sortable', { sortable: true }],
     ])(
       'rejects an inline reference declaring %s alongside its nesting',
       (role, declaration) => {
-        // An inline reference has exactly two jobs: a reading device (no Role)
-        // or a surfaced nested object (`output`). Anything else would have an
-        // engine search, facet, filter or sort on a nested document.
+        // An inline reference's stored value is a nested object: not a token an
+        // engine tokenizes for free text, orders by, or points a reference at.
+        // `filterable`/`facetable` it CAN serve, through an identity companion.
         expect(() =>
           searchSchema(
             {
@@ -1240,9 +1269,9 @@ describe('searchSchema validation', () => {
       expect(() =>
         searchSchema(
           datasetNesting({ strategy: 'inline', typeName: 'MediaObject' }),
-          mediaObjectWith({ filterable: true, facetable: true }),
+          mediaObjectWith({ facetable: true, sortable: true }),
         ),
-      ).toThrow(/“filterable”, “facetable”/);
+      ).toThrow(/“facetable”, “sortable”/);
     });
 
     it('rejects a label source on a nested field', () => {
@@ -1262,10 +1291,10 @@ describe('searchSchema validation', () => {
       );
     });
 
-    it('rejects a lookup on a nested field', () => {
-      // A lookup is resolved level by level from the hit's projection, and a
-      // nested document is read back with its referent – so nothing would
-      // resolve it, and every field of the emitted type would serve null.
+    it('accepts a lookup on a nested field, resolving its target', () => {
+      // What makes a qualified relation expressible: the entry holds the edge's
+      // own values AND points into another collection. Resolution descends the
+      // inline level for free and batches the lookup below it (ADR 24).
       expect(() =>
         searchSchema(
           datasetNesting({ strategy: 'inline', typeName: 'MediaObject' }),
@@ -1273,8 +1302,23 @@ describe('searchSchema validation', () => {
             kind: 'reference',
             ref: { strategy: 'lookup', target: 'Organization' },
           }),
+          organizationWithLabel,
         ),
-      ).toThrow(/Nested field “MediaObject.contentUrl” is a lookup/);
+      ).not.toThrow();
+    });
+
+    it('rejects a nested lookup whose target is not a declared Root Type', () => {
+      // Resolved by the same pass a top-level lookup's target is, so a nested
+      // one cannot name a collection that does not exist either.
+      expect(() =>
+        searchSchema(
+          datasetNesting({ strategy: 'inline', typeName: 'MediaObject' }),
+          mediaObjectWith({
+            kind: 'reference',
+            ref: { strategy: 'lookup', target: 'Nowhere' },
+          }),
+        ),
+      ).toThrow(/“Nowhere”/);
     });
 
     it('names the nested Physical Field of a referent’s field', () => {
@@ -1462,9 +1506,11 @@ describe('searchSchema validation', () => {
       );
     });
 
-    it('rejects a Reference Type as a label source: it cannot be searchable', () => {
-      // Why a label source is always a Root Type, and so always has a
-      // collection to resolve from: a Reference Type carries `output` only.
+    it('rejects a Reference Type as a label source even when it could serve one', () => {
+      // A Reference Type MAY declare a searchable label field (ADR 24), so
+      // “it cannot be searchable” is no longer why this is refused. The reason
+      // that survives is the one that always did the work: a label is read
+      // from the source’s own collection, and only a Root Type has one.
       expect(() =>
         searchSchema(
           {
@@ -1491,7 +1537,9 @@ describe('searchSchema validation', () => {
             ],
           },
         ),
-      ).toThrow(/Nested field “Agent.label” declares “searchable”/);
+      ).toThrow(
+        /names label source “Agent”, which is a Reference Type; a label source must be a Root Type/,
+      );
     });
 
     it('reads the label source name off a lookup’s target and an idOnly’s labelSource', () => {

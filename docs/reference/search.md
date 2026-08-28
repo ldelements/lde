@@ -360,13 +360,18 @@ construct serves two jobs (see
   own fields. A multi-valued reference keeps each referent’s values grouped, so
   a consumer never pairs parallel arrays by index.
 
-Those are its only two shapes, and a nested field carries **`output` only**.
-`searchable`, `filterable`, `facetable`, `sortable` and `labelSource` – on the
-inline reference itself or on any field of its Reference Type – are rejected by
-`searchSchema`, naming the field: a nested value is stored with its referent and
-read back with it, never as an addressable field of its own, so declaring one of
-those would be silently ignored per query. Filtering, faceting and sorting on
-nested fields is future work.
+A nested field may declare `output`, `filterable` and `searchable`. It may not
+declare `facetable` or `sortable`, and `searchSchema` rejects those naming the
+field: an engine's facet counts over a nested field are computed per _document_
+rather than per entry, so a bucket would count entries that did not match the
+filter, and there is no sorting _into_ an element of an array. Facet an edge
+through its [identity companion](#data-on-the-edge) instead.
+
+The Roles are independent opt-ins, and that is what keeps nesting cheap. A
+nested field declaring only `output` is stored `index: false` – kept on disk,
+read back with its entry, costing no memory however large it grows – and only
+one that opts into a query Role is indexed. So a schema can nest ten fields for
+display and index one, and pay for the one.
 
 A referent needs no identity of its own: the nesting carries its fields, not a
 document key. A blank-node referent – whose `@id` JSON-LD 1.1 framing prunes –
@@ -406,6 +411,114 @@ today. Never on an `inline` reference, though: that carries its referent as a
 nested object rather than as an id an engine can point a reference at, so the
 two are mutually exclusive (`searchSchema` rejects the pair). Carry the referent
 inline, or join to its collection – not both.
+
+#### Data on the edge
+
+Sometimes a fact belongs to the _relation_ rather than to either end of it – the
+role an agent played, a position, a certainty. A graph states that by putting a
+node in between:
+
+```turtle
+<work> schema:creator [ schema:name   "etser" ;      # the relation's own value
+                        schema:creator <person> ] .  # the endpoint
+```
+
+An inline reference nests whatever node its path reaches, so pointed at that
+middle node it nests the **edge**, and the edge's own fields are the entry's.
+The endpoint is then one hop further out, and a nested reference reaches it:
+
+```ts
+const creatorEdge = defineSearchType({
+  name: 'CreatorEdge',
+  fields: [
+    { name: 'role', kind: 'keyword', path: `${SCHEMA}name`, output: true },
+    {
+      name: 'creator',
+      kind: 'reference',
+      path: `${SCHEMA}creator`,
+      output: true,
+      ref: { strategy: 'lookup', target: 'Person', local: true },
+    },
+  ],
+});
+
+const work = defineSearchType({
+  name: 'Work',
+  class: `${SCHEMA}CreativeWork`,
+  fields: [
+    {
+      name: 'creator',
+      kind: 'reference',
+      path: `${SCHEMA}creator`,
+      array: true,
+      output: true,
+      filterable: true,
+      facetable: true,
+      ref: { strategy: 'inline', typeName: 'CreatorEdge', identity: 'creator' },
+    },
+  ],
+});
+```
+
+One field, one entry per edge, and the same word for reading, filtering and
+faceting:
+
+```graphql
+creator { role creator { id name { value } } }
+where:  { creator: { in: ["https://id.example/rembrandt"] } }
+where:  { creator: { where: { role: { in: ["etser"] } } } }
+facets: { creator { value count label { value } } }
+```
+
+Two declarations make that work.
+
+**`identity`** names the nested reference whose ids identify each entry. A
+nested object is not something an engine can filter or facet, so a reference
+declaring `filterable` or `facetable` fans out a flat **identity companion**
+holding those ids, which the engine filters and facets in its place. The logical
+field keeps one name; only the physical fanout knows there are two. It is
+declared rather than inferred – an edge may carry several references, and only
+you know which one identifies it – and naming it is also what supplies the
+target that types the filter and carries the facet's labels. Both directions are
+enforced: `filterable`/`facetable` without an `identity` has nothing to filter,
+and an `identity` without either is a companion nothing reads.
+
+Because the companion holds ids only, its facet is **exact**: an endpoint the
+source named inline contributes no bucket rather than a bucket keyed on a label,
+so two people who share a name are never merged. The cost is stated rather than
+hidden – the buckets do not sum to the result count, and that belongs in the
+field's [`description`](#describing-a-field).
+
+**`local: true`** on a lookup additionally stores the endpoint's own fields, as
+this document states them, projected through the target's own declaration. The
+resolved document is overlaid on them at query time. That is what lets one field
+serve both populations:
+
+| the endpoint            | what the entry carries                               |
+| ----------------------- | ---------------------------------------------------- |
+| identified, and indexed | its id, and the target's own record                  |
+| identified, not indexed | its id, and what this document said – not a bare IRI |
+| named inline            | what this document said, and no `id`                 |
+
+Without `local`, an endpoint the source named inline is invisible: a reference
+stores IRIs and it has none. Local fields are stored unconditionally rather than
+only where there is no id, because the two failures differ – at index time the
+question is _is this endpoint identified_, at query time it is _is that document
+indexed_.
+
+Note that the displayed name may not be the name a filter matches: the nested
+fields are indexed as this document states them, while the resolved document
+carries the target's own. Where a target is enriched from an authority the two
+differ systematically. Free text covers the gap.
+
+Framing reaches as far as the declaration does – path traversal, inline nesting,
+and the extra hop a keyed target's document key needs – so an endpoint two hops
+out is in the frame. See
+[ADR 24](../decisions/0024-carry-data-on-a-reference-edge).
+
+Out of scope for now: welding several conditions to one entry (“this endpoint
+_in this role_”), and faceting an edge's own values, which the current engine
+cannot serve correctly.
 
 #### Naming the label field
 
@@ -572,25 +685,27 @@ most likely to need telling what it covers.
 
 ```ts
 {
-  name: 'creatorName',
-  kind: 'text',
-  path: '<https://schema.org/creator>/<https://schema.org/name>',
-  locales: ['nl'],
+  name: 'creator',
+  kind: 'reference',
+  array: true,
+  path: '<https://schema.org/creator>',
   output: true,
-  searchable: { weight: 3 },
+  filterable: true,
+  facetable: true,
+  ref: { strategy: 'inline', typeName: 'CreatorEdge', identity: 'creator' },
   description:
-    'Every creator’s name as published, including creators the source names ' +
-    'inline without a URI. Free text rather than a facet, and not always a ' +
-    'personal name.',
+    'Every creator, with the role each played. Faceted and filtered by URI, ' +
+    'so creators the source names inline are shown and searched but never ' +
+    'counted in a bucket.',
 }
 ```
 
-Worth declaring wherever the name is not the whole story. The case it exists for
-is two fields over one property that differ in what they can see: a `creator`
-reference keyed by URI can be faceted but is empty where the source named a
-creator inline, while a `creatorName` read through the graph sees every creator
-but cannot be faceted. Neither is a superset of the other, and a consumer reading
-only the field names will reasonably conclude that one duplicates the other.
+Worth declaring wherever the name is not the whole story – and a coverage gap is
+the usual case. Here the facet is keyed on identity, so it counts only the
+creators the source identified with a URI: exact, never merging two people who
+share a name, and deliberately not summing to the result count. Nothing in the
+field’s _name_ says that, and a consumer comparing a bucket count against a
+total will otherwise read it as a bug.
 
 The declaration is the only place to say so. The module a served API mounts is
 plain data, and there is no hook to annotate the built schema afterwards – so the

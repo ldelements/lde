@@ -18,6 +18,7 @@ import {
   isInlineReference,
   isoToUnixSeconds,
   labelSourceNameOf,
+  localLookupTypeOf,
   physicalFields,
   referenceTypeNamed,
   rootTypeNamed,
@@ -106,10 +107,16 @@ export function projectDocument(
  * only after all projection – so every derive that might read an internal
  * field, at any depth, has already run – which makes this single post-order
  * pass safe. A no-role inline reference is itself internal, so it is deleted
- * whole here; a surfaced (`output`) inline reference survives, but its own
- * internal helper fields are pruned from the nested document. That keeps the
- * *a field without a role reaches neither the engine nor the API* invariant
- * true at every depth of the reference graph, not just at the root.
+ * whole here; one that carries a Role survives, but its own internal helper
+ * fields are pruned from the nested document. That keeps the *a field without a
+ * role reaches neither the engine nor the API* invariant true at every depth of
+ * the reference graph, not just at the root.
+ *
+ * Both kinds of nesting are walked, because both store projected nodes: an
+ * inline reference’s Reference Type, and the Root Type a
+ * {@link ReferenceStrategy.local local} lookup projects its endpoint through.
+ * The second matters more than it looks – a Root Type’s reading-device fields
+ * exist for its OWN derives, and nothing in a referring document wants them.
  */
 function pruneInternalFields(
   document: ProjectedNode,
@@ -121,22 +128,19 @@ function pruneInternalFields(
       delete document[field.name];
       continue;
     }
-    // A surfaced inline reference nests its referent(s) as projected node(s);
-    // prune those too, by their reference type.
     if (schema === undefined || field.kind !== 'reference') {
       continue;
     }
-    const ref = field.ref;
-    if (ref?.strategy !== 'inline') {
-      continue;
-    }
-    const referenceType = referenceTypeNamed(schema, ref.typeName);
+    const nestedType =
+      field.ref?.strategy === 'inline'
+        ? referenceTypeNamed(schema, field.ref.typeName)
+        : localLookupTypeOf(field, schema);
     const nested = document[field.name];
-    if (referenceType === undefined || nested === undefined) {
+    if (nestedType === undefined || nested === undefined) {
       continue;
     }
     for (const referent of Array.isArray(nested) ? nested : [nested]) {
-      pruneInternalFields(referent as ProjectedNode, referenceType, schema);
+      pruneInternalFields(referent as ProjectedNode, nestedType, schema);
     }
   }
 }
@@ -318,6 +322,24 @@ function applyField(
       applyInlineReference(document, node, alias, field, schema, context);
     }
     return;
+  }
+  // A `local` lookup stores nested documents too, shaped by the TARGET’s own
+  // declaration rather than by a reference type – so an unidentified referent
+  // is an entry like any other, minus its `id`. Same reason as above for
+  // needing a schema: without one there is no target to project through.
+  if (field.kind === 'reference' && schema !== undefined) {
+    const localType = localLookupTypeOf(field, schema);
+    if (localType !== undefined) {
+      applyNestedReferents(
+        document,
+        valuesOf(node, alias),
+        field,
+        localType,
+        schema,
+        context,
+      );
+      return;
+    }
   }
   switch (field.kind) {
     case 'text':
@@ -606,9 +628,106 @@ function applyInlineReference(
   if (referenceType === undefined) {
     return;
   }
-  const referents = valuesOf(node, alias)
+  const referents = applyNestedReferents(
+    document,
+    valuesOf(node, alias),
+    field,
+    referenceType,
+    schema,
+    context,
+  );
+  applyIdentityCompanion(document, referents, field, schema);
+}
+
+/**
+ * Write the {@link ReferenceStrategy.identity identity companion} of an inline
+ * reference: the ids its entries reference, flattened out of the nested
+ * documents just projected, under the flat physical name an engine filters and
+ * facets ({@link physicalFields}).
+ *
+ * Harvested from the entries rather than read from a second path, so what the
+ * companion holds is exactly what the entries hold – including the re-keying
+ * the nested reference already applied, which a separately-read path would have
+ * to repeat and could get wrong.
+ *
+ * The identity field stores either bare ids or, when it is a
+ * {@link ReferenceStrategy.local local} lookup, nested documents carrying an
+ * `id`. Both are read here, because which one a deployment declares is about
+ * how much of the referent it wants to display – not about what identifies it.
+ */
+function applyIdentityCompanion(
+  document: ProjectedNode,
+  referents: readonly ProjectedNode[],
+  field: ReferenceField,
+  schema: SearchSchema,
+): void {
+  const names = physicalFields(field, schema);
+  if (names.identity === undefined) {
+    return;
+  }
+  const identity = (field.ref as { readonly identity: string }).identity;
+  // Only the entries the document actually STORES: a single-valued reference
+  // keeps the first referent and drops the rest, and a companion holding an id
+  // from a dropped one would match a filter whose hit shows no such entry.
+  const stored = field.array === true ? referents : referents.slice(0, 1);
+  const ids = dedupe(
+    stored.flatMap((referent) =>
+      (Array.isArray(referent[identity])
+        ? referent[identity]
+        : [referent[identity]]
+      )
+        .map(identityValue)
+        .filter((id): id is string => id !== undefined),
+    ),
+  );
+  if (ids.length === 0) {
+    return;
+  }
+  setArray(document, names.identity, ids);
+  // Same rule as every other facetable reference: where the target declares a
+  // facet policy, the facet reads a narrowed companion of its own, so an
+  // excluded id is never seen by the engine rather than merely unlabelled.
+  const policy = inheritedFacetKeys(field, schema);
+  if (policy !== undefined) {
+    setArray(document, names.facet as string, ids.filter(policy.only));
+  }
+}
+
+/** The id a value under an identity field carries: the value itself when the
+ *  field stores bare ids, its `id` when it stores nested documents. */
+function identityValue(value: unknown): string | undefined {
+  if (typeof value === 'string') {
+    return value;
+  }
+  const id = isObject(value) ? value.id : undefined;
+  return typeof id === 'string' ? id : undefined;
+}
+
+/**
+ * Project raw framed values as nested document(s) of `nestedType` and attach
+ * them under the field’s name – the shared body of an inline reference and a
+ * {@link ReferenceStrategy.local local} lookup, which differ only in which type
+ * shapes the referent: a declared Reference Type for the one, the lookup’s own
+ * target Root Type for the other. Sharing it is what makes the two reconstruct
+ * through one path, so a consumer cannot tell a nested referent from a resolved
+ * one.
+ *
+ * Projecting through a Root Type also gives a `local` referent its `id` for
+ * free, re-keyed through that type’s {@link RootType.key} exactly as a
+ * top-level document of that type would be – so the stored id is the one the
+ * target’s collection files it under, and the lookup can find it.
+ */
+function applyNestedReferents(
+  document: ProjectedNode,
+  values: readonly unknown[],
+  field: ReferenceField,
+  nestedType: SearchType,
+  schema: SearchSchema,
+  context: ProjectionContext,
+): readonly ProjectedNode[] {
+  const referents = values
     .filter(isObject)
-    .map((referent) => projectFields(referent, referenceType, schema, context))
+    .map((referent) => projectFields(referent, nestedType, schema, context))
     // Fields, not identity, are what makes something a referent: a literal
     // value object under the alias (dirty source data), or a node this
     // reference type reads nothing from, projects nothing and is no referent.
@@ -616,9 +735,10 @@ function applyInlineReference(
     // single-valued reference, let it win the slot over a real referent.
     .filter((referent) => Object.keys(referent).length > 0);
   if (referents.length === 0) {
-    return;
+    return referents;
   }
   document[field.name] = field.array === true ? referents : referents[0];
+  return referents;
 }
 
 // --- Framed-IR readers: read a field’s value off the framed node by its

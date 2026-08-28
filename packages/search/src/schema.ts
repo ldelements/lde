@@ -214,7 +214,10 @@ export interface KeywordField extends SearchFieldBase, Searchable {
  *   `‹Target›Reference`, since type names must be unique).
  * - `inline` carries fields denormalised from the **parent’s** RDF framing at
  *   index time, shaped by the declared {@link ReferenceType} `typeName` names –
- *   so its typeName can never name a root type.
+ *   so its typeName can never name a root type. Pointed at a node the graph put
+ *   *between* subject and endpoint, the nested node is the **edge**, and
+ *   {@link ReferenceStrategy.identity `identity`} names the nested reference
+ *   that carries the endpoint.
  */
 export type ReferenceStrategy =
   | {
@@ -227,9 +230,70 @@ export type ReferenceStrategy =
        *  that belong to no such set. */
       readonly typeName?: string;
       readonly target?: never;
+      readonly identity?: never;
     }
-  | { readonly strategy: 'lookup'; readonly target: string }
-  | { readonly strategy: 'inline'; readonly typeName: string };
+  | {
+      readonly strategy: 'lookup';
+      readonly target: string;
+      /**
+       * Also project the target’s **own fields from this document’s frame**, so
+       * the reference stores what the referring document states about the
+       * referent alongside the id – and the resolved document overlays it at
+       * query time rather than being the only source of it.
+       *
+       * What it buys is one field where there were two. A referent the graph
+       * names inline – a literal, a blank node – has no id, so a plain
+       * reference stores nothing for it and a deployment needs a second, text
+       * field beside this one to show it at all; the two are then parallel
+       * arrays that cannot be paired. With `local`, an unidentified referent is
+       * an entry like any other, minus its `id`.
+       *
+       * Stored **unconditionally**, not only where there is no id, because the
+       * two failures differ: at index time the question is *is this referent
+       * identified*, at query time it is *is that document indexed*. A referent
+       * whose document is missing from the target’s collection therefore still
+       * carries what this document said about it, instead of degrading to a
+       * bare IRI.
+       *
+       * Opt-in, because it changes what the field stores – a nested object
+       * rather than an id – and because framing must reach one step further to
+       * read the target’s fields off the referent
+       * ({@link inlineFramingDepth}). A schema that declares none pays neither.
+       */
+      readonly local?: boolean;
+      readonly identity?: never;
+    }
+  | {
+      readonly strategy: 'inline';
+      readonly typeName: string;
+      /**
+       * The `name` of a **nested reference field** of this reference type whose
+       * ids identify each entry’s endpoint – required to declare `filterable`
+       * or `facetable` on the inline reference itself, and meaningless without
+       * one ({@link searchSchema} enforces both directions).
+       *
+       * A nested object is not something an engine can filter or facet, so an
+       * inline reference that opts into either fans out an **identity
+       * companion**: a flat physical field holding the ids its entries
+       * reference ({@link physicalFields}), which the engine filters and facets
+       * in the nested object’s place. The same mechanism `${name}_facet`
+       * already uses – one logical field, two physical fields, one holding a
+       * derived subset of the other.
+       *
+       * Declared rather than inferred, because a reference type may carry more
+       * than one nested reference and only the schema author knows which one
+       * identifies the edge. Naming it is also what gives the companion a
+       * **target**: the named field’s own `target` is the Root Type whose keys
+       * these ids are, which is what a facet policy is inherited through
+       * ({@link inheritedFacetKeys}) and what types the filter at the surface.
+       *
+       * The companion holds ids only, so a facet over it is exact and
+       * identity-keyed: an entry whose endpoint the graph named inline – a
+       * literal, a blank node – contributes no bucket rather than a bucket
+       * keyed on a label, so two endpoints that share a label are never merged.
+       */
+      readonly identity?: string;
+    };
 
 /** An IRI-valued reference to another entity, resolved at the surface. */
 export interface ReferenceField extends SearchFieldBase, Searchable {
@@ -687,14 +751,21 @@ export function isInlineReference(
 }
 
 /**
- * The {@link ReferenceType} a **surfaced** inline reference nests – an
- * `output` inline reference’s referent shape – or `undefined` for every other
- * field. The one predicate the collection definition, result reconstruction and
- * the API surfaces share, so they cannot disagree about which fields carry a
- * nested Search Document and which carry a bare IRI: an inline reference
- * declaring no Role is a reading device, pruned before the writer
- * ({@link isInternalField}), and a `labelOnly`/`idOnly` reference stays an id
- * (plus a resolved label).
+ * The {@link ReferenceType} an inline reference **stores entries of**, or
+ * `undefined` for every other field. The one predicate the collection
+ * definition, result reconstruction and the API surfaces share, so they cannot
+ * disagree about which fields carry nested Search Documents and which carry a
+ * bare IRI: a `labelOnly`/`idOnly` reference stays an id (plus a resolved
+ * label).
+ *
+ * The line is *any Role at all*, not `output`: an inline reference declaring no
+ * Role is a reading device, pruned before the writer
+ * ({@link isInternalField}), while one that is `filterable` or `facetable`
+ * without being `output` still has its entries stored – they are what a nested
+ * filter constrains and what the
+ * {@link ReferenceStrategy.identity identity companion} is harvested from. Only
+ * `output` decides whether they are *surfaced*, which is the surfaces’ own
+ * question ({@link outputFields}).
  *
  * A schema built by {@link searchSchema} always resolves the reference type of
  * its own types; `undefined` for a type declared against another schema.
@@ -703,7 +774,7 @@ export function nestedReferenceType(
   schema: SearchSchema,
   field: SearchField,
 ): ReferenceType | undefined {
-  return isInlineReference(field) && field.output === true
+  return isInlineReference(field) && !isInternalField(field)
     ? referenceTypeNamed(schema, field.ref.typeName)
     : undefined;
 }
@@ -726,40 +797,147 @@ export function nestedFieldName(parent: string, name: string): string {
 }
 
 /**
- * The framing depth a Root Type needs: how many hops the inline reference graph
- * reaches from it (`Dataset → Subset → Measurement` is two), floored at one so
- * the existing single-hop embed for non-inline references is preserved. Depth is
- * a property of the declaration, bounded because {@link searchSchema} rejects
- * inline cycles – never a knob or a constant. Framing bounded per batch keeps
- * memory bounded by the unit of work (ADR 12), not the graph.
+ * The framing depth a Root Type needs: how far the **furthest value it declares**
+ * lies from it, in hops. Depth is a property of the declaration, bounded because
+ * {@link searchSchema} rejects inline cycles – never a knob or a constant.
+ * Framing bounded per batch keeps memory bounded by the unit of work (ADR 12),
+ * not the graph.
+ *
+ * Reach is measured in hops and depth in *intermediate* nodes, so depth is one
+ * less: reading `<a>/<b>` off a root needs the root’s own triples plus those of
+ * the node `<a>` reaches, which is depth 1. Floored at one, preserving the
+ * single-hop embed a non-inline reference has always had.
+ *
+ * Three things add hops, and counting only the first is what let a value fall
+ * outside the frame and be stored as absent, in silence:
+ *
+ * - **a property path**, which may traverse (`<a>/<b>` is two hops);
+ * - **an inline reference**, whose referent’s own fields reach on from wherever
+ *   its path landed;
+ * - **a reference naming a keyed target**, whose document key is read one hop
+ *   past the referent (ADR 22) – so a reference reached through an inline
+ *   chain needs its key hop inside the frame too, or it stores an un-keyed id
+ *   that matches nothing in the target’s collection.
  */
 export function inlineFramingDepth(
   schema: SearchSchema,
   searchType: SearchType,
 ): number {
-  return Math.max(1, inlineChainLength(schema, searchType));
+  return Math.max(1, framingReach(schema, searchType) - 1);
 }
 
-/** The longest inline reference chain reachable from `searchType`. The recursion
- *  terminates because {@link searchSchema} rejects inline cycles; a reference the
- *  given schema does not declare (e.g. a type framed against another schema)
- *  contributes no depth. */
-function inlineChainLength(
+/**
+ * The furthest a declared value lies from a node of `searchType`, in hops. A
+ * reference the given schema does not declare (e.g. a type framed against
+ * another schema) contributes no reach.
+ *
+ * `visiting` is what makes the walk terminate. {@link searchSchema} rejects
+ * *inline* cycles, but a {@link ReferenceStrategy.local local} lookup can reach
+ * a Root Type that reaches back – `Work → Person → Work` is a perfectly
+ * reasonable schema – and nothing forbids it. A type already on the path
+ * contributes no further reach, so a cycle stops rather than being rejected:
+ * the depth it would ask for is unbounded, and the useful depth is the acyclic
+ * one.
+ */
+function framingReach(
   schema: SearchSchema,
   searchType: SearchType,
+  visiting: ReadonlySet<string> = new Set(),
 ): number {
-  let longest = 0;
-  for (const field of searchType.fields) {
-    if (!isInlineReference(field)) {
-      continue;
-    }
-    const referent = referenceTypeNamed(schema, field.ref.typeName);
-    if (referent === undefined) {
-      continue;
-    }
-    longest = Math.max(longest, 1 + inlineChainLength(schema, referent));
+  if (visiting.has(searchType.name)) {
+    return 0;
   }
-  return longest;
+  const onPath = new Set(visiting).add(searchType.name);
+  let furthest = 0;
+  for (const field of searchType.fields) {
+    if (field.path === undefined) {
+      continue;
+    }
+    const hops = pathHopCount(field.path);
+    if (isInlineReference(field)) {
+      const referent = referenceTypeNamed(schema, field.ref.typeName);
+      furthest = Math.max(
+        furthest,
+        hops +
+          (referent === undefined ? 0 : framingReach(schema, referent, onPath)),
+      );
+      continue;
+    }
+    // A `local` lookup reads the target’s OWN fields off the referent, so the
+    // target’s reach continues from wherever this field’s path landed – the
+    // same accumulation an inline reference makes, through a Root Type.
+    const local = localLookupTypeOf(field, schema);
+    if (local !== undefined) {
+      furthest = Math.max(furthest, hops + framingReach(schema, local, onPath));
+      continue;
+    }
+    // A keyed target’s key field is itself path-bearing, so its own traversal
+    // counts too – the extraction reads it off the referent with that path.
+    const keyPath = keyedTargetKeyPath(field, schema);
+    furthest = Math.max(
+      furthest,
+      hops + (keyPath === undefined ? 0 : pathHopCount(keyPath)),
+    );
+  }
+  return furthest;
+}
+
+/** The `path` of the key field of the keyed Root Type a reference names, when
+ *  it names one that declares a {@link RootType.key}. */
+function keyedTargetKeyPath(
+  field: SearchField,
+  schema: SearchSchema,
+): string | undefined {
+  if (field.kind !== 'reference') {
+    return undefined;
+  }
+  const targetName = labelSourceNameOf(field);
+  const target =
+    targetName === undefined ? undefined : rootTypeNamed(schema, targetName);
+  if (target?.key === undefined) {
+    return undefined;
+  }
+  // `searchSchema` guarantees a key field that is declared and path-bearing –
+  // the same guarantee the extraction’s key hop is built on.
+  return (
+    fieldNamed(target, target.key.field) as SearchField & { path: string }
+  ).path;
+}
+
+/**
+ * How many hops a `path` traverses: the number of top-level sequence steps.
+ * `<a>/<b>` is two; alternation and inverse do not add a hop, and a `/` inside
+ * an IRI or a group is not a step.
+ *
+ * A path that carries no `<` is a **single term** – one IRI – however many `/`
+ * its IRI happens to contain (`<https://schema.org/name>` is one hop, not
+ * four). That is not a special case but the grammar: a sequence is only
+ * expressible with each IRI delimited, since `?s a/b ?o` does not parse.
+ * Reading the delimiters is therefore what tells a path apart from an IRI, and
+ * it is the whole reason this is safe to scan rather than parse.
+ *
+ * Deliberately a scanner: the grammar belongs to the reader adapter (which
+ * parses it for real), and only the *shape* of the sequence matters here. It is
+ * also the safe direction to be approximate in – an over-count frames one hop
+ * too wide, which costs a little; an under-count leaves a declared value
+ * outside the frame, which is silent.
+ */
+function pathHopCount(path: string): number {
+  if (!path.includes('<')) {
+    return 1;
+  }
+  let steps = 1;
+  let nesting = 0;
+  for (const character of path) {
+    if (character === '<' || character === '(') {
+      nesting++;
+    } else if (character === '>' || character === ')') {
+      nesting--;
+    } else if (character === '/' && nesting === 0) {
+      steps++;
+    }
+  }
+  return steps;
 }
 
 /**
@@ -784,25 +962,131 @@ function assertResolvableInlineReferences(
           `Inline reference “${searchType.name}.${field.name}” names “${field.ref.typeName}”, which is not a declared reference type; declare a reference type (a SearchType with no class) with that name.`,
         );
       }
-      // The two jobs of an inline reference, told apart only by Roles: a
-      // reading device (no Role, pruned before the writer) or a surfaced nested
-      // object (`output`). Anything else asks an engine to search, filter,
-      // facet or sort on a value that is stored as a nested document – which no
-      // query compiler serves, so it would be ignored per query.
-      const extraRoles = unserviceableNestedRoles(field);
+      // An inline reference’s stored value is a nested object, which an engine
+      // can neither tokenize for free text nor order by. `filterable` and
+      // `facetable` it CAN serve – through the identity companion below – so
+      // only the roles no companion could answer are refused here.
+      const extraRoles = unserviceableInlineRoles(field);
       if (extraRoles.length > 0) {
         throw new Error(
           `Inline reference “${searchType.name}.${field.name}” declares ${extraRoles
             .map((role) => `“${role}”`)
             .join(
               ', ',
-            )}, which it cannot serve: an inline reference is either a reading device (no Role) or surfaced (“output”).`,
+            )}, which it cannot serve: its value is a nested object, not a token an engine can search, sort or join on.`,
         );
       }
+      assertIdentityCompanion(searchType, field, referenceTypes);
+    }
+  }
+  for (const searchType of types) {
+    for (const field of searchType.fields) {
+      assertServiceableLocalLookup(searchType, field);
     }
   }
   for (const referenceType of referenceTypes.values()) {
     assertNoInlineCycle(referenceType, referenceTypes, new Set());
+  }
+}
+
+/**
+ * An inline reference’s {@link ReferenceStrategy.identity identity companion}
+ * holds together in both directions: `filterable`/`facetable` need an
+ * `identity` to point the engine at, and an `identity` with neither Role is a
+ * companion nothing reads.
+ *
+ * The named field must be a nested **reference that names a target** – a
+ * `lookup`’s `target` or an `idOnly`’s `labelSource` – because naming one is
+ * exactly the claim the companion rests on: *these values are ids of documents
+ * in that collection* (ADR 20). That the target resolves to a declared Root
+ * Type needs no rule here: {@link assertResolvableLabelSources} walks Reference
+ * Types too, so the nested reference this names is resolved with every other.
+ */
+function assertIdentityCompanion(
+  searchType: SearchType,
+  field: ReferenceField & { readonly ref: { readonly typeName: string } },
+  referenceTypes: ReadonlyMap<string, ReferenceType>,
+): void {
+  const where = `Inline reference “${searchType.name}.${field.name}”`;
+  const identity = field.ref.identity;
+  const filters = field.filterable === true || field.facetable === true;
+  if (identity === undefined) {
+    if (filters) {
+      throw new Error(
+        `${where} declares “filterable”/“facetable” without an “identity”: a nested object is not a value an engine filters or facets, so it needs a nested reference to name the ids to filter and facet in its place.`,
+      );
+    }
+    return;
+  }
+  if (!filters) {
+    throw new Error(
+      `${where} declares an “identity” but neither “filterable” nor “facetable”: the companion it names would be indexed and never read. Declare a Role for it, or drop the “identity”.`,
+    );
+  }
+  // Resolvable by construction: the typeName was checked just above.
+  const referenceType = referenceTypes.get(field.ref.typeName);
+  const identityField = referenceType && fieldNamed(referenceType, identity);
+  if (identityField === undefined) {
+    throw new Error(
+      `${where} names identity “${identity}”, which “${field.ref.typeName}” does not declare.`,
+    );
+  }
+  if (
+    identityField.kind !== 'reference' ||
+    labelSourceNameOf(identityField) === undefined
+  ) {
+    throw new Error(
+      `${where} names identity “${identity}”, which names no target: an identity companion holds ids of documents in a collection, so the field it harvests must be a reference declaring a “lookup” target or a label source.`,
+    );
+  }
+}
+
+/**
+ * A {@link ReferenceStrategy.local local} lookup stores a nested object rather
+ * than an id, so it is held to the same Roles an inline reference is: an engine
+ * can neither tokenize an object for free text, order by it, facet it, nor
+ * point a reference field at it.
+ *
+ * Without this the failures are all silent-ish and all different: a `joinable`
+ * one emits an engine reference over a field holding objects, a `facetable` one
+ * has `physicalFields` name a facet field the collection never declares, and a
+ * `filterable` one compiles a membership clause against an object. Refusing the
+ * declaration is the only place these are one mistake.
+ *
+ * A nested reference wanting to be filtered declares an ordinary nested field
+ * for the value; a referring field wanting to be faceted declares an
+ * {@link ReferenceStrategy.identity identity companion} on the inline reference
+ * that carries it.
+ */
+function assertServiceableLocalLookup(
+  searchType: SearchType,
+  field: SearchField,
+): void {
+  if (
+    field.kind !== 'reference' ||
+    field.ref?.strategy !== 'lookup' ||
+    field.ref.local !== true
+  ) {
+    return;
+  }
+  const unserviceable = unserviceableInlineRoles(field);
+  if (unserviceable.length > 0 || field.facetable === true) {
+    const roles = [
+      ...unserviceable,
+      ...(field.facetable === true ? (['facetable'] as const) : []),
+    ];
+    throw new Error(
+      `Local lookup “${searchType.name}.${field.name}” declares ${roles
+        .map((role) => `“${role}”`)
+        .join(
+          ', ',
+        )}, which it cannot serve: a “local” lookup stores the referent’s own document, not an id an engine can search, sort, facet or join on.`,
+    );
+  }
+  if (field.filterable === true) {
+    throw new Error(
+      `Local lookup “${searchType.name}.${field.name}” declares “filterable”, which it cannot serve: it stores the referent’s own document rather than an id. Filter it through the identity companion of the inline reference that carries it, or drop “local”.`,
+    );
   }
 }
 
@@ -830,17 +1114,31 @@ function assertNoInlineCycle(
 
 /**
  * Every field of a {@link ReferenceType} must be one the nesting can actually
- * serve. A nested field carries **`output` only**: it is stored as part of its
- * referent and read back with it, so it never becomes an indexed, addressable
- * field of its own. `searchable`, `filterable`, `facetable` and `sortable` on a
- * nested field would need query-compiler and engine support that no engine port
- * declares, and a `labelSource` would need a label lookup no reconstruction
- * runs – each would be silently ignored per query. A Role-less field stays an
- * {@link isInternalField Internal Field}, the reading device that is the other
- * half of an inline reference’s job.
+ * serve. A nested field carries `output`, `filterable` and `searchable`; it may
+ * also be a `lookup`, resolved by descending its entries rather than by a
+ * round-trip of its own. `facetable` and `sortable` are refused, and for
+ * measured reasons rather than for want of a compiler:
+ *
+ * - **`facetable`** – an engine’s facet counts over a nested field are
+ *   *document-level*. A filter scoped to one entry does not scope the facet, so
+ *   a bucket counts every entry of every matching document, including the
+ *   entries that did not satisfy the filter. The count is therefore wrong in a
+ *   way no work on our side recovers. Facet a qualified edge through its
+ *   {@link ReferenceStrategy.identity identity companion}, which is a flat
+ *   field an engine facets exactly.
+ * - **`sortable`** – there is no such thing as sorting *into* an element of an
+ *   array; a document holds many entries and a sort key is one value.
+ *
+ * A `labelSource` stays refused: it would need a label lookup no reconstruction
+ * runs, and a nested reference that wants its referent’s fields declares a
+ * `lookup` instead. A Role-less field stays an {@link isInternalField Internal
+ * Field}, the reading device that is the other half of an inline reference’s
+ * job.
  *
  * Checked schema-wide, like the label sources and for the same reason: a single
  * declaration cannot see whether it is a Reference Type at all.
+ *
+ * See [ADR 24](../../docs/decisions/0024-carry-data-on-a-reference-edge.md).
  */
 function assertServiceableNestedFields(
   referenceTypes: ReadonlyMap<string, ReferenceType>,
@@ -854,47 +1152,51 @@ function assertServiceableNestedFields(
             .map((role) => `“${role}”`)
             .join(
               ', ',
-            )}, which an inline reference cannot serve; a nested field carries “output” only.`,
+            )}, which nesting cannot serve: an engine facets a nested field per document rather than per entry, and sorts on one value rather than into an array. Facet the edge through the inline reference’s “identity” companion instead.`,
         );
       }
       if (
         (field as { readonly labelSource?: string }).labelSource !== undefined
       ) {
         throw new Error(
-          `Nested field “${referenceType.name}.${field.name}” declares a label source, which an inline reference cannot serve; nest the referent through an inline reference instead of resolving a label for it.`,
-        );
-      }
-      // A lookup is resolved from the hit's own projection, level by level; a
-      // nested document is read back with its referent and never appears in
-      // one. Accepting it would emit a type whose every field serves null.
-      if (field.kind === 'reference' && field.ref?.strategy === 'lookup') {
-        throw new Error(
-          `Nested field “${referenceType.name}.${field.name}” is a lookup, which an inline reference cannot serve: a nested document is read back with its referent, so nothing resolves a lookup inside one. Nest the referent through an inline reference instead.`,
+          `Nested field “${referenceType.name}.${field.name}” declares a label source, which an inline reference cannot serve; declare a “lookup” on the nested reference instead of resolving a label for it.`,
         );
       }
     }
   }
 }
 
-/** The Roles a field declares that nesting cannot serve – every Role but
- *  `output`, in declaration order, so a message names them all at once. */
+/** The Roles a **nested** field declares that nesting cannot serve, in
+ *  declaration order, so a message names them all at once. */
 function unserviceableNestedRoles(
   field: SearchField,
 ): readonly (typeof UNSERVICEABLE_NESTED_ROLES)[number][] {
-  return UNSERVICEABLE_NESTED_ROLES.filter((role) =>
+  return UNSERVICEABLE_NESTED_ROLES.filter((role) => field[role] === true);
+}
+
+/** The Roles a nested field cannot carry: an engine facets a nested field per
+ *  document rather than per entry, and cannot sort into an array element. */
+const UNSERVICEABLE_NESTED_ROLES = ['facetable', 'sortable'] as const;
+
+/** The Roles the **inline reference itself** declares that it cannot serve, in
+ *  declaration order. Its value is a nested object, which an engine can neither
+ *  tokenize for free text nor order by; `filterable` and `facetable` it serves
+ *  through its {@link ReferenceStrategy.identity identity companion}. */
+function unserviceableInlineRoles(
+  field: ReferenceField,
+): readonly (typeof UNSERVICEABLE_INLINE_ROLES)[number][] {
+  return UNSERVICEABLE_INLINE_ROLES.filter((role) =>
     role === 'searchable'
       ? field.searchable !== undefined
       : field[role] === true,
   );
 }
 
-/** The Roles a nested field cannot carry – everything but `output`. */
-const UNSERVICEABLE_NESTED_ROLES = [
-  'searchable',
-  'filterable',
-  'facetable',
-  'sortable',
-] as const;
+/** The Roles an inline reference cannot carry. `joinable` is absent because
+ *  {@link validateSearchType} already refuses it on an inline reference, with a
+ *  reason of its own; refusing it twice would only make which message appears
+ *  depend on validation order. */
+const UNSERVICEABLE_INLINE_ROLES = ['searchable', 'sortable'] as const;
 
 /** The label field name a type falls back to when it declares no
  *  {@link SearchTypeBase.labelField}. */
@@ -942,11 +1244,16 @@ export function labelSourceNameOf(field: ReferenceField): string | undefined {
  * can actually serve labels ({@link labelFieldOf}). Checked schema-wide,
  * because a single declaration cannot see its siblings.
  *
- * Resolved through {@link rootTypeNamed}, which is exactly the set that can
- * serve labels: a label field is `searchable`, and
- * {@link assertServiceableNestedFields} – which runs first – already rejects a
- * `searchable` field on a Reference Type, so a resolved label always has a
- * collection to come from.
+ * Resolved through {@link rootTypeNamed}, which is exactly the set that has a
+ * collection to serve labels from – a Reference Type is nested inside its
+ * referrer and has none, so naming one here fails to resolve rather than
+ * resolving to something unreadable.
+ *
+ * Reference Types are walked too, so a **nested** `lookup` has its `target`
+ * resolved by the same pass a top-level one does. That is also what validates
+ * the target behind an inline reference’s
+ * {@link ReferenceStrategy.identity identity companion}, since the companion
+ * harvests a nested reference that names one.
  */
 function assertResolvableLabelSources(
   types: readonly SearchType[],
@@ -1466,6 +1773,95 @@ export interface PhysicalFields {
    *  {@link FacetKeys facet policy} admits. `undefined` for a field that is
    *  not facetable. */
   readonly facet: string | undefined;
+  /**
+   * The **identity companion** an inline reference filters and facets through:
+   * `${name}_id`, holding the ids its entries reference
+   * ({@link ReferenceStrategy.identity}). `undefined` for every other field –
+   * an ordinary field filters on its own `name`.
+   *
+   * A nested object is not a value an engine filters or facets, so this is the
+   * flat field it filters and facets in its place. The logical field keeps one
+   * name at the surface; only the physical fanout knows there are two.
+   */
+  readonly identity: string | undefined;
+}
+
+/** The physical name of an inline reference’s
+ *  {@link ReferenceStrategy.identity identity companion}. */
+export function identityFieldName(name: string): string {
+  return `${name}_id`;
+}
+
+/**
+ * The Root Type a {@link ReferenceStrategy.local local} lookup projects its
+ * referents through, or `undefined` for every other field. Such a reference
+ * stores nested documents shaped by the **target’s own declaration** – so it
+ * needs no reference type of its own, and reconstructs through the same path a
+ * resolved referent does.
+ */
+/**
+ * The Root Type whose labels a reference’s **facet buckets** read – its own
+ * label source, or, for an inline reference, the one its
+ * {@link ReferenceStrategy.identity identity companion} points at.
+ *
+ * The same one-level-in reading {@link inheritedFacetKeys} makes, and for the
+ * same reason: the companion holds that field’s ids, so the type that names
+ * those ids is the type that can label them. Kept together with it so a facet
+ * cannot inherit a policy from one type and its labels from another – or, as
+ * happened first, inherit the policy and no labels at all.
+ */
+export function labelTargetNameOf(
+  field: SearchField,
+  schema: SearchSchema | undefined,
+): string | undefined {
+  if (field.kind !== 'reference') {
+    return undefined;
+  }
+  return labelSourceNameOf(identityFieldOf(field, schema) ?? field);
+}
+
+export function localLookupTypeOf(
+  field: SearchField,
+  schema: SearchSchema | undefined,
+): RootType | undefined {
+  if (
+    schema === undefined ||
+    field.kind !== 'reference' ||
+    field.ref?.strategy !== 'lookup' ||
+    field.ref.local !== true
+  ) {
+    return undefined;
+  }
+  return rootTypeNamed(schema, field.ref.target);
+}
+
+/**
+ * The nested reference an inline reference’s
+ * {@link ReferenceStrategy.identity identity companion} harvests, or
+ * `undefined` where the field declares none (or the schema cannot resolve its
+ * reference type). The one reading of *which nested field identifies the edge*,
+ * so the projection (which harvests it), {@link inheritedFacetKeys} (which
+ * reads its target’s facet policy) and an adapter’s filter compiler cannot
+ * resolve it differently.
+ */
+export function identityFieldOf(
+  field: SearchField,
+  schema: SearchSchema | undefined,
+): ReferenceField | undefined {
+  if (schema === undefined || !isInlineReference(field)) {
+    return undefined;
+  }
+  const identity = field.ref.identity;
+  if (identity === undefined) {
+    return undefined;
+  }
+  const referenceType = referenceTypeNamed(schema, field.ref.typeName);
+  if (referenceType === undefined) {
+    return undefined;
+  }
+  // `assertIdentityCompanion` guarantees the named field is declared and is a
+  // reference, so this is a read rather than a search.
+  return fieldNamed(referenceType, identity) as ReferenceField | undefined;
 }
 
 /**
@@ -1839,8 +2235,17 @@ export function physicalFields(
         : [],
       // Text is never facetable (`validateSearchType`).
       facet: undefined,
+      identity: undefined,
     };
   }
+  // An inline reference stores a nested object, so everything an engine indexes
+  // for it reads the identity companion instead – the facet included, which is
+  // why the facet name is derived from the companion rather than from `name`.
+  const identity =
+    identityFieldOf(field, schema) === undefined
+      ? undefined
+      : identityFieldName(field.name);
+  const filtered = identity ?? field.name;
   return {
     search: field.searchable !== undefined ? [`${field.name}_search`] : [],
     sort: [],
@@ -1848,8 +2253,9 @@ export function physicalFields(
       field.facetable !== true
         ? undefined
         : inheritedFacetKeys(field, schema) === undefined
-          ? field.name
-          : `${field.name}_facet`,
+          ? filtered
+          : `${filtered}_facet`,
+    identity,
   };
 }
 
@@ -1863,6 +2269,14 @@ export function physicalFields(
  * own values rather than reading a referent, is re-keyed by nothing and so
  * narrowed by nothing either. The one reading the projection (which writes the
  * companion) and {@link physicalFields} (which names it) share.
+ *
+ * An **inline** reference names its target one level in, through the nested
+ * reference its {@link ReferenceStrategy.identity identity companion} harvests
+ * ({@link identityFieldOf}). The boundary is the same one: the companion holds
+ * that field’s ids, so the policy that narrows a facet over those ids is the
+ * policy of the type that field names. Reading it through the nested field
+ * rather than declaring it twice is what keeps *which of a type’s ids deserve
+ * a bucket* a fact about the type.
  */
 export function inheritedFacetKeys(
   field: SearchField,
@@ -1876,7 +2290,8 @@ export function inheritedFacetKeys(
   ) {
     return undefined;
   }
-  const targetName = labelSourceNameOf(field);
+  const identity = identityFieldOf(field, schema);
+  const targetName = labelSourceNameOf(identity ?? field);
   return targetName === undefined
     ? undefined
     : rootTypeNamed(schema, targetName)?.facetKeys;
