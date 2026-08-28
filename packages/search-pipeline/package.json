@@ -26,7 +26,7 @@
   ],
   "dependencies": {
     "@lde/search": "^0.23.2",
-    "@traqula/generator-sparql-1-1": "^1.1.8",
+    "@traqula/generator-sparql-1-1": "^1.2.0",
     "@traqula/parser-sparql-1-1": "^1.2.0",
     "@traqula/rules-sparql-1-1": "^1.2.0",
     "tslib": "^2.3.0"
