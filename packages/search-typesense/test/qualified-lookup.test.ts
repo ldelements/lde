@@ -335,6 +335,22 @@ describe('resolving a lookup inside an edge', () => {
     ]);
   });
 
+  it('never sends a stored entry to the label lookup as an id', async () => {
+    // The per-hit label lookup reads each stored value as an id. An entry is an
+    // OBJECT, so admitting these fields would put the literal string
+    // `"[object Object]"` into the batched `id:[…]` filter, on every page.
+    const { fake, lookups } = client();
+    const engine = createTypesenseSearchEngine(fake.client, schema, {
+      collections,
+    });
+
+    await engine.search(work as never, { ...base, resolve });
+
+    for (const lookup of lookups) {
+      expect(String(lookup.filter_by)).not.toContain('[object Object]');
+    }
+  });
+
   it('overlays the resolved document on what the work stated', async () => {
     const { fake } = client();
     const engine = createTypesenseSearchEngine(fake.client, schema, {

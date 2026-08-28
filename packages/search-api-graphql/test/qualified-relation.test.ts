@@ -125,6 +125,66 @@ async function run(source: string, engine: SearchEngine) {
   });
 }
 
+describe('the id of a type two references share', () => {
+  // One emitted type serves every field pointing at its target, so its `id`
+  // nullability cannot be read off whichever field registers first: declared
+  // the wrong way round, every unidentified endpoint fails the response.
+  const sharedTarget = (localFirst: boolean) => {
+    const plain = {
+      name: 'publisher',
+      kind: 'reference',
+      output: true,
+      ref: { strategy: 'lookup', target: 'Person' },
+    } as const;
+    const local = {
+      name: 'creator',
+      kind: 'reference',
+      array: true,
+      output: true,
+      ref: { strategy: 'lookup', target: 'Person', local: true },
+    } as const;
+    return defineSearchType({
+      name: 'Shared',
+      class: 'https://example.org/Shared',
+      fields: localFirst ? [local, plain] : [plain, local],
+    });
+  };
+
+  it.each([
+    ['the local reference declared first', true],
+    ['the plain reference declared first', false],
+  ])('is nullable with %s', (_order, localFirst) => {
+    const type = sharedTarget(localFirst);
+    const printed = printSchema(
+      buildGraphQLSchema(searchSchema(type, person), {}),
+    );
+
+    // `IRI!` here would fail the whole response for an endpoint the source
+    // named inline – which is the case `local` exists to carry.
+    expect(printed).toMatch(/type PersonReference \{[^}]*\bid: IRI\n/);
+  });
+
+  it('keeps the non-null id where no reference is local', () => {
+    const plainOnly = defineSearchType({
+      name: 'Plain',
+      class: 'https://example.org/Plain',
+      fields: [
+        {
+          name: 'publisher',
+          kind: 'reference',
+          output: true,
+          ref: { strategy: 'lookup', target: 'Person' },
+        },
+      ],
+    });
+    const printed = printSchema(
+      buildGraphQLSchema(searchSchema(plainOnly, person), {}),
+    );
+
+    expect(printed).toMatch(/type PersonReference \{[^}]*\bid: IRI!/);
+  });
+});
+
 describe('the surface of a qualified relation', () => {
   it('serves one field carrying both populations', async () => {
     const { engine } = fakeEngine();

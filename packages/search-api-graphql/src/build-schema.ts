@@ -36,6 +36,8 @@ import {
   facetableFields,
   filterableFields,
   labelTargetNameOf,
+  localLookupTypeOf,
+  referenceFields,
   filterOn,
   filterOperatorFor,
   ID_FIELD,
@@ -405,6 +407,46 @@ export function buildGraphQLSchema(
   // collide: searchSchema resolves its typeName to a declared Reference Type
   // and rejects duplicate names schema-wide.
   const referenceTypes = new Map<string, GraphQLObjectType>();
+  /**
+   * The lookup targets whose emitted type must carry a NULLABLE `id`: those
+   * some field reaches through a {@link ReferenceStrategy.local local} lookup,
+   * which stores what a document says about an endpoint whether or not the
+   * endpoint is identified.
+   *
+   * Computed over the whole schema before any type is registered, because one
+   * emitted type is SHARED by every field pointing at its target. Decided per
+   * field instead, the answer would depend on which field happened to register
+   * first: a plain `publisher` lookup registering before a `local` creator
+   * would make `id` non-null and then fail the response for every unidentified
+   * creator – exactly the endpoint `local` exists to serve.
+   *
+   * Nullability is therefore a property of the type, and takes the weakest
+   * guarantee any of its users can keep.
+   */
+  const nullableIdTargets = new Set<string>();
+  {
+    const walked = new Set<string>();
+    const collect = (searchType: SearchType): void => {
+      if (walked.has(searchType.name)) {
+        return;
+      }
+      walked.add(searchType.name);
+      for (const field of referenceFields(searchType)) {
+        if (field.ref?.strategy === 'lookup' && field.ref.local === true) {
+          nullableIdTargets.add(field.ref.target);
+        }
+        const nested =
+          nestedReferenceType(schema, field) ??
+          localLookupTypeOf(field, schema);
+        if (nested !== undefined) {
+          collect(nested);
+        }
+      }
+    };
+    for (const rootType of schema.values()) {
+      collect(rootType);
+    }
+  }
   // Seeded with the shared types every schema carries, not just the root type
   // names: a declaration is free to name a type `IRI` or `ValueBucket`, and
   // without this it would pass both collision checks and fail at
@@ -472,8 +514,11 @@ export function buildGraphQLSchema(
     const typeName = referencedTypeName(field.ref) as string;
     if (referenceTypes.has(typeName)) {
       // Fields sharing a referent share one emitted type, and cannot disagree
-      // about it: a lookup's fields come from the target that names the type,
-      // an inline reference's from the Reference Type that does.
+      // about its FIELDS: a lookup's come from the target that names the type,
+      // an inline reference's from the Reference Type that does. They can
+      // disagree about `id` nullability, which is why that is settled over the
+      // whole schema up front ({@link nullableIdTargets}) rather than read off
+      // whichever field registers the type first.
       return;
     }
     const graphQLName = rootTypeNames.has(typeName)
@@ -517,7 +562,8 @@ export function buildGraphQLSchema(
           // entry would fail the response instead of serving what it has.
           id: {
             type:
-              field.ref?.strategy === 'lookup' && field.ref.local !== true
+              field.ref?.strategy === 'lookup' &&
+              !nullableIdTargets.has(typeName)
                 ? new GraphQLNonNull(iriScalar)
                 : iriScalar,
           },

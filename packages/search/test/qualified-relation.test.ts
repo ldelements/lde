@@ -389,6 +389,19 @@ describe('a local lookup is held to the Roles a nested object can serve', () => 
     );
   });
 
+  it('rejects joinable, which the collection would silently not emit', () => {
+    // `validateSearchType` refuses `joinable` on an INLINE reference, not on a
+    // lookup – so without this the join graph builds the edge, the collection
+    // builder takes the nesting branch and emits no engine reference, and the
+    // join fails at query time against a field that was never declared.
+    expect(() =>
+      searchSchema(
+        localReference({ joinable: true, labelSource: 'Person' }),
+        person,
+      ),
+    ).toThrow(/declares “joinable”/);
+  });
+
   it('rejects filterable, pointing at the companion instead', () => {
     expect(() =>
       searchSchema(localReference({ filterable: true }), person),
@@ -435,6 +448,61 @@ describe('declaring the companion', () => {
   it('rejects filterable without an identity to filter through', () => {
     expect(() => searchSchema(workWith({}), person, creatorEdge)).toThrow(
       /without an “identity”/,
+    );
+  });
+
+  it('rejects an identity declared inside a reference type', () => {
+    // A companion is a flat field beside the reference, and only a Root Type
+    // has somewhere flat to put one. Nested, the projection would write it into
+    // each entry while the collection declared it nowhere – so a filter on it
+    // would name a field the engine does not carry.
+    const innerEdge = defineSearchType({
+      name: 'InnerEdge',
+      fields: [
+        {
+          name: 'creator',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}creator`,
+          output: true,
+          ref: { strategy: 'lookup', target: 'Person' },
+        },
+      ],
+    });
+    const outerEdge = defineSearchType({
+      name: 'OuterEdge',
+      fields: [
+        {
+          name: 'inner',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}creator`,
+          array: true,
+          output: true,
+          filterable: true,
+          ref: {
+            strategy: 'inline',
+            typeName: 'InnerEdge',
+            identity: 'creator',
+          },
+        },
+      ],
+    });
+    const nesting = defineSearchType({
+      name: 'Work',
+      class: `${SCHEMA_ORG}CreativeWork`,
+      fields: [
+        {
+          name: 'credit',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}creator`,
+          array: true,
+          output: true,
+          ref: { strategy: 'inline', typeName: 'OuterEdge' },
+        },
+      ],
+    });
+
+    expect(() => searchSchema(nesting, person, outerEdge, innerEdge)).toThrow(
+      /is a reference type: an identity companion is a flat field/,
     );
   });
 

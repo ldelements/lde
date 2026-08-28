@@ -259,10 +259,26 @@ export function createTypesenseSearchEngine<
       return [
         searchType.class,
         referenceFields(searchType)
-          .filter((field) => field.output === true && sources?.has(field.name))
+          .filter(
+            (field) =>
+              field.output === true &&
+              sources?.has(field.name) === true &&
+              // A field storing NESTED DOCUMENTS is excluded, and must be: this
+              // list drives the per-hit label lookup, which reads each stored
+              // value as an id. An inline reference and a `local` lookup store
+              // objects, so every entry would contribute the string
+              // `"[object Object]"` to the batched `id:[…]` filter. Neither
+              // needs entry labels anyway – the referent's own fields are in
+              // the entry – and their FACET buckets are labelled by a separate
+              // path that reads the companion.
+              nestedReferenceType(schema, field) === undefined &&
+              localLookupTypeOf(field, schema) === undefined,
+          )
           .map((field) => ({
             name: field.name,
-            source: sources!.get(field.name)!,
+            source: (sources as Map<string, LabelSource>).get(
+              field.name,
+            ) as LabelSource,
           })),
       ];
     }),

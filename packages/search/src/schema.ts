@@ -1023,6 +1023,16 @@ function assertIdentityCompanion(
       `${where} declares an “identity” but neither “filterable” nor “facetable”: the companion it names would be indexed and never read. Declare a Role for it, or drop the “identity”.`,
     );
   }
+  // A companion is a FLAT field beside the reference, and only a Root Type has
+  // somewhere flat to put one: inside a Reference Type it would be written into
+  // each entry and declared nowhere, so a filter on it would name a field the
+  // collection does not carry. An edge nested inside another edge is not a
+  // shape anything has needed; refusing it is better than serving it wrong.
+  if (searchType.class === undefined) {
+    throw new Error(
+      `${where} declares an “identity”, but “${searchType.name}” is a reference type: an identity companion is a flat field beside the reference, and a nested one has nowhere to live. Declare the companion on the reference that carries this type.`,
+    );
+  }
   // Resolvable by construction: the typeName was checked just above.
   const referenceType = referenceTypes.get(field.ref.typeName);
   const identityField = referenceType && fieldNamed(referenceType, identity);
@@ -1070,10 +1080,20 @@ function assertServiceableLocalLookup(
     return;
   }
   const unserviceable = unserviceableInlineRoles(field);
-  if (unserviceable.length > 0 || field.facetable === true) {
+  if (
+    unserviceable.length > 0 ||
+    field.facetable === true ||
+    field.joinable === true
+  ) {
     const roles = [
       ...unserviceable,
       ...(field.facetable === true ? (['facetable'] as const) : []),
+      // `validateSearchType` refuses `joinable` on an INLINE reference, not on
+      // a lookup, so a `local` one would otherwise pass: `joinGraph` builds the
+      // edge, the collection builder takes the nesting branch and emits no
+      // engine reference, and the join fails at query time against a field the
+      // collection never declared.
+      ...(field.joinable === true ? (['joinable'] as const) : []),
     ];
     throw new Error(
       `Local lookup “${searchType.name}.${field.name}” declares ${roles
