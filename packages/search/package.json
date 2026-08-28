@@ -52,7 +52,7 @@
   "devDependencies": {
     "@tpluscode/rdf-ns-builders": "^5.0.0",
     "@types/jsonld": "^1.5.15",
-    "n3": "^2.1.2"
+    "n3": "^2.4.0"
   },
   "peerDependencies": {
     "vitest": "^4.0.0"
