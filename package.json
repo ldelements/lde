@@ -45,7 +45,7 @@
     "husky": "^9.1.7",
     "jiti": "2.7.0",
     "jsonc-eslint-parser": "^3.1.0",
-    "lint-staged": "^17.2.0",
+    "lint-staged": "^17.3.0",
     "mermaid": "^11.16.0",
     "nock": "^14.0.16",
     "nx": "23.1.1",
