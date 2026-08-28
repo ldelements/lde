@@ -53,6 +53,7 @@ export {
   filterOperatorFor,
   filterOperator,
   filterOn,
+  isWelded,
   isUnsatisfiable,
   validateQuery,
   assertValidQuery,

@@ -111,7 +111,36 @@ export type Criterion =
         readonly max?: number | string;
       };
     })
-  | (CriterionBase & { readonly is: boolean });
+  | (CriterionBase & { readonly is: boolean })
+  | (CriterionBase & { readonly entry: readonly Criterion[] });
+
+/**
+ * The conditions a criterion welds to **one entry** of the nested reference its
+ * {@link CriterionBase.field} names – *this endpoint in this role*, rather than
+ * this endpoint somewhere and that role somewhere.
+ *
+ * Welding is the whole reason an edge is worth indexing. Stated as two ordinary
+ * criteria, `role = etser` and `creator = rembrandt` are satisfied by
+ * *different* entries of the same document, which silently answers a wider
+ * question – the parallel-array defect nesting exists to remove.
+ *
+ * It stays an **atom**, so `where` remains the flat conjunction of disjunctions
+ * of [ADR 18](../../docs/decisions/0018-filter-across-several-fields-with-one-clause.md):
+ * the conjunction lives *inside* one criterion rather than nesting clause
+ * structure, and skip-own-filter still scans one level and finds one field.
+ *
+ * Each welded condition names a field of the reference type and carries no
+ * `on` of its own: they are all conditions on the same entry, which is what
+ * welding means.
+ */
+export type WeldedCriterion = CriterionBase & {
+  readonly entry: readonly Criterion[];
+};
+
+/** Whether a criterion welds conditions to one entry ({@link WeldedCriterion}). */
+export function isWelded(criterion: Criterion): criterion is WeldedCriterion {
+  return 'entry' in criterion;
+}
 
 /**
  * One `where` clause: a disjunction, matching a document that satisfies **any**
@@ -235,6 +264,12 @@ export interface QueryIssue {
     /** A projected reference is not a `lookup`, so nothing resolves it. */
     | 'not-resolvable'
     /**
+     * A criterion welds conditions to one entry of a field that has no entries
+     * – it is not an inline reference. Welding means *one entry satisfies all
+     * of these*, so there has to be something to weld them to.
+     */
+    | 'not-weldable'
+    /**
      * A `date` range bound the storage codec ({@link isoToUnixSeconds}) cannot
      * read, so there is no stored value to compare against – reported per
      * bound, each issue naming its own {@link QueryIssue.value}.
@@ -245,6 +280,53 @@ export interface QueryIssue {
      * and only the caller can fix the bound.
      */
     | 'unparseable-bound';
+}
+
+/**
+ * The checks every leaf criterion answers to, wherever it sits: the field is
+ * declared and `filterable` on the type it constrains, its operator matches
+ * that field's kind, and a `date` range's bounds are readable.
+ *
+ * Shared by an ordinary criterion and by each condition welded to an entry, so
+ * a welded condition is held to exactly the same rules – there is no second,
+ * weaker validator for the inside of an edge. `field` is the path to report
+ * under, which differs between the two.
+ */
+function collectLeafIssues(
+  criterion: Criterion,
+  constrained: SearchType,
+  field: string,
+  issues: QueryIssue[],
+): void {
+  const declared = fieldNamed(constrained, criterion.field);
+  if (declared === undefined) {
+    issues.push({ part: 'where', field, reason: 'unknown-field' });
+    return;
+  }
+  if (declared.filterable !== true) {
+    issues.push({ part: 'where', field, reason: 'not-filterable' });
+    return;
+  }
+  if (filterOperatorFor(declared.kind) !== filterOperator(criterion)) {
+    issues.push({ part: 'where', field, reason: 'operator-mismatch' });
+    return;
+  }
+  if (declared.kind === 'date' && 'range' in criterion) {
+    // A `date` bound is ISO 8601 at the edge and Unix seconds in storage, so a
+    // bound the codec cannot read has nothing to compare against. Both bounds
+    // are checked, so a caller who wrote two bad ones is told about both
+    // instead of fixing one to be told about the other.
+    for (const bound of [criterion.range.min, criterion.range.max]) {
+      if (typeof bound === 'string' && isoToUnixSeconds(bound) === undefined) {
+        issues.push({
+          part: 'where',
+          field,
+          value: bound,
+          reason: 'unparseable-bound',
+        });
+      }
+    }
+  }
 }
 
 /**
@@ -420,37 +502,29 @@ export function validateQuery(
         continue;
       }
       const declared = fieldNamed(constrained, name);
-      if (declared === undefined) {
-        issues.push({ part: 'where', field, reason: 'unknown-field' });
-      } else if (declared.filterable !== true) {
-        issues.push({ part: 'where', field, reason: 'not-filterable' });
-      } else if (
-        filterOperatorFor(declared.kind) !== filterOperator(criterion)
-      ) {
-        issues.push({
-          part: 'where',
-          field,
-          reason: 'operator-mismatch',
-        });
-      } else if (declared.kind === 'date' && 'range' in criterion) {
-        // A `date` bound is ISO 8601 at the edge and Unix seconds in storage,
-        // so a bound the codec cannot read has nothing to compare against.
-        // Both bounds are checked, so a caller who wrote two bad ones is told
-        // about both instead of fixing one to be told about the other.
-        for (const bound of [criterion.range.min, criterion.range.max]) {
-          if (
-            typeof bound === 'string' &&
-            isoToUnixSeconds(bound) === undefined
-          ) {
-            issues.push({
-              part: 'where',
-              field,
-              value: bound,
-              reason: 'unparseable-bound',
-            });
-          }
+      // A welded criterion names the NESTED REFERENCE and constrains fields of
+      // the type it nests, so each condition is checked one level in – against
+      // that reference type, and reported under the path a consumer wrote.
+      if (isWelded(criterion)) {
+        const entryType =
+          declared === undefined
+            ? undefined
+            : nestedReferenceType(schema, declared);
+        if (entryType === undefined) {
+          issues.push({ part: 'where', field, reason: 'not-weldable' });
+          continue;
         }
+        for (const welded of criterion.entry) {
+          collectLeafIssues(
+            welded,
+            entryType,
+            [...on, name, welded.field].join('.'),
+            issues,
+          );
+        }
+        continue;
       }
+      collectLeafIssues(criterion, constrained, field, issues);
     }
   }
   for (const name of query.facets) {

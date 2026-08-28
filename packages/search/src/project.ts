@@ -330,7 +330,7 @@ function applyField(
   if (field.kind === 'reference' && schema !== undefined) {
     const localType = localLookupTypeOf(field, schema);
     if (localType !== undefined) {
-      applyNestedReferents(
+      const endpoints = applyNestedReferents(
         document,
         valuesOf(node, alias),
         field,
@@ -338,6 +338,11 @@ function applyField(
         schema,
         context,
       );
+      // A `local` lookup stores an object, so its own id is a level deeper than
+      // a filter can reach – an engine welds conditions on an entry's LEAF
+      // fields only. `filterable` therefore fans out the id beside the object,
+      // exactly as an inline reference's identity companion does.
+      applyLocalIdentity(document, endpoints, field, schema);
       return;
     }
   }
@@ -690,6 +695,34 @@ function applyIdentityCompanion(
   const policy = inheritedFacetKeys(field, schema);
   if (policy !== undefined) {
     setArray(document, names.facet as string, ids.filter(policy.only));
+  }
+}
+
+/**
+ * Write the identity companion of a {@link ReferenceStrategy.local local}
+ * lookup: the ids of the endpoints just stored, under the flat physical name an
+ * engine filters on ({@link physicalFields}).
+ *
+ * Nothing to do where the field is not `filterable`: without that Role there is
+ * no companion, and the endpoint is display weight like every other nesting.
+ */
+function applyLocalIdentity(
+  document: ProjectedNode,
+  endpoints: readonly ProjectedNode[],
+  field: ReferenceField,
+  schema: SearchSchema,
+): void {
+  const names = physicalFields(field, schema);
+  if (names.identity === undefined) {
+    return;
+  }
+  const ids = dedupe(
+    endpoints
+      .map((endpoint) => endpoint.id)
+      .filter((id): id is string => typeof id === 'string'),
+  );
+  if (ids.length > 0) {
+    setArray(document, names.identity, ids);
   }
 }
 

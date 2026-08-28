@@ -516,8 +516,18 @@ and the extra hop a keyed target's document key needs – so an endpoint two hop
 out is in the frame. See
 [ADR 24](../decisions/0024-carry-data-on-a-reference-edge).
 
-Out of scope for now: welding several conditions to one entry (“this endpoint
-_in this role_”), and faceting an edge's own values, which the current engine
+**Conditions inside one edge's `where` are welded to one entry.** `creator: {
+where: { creator: { in: […] }, role: { in: ["etser"] } } }` means _this person
+in this role_, not _this person somewhere and this role somewhere_ – which two
+different entries could satisfy between them. The rule in one line: inside one
+edge's `where`, the same entry; across `and`/`or` clauses, anywhere in the
+document.
+
+Welding on identity needs the endpoint's `filterable`, which fans out its id as
+a leaf beside the stored object – an engine welds conditions on an entry's own
+leaf fields only. That is a physical detail: you write the logical field.
+
+Out of scope for now: faceting an edge's own values, which the current engine
 cannot serve correctly.
 
 #### Naming the label field

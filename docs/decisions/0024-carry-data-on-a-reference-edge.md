@@ -71,7 +71,7 @@ One field, one entry per edge:
 }
 ```
 
-Six mechanisms make that work.
+Seven mechanisms make that work.
 
 ### 1. A nested field may be `filterable` and `searchable`
 
@@ -177,7 +177,38 @@ path traversal, inline nesting, and the extra hop a keyed target’s document ke
 needs (ADR 22). It is still one schema-derived constant computed once, so ADR
 12’s bound holds – the constant is just slightly larger.
 
-### 6. A criterion may address a nested field
+### 6. Conditions inside one edge are welded to one entry
+
+“This endpoint _in this role_” is the question an edge exists to answer, and it
+is not the same question as “this endpoint somewhere, this role somewhere”. A
+document with Blaeu-as-etcher and Rembrandt-as-painter answers the second and
+not the first.
+
+So **every condition inside one edge’s `where` holds of the same entry**:
+
+```graphql
+where: { creator: { where: { creator: { in: ["…/rembrandt"] },
+                             role:    { in: ["etser"] } } } }
+```
+
+One line states the rule: **inside one edge’s `where`, the same entry; across
+`and`/`or` clauses, anywhere in the document.** The compact spelling is the
+welded one, so what is easiest to write is also what is usually meant.
+
+It stays an **atom** – one criterion carrying its conditions – so ADR 18’s flat
+conjunction of disjunctions is untouched and skip-own-filter still finds one
+field per clause. `‹Edge›Where` therefore declares no `or`/`and`: a disjunction
+inside a weld is not a weld, and the surface rejects it rather than flattening
+it into something wider.
+
+Welding an **identity** needs care, because an engine welds conditions on an
+entry’s **leaf** fields only. A `local` lookup stores an object, so its id sits
+a level too deep – which is why `filterable` on one fans out the same identity
+companion an inline reference uses, as a leaf beside the object. The consumer
+never sees it: they write the logical field, and the compiler reads the
+companion.
+
+### 7. A criterion may address a nested field
 
 `CriterionBase.on` becomes a path of two kinds of hop, resolved from the schema:
 a `joinable` reference resolves through the join graph and compiles to a
@@ -197,16 +228,23 @@ nested field is still an atom naming one field.
 
 Checked against the docs and a live `typesense/typesense:30.2` container.
 
-| Behaviour                                                 | Result                                                   |
-| --------------------------------------------------------- | -------------------------------------------------------- |
-| Index one nested sub-field, leave siblings `index: false` | Works; unindexed siblings still returned                 |
-| Free text (`query_by`) over a nested field                | Works, at nesting depth 1 and 2                          |
-| Exact membership on a nested field                        | Works, at both depths                                    |
-| Filter an `index: false` field                            | Fails **loudly**: `Cannot filter on non-indexed field …` |
-| `index: false` on the parent `object[]`                   | **Silently** disables every child’s indexing             |
-| Facet a nested sub-field                                  | Counts are **document-level**                            |
+| Behaviour                                                 | Result                                                    |
+| --------------------------------------------------------- | --------------------------------------------------------- |
+| Index one nested sub-field, leave siblings `index: false` | Works; unindexed siblings still returned                  |
+| Free text (`query_by`) over a nested field                | Works, at nesting depth 1 and 2                           |
+| Exact membership on a nested field                        | Works, at both depths                                     |
+| Filter an `index: false` field                            | Fails **loudly**: `Cannot filter on non-indexed field …`  |
+| `index: false` on the parent `object[]`                   | **Silently** disables every child’s indexing              |
+| Facet a nested sub-field                                  | Counts are **document-level**                             |
+| Weld conditions on an entry’s leaf fields (`p.{a && b}`)  | Exact                                                     |
+| A **dotted path** inside a weld (`p.{a.b:=…}`)            | **Hangs** – no error, no result, the connection times out |
 
-Two of these decide the design.
+Three of these decide the design.
+
+**The hang.** A dotted path inside a group does not fail, it never returns – so
+the compiler must be structurally incapable of emitting one rather than merely
+avoiding it. Every welded condition is compiled against the reference type with
+an empty prefix, which makes a leaf name the only thing that can appear there.
 
 **The parent-object trap.** With the parent `object[]` unindexed, indexed
 children are ignored and every query returns empty – no error. The collection
@@ -245,12 +283,6 @@ field – is how an edge gets faceted.
 
 ### Out of scope, deliberately
 
-- **Welding several conditions to one entry** (“this endpoint _in this role_”).
-  The engine serves it exactly. The unwelded spelling – two conditions on two
-  sub-fields – silently matches documents where _different_ entries satisfied
-  each one, so if it is ever offered it must be the only multi-condition form
-  offered, as a criterion that stays an atom. Nothing here needs reshaping to add
-  it; a sub-field flips to indexed.
 - **Faceting an edge’s own values.** Not servable on this engine, and servable on
   one with element-scoped aggregation. An engine gap, revisited per adapter.
 - **Ordering entries.** The container is ordered end to end, but nothing upstream

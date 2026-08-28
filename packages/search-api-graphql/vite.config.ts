@@ -29,7 +29,7 @@ export default mergeConfig(
           // Re-anchored for the selection-set projection: its defensive reads
           // (an unresolvable target, an absent field list) are reachable only
           // from a direct caller, since GraphQL validates the query first.
-          branches: 96.91,
+          branches: 96.97,
           statements: 100,
         },
       },

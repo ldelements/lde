@@ -407,6 +407,12 @@ function nestedFields(
           defaultLocale,
           flattensToArray,
         ),
+        // A nested field that stores an object cannot be filtered as itself,
+        // and its own id is a level deeper than a condition can be welded to –
+        // an engine welds conditions on an entry's LEAF fields only. Its
+        // identity companion is that leaf, so it sits beside the object rather
+        // than inside it.
+        ...nestedIdentityFields(prefix, field, schema, flattensToArray),
       );
       continue;
     }
@@ -466,6 +472,29 @@ function identityCompanionFields(
     });
   }
   return fields;
+}
+
+/** The identity companion of a nested field that stores an object: a flat leaf
+ *  beside it, holding the ids a filter welds on. Empty for a nested field that
+ *  declares no query Role, which needs none. */
+function nestedIdentityFields(
+  prefix: string,
+  field: SearchField,
+  schema: SearchSchema,
+  flattensToArray: boolean,
+): CollectionFieldSchema[] {
+  const names = physicalFields(field, schema);
+  if (names.identity === undefined) {
+    return [];
+  }
+  return [
+    {
+      name: nestedFieldName(prefix, names.identity),
+      type: flattensToArray ? 'string[]' : 'string',
+      index: true,
+      optional: true,
+    },
+  ];
 }
 
 /** The type a *nested* field itself nests: another inline reference’s type, or

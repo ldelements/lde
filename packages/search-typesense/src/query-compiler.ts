@@ -9,7 +9,9 @@ import {
   type SearchQuery,
   type SearchSchema,
   type SearchType,
+  type CriterionBase,
   type Sort,
+  type WeldedCriterion,
 } from '@lde/search';
 import {
   fieldNamed,
@@ -18,9 +20,11 @@ import {
   ID_FIELD,
   isoToUnixSeconds,
   isRangeFacet,
+  isWelded,
   joinGraph,
   pageForOffset,
   physicalFields,
+  nestedReferenceType,
   resolvePath,
   searchableFields,
 } from '@lde/search/adapter';
@@ -329,7 +333,9 @@ function compileCriterion(
 ): string | typeof VACUOUS | typeof UNUSABLE {
   const on = criterion.on ?? [];
   if (on.length === 0) {
-    return compileLeaf(criterion, searchType, options.schema);
+    return isWelded(criterion)
+      ? compileWelded(criterion, searchType, options.schema, '')
+      : compileLeaf(criterion, searchType, options.schema);
   }
   // The path carries two kinds of hop, and they compile differently: a JOIN
   // crosses into another collection and wraps the leaf in `$collection(…)`; a
@@ -365,12 +371,11 @@ function compileCriterion(
     collections.push(resolved.collection);
     target = resolved.searchType;
   }
-  const leaf = compileLeaf(
-    criterion,
-    resolvedPath?.leafType ?? target,
-    options.schema,
-    nestedHops.join('.'),
-  );
+  const leafType = resolvedPath?.leafType ?? target;
+  const prefix = nestedHops.join('.');
+  const leaf = isWelded(criterion)
+    ? compileWelded(criterion, leafType, options.schema, prefix)
+    : compileLeaf(criterion, leafType, options.schema, prefix);
   // A vacuous leaf states no constraint on the referent, so the join as a whole
   // states none either – the reading, and so the outcome, passes straight
   // through the hops.
@@ -431,13 +436,62 @@ function compileLeaf(
   if ('range' in criterion) {
     return compileRange(field, criterion.range, prefix) ?? VACUOUS;
   }
-  return `${qualify(prefix, field.name)}:=${criterion.is}`;
+  // Every other shape returned above; a welded criterion never reaches here
+  // (compileWelded handles it before the leaf compiler is called).
+  return `${qualify(prefix, field.name)}:=${(criterion as CriterionBase & { readonly is: boolean }).is}`;
 }
 
 /** A field name under its nesting path, if any – the one place the dotted
  *  addressing an engine uses for a stored nested document is spelled. */
 function qualify(prefix: string, name: string): string {
   return prefix === '' ? name : `${prefix}.${name}`;
+}
+
+/**
+ * A **welded** criterion: `path.{a && b}`, matching a document with ONE entry
+ * that satisfies every condition – as against `path.a && path.b`, which two
+ * different entries can satisfy between them.
+ *
+ * Each condition is compiled against the reference type with an EMPTY prefix,
+ * so what goes inside the braces is always a leaf name. That is a correctness
+ * requirement, not tidiness: Typesense 30.2 **hangs** on a dotted path inside a
+ * group (`creator.{creator.name:=…}` never returns – no error, no result), so
+ * the compiler must be structurally incapable of emitting one. A field whose
+ * value is itself nested is reached through its identity companion, which is a
+ * leaf ({@link physicalFields}).
+ *
+ * A condition that states no constraint drops out, and the weld is whatever
+ * remains; a weld left with nothing is vacuous like any other empty clause.
+ */
+function compileWelded(
+  criterion: WeldedCriterion,
+  searchType: SearchType,
+  schema: SearchSchema | undefined,
+  prefix: string,
+): string | typeof VACUOUS | typeof UNUSABLE {
+  const entryType =
+    schema &&
+    nestedReferenceType(
+      schema,
+      fieldNamed(searchType, criterion.field) ?? ({} as SearchField),
+    );
+  if (entryType === undefined) {
+    return UNUSABLE;
+  }
+  const conditions: string[] = [];
+  for (const condition of criterion.entry) {
+    const compiled = compileLeaf(condition, entryType, schema);
+    if (compiled === UNUSABLE) {
+      return UNUSABLE;
+    }
+    if (compiled !== VACUOUS) {
+      conditions.push(compiled);
+    }
+  }
+  if (conditions.length === 0) {
+    return VACUOUS;
+  }
+  return `${qualify(prefix, criterion.field)}.{${conditions.join(' && ')}}`;
 }
 
 /**

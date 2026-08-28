@@ -212,9 +212,16 @@ editor.
   same question one hop out – `in` for the ids its entries hold (its
   [identity companion](./search#data-on-the-edge)), `where` for a condition on
   an entry, typed `‹Edge›Where`. Only the cost differs: a join crosses into
-  another collection, a nesting stays inside the document. `‹Edge›Where` carries
-  no `id` key, unlike every root type's: an entry is read, not addressed, so it
-  has no document key to filter on.
+  another collection, a nesting stays inside the document.
+
+  `‹Edge›Where` differs from a root type's in two ways, both because an entry is
+  read rather than addressed. It carries **no `id` key** – an entry has no
+  document key – and **no `or`/`and`**, because its keys are **welded**: every
+  condition in one `‹Edge›Where` must hold of the SAME entry, and a disjunction
+  inside a weld is not a weld. So `creator: { where: { creator: { in: […] },
+role: { in: ["etser"] } } }` asks for _this person in this role_, where the
+  same two conditions written as sibling clauses could be satisfied by two
+  different entries.
 
 - **`orderBy`**: `RELEVANCE` plus every `sortable` field, as an enum – field
   names SCREAMING_SNAKE_CASEd (`datePosted` → `DATE_POSTED`); `direction`

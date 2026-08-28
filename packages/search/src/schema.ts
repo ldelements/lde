@@ -1063,10 +1063,12 @@ function assertIdentityCompanion(
  * `filterable` one compiles a membership clause against an object. Refusing the
  * declaration is the only place these are one mistake.
  *
- * A nested reference wanting to be filtered declares an ordinary nested field
- * for the value; a referring field wanting to be faceted declares an
- * {@link ReferenceStrategy.identity identity companion} on the inline reference
- * that carries it.
+ * `filterable` it CAN serve, and does so the same way an inline reference does:
+ * through a flat `${name}_id` companion beside the stored object
+ * ({@link physicalFields}). That is what lets a condition on the endpoint's
+ * identity be welded to a condition on the edge's own value – an engine can
+ * only weld conditions on an entry's own **leaf** fields, and the endpoint's id
+ * is otherwise one level further in.
  */
 function assertServiceableLocalLookup(
   searchType: SearchType,
@@ -1101,11 +1103,6 @@ function assertServiceableLocalLookup(
         .join(
           ', ',
         )}, which it cannot serve: a “local” lookup stores the referent’s own document, not an id an engine can search, sort, facet or join on.`,
-    );
-  }
-  if (field.filterable === true) {
-    throw new Error(
-      `Local lookup “${searchType.name}.${field.name}” declares “filterable”, which it cannot serve: it stores the referent’s own document rather than an id. Filter it through the identity companion of the inline reference that carries it, or drop “local”.`,
     );
   }
 }
@@ -2258,13 +2255,17 @@ export function physicalFields(
       identity: undefined,
     };
   }
-  // An inline reference stores a nested object, so everything an engine indexes
-  // for it reads the identity companion instead – the facet included, which is
-  // why the facet name is derived from the companion rather than from `name`.
-  const identity =
-    identityFieldOf(field, schema) === undefined
-      ? undefined
-      : identityFieldName(field.name);
+  // A field storing a nested OBJECT cannot be filtered or faceted as itself, so
+  // everything an engine indexes for it reads the identity companion instead –
+  // the facet included, which is why the facet name is derived from the
+  // companion rather than from `name`. Two shapes store one: an inline
+  // reference that names an `identity`, and a `local` lookup, whose own id is
+  // otherwise a level further in than an engine can weld a condition to.
+  const nestsAnObject =
+    identityFieldOf(field, schema) !== undefined ||
+    (localLookupTypeOf(field, schema) !== undefined &&
+      field.filterable === true);
+  const identity = nestsAnObject ? identityFieldName(field.name) : undefined;
   const filtered = identity ?? field.name;
   return {
     search: field.searchable !== undefined ? [`${field.name}_search`] : [],

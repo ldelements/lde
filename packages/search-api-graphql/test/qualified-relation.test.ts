@@ -42,6 +42,9 @@ const creatorEdge = defineSearchType({
       name: 'creator',
       kind: 'reference',
       output: true,
+      // Filterable, so a condition on the endpoint's identity can be welded to
+      // one on the edge's own value.
+      filterable: true,
       ref: { strategy: 'lookup', target: 'Person', local: true },
     },
   ],
@@ -185,6 +188,86 @@ describe('the id of a type two references share', () => {
   });
 });
 
+describe('an edge reached through a join', () => {
+  // A join may contain a nesting: the weld happens in the joined document, and
+  // the criterion carries the hop that got there.
+  const dataset = defineSearchType({
+    name: 'Dataset',
+    class: 'https://example.org/Dataset',
+    fields: [
+      {
+        name: 'label',
+        kind: 'text',
+        locales: ['nl'],
+        output: true,
+        searchable: { weight: 1 },
+      },
+      {
+        name: 'creator',
+        kind: 'reference',
+        array: true,
+        output: true,
+        filterable: true,
+        ref: {
+          strategy: 'inline',
+          typeName: 'CreatorEdge',
+          identity: 'creator',
+        },
+      },
+    ],
+  });
+  const joined = defineSearchType({
+    name: 'Joined',
+    class: 'https://example.org/Joined',
+    fields: [
+      {
+        name: 'dataset',
+        kind: 'reference',
+        output: true,
+        filterable: true,
+        joinable: true,
+        labelSource: 'Dataset',
+        ref: { strategy: 'idOnly', typeName: 'Dataset' },
+      },
+    ],
+  });
+  const joinedSchema = searchSchema(joined, dataset, person, creatorEdge);
+  const joinedGql = buildGraphQLSchema(joinedSchema, {});
+
+  it('welds inside the joined document, carrying the hop', async () => {
+    let captured: SearchQuery | undefined;
+    const engine: SearchEngine = {
+      schema: joinedSchema,
+      async search(_t: SearchType, query: SearchQuery) {
+        captured = query;
+        return { total: 0, hits: [], facets: {} } as never;
+      },
+      async searchFacets(_t, queries) {
+        return queries.map(() => ({ facets: {} })) as never;
+      },
+    };
+
+    const response = await graphql({
+      schema: joinedGql,
+      source: `{ joineds(where: { dataset: { where: { creator: { where: { role: { in: ["etser"] } } } } } }) { pagination { total } } }`,
+      contextValue: { engine, acceptLanguage: ['nl'] } as SearchContext,
+    });
+
+    expect(response.errors).toBeUndefined();
+    expect(captured?.where).toEqual([
+      {
+        or: [
+          {
+            on: ['dataset'],
+            field: 'creator',
+            entry: [{ field: 'role', in: ['etser'] }],
+          },
+        ],
+      },
+    ]);
+  });
+});
+
 describe('the surface of a qualified relation', () => {
   it('serves one field carrying both populations', async () => {
     const { engine } = fakeEngine();
@@ -225,7 +308,7 @@ describe('the surface of a qualified relation', () => {
     ]);
   });
 
-  it('filters by a condition on an entry, as an `on` hop', async () => {
+  it('welds every condition in an edge’s `where` to one entry', async () => {
     const { engine, received } = fakeEngine();
 
     const response = await run(
@@ -234,11 +317,72 @@ describe('the surface of a qualified relation', () => {
     );
 
     expect(response.errors).toBeUndefined();
-    // Flattened into the criterion's path, so `where` stays the flat
-    // conjunction of disjunctions ADR 18 made it.
+    // One criterion carrying the condition, not a path-qualified leaf: the
+    // conjunction lives INSIDE the atom, so `where` stays the flat conjunction
+    // of disjunctions ADR 18 made it.
     expect(received().where).toEqual([
-      { or: [{ on: ['creator'], field: 'name', in: ['Jan Jansen'] }] },
+      {
+        or: [
+          { field: 'creator', entry: [{ field: 'name', in: ['Jan Jansen'] }] },
+        ],
+      },
     ]);
+  });
+
+  it('welds identity to the edge’s own value, using the logical name', async () => {
+    const { engine, received } = fakeEngine();
+
+    const response = await run(
+      `{ works(where: { creator: { where: { creator: { in: ["https://p/1"] }, role: { in: ["etser"] } } } }) { items { title { value } } } }`,
+      engine,
+    );
+
+    // “Rembrandt AS etcher”, not “Rembrandt somewhere and an etcher
+    // somewhere”. The consumer writes the logical field `creator`; that it is
+    // stored as an object beside a flat id companion is the engine's business.
+    expect(response.errors).toBeUndefined();
+    expect(received().where).toEqual([
+      {
+        or: [
+          {
+            field: 'creator',
+            // Declaration order, not the order the client wrote the keys –
+            // the same convention every keyed input already follows.
+            entry: [
+              { field: 'role', in: ['etser'] },
+              { field: 'creator', in: ['https://p/1'] },
+            ],
+          },
+        ],
+      },
+    ]);
+  });
+
+  it('contributes no clause for an edge condition that states nothing', async () => {
+    const { engine, received } = fakeEngine();
+
+    const response = await run(
+      `{ works(where: { creator: { where: {} } }) { items { title { value } } } }`,
+      engine,
+    );
+
+    expect(response.errors).toBeUndefined();
+    expect(received().where).toEqual([]);
+  });
+
+  it('offers no `or` inside an edge condition, which is not a weld', async () => {
+    const { engine } = fakeEngine();
+
+    const response = await run(
+      `{ works(where: { creator: { where: { or: [{ role: { in: ["etser"] } }] } } }) { items { title { value } } } }`,
+      engine,
+    );
+
+    // Rejected by the SCHEMA, not by a resolver: `‹Edge›Where` declares no
+    // `or`/`and`, because a disjunction inside a weld is not a weld.
+    expect(response.errors?.[0]?.message).toMatch(
+      /Field "or" is not defined by type "CreatorEdgeWhere"/,
+    );
   });
 
   it('asks the engine to resolve the lookup inside the edge', async () => {

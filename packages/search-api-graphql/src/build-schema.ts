@@ -1226,6 +1226,19 @@ function whereToFilters(
   // inferred from how deeply it is nested.
   for (const entry of keyEntriesOf(where, searchType, joins, schema)) {
     if ('nested' in entry) {
+      // A NESTING hop welds: every condition inside one edge's `where` must
+      // hold of the SAME entry, which is the whole point of indexing an edge.
+      // Written as separate criteria they would be satisfiable by different
+      // entries – the parallel-array answer, silently wider than what was
+      // asked. A JOIN hop keeps recursing: those conditions are about another
+      // document, where there is nothing to weld them to.
+      if (entry.target.class === undefined) {
+        const welded = weldedCriterionOf(entry, joins, schema, on);
+        if (welded !== undefined) {
+          filters.push(filterOn(welded));
+        }
+        continue;
+      }
       filters.push(
         ...whereToFilters(entry.nested, entry.target, joins, schema, [
           ...on,
@@ -1253,6 +1266,41 @@ function whereToFilters(
     filters.push(...whereToFilters(nested, searchType, joins, schema, on));
   }
   return filters;
+}
+
+/**
+ * The one criterion an edge's `where` compiles to: its conditions welded to a
+ * single entry.
+ *
+ * Every key of that `where` becomes a condition. It carries no `or`/`and` of
+ * its own – `‹Edge›Where` declares neither, so the surface rejects them before
+ * a resolver runs: a disjunction inside a weld is not a weld, and the flat IR
+ * has nowhere to put one. `undefined` when the `where` states nothing, which
+ * constrains nothing and so contributes no clause.
+ */
+function weldedCriterionOf(
+  entry: {
+    readonly name: string;
+    readonly nested: Record<string, unknown>;
+    readonly target: SearchType;
+  },
+  joins: JoinGraph,
+  schema: SearchSchema,
+  on: readonly string[],
+): Criterion | undefined {
+  // Every entry here is a plain criterion, and can only be: a hop needs either
+  // a joinable reference (`joins.resolve` answers nothing from a Reference
+  // Type) or a filterable inline one (which needs an `identity`, refused inside
+  // a Reference Type). So there is nothing to skip.
+  const conditions = keyEntriesOf(
+    entry.nested,
+    entry.target,
+    joins,
+    schema,
+  ).map((nested) => (nested as { readonly criterion: Criterion }).criterion);
+  return conditions.length === 0
+    ? undefined
+    : withPath({ field: entry.name, entry: conditions }, on);
 }
 
 /** A criterion with its join path attached, or unchanged at the top level –

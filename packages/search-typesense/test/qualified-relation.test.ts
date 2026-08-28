@@ -43,6 +43,8 @@ const creatorEdge = defineSearchType({
       kind: 'reference',
       path: `${SCHEMA_ORG}creator`,
       output: true,
+      // Earns the identity companion an engine welds a condition on.
+      filterable: true,
       ref: { strategy: 'lookup', target: 'Person', local: true },
     },
   ],
@@ -188,6 +190,55 @@ describe('nested fields of other kinds', () => {
       buildCollectionDefinition(richWork, { schema: richSchema }).fields ?? []
     ).find((field) => field.name === name);
 
+  it('stems an untagged nested text field in the deployment’s locale', () => {
+    // A nested text field fans out exactly as a root one does, `und` included:
+    // folded, and stemmed in `defaultLocale` when the deployment sets one.
+    const textEdge = defineSearchType({
+      name: 'TextEdge',
+      fields: [
+        {
+          name: 'note',
+          kind: 'text',
+          path: `${SCHEMA_ORG}description`,
+          locales: ['und'],
+          // Searchable but NOT output: indexed for free text, with no display
+          // copy stored, so the entry carries only what is queried.
+          searchable: { weight: 1 },
+        },
+      ],
+    });
+    const textWork = defineSearchType({
+      name: 'Work',
+      class: `${SCHEMA_ORG}CreativeWork`,
+      fields: [
+        {
+          name: 'credit',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}creator`,
+          array: true,
+          output: true,
+          ref: { strategy: 'inline', typeName: 'TextEdge' },
+        },
+      ],
+    });
+    const fields =
+      buildCollectionDefinition(textWork, {
+        schema: searchSchema(textWork, textEdge),
+        defaultLocale: 'nl',
+      }).fields ?? [];
+
+    expect(
+      fields.find((field) => field.name === 'credit.note_search_und'),
+    ).toMatchObject({ type: 'string[]', stem: true, locale: 'nl' });
+    // No display copy: the field never surfaces.
+    expect(fields.some((field) => field.name.startsWith('credit.note_'))).toBe(
+      true,
+    );
+    expect(fields.filter((field) => field.name.includes('note')).length).toBe(
+      1,
+    );
+  });
+
   it('gives a searchable nested keyword its folded companion', () => {
     expect(richField('credit.note_search')).toMatchObject({
       type: 'string[]',
@@ -321,6 +372,75 @@ describe('compiling a filter over an edge', () => {
     );
 
     expect(params.filter_by).toBe('id:=[]');
+  });
+
+  it('welds conditions into one group, on leaf names only', () => {
+    // `path.{a && b}` matches one entry satisfying both, where `path.a && path.b`
+    // lets two different entries satisfy them between them.
+    //
+    // Everything inside the braces is a LEAF name, and must be: Typesense 30.2
+    // HANGS on a dotted path inside a group – no error, no result, the
+    // connection just times out – so the endpoint's identity is reached through
+    // its companion leaf rather than through `creator.id`.
+    const params = buildSearchParams(
+      {
+        ...base,
+        where: [
+          {
+            or: [
+              {
+                field: 'creator',
+                entry: [
+                  { field: 'name', in: ['Jan Jansen'] },
+                  { field: 'creator', in: ['https://id.example/1'] },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      work,
+      { schema },
+    );
+
+    expect(params.filter_by).toBe(
+      'creator.{name:=[`Jan Jansen`] && creator_id:=[`https://id.example/1`]}',
+    );
+    // No dotted FIELD PATH inside the braces – checked on the names, since the
+    // values are IRIs and full of dots.
+    const inside = /\{(.*)\}$/.exec(String(params.filter_by))?.[1] ?? '';
+    for (const condition of inside.split(' && ')) {
+      expect(condition.slice(0, condition.indexOf(':'))).not.toContain('.');
+    }
+  });
+
+  it.each([
+    [
+      'a weld on a field that nests nothing',
+      { field: 'role', entry: [{ field: 'x', in: ['y'] }] },
+      'id:=[]',
+    ],
+    [
+      'a weld whose condition names no field of the entry',
+      { field: 'creator', entry: [{ field: 'nope', in: ['y'] }] },
+      'id:=[]',
+    ],
+    [
+      'a weld that states nothing',
+      { field: 'creator', entry: [{ field: 'name', in: [] }] },
+      undefined,
+    ],
+  ])('drops %s', (_case, criterion, expected) => {
+    // Through the engine `assertValidQuery` rejects the first two; compiled
+    // directly, an unusable clause matches nothing and a vacuous one is
+    // skipped, exactly as every other clause is.
+    const params = buildSearchParams(
+      { ...base, where: [{ or: [criterion as never] }] },
+      work,
+      { schema },
+    );
+
+    expect(params.filter_by).toBe(expected);
   });
 
   it('facets an inline reference on its companion', () => {

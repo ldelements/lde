@@ -4,9 +4,11 @@ import {
   defineSearchType,
   inlineFramingDepth,
   labelTargetNameOf,
+  physicalFields,
   searchSchema,
 } from '../src/schema.js';
 import { resolvePath, validateQuery, type SearchQuery } from '../src/query.js';
+import type { SearchType } from '../src/schema.js';
 
 const SCHEMA_ORG = 'https://schema.org/';
 const RKD = 'https://rkd.example/104628';
@@ -359,6 +361,121 @@ describe('addressing a nested field from a criterion', () => {
   });
 });
 
+describe('welding conditions to one entry', () => {
+  const base: SearchQuery = {
+    where: [],
+    orderBy: [],
+    limit: 10,
+    offset: 0,
+    facets: [],
+    locale: 'nl',
+  };
+  const welded = (entry: readonly { field: string; in: string[] }[]) => ({
+    ...base,
+    where: [{ or: [{ field: 'creator', entry }] }],
+  });
+
+  it('accepts conditions on the fields of the edge’s own type', () => {
+    expect(
+      validateQuery(welded([{ field: 'role', in: ['etser'] }]), work, schema),
+    ).toEqual([]);
+  });
+
+  it('holds a welded condition to the same rules as any other', () => {
+    // No weaker validator for the inside of an edge: an unknown field is an
+    // unknown field, reported under the path a consumer wrote.
+    expect(
+      validateQuery(welded([{ field: 'nope', in: ['x'] }]), work, schema),
+    ).toEqual([
+      { part: 'where', field: 'creator.nope', reason: 'unknown-field' },
+    ]);
+  });
+
+  it('refuses to weld onto a field the type does not declare', () => {
+    expect(
+      validateQuery(
+        { ...base, where: [{ or: [{ field: 'nope', entry: [] }] }] },
+        work,
+        schema,
+      ),
+    ).toEqual([{ part: 'where', field: 'nope', reason: 'not-weldable' }]);
+  });
+
+  it('refuses to weld onto a field that has no entries', () => {
+    const flat = defineSearchType({
+      name: 'Work',
+      class: `${SCHEMA_ORG}CreativeWork`,
+      fields: [
+        {
+          name: 'creator',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}creator`,
+          array: true,
+          output: true,
+          filterable: true,
+          ref: { strategy: 'lookup', target: 'Person' },
+        },
+      ],
+    });
+
+    expect(
+      validateQuery(
+        welded([{ field: 'role', in: ['etser'] }]),
+        flat,
+        searchSchema(flat, person),
+      ),
+    ).toEqual([{ part: 'where', field: 'creator', reason: 'not-weldable' }]);
+  });
+});
+
+describe('the identity companion of a local lookup', () => {
+  // Its own id is a level deeper than a condition can be welded to, so
+  // `filterable` fans it out as a leaf beside the stored object.
+  const filterableEdge = defineSearchType({
+    name: 'CreatorEdge',
+    fields: [
+      {
+        name: 'role',
+        kind: 'keyword',
+        path: `${SCHEMA_ORG}name`,
+        output: true,
+        filterable: true,
+      },
+      {
+        name: 'creator',
+        kind: 'reference',
+        path: `${SCHEMA_ORG}creator`,
+        output: true,
+        filterable: true,
+        ref: { strategy: 'lookup', target: 'Person', local: true },
+      },
+    ],
+  });
+
+  it('is written beside the object it identifies', () => {
+    const document = projectDocument(
+      node,
+      work,
+      searchSchema(work, person, filterableEdge),
+    );
+    const [identified] = document.creator as readonly SearchDocument[];
+
+    expect(identified.creator_id).toEqual([RKD]);
+    expect((identified.creator as SearchDocument).id).toBe(RKD);
+  });
+
+  it('is absent where the endpoint is not identified', () => {
+    const document = projectDocument(
+      node,
+      work,
+      searchSchema(work, person, filterableEdge),
+    );
+    const [, unidentified] = document.creator as readonly SearchDocument[];
+
+    expect(unidentified).not.toHaveProperty('creator_id');
+  });
+});
+
 describe('a local lookup is held to the Roles a nested object can serve', () => {
   const localReference = (extra: Record<string, unknown>) =>
     ({
@@ -402,10 +519,16 @@ describe('a local lookup is held to the Roles a nested object can serve', () => 
     ).toThrow(/declares “joinable”/);
   });
 
-  it('rejects filterable, pointing at the companion instead', () => {
-    expect(() =>
-      searchSchema(localReference({ filterable: true }), person),
-    ).toThrow(/identity companion/);
+  it('accepts filterable, which earns it an identity companion', () => {
+    // Its own id is a level deeper than a filter can be welded to – an engine
+    // welds conditions on an entry's LEAF fields only – so `filterable` fans
+    // the id out beside the object, exactly as an inline reference does.
+    const filterable = localReference({ filterable: true }) as SearchType;
+    const filterableSchema = searchSchema(filterable, person);
+
+    expect(
+      physicalFields(filterable.fields[0], filterableSchema).identity,
+    ).toBe('creator_id');
   });
 
   it('accepts it as an output-only nesting', () => {
