@@ -125,6 +125,43 @@ describe('the collection an edge is stored in', () => {
   });
 });
 
+describe('a single-valued edge', () => {
+  // The arity that no other test covers, and the one where a declared type can
+  // disagree with what is stored.
+  const singleWork = defineSearchType({
+    name: 'Work',
+    class: `${SCHEMA_ORG}CreativeWork`,
+    fields: [
+      {
+        name: 'creator',
+        kind: 'reference',
+        path: `${SCHEMA_ORG}creator`,
+        output: true,
+        filterable: true,
+        ref: {
+          strategy: 'inline',
+          typeName: 'CreatorEdge',
+          identity: 'creator',
+        },
+      },
+    ],
+  });
+  const singleSchema = searchSchema(singleWork, person, creatorEdge);
+
+  it('declares the nested identity companion as a list', () => {
+    // The projection writes it with `setArray` whatever the arity, and an
+    // indexed field's declared type is checked at import – a `string` here
+    // rejects every document carrying such an edge.
+    const fields =
+      buildCollectionDefinition(singleWork, { schema: singleSchema }).fields ??
+      [];
+
+    expect(
+      fields.find((field) => field.name === 'creator.creator_id'),
+    ).toMatchObject({ type: 'string[]', index: true });
+  });
+});
+
 describe('nested fields of other kinds', () => {
   // One edge carrying each shape the fanout has to handle: a searchable
   // keyword (its own folded companion), and an indexed numeric (whose type is
@@ -372,6 +409,77 @@ describe('compiling a filter over an edge', () => {
     );
 
     expect(params.filter_by).toBe('id:=[]');
+  });
+
+  it('queries nested searchable fields too', () => {
+    // A companion that is indexed but absent from `query_by` costs the RAM of
+    // an indexed field and matches nothing – so the Role has to reach here or
+    // it means nothing.
+    const params = buildSearchParams({ ...base, text: 'rembrandt' }, work, {
+      schema,
+    });
+
+    expect(String(params.query_by).split(',')).toContain(
+      'creator.creator.label_search_und',
+    );
+  });
+
+  it('stops at a cycle when collecting searchable fields', () => {
+    // A `local` lookup can reach a type that reaches back, so the walk that
+    // gathers nested search companions has to terminate on its own.
+    const cyclicPerson = defineSearchType({
+      name: 'Person',
+      class: `${SCHEMA_ORG}Person`,
+      fields: [
+        {
+          name: 'label',
+          kind: 'text',
+          path: `${SCHEMA_ORG}name`,
+          locales: ['und'],
+          output: true,
+          searchable: { weight: 1 },
+        },
+        {
+          name: 'made',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}makesOffer`,
+          output: true,
+          ref: { strategy: 'lookup', target: 'Cyclic', local: true },
+        },
+      ],
+    });
+    const cyclicWork = defineSearchType({
+      name: 'Cyclic',
+      class: `${SCHEMA_ORG}CreativeWork`,
+      labelField: 'title',
+      fields: [
+        {
+          name: 'title',
+          kind: 'text',
+          path: `${SCHEMA_ORG}name`,
+          locales: ['und'],
+          output: true,
+          searchable: { weight: 5 },
+        },
+        {
+          name: 'creator',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}creator`,
+          output: true,
+          ref: { strategy: 'lookup', target: 'Person', local: true },
+        },
+      ],
+    });
+    const cyclicSchema = searchSchema(cyclicWork, cyclicPerson);
+
+    const params = buildSearchParams({ ...base, text: 'x' }, cyclicWork, {
+      schema: cyclicSchema,
+    });
+
+    expect(String(params.query_by).split(',')).toEqual([
+      'title_search_und',
+      'creator.label_search_und',
+    ]);
   });
 
   it('welds conditions into one group, on leaf names only', () => {

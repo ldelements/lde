@@ -984,6 +984,7 @@ function assertResolvableInlineReferences(
       assertServiceableLocalLookup(searchType, field);
     }
   }
+  assertConsistentIdentities(types);
   for (const referenceType of referenceTypes.values()) {
     assertNoInlineCycle(referenceType, referenceTypes, new Set());
   }
@@ -1104,6 +1105,47 @@ function assertServiceableLocalLookup(
           ', ',
         )}, which it cannot serve: a “local” lookup stores the referent’s own document, not an id an engine can search, sort, facet or join on.`,
     );
+  }
+}
+
+/**
+ * Every field nesting one Reference Type must agree about whether it declares
+ * an {@link ReferenceStrategy.identity identity}.
+ *
+ * One reference type yields ONE emitted filter type, shared by every field that
+ * nests it, and whether that filter offers an “ids it holds” arm is exactly
+ * whether an identity was declared. Left to disagree, the arm would be decided
+ * by whichever field a surface happened to build the type from: the
+ * identity-bearing field silently loses the ability to filter by id, or the
+ * identity-less one gains an arm that filters a nested object an engine cannot
+ * read. Both are silent, and which one you get depends on declaration order.
+ *
+ * The rule is therefore about the *edge type*, not about each field reaching
+ * it, and it fails at startup naming both fields.
+ */
+function assertConsistentIdentities(types: readonly SearchType[]): void {
+  const declaredBy = new Map<string, { field: string; identity: boolean }>();
+  for (const searchType of types) {
+    for (const field of searchType.fields) {
+      if (!isInlineReference(field) || isInternalField(field)) {
+        continue;
+      }
+      const identity = field.ref.identity !== undefined;
+      const where = `${searchType.name}.${field.name}`;
+      const first = declaredBy.get(field.ref.typeName);
+      if (first === undefined) {
+        declaredBy.set(field.ref.typeName, { field: where, identity });
+        continue;
+      }
+      if (first.identity !== identity) {
+        const [with_, without] = first.identity
+          ? [first.field, where]
+          : [where, first.field];
+        throw new Error(
+          `References “${with_}” and “${without}” both nest “${field.ref.typeName}” but disagree about “identity”: they share one emitted filter type, so one of them would silently lose the ability to filter by id – or gain one that filters a nested object. Declare an identity on both, or on neither.`,
+        );
+      }
+    }
   }
 }
 
@@ -1810,13 +1852,6 @@ export function identityFieldName(name: string): string {
 }
 
 /**
- * The Root Type a {@link ReferenceStrategy.local local} lookup projects its
- * referents through, or `undefined` for every other field. Such a reference
- * stores nested documents shaped by the **target’s own declaration** – so it
- * needs no reference type of its own, and reconstructs through the same path a
- * resolved referent does.
- */
-/**
  * The Root Type whose labels a reference’s **facet buckets** read – its own
  * label source, or, for an inline reference, the one its
  * {@link ReferenceStrategy.identity identity companion} points at.
@@ -1837,6 +1872,13 @@ export function labelTargetNameOf(
   return labelSourceNameOf(identityFieldOf(field, schema) ?? field);
 }
 
+/**
+ * The Root Type a {@link ReferenceStrategy.local local} lookup projects its
+ * referents through, or `undefined` for every other field. Such a reference
+ * stores nested documents shaped by the **target’s own declaration** – so it
+ * needs no reference type of its own, and reconstructs through the same path a
+ * resolved referent does.
+ */
 export function localLookupTypeOf(
   field: SearchField,
   schema: SearchSchema | undefined,

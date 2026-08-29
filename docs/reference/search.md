@@ -360,7 +360,9 @@ construct serves two jobs (see
   own fields. A multi-valued reference keeps each referent’s values grouped, so
   a consumer never pairs parallel arrays by index.
 
-A nested field may declare `output`, `filterable` and `searchable`. It may not
+A nested field may declare `output`, `filterable` and `searchable` – free text
+reaches a nested searchable field, so a name stated on an edge is matched by
+`query` without a flat copy beside it. It may not
 declare `facetable` or `sortable`, and `searchSchema` rejects those naming the
 field: an engine's facet counts over a nested field are computed per _document_
 rather than per entry, so a bucket would count entries that did not match the

@@ -464,6 +464,80 @@ describe('the identity companion of a local lookup', () => {
     expect((identified.creator as SearchDocument).id).toBe(RKD);
   });
 
+  it('holds only the endpoint a single-valued reference stores', () => {
+    // A single-valued reference keeps the first endpoint and drops the rest;
+    // a companion holding a dropped one's id would match a filter whose hit
+    // then shows a different endpoint.
+    const twoEndpoints = {
+      '@id': 'https://ex/work/4',
+      [workKey('creator')]: [
+        {
+          [edgeKey('creator')]: [
+            { '@id': 'https://a/1', [personKey('sameAs')]: [{ '@id': RKD }] },
+            { '@id': 'https://a/2' },
+          ],
+        },
+      ],
+    };
+    const singleEndpointEdge = defineSearchType({
+      name: 'CreatorEdge',
+      fields: [
+        {
+          name: 'creator',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}creator`,
+          output: true,
+          filterable: true,
+          ref: { strategy: 'lookup', target: 'Person', local: true },
+        },
+      ],
+    });
+    const document = projectDocument(
+      twoEndpoints,
+      work,
+      searchSchema(work, person, singleEndpointEdge),
+    );
+    const [entry] = document.creator as readonly SearchDocument[];
+
+    expect(entry.creator_id).toEqual([RKD]);
+  });
+
+  it('holds every endpoint a multi-valued reference stores', () => {
+    const jointEdge = defineSearchType({
+      name: 'CreatorEdge',
+      fields: [
+        {
+          name: 'creator',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}creator`,
+          array: true,
+          output: true,
+          filterable: true,
+          ref: { strategy: 'lookup', target: 'Person', local: true },
+        },
+      ],
+    });
+    const twoEndpoints = {
+      '@id': 'https://ex/work/5',
+      [workKey('creator')]: [
+        {
+          [edgeKey('creator')]: [
+            { '@id': 'https://a/1', [personKey('sameAs')]: [{ '@id': RKD }] },
+            { '@id': 'https://a/2' },
+          ],
+        },
+      ],
+    };
+    const document = projectDocument(
+      twoEndpoints,
+      work,
+      searchSchema(work, person, jointEdge),
+    );
+    const [entry] = document.creator as readonly SearchDocument[];
+
+    expect(entry.creator_id).toEqual([RKD, 'https://a/2']);
+  });
+
   it('is absent where the endpoint is not identified', () => {
     const document = projectDocument(
       node,
@@ -473,6 +547,105 @@ describe('the identity companion of a local lookup', () => {
     const [, unidentified] = document.creator as readonly SearchDocument[];
 
     expect(unidentified).not.toHaveProperty('creator_id');
+  });
+});
+
+describe('two references nesting one edge type', () => {
+  it('must agree about declaring an identity', () => {
+    // One reference type yields ONE filter type. Left to disagree, whichever
+    // field built it decides: the identity-bearing one silently loses its id
+    // filter, or the other gains one that filters a nested object.
+    const disagreeing = defineSearchType({
+      name: 'Work',
+      class: `${SCHEMA_ORG}CreativeWork`,
+      fields: [
+        {
+          name: 'creator',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}creator`,
+          array: true,
+          output: true,
+          filterable: true,
+          ref: {
+            strategy: 'inline',
+            typeName: 'CreatorEdge',
+            identity: 'creator',
+          },
+        },
+        {
+          name: 'contributor',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}contributor`,
+          array: true,
+          output: true,
+          ref: { strategy: 'inline', typeName: 'CreatorEdge' },
+        },
+      ],
+    });
+
+    expect(() => searchSchema(disagreeing, person, creatorEdge)).toThrow(
+      /disagree about “identity”/,
+    );
+  });
+
+  it('accepts two references that agree', () => {
+    // The ordinary case: one edge type reached by two properties, each
+    // declaring the identity it filters through.
+    const agreeing = defineSearchType({
+      name: 'Work',
+      class: `${SCHEMA_ORG}CreativeWork`,
+      fields: (['creator', 'contributor'] as const).map((name) => ({
+        name,
+        kind: 'reference' as const,
+        path: `${SCHEMA_ORG}${name}`,
+        array: true,
+        output: true,
+        filterable: true,
+        ref: {
+          strategy: 'inline' as const,
+          typeName: 'CreatorEdge',
+          identity: 'creator',
+        },
+      })),
+    });
+
+    expect(() => searchSchema(agreeing, person, creatorEdge)).not.toThrow();
+  });
+
+  it('names the identity-bearing field first, whichever came first', () => {
+    // The message has to read the same either way round, or it sends an author
+    // to the wrong declaration.
+    const reversed = defineSearchType({
+      name: 'Work',
+      class: `${SCHEMA_ORG}CreativeWork`,
+      fields: [
+        {
+          name: 'contributor',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}contributor`,
+          array: true,
+          output: true,
+          ref: { strategy: 'inline', typeName: 'CreatorEdge' },
+        },
+        {
+          name: 'creator',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}creator`,
+          array: true,
+          output: true,
+          filterable: true,
+          ref: {
+            strategy: 'inline',
+            typeName: 'CreatorEdge',
+            identity: 'creator',
+          },
+        },
+      ],
+    });
+
+    expect(() => searchSchema(reversed, person, creatorEdge)).toThrow(
+      /“Work.creator” and “Work.contributor”/,
+    );
   });
 });
 

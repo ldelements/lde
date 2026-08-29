@@ -167,6 +167,31 @@ describe('the id of a type two references share', () => {
     expect(printed).toMatch(/type PersonReference \{[^}]*\bid: IRI\n/);
   });
 
+  it('relaxes a required field of the target too', () => {
+    // Same argument as the id: `required` is a promise about the TARGET's own
+    // document, not about a referrer's account of it, and a document that
+    // named an endpoint inline states no more than it states.
+    const withRequired = defineSearchType({
+      name: 'Person',
+      class: 'https://example.org/Person',
+      fields: [
+        {
+          name: 'label',
+          kind: 'text',
+          locales: ['nl'],
+          output: true,
+          searchable: { weight: 1 },
+        },
+        { name: 'code', kind: 'keyword', output: true, required: true },
+      ],
+    });
+    const printed = printSchema(
+      buildGraphQLSchema(searchSchema(sharedTarget(true), withRequired), {}),
+    );
+
+    expect(printed).toMatch(/type PersonReference \{[^}]*\bcode: String\n/);
+  });
+
   it('keeps the non-null id where no reference is local', () => {
     const plainOnly = defineSearchType({
       name: 'Plain',

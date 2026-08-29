@@ -22,6 +22,7 @@ import {
   isRangeFacet,
   isWelded,
   joinGraph,
+  localLookupTypeOf,
   pageForOffset,
   physicalFields,
   nestedReferenceType,
@@ -117,7 +118,11 @@ export function buildSearchParams(
     query.text !== undefined && query.text.length > 0
       ? fold(query.text)
       : undefined;
-  const { names, weights } = queryFields(searchType, query.locale);
+  const { names, weights } = queryFields(
+    searchType,
+    query.locale,
+    options.schema,
+  );
   const filterBy = compileFilterBy(query.where, searchType, options);
   const sortBy = query.orderBy
     .map((sort) => compileSort(sort, searchType, query.locale))
@@ -192,16 +197,47 @@ function compileRangeFacet(
 function queryFields(
   searchType: SearchType,
   locale: string,
+  schema: SearchSchema | undefined,
 ): { readonly names: string[]; readonly weights: number[] } {
   const names: string[] = [];
   const weights: number[] = [];
+  collectSearchable(searchType, locale, schema, '', new Set(), names, weights);
+  return { names, weights };
+}
+
+/**
+ * Collect the searchable physical fields of a type and of everything it nests,
+ * each under the path an engine addresses it by.
+ *
+ * Nested fields are walked because a nested field may declare `searchable`
+ * (ADR 24) – and a companion that is indexed but absent from `query_by` is the
+ * worst of both: it costs the RAM of an indexed field and matches nothing, in
+ * silence. So the walk here is what makes that Role mean anything.
+ *
+ * `visited` guards the walk: an inline chain is acyclic, but a
+ * {@link ReferenceStrategy.local local} lookup can reach a Root Type that
+ * reaches back.
+ */
+function collectSearchable(
+  searchType: SearchType,
+  locale: string,
+  schema: SearchSchema | undefined,
+  prefix: string,
+  visited: Set<string>,
+  names: string[],
+  weights: number[],
+): void {
+  if (visited.has(searchType.name)) {
+    return;
+  }
+  visited.add(searchType.name);
   for (const field of searchableFields(searchType)) {
     const search = physicalFields(field).search;
     const baseWeight = field.searchable.weight;
     if (field.kind === 'text') {
       const locales = field.locales;
       search.forEach((name, index) => {
-        names.push(name);
+        names.push(qualify(prefix, name));
         // The active locale keeps full weight; `und` is language-neutral, so
         // it is never demoted (an untagged-only field would otherwise always
         // rank below its declared weight).
@@ -213,12 +249,29 @@ function queryFields(
       });
     } else {
       for (const name of search) {
-        names.push(name);
+        names.push(qualify(prefix, name));
         weights.push(baseWeight);
       }
     }
   }
-  return { names, weights };
+  if (schema === undefined) {
+    return;
+  }
+  for (const field of searchType.fields) {
+    const nested =
+      nestedReferenceType(schema, field) ?? localLookupTypeOf(field, schema);
+    if (nested !== undefined) {
+      collectSearchable(
+        nested,
+        locale,
+        schema,
+        qualify(prefix, field.name),
+        visited,
+        names,
+        weights,
+      );
+    }
+  }
 }
 
 /** AND-join the compiled `where` clauses. A clause that states no constraint is

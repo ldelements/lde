@@ -412,7 +412,7 @@ function nestedFields(
         // an engine welds conditions on an entry's LEAF fields only. Its
         // identity companion is that leaf, so it sits beside the object rather
         // than inside it.
-        ...nestedIdentityFields(prefix, field, schema, flattensToArray),
+        ...nestedIdentityFields(prefix, field, schema),
       );
       continue;
     }
@@ -481,7 +481,6 @@ function nestedIdentityFields(
   prefix: string,
   field: SearchField,
   schema: SearchSchema,
-  flattensToArray: boolean,
 ): CollectionFieldSchema[] {
   const names = physicalFields(field, schema);
   if (names.identity === undefined) {
@@ -490,7 +489,11 @@ function nestedIdentityFields(
   return [
     {
       name: nestedFieldName(prefix, names.identity),
-      type: flattensToArray ? 'string[]' : 'string',
+      // Always a list, whatever the enclosing reference's arity: the projection
+      // writes it with `setArray`, and an indexed field's declared type is
+      // checked against what is stored – a `string` here rejects every
+      // document carrying such an edge, at import.
+      type: 'string[]',
       index: true,
       optional: true,
     },

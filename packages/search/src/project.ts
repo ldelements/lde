@@ -716,8 +716,12 @@ function applyLocalIdentity(
   if (names.identity === undefined) {
     return;
   }
+  // Only the endpoints the field actually STORES: a single-valued reference
+  // keeps the first and drops the rest, and a companion holding an id from a
+  // dropped one would match a filter whose hit shows a different endpoint.
+  const stored = field.array === true ? endpoints : endpoints.slice(0, 1);
   const ids = dedupe(
-    endpoints
+    stored
       .map((endpoint) => endpoint.id)
       .filter((id): id is string => typeof id === 'string'),
   );

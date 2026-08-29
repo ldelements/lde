@@ -570,7 +570,18 @@ export function buildGraphQLSchema(
           ...Object.fromEntries(
             outputFields(nested).map((nestedField) => [
               nestedField.name,
-              outputFieldConfig(nestedField),
+              // `required` is relaxed for the same reason `id` is above: a
+              // `local` lookup carries what a document SAYS about an endpoint,
+              // and a document that named one inline states no more than it
+              // states. A field the target promises is non-null on the
+              // target's own document, not on a referrer's account of it, so
+              // holding this one to it fails the whole response for exactly
+              // the endpoint `local` exists to serve.
+              outputFieldConfig(
+                nullableIdTargets.has(typeName)
+                  ? ({ ...nestedField, required: false } as SearchField)
+                  : nestedField,
+              ),
             ]),
           ),
         }),
