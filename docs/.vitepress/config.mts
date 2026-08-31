@@ -45,6 +45,7 @@ const packageGroups: Record<string, string[]> = {
     'iiif-validator',
     'resolver',
     'sparql-importer',
+    'sparql-anything',
   ],
   Publication: [
     'fastify-rdf',
