@@ -150,7 +150,7 @@ describe('InPlaceRebuild error paths', () => {
     });
 
     const run = await writer.openRun(makeRunContext());
-    await expect(run.commit()).rejects.toThrow(/beyond 2 distinct sources/);
+    await expect(run.commit()).rejects.toThrow(/beyond 2 distinct datasets/);
     expect(deletedFilters).not.toHaveBeenCalled();
   });
 });

@@ -287,14 +287,16 @@ untagged `und` text, see [Locales](./search#locales) – plus
 
 `BlueGreenRebuild` rebuilds the index from zero and goes live atomically:
 `openRun` creates a fresh versioned collection (`${name}_<timestamp>`),
-`write` streams documents into it in batches (each stamped with its `source`
-dataset IRI), and `commit` atomically repoints the `name` alias and drops the
+`write` streams documents into it in batches (each recording the dataset it came
+from), and `commit` atomically repoints the `name` alias and drops the
 collection it superseded. Until commit, the live alias never points at a
 partial build; `abort` drops the half-built collection. Deletion is implicit –
 whatever a run does not write does not exist in the new collection. A dataset
 that fails (or is reset before a dump re-run) is rolled back out of the
-not-yet-live collection by `source`, so the swap never ships a half-processed
-dataset. Right-sized for small collections (e.g. one document per dataset
+not-yet-live collection, so the swap never ships a half-processed dataset; on a
+[canonically keyed collection](#documents-several-datasets-share) the rollback
+drops that dataset’s **membership**, so a document another dataset also
+contributed stays, with that dataset’s references still resolving. Right-sized for small collections (e.g. one document per dataset
 description).
 
 ```ts
@@ -319,23 +321,23 @@ await run.commit();
 `InPlaceRebuild` maintains one long-lived collection with per-source
 atomicity – no swap, no staging – for large, mostly-static corpora (e.g.
 millions of objects across many datasets, where a daily run touches only the
-changed ones). Every document is stamped with its `source` (the dataset IRI)
-and `last_seen` (the run id); deletion is a sweep, never special-cased:
+changed ones). Every document records the dataset it came from and the run that
+last wrote it; deletion is a sweep, never special-cased:
 
-- a successful dataset flush deletes the source’s documents the run did not
-  rewrite (`source = dataset && last_seen != runId`); a failed dataset is not
-  swept – its output is incomplete – and the next successful run reconciles;
-- `reset` (the pipeline’s dump-fallback discard) deletes only **this run’s**
-  writes for the source (`source = dataset && last_seen = runId`), so the dump
-  re-run rebuilds it cleanly while the source’s prior-run documents are left
-  for the success sweep to reconcile;
-- `commit` deletes every document whose source left the run’s selection (the
+- a successful dataset flush drops what the dataset had and the run did not
+  rewrite; a failed dataset is not swept – its output is incomplete – and the
+  next successful run reconciles;
+- `reset` (the pipeline’s dump-fallback discard) drops only **this run’s**
+  writes for the dataset, so the dump re-run rebuilds it cleanly while the
+  dataset’s prior-run documents are left for the success sweep to reconcile;
+- `commit` drops what belongs to datasets that left the run’s selection (the
   registry-membership sweep over `RunContext.selectedSources()`, which
   includes datasets skipped as unchanged);
 - `abort` only releases the lock: upserts are idempotent, so whatever landed
   stays until the next run reconciles.
 
-Document ids must be unique per (source, entity) – the caller keys them.
+Unless the type is [canonically keyed](#documents-several-datasets-share),
+document ids must be unique per (dataset, entity) – the caller keys them.
 
 `openRun` creates the collection on demand and otherwise leaves an existing one
 alone – with one exception. If the collection exists but does not carry every
@@ -346,9 +348,11 @@ policy added to a type this one references), the run **fails** at open – after
 the lock, before any write – naming the drop-and-rebuild that fixes it. Without
 that it would index and commit happily and then fail on every join query, or
 on every facet over that reference: the values would be there, the reference
-or the facet field would not. Rotating a pipeline version reprocesses datasets;
-it does not recreate collections. Scoped to those two – every other schema
-difference is self-correcting.
+or the facet field would not. A third check covers a collection that predates
+its type being keyed – see [Documents several datasets
+share](#documents-several-datasets-share). Rotating a pipeline version
+reprocesses datasets; it does not recreate collections. Scoped to those three –
+every other schema difference is self-correcting.
 
 ### The join component is the unit of rebuild
 
@@ -376,9 +380,9 @@ Two consequences worth planning for:
 
 ### Provenance
 
-`source` above is the **private** bookkeeping field a writer adds when the
-`SearchType` declares nothing over the dataset itself; a schema cannot declare a
-field of that name.
+The dataset a document came from is a **private** bookkeeping field (`source`,
+beside `last_seen`) when the `SearchType` declares nothing over the dataset
+itself; a schema cannot declare a field of either name.
 
 A type that _does_ declare one – a `keyword`/`reference` field with
 [`from: 'dataset'`](./search.md#projection-values) – makes that field the
@@ -405,6 +409,40 @@ membership sweep tries to facet a field the collection does not declare, and
 the documents already stamped with `source` are no longer reachable by any
 sweep. Drop and rebuild the collection when a type adopts the field.
 (Blue/green builds a fresh collection every run, so it needs nothing.)
+
+### Documents several datasets share
+
+A type [keyed](./search#document-key) on a canonical identifier
+(`RootType.key`) can produce **one** document from several datasets – two
+datasets referencing the same GeoNames place converge on the same id. Asking
+which dataset such a document belongs to has no answer, so a keyed collection
+does not ask it: it records **which datasets reference the document**, in a
+private `referenced_by: [{ dataset, run }]`. A write adds its dataset, every
+sweep above removes one, and the document is deleted only when the last referrer
+goes. A dataset skipped as unchanged keeps its membership without any special
+case – nobody else’s sweep touches its entry.
+
+Three things follow for a keyed type. It carries no `source` or `last_seen`, and
+**may not declare a `from: 'dataset'` field** – that field would hold whichever
+dataset wrote last, so a user filtering by any of the others would miss the
+document (rejected when the writer is constructed). Its documents’ fields stay
+last-writer-wins between the datasets that share them, as
+[keying](./search#document-key) already implies. And a write costs one extra
+read: Typesense replaces whole documents and cannot append to an array, so the
+stored membership is read back per batch. Unkeyed collections keep their single
+request and are otherwise untouched by any of this.
+
+**Keying an existing collection needs a fresh one.** `referenced_by` cannot be
+added to a live collection, and would be empty on every document already
+indexed – so those documents would match no dataset and never be collected.
+`InPlaceRebuild` fails at open instead, naming both steps: drop the collection
+**and rotate the pipeline version**, since a rebuild without the rotation is
+repopulated only by the datasets that changed. (Blue/green needs nothing.)
+
+See [ADR 25](../decisions/0025-record-which-datasets-reference-a-document.md),
+which also records why the run is stamped as a timestamp rather than the run id:
+Typesense correlates a comparison inside a nested array element but not a
+negation, and a sweep written with `!=` silently deletes nothing.
 
 Both writers take a `Client` the caller owns (and reuses for queries), so this
 package adds no connection or document type of its own – any object with an `id`

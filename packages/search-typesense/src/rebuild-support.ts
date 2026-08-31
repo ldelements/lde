@@ -1,19 +1,14 @@
-import type { Client } from 'typesense';
-import type { SearchSchema, SearchType } from '@lde/search';
-import {
-  datasetField,
-  isInternalField,
-  joinGraph,
-  physicalFields,
-  referenceFields,
-} from '@lde/search/adapter';
+import type { SearchType } from '@lde/search';
+import { joinGraph, referenceFields } from '@lde/search/adapter';
 import {
   buildCollectionDefinition,
   type CollectionDefinitionOptions,
 } from './collection-definition.js';
 import { deriveCollectionName } from './collection-name.js';
 import { DEFAULT_LOCK_TTL_MS } from './lock.js';
-import { DEFAULT_BATCH_SIZE } from './import.js';
+
+/** Documents imported per Typesense request unless a writer is told otherwise. */
+const DEFAULT_BATCH_SIZE = 1000;
 
 /**
  * The tuning knobs both rebuild writers share, on top of the collection-definition
@@ -111,113 +106,4 @@ function assertDistinctJoinTargetNames(
       );
     }
   }
-}
-
-/**
- * Reject a {@link SearchType} that declares any of the bookkeeping field names
- * a writer stamps, so a domain field can never collide with `source` /
- * `last_seen`.
- */
-export function assertNoReservedFields(
-  searchType: SearchType,
-  reserved: readonly string[],
-): void {
-  const clashing = searchType.fields.filter((field) =>
-    reserved.includes(field.name),
-  );
-  if (clashing.length > 0) {
-    throw new Error(
-      `SearchType “${searchType.name}” declares reserved bookkeeping field(s) ${clashing
-        .map((field) => `“${field.name}”`)
-        .join(', ')}`,
-    );
-  }
-}
-
-/**
- * Reject a declared dataset field the provenance bookkeeping cannot be kept on.
- * A type declaring one makes it the collection’s provenance field – the column
- * the membership sweep enumerates and deletes by – so the declaration has to answer
- * *which single dataset is this document’s* the way the private `source` field
- * did:
- *
- * - **not `array`**: Typesense reads `field:=[a,b]` over a `string[]` as
- *   *contains any*, so a departed source would take every document that merely
- *   mentions it – including entities another selected dataset still
- *   contributes;
- * - **no `transform`**: the sweep compares the stored value against the run’s
- *   selection, which carries raw dataset IRIs, so a transformed value would
- *   match nothing and the sweep would silently stop deleting;
- * - **`facetable`** where the writer enumerates the indexed sources by faceting
- *   it (the In-place writer does; Blue/green only ever filters by a known IRI)
- *   – and faceted **on its own name**: a reference inheriting a facet policy
- *   from the type it names facets a companion holding only the admitted keys
- *   (`physicalFields(field, schema).facet`), so enumerating the sources
- *   through it would miss every dataset the policy excludes. `schema` is what
- *   resolves that; without one no policy is visible, as nowhere else.
- *
- * Thrown at writer construction, so a declaration that cannot be swept fails
- * before a run touches the index rather than at the sweep, after the writes.
- */
-export function assertSweepableProvenanceField(
-  searchType: SearchType,
-  options: {
-    readonly requireFacetable: boolean;
-    readonly schema?: SearchSchema;
-  },
-): void {
-  const field = datasetField(searchType);
-  if (field === undefined || isInternalField(field)) {
-    return;
-  }
-  const problems: string[] = [];
-  if (field.array === true) {
-    problems.push(
-      'it is an array, and a membership sweep over one would delete every document merely mentioning a departed dataset',
-    );
-  }
-  if (field.transform !== undefined) {
-    problems.push(
-      'it declares a transform, and the sweep matches the stored value against the run’s raw dataset IRIs',
-    );
-  }
-  if (options.requireFacetable && field.facetable !== true) {
-    problems.push(
-      'it is not facetable, and the membership sweep enumerates the indexed datasets by faceting it',
-    );
-  } else if (
-    options.requireFacetable &&
-    physicalFields(field, options.schema).facet !== field.name
-  ) {
-    problems.push(
-      'it inherits a facet policy from the type it names, so the engine facets only the datasets the policy admits, and the membership sweep enumerates the indexed datasets by faceting it',
-    );
-  }
-  if (problems.length > 0) {
-    throw new Error(
-      `SearchType “${searchType.name}” declares “${field.name}” over the indexed dataset, which this writer keeps its provenance bookkeeping on, but ${problems.join('; and ')}.`,
-    );
-  }
-}
-
-/** Stamp each document with fixed bookkeeping fields as it streams past. */
-export async function* stampDocuments<TDocument>(
-  documents: AsyncIterable<TDocument>,
-  stamp: Readonly<Record<string, string>>,
-): AsyncIterable<TDocument & Record<string, string>> {
-  for await (const document of documents) {
-    yield { ...document, ...stamp };
-  }
-}
-
-/** Delete a collection’s documents matching a Typesense filter. */
-export async function deleteByFilter(
-  client: Client,
-  collection: string,
-  filterBy: string,
-): Promise<void> {
-  await client
-    .collections(collection)
-    .documents()
-    .delete({ filter_by: filterBy });
 }
