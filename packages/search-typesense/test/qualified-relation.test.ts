@@ -193,12 +193,112 @@ describe('a local lookup that reaches back', () => {
         schema: searchSchema(knowing),
       }).fields ?? [];
 
-    // One level of nesting, then it stops – the same depth the frame reaches.
+    // One level of nesting, then the boundary – the same depth the frame
+    // reaches. The cut field itself is still declared, because the extraction
+    // falls back to the referent there and the projection stores it as an
+    // `{id}` object; only the descent past it stops.
     expect(fields.some((field) => field.name.startsWith('knows.'))).toBe(true);
-    expect(fields.some((field) => field.name.startsWith('knows.knows'))).toBe(
-      false,
-    );
+    expect(fields.find((field) => field.name === 'knows.knows')).toMatchObject({
+      type: 'object',
+      index: false,
+    });
+    expect(
+      fields.find((field) => field.name === 'knows.knows.id'),
+    ).toMatchObject({ type: 'string', index: false });
+    expect(
+      fields.some((field) => field.name.startsWith('knows.knows.knows')),
+    ).toBe(false);
   });
+
+  it.each([
+    { multiValued: false, object: 'object', scalar: 'string' },
+    { multiValued: true, object: 'object[]', scalar: 'string[]' },
+  ])(
+    'declares the key the extraction falls back to at the cut (array: $multiValued)',
+    ({ multiValued, object, scalar }) => {
+      // Two Root Types whose `local` lookups reach each other. The extraction
+      // stops expanding at the type already on the path and emits the target's
+      // KEY hop instead, which `inlineFramingDepth` frames – so a value lands at
+      // `creator.made`, and the leaf a filter welds on lands beside it. Declaring
+      // nothing there left the writer filling fields the collection never
+      // mentioned.
+      const maker = defineSearchType({
+        name: 'Person',
+        class: `${SCHEMA_ORG}Person`,
+        labelField: 'label',
+        fields: [
+          {
+            name: 'label',
+            kind: 'text',
+            path: `${SCHEMA_ORG}name`,
+            locales: ['und'],
+            output: true,
+            searchable: { weight: 1 },
+          },
+          {
+            name: 'made',
+            kind: 'reference',
+            path: `${SCHEMA_ORG}makesOffer`,
+            output: true,
+            filterable: true,
+            ref: { strategy: 'lookup', target: 'Work', local: true },
+          },
+        ],
+      });
+      const madeWork = defineSearchType({
+        name: 'Work',
+        class: `${SCHEMA_ORG}CreativeWork`,
+        labelField: 'label',
+        key: { field: '_sameAs' },
+        fields: [
+          {
+            name: 'label',
+            kind: 'text',
+            path: `${SCHEMA_ORG}name`,
+            locales: ['und'],
+            output: true,
+            searchable: { weight: 1 },
+          },
+          {
+            name: '_sameAs',
+            kind: 'reference',
+            array: true,
+            path: `${SCHEMA_ORG}sameAs`,
+          },
+          {
+            name: 'creator',
+            kind: 'reference',
+            array: multiValued,
+            path: `${SCHEMA_ORG}creator`,
+            output: true,
+            ref: { strategy: 'lookup', target: 'Person', local: true },
+          },
+        ],
+      });
+      const fields =
+        buildCollectionDefinition(madeWork, {
+          schema: searchSchema(madeWork, maker),
+        }).fields ?? [];
+
+      expect(
+        fields.find((field) => field.name === 'creator.made'),
+      ).toMatchObject({ type: object, index: false });
+      expect(
+        fields.find((field) => field.name === 'creator.made.id'),
+      ).toMatchObject({ type: scalar, index: false });
+      // The identity companion sits BESIDE the object, indexed, because that is
+      // the leaf a filter can weld on – always a list, whatever the arity of
+      // the edge it hangs off.
+      expect(
+        fields.find((field) => field.name === 'creator.made_id'),
+      ).toMatchObject({ type: 'string[]', index: true });
+      // The descent still stops: the cut type's own fields are not walked
+      // again.
+      expect(
+        fields.some((field) => field.name.startsWith('creator.made.label')),
+      ).toBe(false);
+    },
+  );
 });
 
 describe('nested fields of other kinds', () => {
@@ -501,6 +601,56 @@ describe('compiling a filter over an edge', () => {
     expect(String(params.query_by).split(',')).toContain(
       'creator.creator.label_search_und',
     );
+  });
+
+  it('queries the companions of a type that nests ITSELF', () => {
+    // The collection declares `related.label_search_und` indexed – one level,
+    // then the boundary. A guard that returned on ENTRY stopped a level
+    // earlier, so the field was indexed and absent from `query_by`: RAM spent
+    // on a field that matches nothing, in silence.
+    const selfNesting = defineSearchType({
+      name: 'Work',
+      class: `${SCHEMA_ORG}CreativeWork`,
+      fields: [
+        {
+          name: 'label',
+          kind: 'text',
+          path: `${SCHEMA_ORG}name`,
+          locales: ['und'],
+          output: true,
+          searchable: { weight: 1 },
+        },
+        {
+          name: 'related',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}isRelatedTo`,
+          output: true,
+          ref: { strategy: 'lookup', target: 'Work', local: true },
+        },
+      ],
+    });
+    const selfSchema = searchSchema(selfNesting);
+    const declared = (
+      buildCollectionDefinition(selfNesting, { schema: selfSchema }).fields ??
+      []
+    ).filter((field) => field.index !== false);
+    const params = buildSearchParams(
+      { ...base, text: 'nachtwacht' },
+      selfNesting,
+      {
+        schema: selfSchema,
+      },
+    );
+    const queried = String(params.query_by).split(',');
+
+    expect(queried).toContain('related.label_search_und');
+    // The two walks agree: every indexed text companion is queried, and
+    // nothing is queried that the collection does not declare.
+    expect(
+      declared
+        .map((field) => field.name)
+        .filter((name) => name.endsWith('_search_und')),
+    ).toEqual(expect.arrayContaining(queried));
   });
 
   it('queries every field that nests one edge type, not just the first', () => {
