@@ -1,4 +1,4 @@
-import { SparqlAnythingConverter } from '../src/index.js';
+import { ConversionJob, SparqlAnythingConverter } from '../src/index.js';
 import { TaskRunner } from '@lde/task-runner';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
@@ -133,14 +133,17 @@ describe('SparqlAnythingConverter', () => {
   });
 
   /** A converter over `taskRunner`, with the options every test shares. */
-  function converterFor(taskRunner: FakeTaskRunner, load?: string) {
+  function converterFor(taskRunner: FakeTaskRunner) {
     return new SparqlAnythingConverter({
-      queryFile,
       jarPath: '/bin/sparql-anything.jar',
       workDir,
-      load,
       taskRunner,
     });
+  }
+
+  /** Jobs running the shared query over each of `chunks`. */
+  function jobsFor(chunks: string[], load?: string): ConversionJob[] {
+    return chunks.map((chunk) => ({ queryFile, chunk, load }));
   }
 
   /** Writes `count` chunk files and returns their paths. */
@@ -158,8 +161,8 @@ describe('SparqlAnythingConverter', () => {
     const taskRunner = new FakeTaskRunner(workDir);
     const [chunk] = await writeChunks(1);
 
-    await converterFor(taskRunner, '/data/reference.ttl').convert(
-      [chunk],
+    await converterFor(taskRunner).convert(
+      jobsFor([chunk], '/data/reference.ttl'),
       join(workDir, 'output.nt'),
     );
 
@@ -169,7 +172,7 @@ describe('SparqlAnythingConverter', () => {
     expect(command).toContain("--load '/data/reference.ttl'");
     expect(command).toContain('--format NT');
     expect(command).toMatch(/-q 'sparql-anything-\S+\/query-0\.rq'/);
-    expect(command).toMatch(/--output 'sparql-anything-\S+\/chunk-0\.nt'/);
+    expect(command).toMatch(/--output 'sparql-anything-\S+\/output-0\.nt'/);
   });
 
   it('quotes every interpolated path, so a space or a metacharacter cannot break out', async () => {
@@ -177,12 +180,13 @@ describe('SparqlAnythingConverter', () => {
     const [chunk] = await writeChunks(1);
 
     await new SparqlAnythingConverter({
-      queryFile,
       jarPath: '/bin/sparql anything.jar',
       workDir,
-      load: "/data/'s-Hertogenbosch.ttl",
       taskRunner,
-    }).convert([chunk], join(workDir, 'output.nt'));
+    }).convert(
+      jobsFor([chunk], "/data/'s-Hertogenbosch.ttl"),
+      join(workDir, 'output.nt'),
+    );
 
     const command = taskRunner.commands[0];
     expect(command).toContain("java '-Xmx2g' -jar '/bin/sparql anything.jar'");
@@ -193,7 +197,10 @@ describe('SparqlAnythingConverter', () => {
     const taskRunner = new FakeTaskRunner(workDir);
     const [chunk] = await writeChunks(1);
 
-    await converterFor(taskRunner).convert([chunk], join(workDir, 'output.nt'));
+    await converterFor(taskRunner).convert(
+      jobsFor([chunk]),
+      join(workDir, 'output.nt'),
+    );
 
     // An uncapped JVM takes a quarter of host memory; a chunk that outgrows
     // this default fails loudly instead, on the JVM's own OutOfMemoryError.
@@ -205,13 +212,12 @@ describe('SparqlAnythingConverter', () => {
     const [chunk] = await writeChunks(1);
 
     await new SparqlAnythingConverter({
-      queryFile,
       jarPath: '/bin/sparql-anything.jar',
       workDir,
       heap: '512m',
       cliArgs: ['-ad'],
       taskRunner,
-    }).convert([chunk], join(workDir, 'output.nt'));
+    }).convert(jobsFor([chunk]), join(workDir, 'output.nt'));
 
     expect(taskRunner.commands[0]).toMatch(
       /^java '-Xmx512m' -jar '\/bin\/sparql-anything\.jar' .* '-ad'$/,
@@ -224,7 +230,6 @@ describe('SparqlAnythingConverter', () => {
     expect(
       () =>
         new SparqlAnythingConverter({
-          queryFile,
           jarPath: '/bin/sparql-anything.jar',
           workDir,
           heap: '-Xmx2g',
@@ -241,10 +246,8 @@ describe('SparqlAnythingConverter', () => {
     expect(
       () =>
         new SparqlAnythingConverter({
-          queryFile,
           jarPath: '/bin/sparql-anything.jar',
           workDir,
-          heap: '2g',
           cliArgs: ['-o', 'elsewhere.nt'],
           taskRunner,
         }),
@@ -255,7 +258,10 @@ describe('SparqlAnythingConverter', () => {
     const taskRunner = new FakeTaskRunner(workDir);
     const [chunk] = await writeChunks(1);
 
-    await converterFor(taskRunner).convert([chunk], join(workDir, 'output.nt'));
+    await converterFor(taskRunner).convert(
+      jobsFor([chunk]),
+      join(workDir, 'output.nt'),
+    );
 
     expect(taskRunner.commands[0]).not.toContain('--load');
   });
@@ -264,7 +270,10 @@ describe('SparqlAnythingConverter', () => {
     const taskRunner = new FakeTaskRunner(workDir);
     const [chunk] = await writeChunks(1);
 
-    await converterFor(taskRunner).convert([chunk], join(workDir, 'output.nt'));
+    await converterFor(taskRunner).convert(
+      jobsFor([chunk]),
+      join(workDir, 'output.nt'),
+    );
 
     expect(taskRunner.queries).toHaveLength(1);
     expect(taskRunner.queries[0]).toContain(`fx:location "${chunk}"`);
@@ -276,13 +285,13 @@ describe('SparqlAnythingConverter', () => {
     const chunks = await writeChunks(3);
     const outputPath = join(workDir, 'output.nt');
 
-    await converterFor(taskRunner).convert(chunks, outputPath);
+    await converterFor(taskRunner).convert(jobsFor(chunks), outputPath);
 
     expect(taskRunner.commands).toHaveLength(3);
     // The FakeTaskRunner writes each chunk's output path as that file's
     // content, so the result reflects the order the chunks were processed.
     expect(await readFile(outputPath, 'utf-8')).toMatch(
-      /^sparql-anything-\S+\/chunk-0\.nt\n\nsparql-anything-\S+\/chunk-1\.nt\n\nsparql-anything-\S+\/chunk-2\.nt\n$/,
+      /^sparql-anything-\S+\/output-0\.nt\n\nsparql-anything-\S+\/output-1\.nt\n\nsparql-anything-\S+\/output-2\.nt\n$/,
     );
   });
 
@@ -290,7 +299,10 @@ describe('SparqlAnythingConverter', () => {
     const taskRunner = new FakeTaskRunner(workDir);
     const chunks = await writeChunks(2);
 
-    await converterFor(taskRunner).convert(chunks, join(workDir, 'output.nt'));
+    await converterFor(taskRunner).convert(
+      jobsFor(chunks),
+      join(workDir, 'output.nt'),
+    );
 
     // Only the caller's own files: the chunks, the query and the output. A
     // leftover chunk output would satisfy the non-empty check on a later run.
@@ -302,13 +314,68 @@ describe('SparqlAnythingConverter', () => {
     ]);
   });
 
-  it('refuses an empty chunk list rather than writing an empty output', async () => {
+  it('runs a job whose query names its own input', async () => {
+    const taskRunner = new FakeTaskRunner(workDir);
+    const ontologyQuery = join(workDir, 'ontology.rq');
+    await writeFile(ontologyQuery, 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }');
+
+    // Not every invocation reads a chunk: some name their input in the query,
+    // or take it through --load.
+    await converterFor(taskRunner).convert(
+      [{ queryFile: ontologyQuery, load: '/data/ontology.rdf' }],
+      join(workDir, 'output.nt'),
+    );
+
+    expect(taskRunner.commands[0]).toContain("--load '/data/ontology.rdf'");
+  });
+
+  it('names the query when a chunkless job produces no output', async () => {
+    const taskRunner = new FakeTaskRunner(workDir, {
+      emptyOutputContaining: 'output-0.nt',
+    });
+    const ontologyQuery = join(workDir, 'ontology.rq');
+    await writeFile(ontologyQuery, 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }');
+
+    await expect(
+      converterFor(taskRunner).convert(
+        [{ queryFile: ontologyQuery, load: '/data/ontology.rdf' }],
+        join(workDir, 'output.nt'),
+      ),
+    ).rejects.toThrow(/produced no output for ‘.*ontology\.rq’;/);
+  });
+
+  it('refuses a job whose query names {SOURCE} but has no chunk', async () => {
+    const taskRunner = new FakeTaskRunner(workDir);
+
+    await expect(
+      converterFor(taskRunner).convert(
+        [{ queryFile }],
+        join(workDir, 'output.nt'),
+      ),
+    ).rejects.toThrow('has no chunk');
+  });
+
+  it('refuses a job whose query would leave its chunk unread', async () => {
+    const taskRunner = new FakeTaskRunner(workDir);
+    const [chunk] = await writeChunks(1);
+    const ontologyQuery = join(workDir, 'ontology.rq');
+    await writeFile(ontologyQuery, 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }');
+
+    await expect(
+      converterFor(taskRunner).convert(
+        [{ queryFile: ontologyQuery, chunk }],
+        join(workDir, 'output.nt'),
+      ),
+    ).rejects.toThrow('would go unread');
+  });
+
+  it('refuses an empty job list rather than writing an empty output', async () => {
     const taskRunner = new FakeTaskRunner(workDir);
     const outputPath = join(workDir, 'output.nt');
 
     await expect(
       converterFor(taskRunner).convert([], outputPath),
-    ).rejects.toThrow('without chunks');
+    ).rejects.toThrow('without jobs');
 
     expect(taskRunner.commands).toHaveLength(0);
     await expect(readFile(outputPath, 'utf-8')).rejects.toThrow();
@@ -318,12 +385,12 @@ describe('SparqlAnythingConverter', () => {
     const chunks = await writeChunks(3);
     // SPARQL Anything exits 0 but writes nothing when it cannot read an input.
     const taskRunner = new FakeTaskRunner(workDir, {
-      emptyOutputContaining: 'chunk-1.nt',
+      emptyOutputContaining: 'output-1.nt',
     });
     const outputPath = join(workDir, 'output.nt');
 
     await expect(
-      converterFor(taskRunner).convert(chunks, outputPath),
+      converterFor(taskRunner).convert(jobsFor(chunks), outputPath),
     ).rejects.toThrow('produced no output');
 
     // The second chunk was empty, so the third never ran and nothing was merged.
@@ -334,11 +401,14 @@ describe('SparqlAnythingConverter', () => {
   it('aborts when a chunk produces no output file', async () => {
     const chunks = await writeChunks(2);
     const taskRunner = new FakeTaskRunner(workDir, {
-      missingOutputContaining: 'chunk-0.nt',
+      missingOutputContaining: 'output-0.nt',
     });
 
     await expect(
-      converterFor(taskRunner).convert(chunks, join(workDir, 'output.nt')),
+      converterFor(taskRunner).convert(
+        jobsFor(chunks),
+        join(workDir, 'output.nt'),
+      ),
     ).rejects.toThrow('produced no output');
 
     expect(taskRunner.commands).toHaveLength(1);
@@ -347,12 +417,15 @@ describe('SparqlAnythingConverter', () => {
   it('surfaces an output that cannot be inspected as itself', async () => {
     const chunks = await writeChunks(2);
     const taskRunner = new FakeTaskRunner(workDir, {
-      unreadableOutputContaining: 'chunk-0.nt',
+      unreadableOutputContaining: 'output-0.nt',
     });
 
     // Not reported as an empty conversion: the cause is a different one.
     await expect(
-      converterFor(taskRunner).convert(chunks, join(workDir, 'output.nt')),
+      converterFor(taskRunner).convert(
+        jobsFor(chunks),
+        join(workDir, 'output.nt'),
+      ),
     ).rejects.toThrow(/ELOOP/);
 
     expect(taskRunner.commands).toHaveLength(1);
@@ -361,12 +434,12 @@ describe('SparqlAnythingConverter', () => {
   it('aborts without writing output when a chunk fails', async () => {
     const chunks = await writeChunks(3);
     const taskRunner = new FakeTaskRunner(workDir, {
-      failOutputContaining: 'chunk-1.nt',
+      failOutputContaining: 'output-1.nt',
     });
     const outputPath = join(workDir, 'output.nt');
 
     await expect(
-      converterFor(taskRunner).convert(chunks, outputPath),
+      converterFor(taskRunner).convert(jobsFor(chunks), outputPath),
     ).rejects.toThrow('Process failed');
 
     // The second chunk failed, so the third never ran and no output was merged.

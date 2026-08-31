@@ -34,13 +34,28 @@ const RESERVED_ARGUMENTS = new Set([
   '--load',
 ]);
 
+/**
+ * One SPARQL Anything invocation: a query, over an optional chunk, with
+ * optional RDF loaded alongside it.
+ */
+export interface ConversionJob {
+  /** Path to the SPARQL CONSTRUCT query to run. */
+  queryFile: string;
+  /**
+   * Path to the chunk the query reads, substituted for the literal `{SOURCE}`
+   * in it. Omit for a query that names its own input.
+   */
+  chunk?: string;
+  /**
+   * Optional path passed to `--load`, as the task runner sees it. A file is
+   * loaded into the default graph; a directory loads each RDF file it holds
+   * into its own named graph.
+   */
+  load?: string;
+}
+
 /** Configuration for a {@link SparqlAnythingConverter}. */
 export interface SparqlAnythingConverterOptions<Task> {
-  /**
-   * Path to the SPARQL CONSTRUCT query run for every chunk. The literal
-   * `{SOURCE}` is replaced with the chunk's path before each run.
-   */
-  queryFile: string;
   /** Path to the SPARQL Anything CLI jar, as the task runner sees it. */
   jarPath: string;
   /**
@@ -51,12 +66,6 @@ export interface SparqlAnythingConverterOptions<Task> {
    * directory, so the same command works on the host and inside a container.
    */
   workDir: string;
-  /**
-   * Optional path passed to `--load`, as the task runner sees it. A file is
-   * loaded into the default graph; a directory loads each RDF file it holds
-   * into its own named graph.
-   */
-  load?: string;
   /**
    * Maximum JVM heap per chunk process, as `-Xmx` takes it: `'2g'`, `'512m'`.
    * One process per chunk bounds memory only together with a cap, since SPARQL
@@ -81,19 +90,15 @@ export interface SparqlAnythingConverterOptions<Task> {
  * concatenating the per-chunk outputs into a single file.
  */
 export class SparqlAnythingConverter<Task> {
-  private readonly queryFile: string;
   private readonly jarPath: string;
   private readonly workDir: string;
-  private readonly load?: string;
   private readonly heap: string;
   private readonly cliArgs: string[];
   private readonly taskRunner: TaskRunner<Task>;
 
   constructor(options: SparqlAnythingConverterOptions<Task>) {
-    this.queryFile = options.queryFile;
     this.jarPath = options.jarPath;
     this.workDir = options.workDir;
-    this.load = options.load;
     const heap = options.heap ?? DEFAULT_HEAP;
     if (!HEAP_SIZE.test(heap)) {
       throw new Error(
@@ -114,48 +119,51 @@ export class SparqlAnythingConverter<Task> {
   }
 
   /**
-   * Converts each chunk to N-Triples and concatenates the results, in the order
-   * given, into `outputPath`. Chunk paths are passed to SPARQL Anything as
-   * given, so they too must be readable by the task runner.
+   * Runs every job and concatenates their N-Triples, in the order given, into
+   * `outputPath`. Query, chunk and `load` paths are passed to SPARQL Anything
+   * as given, so they must be readable by the task runner.
+   *
+   * Jobs of different shapes belong in one call: they are run by one converter,
+   * so a long job and a short one pack together instead of draining in phases.
    */
-  async convert(chunkPaths: string[], outputPath: string): Promise<void> {
-    if (chunkPaths.length === 0) {
+  async convert(jobs: ConversionJob[], outputPath: string): Promise<void> {
+    if (jobs.length === 0) {
       throw new Error(
-        'Cannot convert without chunks; a run that produced none has failed upstream, and an empty output would hide that',
+        'Cannot convert without jobs; a run that produced none has failed upstream, and an empty output would hide that',
       );
     }
-    const query = await readFile(this.queryFile, 'utf-8');
     // A fresh directory per run: a previous run's output left in place would
     // otherwise satisfy the non-empty check below with stale triples.
     const runDir = await mkdtemp(join(this.workDir, 'sparql-anything-'));
     const runDirName = basename(runDir);
     try {
-      const chunkOutputs: string[] = [];
-      for (const [index, chunkPath] of chunkPaths.entries()) {
+      const outputs: string[] = [];
+      for (const [index, job] of jobs.entries()) {
         const queryPath = join(runDirName, `query-${index}.rq`);
-        await writeFile(
-          join(this.workDir, queryPath),
-          query.replaceAll(SOURCE_PLACEHOLDER, chunkPath),
-        );
-        const chunkOutput = join(runDirName, `chunk-${index}.nt`);
+        await writeFile(join(this.workDir, queryPath), await queryFor(job));
+        const jobOutput = join(runDirName, `output-${index}.nt`);
         const task = await this.taskRunner.run(
-          this.command(queryPath, chunkOutput),
+          this.command(queryPath, jobOutput, job),
         );
         // wait() rejects on a non-zero exit, aborting convert() before the
-        // crashed chunk's missing output can be silently concatenated.
+        // crashed job's missing output can be silently concatenated.
         await this.taskRunner.wait(task);
-        const chunkOutputPath = join(this.workDir, chunkOutput);
-        await assertNonEmpty(chunkOutputPath, chunkPath);
-        chunkOutputs.push(chunkOutputPath);
+        const jobOutputPath = join(this.workDir, jobOutput);
+        await assertNonEmpty(jobOutputPath, job);
+        outputs.push(jobOutputPath);
       }
-      await concatenate(chunkOutputs, outputPath);
+      await concatenate(outputs, outputPath);
     } finally {
       await rm(runDir, { recursive: true, force: true });
     }
   }
 
-  /** The SPARQL Anything invocation for one chunk. */
-  private command(queryPath: string, chunkOutput: string): string {
+  /** The SPARQL Anything invocation for one job. */
+  private command(
+    queryPath: string,
+    jobOutput: string,
+    job: ConversionJob,
+  ): string {
     return [
       'java',
       shellQuote(`-Xmx${this.heap}`),
@@ -163,25 +171,50 @@ export class SparqlAnythingConverter<Task> {
       shellQuote(this.jarPath),
       '-q',
       shellQuote(queryPath),
-      ...(this.load === undefined ? [] : ['--load', shellQuote(this.load)]),
+      ...(job.load === undefined ? [] : ['--load', shellQuote(job.load)]),
       '--format',
       'NT',
       '--output',
-      shellQuote(chunkOutput),
+      shellQuote(jobOutput),
       ...this.cliArgs.map(shellQuote),
     ].join(' ');
   }
 }
 
 /**
- * Throws unless the chunk's output holds at least one byte. SPARQL Anything
+ * The job's query, with the chunk substituted for the placeholder.
+ *
+ * A query that names `{SOURCE}` needs a chunk, and a chunk is only reachable
+ * through the placeholder, so either half on its own is a misconfiguration
+ * that SPARQL Anything would report as a parse error, or not at all.
+ */
+async function queryFor(job: ConversionJob): Promise<string> {
+  const query = await readFile(job.queryFile, 'utf-8');
+  const namesSource = query.includes(SOURCE_PLACEHOLDER);
+  if (namesSource && job.chunk === undefined) {
+    throw new Error(
+      `Query ‘${job.queryFile}’ names ${SOURCE_PLACEHOLDER} but its job has no chunk`,
+    );
+  }
+  if (!namesSource && job.chunk !== undefined) {
+    throw new Error(
+      `Job for chunk ‘${job.chunk}’ has a query, ‘${job.queryFile}’, that never names ${SOURCE_PLACEHOLDER}, so the chunk would go unread`,
+    );
+  }
+  return job.chunk === undefined
+    ? query
+    : query.replaceAll(SOURCE_PLACEHOLDER, job.chunk);
+}
+
+/**
+ * Throws unless the job's output holds at least one byte. SPARQL Anything
  * exits 0 when it cannot read or parse an input: it logs the problem, writes an
  * empty output and stops. Without this guard a run stays green while its output
  * silently misses every triple of the chunk.
  */
 async function assertNonEmpty(
   outputPath: string,
-  chunkPath: string,
+  job: ConversionJob,
 ): Promise<void> {
   const size = await stat(outputPath).then(
     (stats) => stats.size,
@@ -196,7 +229,7 @@ async function assertNonEmpty(
   );
   if (size === 0) {
     throw new Error(
-      `SPARQL Anything produced no output for chunk ‘${chunkPath}’; it exits successfully when it cannot read or parse an input`,
+      `SPARQL Anything produced no output for ‘${job.queryFile}’${job.chunk === undefined ? '' : ` over ‘${job.chunk}’`}; it exits successfully when it cannot read or parse an input`,
     );
   }
 }
