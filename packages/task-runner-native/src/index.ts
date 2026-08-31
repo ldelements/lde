@@ -16,34 +16,27 @@ export interface NativeTaskRunnerOptions {
   gracefulShutdownTimeout?: number;
 }
 
-/** What a process left behind once it closed. */
-interface TaskResult {
-  /** Exit code, or `null` when the process was killed by a signal. */
-  code: number | null;
-  /** Output, when the failure path already read (and so consumed) it. */
-  output?: string;
+/** What {@link NativeTaskRunner} knows about a process it spawned. */
+interface TaskState {
+  /** Everything the process has written so far, stdout and stderr in order. */
+  output: string;
+  /**
+   * Resolves with the exit code once the process closes, `null` when it was
+   * killed by a signal. Never rejects, so nothing has to be awaited for the
+   * process to stay healthy.
+   */
+  closed: Promise<number | null>;
 }
 
 export class NativeTaskRunner implements TaskRunner<ChildProcess> {
-  private stdout: Map<number, string> = new Map();
-  private stderr: Map<number, string> = new Map();
   private shell = true;
   private cwd?: string;
   private gracefulShutdownTimeout: number;
   /**
-   * Results of processes that have already closed, so {@link wait} can settle
-   * for one that finished before it was called. Weak, so a record nobody reads
-   * is forgotten along with its process object. The buffered output it points
-   * at is not: {@link stdout} and {@link stderr} are keyed by pid and freed
-   * only when something reads them.
+   * Weak, so a task's output and exit code are released along with its process
+   * object, however many tasks the runner outlives.
    */
-  private results = new WeakMap<ChildProcess, TaskResult>();
-  /** The 'close' listener {@link run} installed, so {@link wait} can remove
-   * exactly that one and leave every other listener in place. */
-  private closeListeners = new WeakMap<
-    ChildProcess,
-    (code: number | null) => void
-  >();
+  private states = new WeakMap<ChildProcess, TaskState>();
 
   constructor(options?: NativeTaskRunnerOptions) {
     this.cwd = options?.cwd;
@@ -56,132 +49,66 @@ export class NativeTaskRunner implements TaskRunner<ChildProcess> {
       shell: this.shell,
       cwd: this.cwd,
     });
-
-    const onClose = (code: number | null) => {
-      /** code is null when the process was killed, which is expected when
-       * {@link stop} is called. */
-      if (code !== null && code !== 0) {
-        // Reading the output here consumes it, so keep it for a later wait().
-        const output = this.taskOutput(task);
-        this.results.set(task, { code, output });
-        task.emit('error', new Error(output));
-      } else {
-        // Leave the output unread: stop() still has to be able to return it.
-        this.results.set(task, { code });
-      }
+    // Listen from the moment the process exists, so nothing depends on how
+    // soon – or how often – the caller gets around to wait() or stop().
+    const state: TaskState = {
+      output: '',
+      closed: new Promise((resolve) => task.once('close', resolve)),
     };
-    this.closeListeners.set(task, onClose);
-    task.on('close', onClose);
-    task.on('error', () => {
-      // Handled by wait(); listener prevents 'unhandled error' crashes.
-    });
+    this.states.set(task, state);
 
-    if (task.pid !== undefined) {
-      task.stdout.on('data', (data) => {
-        this.stdout.set(
-          task.pid!,
-          (this.stdout.get(task.pid!) ?? '') + data.toString(),
-        );
-      });
-
-      task.stderr.on('data', (data) => {
-        this.stderr.set(
-          task.pid!,
-          (this.stderr.get(task.pid!) ?? '') + data.toString(),
-        );
+    for (const stream of [task.stdout, task.stderr]) {
+      stream?.on('data', (data) => {
+        state.output += data.toString();
       });
     }
+    task.on('error', () => {
+      // A failure to spawn arrives here, and an 'error' without a listener is
+      // thrown. It also closes the process, so wait() reports it as a failure.
+    });
 
     return task;
   }
 
-  /**
-   * Resolves with the process's output, or rejects if it failed – whether it
-   * is still running or has already closed. A pool spawns several tasks before
-   * awaiting any of them, so a task that fails fast (a bad jar path exits in
-   * milliseconds) routinely closes before wait() is called.
-   */
+  /** Resolves with the process's output, or rejects if it failed. */
   async wait(task: ChildProcess): Promise<string> {
-    const result = this.results.get(task) ?? (await this.closed(task));
-    // Reading consumes the output, so keep it: waiting twice must not turn
-    // the second answer into an empty string.
-    result.output ??= this.taskOutput(task);
-    if (result.code === 0) {
-      return result.output;
+    const state = this.states.get(task)!;
+    const code = await state.closed;
+    if (code === 0) {
+      return state.output;
     }
-    throw new Error(
-      `Process failed with code ${result.code}: ${result.output}`,
-    );
+    throw new Error(`Process failed with code ${code}: ${state.output}`);
   }
 
-  /** Resolves once `task` closes, recording what it left behind. */
-  private closed(task: ChildProcess): Promise<TaskResult> {
-    return new Promise((resolve) => {
-      // When waiting for a task, reject on error instead of crashing the
-      // process, as we do on purpose in the close listener in run(). Remove
-      // only that listener: removing every 'close' listener would also strand
-      // a stop() in flight and any concurrent wait().
-      const runListener = this.closeListeners.get(task);
-      if (runListener !== undefined) {
-        task.off('close', runListener);
-        this.closeListeners.delete(task);
-      }
-      task.once('close', (code: number | null) => {
-        // Concurrent waiters share one record, so the output cached on it is
-        // read once and answered identically to each of them.
-        const result = this.results.get(task) ?? { code };
-        this.results.set(task, result);
-        resolve(result);
-      });
-    });
-  }
-
+  /** Terminates the process, escalating to SIGKILL, and returns its output. */
   async stop(task: ChildProcess): Promise<string | null> {
-    return new Promise((resolve) => {
-      // Handle already-exited processes.
-      if (task.exitCode !== null || task.killed) {
-        resolve(this.taskOutput(task));
-        return;
-      }
+    const state = this.states.get(task)!;
+    if (task.exitCode !== null || task.killed) {
+      return state.output;
+    }
 
-      const sigkillTimer: { current?: ReturnType<typeof setTimeout> } = {};
-
-      const cleanup = () => {
-        if (sigkillTimer.current) {
-          clearTimeout(sigkillTimer.current);
-        }
-        resolve(this.taskOutput(task));
-      };
-
-      task.on('close', cleanup);
-
+    try {
       // Negative PID to kill whole process group: the {shell: true} argument
       // to spawn splits off a separate process.
+      process.kill(-task.pid!, 'SIGTERM');
+    } catch {
+      // Process may have already exited (ESRCH error).
+      return state.output;
+    }
+
+    const sigkillTimer = setTimeout(() => {
       try {
-        process.kill(-task.pid!, 'SIGTERM');
+        process.kill(-task.pid!, 'SIGKILL');
       } catch {
-        // Process may have already exited (ESRCH error).
-        cleanup();
-        return;
+        // Process may have exited between SIGTERM and SIGKILL.
       }
+    }, this.gracefulShutdownTimeout);
+    try {
+      await state.closed;
+    } finally {
+      clearTimeout(sigkillTimer);
+    }
 
-      // Escalate to SIGKILL after timeout if process doesn't terminate.
-      sigkillTimer.current = setTimeout(() => {
-        try {
-          process.kill(-task.pid!, 'SIGKILL');
-        } catch {
-          // Process may have exited between SIGTERM and SIGKILL.
-        }
-      }, this.gracefulShutdownTimeout);
-    });
-  }
-
-  private taskOutput(task: ChildProcess) {
-    const output =
-      (this.stdout.get(task.pid!) ?? '') + (this.stderr.get(task.pid!) ?? '');
-    this.stdout.delete(task.pid!);
-    this.stderr.delete(task.pid!);
-
-    return output;
+    return state.output;
   }
 }
