@@ -19,3 +19,17 @@ _:anonymousWork a schema:CreativeWork ;
 
 <https://ex/p/1> a schema:Person ;
   schema:name "Johannes Vermeer" .
+
+# A qualified relation, typed apart from the CreativeWork roots above so it is
+# selected on its own: the work points at a Role carrying a value of its own and
+# the agent behind it. One agent is IRI-identified and described in this graph,
+# the other named inline with no IRI at all – the two populations a `local`
+# lookup exists to serve with one field.
+<https://ex/va/1> a schema:VisualArtwork ;
+  schema:name "Winterlandschap"@nl ;
+  schema:creator [ a schema:Role ;
+                   schema:roleName "etser" ;
+                   schema:creator <https://ex/p/1> ] ,
+                 [ a schema:Role ;
+                   schema:roleName "uitgever" ;
+                   schema:creator [ schema:name "Onbekende drukker"@nl ] ] .

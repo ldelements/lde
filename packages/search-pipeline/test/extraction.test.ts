@@ -12,6 +12,7 @@ import {
   fieldNamed,
   irAlias,
   labelSourceNameOf,
+  localLookupTypeOf,
   referenceTypeNamed,
   rootTypeNamed,
 } from '@lde/search/adapter';
@@ -73,6 +74,70 @@ const creativeWork = defineSearchType({
 
 const drapoSchema = searchSchema(creativeWork, person);
 
+// The qualified-relation shape: the work points at a Role, which carries a value
+// of its own and resolves an agent the referring document also describes.
+const agent = defineSearchType({
+  name: 'Agent',
+  class: `${SCHEMA}Person`,
+  labelField: 'name',
+  fields: [
+    {
+      name: 'name',
+      kind: 'text',
+      path: `<${SCHEMA}name>`,
+      locales: ['und'],
+      output: true,
+      searchable: { weight: 5 },
+    },
+    {
+      name: 'birthDate',
+      kind: 'date',
+      path: `<${SCHEMA}birthDate>`,
+      output: true,
+    },
+  ],
+});
+
+const creatorRole = defineSearchType({
+  name: 'CreatorRole',
+  fields: [
+    {
+      name: 'role',
+      kind: 'keyword',
+      array: true,
+      output: true,
+      filterable: true,
+      path: `<${SCHEMA}roleName>`,
+    },
+    {
+      name: 'agent',
+      kind: 'reference',
+      array: true,
+      output: true,
+      path: `<${SCHEMA}creator>`,
+      ref: { strategy: 'lookup', target: 'Agent', local: true },
+    },
+  ],
+});
+
+const roleWork = defineSearchType({
+  name: 'CreativeWork',
+  class: `${SCHEMA}CreativeWork`,
+  fields: [
+    {
+      name: 'creator',
+      kind: 'reference',
+      array: true,
+      output: true,
+      facetable: true,
+      path: `<${SCHEMA}creator>`,
+      ref: { strategy: 'inline', typeName: 'CreatorRole', identity: 'agent' },
+    },
+  ],
+});
+
+const roleSchema = searchSchema(roleWork, agent, creatorRole);
+
 /** The template triples, each narrowed from the broader BGP element type. */
 function templateTriples(query: QueryConstruct): TripleNesting[] {
   return query.template.triples.map((triple) => {
@@ -101,6 +166,19 @@ function unionBranches(query: QueryConstruct): PatternGroup[] {
     throw new Error('expected a UNION at the top of the WHERE');
   }
   return union.patterns;
+}
+
+/** The one template triple minted under an alias – the link a nested walk
+ *  follows from a reference to the values read off its referent. */
+function tripleUnder(query: QueryConstruct, alias: string): TripleNesting {
+  const [triple] = templateTriples(query).filter((candidate) => {
+    const predicate = candidate.predicate;
+    return factory.isTermNamed(predicate) && predicate.value === alias;
+  });
+  if (triple === undefined) {
+    throw new Error(`no template triple under ${alias}`);
+  }
+  return triple;
 }
 
 describe('extractionQuery', () => {
@@ -417,6 +495,165 @@ describe('references into a keyed type', () => {
   });
 });
 
+describe('local lookups (the referent’s own fields)', () => {
+  it('mints the target’s own fields under the TARGET’s aliases', () => {
+    // Without these the referent is stored by id alone, and a referent the
+    // graph named inline – which has no id – comes back empty.
+    expect(templatePredicates(extractionQuery(roleWork, roleSchema))).toEqual(
+      expect.arrayContaining([
+        irAlias(agent, agent.fields[0]),
+        irAlias(agent, agent.fields[1]),
+      ]),
+    );
+  });
+
+  it('reads them off the referent, not off the root', () => {
+    const query = extractionQuery(roleWork, roleSchema);
+    const nameTriple = tripleUnder(query, irAlias(agent, agent.fields[0]));
+    const agentTriple = tripleUnder(
+      query,
+      irAlias(creatorRole, creatorRole.fields[1]),
+    );
+
+    // The same variable the reference’s own template triple binds – the
+    // subject → referent → value link the projection walks back down.
+    expect(nameTriple.subject).toEqual(agentTriple.object);
+    expect(nameTriple.subject).toMatchObject({ subType: 'variable' });
+  });
+
+  it('reads them in an OPTIONAL, so a referent stated by id alone keeps its row', () => {
+    // A `local` lookup stores its referent whether or not the referring
+    // document says anything about it; conjoining the two would drop the id
+    // along with the absent name.
+    expect(extractionQueryString(roleWork, roleSchema)).toContain('OPTIONAL');
+  });
+
+  it('states a keyed target’s key field once, not twice', () => {
+    // The key hop and the local expansion both reach it; only one may emit it.
+    const keyedAgent = defineSearchType({
+      name: 'Agent',
+      class: `${SCHEMA}Person`,
+      labelField: 'name',
+      key: { field: '_sameAs' },
+      fields: [
+        {
+          name: 'name',
+          kind: 'text',
+          path: `<${SCHEMA}name>`,
+          locales: ['und'],
+          output: true,
+          searchable: { weight: 5 },
+        },
+        {
+          name: '_sameAs',
+          kind: 'reference',
+          array: true,
+          path: `<${SCHEMA}sameAs>`,
+        },
+      ],
+    });
+    const keyed = searchSchema(roleWork, keyedAgent, creatorRole);
+    const keyAlias = irAlias(keyedAgent, keyedAgent.fields[1]);
+
+    const minted = templatePredicates(extractionQuery(roleWork, keyed));
+
+    expect(minted.filter((predicate) => predicate === keyAlias)).toHaveLength(
+      1,
+    );
+  });
+
+  it('leaves the reference standing where the target states nothing to read', () => {
+    // A target whose every field is computed: legal, and it contributes no
+    // branch – so there must be no empty OPTIONAL wrapped around nothing.
+    const computed = defineSearchType({
+      name: 'Agent',
+      class: `${SCHEMA}Person`,
+      labelField: 'name',
+      fields: [
+        {
+          name: 'name',
+          kind: 'text',
+          locales: ['und'],
+          output: true,
+          searchable: { weight: 1 },
+          derive: () => 'anonymous',
+        },
+      ],
+    });
+    const bare = searchSchema(roleWork, computed, creatorRole);
+
+    const query = extractionQueryString(roleWork, bare);
+
+    expect(query).not.toContain('OPTIONAL');
+    // The referent is still stored by id, which is a plain lookup’s whole job.
+    expect(templatePredicates(extractionQuery(roleWork, bare))).toContain(
+      irAlias(creatorRole, creatorRole.fields[1]),
+    );
+  });
+
+  it('stops at a type already on the path, so two mutually local types terminate', () => {
+    // `searchSchema` rejects inline reference cycles; nothing forbids this one.
+    const left = defineSearchType({
+      name: 'Left',
+      class: `${SCHEMA}Left`,
+      labelField: 'name',
+      fields: [
+        {
+          name: 'name',
+          kind: 'text',
+          path: `<${SCHEMA}name>`,
+          locales: ['und'],
+          output: true,
+          searchable: { weight: 1 },
+        },
+        {
+          name: 'other',
+          kind: 'reference',
+          array: true,
+          output: true,
+          path: `<${SCHEMA}knows>`,
+          ref: { strategy: 'lookup', target: 'Right', local: true },
+        },
+      ],
+    });
+    const right = defineSearchType({
+      name: 'Right',
+      class: `${SCHEMA}Right`,
+      labelField: 'name',
+      fields: [
+        {
+          name: 'name',
+          kind: 'text',
+          path: `<${SCHEMA}name>`,
+          locales: ['und'],
+          output: true,
+          searchable: { weight: 1 },
+        },
+        {
+          name: 'other',
+          kind: 'reference',
+          array: true,
+          output: true,
+          path: `<${SCHEMA}knows>`,
+          ref: { strategy: 'lookup', target: 'Left', local: true },
+        },
+      ],
+    });
+    const cyclic = searchSchema(left, right);
+
+    // One hop out and back to the boundary, never further: `Left`’s own fields,
+    // `Right`’s read off the referent, and `Right`’s own `other` by id alone.
+    expect(new Set(templatePredicates(extractionQuery(left, cyclic)))).toEqual(
+      new Set([
+        irAlias(left, left.fields[0]),
+        irAlias(left, left.fields[1]),
+        irAlias(right, right.fields[0]),
+        irAlias(right, right.fields[1]),
+      ]),
+    );
+  });
+});
+
 describe('extraction ⟷ projection contract', () => {
   // The drift guard: every IR Alias the generator mints is one the projection
   // reads, and vice versa. Both derive from the same rule – a path-bearing field,
@@ -425,8 +662,10 @@ describe('extraction ⟷ projection contract', () => {
   function projectionReads(
     searchType: SearchType,
     schema: SearchSchema,
+    visiting: ReadonlySet<string> = new Set(),
   ): Set<string> {
     const aliases = new Set<string>();
+    const onPath = new Set(visiting).add(searchType.name);
     for (const field of searchType.fields) {
       if (field.path === undefined) {
         continue;
@@ -438,9 +677,18 @@ describe('extraction ⟷ projection contract', () => {
       if (field.ref?.strategy === 'inline') {
         const referenceType = referenceTypeNamed(schema, field.ref.typeName);
         if (referenceType !== undefined) {
-          for (const alias of projectionReads(referenceType, schema)) {
+          for (const alias of projectionReads(referenceType, schema, onPath)) {
             aliases.add(alias);
           }
+        }
+        continue;
+      }
+      // A `local` lookup: the projection shapes the referent through the
+      // TARGET’s own declaration, so it reads that type’s aliases off it.
+      const local = localLookupTypeOf(field, schema);
+      if (local !== undefined && !onPath.has(local.name)) {
+        for (const alias of projectionReads(local, schema, onPath)) {
+          aliases.add(alias);
         }
         continue;
       }
@@ -494,6 +742,13 @@ describe('extraction ⟷ projection contract', () => {
       templatePredicates(extractionQuery(dataset, schema)),
     );
     expect(minted).toEqual(projectionReads(dataset, schema));
+  });
+
+  it('mints exactly the aliases the projection reads, through a local lookup', () => {
+    const minted = new Set(
+      templatePredicates(extractionQuery(roleWork, roleSchema)),
+    );
+    expect(minted).toEqual(projectionReads(roleWork, roleSchema));
   });
 
   it('mints exactly the aliases the projection reads, into a keyed target', () => {

@@ -15,6 +15,7 @@ import {
   irAlias,
   isInlineReference,
   labelSourceNameOf,
+  localLookupTypeOf,
   referenceTypeNamed,
   rootTypeNamed,
 } from '@lde/search/adapter';
@@ -64,6 +65,15 @@ export interface ExtractionOptions {
  *   nested template (`{ ?root <…/ref> ?r . ?r <…/field> ?v }`), recursing into
  *   the reference type to the schema’s declared depth. The referent-binding hop
  *   uses the source `path`; the emitted triples use the minted aliases.
+ * - **`local` lookups** ({@link ReferenceStrategy.local}): a reference that also
+ *   stores what this document states about its referent gets its branch
+ *   extended with the **target Root Type’s own** fields, read off the referent
+ *   and emitted under that type’s aliases – the same recursion an inline
+ *   reference makes, through a Root Type rather than a Reference Type, and the
+ *   same reach {@link inlineFramingDepth} already frames for. `OPTIONAL`, so a
+ *   referent the document states nothing about keeps its row and still stores
+ *   its id. It subsumes the key hop below, the key field being one of the
+ *   target’s own.
  * - **references into a keyed type**: a reference naming a target that declares
  *   a `key` gets its branch extended with an `OPTIONAL` hop reading the
  *   referent’s key field, emitted under the **target’s** alias for it – so the
@@ -82,7 +92,7 @@ export function extractionQuery(
 ): QueryConstruct {
   const subjectVariable = options.subjectVariable ?? 'root';
   const subject = factory.termVariable(subjectVariable, factory.gen());
-  const built = buildFor(searchType, subject, schema, { next: 0 });
+  const built = buildFor(searchType, subject, schema, { next: 0 }, new Set());
   if (built.branches.length === 0) {
     throw new Error(
       `Cannot generate an extraction CONSTRUCT for “${searchType.name}”: it declares no path-bearing field, so there is nothing to extract.`,
@@ -125,19 +135,28 @@ interface Built {
 /**
  * Walk a type’s path-bearing fields off a subject variable, collecting the
  * template triples (minted aliases) and one WHERE branch per field (source
- * paths). Recurses into an inline reference’s type off a fresh referent
- * variable, so the nested template keeps the `subject → referent → value` link
- * in one CONSTRUCT. The recursion terminates because `searchSchema` rejects
- * inline reference cycles.
+ * paths). Recurses off a fresh referent variable for the two references that
+ * store a referent’s fields rather than only its id – an inline reference,
+ * through its Reference Type, and a {@link ReferenceStrategy.local} lookup,
+ * through its target Root Type – so the nested template keeps the
+ * `subject → referent → value` link in one CONSTRUCT.
+ *
+ * `visiting` is what terminates the second one. `searchSchema` rejects inline
+ * reference cycles, but nothing forbids two Root Types whose `local` lookups
+ * point at each other, so a type already on this path contributes no further
+ * hop – the same cut {@link inlineFramingDepth} makes, so the depth framed and
+ * the depth extracted stay the same number.
  */
 function buildFor(
   searchType: SearchType,
   subject: TermVariable,
   schema: SearchSchema,
   counter: VariableCounter,
+  visiting: ReadonlySet<string>,
 ): Built {
   const template: TripleNesting[] = [];
   const branches: PatternGroup[] = [];
+  const onPath = new Set(visiting).add(searchType.name);
   for (const field of searchType.fields) {
     if (field.path === undefined) {
       continue;
@@ -154,7 +173,7 @@ function buildFor(
         factory.gen(),
       );
       template.push(factory.triple(subject, alias, referent));
-      const nested = buildFor(referenceType, referent, schema, counter);
+      const nested = buildFor(referenceType, referent, schema, counter, onPath);
       template.push(...nested.template);
       const patterns: Pattern[] = [
         factory.patternBgp(
@@ -177,16 +196,55 @@ function buildFor(
           factory.gen(),
         ),
       ];
-      const keyed = keyedTargetOf(field, schema);
-      if (keyed !== undefined) {
-        const built = buildKeyHop(keyed.target, keyed.keyField, value, counter);
-        template.push(built.triple);
-        patterns.push(built.pattern);
+      const local = localTargetOf(field, schema, onPath);
+      if (local === undefined) {
+        // Only where no local expansion follows: a `local` lookup reads the
+        // target’s every path-bearing field, and a keyed target’s key field is
+        // one of them, so emitting the hop as well would state it twice.
+        const keyed = keyedTargetOf(field, schema);
+        if (keyed !== undefined) {
+          const built = buildKeyHop(
+            keyed.target,
+            keyed.keyField,
+            value,
+            counter,
+          );
+          template.push(built.triple);
+          patterns.push(built.pattern);
+        }
+      } else {
+        const nested = buildFor(local, value, schema, counter, onPath);
+        template.push(...nested.template);
+        // `OPTIONAL`, unlike an inline reference’s conjoined nesting: this
+        // referent is stored by id whether or not the referring document says
+        // anything about it, and conjoining would drop both together.
+        if (nested.branches.length > 0) {
+          patterns.push(
+            factory.patternOptional(
+              [factory.patternUnion(nested.branches, factory.gen())],
+              factory.gen(),
+            ),
+          );
+        }
       }
       branches.push(factory.patternGroup(patterns, factory.gen()));
     }
   }
   return { template, branches };
+}
+
+/**
+ * The Root Type a {@link ReferenceStrategy.local} lookup expands into here, or
+ * `undefined` where the field declares none – or where that type is already on
+ * this path, which is where the recursion stops.
+ */
+function localTargetOf(
+  field: SearchField,
+  schema: SearchSchema,
+  visiting: ReadonlySet<string>,
+): RootType | undefined {
+  const local = localLookupTypeOf(field, schema);
+  return local === undefined || visiting.has(local.name) ? undefined : local;
 }
 
 /**

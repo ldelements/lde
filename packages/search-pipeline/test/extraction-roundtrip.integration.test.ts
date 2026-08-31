@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Dataset, Distribution } from '@lde/dataset';
 import type { DatasetWriter } from '@lde/pipeline';
 import { defineSearchType, searchSchema } from '@lde/search';
+import type { RootType, SearchSchema } from '@lde/search';
 import {
   startSparqlEndpoint,
   teardownSparqlEndpoint,
@@ -65,6 +66,73 @@ const creativeWork = defineSearchType({
 
 const schema = searchSchema(creativeWork, person);
 
+// The qualified-relation shape over the same fixture: a `VisualArtwork` whose
+// `creator` is a Role carrying its own value and resolving an agent. Its own
+// schema, since its `Agent` names the same source class `person` does.
+const agent = defineSearchType({
+  name: 'Agent',
+  class: `${SCHEMA}Person`,
+  labelField: 'name',
+  fields: [
+    {
+      name: 'name',
+      kind: 'text',
+      path: `<${SCHEMA}name>`,
+      locales: ['nl', 'und'],
+      output: true,
+      searchable: { weight: 5 },
+    },
+  ],
+});
+
+const creatorRole = defineSearchType({
+  name: 'CreatorRole',
+  fields: [
+    {
+      name: 'role',
+      kind: 'keyword',
+      array: true,
+      output: true,
+      filterable: true,
+      path: `<${SCHEMA}roleName>`,
+    },
+    {
+      name: 'agent',
+      kind: 'reference',
+      array: true,
+      output: true,
+      path: `<${SCHEMA}creator>`,
+      ref: { strategy: 'lookup', target: 'Agent', local: true },
+    },
+  ],
+});
+
+const visualArtwork = defineSearchType({
+  name: 'VisualArtwork',
+  class: `${SCHEMA}VisualArtwork`,
+  fields: [
+    {
+      name: 'name',
+      kind: 'text',
+      path: `<${SCHEMA}name>`,
+      locales: ['nl'],
+      output: true,
+      searchable: { weight: 5 },
+    },
+    {
+      name: 'creator',
+      kind: 'reference',
+      array: true,
+      output: true,
+      facetable: true,
+      path: `<${SCHEMA}creator>`,
+      ref: { strategy: 'inline', typeName: 'CreatorRole', identity: 'agent' },
+    },
+  ],
+});
+
+const roleSchema = searchSchema(visualArtwork, agent, creatorRole);
+
 describe('extraction round-trip: generate → read → frame → project', () => {
   const port = 3007;
   const distribution = Distribution.sparql(
@@ -88,17 +156,20 @@ describe('extraction round-trip: generate → read → frame → project', () =>
     await teardownSparqlEndpoint();
   });
 
-  async function runStage(): Promise<TypedSearchDocument[]> {
+  async function runStage(
+    forSchema: SearchSchema = schema,
+    searchType: RootType = creativeWork,
+  ): Promise<TypedSearchDocument[]> {
     // No `readers`: the stage defaults to the generated Extraction CONSTRUCT,
     // proving the schema-derived reader and the projection agree end to end
     // against a real SPARQL engine, over roots selected by `selectByClass`.
     const [stage] = searchStages({
-      schema,
+      schema: forSchema,
       types: [
         {
-          searchType: creativeWork,
+          searchType,
           rootVariable: 'root',
-          itemSelector: selectByClass(creativeWork),
+          itemSelector: selectByClass(searchType),
         },
       ],
     });
@@ -145,5 +216,33 @@ describe('extraction round-trip: generate → read → frame → project', () =>
     expect(second.name_nl).toBe('De nachtwacht');
     expect(second).not.toHaveProperty('creator');
     expect(second).not.toHaveProperty('description_nl');
+  });
+
+  it('reads a `local` lookup’s agent out of the graph, identified or not', async () => {
+    const [item] = await runStage(roleSchema, visualArtwork);
+    const entries = item?.document.creator as Record<string, unknown>[];
+
+    const entryFor = (role: string) =>
+      entries.find((entry) => (entry.role as string[]).includes(role));
+
+    // An identified agent: the id the reference has always stored, and now the
+    // name this document states about it, read off the referent one hop on.
+    expect(entryFor('etser')?.agent).toEqual([
+      expect.objectContaining({
+        id: 'https://ex/p/1',
+        name_und: 'Johannes Vermeer',
+      }),
+    ]);
+    // An agent the graph named inline: an entry like any other, minus its id –
+    // which is the whole reason `local` exists, and what a plain lookup loses.
+    expect(entryFor('uitgever')?.agent).toEqual([
+      expect.objectContaining({ name_nl: 'Onbekende drukker' }),
+    ]);
+    expect(entryFor('uitgever')?.agent).not.toEqual([
+      expect.objectContaining({ id: expect.anything() }),
+    ]);
+    // The facet stays keyed on identity alone, so the inline agent buckets
+    // under nothing rather than under a label.
+    expect(item?.document.creator_id).toEqual(['https://ex/p/1']);
   });
 });
