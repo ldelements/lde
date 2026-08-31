@@ -7,6 +7,33 @@ import { basename, join } from 'node:path';
 /** Placeholder in the query file that is replaced with each chunk's path. */
 const SOURCE_PLACEHOLDER = '{SOURCE}';
 
+/** A JVM heap size: a number of bytes, or one with a k/m/g suffix. */
+const HEAP_SIZE = /^\d+[kmg]?$/i;
+
+/**
+ * Heap per chunk process when none is configured. Conservative on purpose: a
+ * chunk that needs more fails loudly, with the JVM's OutOfMemoryError in the
+ * output of a non-zero exit, where leaving the JVM uncapped instead lets it
+ * take a quarter of host memory until the OOM killer takes the container.
+ */
+const DEFAULT_HEAP = '2g';
+
+/**
+ * Arguments the converter sets itself, with their aliases. Passing one again
+ * through `cliArgs` would break what the converter does around the process:
+ * it reads back the `--output` it named, in the `--format` it asked for.
+ */
+const RESERVED_ARGUMENTS = new Set([
+  '-q',
+  '--query',
+  '-f',
+  '--format',
+  '-o',
+  '--output',
+  '-l',
+  '--load',
+]);
+
 /** Configuration for a {@link SparqlAnythingConverter}. */
 export interface SparqlAnythingConverterOptions<Task> {
   /**
@@ -30,6 +57,20 @@ export interface SparqlAnythingConverterOptions<Task> {
    * into its own named graph.
    */
   load?: string;
+  /**
+   * Maximum JVM heap per chunk process, as `-Xmx` takes it: `'2g'`, `'512m'`.
+   * One process per chunk bounds memory only together with a cap, since SPARQL
+   * Anything materialises a chunk's whole result graph before writing it, so
+   * there is always one. Raise it for chunks larger than the default suits.
+   * @default '2g'
+   */
+  heap?: string;
+  /**
+   * Further arguments for the SPARQL Anything CLI, passed after the ones the
+   * converter sets itself. Those it cannot repeat: `-q`, `-f`, `-o` and `-l`
+   * are the converter's own, and are rejected here.
+   */
+  cliArgs?: string[];
   /** Runs the SPARQL Anything process for each chunk. */
   taskRunner: TaskRunner<Task>;
 }
@@ -44,6 +85,8 @@ export class SparqlAnythingConverter<Task> {
   private readonly jarPath: string;
   private readonly workDir: string;
   private readonly load?: string;
+  private readonly heap: string;
+  private readonly cliArgs: string[];
   private readonly taskRunner: TaskRunner<Task>;
 
   constructor(options: SparqlAnythingConverterOptions<Task>) {
@@ -51,6 +94,22 @@ export class SparqlAnythingConverter<Task> {
     this.jarPath = options.jarPath;
     this.workDir = options.workDir;
     this.load = options.load;
+    const heap = options.heap ?? DEFAULT_HEAP;
+    if (!HEAP_SIZE.test(heap)) {
+      throw new Error(
+        `‘${heap}’ is not a heap size; give the value -Xmx takes, such as ‘2g’`,
+      );
+    }
+    this.heap = heap;
+    const reserved = (options.cliArgs ?? []).filter((argument) =>
+      RESERVED_ARGUMENTS.has(argument),
+    );
+    if (reserved.length > 0) {
+      throw new Error(
+        `Cannot pass ${reserved.join(', ')} through cliArgs: the converter sets these itself, and reads back the output it named`,
+      );
+    }
+    this.cliArgs = options.cliArgs ?? [];
     this.taskRunner = options.taskRunner;
   }
 
@@ -70,8 +129,6 @@ export class SparqlAnythingConverter<Task> {
     // otherwise satisfy the non-empty check below with stale triples.
     const runDir = await mkdtemp(join(this.workDir, 'sparql-anything-'));
     const runDirName = basename(runDir);
-    const loadOption =
-      this.load === undefined ? '' : ` --load ${shellQuote(this.load)}`;
     try {
       const chunkOutputs: string[] = [];
       for (const [index, chunkPath] of chunkPaths.entries()) {
@@ -82,7 +139,7 @@ export class SparqlAnythingConverter<Task> {
         );
         const chunkOutput = join(runDirName, `chunk-${index}.nt`);
         const task = await this.taskRunner.run(
-          `java -jar ${shellQuote(this.jarPath)} -q ${shellQuote(queryPath)}${loadOption} --format NT --output ${shellQuote(chunkOutput)}`,
+          this.command(queryPath, chunkOutput),
         );
         // wait() rejects on a non-zero exit, aborting convert() before the
         // crashed chunk's missing output can be silently concatenated.
@@ -95,6 +152,24 @@ export class SparqlAnythingConverter<Task> {
     } finally {
       await rm(runDir, { recursive: true, force: true });
     }
+  }
+
+  /** The SPARQL Anything invocation for one chunk. */
+  private command(queryPath: string, chunkOutput: string): string {
+    return [
+      'java',
+      shellQuote(`-Xmx${this.heap}`),
+      '-jar',
+      shellQuote(this.jarPath),
+      '-q',
+      shellQuote(queryPath),
+      ...(this.load === undefined ? [] : ['--load', shellQuote(this.load)]),
+      '--format',
+      'NT',
+      '--output',
+      shellQuote(chunkOutput),
+      ...this.cliArgs.map(shellQuote),
+    ].join(' ');
   }
 }
 

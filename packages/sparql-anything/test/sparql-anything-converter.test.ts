@@ -165,7 +165,7 @@ describe('SparqlAnythingConverter', () => {
 
     expect(taskRunner.commands).toHaveLength(1);
     const command = taskRunner.commands[0];
-    expect(command).toContain("java -jar '/bin/sparql-anything.jar'");
+    expect(command).toContain("java '-Xmx2g' -jar '/bin/sparql-anything.jar'");
     expect(command).toContain("--load '/data/reference.ttl'");
     expect(command).toContain('--format NT');
     expect(command).toMatch(/-q 'sparql-anything-\S+\/query-0\.rq'/);
@@ -185,8 +185,70 @@ describe('SparqlAnythingConverter', () => {
     }).convert([chunk], join(workDir, 'output.nt'));
 
     const command = taskRunner.commands[0];
-    expect(command).toContain("java -jar '/bin/sparql anything.jar'");
+    expect(command).toContain("java '-Xmx2g' -jar '/bin/sparql anything.jar'");
     expect(command).toContain("--load '/data/'\\''s-Hertogenbosch.ttl'");
+  });
+
+  it('caps the heap even when none is configured', async () => {
+    const taskRunner = new FakeTaskRunner(workDir);
+    const [chunk] = await writeChunks(1);
+
+    await converterFor(taskRunner).convert([chunk], join(workDir, 'output.nt'));
+
+    // An uncapped JVM takes a quarter of host memory; a chunk that outgrows
+    // this default fails loudly instead, on the JVM's own OutOfMemoryError.
+    expect(taskRunner.commands[0]).toMatch(/^java '-Xmx2g' -jar /);
+  });
+
+  it('caps the heap before -jar, and appends extra CLI arguments', async () => {
+    const taskRunner = new FakeTaskRunner(workDir);
+    const [chunk] = await writeChunks(1);
+
+    await new SparqlAnythingConverter({
+      queryFile,
+      jarPath: '/bin/sparql-anything.jar',
+      workDir,
+      heap: '512m',
+      cliArgs: ['-ad'],
+      taskRunner,
+    }).convert([chunk], join(workDir, 'output.nt'));
+
+    expect(taskRunner.commands[0]).toMatch(
+      /^java '-Xmx512m' -jar '\/bin\/sparql-anything\.jar' .* '-ad'$/,
+    );
+  });
+
+  it('rejects a heap that is not a size -Xmx takes', () => {
+    const taskRunner = new FakeTaskRunner(workDir);
+
+    expect(
+      () =>
+        new SparqlAnythingConverter({
+          queryFile,
+          jarPath: '/bin/sparql-anything.jar',
+          workDir,
+          heap: '-Xmx2g',
+          taskRunner,
+        }),
+    ).toThrow('is not a heap size');
+  });
+
+  it('rejects CLI arguments the converter sets itself', () => {
+    const taskRunner = new FakeTaskRunner(workDir);
+
+    // Overriding --output would leave the converter reading back a file
+    // SPARQL Anything never wrote, reported as an empty conversion.
+    expect(
+      () =>
+        new SparqlAnythingConverter({
+          queryFile,
+          jarPath: '/bin/sparql-anything.jar',
+          workDir,
+          heap: '2g',
+          cliArgs: ['-o', 'elsewhere.nt'],
+          taskRunner,
+        }),
+    ).toThrow('the converter sets these itself');
   });
 
   it('omits --load when no path is configured', async () => {
