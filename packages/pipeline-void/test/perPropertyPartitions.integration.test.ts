@@ -76,7 +76,7 @@ function canonical(quads: Quad[]): Set<string> {
 describe('per-property partition chunking (end to end)', () => {
   // Unique across the repo's integration suites – nx runs packages' tests
   // concurrently, so a shared port is a flaky EADDRINUSE.
-  const port = 3011;
+  const port = 3013;
   const distribution = Distribution.sparql(
     new URL(`http://localhost:${port}/sparql`),
   );
