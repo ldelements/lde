@@ -102,6 +102,39 @@ describe('NativeTaskRunner', () => {
       );
     });
 
+    it('returns the same output when awaited twice', async () => {
+      const runner = new NativeTaskRunner();
+      const task = await runner.run('echo "test output"');
+
+      const first = await runner.wait(task);
+      const second = await runner.wait(task);
+
+      expect(second).toBe(first);
+    });
+
+    it('settles every concurrent waiter', async () => {
+      const runner = new NativeTaskRunner();
+      const task = await runner.run('echo "test output"');
+
+      // Two waiters on one task: neither may cancel the other out.
+      const outputs = await Promise.all([runner.wait(task), runner.wait(task)]);
+
+      expect(outputs[0]).toContain('test output');
+      expect(outputs[1]).toBe(outputs[0]);
+    });
+
+    it('does not strand a stop() that is already in flight', async () => {
+      const runner = new NativeTaskRunner();
+      const task = await runner.run('sleep 60');
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      // Aborting a run stops its tasks while their waits are outstanding.
+      const stopping = runner.stop(task);
+      const waiting = runner.wait(task).catch(() => 'stopped');
+
+      await expect(Promise.all([stopping, waiting])).resolves.toBeDefined();
+    });
+
     it('rejects for a process that was already stopped', async () => {
       const runner = new NativeTaskRunner();
       const task = await runner.run('sleep 60');

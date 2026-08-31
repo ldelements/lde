@@ -32,10 +32,18 @@ export class NativeTaskRunner implements TaskRunner<ChildProcess> {
   private gracefulShutdownTimeout: number;
   /**
    * Results of processes that have already closed, so {@link wait} can settle
-   * for one that finished before it was called. Weak, so a task nobody waits
-   * on is forgotten along with its process object.
+   * for one that finished before it was called. Weak, so a record nobody reads
+   * is forgotten along with its process object. The buffered output it points
+   * at is not: {@link stdout} and {@link stderr} are keyed by pid and freed
+   * only when something reads them.
    */
   private results = new WeakMap<ChildProcess, TaskResult>();
+  /** The 'close' listener {@link run} installed, so {@link wait} can remove
+   * exactly that one and leave every other listener in place. */
+  private closeListeners = new WeakMap<
+    ChildProcess,
+    (code: number | null) => void
+  >();
 
   constructor(options?: NativeTaskRunnerOptions) {
     this.cwd = options?.cwd;
@@ -49,7 +57,7 @@ export class NativeTaskRunner implements TaskRunner<ChildProcess> {
       cwd: this.cwd,
     });
 
-    task.on('close', (code: number | null) => {
+    const onClose = (code: number | null) => {
       /** code is null when the process was killed, which is expected when
        * {@link stop} is called. */
       if (code !== null && code !== 0) {
@@ -61,7 +69,9 @@ export class NativeTaskRunner implements TaskRunner<ChildProcess> {
         // Leave the output unread: stop() still has to be able to return it.
         this.results.set(task, { code });
       }
-    });
+    };
+    this.closeListeners.set(task, onClose);
+    task.on('close', onClose);
     task.on('error', () => {
       // Handled by wait(); listener prevents 'unhandled error' crashes.
     });
@@ -93,21 +103,33 @@ export class NativeTaskRunner implements TaskRunner<ChildProcess> {
    */
   async wait(task: ChildProcess): Promise<string> {
     const result = this.results.get(task) ?? (await this.closed(task));
-    const output = result.output ?? this.taskOutput(task);
+    // Reading consumes the output, so keep it: waiting twice must not turn
+    // the second answer into an empty string.
+    result.output ??= this.taskOutput(task);
     if (result.code === 0) {
-      return output;
+      return result.output;
     }
-    throw new Error(`Process failed with code ${result.code}: ${output}`);
+    throw new Error(
+      `Process failed with code ${result.code}: ${result.output}`,
+    );
   }
 
   /** Resolves once `task` closes, recording what it left behind. */
   private closed(task: ChildProcess): Promise<TaskResult> {
     return new Promise((resolve) => {
       // When waiting for a task, reject on error instead of crashing the
-      // process, as we do on purpose in the close listener in run().
-      task.removeAllListeners('close');
-      task.on('close', (code: number | null) => {
-        const result = { code };
+      // process, as we do on purpose in the close listener in run(). Remove
+      // only that listener: removing every 'close' listener would also strand
+      // a stop() in flight and any concurrent wait().
+      const runListener = this.closeListeners.get(task);
+      if (runListener !== undefined) {
+        task.off('close', runListener);
+        this.closeListeners.delete(task);
+      }
+      task.once('close', (code: number | null) => {
+        // Concurrent waiters share one record, so the output cached on it is
+        // read once and answered identically to each of them.
+        const result = this.results.get(task) ?? { code };
         this.results.set(task, result);
         resolve(result);
       });
