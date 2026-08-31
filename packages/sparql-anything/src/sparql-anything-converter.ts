@@ -84,6 +84,14 @@ export interface SparqlAnythingConverterOptions<Task> {
    * are the converter's own, and are rejected here.
    */
   cliArgs?: string[];
+  /**
+   * How many chunks to convert at once. Each one is a JVM of its own, so this
+   * multiplies against {@link heap}: the memory a run needs is `concurrency ×
+   * heap`, and the machine that has to hold it is the task runner's, not this
+   * process's. Left at one, chunks are converted one after another.
+   * @default 1
+   */
+  concurrency?: number;
   /** Runs the SPARQL Anything process for each chunk. */
   taskRunner: TaskRunner<Task>;
 }
@@ -98,6 +106,7 @@ export class SparqlAnythingConverter<Task> {
   private readonly workDir: string;
   private readonly heap: string;
   private readonly cliArgs: string[];
+  private readonly concurrency: number;
   private readonly taskRunner: TaskRunner<Task>;
 
   constructor(options: SparqlAnythingConverterOptions<Task>) {
@@ -120,6 +129,13 @@ export class SparqlAnythingConverter<Task> {
       );
     }
     this.cliArgs = options.cliArgs ?? [];
+    const concurrency = options.concurrency ?? 1;
+    if (!Number.isInteger(concurrency) || concurrency < 1) {
+      throw new Error(
+        `‘${concurrency}’ is not a number of chunks to convert at once; give a whole number of one or more`,
+      );
+    }
+    this.concurrency = concurrency;
     this.taskRunner = options.taskRunner;
   }
 
@@ -146,38 +162,94 @@ export class SparqlAnythingConverter<Task> {
     const runDir = await mkdtemp(join(this.workDir, 'sparql-anything-'));
     const runDirName = basename(runDir);
     try {
-      const outputs: string[] = [];
-      let index = 0;
-      for (const { job, query } of planned) {
-        // Interpolated per chunk, at the point of use: holding a copy of the
-        // query for every chunk up front would scale with the input.
-        for (const chunk of job.chunks ?? [undefined]) {
-          const queryPath = join(runDirName, `query-${index}.rq`);
-          await writeFile(
-            join(this.workDir, queryPath),
-            chunk === undefined
-              ? query
-              : // A replacer function, so `$&` and friends in a chunk path are
-                // the characters they look like rather than replacement patterns.
-                query.replaceAll(SOURCE_PLACEHOLDER, () => chunk),
-          );
-          const processOutput = join(runDirName, `output-${index}.nt`);
-          const task = await this.taskRunner.run(
-            this.command(queryPath, processOutput, job),
-          );
-          // wait() rejects on a non-zero exit, aborting convert() before the
-          // crashed process's missing output can be silently concatenated.
-          await this.taskRunner.wait(task);
-          const processOutputPath = join(this.workDir, processOutput);
-          await assertNonEmpty(processOutputPath, job, chunk);
-          outputs.push(processOutputPath);
-          index++;
-        }
-      }
-      await concatenate(outputs, outputPath);
+      const count = await this.runAll(planned, runDirName);
+      // By index, not by completion: the order the jobs and their chunks were
+      // given is the order of the triples, however the processes finished.
+      await concatenate(
+        Array.from({ length: count }, (_, index) =>
+          join(this.workDir, runDirName, `output-${index}.nt`),
+        ),
+        outputPath,
+      );
     } finally {
       await rm(runDir, { recursive: true, force: true });
     }
+  }
+
+  /**
+   * Runs every chunk, at most {@link concurrency} at a time, and returns how
+   * many processes that was.
+   *
+   * The first failure aborts the run: no further chunk is started, and the
+   * processes still going are stopped rather than left writing into a
+   * directory this is about to delete.
+   */
+  private async runAll(
+    planned: PlannedJob[],
+    runDirName: string,
+  ): Promise<number> {
+    const pending = processesOf(planned);
+    const inFlight = new Set<Task>();
+    let failure: unknown;
+
+    // Pulled one at a time rather than with `for...of`: leaving a for-of early
+    // closes the iterator, so the first worker to give up would end the queue
+    // for the others, whatever the reason it stopped.
+    const convertChunks = async (): Promise<void> => {
+      while (failure === undefined) {
+        const next = pending.next();
+        if (next.done === true) {
+          return;
+        }
+        try {
+          await this.convertChunk(next.value, runDirName, inFlight);
+        } catch (error) {
+          failure ??= error;
+          await Promise.all(
+            [...inFlight].map((task) => this.taskRunner.stop(task)),
+          );
+          return;
+        }
+      }
+    };
+
+    await Promise.all(
+      Array.from({ length: this.concurrency }, () => convertChunks()),
+    );
+    if (failure !== undefined) {
+      throw failure;
+    }
+    return countOf(planned);
+  }
+
+  /** Converts one chunk, writing `output-<index>.nt` in the run directory. */
+  private async convertChunk(
+    { index, job, chunk, query }: PlannedProcess,
+    runDirName: string,
+    inFlight: Set<Task>,
+  ): Promise<void> {
+    const queryPath = join(runDirName, `query-${index}.rq`);
+    await writeFile(
+      join(this.workDir, queryPath),
+      chunk === undefined
+        ? query
+        : // A replacer function, so `$&` and friends in a chunk path are the
+          // characters they look like rather than replacement patterns.
+          query.replaceAll(SOURCE_PLACEHOLDER, () => chunk),
+    );
+    const output = join(runDirName, `output-${index}.nt`);
+    const task = await this.taskRunner.run(
+      this.command(queryPath, output, job),
+    );
+    inFlight.add(task);
+    try {
+      // wait() rejects on a non-zero exit, aborting convert() before the
+      // crashed chunk's missing output can be silently concatenated.
+      await this.taskRunner.wait(task);
+    } finally {
+      inFlight.delete(task);
+    }
+    await assertNonEmpty(join(this.workDir, output), job, chunk);
   }
 
   /** The SPARQL Anything invocation for one job. */
@@ -201,6 +273,38 @@ export class SparqlAnythingConverter<Task> {
       ...this.cliArgs.map(shellQuote),
     ].join(' ');
   }
+}
+
+/** One SPARQL Anything process: a job's query, to run over one of its chunks. */
+interface PlannedProcess {
+  /** Position in the run, which orders the outputs and names their files. */
+  index: number;
+  job: ConversionJob;
+  chunk?: string;
+  /** The job's query as written, with `{SOURCE}` still in it. */
+  query: string;
+}
+
+/**
+ * The processes the planned jobs call for, in order: one per chunk, and one
+ * for a job that has none. Lazy, so the workers pulling from it hold one
+ * process each rather than the whole run.
+ */
+function* processesOf(planned: PlannedJob[]): Generator<PlannedProcess> {
+  let index = 0;
+  for (const { job, query } of planned) {
+    for (const chunk of job.chunks ?? [undefined]) {
+      yield { index: index++, job, chunk, query };
+    }
+  }
+}
+
+/** How many processes the planned jobs call for. */
+function countOf(planned: PlannedJob[]): number {
+  return planned.reduce(
+    (total, { job }) => total + (job.chunks?.length ?? 1),
+    0,
+  );
 }
 
 /** A job whose query has been read, and checked against its chunks. */

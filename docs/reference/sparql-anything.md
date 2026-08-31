@@ -41,13 +41,14 @@ await converter.convert(
 
 ### Options
 
-| Option       | Type               | Description                                                                                    |
-| ------------ | ------------------ | ---------------------------------------------------------------------------------------------- |
-| `jarPath`    | `string`           | Path to the SPARQL Anything CLI jar, as the task runner sees it                                |
-| `workDir`    | `string`           | The task runner's working directory; see [Where files are written](#where-files-are-written)   |
-| `heap`       | `string`           | Maximum JVM heap per chunk process, as `-Xmx` takes it (default `'2g'`); see [Memory](#memory) |
-| `cliArgs`    | `string[]`         | Further arguments for the SPARQL Anything CLI; see [Memory](#memory)                           |
-| `taskRunner` | `TaskRunner<Task>` | Runs the SPARQL Anything process for each chunk                                                |
+| Option        | Type               | Description                                                                                                                   |
+| ------------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| `jarPath`     | `string`           | Path to the SPARQL Anything CLI jar, as the task runner sees it                                                               |
+| `workDir`     | `string`           | The task runner's working directory; see [Where files are written](#where-files-are-written)                                  |
+| `heap`        | `string`           | Maximum JVM heap per chunk process, as `-Xmx` takes it (default `'2g'`); see [Memory](#memory)                                |
+| `cliArgs`     | `string[]`         | Further arguments for the SPARQL Anything CLI; see [Memory](#memory)                                                          |
+| `concurrency` | `number`           | How many chunks to convert at once (default `1`); see [Converting several chunks at once](#converting-several-chunks-at-once) |
+| `taskRunner`  | `TaskRunner<Task>` | Runs the SPARQL Anything process for each chunk                                                                               |
 
 ### Jobs
 
@@ -84,6 +85,16 @@ heap: '4g', // -Xmx4g
 ```
 
 Size it with the chunk size. A chunk that outgrows the heap fails loudly – the JVM's `OutOfMemoryError` arrives in the output of a non-zero exit, which aborts the conversion – where an uncapped JVM instead grows until the OOM killer takes the whole container.
+
+### Converting several chunks at once
+
+`concurrency` is how many chunks are converted at the same time. Each one is a JVM of its own, so it multiplies against `heap`: a run needs `concurrency × heap`, on the machine the **task runner** uses – which is not this process's machine when the runner is Docker or remote.
+
+That is why the default is `1` rather than something derived from the CPU count or a memory limit: the converter cannot see the machine its processes run on, so the number is the caller's to choose. `map.sh` sizes its pool from `nproc` capped by the cgroup limit, budgeting ~3 GB a worker; a caller who knows their deployment can do the same arithmetic and pass the result.
+
+Chunks of every job are converted through one pool, in the order the jobs and their chunks were given – a long job and a short one pack together rather than draining in phases. The output is concatenated in that same order, however the processes happened to finish.
+
+The first failure aborts the run: no further chunk is started, and the processes still going are stopped rather than left writing into a directory the converter is about to delete.
 
 `cliArgs` is the escape hatch for CLI flags the converter does not model itself, appended to the arguments it sets. It cannot repeat those: `-q`, `-f`, `-o` and `-l` are rejected, in their long and `--flag=value` forms too, because the converter reads back the `--output` it named, in the `--format` it asked for – overriding either leaves it reporting an empty conversion, or concatenating fragments that are not N-Triples. SPARQL Anything documents repetition only for `-v` and `-c`, so a repeated flag has no defined winner to rely on.
 

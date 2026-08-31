@@ -31,6 +31,8 @@ interface FakeTaskRunnerOptions {
    * cannot be inspected – a symlink to itself, which fails `stat` with ELOOP.
    */
   unreadableOutputContaining?: string;
+  /** Milliseconds `wait()` takes, per output path, to order completions. */
+  waitFor?: Record<string, number>;
 }
 
 /**
@@ -45,6 +47,11 @@ interface FakeTaskRunnerOptions {
 class FakeTaskRunner implements TaskRunner<{ command: string }> {
   readonly commands: string[] = [];
   readonly queries: string[] = [];
+  /** Commands that were stopped before they finished. */
+  readonly stopped: string[] = [];
+  /** The most processes that were ever in flight at the same time. */
+  peakInFlight = 0;
+  private inFlight = 0;
 
   constructor(
     private readonly workDir: string,
@@ -91,14 +98,23 @@ class FakeTaskRunner implements TaskRunner<{ command: string }> {
   }
 
   async wait(task: { command: string }): Promise<string> {
-    const { failOutputContaining } = this.options;
-    if (matches(task.command, failOutputContaining)) {
-      throw new Error('Process failed with code 1');
+    this.inFlight++;
+    this.peakInFlight = Math.max(this.peakInFlight, this.inFlight);
+    try {
+      const output = tokenAfter(task.command, '--output') ?? '';
+      const delay = this.options.waitFor?.[output] ?? 0;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      if (matches(task.command, this.options.failOutputContaining)) {
+        throw new Error('Process failed with code 1');
+      }
+      return '';
+    } finally {
+      this.inFlight--;
     }
-    return '';
   }
 
-  async stop(): Promise<string | null> {
+  async stop(task: { command: string }): Promise<string | null> {
+    this.stopped.push(task.command);
     return null;
   }
 }
@@ -444,6 +460,90 @@ describe('SparqlAnythingConverter', () => {
         join(workDir, 'output.nt'),
       ),
     ).rejects.toThrow('would go unread');
+  });
+
+  it('converts several chunks at once, up to the configured concurrency', async () => {
+    const taskRunner = new FakeTaskRunner(workDir);
+    const chunks = await writeChunks(6);
+
+    await new SparqlAnythingConverter({
+      jarPath: '/bin/sparql-anything.jar',
+      workDir,
+      concurrency: 3,
+      taskRunner,
+    }).convert([{ queryFile, chunks }], join(workDir, 'output.nt'));
+
+    expect(taskRunner.commands).toHaveLength(6);
+    expect(taskRunner.peakInFlight).toBe(3);
+  });
+
+  it('converts one chunk at a time by default', async () => {
+    const taskRunner = new FakeTaskRunner(workDir);
+    const chunks = await writeChunks(3);
+
+    await converterFor(taskRunner).convert(
+      [{ queryFile, chunks }],
+      join(workDir, 'output.nt'),
+    );
+
+    expect(taskRunner.peakInFlight).toBe(1);
+  });
+
+  it('concatenates in the order given, not the order they finished', async () => {
+    const chunks = await writeChunks(3);
+    // The first chunk finishes last.
+    const taskRunner = new FakeTaskRunner(workDir, {
+      waitFor: { 'output-0.nt': 30, 'output-1.nt': 10 },
+    });
+    const outputPath = join(workDir, 'output.nt');
+
+    await new SparqlAnythingConverter({
+      jarPath: '/bin/sparql-anything.jar',
+      workDir,
+      concurrency: 3,
+      taskRunner,
+    }).convert([{ queryFile, chunks }], outputPath);
+
+    expect(await readFile(outputPath, 'utf-8')).toMatch(
+      /^sparql-anything-\S+\/output-0\.nt\n\nsparql-anything-\S+\/output-1\.nt\n\nsparql-anything-\S+\/output-2\.nt\n$/,
+    );
+  });
+
+  it('stops the chunks still running when one fails', async () => {
+    const chunks = await writeChunks(4);
+    const taskRunner = new FakeTaskRunner(workDir, {
+      failOutputContaining: 'output-0.nt',
+      // The others outlive the failure, so they have to be stopped rather than
+      // left writing into the directory convert() is about to delete.
+      waitFor: { 'output-1.nt': 200, 'output-2.nt': 200 },
+    });
+
+    await expect(
+      new SparqlAnythingConverter({
+        jarPath: '/bin/sparql-anything.jar',
+        workDir,
+        concurrency: 3,
+        taskRunner,
+      }).convert([{ queryFile, chunks }], join(workDir, 'output.nt')),
+    ).rejects.toThrow('Process failed');
+
+    expect(taskRunner.stopped).toHaveLength(2);
+    // The fourth chunk was never started.
+    expect(taskRunner.commands).toHaveLength(3);
+  });
+
+  it('rejects a concurrency that is not a whole number of processes', () => {
+    const taskRunner = new FakeTaskRunner(workDir);
+
+    expect(
+      () =>
+        new SparqlAnythingConverter({
+          jarPath: '/bin/sparql-anything.jar',
+          workDir,
+          concurrency: 0,
+          taskRunner,
+        }),
+    ).toThrow('is not a number of chunks to convert at once');
   });
 
   it('refuses an empty job list rather than writing an empty output', async () => {
