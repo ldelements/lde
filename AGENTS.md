@@ -22,6 +22,7 @@ Uses TypeScript with ESNext modules and Vite for building/testing.
 - All exported/public APIs must have JSDoc comments for a good developer experience.
 - With all code changes, ensure all README.md files (including diagrams) are still accurate.
 - Memory must be bounded by a configured unit of work (`batchSize`, `capacity`, …), never by the size of the input – LDE processes data it cannot hold. A bound stated in the data’s own units (“one dataset”, “one graph”) is not a bound. See [ADR 12](docs/decisions/0012-bound-memory-by-the-unit-of-work-not-the-input.md).
+- Packages must stay domain-agnostic, because reuse across unrelated users is the point of the library. A package may commit to an open standard it names in its own contract – DCAT-AP in `dataset-registry-client`, SHACL in `pipeline-shacl-validator` – but never to one caller’s data: no option, type or method may carry a concept that only makes sense for a single dataset, deployment or organisation. The test is whether the name still reads to someone in another sector who has never seen your data. The domain belongs in the values a caller passes, not in the names it passes them under.
 
 ## Development Commands
 
@@ -105,6 +106,7 @@ The `@nx/js:library` generator’s output diverges from the conventions in this 
    - `repository.directory` → `packages/<new-name>`
    - `version` → `0.0.0` (do NOT keep the sibling’s version). The first CI release bumps from the manifest over the package’s full history under the zero-major scheme (minor = breaking, patch = feature/fix), so `0.0.0` lands at `0.0.1` for plain `feat` commits (`search-api-server`, `search-indexer`) and at `0.1.0` only when the history carries a breaking-marked commit (`search-typesense`, `text-normalization`); a manifest pre-set to `0.1.0` overshoots (`pipeline-shacl-sampler` shipped `0.2.0`). This must be in place before the PR merges – see [Releasing a new package](#releasing-a-new-package).
    - `dependencies` and `peerDependencies` – replace with what the new package actually needs
+   - Check the public API for domain-specific names before you write the first option, not at review time
 4. **Replace the source.** Empty out `src/` and `test/`, write the new code.
 5. **Update `tsconfig.lib.json` `references`** to match the new package’s actual `@lde/*` peers.
 6. **Reset coverage thresholds.** In `vite.config.ts`, drop the explicit numbers to `0`; the first test run with `autoUpdate: true` will set the real baseline.
