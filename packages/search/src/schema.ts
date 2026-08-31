@@ -808,16 +808,19 @@ export function nestedFieldName(parent: string, name: string): string {
  * the node `<a>` reaches, which is depth 1. Floored at one, preserving the
  * single-hop embed a non-inline reference has always had.
  *
- * Three things add hops, and counting only the first is what let a value fall
+ * Four things add hops, and counting only the first is what let a value fall
  * outside the frame and be stored as absent, in silence:
  *
  * - **a property path**, which may traverse (`<a>/<b>` is two hops);
  * - **an inline reference**, whose referent’s own fields reach on from wherever
  *   its path landed;
+ * - **a {@link ReferenceStrategy.local local} lookup**, whose target’s own
+ *   fields reach on from the endpoint in the same way, through a Root Type;
  * - **a reference naming a keyed target**, whose document key is read one hop
  *   past the referent (ADR 22) – so a reference reached through an inline
  *   chain needs its key hop inside the frame too, or it stores an un-keyed id
- *   that matches nothing in the target’s collection.
+ *   that matches nothing in the target’s collection. This one is also what a
+ *   cut local expansion falls back to, so it is counted there as well.
  */
 export function inlineFramingDepth(
   schema: SearchSchema,
