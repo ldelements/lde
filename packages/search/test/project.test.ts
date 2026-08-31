@@ -351,6 +351,24 @@ describe('projectDocument', () => {
     expect(document.title_sort_nl).toBeUndefined();
   });
 
+  it('falls back to the document’s first value for a locale it has no title in', () => {
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/d/5b',
+        [dsKey('title')]: { '@language': 'en', '@value': 'Title' },
+      },
+      { name: 'Dataset', class: DATASET, fields },
+    );
+    // A sort names one key, so an empty `title_sort_nl` would tie this document
+    // with every other one lacking a Dutch title – no order at all. It sorts
+    // under its English title instead. Search is unaffected: that query fans
+    // out over every locale key, so the fallback would only duplicate.
+    expect(document.title_sort_nl).toBe('title');
+    expect(document.title_sort_en).toBe('title');
+    expect(document.title_search_nl).toBeUndefined();
+    expect(document.title_search_en).toBe('title');
+  });
+
   it('displays a value whose language is outside locales, but does not index it', () => {
     const document = projectDocument(
       {
