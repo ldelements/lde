@@ -399,6 +399,43 @@ describe('openDocuments', () => {
     ]);
   });
 
+  it('reads a batch too wide for one multi_search as several requests', async () => {
+    // `batchSize` is the caller's knob; it must not decide whether a write
+    // succeeds. Typesense accepts 50 searches per request by default, and a
+    // batch of 10 001 ids needs 51 lookups.
+    const requests: number[] = [];
+    const client = {
+      collections: () => ({
+        documents: () => ({
+          import: async (batch: unknown[]) =>
+            batch.map(() => ({ success: true })),
+        }),
+      }),
+      multiSearch: {
+        perform: async ({ searches }: { searches: unknown[] }) => {
+          requests.push(searches.length);
+          return { results: searches.map(() => ({ hits: [] })) };
+        },
+      },
+    } as unknown as Client;
+
+    const documents = openDocuments<{ id: string }>(client, 'places', {
+      ...options,
+      batchSize: 20_000,
+    });
+    await documents.add(
+      dataset,
+      stream(
+        Array.from({ length: 10_001 }, (unused, index) => ({
+          id: `http://example.org/place/${index}`,
+        })),
+      ),
+    );
+    await documents.flush();
+
+    expect(requests).toEqual([50, 1]);
+  });
+
   it('reports the documents an import rejected rather than losing them silently', async () => {
     const client = {
       collections: () => ({

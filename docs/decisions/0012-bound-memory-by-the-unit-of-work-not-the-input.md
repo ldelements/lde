@@ -33,7 +33,9 @@ independently, each inventing its own name:
   (`capacity`); `Stage` reads one `batchSize` of selector bindings at a time,
   with `maxConcurrency` batches in flight; `SparqlSelector` paginates under
   `maxResults`.
-- `@lde/search-typesense` – `BatchImporter` holds one `batchSize` of documents.
+- `@lde/search-typesense` – a run’s documents hold one `batchSize` before an
+  import, and a membership sweep reads one page of documents at a time however
+  many a dataset has.
 - `@lde/distribution-probe` – shipped as _“bounded-stream reads”_ (`aabcd08`).
 - `@lde/pipeline-shacl-sampler` – sampling is bounding.
 

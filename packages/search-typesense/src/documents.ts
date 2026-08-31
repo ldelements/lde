@@ -35,6 +35,10 @@ const RETRACTION_PAGE = 250;
 /** Ids per `multi_search` entry when reading membership back before a write. */
 const LOOKUP_BATCH = 200;
 
+/** Entries per `multi_search` request: the engine’s own default ceiling
+ *  (`max-searches-in-multi-search`), which a large `batchSize` would exceed. */
+const MAX_SEARCHES_PER_REQUEST = 50;
+
 /** Stay well under Typesense’s ~4000-char URL query-string limit per delete. */
 const MAX_FILTER_VALUES_LENGTH = 3000;
 
@@ -380,7 +384,7 @@ function ownedDocuments<TDocument extends { id: string }>(
         selectedDatasets,
         options.maxSweepableSources ?? DEFAULT_MAX_SWEEPABLE_SOURCES,
       );
-      for (const chunk of chunked(departed)) {
+      for (const chunk of chunked(departed.map(escapeFilterValue))) {
         await deleteByFilter(
           client,
           collection,
@@ -582,24 +586,35 @@ async function storedMembership(
       per_page: batch.length,
     });
   }
-  const { results } = (await client.multiSearch.perform({ searches })) as {
-    results: readonly {
-      hits?: readonly { document: Record<string, unknown> }[];
-      error?: string;
-    }[];
-  };
   const membership = new Map<string, readonly Referrer[]>();
-  for (const result of results) {
-    // multi_search reports a failed entry inline instead of rejecting. A lost
-    // entry would silently drop the membership of everything it covered, so it
-    // is raised rather than skipped.
-    if (result.error !== undefined) {
-      throw new Error(
-        `Reading membership from “${collection}” failed: ${result.error}`,
-      );
-    }
-    for (const hit of result.hits ?? []) {
-      membership.set(String(hit.document.id), referrersOf(hit.document));
+  // A batch wide enough to need more entries than the engine accepts per
+  // request travels as several requests: `batchSize` is the caller's knob, and
+  // it must not decide whether a write succeeds.
+  for (
+    let start = 0;
+    start < searches.length;
+    start += MAX_SEARCHES_PER_REQUEST
+  ) {
+    const { results } = (await client.multiSearch.perform({
+      searches: searches.slice(start, start + MAX_SEARCHES_PER_REQUEST),
+    })) as {
+      results: readonly {
+        hits?: readonly { document: Record<string, unknown> }[];
+        error?: string;
+      }[];
+    };
+    for (const result of results) {
+      // multi_search reports a failed entry inline instead of rejecting. A lost
+      // entry would silently drop the membership of everything it covered, so
+      // it is raised rather than skipped.
+      if (result.error !== undefined) {
+        throw new Error(
+          `Reading membership from “${collection}” failed: ${result.error}`,
+        );
+      }
+      for (const hit of result.hits ?? []) {
+        membership.set(String(hit.document.id), referrersOf(hit.document));
+      }
     }
   }
   return membership;
