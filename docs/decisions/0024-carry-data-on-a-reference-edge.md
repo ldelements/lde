@@ -75,37 +75,43 @@ Seven mechanisms make that work.
 
 ### 1. A nested field may be `filterable` and `searchable`
 
-It could previously be `output` and nothing else, because serving more “would
-need query-compiler and engine support that no engine port declares”. Measured
-against a live engine, that held for two of the four Roles, not all four:
+A field's **capabilities** are what it opts into: `output`, `filterable`,
+`facetable`, `sortable`, `searchable`, `joinable`. (The code calls these
+_Roles_. This record says _capability_ throughout, because its worked example is
+a `schema:Role` – the edge node – and one word cannot mean both here.)
 
-| Role                       | Verdict                                                      |
+A nested field could previously be `output` and nothing else, because serving
+more “would need query-compiler and engine support that no engine port
+declares”. Measured against a live engine, that held for two of the four
+capabilities, not all four:
+
+| Capability                 | Verdict                                                      |
 | -------------------------- | ------------------------------------------------------------ |
 | `filterable`, `searchable` | served exactly: now allowed                                  |
 | `facetable`                | counts are **document-level**, so they are wrong (see below) |
 | `sortable`                 | there is no sorting _into_ an array element                  |
 
-Roles stay independent opt-ins, and here that matters more than usual, because
-**edges multiply**. A document carries one entry per relation and a corpus
-carries millions of documents, so a rule of “nesting means indexing” would price
-the whole entry – every qualifier, every name, every id – into memory, on every
-edge. Adding a role for display would then cost the same as adding one you
-query.
+Capabilities stay independent opt-ins, and here that matters more than usual,
+because **edges multiply**. A document carries one entry per relation and a
+corpus carries millions of documents, so a rule of “nesting means indexing”
+would price the whole entry – every qualifier, every name, every id – into
+memory, on every edge. Adding a capability for display would then cost the same
+as adding one you query.
 
 An engine holds its _index_ in memory and the documents themselves on disk, so
 an `index: false` field costs disk and response bytes but no RAM however large
 it grows. A nested field declaring only `output` is therefore stored exactly as
-before, and only one that opts into a query Role is indexed. A deployment can
-nest ten fields for display and index one, and pay for the one.
+before, and only one that opts into a query capability is indexed. A deployment
+can nest ten fields for display and index one, and pay for the one.
 
 With one exception worth stating, because it is the one place the cost is not
 the referring type's to choose: a `local` lookup
 projects its endpoint through the **target's own declaration**, so the target's
-Roles come with it – a `searchable` label on `Person` is indexed inside every
-document that nests one. That is what makes free text reach an endpoint's name,
-and it is a real cost: nesting a wide target for display alone indexes its
-searchable fields per referring document. Nest a target whose Roles you are
-willing to pay for at that multiplicity.
+capabilities come with it – a `searchable` label on `Person` is indexed inside
+every document that nests one. That is what makes free text reach an endpoint's
+name, and it is a real cost: nesting a wide target for display alone indexes its
+searchable fields per referring document. Nest a target whose capabilities you
+are willing to pay for at that multiplicity.
 
 We extend `inline` rather than add a `qualified` strategy beside it. A second
 nesting word would make the interface larger, forcing every user to choose
