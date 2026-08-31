@@ -35,17 +35,17 @@ const RESERVED_ARGUMENTS = new Set([
 ]);
 
 /**
- * One SPARQL Anything invocation: a query, over an optional chunk, with
- * optional RDF loaded alongside it.
+ * One query, run over each of its chunks, with optional RDF loaded alongside
+ * it. Every chunk gets its own process; what they share is stated once.
  */
 export interface ConversionJob {
   /** Path to the SPARQL CONSTRUCT query to run. */
   queryFile: string;
   /**
-   * Path to the chunk the query reads, substituted for the literal `{SOURCE}`
-   * in it. Omit for a query that names its own input.
+   * Paths to the chunks the query reads, one process each, substituted for the
+   * literal `{SOURCE}` in it. Omit for a query that names its own input.
    */
-  chunk?: string;
+  chunks?: string[];
   /**
    * Optional path passed to `--load`, as the task runner sees it. A file is
    * loaded into the default graph; a directory loads each RDF file it holds
@@ -132,25 +132,26 @@ export class SparqlAnythingConverter<Task> {
         'Cannot convert without jobs; a run that produced none has failed upstream, and an empty output would hide that',
       );
     }
+    const processes = await plan(jobs);
     // A fresh directory per run: a previous run's output left in place would
     // otherwise satisfy the non-empty check below with stale triples.
     const runDir = await mkdtemp(join(this.workDir, 'sparql-anything-'));
     const runDirName = basename(runDir);
     try {
       const outputs: string[] = [];
-      for (const [index, job] of jobs.entries()) {
+      for (const [index, { query, job, chunk }] of processes.entries()) {
         const queryPath = join(runDirName, `query-${index}.rq`);
-        await writeFile(join(this.workDir, queryPath), await queryFor(job));
-        const jobOutput = join(runDirName, `output-${index}.nt`);
+        await writeFile(join(this.workDir, queryPath), query);
+        const processOutput = join(runDirName, `output-${index}.nt`);
         const task = await this.taskRunner.run(
-          this.command(queryPath, jobOutput, job),
+          this.command(queryPath, processOutput, job),
         );
         // wait() rejects on a non-zero exit, aborting convert() before the
-        // crashed job's missing output can be silently concatenated.
+        // crashed process's missing output can be silently concatenated.
         await this.taskRunner.wait(task);
-        const jobOutputPath = join(this.workDir, jobOutput);
-        await assertNonEmpty(jobOutputPath, job);
-        outputs.push(jobOutputPath);
+        const processOutputPath = join(this.workDir, processOutput);
+        await assertNonEmpty(processOutputPath, job, chunk);
+        outputs.push(processOutputPath);
       }
       await concatenate(outputs, outputPath);
     } finally {
@@ -181,29 +182,55 @@ export class SparqlAnythingConverter<Task> {
   }
 }
 
+/** One SPARQL Anything process: a job's query, resolved for one chunk. */
+interface PlannedProcess {
+  job: ConversionJob;
+  chunk?: string;
+  query: string;
+}
+
 /**
- * The job's query, with the chunk substituted for the placeholder.
+ * The processes the jobs call for, in order: one per chunk, and one for a job
+ * without chunks. Each job's query file is read once, however many chunks it
+ * covers.
  *
- * A query that names `{SOURCE}` needs a chunk, and a chunk is only reachable
+ * A query that names `{SOURCE}` needs chunks, and a chunk is only reachable
  * through the placeholder, so either half on its own is a misconfiguration
  * that SPARQL Anything would report as a parse error, or not at all.
  */
-async function queryFor(job: ConversionJob): Promise<string> {
-  const query = await readFile(job.queryFile, 'utf-8');
-  const namesSource = query.includes(SOURCE_PLACEHOLDER);
-  if (namesSource && job.chunk === undefined) {
-    throw new Error(
-      `Query ‘${job.queryFile}’ names ${SOURCE_PLACEHOLDER} but its job has no chunk`,
-    );
+async function plan(jobs: ConversionJob[]): Promise<PlannedProcess[]> {
+  const processes: PlannedProcess[] = [];
+  for (const job of jobs) {
+    const query = await readFile(job.queryFile, 'utf-8');
+    const namesSource = query.includes(SOURCE_PLACEHOLDER);
+    if (job.chunks === undefined) {
+      if (namesSource) {
+        throw new Error(
+          `Query ‘${job.queryFile}’ names ${SOURCE_PLACEHOLDER} but its job has no chunks`,
+        );
+      }
+      processes.push({ job, query });
+      continue;
+    }
+    if (!namesSource) {
+      throw new Error(
+        `Query ‘${job.queryFile}’ never names ${SOURCE_PLACEHOLDER}, so its job's chunks would go unread`,
+      );
+    }
+    if (job.chunks.length === 0) {
+      throw new Error(
+        `Job for query ‘${job.queryFile}’ has no chunks; a step that produced none has failed upstream, and converting nothing would hide that`,
+      );
+    }
+    for (const chunk of job.chunks) {
+      processes.push({
+        job,
+        chunk,
+        query: query.replaceAll(SOURCE_PLACEHOLDER, chunk),
+      });
+    }
   }
-  if (!namesSource && job.chunk !== undefined) {
-    throw new Error(
-      `Job for chunk ‘${job.chunk}’ has a query, ‘${job.queryFile}’, that never names ${SOURCE_PLACEHOLDER}, so the chunk would go unread`,
-    );
-  }
-  return job.chunk === undefined
-    ? query
-    : query.replaceAll(SOURCE_PLACEHOLDER, job.chunk);
+  return processes;
 }
 
 /**
@@ -215,6 +242,7 @@ async function queryFor(job: ConversionJob): Promise<string> {
 async function assertNonEmpty(
   outputPath: string,
   job: ConversionJob,
+  chunk?: string,
 ): Promise<void> {
   const size = await stat(outputPath).then(
     (stats) => stats.size,
@@ -229,7 +257,7 @@ async function assertNonEmpty(
   );
   if (size === 0) {
     throw new Error(
-      `SPARQL Anything produced no output for ‘${job.queryFile}’${job.chunk === undefined ? '' : ` over ‘${job.chunk}’`}; it exits successfully when it cannot read or parse an input`,
+      `SPARQL Anything produced no output for ‘${job.queryFile}’${chunk === undefined ? '' : ` over ‘${chunk}’`}; it exits successfully when it cannot read or parse an input`,
     );
   }
 }

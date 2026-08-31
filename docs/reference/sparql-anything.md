@@ -24,20 +24,15 @@ const converter = new SparqlAnythingConverter({
 
 await converter.convert(
   [
-    // A query over each chunk, with reference data loaded alongside it.
+    // One query over many chunks, with reference data loaded alongside it.
     {
       queryFile: 'config/places.rq',
-      chunk: 'data/places_aa.csv',
-      load: 'data/reference.ttl',
-    },
-    {
-      queryFile: 'config/places.rq',
-      chunk: 'data/places_ab.csv',
+      chunks: ['data/places_aa.csv', 'data/places_ab.csv'],
       load: 'data/reference.ttl',
     },
     // A shorter job of a different shape, in the same call.
-    { queryFile: 'config/names.rq', chunk: 'data/names_aa.csv' },
-    // A query that names its own input, so it takes no chunk.
+    { queryFile: 'config/names.rq', chunks: ['data/names_aa.csv'] },
+    // A query that names its own input, so it takes no chunks.
     { queryFile: 'config/ontology.rq', load: 'data/ontology.rdf' },
   ],
   'output/places.nt',
@@ -56,17 +51,17 @@ await converter.convert(
 
 ### Jobs
 
-Each entry passed to `convert()` is one SPARQL Anything invocation.
+Each entry passed to `convert()` is one query and the chunks to run it over – one process per chunk, so what those processes share is stated once.
 
-| Field       | Type     | Description                                                                                       |
-| ----------- | -------- | ------------------------------------------------------------------------------------------------- |
-| `queryFile` | `string` | Path to the SPARQL CONSTRUCT query to run                                                         |
-| `chunk`     | `string` | Path substituted for the literal `{SOURCE}` in the query; omit when the query names its own input |
-| `load`      | `string` | Optional path passed to `--load`; see [Loading existing RDF](#loading-existing-rdf)               |
+| Field       | Type       | Description                                                                                                          |
+| ----------- | ---------- | -------------------------------------------------------------------------------------------------------------------- |
+| `queryFile` | `string`   | Path to the SPARQL CONSTRUCT query to run                                                                            |
+| `chunks`    | `string[]` | Paths substituted for the literal `{SOURCE}` in the query, one process each; omit when the query names its own input |
+| `load`      | `string`   | Optional path passed to `--load`; see [Loading existing RDF](#loading-existing-rdf)                                  |
 
-A query and a chunk have to agree: a query naming `{SOURCE}` without a chunk, or a chunk whose query never names `{SOURCE}`, is rejected rather than run – SPARQL Anything would report the first as a parse error and the second not at all.
+A query and its chunks have to agree: a query naming `{SOURCE}` without chunks, or chunks whose query never names `{SOURCE}`, is rejected rather than run – SPARQL Anything would report the first as a parse error and the second not at all. An empty `chunks` array is rejected too: a step that produced none has already failed.
 
-**Jobs of different shapes belong in one call.** They are run by one converter, so a long job and a short one pack together instead of draining in phases – and their outputs land in one file, in the order given, without the caller stitching anything together afterwards.
+**Jobs of different shapes belong in one call.** They are run by one converter, so a long job's chunks and a short one's pack together instead of draining in phases – and their outputs land in one file, in the order given, without the caller stitching anything together afterwards.
 
 ### Where files are written
 
@@ -96,7 +91,7 @@ Size it with the chunk size. A chunk that outgrows the heap fails loudly – the
 
 For each job, the converter:
 
-1. Replaces the literal `{SOURCE}` in the query file with the job’s chunk path, if it has one, and writes the result to a temporary `.rq` file.
+1. Replaces the literal `{SOURCE}` in the query file with the chunk’s path, if the job has chunks, and writes the result to a temporary `.rq` file.
 2. Runs `java -Xmx<heap> -jar <jar> -q <query> [--load <load>] --format NT --output <chunk>.nt [cliArgs]`, with every path quoted, so a space or a shell metacharacter in a filename can neither break the command nor inject into it.
 3. Waits for the process; a non-zero exit **aborts the whole conversion** so a crashed chunk can never be silently dropped from the output.
 4. Checks that the job’s output is not empty. SPARQL Anything exits successfully when it cannot read or parse an input – it logs the problem and writes nothing – so an empty or missing output **aborts the conversion** too.

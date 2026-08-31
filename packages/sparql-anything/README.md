@@ -21,7 +21,7 @@ const converter = new SparqlAnythingConverter({
 });
 
 await converter.convert(
-  [{ queryFile: 'config/places.rq', chunk: 'data/places_aa.csv' }],
+  [{ queryFile: 'config/places.rq', chunks: ['data/places_aa.csv'] }],
   'output/places.nt',
 );
 ```

@@ -141,9 +141,9 @@ describe('SparqlAnythingConverter', () => {
     });
   }
 
-  /** Jobs running the shared query over each of `chunks`. */
+  /** One job running the shared query over every one of `chunks`. */
   function jobsFor(chunks: string[], load?: string): ConversionJob[] {
-    return chunks.map((chunk) => ({ queryFile, chunk, load }));
+    return [{ queryFile, chunks, load }];
   }
 
   /** Writes `count` chunk files and returns their paths. */
@@ -314,6 +314,38 @@ describe('SparqlAnythingConverter', () => {
     ]);
   });
 
+  it('states a query and its --load once for every chunk of a job', async () => {
+    const taskRunner = new FakeTaskRunner(workDir);
+    const chunks = await writeChunks(3);
+
+    await converterFor(taskRunner).convert(
+      [{ queryFile, chunks, load: '/data/reference.ttl' }],
+      join(workDir, 'output.nt'),
+    );
+
+    // One process per chunk, each with the job's query and --load.
+    expect(taskRunner.commands).toHaveLength(3);
+    for (const command of taskRunner.commands) {
+      expect(command).toContain("--load '/data/reference.ttl'");
+    }
+    expect(taskRunner.queries.map((query) => query)).toEqual(
+      chunks.map(
+        (chunk) => `CONSTRUCT { ?s ?p ?o } WHERE { fx:location "${chunk}" }`,
+      ),
+    );
+  });
+
+  it('refuses a job whose chunk list is empty', async () => {
+    const taskRunner = new FakeTaskRunner(workDir);
+
+    await expect(
+      converterFor(taskRunner).convert(
+        [{ queryFile, chunks: [] }],
+        join(workDir, 'output.nt'),
+      ),
+    ).rejects.toThrow('has no chunks; a step that produced none');
+  });
+
   it('runs a job whose query names its own input', async () => {
     const taskRunner = new FakeTaskRunner(workDir);
     const ontologyQuery = join(workDir, 'ontology.rq');
@@ -352,10 +384,10 @@ describe('SparqlAnythingConverter', () => {
         [{ queryFile }],
         join(workDir, 'output.nt'),
       ),
-    ).rejects.toThrow('has no chunk');
+    ).rejects.toThrow('has no chunks');
   });
 
-  it('refuses a job whose query would leave its chunk unread', async () => {
+  it('refuses a job whose query would leave its chunks unread', async () => {
     const taskRunner = new FakeTaskRunner(workDir);
     const [chunk] = await writeChunks(1);
     const ontologyQuery = join(workDir, 'ontology.rq');
@@ -363,7 +395,7 @@ describe('SparqlAnythingConverter', () => {
 
     await expect(
       converterFor(taskRunner).convert(
-        [{ queryFile: ontologyQuery, chunk }],
+        [{ queryFile: ontologyQuery, chunks: [chunk] }],
         join(workDir, 'output.nt'),
       ),
     ).rejects.toThrow('would go unread');
