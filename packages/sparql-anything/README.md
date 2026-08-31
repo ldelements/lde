@@ -17,8 +17,9 @@ import { NativeTaskRunner } from '@lde/task-runner-native';
 const converter = new SparqlAnythingConverter({
   queryFile: 'config/places.rq',
   jarPath: 'bin/sparql-anything.jar',
+  workDir: 'data',
   load: 'data/reference.ttl',
-  taskRunner: new NativeTaskRunner(),
+  taskRunner: new NativeTaskRunner({ cwd: 'data' }),
 });
 
 await converter.convert(['data/places_aa.csv'], 'output/places.nt');

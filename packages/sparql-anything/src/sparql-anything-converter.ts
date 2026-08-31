@@ -1,9 +1,8 @@
-import { TaskRunner } from '@lde/task-runner';
+import { shellQuote, TaskRunner } from '@lde/task-runner';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { finished, pipeline } from 'node:stream/promises';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { basename, join } from 'node:path';
 
 /** Placeholder in the query file that is replaced with each chunk's path. */
 const SOURCE_PLACEHOLDER = '{SOURCE}';
@@ -15,11 +14,20 @@ export interface SparqlAnythingConverterOptions<Task> {
    * `{SOURCE}` is replaced with the chunk's path before each run.
    */
   queryFile: string;
-  /** Path to the SPARQL Anything CLI jar. */
+  /** Path to the SPARQL Anything CLI jar, as the task runner sees it. */
   jarPath: string;
   /**
-   * Optional path passed to `--load`. A file is loaded into the default graph;
-   * a directory loads each RDF file it holds into its own named graph.
+   * The task runner's working directory: `cwd` for a `NativeTaskRunner`,
+   * `mountDir` for a `DockerTaskRunner`. The converter writes its generated
+   * query files and per-chunk outputs into a fresh subdirectory here, removes
+   * it when it is done, and refers to those files by a path relative to this
+   * directory, so the same command works on the host and inside a container.
+   */
+  workDir: string;
+  /**
+   * Optional path passed to `--load`, as the task runner sees it. A file is
+   * loaded into the default graph; a directory loads each RDF file it holds
+   * into its own named graph.
    */
   load?: string;
   /** Runs the SPARQL Anything process for each chunk. */
@@ -34,45 +42,58 @@ export interface SparqlAnythingConverterOptions<Task> {
 export class SparqlAnythingConverter<Task> {
   private readonly queryFile: string;
   private readonly jarPath: string;
+  private readonly workDir: string;
   private readonly load?: string;
   private readonly taskRunner: TaskRunner<Task>;
 
   constructor(options: SparqlAnythingConverterOptions<Task>) {
     this.queryFile = options.queryFile;
     this.jarPath = options.jarPath;
+    this.workDir = options.workDir;
     this.load = options.load;
     this.taskRunner = options.taskRunner;
   }
 
   /**
    * Converts each chunk to N-Triples and concatenates the results, in the order
-   * given, into `outputPath`.
+   * given, into `outputPath`. Chunk paths are passed to SPARQL Anything as
+   * given, so they too must be readable by the task runner.
    */
   async convert(chunkPaths: string[], outputPath: string): Promise<void> {
+    if (chunkPaths.length === 0) {
+      throw new Error(
+        'Cannot convert without chunks; a run that produced none has failed upstream, and an empty output would hide that',
+      );
+    }
     const query = await readFile(this.queryFile, 'utf-8');
-    const loadOption = this.load === undefined ? '' : ` --load ${this.load}`;
-    const tempDir = await mkdtemp(join(tmpdir(), 'sparql-anything-'));
+    // A fresh directory per run: a previous run's output left in place would
+    // otherwise satisfy the non-empty check below with stale triples.
+    const runDir = await mkdtemp(join(this.workDir, 'sparql-anything-'));
+    const runDirName = basename(runDir);
+    const loadOption =
+      this.load === undefined ? '' : ` --load ${shellQuote(this.load)}`;
     try {
       const chunkOutputs: string[] = [];
       for (const [index, chunkPath] of chunkPaths.entries()) {
-        const queryPath = join(tempDir, `query-${index}.rq`);
+        const queryPath = join(runDirName, `query-${index}.rq`);
         await writeFile(
-          queryPath,
+          join(this.workDir, queryPath),
           query.replaceAll(SOURCE_PLACEHOLDER, chunkPath),
         );
-        const chunkOutput = `${chunkPath}.nt`;
+        const chunkOutput = join(runDirName, `chunk-${index}.nt`);
         const task = await this.taskRunner.run(
-          `java -jar ${this.jarPath} -q ${queryPath}${loadOption} --format NT --output ${chunkOutput}`,
+          `java -jar ${shellQuote(this.jarPath)} -q ${shellQuote(queryPath)}${loadOption} --format NT --output ${shellQuote(chunkOutput)}`,
         );
         // wait() rejects on a non-zero exit, aborting convert() before the
         // crashed chunk's missing output can be silently concatenated.
         await this.taskRunner.wait(task);
-        await assertNonEmpty(chunkOutput, chunkPath);
-        chunkOutputs.push(chunkOutput);
+        const chunkOutputPath = join(this.workDir, chunkOutput);
+        await assertNonEmpty(chunkOutputPath, chunkPath);
+        chunkOutputs.push(chunkOutputPath);
       }
       await concatenate(chunkOutputs, outputPath);
     } finally {
-      await rm(tempDir, { recursive: true, force: true });
+      await rm(runDir, { recursive: true, force: true });
     }
   }
 }
@@ -89,7 +110,14 @@ async function assertNonEmpty(
 ): Promise<void> {
   const size = await stat(outputPath).then(
     (stats) => stats.size,
-    () => 0,
+    (error: NodeJS.ErrnoException) => {
+      // Anything but a missing file is a problem of its own, and reporting it
+      // as an empty conversion would send the reader after the wrong cause.
+      if (error.code !== 'ENOENT') {
+        throw error;
+      }
+      return 0;
+    },
   );
   if (size === 0) {
     throw new Error(
@@ -108,7 +136,12 @@ async function concatenate(
   outputPath: string,
 ): Promise<void> {
   const output = createWriteStream(outputPath);
-  for (const inputPath of inputPaths) {
+  for (const [index, inputPath] of inputPaths.entries()) {
+    // A newline between files, in case one does not end in one: N-Triples
+    // tolerates the blank line, but not two triples sharing a line.
+    if (index > 0) {
+      output.write('\n');
+    }
     await pipeline(createReadStream(inputPath), output, { end: false });
   }
   output.end();
