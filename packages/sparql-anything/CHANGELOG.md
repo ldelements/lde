@@ -1,3 +1,9 @@
+## 0.1.1 (2026-08-31)
+
+### 🚀 Features
+
+- **sparql-anything:** convert several chunks at once ([#795](https://github.com/ldelements/lde/pull/795))
+
 ## 0.1.0 (2026-08-31)
 
 ### 🚀 Features
