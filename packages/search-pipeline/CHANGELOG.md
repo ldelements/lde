@@ -1,3 +1,14 @@
+## 0.26.1 (2026-08-31)
+
+### 🩹 Fixes
+
+- **search-pipeline:** read a local lookup's own fields off the referent ([#788](https://github.com/ldelements/lde/pull/788))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.29.1
+- Updated @lde/search to 0.24.1
+
 ## 0.26.0 (2026-08-31)
 
 ### 🧱 Updated Dependencies

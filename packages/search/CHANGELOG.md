@@ -1,3 +1,9 @@
+## 0.24.1 (2026-08-31)
+
+### 🩹 Fixes
+
+- **search-pipeline:** read a local lookup's own fields off the referent ([#788](https://github.com/ldelements/lde/pull/788))
+
 ## 0.24.0 (2026-08-31)
 
 ### 🚀 Features
