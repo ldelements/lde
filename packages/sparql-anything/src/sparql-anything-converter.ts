@@ -1,7 +1,7 @@
 import { TaskRunner } from '@lde/task-runner';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { pipeline } from 'node:stream/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { finished, pipeline } from 'node:stream/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -63,12 +63,34 @@ export class SparqlAnythingConverter<Task> {
         // wait() rejects on a non-zero exit, aborting convert() before the
         // crashed chunk's missing output can be silently concatenated.
         await this.taskRunner.wait(task);
+        await assertNonEmpty(chunkOutput, chunkPath);
         chunkOutputs.push(chunkOutput);
       }
       await concatenate(chunkOutputs, outputPath);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
+  }
+}
+
+/**
+ * Throws unless the chunk's output holds at least one byte. SPARQL Anything
+ * exits 0 when it cannot read or parse an input: it logs the problem, writes an
+ * empty output and stops. Without this guard a run stays green while its output
+ * silently misses every triple of the chunk.
+ */
+async function assertNonEmpty(
+  outputPath: string,
+  chunkPath: string,
+): Promise<void> {
+  const size = await stat(outputPath).then(
+    (stats) => stats.size,
+    () => 0,
+  );
+  if (size === 0) {
+    throw new Error(
+      `SPARQL Anything produced no output for chunk ‘${chunkPath}’; it exits successfully when it cannot read or parse an input`,
+    );
   }
 }
 
@@ -82,11 +104,12 @@ async function concatenate(
   outputPath: string,
 ): Promise<void> {
   const output = createWriteStream(outputPath);
-  try {
-    for (const inputPath of inputPaths) {
-      await pipeline(createReadStream(inputPath), output, { end: false });
-    }
-  } finally {
-    output.end();
+  for (const inputPath of inputPaths) {
+    await pipeline(createReadStream(inputPath), output, { end: false });
   }
+  output.end();
+  // pipeline() with `end: false` resolves once the source ends, not once the
+  // destination is flushed and closed, so await that before reporting success.
+  // On an earlier rejection pipeline() has already destroyed the stream.
+  await finished(output);
 }

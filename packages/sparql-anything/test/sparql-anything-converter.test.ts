@@ -5,6 +5,22 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
+/** Options for a {@link FakeTaskRunner}. */
+interface FakeTaskRunnerOptions {
+  /** When set, `wait()` rejects for commands whose output path contains this. */
+  failOutputContaining?: string;
+  /**
+   * When set, chunks whose output path contains this get an empty `--output`
+   * file, as SPARQL Anything writes when it cannot read or parse an input.
+   */
+  emptyOutputContaining?: string;
+  /**
+   * When set, chunks whose output path contains this get no `--output` file at
+   * all, as SPARQL Anything leaves behind when it crashes before writing.
+   */
+  missingOutputContaining?: string;
+}
+
 /**
  * Records the commands it is asked to run and simulates SPARQL Anything:
  * it captures the query passed via `-q <file>` and writes the `--output <file>`
@@ -15,8 +31,7 @@ class FakeTaskRunner implements TaskRunner<{ command: string }> {
   readonly commands: string[] = [];
   readonly queries: string[] = [];
 
-  /** When set, `wait()` rejects for commands whose output path contains this. */
-  constructor(private readonly failOutputContaining?: string) {}
+  constructor(private readonly options: FakeTaskRunnerOptions = {}) {}
 
   async run(command: string): Promise<{ command: string }> {
     this.commands.push(command);
@@ -25,17 +40,28 @@ class FakeTaskRunner implements TaskRunner<{ command: string }> {
       this.queries.push(await readFile(queryFile, 'utf-8'));
     }
     const outputFile = tokenAfter(command, '--output');
-    if (outputFile) {
-      await writeFile(outputFile, `${outputFile}\n`);
+    const { missingOutputContaining } = this.options;
+    if (
+      outputFile &&
+      !(missingOutputContaining && outputFile.includes(missingOutputContaining))
+    ) {
+      await writeFile(outputFile, this.outputFor(outputFile));
     }
     return { command };
   }
 
+  /** The content SPARQL Anything would write for `outputFile`. */
+  outputFor(outputFile: string): string {
+    const { emptyOutputContaining } = this.options;
+    if (emptyOutputContaining && outputFile.includes(emptyOutputContaining)) {
+      return '';
+    }
+    return `${outputFile}\n`;
+  }
+
   async wait(task: { command: string }): Promise<string> {
-    if (
-      this.failOutputContaining &&
-      task.command.includes(this.failOutputContaining)
-    ) {
+    const { failOutputContaining } = this.options;
+    if (failOutputContaining && task.command.includes(failOutputContaining)) {
       throw new Error('Process failed with code 1');
     }
     return '';
@@ -134,7 +160,64 @@ describe('SparqlAnythingConverter', () => {
     // The FakeTaskRunner writes each chunk's `.nt` path as that file's content,
     // so the concatenated output reflects the order the chunks were processed.
     const output = await readFile(outputPath, 'utf-8');
-    expect(output).toBe(chunks.map((chunk) => `${chunk}.nt\n`).join(''));
+    expect(output).toBe(
+      chunks.map((chunk) => taskRunner.outputFor(`${chunk}.nt`)).join(''),
+    );
+  });
+
+  it('aborts when a chunk produces an empty output', async () => {
+    const chunks = [
+      join(workDir, 'geonames_aa.csv'),
+      join(workDir, 'geonames_ab.csv'),
+      join(workDir, 'geonames_ac.csv'),
+    ];
+    for (const chunk of chunks) {
+      await writeFile(chunk, 'header\nrow');
+    }
+    // SPARQL Anything exits 0 but writes nothing when it cannot read an input.
+    const taskRunner = new FakeTaskRunner({
+      emptyOutputContaining: 'geonames_ab.csv.nt',
+    });
+    const converter = new SparqlAnythingConverter({
+      queryFile,
+      jarPath: '/bin/sparql-anything.jar',
+      adminCodesFile: '/data/admin-codes.ttl',
+      taskRunner,
+    });
+    const outputPath = join(workDir, 'geonames.nt');
+
+    await expect(converter.convert(chunks, outputPath)).rejects.toThrow(
+      'produced no output',
+    );
+
+    // The second chunk was empty, so the third never ran and nothing was merged.
+    expect(taskRunner.commands).toHaveLength(2);
+    await expect(readFile(outputPath, 'utf-8')).rejects.toThrow();
+  });
+
+  it('aborts when a chunk produces no output file', async () => {
+    const chunks = [
+      join(workDir, 'geonames_aa.csv'),
+      join(workDir, 'geonames_ab.csv'),
+    ];
+    for (const chunk of chunks) {
+      await writeFile(chunk, 'header\nrow');
+    }
+    const taskRunner = new FakeTaskRunner({
+      missingOutputContaining: 'geonames_aa.csv.nt',
+    });
+    const converter = new SparqlAnythingConverter({
+      queryFile,
+      jarPath: '/bin/sparql-anything.jar',
+      adminCodesFile: '/data/admin-codes.ttl',
+      taskRunner,
+    });
+
+    await expect(
+      converter.convert(chunks, join(workDir, 'geonames.nt')),
+    ).rejects.toThrow('produced no output');
+
+    expect(taskRunner.commands).toHaveLength(1);
   });
 
   it('aborts without writing output when a chunk fails', async () => {
@@ -146,7 +229,9 @@ describe('SparqlAnythingConverter', () => {
     for (const chunk of chunks) {
       await writeFile(chunk, 'header\nrow');
     }
-    const taskRunner = new FakeTaskRunner('geonames_ab.csv.nt');
+    const taskRunner = new FakeTaskRunner({
+      failOutputContaining: 'geonames_ab.csv.nt',
+    });
     const converter = new SparqlAnythingConverter({
       queryFile,
       jarPath: '/bin/sparql-anything.jar',
