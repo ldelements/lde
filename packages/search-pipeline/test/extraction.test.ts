@@ -524,8 +524,27 @@ describe('local lookups (the referent’s own fields)', () => {
   it('reads them in an OPTIONAL, so a referent stated by id alone keeps its row', () => {
     // A `local` lookup stores its referent whether or not the referring
     // document says anything about it; conjoining the two would drop the id
-    // along with the absent name.
-    expect(extractionQueryString(roleWork, roleSchema)).toContain('OPTIONAL');
+    // along with the absent name. Asserted on the branch rather than on the
+    // query text, so it stays about *this* nesting rather than about any
+    // OPTIONAL anywhere – a keyed target brings one of its own.
+    // The inline reference's branch nests a union of the edge type's own
+    // fields; the local expansion sits inside the endpoint field's group.
+    const [creatorBranch] = unionBranches(
+      extractionQuery(roleWork, roleSchema),
+    );
+    const edgeFields = creatorBranch.patterns[1];
+    if (edgeFields === undefined || !factory.isPatternUnion(edgeFields)) {
+      throw new Error('expected the edge type’s fields in a nested union');
+    }
+    const [, agentBranch] = edgeFields.patterns;
+    const [referentHop, nested] = agentBranch?.patterns ?? [];
+
+    // The hop that binds the referent is conjoined: the entry itself is not
+    // optional, only what this document says about its endpoint.
+    expect(referentHop !== undefined && factory.isPatternBgp(referentHop)).toBe(
+      true,
+    );
+    expect(nested).toMatchObject({ type: 'pattern', subType: 'optional' });
   });
 
   it('states a keyed target’s key field once, not twice', () => {
@@ -643,13 +662,20 @@ describe('local lookups (the referent’s own fields)', () => {
 
     // One hop out and back to the boundary, never further: `Left`’s own fields,
     // `Right`’s read off the referent, and `Right`’s own `other` by id alone.
-    expect(new Set(templatePredicates(extractionQuery(left, cyclic)))).toEqual(
-      new Set([
-        irAlias(left, left.fields[0]),
-        irAlias(left, left.fields[1]),
-        irAlias(right, right.fields[0]),
-        irAlias(right, right.fields[1]),
-      ]),
+    // Asserted as a list rather than a set – both types declare the same field
+    // names, so a second lap would re-emit aliases a set has already absorbed
+    // and the cut could slip a level without the assertion noticing.
+    expect(templatePredicates(extractionQuery(left, cyclic))).toEqual([
+      irAlias(left, left.fields[0]),
+      irAlias(left, left.fields[1]),
+      irAlias(right, right.fields[0]),
+      irAlias(right, right.fields[1]),
+    ]);
+    // …and the last of them is read off the referent the one before it bound,
+    // which is what makes “one lap” a statement about depth.
+    const query = extractionQuery(left, cyclic);
+    expect(tripleUnder(query, irAlias(right, right.fields[1])).subject).toEqual(
+      tripleUnder(query, irAlias(left, left.fields[1])).object,
     );
   });
 });

@@ -1039,6 +1039,72 @@ describe('framing depth in the awkward cases', () => {
     expect(inlineFramingDepth(cyclic, cyclicWork)).toBe(1);
   });
 
+  it('frames the key hop the extraction falls back to at the cut', () => {
+    // At the cut the local expansion stops and the extraction reads the key
+    // instead – off a referent one hop further out than the expansion reached.
+    // Counting the cut as “reach 0, nothing else” framed one hop short, and the
+    // innermost referent stored a node IRI that keys nothing in its collection.
+    const cutPerson = defineSearchType({
+      name: 'Person',
+      class: `${SCHEMA_ORG}Person`,
+      labelField: 'label',
+      fields: [
+        {
+          name: 'label',
+          kind: 'text',
+          path: `${SCHEMA_ORG}name`,
+          locales: ['und'],
+          output: true,
+          searchable: { weight: 1 },
+        },
+        {
+          // The field the cut falls on: `Work` is already on the path, so the
+          // expansion stops and the key hop is what the extraction emits.
+          name: 'made',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}makesOffer`,
+          output: true,
+          ref: { strategy: 'lookup', target: 'Work', local: true },
+        },
+      ],
+    });
+    const keyedWork = defineSearchType({
+      name: 'Work',
+      class: `${SCHEMA_ORG}CreativeWork`,
+      labelField: 'label',
+      key: { field: '_sameAs' },
+      fields: [
+        {
+          name: 'label',
+          kind: 'text',
+          path: `${SCHEMA_ORG}name`,
+          locales: ['und'],
+          output: true,
+          searchable: { weight: 1 },
+        },
+        {
+          name: '_sameAs',
+          kind: 'reference',
+          array: true,
+          path: `${SCHEMA_ORG}sameAs`,
+        },
+        {
+          name: 'creator',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}creator`,
+          output: true,
+          ref: { strategy: 'lookup', target: 'Person', local: true },
+        },
+      ],
+    });
+
+    // work → creator → made → the key read off it: three hops, two intermediate
+    // nodes.
+    expect(
+      inlineFramingDepth(searchSchema(keyedWork, cutPerson), keyedWork),
+    ).toBe(2);
+  });
+
   it('ignores a field with no path to traverse', () => {
     const derived = defineSearchType({
       name: 'Derived',

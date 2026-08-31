@@ -838,15 +838,17 @@ export function inlineFramingDepth(
  * contributes no further reach, so a cycle stops rather than being rejected:
  * the depth it would ask for is unbounded, and the useful depth is the acyclic
  * one.
+ *
+ * The cut is made **where the field is read**, not on entry, because the
+ * extraction cuts there too and still emits the key hop it falls back to. A
+ * guard on entry would count the cut as reach 0 and nothing else, framing that
+ * hop out – and the innermost referent would store a node IRI keying nothing.
  */
 function framingReach(
   schema: SearchSchema,
   searchType: SearchType,
   visiting: ReadonlySet<string> = new Set(),
 ): number {
-  if (visiting.has(searchType.name)) {
-    return 0;
-  }
   const onPath = new Set(visiting).add(searchType.name);
   let furthest = 0;
   for (const field of searchType.fields) {
@@ -866,8 +868,15 @@ function framingReach(
     // A `local` lookup reads the target’s OWN fields off the referent, so the
     // target’s reach continues from wherever this field’s path landed – the
     // same accumulation an inline reference makes, through a Root Type.
+    //
+    // Cut at a type already on the path, exactly where the extraction cuts:
+    // there the local expansion contributes nothing and the extraction falls
+    // back to the key hop, whose own traversal still has to be framed. Reading
+    // the cut as “reach 0, and nothing else to count” left the innermost
+    // referent’s key one hop outside the frame, so it stored a node IRI that
+    // matches nothing in the target’s collection.
     const local = localLookupTypeOf(field, schema);
-    if (local !== undefined) {
+    if (local !== undefined && !onPath.has(local.name)) {
       furthest = Math.max(furthest, hops + framingReach(schema, local, onPath));
       continue;
     }
