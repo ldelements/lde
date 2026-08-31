@@ -254,6 +254,11 @@ function typesenseFields(
         nested,
         schema as SearchSchema,
         defaultLocale,
+        false,
+        // The declaring type is already on the path, exactly as the frame and
+        // the extraction seed theirs, so a lookup back to it is cut at the
+        // same depth here as it is there.
+        new Set([searchType.name]),
       ),
       ...identityCompanionFields(field, schema as SearchSchema),
     ];
