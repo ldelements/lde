@@ -1,3 +1,9 @@
+## 0.0.2 (2026-08-31)
+
+### 🚀 Features
+
+- **sparql-anything:** cap the JVM heap, and pass through CLI arguments ([#789](https://github.com/ldelements/lde/pull/789))
+
 ## 0.0.1 (2026-08-31)
 
 ### 🚀 Features
