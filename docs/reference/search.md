@@ -346,8 +346,8 @@ indexed, since what a `lookup`/`idOnly` reference stores is a selection key.
 
 An **inline reference** resolves `ref.typeName` to a declared **Reference Type**
 and projects the referent through it – a nested `SearchDocument`, or an array
-for an `array` reference. Roles decide whether the nesting surfaces, so the same
-construct serves two jobs (see
+for an `array` reference. Its capabilities decide whether the nesting surfaces,
+so the same construct serves two jobs (see
 [ADR 11](../decisions/0011-decouple-rdf-depth-from-the-api-surface)):
 
 - a **reading device** declares no role, so it is an internal field: projected
@@ -369,11 +369,13 @@ rather than per entry, so a bucket would count entries that did not match the
 filter, and there is no sorting _into_ an element of an array. Facet an edge
 through its [identity companion](#data-on-the-edge) instead.
 
-The Roles are independent opt-ins, and that is what keeps nesting cheap. A
-nested field declaring only `output` is stored `index: false` – kept on disk,
-read back with its entry, costing no memory however large it grows – and only
-one that opts into a query Role is indexed. So a schema can nest ten fields for
-display and index one, and pay for the one.
+A field's **capabilities** – `output`, `filterable`, `facetable`, `sortable`,
+`searchable`, `joinable`; the code calls them Roles – are independent opt-ins,
+and that is what keeps nesting cheap. A nested field declaring only `output` is
+stored `index: false` – kept on disk, read back with its entry, costing no
+memory however large it grows – and only one that opts into a query capability
+is indexed. So a schema can nest ten fields for display and index one, and pay
+for the one.
 
 A referent needs no identity of its own: the nesting carries its fields, not a
 document key. A blank-node referent – whose `@id` JSON-LD 1.1 framing prunes –

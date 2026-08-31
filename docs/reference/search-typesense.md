@@ -92,7 +92,7 @@ An **inline reference** is stored as a nested object – `object` or `object[]`,
 which turns on the collection’s `enable_nested_fields` – with one nested
 Physical Field per field of the type it nests (`media.contentUrl`,
 `media.caption_<lang>`, via `nestedFieldName`). A nested field is declared
-`index: false` unless it opts into a query Role, so a display-only nesting is
+`index: false` unless it opts into a query capability, so a display-only nesting is
 weight on disk like the language labels, and only a `filterable`/`searchable`
 one costs memory. Pass the `schema` option for a type that carries one – it is
 what resolves the nested type; a type declaring one without it throws here,
