@@ -8,19 +8,14 @@ import type {
 } from '@lde/pipeline';
 import type { Dataset } from '@lde/dataset';
 import { buildCollectionDefinition } from './collection-definition.js';
-import { BatchImporter } from './import.js';
 import { httpStatus, openLockedRun, releaseLock } from './lock.js';
 import {
-  SOURCE_FIELD,
-  provenanceField,
-  sourceDocumentsFilter,
-} from './sweep.js';
+  assertWritableType,
+  openDocuments,
+  withBookkeeping,
+} from './documents.js';
 import {
-  assertNoReservedFields,
-  assertSweepableProvenanceField,
-  deleteByFilter,
   resolveRebuildOptions,
-  stampDocuments,
   type RebuildOptions,
   type ResolvedRebuildOptions,
 } from './rebuild-support.js';
@@ -43,11 +38,14 @@ export type BlueGreenRebuildOptions = RebuildOptions;
  *   creates the versioned collection (`${name}_<timestamp>`) with the schema
  *   derived from the {@link SearchType}.
  * - `write` streams documents into the fresh collection, batched across write
- *   calls, each stamped with its `source` (the dataset IRI).
+ *   calls, each recording the dataset it came from ({@link openDocuments}).
  * - `flush` on a **failed** dataset, and `reset` (the pipeline’s dump-fallback
- *   discard), roll that dataset’s documents back out of the not-yet-live
- *   collection by `source`, so a swap never ships a half-processed dataset;
- *   a successful flush leaves the streamed documents in place.
+ *   discard), roll that dataset back out of the not-yet-live collection, so a
+ *   swap never ships a half-processed dataset; a successful flush leaves the
+ *   streamed documents in place. On a canonically keyed collection the
+ *   rollback drops the failed dataset’s *membership*, so a document another
+ *   dataset also contributed stays – with a reference from that dataset that
+ *   still resolves.
  * - `commit` imports the remainder, atomically repoints the `name` alias to
  *   the new collection, drops the collection it superseded, and releases the
  *   lock. Until commit, the live alias never points at a partial build.
@@ -72,22 +70,15 @@ export class BlueGreenRebuild<
    */
   public readonly collectionName: string;
   private readonly resolved: ResolvedRebuildOptions;
-  /** The column this collection carries its documents’ dataset IRI in: the
-   *  type’s declared dataset field, or the private `source` when it declares
-   *  none. Both the stamp and the per-dataset rollback filter read it. */
-  private readonly sourceField: string;
 
   constructor(
     private readonly client: Client,
     private readonly searchType: SearchType,
     options: BlueGreenRebuildOptions = {},
   ) {
-    // `source` is stamped on every document for per-dataset rollback.
-    assertNoReservedFields(searchType, [SOURCE_FIELD]);
-    // Rollback filters by a known dataset IRI rather than enumerating the
-    // indexed ones, so a declared field need not be facetable here.
-    assertSweepableProvenanceField(searchType, { requireFacetable: false });
-    this.sourceField = provenanceField(searchType);
+    // Rollback drops a known dataset rather than enumerating the indexed ones,
+    // so a declared dataset field need not be facetable here.
+    assertWritableType(searchType, { requireFacetable: false });
     this.resolved = resolveRebuildOptions(searchType, options);
     this.collectionName =
       this.resolved.definitionOptions.collectionNameFor(searchType);
@@ -96,7 +87,6 @@ export class BlueGreenRebuild<
   async openRun(context: RunContext): Promise<RunWriter<TDocument>> {
     const { batchSize, lockTtlMs, definitionOptions } = this.resolved;
     const name = this.collectionName;
-    const sourceField = this.sourceField;
 
     return openLockedRun(this.client, name, lockTtlMs, async () => {
       // Create the fresh (blue) collection up front, so a failure surfaces
@@ -120,44 +110,27 @@ export class BlueGreenRebuild<
         ...definitionOptions,
         collectionNameFor: versioned,
       });
-      await this.client.collections().create({
-        ...definition,
-        // The private `source` only when the type declares no dataset field of
-        // its own; a declared one is already in the definition and carries the
-        // same IRI.
-        fields: [
-          ...(definition.fields ?? []),
-          ...(sourceField === SOURCE_FIELD
-            ? [{ name: SOURCE_FIELD, type: 'string' } as const]
-            : []),
-        ],
+      await this.client
+        .collections()
+        .create(withBookkeeping(definition, this.searchType));
+
+      const documents = openDocuments<TDocument>(this.client, collection, {
+        searchType: this.searchType,
+        runId: context.runId,
+        startedAt: context.startedAt,
+        batchSize,
       });
 
-      const importer = new BatchImporter<TDocument & Record<string, string>>(
-        this.client,
-        collection,
-        batchSize,
-      );
-
-      // Drop a dataset’s streamed documents back out of the not-yet-live
-      // collection (a failed dataset, or a reset before the dump re-run). Any
-      // still buffered must land first, so the delete filter sees them.
-      const rollback = async (dataset: Dataset): Promise<void> => {
-        await importer.flush();
-        await deleteByFilter(
-          this.client,
-          collection,
-          sourceDocumentsFilter(sourceField, dataset.iri.toString()),
-        );
-      };
+      // Roll a dataset back out of the not-yet-live collection (a failed
+      // dataset, or a reset before the dump re-run). On a keyed collection
+      // that drops its membership rather than the documents themselves, so a
+      // dataset that succeeded keeps the ones it also contributed.
+      const rollback = async (dataset: Dataset): Promise<void> =>
+        documents.dropAll(dataset);
 
       return {
-        write: async (dataset: Dataset, documents: AsyncIterable<TDocument>) =>
-          importer.add(
-            stampDocuments(documents, {
-              [sourceField]: dataset.iri.toString(),
-            }),
-          ),
+        write: async (dataset: Dataset, items: AsyncIterable<TDocument>) =>
+          documents.add(dataset, items),
 
         flush: async (dataset: Dataset, outcome: DatasetOutcome) => {
           // A successful dataset keeps its streamed documents (they go live at
@@ -170,7 +143,7 @@ export class BlueGreenRebuild<
         reset: async (dataset: Dataset) => rollback(dataset),
 
         commit: async () => {
-          await importer.flush();
+          await documents.flush();
           // The alias swap is the commit point: once it lands the new
           // collection is live. Everything after it is best-effort cleanup that
           // must NOT fail the commit – a post-swap rejection would otherwise

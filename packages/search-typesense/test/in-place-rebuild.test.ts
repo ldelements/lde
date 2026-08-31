@@ -96,6 +96,33 @@ describe('InPlaceRebuild', () => {
     await run.commit();
   });
 
+  it('sweeps a departed dataset whose IRI carries a filter delimiter', async () => {
+    // A dataset IRI is a URL, and a URL may contain a comma – which is how
+    // Typesense separates the values of a filter list. Unescaped, the filter
+    // splits into two values and takes a SELECTED dataset’s documents with it.
+    const comma = new Dataset({
+      iri: new URL('http://example.org/dataset/a,b'),
+      distributions: [],
+    });
+    const writer = new InPlaceRebuild<{ id: string; title: string }>(
+      client,
+      objectType,
+      { collectionNameFor: () => NAME },
+    );
+    await seed(
+      writer,
+      new Map([
+        [comma, [{ id: 'c1', title: 'Comma' }]],
+        [datasetB, [{ id: 'b1', title: 'Bee' }]],
+      ]),
+    );
+
+    const run = await writer.openRun(makeRunContext([datasetB.iri.toString()]));
+    await run.commit();
+
+    expect(await documentIds(client)).toEqual(['b1']);
+  });
+
   it('sweeps a source’s stale documents when the dataset flushes successfully', async () => {
     const writer = new InPlaceRebuild<{ id: string; title: string }>(
       client,
