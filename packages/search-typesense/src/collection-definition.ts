@@ -254,6 +254,11 @@ function typesenseFields(
         nested,
         schema as SearchSchema,
         defaultLocale,
+        false,
+        // The declaring type is already on the path, exactly as the frame and
+        // the extraction seed theirs, so a lookup back to it is cut at the
+        // same depth here as it is there.
+        new Set([searchType.name]),
       ),
       ...identityCompanionFields(field, schema as SearchSchema),
     ];
@@ -407,10 +412,34 @@ function nestedFields(
     }
     const deeper = nestedTypeOfNestedField(field, schema);
     if (deeper !== undefined && walked.has(deeper.name)) {
-      // The cycle stops here, and so does the frame – nothing will ever be
-      // stored under this field, so nothing is declared for it. Falling
-      // through would declare it as a LEAF, whose scalar type is not what a
-      // nested object would be stored as.
+      // The cycle stops here, and so does the frame – but a value is still
+      // stored: the extraction falls back to the target's key hop, and the
+      // projection writes the referent as an `{id}` object beside its identity
+      // leaf. So the BOUNDARY is declared and only the descent stops. Falling
+      // through instead would declare the field as a LEAF, whose scalar type
+      // is not what a nested object is stored as.
+      const boundary = nestedFieldName(prefix, field.name);
+      const boundaryArray = flattensToArray || field.array === true;
+      children.push(
+        {
+          name: boundary,
+          type: boundaryArray ? 'object[]' : 'object',
+          // Nothing under it is indexed – the key is a stored value, and the
+          // leaf a filter welds on sits beside the object, not inside it.
+          index: false,
+          optional: true,
+        },
+        {
+          // Always a Root Type, so always identified: `searchSchema` rejects
+          // inline cycles, so the only way to arrive at a type already on the
+          // path is a `local` lookup, whose target declares a class.
+          name: nestedFieldName(boundary, 'id'),
+          type: boundaryArray ? 'string[]' : 'string',
+          index: false,
+          optional: true,
+        },
+        ...nestedIdentityFields(prefix, field, schema),
+      );
       continue;
     }
     if (deeper !== undefined) {

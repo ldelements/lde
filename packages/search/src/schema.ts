@@ -808,16 +808,19 @@ export function nestedFieldName(parent: string, name: string): string {
  * the node `<a>` reaches, which is depth 1. Floored at one, preserving the
  * single-hop embed a non-inline reference has always had.
  *
- * Three things add hops, and counting only the first is what let a value fall
+ * Four things add hops, and counting only the first is what let a value fall
  * outside the frame and be stored as absent, in silence:
  *
  * - **a property path**, which may traverse (`<a>/<b>` is two hops);
  * - **an inline reference**, whose referent’s own fields reach on from wherever
  *   its path landed;
+ * - **a {@link ReferenceStrategy.local local} lookup**, whose target’s own
+ *   fields reach on from the endpoint in the same way, through a Root Type;
  * - **a reference naming a keyed target**, whose document key is read one hop
  *   past the referent (ADR 22) – so a reference reached through an inline
  *   chain needs its key hop inside the frame too, or it stores an un-keyed id
- *   that matches nothing in the target’s collection.
+ *   that matches nothing in the target’s collection. This one is also what a
+ *   cut local expansion falls back to, so it is counted there as well.
  */
 export function inlineFramingDepth(
   schema: SearchSchema,
@@ -838,15 +841,17 @@ export function inlineFramingDepth(
  * contributes no further reach, so a cycle stops rather than being rejected:
  * the depth it would ask for is unbounded, and the useful depth is the acyclic
  * one.
+ *
+ * The cut is made **where the field is read**, not on entry, because the
+ * extraction cuts there too and still emits the key hop it falls back to. A
+ * guard on entry would count the cut as reach 0 and nothing else, framing that
+ * hop out – and the innermost referent would store a node IRI keying nothing.
  */
 function framingReach(
   schema: SearchSchema,
   searchType: SearchType,
   visiting: ReadonlySet<string> = new Set(),
 ): number {
-  if (visiting.has(searchType.name)) {
-    return 0;
-  }
   const onPath = new Set(visiting).add(searchType.name);
   let furthest = 0;
   for (const field of searchType.fields) {
@@ -866,8 +871,15 @@ function framingReach(
     // A `local` lookup reads the target’s OWN fields off the referent, so the
     // target’s reach continues from wherever this field’s path landed – the
     // same accumulation an inline reference makes, through a Root Type.
+    //
+    // Cut at a type already on the path, exactly where the extraction cuts:
+    // there the local expansion contributes nothing and the extraction falls
+    // back to the key hop, whose own traversal still has to be framed. Reading
+    // the cut as “reach 0, and nothing else to count” left the innermost
+    // referent’s key one hop outside the frame, so it stored a node IRI that
+    // matches nothing in the target’s collection.
     const local = localLookupTypeOf(field, schema);
-    if (local !== undefined) {
+    if (local !== undefined && !onPath.has(local.name)) {
       furthest = Math.max(furthest, hops + framingReach(schema, local, onPath));
       continue;
     }

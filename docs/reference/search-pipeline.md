@@ -412,6 +412,19 @@ guarantees one output triple per genuine value:
   fields are UNION’d off the referent variable, so even a multi-hop nested
   template never conjoins independent multi-valued fields – only the intermediate
   link triple repeats, and only linearly.
+- **A `local` lookup nests like an inline reference, in an `OPTIONAL`.** A
+  reference that also stores what this document says about its endpoint
+  ([`local`](./search#data-on-the-edge)) gets its branch extended with the target
+  Root Type's own fields, UNION'd off the referent and emitted under that type's
+  aliases. The union is what keeps the endpoint's independent multi-valued
+  properties additive rather than multiplicative: measured on an agent with 3
+  names, 2 job titles and 2 `sameAs`, the generated shape yields 8 solution rows
+  where one `OPTIONAL` per property yields 13, and the gap widens with every
+  value. `OPTIONAL` rather than conjoined, unlike an inline reference's nesting,
+  because a `local` lookup stores its endpoint by id whether or not the document
+  says anything about it – conjoining would drop the id along with the absent
+  fields. It subsumes the key hop below, the key field being one of the target's
+  own.
 - **A key hop stays inside its branch.** A reference naming a target that
   declares a [document key](./search#document-key) gets its branch extended with
   an `OPTIONAL` hop reading the referent’s key field, emitted under the target’s

@@ -516,8 +516,9 @@ carries the target's own. Where a target is enriched from an authority the two
 differ systematically. Free text covers the gap.
 
 Framing reaches as far as the declaration does – path traversal, inline nesting,
-and the extra hop a keyed target's document key needs – so an endpoint two hops
-out is in the frame. See
+the target's own fields a `local` lookup reads off the endpoint, and the extra
+hop a keyed target's document key needs – so an endpoint two hops out is in the
+frame. See
 [ADR 24](../decisions/0024-carry-data-on-a-reference-edge).
 
 **Conditions inside one edge's `where` are welded to one entry.** `creator: {

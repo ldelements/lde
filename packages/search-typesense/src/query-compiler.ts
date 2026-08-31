@@ -221,7 +221,9 @@ function queryFields(
  * contribute its own companions. A set shared across the walk would let the
  * first field claim the type and leave the second's companions indexed but
  * unqueried. What it does guard is a type reached from ITSELF, which a
- * {@link ReferenceStrategy.local local} lookup can do.
+ * {@link ReferenceStrategy.local local} lookup can do – cut at the same
+ * boundary the collection's own walk cuts at, so no field is declared indexed
+ * that this walk does not ask for.
  */
 function collectSearchable(
   searchType: SearchType,
@@ -232,9 +234,6 @@ function collectSearchable(
   names: string[],
   weights: number[],
 ): void {
-  if (onPath.has(searchType.name)) {
-    return;
-  }
   const walked = new Set(onPath).add(searchType.name);
   for (const field of searchableFields(searchType)) {
     const search = physicalFields(field).search;
@@ -271,7 +270,12 @@ function collectSearchable(
     }
     const nested =
       nestedReferenceType(schema, field) ?? localLookupTypeOf(field, schema);
-    if (nested !== undefined) {
+    // Cut on the CHILD, not on entry, and against the set this level was
+    // reached with – the same boundary the collection's own walk cuts at
+    // (`nestedFields`). Returning on entry instead skipped the companions of
+    // the level the collection HAD declared, leaving them indexed and absent
+    // from `query_by` wherever a type reached itself.
+    if (nested !== undefined && !onPath.has(nested.name)) {
       collectSearchable(
         nested,
         locale,
