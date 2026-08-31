@@ -685,6 +685,14 @@ describe('extraction ⟷ projection contract', () => {
   // reads, and vice versa. Both derive from the same rule – a path-bearing field,
   // recursing inline referents through their reference type – so a change to
   // either walk that drops or adds a field breaks this test.
+  //
+  // `visiting` is a bound this model has and the projection does NOT: the real
+  // projection (`projectDocument`) walks whatever the frame handed it and is
+  // bounded by the frame alone. It is here only so a cyclic schema terminates,
+  // and it means this guard cannot answer *where* the two should stop – only
+  // that they agree on the aliases in an acyclic one, which is every schema it
+  // is called with. The depths themselves are pinned by `inlineFramingDepth`'s
+  // own tests and by the cut test above.
   function projectionReads(
     searchType: SearchType,
     schema: SearchSchema,
