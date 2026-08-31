@@ -649,6 +649,33 @@ describe('two references nesting one edge type', () => {
   });
 });
 
+describe('a nested field cannot join out of its entry', () => {
+  it('refuses joinable on a nested lookup', () => {
+    // A join addresses another COLLECTION, and there is none to address from
+    // inside an entry. Unrefused, the join graph builds no edge, the
+    // collection emits no engine reference, and the criterion degrades to a
+    // vacuous `in: []` – which matches everything.
+    const joiningEdge = defineSearchType({
+      name: 'CreatorEdge',
+      fields: [
+        {
+          name: 'creator',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}creator`,
+          output: true,
+          filterable: true,
+          joinable: true,
+          ref: { strategy: 'lookup', target: 'Person' },
+        },
+      ],
+    });
+
+    expect(() => searchSchema(work, person, joiningEdge)).toThrow(
+      /declares “joinable”/,
+    );
+  });
+});
+
 describe('a local lookup is held to the Roles a nested object can serve', () => {
   const localReference = (extra: Record<string, unknown>) =>
     ({

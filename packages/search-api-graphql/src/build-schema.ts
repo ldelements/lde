@@ -1344,6 +1344,18 @@ function criteriaOf(
       criteria.push(withPath(entry.criterion, on));
       continue;
     }
+    // A NESTING hop welds, in an `or` alternative exactly as anywhere else –
+    // and it is the one place a weld belongs most naturally, since a welded
+    // criterion IS an atom. Compiled as separate joined criteria it would be
+    // rejected below as “a conjunction inside an or”, which is precisely the
+    // thing welding avoids.
+    if (entry.target.class === undefined) {
+      const welded = weldedCriterionOf(entry, joins, schema, on);
+      if (welded !== undefined) {
+        criteria.push(welded);
+      }
+      continue;
+    }
     const path = [...on, entry.name];
     const nested = whereToFilters(
       entry.nested,

@@ -372,8 +372,17 @@ function nestedFields(
   schema: SearchSchema,
   defaultLocale: string | undefined,
   withinArray = false,
+  onPath: ReadonlySet<string> = new Set(),
 ): CollectionFieldSchema[] {
   const array = reference.array === true;
+  // A type already on this path is not descended into again. `searchSchema`
+  // rejects INLINE cycles, but a {@link ReferenceStrategy.local local} lookup
+  // may reach a Root Type that reaches back – `Work → Person → Work` is a
+  // reasonable schema and nothing forbids it – and without this the builder
+  // recurses until the stack gives out. Stopping here matches where the FRAME
+  // stops ({@link inlineFramingDepth}), so the collection declares exactly the
+  // depth the projection can fill.
+  const walked = new Set(onPath).add(nestedType.name);
   // Typesense flattens a nested object, so a value under a multi-valued
   // ancestor arrives as an array however single-valued the declaration is.
   // That only matters for an INDEXED field, whose declared type is checked
@@ -397,6 +406,13 @@ function nestedFields(
       continue;
     }
     const deeper = nestedTypeOfNestedField(field, schema);
+    if (deeper !== undefined && walked.has(deeper.name)) {
+      // The cycle stops here, and so does the frame – nothing will ever be
+      // stored under this field, so nothing is declared for it. Falling
+      // through would declare it as a LEAF, whose scalar type is not what a
+      // nested object would be stored as.
+      continue;
+    }
     if (deeper !== undefined) {
       children.push(
         ...nestedFields(
@@ -406,6 +422,7 @@ function nestedFields(
           schema,
           defaultLocale,
           flattensToArray,
+          walked,
         ),
         // A nested field that stores an object cannot be filtered as itself,
         // and its own id is a level deeper than a condition can be welded to –
@@ -563,9 +580,14 @@ function nestedLeafFields(
   // itself – its search companion below indexes on its own account.
   const indexed = field.filterable === true;
   const valueType = typesenseValueType(field);
+  // Two ways a list arrives: the field declares one, or an ancestor's
+  // `object[]` flattens it into one. `typesenseValueType` honours `array` only
+  // for the string-shaped kinds, so a multi-valued nested `integer` would
+  // otherwise be declared scalar and rejected at import.
+  const storesAList = flattensToArray || field.array === true;
   fields.push({
     name: nestedFieldName(prefix, field.name),
-    type: indexed && flattensToArray ? arrayValueType(valueType) : valueType,
+    type: indexed && storesAList ? arrayValueType(valueType) : valueType,
     index: indexed,
     // Always optional: `required` is a promise about the *referent* (this value
     // is on every referent), while Typesense’s flag is about the document.

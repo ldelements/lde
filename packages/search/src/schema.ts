@@ -1211,7 +1211,7 @@ function assertServiceableNestedFields(
             .map((role) => `“${role}”`)
             .join(
               ', ',
-            )}, which nesting cannot serve: an engine facets a nested field per document rather than per entry, and sorts on one value rather than into an array. Facet the edge through the inline reference’s “identity” companion instead.`,
+            )}, which nesting cannot serve: an engine facets a nested field per document rather than per entry, sorts on one value rather than into an array, and has no collection to join to from inside an entry. Facet the edge through the inline reference’s “identity” companion instead.`,
         );
       }
       if (
@@ -1230,12 +1230,27 @@ function assertServiceableNestedFields(
 function unserviceableNestedRoles(
   field: SearchField,
 ): readonly (typeof UNSERVICEABLE_NESTED_ROLES)[number][] {
-  return UNSERVICEABLE_NESTED_ROLES.filter((role) => field[role] === true);
+  return UNSERVICEABLE_NESTED_ROLES.filter(
+    (role) => (field as unknown as Record<string, unknown>)[role] === true,
+  );
 }
 
-/** The Roles a nested field cannot carry: an engine facets a nested field per
- *  document rather than per entry, and cannot sort into an array element. */
-const UNSERVICEABLE_NESTED_ROLES = ['facetable', 'sortable'] as const;
+/**
+ * The Roles a nested field cannot carry. An engine facets a nested field per
+ * document rather than per entry, and cannot sort into an array element.
+ *
+ * `joinable` is refused for a different reason: a join is a clause about
+ * another COLLECTION, and there is none to address from inside an entry.
+ * `buildJoinGraph` walks Root Types, so a nested one builds no edge and the
+ * collection emits no engine reference – while the surface still offers the
+ * filter, whose criterion then degrades to a vacuous `in: []` and matches
+ * EVERYTHING. Refusing the declaration is the only place that is one mistake.
+ */
+const UNSERVICEABLE_NESTED_ROLES = [
+  'facetable',
+  'sortable',
+  'joinable',
+] as const;
 
 /** The Roles the **inline reference itself** declares that it cannot serve, in
  *  declaration order. Its value is a nested object, which an engine can neither

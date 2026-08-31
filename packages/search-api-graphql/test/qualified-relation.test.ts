@@ -383,6 +383,47 @@ describe('the surface of a qualified relation', () => {
     ]);
   });
 
+  it('welds inside an `or` alternative too', async () => {
+    // A welded criterion IS an atom, so a disjunction is exactly where it
+    // belongs. Compiled as separate joined criteria it was rejected as “a
+    // conjunction inside an or” – the thing welding exists to avoid.
+    const { engine, received } = fakeEngine();
+
+    const response = await run(
+      `{ works(where: { or: [{ creator: { where: { creator: { in: ["https://p/1"] }, role: { in: ["etser"] } } } }] }) { items { title { value } } } }`,
+      engine,
+    );
+
+    expect(response.errors).toBeUndefined();
+    expect(received().where).toEqual([
+      {
+        or: [
+          {
+            field: 'creator',
+            entry: [
+              { field: 'role', in: ['etser'] },
+              { field: 'creator', in: ['https://p/1'] },
+            ],
+          },
+        ],
+      },
+    ]);
+  });
+
+  it('contributes no alternative for an empty edge condition in an `or`', async () => {
+    const { engine, received } = fakeEngine();
+
+    const response = await run(
+      `{ works(where: { or: [{ creator: { where: {} } }] }) { items { title { value } } } }`,
+      engine,
+    );
+
+    expect(response.errors).toBeUndefined();
+    // An alternative that constrains nothing would make the whole disjunction
+    // match everything, so it contributes none rather than an empty one.
+    expect(received().where).toEqual([]);
+  });
+
   it('contributes no clause for an edge condition that states nothing', async () => {
     const { engine, received } = fakeEngine();
 

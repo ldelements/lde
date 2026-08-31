@@ -162,6 +162,45 @@ describe('a single-valued edge', () => {
   });
 });
 
+describe('a local lookup that reaches back', () => {
+  it('builds a collection rather than recursing forever', () => {
+    // `searchSchema` rejects INLINE cycles; a `local` lookup may reach a type
+    // that reaches back, and without a guard the builder recurses until the
+    // stack gives out.
+    const knowing = defineSearchType({
+      name: 'Person',
+      class: `${SCHEMA_ORG}Person`,
+      fields: [
+        {
+          name: 'label',
+          kind: 'text',
+          path: `${SCHEMA_ORG}name`,
+          locales: ['und'],
+          output: true,
+          searchable: { weight: 1 },
+        },
+        {
+          name: 'knows',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}knows`,
+          output: true,
+          ref: { strategy: 'lookup', target: 'Person', local: true },
+        },
+      ],
+    });
+    const fields =
+      buildCollectionDefinition(knowing, {
+        schema: searchSchema(knowing),
+      }).fields ?? [];
+
+    // One level of nesting, then it stops – the same depth the frame reaches.
+    expect(fields.some((field) => field.name.startsWith('knows.'))).toBe(true);
+    expect(fields.some((field) => field.name.startsWith('knows.knows'))).toBe(
+      false,
+    );
+  });
+});
+
 describe('nested fields of other kinds', () => {
   // One edge carrying each shape the fanout has to handle: a searchable
   // keyword (its own folded companion), and an indexed numeric (whose type is
@@ -280,6 +319,46 @@ describe('nested fields of other kinds', () => {
     expect(richField('credit.note_search')).toMatchObject({
       type: 'string[]',
     });
+  });
+
+  it('widens a multi-valued nested numeric under a single-valued edge', () => {
+    // Two ways a list arrives – the field declares one, or an ancestor
+    // flattens it – and `typesenseValueType` honours only the string-shaped
+    // kinds' own `array`, so this one needs widening on its own account.
+    const countEdge = defineSearchType({
+      name: 'CountEdge',
+      fields: [
+        {
+          name: 'position',
+          kind: 'integer',
+          path: `${SCHEMA_ORG}position`,
+          array: true,
+          output: true,
+          filterable: true,
+        },
+      ],
+    });
+    const singleEdgeWork = defineSearchType({
+      name: 'Work',
+      class: `${SCHEMA_ORG}CreativeWork`,
+      fields: [
+        {
+          name: 'credit',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}creator`,
+          output: true,
+          ref: { strategy: 'inline', typeName: 'CountEdge' },
+        },
+      ],
+    });
+    const fields =
+      buildCollectionDefinition(singleEdgeWork, {
+        schema: searchSchema(singleEdgeWork, countEdge),
+      }).fields ?? [];
+
+    expect(
+      fields.find((field) => field.name === 'credit.position'),
+    ).toMatchObject({ type: 'int64[]', index: true });
   });
 
   it.each([
@@ -422,6 +501,66 @@ describe('compiling a filter over an edge', () => {
     expect(String(params.query_by).split(',')).toContain(
       'creator.creator.label_search_und',
     );
+  });
+
+  it('queries every field that nests one edge type, not just the first', () => {
+    // Two properties over one edge type is the ordinary case. A guard scoped to
+    // the WALK rather than to the path would let `creator` claim the type and
+    // leave `contributor`'s companions indexed but never queried.
+    const twoEdges = defineSearchType({
+      name: 'Work',
+      class: `${SCHEMA_ORG}CreativeWork`,
+      fields: (['creator', 'contributor'] as const).map((name) => ({
+        name,
+        kind: 'reference' as const,
+        path: `${SCHEMA_ORG}${name}`,
+        array: true,
+        output: true,
+        ref: { strategy: 'inline' as const, typeName: 'CreatorEdge' },
+      })),
+    });
+    const params = buildSearchParams({ ...base, text: 'x' }, twoEdges, {
+      schema: searchSchema(twoEdges, person, creatorEdge),
+    });
+    const queried = String(params.query_by).split(',');
+
+    expect(queried).toContain('creator.creator.label_search_und');
+    expect(queried).toContain('contributor.creator.label_search_und');
+  });
+
+  it('asks for nothing from a field the collection does not carry', () => {
+    // A role-less `local` lookup is an internal reading device: pruned before
+    // the writer and declared nowhere. Naming its target's companions in
+    // `query_by` makes the engine reject EVERY search on the collection.
+    const withReadingDevice = defineSearchType({
+      name: 'Work',
+      class: `${SCHEMA_ORG}CreativeWork`,
+      fields: [
+        {
+          name: 'title',
+          kind: 'text',
+          path: `${SCHEMA_ORG}name`,
+          locales: ['und'],
+          output: true,
+          searchable: { weight: 5 },
+        },
+        {
+          name: 'hidden',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}creator`,
+          ref: { strategy: 'lookup', target: 'Person', local: true },
+        },
+      ],
+    });
+    const params = buildSearchParams(
+      { ...base, text: 'x' },
+      withReadingDevice,
+      {
+        schema: searchSchema(withReadingDevice, person),
+      },
+    );
+
+    expect(String(params.query_by)).toBe('title_search_und');
   });
 
   it('stops at a cycle when collecting searchable fields', () => {

@@ -19,6 +19,7 @@ import {
   filterOperatorFor,
   ID_FIELD,
   isoToUnixSeconds,
+  isInternalField,
   isRangeFacet,
   isWelded,
   joinGraph,
@@ -214,23 +215,27 @@ function queryFields(
  * worst of both: it costs the RAM of an indexed field and matches nothing, in
  * silence. So the walk here is what makes that Role mean anything.
  *
- * `visited` guards the walk: an inline chain is acyclic, but a
- * {@link ReferenceStrategy.local local} lookup can reach a Root Type that
- * reaches back.
+ * `onPath` guards the walk, and is scoped to the PATH rather than to the walk
+ * as a whole: two fields may nest one type – `creator` and `contributor` over
+ * the same edge – and each reaches it under its own prefix, so each must
+ * contribute its own companions. A set shared across the walk would let the
+ * first field claim the type and leave the second's companions indexed but
+ * unqueried. What it does guard is a type reached from ITSELF, which a
+ * {@link ReferenceStrategy.local local} lookup can do.
  */
 function collectSearchable(
   searchType: SearchType,
   locale: string,
   schema: SearchSchema | undefined,
   prefix: string,
-  visited: Set<string>,
+  onPath: ReadonlySet<string>,
   names: string[],
   weights: number[],
 ): void {
-  if (visited.has(searchType.name)) {
+  if (onPath.has(searchType.name)) {
     return;
   }
-  visited.add(searchType.name);
+  const walked = new Set(onPath).add(searchType.name);
   for (const field of searchableFields(searchType)) {
     const search = physicalFields(field).search;
     const baseWeight = field.searchable.weight;
@@ -258,6 +263,12 @@ function collectSearchable(
     return;
   }
   for (const field of searchType.fields) {
+    // An internal field is pruned before the writer and declared in no
+    // collection, so its target's companions exist nowhere – asking `query_by`
+    // for one makes the ENGINE reject every search on the collection.
+    if (isInternalField(field)) {
+      continue;
+    }
     const nested =
       nestedReferenceType(schema, field) ?? localLookupTypeOf(field, schema);
     if (nested !== undefined) {
@@ -266,7 +277,7 @@ function collectSearchable(
         locale,
         schema,
         qualify(prefix, field.name),
-        visited,
+        walked,
         names,
         weights,
       );

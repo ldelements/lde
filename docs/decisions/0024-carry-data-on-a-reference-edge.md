@@ -98,6 +98,15 @@ it grows. A nested field declaring only `output` is therefore stored exactly as
 before, and only one that opts into a query Role is indexed. A deployment can
 nest ten fields for display and index one, and pay for the one.
 
+With one exception worth stating, because it is the one place the cost is not
+the referring type's to choose: a `local` lookup
+projects its endpoint through the **target's own declaration**, so the target's
+Roles come with it – a `searchable` label on `Person` is indexed inside every
+document that nests one. That is what makes free text reach an endpoint's name,
+and it is a real cost: nesting a wide target for display alone indexes its
+searchable fields per referring document. Nest a target whose Roles you are
+willing to pay for at that multiplicity.
+
 We extend `inline` rather than add a `qualified` strategy beside it. A second
 nesting word would make the interface larger, forcing every user to choose
 between two and a switch (including rebuild) once a nested field needs a filter.
