@@ -2,15 +2,7 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "outDir": "./out-tsc/vitest",
-    "types": [
-      "vitest/globals",
-      "vitest/importMeta",
-      "vite/client",
-      "node",
-      "vitest"
-    ],
-    "ignoreDeprecations": "6.0",
-    "rootDir": "."
+    "types": ["node"]
   },
   "include": [
     "test/**/*.test.ts",

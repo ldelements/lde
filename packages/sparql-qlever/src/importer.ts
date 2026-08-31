@@ -7,6 +7,7 @@ import {
 } from '@lde/sparql-importer';
 import { compressionMediaTypes, Distribution } from '@lde/dataset';
 import { LastModifiedDownloader } from '@lde/distribution-downloader';
+import { shellQuote } from '@lde/task-runner';
 import { basename, dirname, join } from 'path';
 import { readFile, stat, writeFile } from 'node:fs/promises';
 import { needsPreprocessing, preprocess } from './preprocess.js';
@@ -261,21 +262,6 @@ export class Importer implements ImporterInterface {
     );
     return await this.options.taskRunner.wait(indexTask);
   }
-}
-
-/**
- * POSIX-quote a value for safe interpolation into a shell command: wrap it in
- * single quotes and escape any embedded single quote as `'\''`.
- *
- * Without this, a data filename containing an apostrophe – e.g. a dataset
- * titled `'s-Hertogenbosch`, whose distribution URL maps to a local file like
- * `…Erfgoed+'s-Hertogenbosch.nt` – would terminate the surrounding quotes, so
- * `cat`/`gunzip` would read a non-existent path and feed `qlever-index` empty
- * input. The index then "succeeds" with 0 triples, the import is treated as
- * failed, and every distribution (and the JSON-LD fallback) fails the same way.
- */
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 type fileFormat = 'nt' | 'nq' | 'ttl';

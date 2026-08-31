@@ -15,18 +15,19 @@ Find and retrieve dataset descriptions from registries.
 
 Transform, enrich and analyse datasets with SPARQL pipelines.
 
-| Package                                                     | Description                                                        |
-| ----------------------------------------------------------- | ------------------------------------------------------------------ |
-| [@lde/pipeline](./pipeline)                                 | Build pipelines that query, transform and enrich Linked Data       |
-| [@lde/pipeline-shacl-sampler](./pipeline-shacl-sampler)     | Per-class sampling stages derived from SHACL shapes                |
-| [@lde/pipeline-shacl-validator](./pipeline-shacl-validator) | SHACL validation for pipeline stages                               |
-| [@lde/pipeline-void](./pipeline-void)                       | VoID statistical analysis for RDF datasets                         |
-| [@lde/distribution-downloader](./distribution-downloader)   | Download distributions for local processing                        |
-| [@lde/distribution-health](./distribution-health)           | Derive distribution usability from reachability and RDF validity   |
-| [@lde/distribution-probe](./distribution-probe)             | Probe distributions for availability and metadata                  |
-| [@lde/iiif-validator](./iiif-validator)                     | Validate that a URL resolves to a valid IIIF Presentation Manifest |
-| [@lde/resolver](./resolver)                                 | Resolve external references with a durable store, bounds and retry |
-| [@lde/sparql-importer](./sparql-importer)                   | Import data dumps to a local SPARQL endpoint for querying          |
+| Package                                                     | Description                                                           |
+| ----------------------------------------------------------- | --------------------------------------------------------------------- |
+| [@lde/pipeline](./pipeline)                                 | Build pipelines that query, transform and enrich Linked Data          |
+| [@lde/pipeline-shacl-sampler](./pipeline-shacl-sampler)     | Per-class sampling stages derived from SHACL shapes                   |
+| [@lde/pipeline-shacl-validator](./pipeline-shacl-validator) | SHACL validation for pipeline stages                                  |
+| [@lde/pipeline-void](./pipeline-void)                       | VoID statistical analysis for RDF datasets                            |
+| [@lde/distribution-downloader](./distribution-downloader)   | Download distributions for local processing                           |
+| [@lde/distribution-health](./distribution-health)           | Derive distribution usability from reachability and RDF validity      |
+| [@lde/distribution-probe](./distribution-probe)             | Probe distributions for availability and metadata                     |
+| [@lde/iiif-validator](./iiif-validator)                     | Validate that a URL resolves to a valid IIIF Presentation Manifest    |
+| [@lde/resolver](./resolver)                                 | Resolve external references with a durable store, bounds and retry    |
+| [@lde/sparql-importer](./sparql-importer)                   | Import data dumps to a local SPARQL endpoint for querying             |
+| [@lde/sparql-anything](./sparql-anything)                   | Convert tabular and other non-RDF sources to RDF with SPARQL Anything |
 
 ## Publication
 
