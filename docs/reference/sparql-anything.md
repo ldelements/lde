@@ -10,7 +10,7 @@ npm install @lde/sparql-anything
 
 ## `SparqlAnythingConverter`
 
-The converter runs the SPARQL Anything jar **once per job** – a query, over an optional chunk – to bound memory use, then concatenates the per-job N-Triples outputs into a single file. Processes are spawned through a [`@lde/task-runner`](./task-runner), so the same converter works on the host, in Docker, or anywhere else a `TaskRunner` is implemented.
+The converter runs the SPARQL Anything jar **once per chunk** to bound memory use, then concatenates the resulting N-Triples into a single file. A **job** is a query and the chunks to run it over, so what those processes share is stated once. Processes are spawned through a [`@lde/task-runner`](./task-runner), so the same converter works on the host, in Docker, or anywhere else a `TaskRunner` is implemented.
 
 ```typescript
 import { SparqlAnythingConverter } from '@lde/sparql-anything';
@@ -41,13 +41,13 @@ await converter.convert(
 
 ### Options
 
-| Option       | Type               | Description                                                                                  |
-| ------------ | ------------------ | -------------------------------------------------------------------------------------------- |
-| `jarPath`    | `string`           | Path to the SPARQL Anything CLI jar, as the task runner sees it                              |
-| `workDir`    | `string`           | The task runner's working directory; see [Where files are written](#where-files-are-written) |
-| `heap`       | `string`           | Maximum JVM heap per job process, as `-Xmx` takes it (default `'2g'`); see [Memory](#memory) |
-| `cliArgs`    | `string[]`         | Further arguments for the SPARQL Anything CLI; see [Memory](#memory)                         |
-| `taskRunner` | `TaskRunner<Task>` | Runs the SPARQL Anything process for each job                                                |
+| Option       | Type               | Description                                                                                    |
+| ------------ | ------------------ | ---------------------------------------------------------------------------------------------- |
+| `jarPath`    | `string`           | Path to the SPARQL Anything CLI jar, as the task runner sees it                                |
+| `workDir`    | `string`           | The task runner's working directory; see [Where files are written](#where-files-are-written)   |
+| `heap`       | `string`           | Maximum JVM heap per chunk process, as `-Xmx` takes it (default `'2g'`); see [Memory](#memory) |
+| `cliArgs`    | `string[]`         | Further arguments for the SPARQL Anything CLI; see [Memory](#memory)                           |
+| `taskRunner` | `TaskRunner<Task>` | Runs the SPARQL Anything process for each chunk                                                |
 
 ### Jobs
 
@@ -65,11 +65,11 @@ A query and its chunks have to agree: a query naming `{SOURCE}` without chunks, 
 
 ### Where files are written
 
-`workDir` is the task runner's working directory – `cwd` for a `NativeTaskRunner`, `mountDir` for a `DockerTaskRunner`. The converter writes its generated query files and per-job outputs into a fresh subdirectory there and removes it when the conversion ends, then refers to them by a path relative to `workDir`, so the identical command works on the host and inside a container.
+`workDir` is the task runner's working directory – `cwd` for a `NativeTaskRunner`, `mountDir` for a `DockerTaskRunner`. The converter writes its generated query files and per-process outputs into a fresh subdirectory there and removes it when the conversion ends, then refers to them by a path relative to `workDir`, so the identical command works on the host and inside a container.
 
-Per-run directories matter for more than tidiness: a job output left over from an earlier run would satisfy the non-empty check below with stale triples.
+Per-run directories matter for more than tidiness: an output left over from an earlier run would satisfy the non-empty check below with stale triples.
 
-`jarPath`, and each job's `load` and `chunk` paths, are passed through as given, because only the caller knows how the runner sees them – in a container the jar usually lives in the image, while the chunks have to be under the mount.
+`jarPath`, and each job's `load` and `chunks` paths, are passed through as given, because only the caller knows how the runner sees them – in a container the jar usually lives in the image, while the chunks have to be under the mount.
 
 ### Loading existing RDF
 
@@ -89,13 +89,13 @@ Size it with the chunk size. A chunk that outgrows the heap fails loudly – the
 
 ## How a conversion runs
 
-For each job, the converter:
+For each chunk – or once, for a job that has none – the converter:
 
-1. Replaces the literal `{SOURCE}` in the query file with the chunk’s path, if the job has chunks, and writes the result to a temporary `.rq` file.
+1. Replaces the literal `{SOURCE}` in the job’s query with the chunk’s path and writes the result to a temporary `.rq` file. The query is read once per job, and interpolated per chunk.
 2. Runs `java -Xmx<heap> -jar <jar> -q <query> [--load <load>] --format NT --output <chunk>.nt [cliArgs]`, with every path quoted, so a space or a shell metacharacter in a filename can neither break the command nor inject into it.
 3. Waits for the process; a non-zero exit **aborts the whole conversion** so a crashed chunk can never be silently dropped from the output.
-4. Checks that the job’s output is not empty. SPARQL Anything exits successfully when it cannot read or parse an input – it logs the problem and writes nothing – so an empty or missing output **aborts the conversion** too.
+4. Checks that the output is not empty. SPARQL Anything exits successfully when it cannot read or parse an input – it logs the problem and writes nothing – so an empty or missing output **aborts the conversion** too.
 
 Converting an empty list of jobs is an error rather than an empty output: a step that produced none has already failed.
 
-Finally, the per-job `.nt` files are concatenated, in the order the jobs were given, into the output path. The concatenation streams, so multi-gigabyte outputs do not have to fit in memory. N-Triples has no prefixes or document structure, so concatenating per-chunk files always yields a single valid document.
+Finally, the `.nt` files are concatenated, in the order the jobs and their chunks were given, into the output path. The concatenation streams, so multi-gigabyte outputs do not have to fit in memory. N-Triples has no prefixes or document structure, so concatenating per-chunk files always yields a single valid document.

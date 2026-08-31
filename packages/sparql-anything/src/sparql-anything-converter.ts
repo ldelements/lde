@@ -120,8 +120,11 @@ export class SparqlAnythingConverter<Task> {
 
   /**
    * Runs every job and concatenates their N-Triples, in the order given, into
-   * `outputPath`. Query, chunk and `load` paths are passed to SPARQL Anything
-   * as given, so they must be readable by the task runner.
+   * `outputPath`.
+   *
+   * `queryFile` is read here, so it must be readable by this process; the chunk
+   * and `load` paths are passed to SPARQL Anything as given, so those must be
+   * readable by the task runner.
    *
    * Jobs of different shapes belong in one call: they are run by one converter,
    * so a long job and a short one pack together instead of draining in phases.
@@ -132,26 +135,37 @@ export class SparqlAnythingConverter<Task> {
         'Cannot convert without jobs; a run that produced none has failed upstream, and an empty output would hide that',
       );
     }
-    const processes = await plan(jobs);
+    const planned = await plan(jobs);
     // A fresh directory per run: a previous run's output left in place would
     // otherwise satisfy the non-empty check below with stale triples.
     const runDir = await mkdtemp(join(this.workDir, 'sparql-anything-'));
     const runDirName = basename(runDir);
     try {
       const outputs: string[] = [];
-      for (const [index, { query, job, chunk }] of processes.entries()) {
-        const queryPath = join(runDirName, `query-${index}.rq`);
-        await writeFile(join(this.workDir, queryPath), query);
-        const processOutput = join(runDirName, `output-${index}.nt`);
-        const task = await this.taskRunner.run(
-          this.command(queryPath, processOutput, job),
-        );
-        // wait() rejects on a non-zero exit, aborting convert() before the
-        // crashed process's missing output can be silently concatenated.
-        await this.taskRunner.wait(task);
-        const processOutputPath = join(this.workDir, processOutput);
-        await assertNonEmpty(processOutputPath, job, chunk);
-        outputs.push(processOutputPath);
+      let index = 0;
+      for (const { job, query } of planned) {
+        // Interpolated per chunk, at the point of use: holding a copy of the
+        // query for every chunk up front would scale with the input.
+        for (const chunk of job.chunks ?? [undefined]) {
+          const queryPath = join(runDirName, `query-${index}.rq`);
+          await writeFile(
+            join(this.workDir, queryPath),
+            chunk === undefined
+              ? query
+              : query.replaceAll(SOURCE_PLACEHOLDER, chunk),
+          );
+          const processOutput = join(runDirName, `output-${index}.nt`);
+          const task = await this.taskRunner.run(
+            this.command(queryPath, processOutput, job),
+          );
+          // wait() rejects on a non-zero exit, aborting convert() before the
+          // crashed process's missing output can be silently concatenated.
+          await this.taskRunner.wait(task);
+          const processOutputPath = join(this.workDir, processOutput);
+          await assertNonEmpty(processOutputPath, job, chunk);
+          outputs.push(processOutputPath);
+          index++;
+        }
       }
       await concatenate(outputs, outputPath);
     } finally {
@@ -182,24 +196,28 @@ export class SparqlAnythingConverter<Task> {
   }
 }
 
-/** One SPARQL Anything process: a job's query, resolved for one chunk. */
-interface PlannedProcess {
+/** A job whose query has been read, and checked against its chunks. */
+interface PlannedJob {
   job: ConversionJob;
-  chunk?: string;
+  /** The query as written, with `{SOURCE}` still in it. */
   query: string;
 }
 
 /**
- * The processes the jobs call for, in order: one per chunk, and one for a job
- * without chunks. Each job's query file is read once, however many chunks it
- * covers.
+ * Reads and checks every job's query before any process runs, so a
+ * misconfigured job fails now rather than after the jobs before it have each
+ * run a JVM.
+ *
+ * One query is held per job, not per chunk: a job's chunks are counted in
+ * thousands, and a copy of the query for each would grow with the input rather
+ * than with the work in hand.
  *
  * A query that names `{SOURCE}` needs chunks, and a chunk is only reachable
  * through the placeholder, so either half on its own is a misconfiguration
  * that SPARQL Anything would report as a parse error, or not at all.
  */
-async function plan(jobs: ConversionJob[]): Promise<PlannedProcess[]> {
-  const processes: PlannedProcess[] = [];
+async function plan(jobs: ConversionJob[]): Promise<PlannedJob[]> {
+  const planned: PlannedJob[] = [];
   for (const job of jobs) {
     const query = await readFile(job.queryFile, 'utf-8');
     const namesSource = query.includes(SOURCE_PLACEHOLDER);
@@ -209,28 +227,21 @@ async function plan(jobs: ConversionJob[]): Promise<PlannedProcess[]> {
           `Query ‘${job.queryFile}’ names ${SOURCE_PLACEHOLDER} but its job has no chunks`,
         );
       }
-      processes.push({ job, query });
-      continue;
+    } else {
+      if (!namesSource) {
+        throw new Error(
+          `Query ‘${job.queryFile}’ never names ${SOURCE_PLACEHOLDER}, so its job's chunks would go unread`,
+        );
+      }
+      if (job.chunks.length === 0) {
+        throw new Error(
+          `Job for query ‘${job.queryFile}’ has no chunks; a step that produced none has failed upstream, and converting nothing would hide that`,
+        );
+      }
     }
-    if (!namesSource) {
-      throw new Error(
-        `Query ‘${job.queryFile}’ never names ${SOURCE_PLACEHOLDER}, so its job's chunks would go unread`,
-      );
-    }
-    if (job.chunks.length === 0) {
-      throw new Error(
-        `Job for query ‘${job.queryFile}’ has no chunks; a step that produced none has failed upstream, and converting nothing would hide that`,
-      );
-    }
-    for (const chunk of job.chunks) {
-      processes.push({
-        job,
-        chunk,
-        query: query.replaceAll(SOURCE_PLACEHOLDER, chunk),
-      });
-    }
+    planned.push({ job, query });
   }
-  return processes;
+  return planned;
 }
 
 /**

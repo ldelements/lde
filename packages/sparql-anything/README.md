@@ -2,7 +2,7 @@
 
 Convert tabular and other non-RDF sources to RDF with the [SPARQL Anything](https://sparql-anything.cc) CLI.
 
-The `SparqlAnythingConverter` runs the SPARQL Anything jar once per job – a query, over an optional chunk – to bound memory use, then concatenates the per-job N-Triples outputs into a single file.
+The `SparqlAnythingConverter` runs the SPARQL Anything jar once per input chunk to bound memory use, then concatenates the resulting N-Triples into a single file. A job is a query and the chunks to run it over.
 
 ## Installation
 
