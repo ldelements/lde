@@ -7,8 +7,12 @@ import { basename, join } from 'node:path';
 /** Placeholder in the query file that is replaced with each chunk's path. */
 const SOURCE_PLACEHOLDER = '{SOURCE}';
 
-/** A JVM heap size: a number of bytes, or one with a k/m/g suffix. */
-const HEAP_SIZE = /^\d+[kmg]?$/i;
+/**
+ * A JVM heap size: a non-zero number of bytes, or one with a k/m/g suffix.
+ * Zero passes -Xmx's own syntax but kills every process at JVM startup, which
+ * is the one value a check meant to fail fast must not let through.
+ */
+const HEAP_SIZE = /^(?!0+[kmg]?$)\d+[kmg]?$/i;
 
 /**
  * Heap per chunk process when none is configured. Conservative on purpose: a
@@ -107,7 +111,8 @@ export class SparqlAnythingConverter<Task> {
     }
     this.heap = heap;
     const reserved = (options.cliArgs ?? []).filter((argument) =>
-      RESERVED_ARGUMENTS.has(argument),
+      // Also in the `--format=NT` form, which is a single token.
+      RESERVED_ARGUMENTS.has(argument.split('=')[0]),
     );
     if (reserved.length > 0) {
       throw new Error(
@@ -152,7 +157,9 @@ export class SparqlAnythingConverter<Task> {
             join(this.workDir, queryPath),
             chunk === undefined
               ? query
-              : query.replaceAll(SOURCE_PLACEHOLDER, chunk),
+              : // A replacer function, so `$&` and friends in a chunk path are
+                // the characters they look like rather than replacement patterns.
+                query.replaceAll(SOURCE_PLACEHOLDER, () => chunk),
           );
           const processOutput = join(runDirName, `output-${index}.nt`);
           const task = await this.taskRunner.run(
@@ -230,7 +237,7 @@ async function plan(jobs: ConversionJob[]): Promise<PlannedJob[]> {
     } else {
       if (!namesSource) {
         throw new Error(
-          `Query ‘${job.queryFile}’ never names ${SOURCE_PLACEHOLDER}, so its job's chunks would go unread`,
+          `Query ‘${job.queryFile}’ never names ${SOURCE_PLACEHOLDER}, so its job’s chunks would go unread`,
         );
       }
       if (job.chunks.length === 0) {

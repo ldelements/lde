@@ -238,6 +238,35 @@ describe('SparqlAnythingConverter', () => {
     ).toThrow('is not a heap size');
   });
 
+  it('substitutes a chunk path literally, however it looks', async () => {
+    const taskRunner = new FakeTaskRunner(workDir);
+    // `$&` is a replacement pattern in a JavaScript string replacement, and
+    // would otherwise put the placeholder itself back into the query.
+    const chunk = join(workDir, 'chunk-$&.csv');
+    await writeFile(chunk, 'header\nrow');
+
+    await converterFor(taskRunner).convert(
+      [{ queryFile, chunks: [chunk] }],
+      join(workDir, 'output.nt'),
+    );
+
+    expect(taskRunner.queries[0]).toContain(`fx:location "${chunk}"`);
+  });
+
+  it('rejects a heap of zero, which no process would survive', () => {
+    const taskRunner = new FakeTaskRunner(workDir);
+
+    expect(
+      () =>
+        new SparqlAnythingConverter({
+          jarPath: '/bin/sparql-anything.jar',
+          workDir,
+          heap: '0g',
+          taskRunner,
+        }),
+    ).toThrow('is not a heap size');
+  });
+
   it('rejects CLI arguments the converter sets itself', () => {
     const taskRunner = new FakeTaskRunner(workDir);
 
@@ -249,6 +278,22 @@ describe('SparqlAnythingConverter', () => {
           jarPath: '/bin/sparql-anything.jar',
           workDir,
           cliArgs: ['-o', 'elsewhere.nt'],
+          taskRunner,
+        }),
+    ).toThrow('the converter sets these itself');
+  });
+
+  it('rejects a reserved CLI argument in its --flag=value form', () => {
+    const taskRunner = new FakeTaskRunner(workDir);
+
+    // Left through, this would have concatenated Turtle as if it were
+    // N-Triples, and the run would have stayed green.
+    expect(
+      () =>
+        new SparqlAnythingConverter({
+          jarPath: '/bin/sparql-anything.jar',
+          workDir,
+          cliArgs: ['--format=TTL'],
           taskRunner,
         }),
     ).toThrow('the converter sets these itself');
