@@ -33,6 +33,12 @@ interface FakeTaskRunnerOptions {
   unreadableOutputContaining?: string;
   /** Milliseconds `wait()` takes, per output path, to order completions. */
   waitFor?: Record<string, number>;
+  /** Milliseconds `wait()` takes for any output not named in `waitFor`. */
+  waitForAll?: number;
+  /** Milliseconds `run()` takes, per output path, before the task exists. */
+  runFor?: Record<string, number>;
+  /** When set, `stop()` rejects, as a runner does for a container already gone. */
+  stopFails?: boolean;
 }
 
 /**
@@ -67,6 +73,8 @@ class FakeTaskRunner implements TaskRunner<{ command: string }> {
     const outputFile = tokenAfter(command, '--output');
     if (outputFile) {
       await this.writeOutput(outputFile);
+      const delay = delayFor(this.options.runFor, outputFile) ?? 0;
+      await new Promise((resolve) => setTimeout(resolve, delay));
     }
     return { command };
   }
@@ -101,8 +109,10 @@ class FakeTaskRunner implements TaskRunner<{ command: string }> {
     this.inFlight++;
     this.peakInFlight = Math.max(this.peakInFlight, this.inFlight);
     try {
-      const output = tokenAfter(task.command, '--output') ?? '';
-      const delay = this.options.waitFor?.[output] ?? 0;
+      const delay =
+        delayFor(this.options.waitFor, tokenAfter(task.command, '--output')) ??
+        this.options.waitForAll ??
+        0;
       await new Promise((resolve) => setTimeout(resolve, delay));
       if (matches(task.command, this.options.failOutputContaining)) {
         throw new Error('Process failed with code 1');
@@ -115,8 +125,28 @@ class FakeTaskRunner implements TaskRunner<{ command: string }> {
 
   async stop(task: { command: string }): Promise<string | null> {
     this.stopped.push(task.command);
+    if (this.options.stopFails === true) {
+      throw new Error('No such container');
+    }
     return null;
   }
+}
+
+/**
+ * The delay configured for an output path. Keyed by file name, while the
+ * command names it relative to the run directory.
+ */
+function delayFor(
+  delays: Record<string, number> | undefined,
+  outputPath?: string,
+): number | undefined {
+  if (delays === undefined || outputPath === undefined) {
+    return undefined;
+  }
+  const named = Object.entries(delays).find(([name]) =>
+    outputPath.endsWith(name),
+  );
+  return named?.[1];
 }
 
 /** Whether `needle` is configured and `haystack` contains it. */
@@ -463,7 +493,8 @@ describe('SparqlAnythingConverter', () => {
   });
 
   it('converts several chunks at once, up to the configured concurrency', async () => {
-    const taskRunner = new FakeTaskRunner(workDir);
+    // A delay every chunk shares, so the overlap does not depend on timing.
+    const taskRunner = new FakeTaskRunner(workDir, { waitForAll: 20 });
     const chunks = await writeChunks(6);
 
     await new SparqlAnythingConverter({
@@ -530,6 +561,49 @@ describe('SparqlAnythingConverter', () => {
     expect(taskRunner.stopped).toHaveLength(2);
     // The fourth chunk was never started.
     expect(taskRunner.commands).toHaveLength(3);
+  });
+
+  it('reports the conversion failure even when stopping the others fails', async () => {
+    const chunks = await writeChunks(3);
+    // A task runner cannot stop a container that has already gone; saying so
+    // must not replace the failure that is worth reporting.
+    const taskRunner = new FakeTaskRunner(workDir, {
+      failOutputContaining: 'output-0.nt',
+      waitFor: { 'output-1.nt': 100, 'output-2.nt': 100 },
+      stopFails: true,
+    });
+
+    await expect(
+      new SparqlAnythingConverter({
+        jarPath: '/bin/sparql-anything.jar',
+        workDir,
+        concurrency: 3,
+        taskRunner,
+      }).convert([{ queryFile, chunks }], join(workDir, 'output.nt')),
+    ).rejects.toThrow('Process failed');
+  });
+
+  it('stops a chunk that started while the run was failing', async () => {
+    const chunks = await writeChunks(2);
+    // The second chunk's process appears only after the first has failed, so
+    // it is not among the ones that failure stopped.
+    const taskRunner = new FakeTaskRunner(workDir, {
+      failOutputContaining: 'output-0.nt',
+      runFor: { 'output-1.nt': 50 },
+    });
+
+    await expect(
+      new SparqlAnythingConverter({
+        jarPath: '/bin/sparql-anything.jar',
+        workDir,
+        concurrency: 2,
+        taskRunner,
+      }).convert([{ queryFile, chunks }], join(workDir, 'output.nt')),
+    ).rejects.toThrow('Process failed');
+
+    expect(taskRunner.stopped).toEqual([
+      expect.stringContaining('output-1.nt'),
+    ]);
   });
 
   it('rejects a concurrency that is not a whole number of processes', () => {

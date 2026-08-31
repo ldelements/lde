@@ -189,25 +189,22 @@ export class SparqlAnythingConverter<Task> {
     runDirName: string,
   ): Promise<number> {
     const pending = processesOf(planned);
-    const inFlight = new Set<Task>();
-    let failure: unknown;
+    const state: RunState<Task> = { inFlight: new Set() };
 
     // Pulled one at a time rather than with `for...of`: leaving a for-of early
     // closes the iterator, so the first worker to give up would end the queue
     // for the others, whatever the reason it stopped.
     const convertChunks = async (): Promise<void> => {
-      while (failure === undefined) {
+      while (state.failure === undefined) {
         const next = pending.next();
         if (next.done === true) {
           return;
         }
         try {
-          await this.convertChunk(next.value, runDirName, inFlight);
+          await this.convertChunk(next.value, runDirName, state);
         } catch (error) {
-          failure ??= error;
-          await Promise.all(
-            [...inFlight].map((task) => this.taskRunner.stop(task)),
-          );
+          state.failure ??= error;
+          await this.stopInFlight(state);
           return;
         }
       }
@@ -216,8 +213,8 @@ export class SparqlAnythingConverter<Task> {
     await Promise.all(
       Array.from({ length: this.concurrency }, () => convertChunks()),
     );
-    if (failure !== undefined) {
-      throw failure;
+    if (state.failure !== undefined) {
+      throw state.failure;
     }
     return countOf(planned);
   }
@@ -226,7 +223,7 @@ export class SparqlAnythingConverter<Task> {
   private async convertChunk(
     { index, job, chunk, query }: PlannedProcess,
     runDirName: string,
-    inFlight: Set<Task>,
+    state: RunState<Task>,
   ): Promise<void> {
     const queryPath = join(runDirName, `query-${index}.rq`);
     await writeFile(
@@ -241,15 +238,38 @@ export class SparqlAnythingConverter<Task> {
     const task = await this.taskRunner.run(
       this.command(queryPath, output, job),
     );
-    inFlight.add(task);
+    state.inFlight.add(task);
     try {
+      if (state.failure !== undefined) {
+        // Started in the window between another chunk failing and this worker
+        // seeing it, so it is not in the set that failure stopped.
+        await this.stopQuietly(task);
+        return;
+      }
       // wait() rejects on a non-zero exit, aborting convert() before the
       // crashed chunk's missing output can be silently concatenated.
       await this.taskRunner.wait(task);
     } finally {
-      inFlight.delete(task);
+      state.inFlight.delete(task);
     }
     await assertNonEmpty(join(this.workDir, output), job, chunk);
+  }
+
+  /** Stops every process still running, so none outlives the run. */
+  private async stopInFlight(state: RunState<Task>): Promise<void> {
+    await Promise.all(
+      [...state.inFlight].map((task) => this.stopQuietly(task)),
+    );
+  }
+
+  /**
+   * Stops a task, ignoring a failure to stop it. Stopping is best effort by
+   * nature – a process that has just exited cannot be stopped, and reporting
+   * that would replace the failure that is actually worth reporting, and leave
+   * the other workers unawaited while the run directory is deleted.
+   */
+  private async stopQuietly(task: Task): Promise<void> {
+    await this.taskRunner.stop(task).catch(() => undefined);
   }
 
   /** The SPARQL Anything invocation for one job. */
@@ -305,6 +325,14 @@ function countOf(planned: PlannedJob[]): number {
     (total, { job }) => total + (job.chunks?.length ?? 1),
     0,
   );
+}
+
+/** What the workers of one run share. */
+interface RunState<Task> {
+  /** Tasks that have been started and not yet finished. */
+  inFlight: Set<Task>;
+  /** The first failure, which aborts the run. */
+  failure?: unknown;
 }
 
 /** A job whose query has been read, and checked against its chunks. */
