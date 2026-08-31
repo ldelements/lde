@@ -1,3 +1,13 @@
+## 0.29.0 (2026-08-31)
+
+### 🩹 Fixes
+
+- ⚠️  **search-typesense:** record which datasets reference a document ([#785](https://github.com/ldelements/lde/pull/785))
+
+### ⚠️  Breaking Changes
+
+- **search-typesense:** record which datasets reference a document  ([#785](https://github.com/ldelements/lde/pull/785))
+
 ## 0.28.0 (2026-08-31)
 
 ### 🚀 Features

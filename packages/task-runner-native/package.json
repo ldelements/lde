@@ -1,6 +1,6 @@
 {
   "name": "@lde/task-runner-native",
-  "version": "0.2.17",
+  "version": "0.2.18",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
     "directory": "packages/task-runner-native"

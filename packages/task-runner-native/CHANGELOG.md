@@ -1,3 +1,9 @@
+## 0.2.18 (2026-08-31)
+
+### 🩹 Fixes
+
+- **task-runner-native:** settle wait() for a process that already closed ([#787](https://github.com/ldelements/lde/pull/787))
+
 ## 0.2.17 (2026-08-31)
 
 ### 🧱 Updated Dependencies
