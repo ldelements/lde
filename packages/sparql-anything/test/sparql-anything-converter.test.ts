@@ -189,6 +189,33 @@ describe('SparqlAnythingConverter', () => {
     expect(command).toContain("--load '/data/'\\''s-Hertogenbosch.ttl'");
   });
 
+  it('passes JVM options before -jar, and extra CLI arguments after', async () => {
+    const taskRunner = new FakeTaskRunner(workDir);
+    const [chunk] = await writeChunks(1);
+
+    await new SparqlAnythingConverter({
+      queryFile,
+      jarPath: '/bin/sparql-anything.jar',
+      workDir,
+      javaOptions: ['-Xmx2g'],
+      cliArgs: ['-ad'],
+      taskRunner,
+    }).convert([chunk], join(workDir, 'output.nt'));
+
+    expect(taskRunner.commands[0]).toMatch(
+      /^java '-Xmx2g' -jar '\/bin\/sparql-anything\.jar' .* '-ad'$/,
+    );
+  });
+
+  it('runs a bare java command when neither is configured', async () => {
+    const taskRunner = new FakeTaskRunner(workDir);
+    const [chunk] = await writeChunks(1);
+
+    await converterFor(taskRunner).convert([chunk], join(workDir, 'output.nt'));
+
+    expect(taskRunner.commands[0]).toMatch(/^java -jar /);
+  });
+
   it('omits --load when no path is configured', async () => {
     const taskRunner = new FakeTaskRunner(workDir);
     const [chunk] = await writeChunks(1);

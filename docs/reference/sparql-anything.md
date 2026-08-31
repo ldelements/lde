@@ -32,13 +32,15 @@ await converter.convert(
 
 ### Options
 
-| Option       | Type               | Description                                                                                  |
-| ------------ | ------------------ | -------------------------------------------------------------------------------------------- |
-| `queryFile`  | `string`           | Path to the SPARQL CONSTRUCT query. The literal `{SOURCE}` is replaced per chunk             |
-| `jarPath`    | `string`           | Path to the SPARQL Anything CLI jar, as the task runner sees it                              |
-| `workDir`    | `string`           | The task runner's working directory; see [Where files are written](#where-files-are-written) |
-| `load`       | `string`           | Optional path passed to `--load`; see [Loading existing RDF](#loading-existing-rdf)          |
-| `taskRunner` | `TaskRunner<Task>` | Runs the SPARQL Anything process for each chunk                                              |
+| Option        | Type               | Description                                                                                  |
+| ------------- | ------------------ | -------------------------------------------------------------------------------------------- |
+| `queryFile`   | `string`           | Path to the SPARQL CONSTRUCT query. The literal `{SOURCE}` is replaced per chunk             |
+| `jarPath`     | `string`           | Path to the SPARQL Anything CLI jar, as the task runner sees it                              |
+| `workDir`     | `string`           | The task runner's working directory; see [Where files are written](#where-files-are-written) |
+| `load`        | `string`           | Optional path passed to `--load`; see [Loading existing RDF](#loading-existing-rdf)          |
+| `javaOptions` | `string[]`         | Options for the JVM, before `-jar`; see [Memory](#memory)                                    |
+| `cliArgs`     | `string[]`         | Further arguments for the SPARQL Anything CLI, after the converter's own                     |
+| `taskRunner`  | `TaskRunner<Task>` | Runs the SPARQL Anything process for each chunk                                              |
 
 ### Where files are written
 
@@ -52,12 +54,22 @@ Per-run directories matter for more than tidiness: a chunk output left over from
 
 `load` is optional. Pass it to combine the converted data with RDF you already have – a lookup table the query joins against, for instance. SPARQL Anything reads a **file** into the default graph, and a **directory** as one named graph per RDF file it holds, so the two are not interchangeable. Leave `load` unset and no `--load` is passed at all.
 
+### Memory
+
+One process per chunk bounds how much has to be held at once, but only together with a heap cap: SPARQL Anything materialises a chunk's whole result graph before writing it, and a JVM with no `-Xmx` helps itself to a quarter of host memory. Pass one, and size it with the chunk size:
+
+```typescript
+javaOptions: ['-Xmx2g'],
+```
+
+`cliArgs` is the escape hatch for CLI flags the converter does not model itself. Both are quoted like every other interpolated value, and `cliArgs` lands after the arguments the converter sets, so a flag repeated there is the one the CLI sees last.
+
 ## How a conversion runs
 
 For each chunk, the converter:
 
 1. Replaces the literal `{SOURCE}` in the query file with the chunk’s path and writes the result to a temporary `.rq` file.
-2. Runs `java -jar <jar> -q <query> [--load <load>] --format NT --output <chunk>.nt`, with every path quoted, so a space or a shell metacharacter in a filename can neither break the command nor inject into it.
+2. Runs `java [javaOptions] -jar <jar> -q <query> [--load <load>] --format NT --output <chunk>.nt [cliArgs]`, with every path quoted, so a space or a shell metacharacter in a filename can neither break the command nor inject into it.
 3. Waits for the process; a non-zero exit **aborts the whole conversion** so a crashed chunk can never be silently dropped from the output.
 4. Checks that the chunk’s output is not empty. SPARQL Anything exits successfully when it cannot read or parse an input – it logs the problem and writes nothing – so an empty or missing output **aborts the conversion** too.
 

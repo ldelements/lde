@@ -30,6 +30,18 @@ export interface SparqlAnythingConverterOptions<Task> {
    * into its own named graph.
    */
   load?: string;
+  /**
+   * Options for the JVM itself, passed before `-jar`. Cap the heap here –
+   * `['-Xmx2g']` – because SPARQL Anything materialises a chunk's whole result
+   * graph before writing it, and an uncapped JVM helps itself to a quarter of
+   * host memory. Chunk size and heap cap are chosen together.
+   */
+  javaOptions?: string[];
+  /**
+   * Further arguments for the SPARQL Anything CLI, passed after the ones the
+   * converter sets itself.
+   */
+  cliArgs?: string[];
   /** Runs the SPARQL Anything process for each chunk. */
   taskRunner: TaskRunner<Task>;
 }
@@ -44,6 +56,8 @@ export class SparqlAnythingConverter<Task> {
   private readonly jarPath: string;
   private readonly workDir: string;
   private readonly load?: string;
+  private readonly javaOptions: string[];
+  private readonly cliArgs: string[];
   private readonly taskRunner: TaskRunner<Task>;
 
   constructor(options: SparqlAnythingConverterOptions<Task>) {
@@ -51,6 +65,8 @@ export class SparqlAnythingConverter<Task> {
     this.jarPath = options.jarPath;
     this.workDir = options.workDir;
     this.load = options.load;
+    this.javaOptions = options.javaOptions ?? [];
+    this.cliArgs = options.cliArgs ?? [];
     this.taskRunner = options.taskRunner;
   }
 
@@ -70,8 +86,6 @@ export class SparqlAnythingConverter<Task> {
     // otherwise satisfy the non-empty check below with stale triples.
     const runDir = await mkdtemp(join(this.workDir, 'sparql-anything-'));
     const runDirName = basename(runDir);
-    const loadOption =
-      this.load === undefined ? '' : ` --load ${shellQuote(this.load)}`;
     try {
       const chunkOutputs: string[] = [];
       for (const [index, chunkPath] of chunkPaths.entries()) {
@@ -82,7 +96,7 @@ export class SparqlAnythingConverter<Task> {
         );
         const chunkOutput = join(runDirName, `chunk-${index}.nt`);
         const task = await this.taskRunner.run(
-          `java -jar ${shellQuote(this.jarPath)} -q ${shellQuote(queryPath)}${loadOption} --format NT --output ${shellQuote(chunkOutput)}`,
+          this.command(queryPath, chunkOutput),
         );
         // wait() rejects on a non-zero exit, aborting convert() before the
         // crashed chunk's missing output can be silently concatenated.
@@ -95,6 +109,24 @@ export class SparqlAnythingConverter<Task> {
     } finally {
       await rm(runDir, { recursive: true, force: true });
     }
+  }
+
+  /** The SPARQL Anything invocation for one chunk. */
+  private command(queryPath: string, chunkOutput: string): string {
+    return [
+      'java',
+      ...this.javaOptions.map(shellQuote),
+      '-jar',
+      shellQuote(this.jarPath),
+      '-q',
+      shellQuote(queryPath),
+      ...(this.load === undefined ? [] : ['--load', shellQuote(this.load)]),
+      '--format',
+      'NT',
+      '--output',
+      shellQuote(chunkOutput),
+      ...this.cliArgs.map(shellQuote),
+    ].join(' ');
   }
 }
 
