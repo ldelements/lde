@@ -36,7 +36,7 @@ await runner.stop(container);
 | Option          | Type     | Required | Description                                                                                                                        |
 | --------------- | -------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | `image`         | `string` | Yes      | Docker image to use                                                                                                                |
-| `containerName` | `string` | No       | Name for the container (auto-removed on restart)                                                                                   |
+| `containerName` | `string` | No       | Name for the container (auto-removed on restart). One task at a time; see [Naming containers](#naming-containers)                  |
 | `mountDir`      | `string` | No       | Host directory to mount at `/mount` in the container                                                                               |
 | `port`          | `number` | No       | Port to expose from the container                                                                                                  |
 | `network`       | `string` | No       | Docker network to attach the container to (`HostConfig.NetworkMode`); on a user-defined network the container is reachable by name |
@@ -55,3 +55,11 @@ await runner.stop(container);
 ## Output and errors
 
 `wait()` and `stop()` do not stream logs while the container runs. Instead, each fetches the container’s stdout and stderr in one go (`follow: false`) and returns them as a string. When the container exits with a non-zero status code, `wait()` throws an error of the form `Task failed with status code N: <logs>`.
+
+## Naming containers
+
+`containerName` names the container, and on a `network` that name is how other containers reach it. It therefore belongs to one container at a time, and the runner enforces that: starting a task while a named task is still running is an error rather than a silent replacement.
+
+That matters because the runner removes a container of that name before starting a task, which is what makes restarting idempotent – a container left behind by an earlier run cannot block the next one. Without the check, a second task would remove the container of the first _while it was still running_, and the first task's `wait()` would fail with no explanation of why.
+
+Leave `containerName` unset to run tasks alongside each other. Docker then names each container itself, and nothing is shared for them to take from one another.
