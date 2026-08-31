@@ -1,3 +1,13 @@
+## 0.1.0 (2026-08-31)
+
+### 🚀 Features
+
+- ⚠️  **sparql-anything:** convert a list of jobs, not a list of chunks ([#791](https://github.com/ldelements/lde/pull/791))
+
+### ⚠️  Breaking Changes
+
+- **sparql-anything:** convert a list of jobs, not a list of chunks  ([#791](https://github.com/ldelements/lde/pull/791))
+
 ## 0.0.2 (2026-08-31)
 
 ### 🚀 Features
