@@ -16,12 +16,26 @@ export interface NativeTaskRunnerOptions {
   gracefulShutdownTimeout?: number;
 }
 
+/** What a process left behind once it closed. */
+interface TaskResult {
+  /** Exit code, or `null` when the process was killed by a signal. */
+  code: number | null;
+  /** Output, when the failure path already read (and so consumed) it. */
+  output?: string;
+}
+
 export class NativeTaskRunner implements TaskRunner<ChildProcess> {
   private stdout: Map<number, string> = new Map();
   private stderr: Map<number, string> = new Map();
   private shell = true;
   private cwd?: string;
   private gracefulShutdownTimeout: number;
+  /**
+   * Results of processes that have already closed, so {@link wait} can settle
+   * for one that finished before it was called. Weak, so a task nobody waits
+   * on is forgotten along with its process object.
+   */
+  private results = new WeakMap<ChildProcess, TaskResult>();
 
   constructor(options?: NativeTaskRunnerOptions) {
     this.cwd = options?.cwd;
@@ -35,11 +49,17 @@ export class NativeTaskRunner implements TaskRunner<ChildProcess> {
       cwd: this.cwd,
     });
 
-    task.on('close', (code: number) => {
+    task.on('close', (code: number | null) => {
       /** code is null when the process was killed, which is expected when
        * {@link stop} is called. */
       if (code !== null && code !== 0) {
-        task.emit('error', new Error(this.taskOutput(task)));
+        // Reading the output here consumes it, so keep it for a later wait().
+        const output = this.taskOutput(task);
+        this.results.set(task, { code, output });
+        task.emit('error', new Error(output));
+      } else {
+        // Leave the output unread: stop() still has to be able to return it.
+        this.results.set(task, { code });
       }
     });
     task.on('error', () => {
@@ -65,18 +85,31 @@ export class NativeTaskRunner implements TaskRunner<ChildProcess> {
     return task;
   }
 
+  /**
+   * Resolves with the process's output, or rejects if it failed – whether it
+   * is still running or has already closed. A pool spawns several tasks before
+   * awaiting any of them, so a task that fails fast (a bad jar path exits in
+   * milliseconds) routinely closes before wait() is called.
+   */
   async wait(task: ChildProcess): Promise<string> {
-    return new Promise((resolve, reject) => {
+    const result = this.results.get(task) ?? (await this.closed(task));
+    const output = result.output ?? this.taskOutput(task);
+    if (result.code === 0) {
+      return output;
+    }
+    throw new Error(`Process failed with code ${result.code}: ${output}`);
+  }
+
+  /** Resolves once `task` closes, recording what it left behind. */
+  private closed(task: ChildProcess): Promise<TaskResult> {
+    return new Promise((resolve) => {
       // When waiting for a task, reject on error instead of crashing the
-      // process, as we do on purpose in the close listener above.
+      // process, as we do on purpose in the close listener in run().
       task.removeAllListeners('close');
-      task.on('close', (code: number) => {
-        const output = this.taskOutput(task);
-        if (code === 0) {
-          resolve(output);
-        } else {
-          reject(new Error(`Process failed with code ${code}: ${output}`));
-        }
+      task.on('close', (code: number | null) => {
+        const result = { code };
+        this.results.set(task, result);
+        resolve(result);
       });
     });
   }

@@ -1,8 +1,21 @@
 import { NativeTaskRunner } from '../src/index.js';
+import { ChildProcess } from 'node:child_process';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+
+/** Resolves once the process has exited and its output has been read. */
+function closed(task: ChildProcess): Promise<void> {
+  return new Promise((resolve) => {
+    if (task.exitCode !== null || task.signalCode !== null) {
+      // Still give the 'close' listeners a turn to run.
+      setImmediate(resolve);
+      return;
+    }
+    task.on('close', () => setImmediate(resolve));
+  });
+}
 
 describe('NativeTaskRunner', () => {
   let tempDir: string;
@@ -60,8 +73,41 @@ describe('NativeTaskRunner', () => {
       const runner = new NativeTaskRunner();
       const task = await runner.run('exit 1');
       await expect(runner.wait(task)).rejects.toThrow(
-        'Process failed with code 1'
+        'Process failed with code 1',
       );
+    });
+
+    it('returns output for a process that already succeeded', async () => {
+      const runner = new NativeTaskRunner();
+      const task = await runner.run('echo "test output"');
+      await closed(task);
+
+      // A pool spawns several tasks before awaiting any of them, so wait()
+      // routinely arrives after the process is gone. Attaching a listener
+      // then would wait for a 'close' that has already fired.
+      const output = await runner.wait(task);
+
+      expect(output).toContain('test output');
+    });
+
+    it('rejects for a process that already failed', async () => {
+      const runner = new NativeTaskRunner();
+      // A bad command exits within milliseconds, so a pool spawning its next
+      // task is enough for this to lose the race.
+      const task = await runner.run('exit 1');
+      await closed(task);
+
+      await expect(runner.wait(task)).rejects.toThrow(
+        'Process failed with code 1',
+      );
+    });
+
+    it('rejects for a process that was already stopped', async () => {
+      const runner = new NativeTaskRunner();
+      const task = await runner.run('sleep 60');
+      await runner.stop(task);
+
+      await expect(runner.wait(task)).rejects.toThrow('Process failed');
     });
   });
 
@@ -99,7 +145,7 @@ describe('NativeTaskRunner', () => {
         `#!/bin/bash
 trap '' SIGTERM
 while true; do sleep 1; done`,
-        { mode: 0o755 }
+        { mode: 0o755 },
       );
 
       const task = await runner.run(`bash ${scriptPath}`);
