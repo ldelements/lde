@@ -4,6 +4,13 @@ import Docker, { Container, ContainerCreateOptions } from 'dockerode';
 
 export interface DockerTaskRunnerOptions {
   image: string;
+  /**
+   * Name for the container. Other containers on a `network` address it by this
+   * name, so it belongs to one container at a time: a runner that has it runs
+   * one task at a time, and rejects a second while the first is still going.
+   * Leave it unset to run tasks alongside each other, and Docker names each
+   * container itself.
+   */
   containerName?: string;
   /** Publish this container port to the same port on the host. */
   port?: number;
@@ -19,6 +26,12 @@ export interface DockerTaskRunnerOptions {
 
 export class DockerTaskRunner implements TaskRunner<Container> {
   private readonly options;
+  /**
+   * Containers started under {@link DockerTaskRunnerOptions.containerName}
+   * that have not been awaited or stopped, so a second task cannot take the
+   * name out from under one that is still running.
+   */
+  private readonly running = new Set<Container>();
 
   constructor(options: DockerTaskRunnerOptions) {
     this.options = {
@@ -28,27 +41,38 @@ export class DockerTaskRunner implements TaskRunner<Container> {
   }
 
   async wait(task: Container): Promise<string> {
-    const result = await task.wait();
-    const logs = (
-      await task.logs({
-        stdout: true,
-        stderr: true,
-        follow: false,
-      })
-    ).toString();
+    try {
+      const result = await task.wait();
+      const logs = (
+        await task.logs({
+          stdout: true,
+          stderr: true,
+          follow: false,
+        })
+      ).toString();
 
-    if (result.StatusCode !== 0) {
-      throw new Error(
-        `Task failed with status code ${result.StatusCode}: ${logs})`,
-      );
+      if (result.StatusCode !== 0) {
+        throw new Error(
+          `Task failed with status code ${result.StatusCode}: ${logs})`,
+        );
+      }
+
+      return logs;
+    } finally {
+      this.running.delete(task);
     }
-
-    return logs;
   }
 
   async run(command: string): Promise<Container> {
     if (this.options.containerName) {
+      if (this.running.size > 0) {
+        throw new Error(
+          `A task is already running as ‘${this.options.containerName}’. A runner with a containerName runs one task at a time, because that name is how other containers address it; leave containerName unset to run tasks alongside each other.`,
+        );
+      }
       try {
+        // A container of this name left behind by an earlier run: removing it
+        // is what makes starting a task again idempotent.
         await this.options.docker
           .getContainer(this.options.containerName)
           .remove({ force: true });
@@ -107,17 +131,24 @@ export class DockerTaskRunner implements TaskRunner<Container> {
       await this.options.docker.createContainer(containerOptions);
 
     await container.start();
+    if (this.options.containerName) {
+      this.running.add(container);
+    }
 
     return container;
   }
 
   async stop(task: Container): Promise<string> {
-    const logs = await task.logs({
-      stdout: true,
-      stderr: true,
-      follow: false,
-    });
-    await task.stop();
-    return logs.toString();
+    try {
+      const logs = await task.logs({
+        stdout: true,
+        stderr: true,
+        follow: false,
+      });
+      await task.stop();
+      return logs.toString();
+    } finally {
+      this.running.delete(task);
+    }
   }
 }

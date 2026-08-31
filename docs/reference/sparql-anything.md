@@ -96,8 +96,8 @@ Chunks of every job are converted through one pool, in the order the jobs and th
 
 The first failure aborts the run: no further chunk is started, and the processes still going are stopped rather than left writing into a directory the converter is about to delete. A process that cannot be stopped – one that has just exited, say – does not change what is reported: the conversion failure is the one worth reading.
 
-> [!WARNING]
-> A `DockerTaskRunner` configured with a `containerName` cannot be used with `concurrency` above one. It force-removes any container of that name before starting a task, so each chunk would destroy the container of the chunk before it. Leave `containerName` unset for a converter that runs chunks in parallel.
+> [!NOTE]
+> A `DockerTaskRunner` configured with a `containerName` runs one task at a time – the name is how other containers address it – so it rejects a second chunk rather than taking the name from the first. Leave `containerName` unset for a converter that runs chunks in parallel.
 
 `cliArgs` is the escape hatch for CLI flags the converter does not model itself, appended to the arguments it sets. It cannot repeat those: `-q`, `-f`, `-o` and `-l` are rejected, in their long and `--flag=value` forms too, because the converter reads back the `--output` it named, in the `--format` it asked for – overriding either leaves it reporting an empty conversion, or concatenating fragments that are not N-Triples. SPARQL Anything documents repetition only for `-v` and `-c`, so a repeated flag has no defined winner to rely on.
 

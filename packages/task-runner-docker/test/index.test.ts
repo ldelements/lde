@@ -27,6 +27,9 @@ function createFakeDocker(): Docker & { created: ContainerCreateOptions[] } {
       fake.created.push(options);
       return {
         start: () => Promise.resolve(),
+        wait: () => Promise.resolve({ StatusCode: 0 }),
+        logs: () => Promise.resolve(Buffer.from('')),
+        stop: () => Promise.resolve(),
       };
     },
   };
@@ -63,5 +66,50 @@ describe('DockerTaskRunner', () => {
 
     expect(docker.created[0].HostConfig?.NetworkMode).toBe('app_default');
     expect(docker.created[0].HostConfig?.PortBindings).toBeUndefined();
+  });
+
+  it('runs tasks alongside each other when they are not named', async () => {
+    const docker = createFakeDocker();
+    const runner = new DockerTaskRunner({ image: 'example/image', docker });
+
+    await runner.run('first');
+    await runner.run('second');
+
+    // Docker names each container itself, so neither can displace the other.
+    expect(docker.created).toHaveLength(2);
+    expect(docker.created[0].name).toBeUndefined();
+  });
+
+  it('refuses a second task while the named one is still running', async () => {
+    const docker = createFakeDocker();
+    const runner = new DockerTaskRunner({
+      image: 'example/image',
+      containerName: 'example',
+      docker,
+    });
+    await runner.run('first');
+
+    // Starting it would have force-removed the container of the task that is
+    // still running under that name.
+    await expect(runner.run('second')).rejects.toThrow(
+      'A task is already running as ‘example’',
+    );
+    expect(docker.created).toHaveLength(1);
+  });
+
+  it('reuses the name once the task it belonged to has finished', async () => {
+    const docker = createFakeDocker();
+    const runner = new DockerTaskRunner({
+      image: 'example/image',
+      containerName: 'example',
+      docker,
+    });
+
+    await runner.wait(await runner.run('first'));
+    await runner.stop(await runner.run('second'));
+    await runner.run('third');
+
+    // Starting a task again stays idempotent: each removes what the last left.
+    expect(docker.created).toHaveLength(3);
   });
 });
