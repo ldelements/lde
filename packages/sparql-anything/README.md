@@ -18,6 +18,7 @@ const converter = new SparqlAnythingConverter({
   queryFile: 'config/places.rq',
   jarPath: 'bin/sparql-anything.jar',
   workDir: 'data',
+  heap: '2g',
   load: 'data/reference.ttl',
   taskRunner: new NativeTaskRunner({ cwd: 'data' }),
 });

@@ -7,6 +7,25 @@ import { basename, join } from 'node:path';
 /** Placeholder in the query file that is replaced with each chunk's path. */
 const SOURCE_PLACEHOLDER = '{SOURCE}';
 
+/** A JVM heap size: a number of bytes, or one with a k/m/g suffix. */
+const HEAP_SIZE = /^\d+[kmg]?$/i;
+
+/**
+ * Arguments the converter sets itself, with their aliases. Passing one again
+ * through `cliArgs` would break what the converter does around the process:
+ * it reads back the `--output` it named, in the `--format` it asked for.
+ */
+const RESERVED_ARGUMENTS = new Set([
+  '-q',
+  '--query',
+  '-f',
+  '--format',
+  '-o',
+  '--output',
+  '-l',
+  '--load',
+]);
+
 /** Configuration for a {@link SparqlAnythingConverter}. */
 export interface SparqlAnythingConverterOptions<Task> {
   /**
@@ -31,15 +50,17 @@ export interface SparqlAnythingConverterOptions<Task> {
    */
   load?: string;
   /**
-   * Options for the JVM itself, passed before `-jar`. Cap the heap here –
-   * `['-Xmx2g']` – because SPARQL Anything materialises a chunk's whole result
-   * graph before writing it, and an uncapped JVM helps itself to a quarter of
-   * host memory. Chunk size and heap cap are chosen together.
+   * Maximum JVM heap per chunk process, as `-Xmx` takes it: `'2g'`, `'512m'`.
+   * Required, because one process per chunk bounds memory only together with a
+   * cap: SPARQL Anything materialises a chunk's whole result graph before
+   * writing it, and an uncapped JVM helps itself to a quarter of host memory.
+   * Chunk size and heap are chosen together.
    */
-  javaOptions?: string[];
+  heap: string;
   /**
    * Further arguments for the SPARQL Anything CLI, passed after the ones the
-   * converter sets itself.
+   * converter sets itself. Those it cannot repeat: `-q`, `-f`, `-o` and `-l`
+   * are the converter's own, and are rejected here.
    */
   cliArgs?: string[];
   /** Runs the SPARQL Anything process for each chunk. */
@@ -56,7 +77,7 @@ export class SparqlAnythingConverter<Task> {
   private readonly jarPath: string;
   private readonly workDir: string;
   private readonly load?: string;
-  private readonly javaOptions: string[];
+  private readonly heap: string;
   private readonly cliArgs: string[];
   private readonly taskRunner: TaskRunner<Task>;
 
@@ -65,7 +86,20 @@ export class SparqlAnythingConverter<Task> {
     this.jarPath = options.jarPath;
     this.workDir = options.workDir;
     this.load = options.load;
-    this.javaOptions = options.javaOptions ?? [];
+    if (!HEAP_SIZE.test(options.heap)) {
+      throw new Error(
+        `‘${options.heap}’ is not a heap size; give the value -Xmx takes, such as ‘2g’`,
+      );
+    }
+    this.heap = options.heap;
+    const reserved = (options.cliArgs ?? []).filter((argument) =>
+      RESERVED_ARGUMENTS.has(argument),
+    );
+    if (reserved.length > 0) {
+      throw new Error(
+        `Cannot pass ${reserved.join(', ')} through cliArgs: the converter sets these itself, and reads back the output it named`,
+      );
+    }
     this.cliArgs = options.cliArgs ?? [];
     this.taskRunner = options.taskRunner;
   }
@@ -115,7 +149,7 @@ export class SparqlAnythingConverter<Task> {
   private command(queryPath: string, chunkOutput: string): string {
     return [
       'java',
-      ...this.javaOptions.map(shellQuote),
+      shellQuote(`-Xmx${this.heap}`),
       '-jar',
       shellQuote(this.jarPath),
       '-q',
