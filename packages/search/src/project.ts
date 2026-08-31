@@ -455,6 +455,17 @@ function referenceValues(
  * `sortable`) stay on the declared `locales`, which drive the indexed, stemmed,
  * weighted fanout; a value in an undeclared language is not indexed. Absent
  * languages emit nothing.
+ *
+ * The two companions differ in what an absent language means. A search query
+ * fans out over *every* locale key at once, so a document titled in one
+ * language is found whichever language the reader asks in. A sort names a
+ * **single** key, so a locale key left empty is not “no value in Dutch” – it is
+ * the empty string, which ties with every other document missing that language
+ * and leaves them in relevance order. Each locale’s sort key therefore falls
+ * back to the document’s first value in `locales` order: a collection of
+ * untagged titles sorts by title in a Dutch request rather than not at all.
+ * Ordering across languages is approximate by nature; a total order over the
+ * titles a reader actually sees beats a partial one over the tagged few.
  */
 function applyText(
   document: ProjectedNode,
@@ -476,22 +487,30 @@ function applyText(
   // here it simply indexes nothing.
   if (field.searchable !== undefined || field.sortable === true) {
     const names = physicalFields(field);
-    field.locales.forEach((locale, index) => {
-      const localeValues = values
+    const valuesPerLocale = field.locales.map((locale) =>
+      values
         .filter((value) => value.lang === locale)
-        .map((value) => value.value);
-      if (localeValues.length === 0) {
-        return;
-      }
-      if (field.searchable) {
+        .map((value) => value.value),
+    );
+    // What every locale’s sort key falls back to: the document’s first value
+    // in `locales` order, which is the declaration’s own statement of which
+    // language stands in for the others.
+    const fallbackSortValue = valuesPerLocale.find(
+      (localeValues) => localeValues.length > 0,
+    )?.[0];
+    valuesPerLocale.forEach((localeValues, index) => {
+      if (field.searchable !== undefined && localeValues.length > 0) {
         setString(
           document,
           names.search[index],
           foldedSearchValue(localeValues),
         );
       }
-      if (field.sortable) {
-        setString(document, names.sort[index], fold(localeValues[0]));
+      if (field.sortable === true) {
+        const sortValue = localeValues[0] ?? fallbackSortValue;
+        if (sortValue !== undefined) {
+          setString(document, names.sort[index], fold(sortValue));
+        }
       }
     });
   }

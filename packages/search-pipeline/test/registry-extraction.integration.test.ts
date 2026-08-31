@@ -160,6 +160,10 @@ describe('registry-sourced extraction: scoped to the dataset’s own graph', () 
         label_sort_nl: 'vaandels van limburg',
         label_search_en: 'banners of limburg',
         label_sort_en: 'banners of limburg',
+        // The `und` locale is declared but untagged labels are absent here, so
+        // its sort key falls back to the first declared locale’s value – a
+        // reader whose language the request does not state still gets an order.
+        label_sort_und: 'vaandels van limburg',
         description_nl: 'Een dataset over vaandels.',
         description_search_nl: 'een dataset over vaandels.',
         publisher: ['https://ex/org/trace'],

@@ -952,15 +952,24 @@ language present:
   lets a language that needs a dedicated tokenizer set its own stemming `locale`
   in the engine schema);
 - `sortable` → `title_sort_nl`/`title_sort_en` (folded, so a locale-switching UI
-  sorts on the active language).
+  sorts on the active language). Each locale’s key **falls back** to the
+  document’s first value in `locales` order when that language is absent, so a
+  document titled only in English still sorts under a title in a Dutch request.
+  A sort names a single key: without the fallback every document lacking the
+  active language would tie on the empty string and come back in relevance
+  order, which is what a collection of untagged titles looks like when it is
+  “sorted” by name. Search needs no such fallback – a query fans out over every
+  locale key at once.
 
 A field with `searchable` but no `output` is **search-only** – folded and stemmed
 for retrieval but never rendered (e.g. a creator searched here but shown via a
 separate label). **Only listed locales are indexed** (searched and sorted); a
 literal whose language tag is not in `locales` is still **displayed** but not
 matched or sorted on. Display fields are **omitted, never empty**, when a document
-lacks that language, and the per-locale search/sort fields likewise, so declare
-them optional in the engine schema and sort with `missing_values: last`. A
+lacks that language, and the per-locale search fields likewise, so declare them
+optional in the engine schema and sort with `missing_values: last`. A sort field
+is present whenever the field holds any value in a declared locale (the fallback
+above); it is absent only when the field is. A
 deployment that wants to bound the displayed languages narrows them upstream
 (e.g. selecting a language subset in its CONSTRUCT query), since preservation is
 the default.
