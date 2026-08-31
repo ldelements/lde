@@ -1,6 +1,6 @@
 {
   "name": "@lde/sparql-qlever",
-  "version": "0.15.7",
+  "version": "0.16.0",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
     "directory": "packages/sparql-qlever"
@@ -29,7 +29,7 @@
     "@lde/sparql-importer": "^0.6.10",
     "@lde/sparql-server": "^0.4.14",
     "@lde/task-runner": "^0.2.14",
-    "@lde/task-runner-docker": "^0.2.17",
+    "@lde/task-runner-docker": "^0.3.0",
     "@lde/task-runner-native": "^0.2.18",
     "@lde/wait-for-sparql": "^0.2.17",
     "rdf-parse": "^5.0.0",

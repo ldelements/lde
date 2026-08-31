@@ -1,3 +1,13 @@
+## 0.3.0 (2026-08-31)
+
+### 🩹 Fixes
+
+- ⚠️  **task-runner-docker:** refuse a second task while the named one runs ([#796](https://github.com/ldelements/lde/pull/796))
+
+### ⚠️  Breaking Changes
+
+- **task-runner-docker:** refuse a second task while the named one runs  ([#796](https://github.com/ldelements/lde/pull/796))
+
 ## 0.2.17 (2026-08-31)
 
 ### 🧱 Updated Dependencies

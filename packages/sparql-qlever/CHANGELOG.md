@@ -1,3 +1,9 @@
+## 0.16.0 (2026-08-31)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/task-runner-docker to 0.3.0
+
 ## 0.15.7 (2026-08-31)
 
 ### 🧱 Updated Dependencies
