@@ -1,3 +1,14 @@
+## 0.26.2 (2026-08-31)
+
+### 🩹 Fixes
+
+- **search:** sort a document that has no title in the reader’s language ([1e39d9fa](https://github.com/ldelements/lde/commit/1e39d9fa))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.29.2
+- Updated @lde/search to 0.24.2
+
 ## 0.26.1 (2026-08-31)
 
 ### 🩹 Fixes
