@@ -1,3 +1,9 @@
+## 0.2.12 (2026-08-31)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/sparql-importer to 0.6.10
+
 ## 0.2.11 (2026-08-24)
 
 ### 🧱 Updated Dependencies

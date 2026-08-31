@@ -1,3 +1,9 @@
+## 0.2.14 (2026-08-31)
+
+### 🚀 Features
+
+- **sparql-anything:** add SparqlAnythingConverter for chunked non-RDF to RDF conversion ([#511](https://github.com/ldelements/lde/pull/511))
+
 ## 0.2.13 (2026-07-24)
 
 This was a version bump only for @lde/task-runner to align it with other projects, there were no code changes.

@@ -1,3 +1,13 @@
+## 0.24.0 (2026-08-31)
+
+### 🚀 Features
+
+- ⚠️  **search:** carry data on a reference edge ([#780](https://github.com/ldelements/lde/pull/780))
+
+### ⚠️  Breaking Changes
+
+- **search:** carry data on a reference edge  ([#780](https://github.com/ldelements/lde/pull/780))
+
 ## 0.23.2 (2026-08-24)
 
 ### 🚀 Features
