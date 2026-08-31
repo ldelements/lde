@@ -101,21 +101,36 @@ describe('SparqlAnythingConverter', () => {
     const converter = new SparqlAnythingConverter({
       queryFile,
       jarPath: '/bin/sparql-anything.jar',
-      adminCodesFile: '/data/admin-codes.ttl',
+      load: '/data/reference.ttl',
       taskRunner,
     });
-    const chunk = join(workDir, 'geonames_aa.csv');
+    const chunk = join(workDir, 'chunk-a.csv');
     await writeFile(chunk, 'header\nrow');
 
-    await converter.convert([chunk], join(workDir, 'geonames.nt'));
+    await converter.convert([chunk], join(workDir, 'output.nt'));
 
     expect(taskRunner.commands).toHaveLength(1);
     const command = taskRunner.commands[0];
     expect(command).toContain('java -jar /bin/sparql-anything.jar');
-    expect(command).toContain('--load /data/admin-codes.ttl');
+    expect(command).toContain('--load /data/reference.ttl');
     expect(command).toContain('--format NT');
     expect(command).toContain(`--output ${chunk}.nt`);
     expect(command).toMatch(/-q \S+\.rq/);
+  });
+
+  it('omits --load when no path is configured', async () => {
+    const taskRunner = new FakeTaskRunner();
+    const converter = new SparqlAnythingConverter({
+      queryFile,
+      jarPath: '/bin/sparql-anything.jar',
+      taskRunner,
+    });
+    const chunk = join(workDir, 'chunk-a.csv');
+    await writeFile(chunk, 'header\nrow');
+
+    await converter.convert([chunk], join(workDir, 'output.nt'));
+
+    expect(taskRunner.commands[0]).not.toContain('--load');
   });
 
   it('substitutes the chunk path into the query, leaving no placeholder', async () => {
@@ -123,13 +138,13 @@ describe('SparqlAnythingConverter', () => {
     const converter = new SparqlAnythingConverter({
       queryFile,
       jarPath: '/bin/sparql-anything.jar',
-      adminCodesFile: '/data/admin-codes.ttl',
+      load: '/data/reference.ttl',
       taskRunner,
     });
-    const chunk = join(workDir, 'geonames_aa.csv');
+    const chunk = join(workDir, 'chunk-a.csv');
     await writeFile(chunk, 'header\nrow');
 
-    await converter.convert([chunk], join(workDir, 'geonames.nt'));
+    await converter.convert([chunk], join(workDir, 'output.nt'));
 
     expect(taskRunner.queries).toHaveLength(1);
     expect(taskRunner.queries[0]).toContain(`fx:location "${chunk}"`);
@@ -141,18 +156,18 @@ describe('SparqlAnythingConverter', () => {
     const converter = new SparqlAnythingConverter({
       queryFile,
       jarPath: '/bin/sparql-anything.jar',
-      adminCodesFile: '/data/admin-codes.ttl',
+      load: '/data/reference.ttl',
       taskRunner,
     });
     const chunks = [
-      join(workDir, 'geonames_aa.csv'),
-      join(workDir, 'geonames_ab.csv'),
-      join(workDir, 'geonames_ac.csv'),
+      join(workDir, 'chunk-a.csv'),
+      join(workDir, 'chunk-b.csv'),
+      join(workDir, 'chunk-c.csv'),
     ];
     for (const chunk of chunks) {
       await writeFile(chunk, 'header\nrow');
     }
-    const outputPath = join(workDir, 'geonames.nt');
+    const outputPath = join(workDir, 'output.nt');
 
     await converter.convert(chunks, outputPath);
 
@@ -167,24 +182,24 @@ describe('SparqlAnythingConverter', () => {
 
   it('aborts when a chunk produces an empty output', async () => {
     const chunks = [
-      join(workDir, 'geonames_aa.csv'),
-      join(workDir, 'geonames_ab.csv'),
-      join(workDir, 'geonames_ac.csv'),
+      join(workDir, 'chunk-a.csv'),
+      join(workDir, 'chunk-b.csv'),
+      join(workDir, 'chunk-c.csv'),
     ];
     for (const chunk of chunks) {
       await writeFile(chunk, 'header\nrow');
     }
     // SPARQL Anything exits 0 but writes nothing when it cannot read an input.
     const taskRunner = new FakeTaskRunner({
-      emptyOutputContaining: 'geonames_ab.csv.nt',
+      emptyOutputContaining: 'chunk-b.csv.nt',
     });
     const converter = new SparqlAnythingConverter({
       queryFile,
       jarPath: '/bin/sparql-anything.jar',
-      adminCodesFile: '/data/admin-codes.ttl',
+      load: '/data/reference.ttl',
       taskRunner,
     });
-    const outputPath = join(workDir, 'geonames.nt');
+    const outputPath = join(workDir, 'output.nt');
 
     await expect(converter.convert(chunks, outputPath)).rejects.toThrow(
       'produced no output',
@@ -196,25 +211,22 @@ describe('SparqlAnythingConverter', () => {
   });
 
   it('aborts when a chunk produces no output file', async () => {
-    const chunks = [
-      join(workDir, 'geonames_aa.csv'),
-      join(workDir, 'geonames_ab.csv'),
-    ];
+    const chunks = [join(workDir, 'chunk-a.csv'), join(workDir, 'chunk-b.csv')];
     for (const chunk of chunks) {
       await writeFile(chunk, 'header\nrow');
     }
     const taskRunner = new FakeTaskRunner({
-      missingOutputContaining: 'geonames_aa.csv.nt',
+      missingOutputContaining: 'chunk-a.csv.nt',
     });
     const converter = new SparqlAnythingConverter({
       queryFile,
       jarPath: '/bin/sparql-anything.jar',
-      adminCodesFile: '/data/admin-codes.ttl',
+      load: '/data/reference.ttl',
       taskRunner,
     });
 
     await expect(
-      converter.convert(chunks, join(workDir, 'geonames.nt')),
+      converter.convert(chunks, join(workDir, 'output.nt')),
     ).rejects.toThrow('produced no output');
 
     expect(taskRunner.commands).toHaveLength(1);
@@ -222,23 +234,23 @@ describe('SparqlAnythingConverter', () => {
 
   it('aborts without writing output when a chunk fails', async () => {
     const chunks = [
-      join(workDir, 'geonames_aa.csv'),
-      join(workDir, 'geonames_ab.csv'),
-      join(workDir, 'geonames_ac.csv'),
+      join(workDir, 'chunk-a.csv'),
+      join(workDir, 'chunk-b.csv'),
+      join(workDir, 'chunk-c.csv'),
     ];
     for (const chunk of chunks) {
       await writeFile(chunk, 'header\nrow');
     }
     const taskRunner = new FakeTaskRunner({
-      failOutputContaining: 'geonames_ab.csv.nt',
+      failOutputContaining: 'chunk-b.csv.nt',
     });
     const converter = new SparqlAnythingConverter({
       queryFile,
       jarPath: '/bin/sparql-anything.jar',
-      adminCodesFile: '/data/admin-codes.ttl',
+      load: '/data/reference.ttl',
       taskRunner,
     });
-    const outputPath = join(workDir, 'geonames.nt');
+    const outputPath = join(workDir, 'output.nt');
 
     await expect(converter.convert(chunks, outputPath)).rejects.toThrow(
       'Process failed',

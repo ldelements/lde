@@ -19,7 +19,7 @@ import { NativeTaskRunner } from '@lde/task-runner-native';
 const converter = new SparqlAnythingConverter({
   queryFile: 'config/places.rq', // CONSTRUCT query; `{SOURCE}` is replaced per chunk
   jarPath: 'bin/sparql-anything.jar',
-  adminCodesFile: 'data/admin-codes.ttl', // loaded into the default graph via --load
+  load: 'data/reference.ttl', // optional; loaded into the default graph via --load
   taskRunner: new NativeTaskRunner(),
 });
 
@@ -31,19 +31,23 @@ await converter.convert(
 
 ### Options
 
-| Option           | Type               | Description                                                                      |
-| ---------------- | ------------------ | -------------------------------------------------------------------------------- |
-| `queryFile`      | `string`           | Path to the SPARQL CONSTRUCT query. The literal `{SOURCE}` is replaced per chunk |
-| `jarPath`        | `string`           | Path to the SPARQL Anything CLI jar                                              |
-| `adminCodesFile` | `string`           | Path to the Turtle file loaded into the default graph (`--load`)                 |
-| `taskRunner`     | `TaskRunner<Task>` | Runs the SPARQL Anything process for each chunk                                  |
+| Option       | Type               | Description                                                                         |
+| ------------ | ------------------ | ----------------------------------------------------------------------------------- |
+| `queryFile`  | `string`           | Path to the SPARQL CONSTRUCT query. The literal `{SOURCE}` is replaced per chunk    |
+| `jarPath`    | `string`           | Path to the SPARQL Anything CLI jar                                                 |
+| `load`       | `string`           | Optional path passed to `--load`; see [Loading existing RDF](#loading-existing-rdf) |
+| `taskRunner` | `TaskRunner<Task>` | Runs the SPARQL Anything process for each chunk                                     |
+
+### Loading existing RDF
+
+`load` is optional. Pass it to combine the converted data with RDF you already have – a lookup table the query joins against, for instance. SPARQL Anything reads a **file** into the default graph, and a **directory** as one named graph per RDF file it holds, so the two are not interchangeable. Leave `load` unset and no `--load` is passed at all.
 
 ## How a conversion runs
 
 For each chunk, the converter:
 
 1. Replaces the literal `{SOURCE}` in the query file with the chunk’s path and writes the result to a temporary `.rq` file.
-2. Runs `java -jar <jar> -q <query> --load <adminCodesFile> --format NT --output <chunk>.nt`.
+2. Runs `java -jar <jar> -q <query> [--load <load>] --format NT --output <chunk>.nt`.
 3. Waits for the process; a non-zero exit **aborts the whole conversion** so a crashed chunk can never be silently dropped from the output.
 4. Checks that the chunk’s output is not empty. SPARQL Anything exits successfully when it cannot read or parse an input – it logs the problem and writes nothing – so an empty or missing output **aborts the conversion** too.
 

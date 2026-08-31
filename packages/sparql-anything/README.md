@@ -17,11 +17,11 @@ import { NativeTaskRunner } from '@lde/task-runner-native';
 const converter = new SparqlAnythingConverter({
   queryFile: 'config/places.rq',
   jarPath: 'bin/sparql-anything.jar',
-  adminCodesFile: 'data/admin-codes.ttl',
+  load: 'data/reference.ttl',
   taskRunner: new NativeTaskRunner(),
 });
 
-await converter.convert(['data/geonames_aa.csv'], 'output/geonames.nt');
+await converter.convert(['data/places_aa.csv'], 'output/places.nt');
 ```
 
 ## Documentation

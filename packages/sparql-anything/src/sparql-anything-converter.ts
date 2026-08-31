@@ -17,8 +17,11 @@ export interface SparqlAnythingConverterOptions<Task> {
   queryFile: string;
   /** Path to the SPARQL Anything CLI jar. */
   jarPath: string;
-  /** Path to the Turtle file loaded into the default graph (`--load`). */
-  adminCodesFile: string;
+  /**
+   * Optional path passed to `--load`. A file is loaded into the default graph;
+   * a directory loads each RDF file it holds into its own named graph.
+   */
+  load?: string;
   /** Runs the SPARQL Anything process for each chunk. */
   taskRunner: TaskRunner<Task>;
 }
@@ -31,13 +34,13 @@ export interface SparqlAnythingConverterOptions<Task> {
 export class SparqlAnythingConverter<Task> {
   private readonly queryFile: string;
   private readonly jarPath: string;
-  private readonly adminCodesFile: string;
+  private readonly load?: string;
   private readonly taskRunner: TaskRunner<Task>;
 
   constructor(options: SparqlAnythingConverterOptions<Task>) {
     this.queryFile = options.queryFile;
     this.jarPath = options.jarPath;
-    this.adminCodesFile = options.adminCodesFile;
+    this.load = options.load;
     this.taskRunner = options.taskRunner;
   }
 
@@ -47,6 +50,7 @@ export class SparqlAnythingConverter<Task> {
    */
   async convert(chunkPaths: string[], outputPath: string): Promise<void> {
     const query = await readFile(this.queryFile, 'utf-8');
+    const loadOption = this.load === undefined ? '' : ` --load ${this.load}`;
     const tempDir = await mkdtemp(join(tmpdir(), 'sparql-anything-'));
     try {
       const chunkOutputs: string[] = [];
@@ -58,7 +62,7 @@ export class SparqlAnythingConverter<Task> {
         );
         const chunkOutput = `${chunkPath}.nt`;
         const task = await this.taskRunner.run(
-          `java -jar ${this.jarPath} -q ${queryPath} --load ${this.adminCodesFile} --format NT --output ${chunkOutput}`,
+          `java -jar ${this.jarPath} -q ${queryPath}${loadOption} --format NT --output ${chunkOutput}`,
         );
         // wait() rejects on a non-zero exit, aborting convert() before the
         // crashed chunk's missing output can be silently concatenated.
