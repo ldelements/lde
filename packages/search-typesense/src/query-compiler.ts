@@ -9,7 +9,9 @@ import {
   type SearchQuery,
   type SearchSchema,
   type SearchType,
+  type CriterionBase,
   type Sort,
+  type WeldedCriterion,
 } from '@lde/search';
 import {
   fieldNamed,
@@ -17,9 +19,15 @@ import {
   filterOperatorFor,
   ID_FIELD,
   isoToUnixSeconds,
+  isInternalField,
   isRangeFacet,
+  isWelded,
+  joinGraph,
+  localLookupTypeOf,
   pageForOffset,
   physicalFields,
+  nestedReferenceType,
+  resolvePath,
   searchableFields,
 } from '@lde/search/adapter';
 
@@ -111,7 +119,11 @@ export function buildSearchParams(
     query.text !== undefined && query.text.length > 0
       ? fold(query.text)
       : undefined;
-  const { names, weights } = queryFields(searchType, query.locale);
+  const { names, weights } = queryFields(
+    searchType,
+    query.locale,
+    options.schema,
+  );
   const filterBy = compileFilterBy(query.where, searchType, options);
   const sortBy = query.orderBy
     .map((sort) => compileSort(sort, searchType, query.locale))
@@ -186,16 +198,51 @@ function compileRangeFacet(
 function queryFields(
   searchType: SearchType,
   locale: string,
+  schema: SearchSchema | undefined,
 ): { readonly names: string[]; readonly weights: number[] } {
   const names: string[] = [];
   const weights: number[] = [];
+  collectSearchable(searchType, locale, schema, '', new Set(), names, weights);
+  return { names, weights };
+}
+
+/**
+ * Collect the searchable physical fields of a type and of everything it nests,
+ * each under the path an engine addresses it by.
+ *
+ * Nested fields are walked because a nested field may declare `searchable`
+ * (ADR 24) – and a companion that is indexed but absent from `query_by` is the
+ * worst of both: it costs the RAM of an indexed field and matches nothing, in
+ * silence. So the walk here is what makes that Role mean anything.
+ *
+ * `onPath` guards the walk, and is scoped to the PATH rather than to the walk
+ * as a whole: two fields may nest one type – `creator` and `contributor` over
+ * the same edge – and each reaches it under its own prefix, so each must
+ * contribute its own companions. A set shared across the walk would let the
+ * first field claim the type and leave the second's companions indexed but
+ * unqueried. What it does guard is a type reached from ITSELF, which a
+ * {@link ReferenceStrategy.local local} lookup can do.
+ */
+function collectSearchable(
+  searchType: SearchType,
+  locale: string,
+  schema: SearchSchema | undefined,
+  prefix: string,
+  onPath: ReadonlySet<string>,
+  names: string[],
+  weights: number[],
+): void {
+  if (onPath.has(searchType.name)) {
+    return;
+  }
+  const walked = new Set(onPath).add(searchType.name);
   for (const field of searchableFields(searchType)) {
     const search = physicalFields(field).search;
     const baseWeight = field.searchable.weight;
     if (field.kind === 'text') {
       const locales = field.locales;
       search.forEach((name, index) => {
-        names.push(name);
+        names.push(qualify(prefix, name));
         // The active locale keeps full weight; `und` is language-neutral, so
         // it is never demoted (an untagged-only field would otherwise always
         // rank below its declared weight).
@@ -207,12 +254,35 @@ function queryFields(
       });
     } else {
       for (const name of search) {
-        names.push(name);
+        names.push(qualify(prefix, name));
         weights.push(baseWeight);
       }
     }
   }
-  return { names, weights };
+  if (schema === undefined) {
+    return;
+  }
+  for (const field of searchType.fields) {
+    // An internal field is pruned before the writer and declared in no
+    // collection, so its target's companions exist nowhere – asking `query_by`
+    // for one makes the ENGINE reject every search on the collection.
+    if (isInternalField(field)) {
+      continue;
+    }
+    const nested =
+      nestedReferenceType(schema, field) ?? localLookupTypeOf(field, schema);
+    if (nested !== undefined) {
+      collectSearchable(
+        nested,
+        locale,
+        schema,
+        qualify(prefix, field.name),
+        walked,
+        names,
+        weights,
+      );
+    }
+  }
 }
 
 /** AND-join the compiled `where` clauses. A clause that states no constraint is
@@ -327,16 +397,35 @@ function compileCriterion(
 ): string | typeof VACUOUS | typeof UNUSABLE {
   const on = criterion.on ?? [];
   if (on.length === 0) {
-    return compileLeaf(criterion, searchType, options.schema);
+    return isWelded(criterion)
+      ? compileWelded(criterion, searchType, options.schema, '')
+      : compileLeaf(criterion, searchType, options.schema);
   }
+  // The path carries two kinds of hop, and they compile differently: a JOIN
+  // crosses into another collection and wraps the leaf in `$collection(…)`; a
+  // NESTING stays in this document and qualifies the leaf’s field name. The
+  // schema is what tells them apart, so without one every hop is read as a
+  // join – exactly the behaviour before nesting existed.
+  const resolvedPath =
+    options.schema === undefined
+      ? undefined
+      : resolvePath(searchType, on, options.schema, joinGraph(options.schema));
+  if (typeof resolvedPath === 'string') {
+    return UNUSABLE;
+  }
+  const joinHops = resolvedPath?.joinPath ?? on;
+  const nestedHops = resolvedPath?.nestedPath ?? [];
   // A joined criterion constrains a document in ANOTHER collection, so the leaf
   // is compiled against the type that path reaches and then wrapped, one
   // `$collection(…)` per hop, outermost hop first:
   // `['dataset', 'publisher']` → `$datasets($publishers(id:=…))`.
   const collections: string[] = [];
   let target = searchType;
-  for (let hop = 1; hop <= on.length; hop++) {
-    const resolved = options.joinTargetFor?.(searchType, on.slice(0, hop));
+  for (let hop = 1; hop <= joinHops.length; hop++) {
+    const resolved = options.joinTargetFor?.(
+      searchType,
+      joinHops.slice(0, hop),
+    );
     if (resolved === undefined) {
       // An unresolvable path is a criterion that cannot be compiled at all –
       // false, so it drops out and its siblings still stand. Through the
@@ -346,7 +435,11 @@ function compileCriterion(
     collections.push(resolved.collection);
     target = resolved.searchType;
   }
-  const leaf = compileLeaf(criterion, target, options.schema);
+  const leafType = resolvedPath?.leafType ?? target;
+  const prefix = nestedHops.join('.');
+  const leaf = isWelded(criterion)
+    ? compileWelded(criterion, leafType, options.schema, prefix)
+    : compileLeaf(criterion, leafType, options.schema, prefix);
   // A vacuous leaf states no constraint on the referent, so the join as a whole
   // states none either – the reading, and so the outcome, passes straight
   // through the hops.
@@ -359,12 +452,20 @@ function compileCriterion(
   );
 }
 
-/** The criterion’s own term, against the type it actually constrains – the
- *  searched type, or the one its join path reaches. */
+/**
+ * The criterion’s own term, against the type it actually constrains – the
+ * searched type, the one its join path reaches, or the reference type its
+ * nesting path walks into.
+ *
+ * `prefix` is that nesting path, dotted: an engine addresses a stored nested
+ * document by qualifying the field name, so `role` inside `creator` becomes
+ * `creator.role`. Empty for every unnested criterion.
+ */
 function compileLeaf(
   criterion: Criterion,
   searchType: SearchType,
   schema: SearchSchema | undefined,
+  prefix = '',
 ): string | typeof VACUOUS | typeof UNUSABLE {
   // `id` is the Typesense document key, not a declared field. Exact `:=`
   // membership, like a non-facet field ({@link compileMembership}), so an IRI
@@ -373,7 +474,12 @@ function compileLeaf(
   // clause.) An empty identity membership enumerates NO document, so it is
   // unusable rather than vacuous – the one place the two readings diverge.
   if (criterion.field === ID_FIELD) {
-    return 'in' in criterion && criterion.in.length > 0
+    // `id` names the DOCUMENT key, which exists only at the top level: inside a
+    // nested reference there is no document to key. Compiling it under a prefix
+    // would filter the root collection's `id` instead – a different question,
+    // silently answered. `assertValidQuery` rejects it first; this is the guard
+    // for a hand-built query.
+    return prefix === '' && 'in' in criterion && criterion.in.length > 0
       ? `${ID_FIELD}:=[${criterion.in.map(escapeFilterValue).join(',')}]`
       : UNUSABLE;
   }
@@ -388,13 +494,68 @@ function compileLeaf(
   }
   if ('in' in criterion) {
     return criterion.in.length > 0
-      ? compileMembership(field, criterion.in, schema)
+      ? compileMembership(field, criterion.in, schema, prefix)
       : VACUOUS;
   }
   if ('range' in criterion) {
-    return compileRange(field, criterion.range) ?? VACUOUS;
+    return compileRange(field, criterion.range, prefix) ?? VACUOUS;
   }
-  return `${field.name}:=${criterion.is}`;
+  // Every other shape returned above; a welded criterion never reaches here
+  // (compileWelded handles it before the leaf compiler is called).
+  return `${qualify(prefix, field.name)}:=${(criterion as CriterionBase & { readonly is: boolean }).is}`;
+}
+
+/** A field name under its nesting path, if any – the one place the dotted
+ *  addressing an engine uses for a stored nested document is spelled. */
+function qualify(prefix: string, name: string): string {
+  return prefix === '' ? name : `${prefix}.${name}`;
+}
+
+/**
+ * A **welded** criterion: `path.{a && b}`, matching a document with ONE entry
+ * that satisfies every condition – as against `path.a && path.b`, which two
+ * different entries can satisfy between them.
+ *
+ * Each condition is compiled against the reference type with an EMPTY prefix,
+ * so what goes inside the braces is always a leaf name. That is a correctness
+ * requirement, not tidiness: Typesense 30.2 **hangs** on a dotted path inside a
+ * group (`creator.{creator.name:=…}` never returns – no error, no result), so
+ * the compiler must be structurally incapable of emitting one. A field whose
+ * value is itself nested is reached through its identity companion, which is a
+ * leaf ({@link physicalFields}).
+ *
+ * A condition that states no constraint drops out, and the weld is whatever
+ * remains; a weld left with nothing is vacuous like any other empty clause.
+ */
+function compileWelded(
+  criterion: WeldedCriterion,
+  searchType: SearchType,
+  schema: SearchSchema | undefined,
+  prefix: string,
+): string | typeof VACUOUS | typeof UNUSABLE {
+  const entryType =
+    schema &&
+    nestedReferenceType(
+      schema,
+      fieldNamed(searchType, criterion.field) ?? ({} as SearchField),
+    );
+  if (entryType === undefined) {
+    return UNUSABLE;
+  }
+  const conditions: string[] = [];
+  for (const condition of criterion.entry) {
+    const compiled = compileLeaf(condition, entryType, schema);
+    if (compiled === UNUSABLE) {
+      return UNUSABLE;
+    }
+    if (compiled !== VACUOUS) {
+      conditions.push(compiled);
+    }
+  }
+  if (conditions.length === 0) {
+    return VACUOUS;
+  }
+  return `${qualify(prefix, criterion.field)}.{${conditions.join(' && ')}}`;
 }
 
 /**
@@ -411,11 +572,16 @@ function compileMembership(
   field: SearchField,
   values: readonly string[],
   schema: SearchSchema | undefined,
+  prefix = '',
 ): string {
   const list = `[${values.map(escapeFilterValue).join(',')}]`;
-  return physicalFields(field, schema).facet === field.name
-    ? `${field.name}:${list}`
-    : `${field.name}:=${list}`;
+  const names = physicalFields(field, schema);
+  // An inline reference stores a nested object, which an engine cannot filter.
+  // Its identity companion is the flat id field standing in for it – so the
+  // logical name a consumer writes and the physical name the engine reads
+  // differ here, and only here.
+  const name = qualify(prefix, names.identity ?? field.name);
+  return names.facet === name ? `${name}:${list}` : `${name}:=${list}`;
 }
 
 /** An inclusive Typesense range clause, or `undefined` when neither bound is
@@ -428,8 +594,9 @@ function compileMembership(
 function compileRange(
   field: SearchField,
   range: { readonly min?: number | string; readonly max?: number | string },
+  prefix = '',
 ): string | undefined {
-  const name = field.name;
+  const name = qualify(prefix, field.name);
   // A bound a caller sent as `null` – a GraphQL variable left unfilled, which
   // the surface passes through – is a bound NOT SET, not a bound of `null`.
   // Read literally it reaches the engine as `datePosted:[null..…]`, which

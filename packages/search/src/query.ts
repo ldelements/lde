@@ -3,6 +3,7 @@ import {
   filterOperatorFor,
   ID_FIELD,
   isoToUnixSeconds,
+  nestedReferenceType,
   type SearchSchema,
   type SearchType,
 } from './schema.js';
@@ -110,7 +111,36 @@ export type Criterion =
         readonly max?: number | string;
       };
     })
-  | (CriterionBase & { readonly is: boolean });
+  | (CriterionBase & { readonly is: boolean })
+  | (CriterionBase & { readonly entry: readonly Criterion[] });
+
+/**
+ * The conditions a criterion welds to **one entry** of the nested reference its
+ * {@link CriterionBase.field} names – *this endpoint in this role*, rather than
+ * this endpoint somewhere and that role somewhere.
+ *
+ * Welding is the whole reason an edge is worth indexing. Stated as two ordinary
+ * criteria, `role = etser` and `creator = rembrandt` are satisfied by
+ * *different* entries of the same document, which silently answers a wider
+ * question – the parallel-array defect nesting exists to remove.
+ *
+ * It stays an **atom**, so `where` remains the flat conjunction of disjunctions
+ * of [ADR 18](../../docs/decisions/0018-filter-across-several-fields-with-one-clause.md):
+ * the conjunction lives *inside* one criterion rather than nesting clause
+ * structure, and skip-own-filter still scans one level and finds one field.
+ *
+ * Each welded condition names a field of the reference type and carries no
+ * `on` of its own: they are all conditions on the same entry, which is what
+ * welding means.
+ */
+export type WeldedCriterion = CriterionBase & {
+  readonly entry: readonly Criterion[];
+};
+
+/** Whether a criterion welds conditions to one entry ({@link WeldedCriterion}). */
+export function isWelded(criterion: Criterion): criterion is WeldedCriterion {
+  return 'entry' in criterion;
+}
 
 /**
  * One `where` clause: a disjunction, matching a document that satisfies **any**
@@ -213,13 +243,32 @@ export interface QueryIssue {
     | 'not-filterable'
     | 'operator-mismatch'
     | 'not-facetable'
-    /** The criterion’s `on` path is longer than {@link MAX_JOIN_DEPTH}. */
+    /** The criterion’s `on` path crosses more than {@link MAX_JOIN_DEPTH}
+     *  *joins*. Nested hops cost no round trip and do not count. */
     | 'join-too-deep'
-    /** The `on` path does not resolve: a name that is not a field, a reference
+    /** A join hop does not resolve: a name that is not a field, a reference
      *  that is not `joinable`, or no join graph to resolve it against. */
     | 'unknown-join'
+    /**
+     * A hop *inside* an inline reference’s entries does not walk into a nested
+     * reference – an unknown name, or a field that is not one. Reported apart
+     * from `unknown-join` so “this field is not joinable” and “this field is
+     * not nested” are not one message.
+     *
+     * Joining out of a nesting lands here too, deliberately: a join addresses
+     * another collection and there is none to address from inside an array
+     * element, so from in here a joinable name is as unwalkable as an unknown
+     * one. A join may contain a nesting; never the reverse.
+     */
+    | 'unknown-nesting'
     /** A projected reference is not a `lookup`, so nothing resolves it. */
     | 'not-resolvable'
+    /**
+     * A criterion welds conditions to one entry of a field that has no entries
+     * – it is not an inline reference. Welding means *one entry satisfies all
+     * of these*, so there has to be something to weld them to.
+     */
+    | 'not-weldable'
     /**
      * A `date` range bound the storage codec ({@link isoToUnixSeconds}) cannot
      * read, so there is no stored value to compare against – reported per
@@ -231,6 +280,132 @@ export interface QueryIssue {
      * and only the caller can fix the bound.
      */
     | 'unparseable-bound';
+}
+
+/**
+ * The checks every leaf criterion answers to, wherever it sits: the field is
+ * declared and `filterable` on the type it constrains, its operator matches
+ * that field's kind, and a `date` range's bounds are readable.
+ *
+ * Shared by an ordinary criterion and by each condition welded to an entry, so
+ * a welded condition is held to exactly the same rules – there is no second,
+ * weaker validator for the inside of an edge. `field` is the path to report
+ * under, which differs between the two.
+ */
+function collectLeafIssues(
+  criterion: Criterion,
+  constrained: SearchType,
+  field: string,
+  issues: QueryIssue[],
+): void {
+  const declared = fieldNamed(constrained, criterion.field);
+  if (declared === undefined) {
+    issues.push({ part: 'where', field, reason: 'unknown-field' });
+    return;
+  }
+  if (declared.filterable !== true) {
+    issues.push({ part: 'where', field, reason: 'not-filterable' });
+    return;
+  }
+  if (filterOperatorFor(declared.kind) !== filterOperator(criterion)) {
+    issues.push({ part: 'where', field, reason: 'operator-mismatch' });
+    return;
+  }
+  if (declared.kind === 'date' && 'range' in criterion) {
+    // A `date` bound is ISO 8601 at the edge and Unix seconds in storage, so a
+    // bound the codec cannot read has nothing to compare against. Both bounds
+    // are checked, so a caller who wrote two bad ones is told about both
+    // instead of fixing one to be told about the other.
+    for (const bound of [criterion.range.min, criterion.range.max]) {
+      if (typeof bound === 'string' && isoToUnixSeconds(bound) === undefined) {
+        issues.push({
+          part: 'where',
+          field,
+          value: bound,
+          reason: 'unparseable-bound',
+        });
+      }
+    }
+  }
+}
+
+/**
+ * A resolved {@link CriterionBase.on} path: which type the leaf field belongs
+ * to, and how the criterion reaches it.
+ *
+ * The two hop kinds are genuinely different operations, so they are separated
+ * here once rather than re-derived by every adapter. A **join** hop crosses
+ * into another collection and costs a round trip; a **nested** hop stays inside
+ * the same document and costs nothing, walking into an inline reference’s
+ * entries.
+ */
+export interface ResolvedPath {
+  /** The type the criterion’s leaf field is declared by. */
+  readonly leafType: SearchType;
+  /** The joinable references to cross, in order. Counts against
+   *  {@link MAX_JOIN_DEPTH}; a nested hop deliberately does not. */
+  readonly joinPath: readonly string[];
+  /** The inline references to walk into, in order, after the joins. */
+  readonly nestedPath: readonly string[];
+}
+
+/** Why an {@link CriterionBase.on} path did not resolve. */
+export type PathFailure = 'join-too-deep' | 'unknown-join' | 'unknown-nesting';
+
+/**
+ * Resolve an {@link CriterionBase.on} path against the schema, classifying each
+ * hop by what the declaration says it is: a {@link ReferenceField.joinable}
+ * reference is a join, an inline reference is a nesting.
+ *
+ * **Nested hops must come last.** A join is a clause about another collection
+ * and a nesting is a clause about a field of this document, so a join can
+ * contain a nesting (`$people(…)` around `edge.role`) but a nesting cannot
+ * contain a join – there is no collection to address from inside an array
+ * element. Once inside a nesting, therefore, a joinable name is as unwalkable
+ * as an unknown one and both report `unknown-nesting`.
+ *
+ * Only join hops count against {@link MAX_JOIN_DEPTH}: the cap exists to bound
+ * round trips, and a nesting hop costs none.
+ */
+export function resolvePath(
+  searchType: SearchType,
+  path: readonly string[],
+  schema: SearchSchema,
+  joins?: JoinGraph,
+): ResolvedPath | PathFailure {
+  const joinPath: string[] = [];
+  const nestedPath: string[] = [];
+  let current: SearchType = searchType;
+  for (const name of path) {
+    const field = fieldNamed(current, name);
+    const nested =
+      field === undefined ? undefined : nestedReferenceType(schema, field);
+    if (nested !== undefined) {
+      nestedPath.push(name);
+      current = nested;
+      continue;
+    }
+    if (nestedPath.length > 0) {
+      // Already inside a document, where the only hop that means anything is
+      // another nesting. A join addresses a collection and there is none to
+      // address from inside an array element, so a joinable name here is as
+      // unwalkable as an unknown one – one reason covers both.
+      return 'unknown-nesting';
+    }
+    // Checked as the budget is spent, not after the walk: a path over the cap
+    // is too deep whether or not its last hop would have resolved, and saying
+    // so is more use than reporting the hop that happened to fail first.
+    if (joinPath.length === MAX_JOIN_DEPTH) {
+      return 'join-too-deep';
+    }
+    const target = joins?.resolve(current, [name]);
+    if (target === undefined) {
+      return 'unknown-join';
+    }
+    joinPath.push(name);
+    current = target;
+  }
+  return { leafType: current, joinPath, nestedPath };
 }
 
 /** The `field` a joined issue is reported under: the path and the leaf name
@@ -296,23 +471,28 @@ export function validateQuery(
       // supplied none cannot serve a joined criterion at all.
       const on = criterion.on ?? [];
       let constrained = searchType;
+      let nested = false;
       if (on.length > 0) {
-        if (on.length > MAX_JOIN_DEPTH) {
-          issues.push({ part: 'where', field, reason: 'join-too-deep' });
+        const resolved = resolvePath(searchType, on, schema, joins);
+        if (typeof resolved === 'string') {
+          issues.push({ part: 'where', field, reason: resolved });
           continue;
         }
-        const target = joins?.resolve(searchType, on);
-        if (target === undefined) {
-          issues.push({ part: 'where', field, reason: 'unknown-join' });
-          continue;
-        }
-        constrained = target;
+        constrained = resolved.leafType;
+        nested = resolved.nestedPath.length > 0;
       }
       // `id` is filterable on every type without being declared by any: it is
       // the document’s IRI, so the lookup exists wherever documents do.
       // Membership only – an IRI has no range and no truth value.
       if (name === ID_FIELD) {
-        if (filterOperator(criterion) !== 'in') {
+        // …but only where documents do. An entry inside a nested reference is
+        // read, not addressed: it has no document key, and the `id` a `local`
+        // lookup stores is the ENDPOINT’s, which the identity companion is
+        // what filters on. Accepting it here would compile to the ROOT
+        // document’s `id` and silently answer a different question.
+        if (nested) {
+          issues.push({ part: 'where', field, reason: 'unknown-nesting' });
+        } else if (filterOperator(criterion) !== 'in') {
           issues.push({
             part: 'where',
             field,
@@ -322,37 +502,29 @@ export function validateQuery(
         continue;
       }
       const declared = fieldNamed(constrained, name);
-      if (declared === undefined) {
-        issues.push({ part: 'where', field, reason: 'unknown-field' });
-      } else if (declared.filterable !== true) {
-        issues.push({ part: 'where', field, reason: 'not-filterable' });
-      } else if (
-        filterOperatorFor(declared.kind) !== filterOperator(criterion)
-      ) {
-        issues.push({
-          part: 'where',
-          field,
-          reason: 'operator-mismatch',
-        });
-      } else if (declared.kind === 'date' && 'range' in criterion) {
-        // A `date` bound is ISO 8601 at the edge and Unix seconds in storage,
-        // so a bound the codec cannot read has nothing to compare against.
-        // Both bounds are checked, so a caller who wrote two bad ones is told
-        // about both instead of fixing one to be told about the other.
-        for (const bound of [criterion.range.min, criterion.range.max]) {
-          if (
-            typeof bound === 'string' &&
-            isoToUnixSeconds(bound) === undefined
-          ) {
-            issues.push({
-              part: 'where',
-              field,
-              value: bound,
-              reason: 'unparseable-bound',
-            });
-          }
+      // A welded criterion names the NESTED REFERENCE and constrains fields of
+      // the type it nests, so each condition is checked one level in – against
+      // that reference type, and reported under the path a consumer wrote.
+      if (isWelded(criterion)) {
+        const entryType =
+          declared === undefined
+            ? undefined
+            : nestedReferenceType(schema, declared);
+        if (entryType === undefined) {
+          issues.push({ part: 'where', field, reason: 'not-weldable' });
+          continue;
         }
+        for (const welded of criterion.entry) {
+          collectLeafIssues(
+            welded,
+            entryType,
+            [...on, name, welded.field].join('.'),
+            issues,
+          );
+        }
+        continue;
       }
+      collectLeafIssues(criterion, constrained, field, issues);
     }
   }
   for (const name of query.facets) {
@@ -380,12 +552,19 @@ export function validateQuery(
 }
 
 /**
- * Walk a projection level by level: each key names a `lookup` reference on the
- * type that level belongs to, each `fields` entry an `output` field of the
- * target it resolves against, and each nested `resolve` repeats against that
- * target. A level whose reference is unresolvable stops there – its subtree
- * belongs to a target that does not exist, so reporting it too would bury the
- * one mistake under its consequences.
+ * Walk a projection level by level. A level is one of two things, and the
+ * difference is what it costs rather than how it is written:
+ *
+ * - a **lookup** level names a `lookup` reference, resolves against that
+ *   target’s collection, and costs one batched round trip;
+ * - a **nested** level names an inline reference and descends into its entries,
+ *   costing nothing – the entries are already in the hit. Its `fields` name
+ *   nothing to fetch, because the entries carry what they carry; only the
+ *   levels *below* it can ask for anything.
+ *
+ * A level whose reference is unresolvable stops there: its subtree belongs to a
+ * target that does not exist, so reporting it too would bury the one mistake
+ * under its consequences.
  */
 function collectProjectionIssues(
   projection: ReferenceProjection | undefined,
@@ -397,6 +576,13 @@ function collectProjectionIssues(
     const field = fieldNamed(searchType, name);
     if (field === undefined) {
       issues.push({ part: 'resolve', field: name, reason: 'unknown-field' });
+      continue;
+    }
+    // Descending into an inline reference is free, so a nested level is valid
+    // wherever the entries exist – what it is *for* is the lookup below it.
+    const nested = nestedReferenceType(schema, field);
+    if (nested !== undefined) {
+      collectProjectionIssues(level.resolve, nested, schema, issues);
       continue;
     }
     if (field.kind !== 'reference' || field.ref?.strategy !== 'lookup') {

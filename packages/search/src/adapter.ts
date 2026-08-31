@@ -22,6 +22,9 @@ export {
   isInlineReference,
   nestedReferenceType,
   nestedFieldName,
+  localLookupTypeOf,
+  identityFieldOf,
+  identityFieldName,
   referenceFields,
   referenceTypeNamed,
   rootTypeNamed,
@@ -34,6 +37,7 @@ export {
   labelFieldOf,
   labelFieldNameOf,
   labelSourceNameOf,
+  labelTargetNameOf,
   documentKeyOf,
   DEFAULT_LABEL_FIELD,
   isRangeFacet,
@@ -49,9 +53,16 @@ export {
   filterOperatorFor,
   filterOperator,
   filterOn,
+  isWelded,
   isUnsatisfiable,
   validateQuery,
   assertValidQuery,
+  resolvePath,
   pageForOffset,
 } from './query.js';
-export type { FilterOperator, QueryIssue } from './query.js';
+export type {
+  FilterOperator,
+  QueryIssue,
+  ResolvedPath,
+  PathFailure,
+} from './query.js';

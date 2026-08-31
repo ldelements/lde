@@ -25,6 +25,7 @@ import {
   type RootType,
   type SearchEngine,
   type ReferenceField,
+  type ReferenceType,
   type SearchField,
   type SearchQuery,
   type SearchSchema,
@@ -34,6 +35,9 @@ import {
   AND_KEY,
   facetableFields,
   filterableFields,
+  labelTargetNameOf,
+  localLookupTypeOf,
+  referenceFields,
   filterOn,
   filterOperatorFor,
   ID_FIELD,
@@ -403,6 +407,46 @@ export function buildGraphQLSchema(
   // collide: searchSchema resolves its typeName to a declared Reference Type
   // and rejects duplicate names schema-wide.
   const referenceTypes = new Map<string, GraphQLObjectType>();
+  /**
+   * The lookup targets whose emitted type must carry a NULLABLE `id`: those
+   * some field reaches through a {@link ReferenceStrategy.local local} lookup,
+   * which stores what a document says about an endpoint whether or not the
+   * endpoint is identified.
+   *
+   * Computed over the whole schema before any type is registered, because one
+   * emitted type is SHARED by every field pointing at its target. Decided per
+   * field instead, the answer would depend on which field happened to register
+   * first: a plain `publisher` lookup registering before a `local` creator
+   * would make `id` non-null and then fail the response for every unidentified
+   * creator – exactly the endpoint `local` exists to serve.
+   *
+   * Nullability is therefore a property of the type, and takes the weakest
+   * guarantee any of its users can keep.
+   */
+  const nullableIdTargets = new Set<string>();
+  {
+    const walked = new Set<string>();
+    const collect = (searchType: SearchType): void => {
+      if (walked.has(searchType.name)) {
+        return;
+      }
+      walked.add(searchType.name);
+      for (const field of referenceFields(searchType)) {
+        if (field.ref?.strategy === 'lookup' && field.ref.local === true) {
+          nullableIdTargets.add(field.ref.target);
+        }
+        const nested =
+          nestedReferenceType(schema, field) ??
+          localLookupTypeOf(field, schema);
+        if (nested !== undefined) {
+          collect(nested);
+        }
+      }
+    };
+    for (const rootType of schema.values()) {
+      collect(rootType);
+    }
+  }
   // Seeded with the shared types every schema carries, not just the root type
   // names: a declaration is free to name a type `IRI` or `ValueBucket`, and
   // without this it would pass both collision checks and fail at
@@ -431,6 +475,7 @@ export function buildGraphQLSchema(
   // same type queried in its own right meet exactly one `‹Name›Where`.
   const joins = joinGraph(schema);
   const whereInputs = new Map<string, GraphQLInputObjectType>();
+  const nestedFilters = new Map<string, GraphQLInputObjectType>();
   const referenceFilters = new Map<string, GraphQLInputObjectType>();
 
   /** The name a reference’s emitted type is keyed under: a `lookup`’s target,
@@ -469,8 +514,11 @@ export function buildGraphQLSchema(
     const typeName = referencedTypeName(field.ref) as string;
     if (referenceTypes.has(typeName)) {
       // Fields sharing a referent share one emitted type, and cannot disagree
-      // about it: a lookup's fields come from the target that names the type,
-      // an inline reference's from the Reference Type that does.
+      // about its FIELDS: a lookup's come from the target that names the type,
+      // an inline reference's from the Reference Type that does. They can
+      // disagree about `id` nullability, which is why that is settled over the
+      // whole schema up front ({@link nullableIdTargets}) rather than read off
+      // whichever field registers the type first.
       return;
     }
     const graphQLName = rootTypeNames.has(typeName)
@@ -506,16 +554,34 @@ export function buildGraphQLSchema(
           // An inline referent’s is nullable, and load-bearing: a referent
           // needs no identity, so a blank-node one nests exactly like a named
           // one, minus this.
+          //
+          // A `local` lookup is the exception among lookups, for that same
+          // reason: it stores what the referring document says about the
+          // endpoint whether or not the endpoint is identified, so an entry
+          // may legitimately arrive without one. Declared non-null, every such
+          // entry would fail the response instead of serving what it has.
           id: {
             type:
-              field.ref?.strategy === 'lookup'
+              field.ref?.strategy === 'lookup' &&
+              !nullableIdTargets.has(typeName)
                 ? new GraphQLNonNull(iriScalar)
                 : iriScalar,
           },
           ...Object.fromEntries(
             outputFields(nested).map((nestedField) => [
               nestedField.name,
-              outputFieldConfig(nestedField),
+              // `required` is relaxed for the same reason `id` is above: a
+              // `local` lookup carries what a document SAYS about an endpoint,
+              // and a document that named one inline states no more than it
+              // states. A field the target promises is non-null on the
+              // target's own document, not on a referrer's account of it, so
+              // holding this one to it fails the whole response for exactly
+              // the endpoint `local` exists to serve.
+              outputFieldConfig(
+                nullableIdTargets.has(typeName)
+                  ? ({ ...nestedField, required: false } as SearchField)
+                  : nestedField,
+              ),
             ]),
           ),
         }),
@@ -627,8 +693,16 @@ export function buildGraphQLSchema(
 
   function whereFieldType(
     field: SearchField,
-    owner: RootType,
+    owner: SearchType,
   ): GraphQLInputType {
+    // An inline reference is filterable in two ways at once, exactly as a
+    // joinable one is: by the ids its entries hold (its identity companion),
+    // and by a condition on an entry. Same input shape, because it is the same
+    // question one hop out – only what the hop costs differs.
+    const nested = nestedReferenceType(schema, field);
+    if (nested !== undefined) {
+      return nestedFilterFor(nested, field);
+    }
     // A joinable reference is filterable in two ways at once – by the ids it
     // holds, and by a condition on the referent – so it earns a richer input
     // than the plain membership every other reference gets. Making the
@@ -639,6 +713,69 @@ export function buildGraphQLSchema(
     return target !== undefined
       ? referenceFilterFor(target)
       : plainWhereFieldType(field);
+  }
+
+  /**
+   * The filter input an inline reference takes: the ids its entries hold, or a
+   * condition on one entry. `@oneOf`, so a criterion stays an atom.
+   *
+   * The `in` arm is typed by the target the reference’s
+   * {@link ReferenceStrategy.identity identity companion} names, so a bucket a
+   * consumer clicks feeds straight back in – the same round trip an ordinary
+   * facetable reference already guarantees. A reference declaring no identity
+   * has no ids to filter, so it offers the `where` arm alone.
+   */
+  function nestedFilterFor(
+    referenceType: ReferenceType,
+    field: SearchField,
+  ): GraphQLInputObjectType {
+    const existing = nestedFilters.get(referenceType.name);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const identityTarget = labelTargetNameOf(field, schema);
+    const nestedWhere = nestedWhereInputFor(referenceType);
+    const created = new GraphQLInputObjectType({
+      name: `${referenceType.name}Filter`,
+      description: `A condition on ${referenceType.name}: the ids its entries reference, or a condition on one entry.`,
+      isOneOf: true,
+      fields: () => ({
+        ...(identityTarget !== undefined && {
+          in: { type: new GraphQLList(new GraphQLNonNull(iriScalar)) },
+        }),
+        where: { type: nestedWhere },
+      }),
+    });
+    nestedFilters.set(referenceType.name, created);
+    return created;
+  }
+
+  /**
+   * The `where` input of a Reference Type – its filterable fields and nothing
+   * else. Deliberately without the `id` key every Root Type's `where` carries:
+   * an entry is read, not addressed, so it has no document key to filter on
+   * ({@link validateQuery} refuses one).
+   */
+  function nestedWhereInputFor(
+    referenceType: ReferenceType,
+  ): GraphQLInputObjectType {
+    // Memoized by its only caller, which is memoized itself – so this is built
+    // once per Reference Type however many fields nest it.
+    return new GraphQLInputObjectType({
+      name: `${referenceType.name}Where`,
+      description:
+        'Sibling keys are combined with AND, and all of them must hold of the SAME entry.',
+      fields: () =>
+        Object.fromEntries(
+          filterableFields(referenceType).map((nestedField) => [
+            nestedField.name,
+            {
+              type: whereFieldType(nestedField, referenceType),
+              description: nestedField.description,
+            },
+          ]),
+        ),
+    });
   }
 
   /** The filter input one field accepts, fixed by what the field keys on: a
@@ -899,12 +1036,11 @@ export function buildGraphQLSchema(
           searchType,
           maxPerPage,
           joins,
+          schema,
         );
         // What the client selected decides what each lookup fetches, so the
         // engine carries the referent fields this query asked for and no more.
-        const resolve = projectionFor(info, searchType, (target) =>
-          rootTypesByName.get(target),
-        );
+        const resolve = projectionFor(info, searchType, schema);
         const finalQuery = typeOptions?.queryDefaults
           ? typeOptions.queryDefaults(built, context)
           : built;
@@ -1046,6 +1182,7 @@ function argsToQuery(
   searchType: RootType,
   maxPerPage: number,
   joins: JoinGraph,
+  schema: SearchSchema,
 ): SearchQuery {
   const perPage = args.perPage ?? 20;
   const page = args.page ?? 1;
@@ -1060,7 +1197,7 @@ function argsToQuery(
   }
   return {
     text: args.query,
-    where: whereToFilters(args.where, searchType, joins),
+    where: whereToFilters(args.where, searchType, joins, schema),
     orderBy: args.orderBy
       ? [{ field: args.orderBy.field, direction: args.orderBy.direction }]
       : [],
@@ -1083,8 +1220,9 @@ function argsToQuery(
  */
 function whereToFilters(
   where: Record<string, unknown> | undefined,
-  searchType: RootType,
+  searchType: SearchType,
   joins: JoinGraph,
+  schema: SearchSchema,
   on: readonly string[] = [],
 ): Filter[] {
   // `== null` deliberately: an explicit `where: null` is as absent as an omitted
@@ -1097,10 +1235,23 @@ function whereToFilters(
   // while `or` becomes a SINGLE filter carrying every alternative. That is the
   // whole AND/OR mapping: which bucket a criterion lands in, never a combinator
   // inferred from how deeply it is nested.
-  for (const entry of keyEntriesOf(where, searchType, joins)) {
+  for (const entry of keyEntriesOf(where, searchType, joins, schema)) {
     if ('nested' in entry) {
+      // A NESTING hop welds: every condition inside one edge's `where` must
+      // hold of the SAME entry, which is the whole point of indexing an edge.
+      // Written as separate criteria they would be satisfiable by different
+      // entries – the parallel-array answer, silently wider than what was
+      // asked. A JOIN hop keeps recursing: those conditions are about another
+      // document, where there is nothing to weld them to.
+      if (entry.target.class === undefined) {
+        const welded = weldedCriterionOf(entry, joins, schema, on);
+        if (welded !== undefined) {
+          filters.push(filterOn(welded));
+        }
+        continue;
+      }
       filters.push(
-        ...whereToFilters(entry.nested, entry.target, joins, [
+        ...whereToFilters(entry.nested, entry.target, joins, schema, [
           ...on,
           entry.name,
         ]),
@@ -1111,7 +1262,9 @@ function whereToFilters(
   }
   const alternatives = (
     (where[OR_KEY] as readonly Record<string, unknown>[] | null) ?? []
-  ).flatMap((criterion) => criteriaOf(criterion, searchType, joins, on));
+  ).flatMap((criterion) =>
+    criteriaOf(criterion, searchType, joins, schema, on),
+  );
   if (alternatives.length > 0) {
     filters.push({ or: alternatives });
   }
@@ -1121,9 +1274,44 @@ function whereToFilters(
   // can never sit inside an `or` (which holds only criteria).
   for (const nested of (where[AND_KEY] as
     readonly Record<string, unknown>[] | null) ?? []) {
-    filters.push(...whereToFilters(nested, searchType, joins, on));
+    filters.push(...whereToFilters(nested, searchType, joins, schema, on));
   }
   return filters;
+}
+
+/**
+ * The one criterion an edge's `where` compiles to: its conditions welded to a
+ * single entry.
+ *
+ * Every key of that `where` becomes a condition. It carries no `or`/`and` of
+ * its own – `‹Edge›Where` declares neither, so the surface rejects them before
+ * a resolver runs: a disjunction inside a weld is not a weld, and the flat IR
+ * has nowhere to put one. `undefined` when the `where` states nothing, which
+ * constrains nothing and so contributes no clause.
+ */
+function weldedCriterionOf(
+  entry: {
+    readonly name: string;
+    readonly nested: Record<string, unknown>;
+    readonly target: SearchType;
+  },
+  joins: JoinGraph,
+  schema: SearchSchema,
+  on: readonly string[],
+): Criterion | undefined {
+  // Every entry here is a plain criterion, and can only be: a hop needs either
+  // a joinable reference (`joins.resolve` answers nothing from a Reference
+  // Type) or a filterable inline one (which needs an `identity`, refused inside
+  // a Reference Type). So there is nothing to skip.
+  const conditions = keyEntriesOf(
+    entry.nested,
+    entry.target,
+    joins,
+    schema,
+  ).map((nested) => (nested as { readonly criterion: Criterion }).criterion);
+  return conditions.length === 0
+    ? undefined
+    : withPath({ field: entry.name, entry: conditions }, on);
 }
 
 /** A criterion with its join path attached, or unchanged at the top level –
@@ -1145,18 +1333,37 @@ function withPath(criterion: Criterion, on: readonly string[]): Criterion {
  */
 function criteriaOf(
   keyed: Record<string, unknown>,
-  searchType: RootType,
+  searchType: SearchType,
   joins: JoinGraph,
+  schema: SearchSchema,
   on: readonly string[] = [],
 ): Criterion[] {
   const criteria: Criterion[] = [];
-  for (const entry of keyEntriesOf(keyed, searchType, joins)) {
+  for (const entry of keyEntriesOf(keyed, searchType, joins, schema)) {
     if (!('nested' in entry)) {
       criteria.push(withPath(entry.criterion, on));
       continue;
     }
+    // A NESTING hop welds, in an `or` alternative exactly as anywhere else –
+    // and it is the one place a weld belongs most naturally, since a welded
+    // criterion IS an atom. Compiled as separate joined criteria it would be
+    // rejected below as “a conjunction inside an or”, which is precisely the
+    // thing welding avoids.
+    if (entry.target.class === undefined) {
+      const welded = weldedCriterionOf(entry, joins, schema, on);
+      if (welded !== undefined) {
+        criteria.push(welded);
+      }
+      continue;
+    }
     const path = [...on, entry.name];
-    const nested = whereToFilters(entry.nested, entry.target, joins, path);
+    const nested = whereToFilters(
+      entry.nested,
+      entry.target,
+      joins,
+      schema,
+      path,
+    );
     const [only] = nested;
     // An `or` alternative must be exactly one criterion. Empty and
     // more-than-one are opposite mistakes, so they are named separately rather
@@ -1183,7 +1390,9 @@ type KeyEntry =
   | {
       readonly name: string;
       readonly nested: Record<string, unknown>;
-      readonly target: RootType;
+      // A Root Type for a JOIN hop, a Reference Type for a NESTING hop. Both
+      // extend the `on` path the same way; only the compiler tells them apart.
+      readonly target: SearchType;
     };
 
 /**
@@ -1198,8 +1407,9 @@ type KeyEntry =
  */
 function keyEntriesOf(
   keyed: Record<string, unknown>,
-  searchType: RootType,
+  searchType: SearchType,
   joins: JoinGraph,
+  schema: SearchSchema,
 ): KeyEntry[] {
   const entries: KeyEntry[] = [];
   const id = keyed[ID_FIELD] as { in?: string[] } | undefined | null;
@@ -1211,7 +1421,13 @@ function keyEntriesOf(
     if (value === undefined || value === null) {
       continue;
     }
-    const target = joins.resolve(searchType, [field.name]);
+    // Both hop kinds take the same `@oneOf` input – `in` (the ids this field
+    // holds) or `where` (a condition one hop out) – so both are read here, and
+    // only what they resolve to differs: another collection, or this
+    // document's own entries.
+    const target =
+      nestedReferenceType(schema, field) ??
+      joins.resolve(searchType, [field.name]);
     if (target !== undefined) {
       const nested = (value as { where?: Record<string, unknown> | null })
         .where;

@@ -88,15 +88,31 @@ Typesense field type comes from each field’s `kind`, and the physical fanout
 field) matches what the projection writes, via `@lde/search`’s `physicalFields`
 and its display helpers, so the index and the documents cannot drift.
 
-A **surfaced inline reference** (`output` + `strategy: 'inline'`) is stored as a
-nested object – `object` or `object[]`, which turns on the collection’s
-`enable_nested_fields` – with one nested Physical Field per output field of its
-Reference Type (`media.contentUrl`, `media.caption_<lang>`, via
-`nestedFieldName`). Everything nested is declared `index: false`: a nested field
-carries `output` only, so it is display weight on disk, like the language
-labels. Pass the `schema` option for a type that surfaces one – it is what
-resolves the Reference Type; a type declaring one without it throws here, rather
-than building a collection whose documents would all fail to import.
+An **inline reference** is stored as a nested object – `object` or `object[]`,
+which turns on the collection’s `enable_nested_fields` – with one nested
+Physical Field per field of the type it nests (`media.contentUrl`,
+`media.caption_<lang>`, via `nestedFieldName`). A nested field is declared
+`index: false` unless it opts into a query Role, so a display-only nesting is
+weight on disk like the language labels, and only a `filterable`/`searchable`
+one costs memory. Pass the `schema` option for a type that carries one – it is
+what resolves the nested type; a type declaring one without it throws here,
+rather than building a collection whose documents would all fail to import.
+
+Two consequences of how Typesense stores nesting, both verified against 30.2 and
+both handled here rather than left to a caller:
+
+- **The parent object is indexed whenever any descendant is.** An indexed child
+  under an `index: false` parent is silently ignored – no error, and every query
+  answering empty – so the parent’s flag is computed from its children.
+- **A value under a multi-valued ancestor arrives as a list**, however
+  single-valued its own declaration. An indexed field’s declared type is checked
+  against what is stored, so it is widened (`int64` → `int64[]`); an unindexed
+  one is not.
+
+An inline reference declaring `filterable` or `facetable` also emits its
+[identity companion](./search#data-on-the-edge) – a flat `${name}_id` field,
+faceted in the nested object’s place, since an engine can filter and facet
+neither an object nor per array element.
 
 A **reference inheriting a [facet policy](./search#facet-policy)** – a facetable
 `lookup`/`labelSource` reference to a type declaring `facetKeys` – is declared

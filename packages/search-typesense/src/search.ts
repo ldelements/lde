@@ -7,7 +7,6 @@ import {
   type NestedDocument,
   type Reference,
   type ReferenceField,
-  type ReferenceType,
   type ResultDocument,
   type RootType,
   type RootTypeOf,
@@ -33,6 +32,8 @@ import {
   joinGraph,
   labelFieldOf,
   labelSourceNameOf,
+  labelTargetNameOf,
+  localLookupTypeOf,
   nestedReferenceType,
   outputFields,
   physicalFields,
@@ -193,10 +194,13 @@ export function createTypesenseSearchEngine<
       searchType.class,
       new Map(
         referenceFields(searchType)
-          .filter((field) => labelSourceNameOf(field) !== undefined)
+          // An INLINE reference names its label target one level in, through
+          // its identity companion: the companion holds that field's ids, so
+          // that field's target is what can label them.
+          .filter((field) => labelTargetNameOf(field, schema) !== undefined)
           .map((field) => {
             const source = typesByName.get(
-              labelSourceNameOf(field) as string,
+              labelTargetNameOf(field, schema) as string,
             ) as RootType;
             const labelField = labelFieldOf(source) as TextField;
             return [
@@ -255,10 +259,26 @@ export function createTypesenseSearchEngine<
       return [
         searchType.class,
         referenceFields(searchType)
-          .filter((field) => field.output === true && sources?.has(field.name))
+          .filter(
+            (field) =>
+              field.output === true &&
+              sources?.has(field.name) === true &&
+              // A field storing NESTED DOCUMENTS is excluded, and must be: this
+              // list drives the per-hit label lookup, which reads each stored
+              // value as an id. An inline reference and a `local` lookup store
+              // objects, so every entry would contribute the string
+              // `"[object Object]"` to the batched `id:[…]` filter. Neither
+              // needs entry labels anyway – the referent's own fields are in
+              // the entry – and their FACET buckets are labelled by a separate
+              // path that reads the companion.
+              nestedReferenceType(schema, field) === undefined &&
+              localLookupTypeOf(field, schema) === undefined,
+          )
           .map((field) => ({
             name: field.name,
-            source: sources!.get(field.name)!,
+            source: (sources as Map<string, LabelSource>).get(
+              field.name,
+            ) as LabelSource,
           })),
       ];
     }),
@@ -869,7 +889,7 @@ export function parseSearchResponse(
   // its IRIs.
   const referenceFacets = new Set(
     referenceFields(searchType)
-      .filter((field) => labelSourceNameOf(field) !== undefined)
+      .filter((field) => labelTargetNameOf(field, schema) !== undefined)
       .map((field) => field.name),
   );
   const facets: Record<string, FacetBucket[]> = {};
@@ -934,15 +954,39 @@ function logicalValue(
       // reconstructs as a nested Search Document rather than as an IRI plus a
       // label. Nesting is rebuilt HERE, below every surface, so a second
       // surface inherits it instead of reimplementing it (ADR 11).
+      const resolved = referents?.get(field.name);
       const nested = nestedReferenceType(schema, field);
       if (nested !== undefined) {
-        return nestedValue(flat[field.name], field, nested, labels, schema);
+        // A nested level resolves nothing itself; what it carries are the
+        // levels below it, which the entries are reconstructed against.
+        return nestedValue(
+          flat[field.name],
+          field,
+          nested,
+          labels,
+          schema,
+          resolved?.children,
+        );
+      }
+      // Checked BEFORE the plain lookup below, because a `local` lookup
+      // resolves through the same kind of level while storing a different
+      // shape: its stored value is the endpoint's own document, not an id, so
+      // reading it as one would stringify the object into a bogus `id`.
+      const localType = localLookupTypeOf(field, schema);
+      if (localType !== undefined) {
+        return localLookupValue(
+          flat[field.name],
+          field,
+          localType,
+          resolved,
+          labels,
+          schema,
+        );
       }
       // A resolved lookup carries the referent's own fields, fetched from the
       // target's collection. It reconstructs through the SAME path a hit does,
       // so a consumer cannot tell a projected referent from an inline one.
-      const resolved = referents?.get(field.name);
-      if (resolved !== undefined) {
+      if (resolved !== undefined && resolved.via === 'lookup') {
         return lookupValue(flat[field.name], field, resolved, labels, schema);
       }
       // A surfaced inline reference stores nested documents, not IRIs, so a
@@ -1010,9 +1054,10 @@ function localizedValue(
 function nestedValue(
   raw: unknown,
   field: ReferenceField,
-  referenceType: ReferenceType,
+  referenceType: SearchType,
   labels: ReadonlyMap<string, LocalizedValue>,
   schema: SearchSchema,
+  children?: ReadonlyMap<string, ResolvedReferents>,
 ): SearchValue | undefined {
   const referents = (Array.isArray(raw) ? raw : [raw]).filter(
     (referent): referent is Record<string, unknown> =>
@@ -1024,6 +1069,7 @@ function nestedValue(
       referenceType,
       labels,
       schema,
+      children,
     );
     return typeof referent.id === 'string'
       ? { id: referent.id, ...document }
@@ -1033,6 +1079,46 @@ function nestedValue(
     return undefined;
   }
   return field.array === true ? documents : documents[0];
+}
+
+/**
+ * Rebuild a {@link ReferenceStrategy.local local} lookup: the endpoint’s own
+ * document as this document stated it, with the **resolved** document overlaid
+ * where the lookup found one.
+ *
+ * Both sides are the target type’s flat physical shape, so the merge is a plain
+ * override and the authoritative value wins field by field. Three cases fall
+ * out of one expression, which is the point of storing local fields
+ * unconditionally:
+ *
+ * - identified and indexed → the target’s own record, over what was stated here;
+ * - identified but not indexed → what was stated here, plus the `id`, rather
+ *   than a bare IRI;
+ * - not identified → what was stated here, with no `id` at all.
+ */
+function localLookupValue(
+  raw: unknown,
+  field: ReferenceField,
+  target: SearchType,
+  resolved: ResolvedReferents | undefined,
+  labels: ReadonlyMap<string, LocalizedValue>,
+  schema: SearchSchema,
+): SearchValue | undefined {
+  const fetched =
+    resolved?.via === 'lookup' ? resolved.documents : new Map<string, never>();
+  const merged = (Array.isArray(raw) ? raw : [raw])
+    .filter(
+      (entry): entry is Record<string, unknown> =>
+        typeof entry === 'object' && entry !== null,
+    )
+    .map((entry) => {
+      const id = typeof entry.id === 'string' ? entry.id : undefined;
+      const authoritative = id === undefined ? undefined : fetched.get(id);
+      return authoritative === undefined
+        ? entry
+        : { ...entry, ...authoritative };
+    });
+  return nestedValue(merged, field, target, labels, schema, resolved?.children);
 }
 
 /**
@@ -1046,7 +1132,7 @@ function nestedValue(
 function lookupValue(
   raw: unknown,
   field: ReferenceField,
-  resolved: ResolvedReferents,
+  resolved: Extract<ResolvedReferents, { readonly via: 'lookup' }>,
   labels: ReadonlyMap<string, LocalizedValue>,
   schema: SearchSchema,
 ): SearchValue | undefined {

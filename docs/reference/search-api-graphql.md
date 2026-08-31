@@ -165,7 +165,9 @@ editor.
   inline reference** instead gets a type built from its Reference Type’s own
   `output` fields – the same per-kind rules as a root type, with a nullable
   `id`, since a referent needs no identity – so a client selects a nested
-  object’s fields directly and renders one referent at a time; scalars/booleans
+  object’s fields directly and renders one referent at a time. A `local` lookup
+  gets the nullable `id` too, and for the same reason: it carries what the
+  document states about an endpoint whether or not the endpoint is identified; scalars/booleans
   per kind; `date` → ISO 8601 string; nullability from `required` / `array` /
   `kind`.
 - **`where`** one input per `filterable` field, typed by what the field keys on:
@@ -199,12 +201,27 @@ editor.
   `IRIFilter`, so the capability difference is visible in the schema rather than
   being a runtime error.
 
-  A nested `where` flattens into a join path on each criterion it produces, so
-  its own `or` and `and` work one hop out too. The one shape it cannot take is a
-  **multi-key** joined `where` inside an `or`: that is a conjunction nested in a
+  A nested `where` flattens into a path on each criterion it produces, so its
+  own `or` and `and` work one hop out too. The one shape it cannot take is a
+  **multi-key** nested `where` inside an `or`: that is a conjunction nested in a
   disjunction, which the flat query IR has nowhere to put, and it is rejected
   naming the rewrite (one `or` alternative per criterion, or move the
   conjunction into `and`).
+
+  An **inline reference** takes the same two-armed input, because it asks the
+  same question one hop out – `in` for the ids its entries hold (its
+  [identity companion](./search#data-on-the-edge)), `where` for a condition on
+  an entry, typed `‹Edge›Where`. Only the cost differs: a join crosses into
+  another collection, a nesting stays inside the document.
+
+  `‹Edge›Where` differs from a root type's in two ways, both because an entry is
+  read rather than addressed. It carries **no `id` key** – an entry has no
+  document key – and **no `or`/`and`**, because its keys are **welded**: every
+  condition in one `‹Edge›Where` must hold of the SAME entry, and a disjunction
+  inside a weld is not a weld. So `creator: { where: { creator: { in: […] },
+role: { in: ["etser"] } } }` asks for _this person in this role_, where the
+  same two conditions written as sibling clauses could be satisfied by two
+  different entries.
 
 - **`orderBy`**: `RELEVANCE` plus every `sortable` field, as an enum – field
   names SCREAMING_SNAKE_CASEd (`datePosted` → `DATE_POSTED`); `direction`

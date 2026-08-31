@@ -9,27 +9,39 @@ import {
   displayFieldName,
   fieldNamed,
   labelFieldOf,
+  nestedReferenceType,
   rootTypeNamed,
 } from '@lde/search/adapter';
 import { escapeFilterValue } from './query-compiler.js';
 
 /**
- * One resolved level of a {@link ReferenceProjection}: the referents fetched
- * for it, keyed by IRI and still in the engine’s flat physical shape, plus the
- * levels resolved *from* them.
+ * One resolved level of a {@link ReferenceProjection}. A level is one of two
+ * things, discriminated by `via`, because the two cost different things:
+ *
+ * - **`lookup`** – referents fetched from the target’s own collection, keyed by
+ *   id and still in the engine’s flat physical shape. One batched round trip.
+ * - **`nested`** – an inline reference descended into. Its entries are already
+ *   in the hit, so nothing is fetched and there is no target; the level exists
+ *   only to carry the levels resolved *below* it.
  *
  * Kept flat rather than reconstructed here so one reconstruction path serves
  * hits and referents alike – the surface never learns that a nested document
  * arrived by a second round-trip rather than from the hit itself.
  */
-export interface ResolvedReferents {
-  /** The Root Type these referents are declared by – reconstruction reads them
-   *  through the target’s own declaration, never the referrer’s. */
-  readonly target: RootType;
-  readonly documents: ReadonlyMap<string, Record<string, unknown>>;
-  /** Keyed by the reference field’s name on the type this level carries. */
-  readonly children: ReadonlyMap<string, ResolvedReferents>;
-}
+export type ResolvedReferents =
+  | {
+      readonly via: 'lookup';
+      /** The Root Type these referents are declared by – reconstruction reads
+       *  them through the target’s own declaration, never the referrer’s. */
+      readonly target: RootType;
+      readonly documents: ReadonlyMap<string, Record<string, unknown>>;
+      /** Keyed by the reference field’s name on the type this level carries. */
+      readonly children: ReadonlyMap<string, ResolvedReferents>;
+    }
+  | {
+      readonly via: 'nested';
+      readonly children: ReadonlyMap<string, ResolvedReferents>;
+    };
 
 /** Typesense caps a filter list; the same batch size the label lookup uses. */
 const BATCH_SIZE = 200;
@@ -62,11 +74,32 @@ export async function resolveProjection(
   const levels = await Promise.all(
     Object.entries(projection).map(async ([name, level]) => {
       const field = fieldNamed(searchType, name);
-      if (
-        field === undefined ||
-        field.kind !== 'reference' ||
-        field.ref?.strategy !== 'lookup'
-      ) {
+      if (field === undefined) {
+        return undefined;
+      }
+      // An inline level costs no round trip: its entries are already in the
+      // parents. Flatten them out and hand them down, so the level BELOW reads
+      // its ids off the entries rather than off the document – which is the
+      // whole of what makes a lookup inside a qualified edge resolvable.
+      const nested = nestedReferenceType(schema, field);
+      if (nested !== undefined) {
+        return [
+          name,
+          {
+            via: 'nested',
+            children: await resolveProjection(
+              client,
+              level.resolve,
+              nested,
+              schema,
+              collections,
+              entriesOf(parents, name),
+              onError,
+            ),
+          },
+        ] as const;
+      }
+      if (field.kind !== 'reference' || field.ref?.strategy !== 'lookup') {
         // `assertValidQuery` rejects this for every caller; skipping keeps a
         // hand-built query from throwing here rather than at the port’s guard.
         return undefined;
@@ -94,6 +127,7 @@ export async function resolveProjection(
       return [
         name,
         {
+          via: 'lookup',
           target,
           documents,
           // The level below reads the IRIs off the documents this one just
@@ -119,7 +153,37 @@ export async function resolveProjection(
   return resolved;
 }
 
-/** Every distinct IRI a page of documents carries under one reference field. */
+/**
+ * The nested entries a page of documents carries under one inline reference,
+ * flattened into one list – the “documents” the level below resolves against.
+ *
+ * Flattening rather than grouping is what keeps the round-trip count per
+ * *level* rather than per document: every entry on the page contributes its ids
+ * to one batch, and reconstruction re-associates them afterwards by id.
+ */
+function entriesOf(
+  documents: readonly Record<string, unknown>[],
+  field: string,
+): Record<string, unknown>[] {
+  return documents.flatMap((document) => {
+    const raw = document[field];
+    return (Array.isArray(raw) ? raw : [raw]).filter(
+      (entry): entry is Record<string, unknown> =>
+        typeof entry === 'object' && entry !== null,
+    );
+  });
+}
+
+/**
+ * Every distinct id a page of documents carries under one reference field.
+ *
+ * A reference stores its ids one of two ways, and which one is about how much
+ * of the referent the deployment wants stored, not about identity: a plain
+ * reference stores the id itself, while a
+ * {@link ReferenceStrategy.local local} lookup stores the endpoint’s own
+ * document, whose `id` is the same value. Both are read, so a level resolves
+ * the same either way.
+ */
 function distinctIris(
   documents: readonly Record<string, unknown>[],
   field: string,
@@ -128,8 +192,12 @@ function distinctIris(
   for (const document of documents) {
     const raw = document[field];
     for (const value of Array.isArray(raw) ? raw : [raw]) {
-      if (typeof value === 'string' && value !== '') {
-        iris.add(value);
+      const id =
+        typeof value === 'object' && value !== null
+          ? (value as Record<string, unknown>).id
+          : value;
+      if (typeof id === 'string' && id !== '') {
+        iris.add(id);
       }
     }
   }

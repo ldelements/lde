@@ -620,19 +620,34 @@ describe('validateQuery', () => {
     });
 
     it('caps the depth, in the IR rather than in a surface', () => {
-      const tooDeep = Array.from(
-        { length: MAX_JOIN_DEPTH + 1 },
-        () => 'dataset',
+      // A chain one longer than the cap, every hop of it resolvable – so what
+      // is being tested is the cap itself, and not a path that simply fails to
+      // resolve. The cap counts JOIN hops, spent one round trip at a time.
+      const last = label('Last');
+      const chain = ['Fourth', 'Third', 'Second', 'First'].reduce<
+        readonly SearchType[]
+      >(
+        (built, name) => [
+          label(name, [joinable('next', built[0].name)]),
+          ...built,
+        ],
+        [last],
       );
+      const [first] = chain;
+      const deepSchema = searchSchema(
+        ...(chain as [SearchType, ...SearchType[]]),
+      );
+      const tooDeep = Array.from({ length: MAX_JOIN_DEPTH + 1 }, () => 'next');
+
       expect(
         validateQuery(
           {
             ...base,
             where: [{ or: [{ on: tooDeep, field: 'id', in: ['x'] }] }],
           },
-          work,
-          joinedSchema,
-          joins,
+          first,
+          deepSchema,
+          joinGraph(deepSchema),
         ),
       ).toEqual([
         {
@@ -640,6 +655,27 @@ describe('validateQuery', () => {
           field: `${tooDeep.join('.')}.id`,
           reason: 'join-too-deep',
         },
+      ]);
+    });
+
+    it('reports the hop that fails, not the length, for an unresolvable path', () => {
+      // The cap used to be a pre-check on path length, which masked this: a
+      // path is over budget only once it has actually spent the budget, and a
+      // hop naming a reference that is not joinable is its own mistake.
+      expect(
+        validateQuery(
+          {
+            ...base,
+            where: [
+              { or: [{ on: ['dataset', 'dataset'], field: 'id', in: ['x'] }] },
+            ],
+          },
+          work,
+          joinedSchema,
+          joins,
+        ),
+      ).toEqual([
+        { part: 'where', field: 'dataset.dataset.id', reason: 'unknown-join' },
       ]);
     });
 

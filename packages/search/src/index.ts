@@ -74,6 +74,7 @@ export type {
   Filter,
   Criterion,
   CriterionBase,
+  WeldedCriterion,
   Sort,
 } from './query.js';
 
