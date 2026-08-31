@@ -32,15 +32,15 @@ await converter.convert(
 
 ### Options
 
-| Option       | Type               | Description                                                                                  |
-| ------------ | ------------------ | -------------------------------------------------------------------------------------------- |
-| `queryFile`  | `string`           | Path to the SPARQL CONSTRUCT query. The literal `{SOURCE}` is replaced per chunk             |
-| `jarPath`    | `string`           | Path to the SPARQL Anything CLI jar, as the task runner sees it                              |
-| `workDir`    | `string`           | The task runner's working directory; see [Where files are written](#where-files-are-written) |
-| `load`       | `string`           | Optional path passed to `--load`; see [Loading existing RDF](#loading-existing-rdf)          |
-| `heap`       | `string`           | Maximum JVM heap per chunk process, as `-Xmx` takes it; see [Memory](#memory)                |
-| `cliArgs`    | `string[]`         | Further arguments for the SPARQL Anything CLI; see [Memory](#memory)                         |
-| `taskRunner` | `TaskRunner<Task>` | Runs the SPARQL Anything process for each chunk                                              |
+| Option       | Type               | Description                                                                                    |
+| ------------ | ------------------ | ---------------------------------------------------------------------------------------------- |
+| `queryFile`  | `string`           | Path to the SPARQL CONSTRUCT query. The literal `{SOURCE}` is replaced per chunk               |
+| `jarPath`    | `string`           | Path to the SPARQL Anything CLI jar, as the task runner sees it                                |
+| `workDir`    | `string`           | The task runner's working directory; see [Where files are written](#where-files-are-written)   |
+| `load`       | `string`           | Optional path passed to `--load`; see [Loading existing RDF](#loading-existing-rdf)            |
+| `heap`       | `string`           | Maximum JVM heap per chunk process, as `-Xmx` takes it (default `'2g'`); see [Memory](#memory) |
+| `cliArgs`    | `string[]`         | Further arguments for the SPARQL Anything CLI; see [Memory](#memory)                           |
+| `taskRunner` | `TaskRunner<Task>` | Runs the SPARQL Anything process for each chunk                                                |
 
 ### Where files are written
 
@@ -56,11 +56,13 @@ Per-run directories matter for more than tidiness: a chunk output left over from
 
 ### Memory
 
-One process per chunk bounds how much has to be held at once, but only together with a heap cap: SPARQL Anything materialises a chunk's whole result graph before writing it, and a JVM with no `-Xmx` helps itself to a quarter of host memory. `heap` is therefore required rather than defaulted – the right size depends on the chunk size, and the two are chosen together:
+One process per chunk bounds how much has to be held at once, but only together with a heap cap: SPARQL Anything materialises a chunk's whole result graph before writing it, and a JVM with no `-Xmx` helps itself to a quarter of host memory. There is therefore always a cap, `2g` unless you raise it:
 
 ```typescript
-heap: '2g', // -Xmx2g
+heap: '4g', // -Xmx4g
 ```
+
+Size it with the chunk size. A chunk that outgrows the heap fails loudly – the JVM's `OutOfMemoryError` arrives in the output of a non-zero exit, which aborts the conversion – where an uncapped JVM instead grows until the OOM killer takes the whole container.
 
 `cliArgs` is the escape hatch for CLI flags the converter does not model itself, appended to the arguments it sets. It cannot repeat those: `-q`, `-f`, `-o` and `-l` are rejected, because the converter reads back the `--output` it named, in the `--format` it asked for – overriding either leaves it reporting an empty conversion, or concatenating fragments that are not N-Triples. SPARQL Anything documents repetition only for `-v` and `-c`, so a repeated flag has no defined winner to rely on.
 

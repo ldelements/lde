@@ -138,7 +138,6 @@ describe('SparqlAnythingConverter', () => {
       queryFile,
       jarPath: '/bin/sparql-anything.jar',
       workDir,
-      heap: '2g',
       load,
       taskRunner,
     });
@@ -181,7 +180,6 @@ describe('SparqlAnythingConverter', () => {
       queryFile,
       jarPath: '/bin/sparql anything.jar',
       workDir,
-      heap: '2g',
       load: "/data/'s-Hertogenbosch.ttl",
       taskRunner,
     }).convert([chunk], join(workDir, 'output.nt'));
@@ -189,6 +187,17 @@ describe('SparqlAnythingConverter', () => {
     const command = taskRunner.commands[0];
     expect(command).toContain("java '-Xmx2g' -jar '/bin/sparql anything.jar'");
     expect(command).toContain("--load '/data/'\\''s-Hertogenbosch.ttl'");
+  });
+
+  it('caps the heap even when none is configured', async () => {
+    const taskRunner = new FakeTaskRunner(workDir);
+    const [chunk] = await writeChunks(1);
+
+    await converterFor(taskRunner).convert([chunk], join(workDir, 'output.nt'));
+
+    // An uncapped JVM takes a quarter of host memory; a chunk that outgrows
+    // this default fails loudly instead, on the JVM's own OutOfMemoryError.
+    expect(taskRunner.commands[0]).toMatch(/^java '-Xmx2g' -jar /);
   });
 
   it('caps the heap before -jar, and appends extra CLI arguments', async () => {

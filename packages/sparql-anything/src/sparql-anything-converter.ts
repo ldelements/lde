@@ -11,6 +11,14 @@ const SOURCE_PLACEHOLDER = '{SOURCE}';
 const HEAP_SIZE = /^\d+[kmg]?$/i;
 
 /**
+ * Heap per chunk process when none is configured. Conservative on purpose: a
+ * chunk that needs more fails loudly, with the JVM's OutOfMemoryError in the
+ * output of a non-zero exit, where leaving the JVM uncapped instead lets it
+ * take a quarter of host memory until the OOM killer takes the container.
+ */
+const DEFAULT_HEAP = '2g';
+
+/**
  * Arguments the converter sets itself, with their aliases. Passing one again
  * through `cliArgs` would break what the converter does around the process:
  * it reads back the `--output` it named, in the `--format` it asked for.
@@ -51,12 +59,12 @@ export interface SparqlAnythingConverterOptions<Task> {
   load?: string;
   /**
    * Maximum JVM heap per chunk process, as `-Xmx` takes it: `'2g'`, `'512m'`.
-   * Required, because one process per chunk bounds memory only together with a
-   * cap: SPARQL Anything materialises a chunk's whole result graph before
-   * writing it, and an uncapped JVM helps itself to a quarter of host memory.
-   * Chunk size and heap are chosen together.
+   * One process per chunk bounds memory only together with a cap, since SPARQL
+   * Anything materialises a chunk's whole result graph before writing it, so
+   * there is always one. Raise it for chunks larger than the default suits.
+   * @default '2g'
    */
-  heap: string;
+  heap?: string;
   /**
    * Further arguments for the SPARQL Anything CLI, passed after the ones the
    * converter sets itself. Those it cannot repeat: `-q`, `-f`, `-o` and `-l`
@@ -86,12 +94,13 @@ export class SparqlAnythingConverter<Task> {
     this.jarPath = options.jarPath;
     this.workDir = options.workDir;
     this.load = options.load;
-    if (!HEAP_SIZE.test(options.heap)) {
+    const heap = options.heap ?? DEFAULT_HEAP;
+    if (!HEAP_SIZE.test(heap)) {
       throw new Error(
-        `‘${options.heap}’ is not a heap size; give the value -Xmx takes, such as ‘2g’`,
+        `‘${heap}’ is not a heap size; give the value -Xmx takes, such as ‘2g’`,
       );
     }
-    this.heap = options.heap;
+    this.heap = heap;
     const reserved = (options.cliArgs ?? []).filter((argument) =>
       RESERVED_ARGUMENTS.has(argument),
     );
