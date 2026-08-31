@@ -5,16 +5,17 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-/** Resolves once the process has exited and its output has been read. */
-function closed(task: ChildProcess): Promise<void> {
-  return new Promise((resolve) => {
-    if (task.exitCode !== null || task.signalCode !== null) {
-      // Still give the 'close' listeners a turn to run.
-      setImmediate(resolve);
-      return;
-    }
-    task.on('close', () => setImmediate(resolve));
-  });
+/**
+ * Resolves once the process has closed – exited AND its output streams ended,
+ * which is what 'close' waits for. Polling rather than listening for the event
+ * keeps it correct whether or not the process is already gone.
+ */
+async function closed(task: ChildProcess): Promise<void> {
+  while (task.exitCode === null || task.stdout?.readableEnded !== true) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  // One more turn, so the runner's own 'close' listener has run.
+  await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 describe('NativeTaskRunner', () => {
@@ -135,6 +136,27 @@ describe('NativeTaskRunner', () => {
       await expect(Promise.all([stopping, waiting])).resolves.toBeDefined();
     });
 
+    it('reports why a process could not be spawned', async () => {
+      const runner = new NativeTaskRunner({ cwd: '/no/such/directory' });
+      const task = await runner.run('echo "hello"');
+
+      // The close code alone is -2, which says nothing about the cause.
+      await expect(runner.wait(task)).rejects.toThrow('ENOENT');
+    });
+
+    it('keeps the end of a very long output', async () => {
+      const runner = new NativeTaskRunner();
+      const task = await runner.run(
+        'for i in $(seq 1 40000); do printf "%s\n" "0123456789012345678901234567890123456789012345678901234567890123"; done; echo LAST-LINE',
+      );
+
+      const output = await runner.wait(task);
+
+      // What a command reports about its work, it reports at the end.
+      expect(output).toContain('LAST-LINE');
+      expect(output.length).toBeLessThan(2_500_000);
+    });
+
     it('rejects for a process that was already stopped', async () => {
       const runner = new NativeTaskRunner();
       const task = await runner.run('sleep 60');
@@ -156,16 +178,16 @@ describe('NativeTaskRunner', () => {
       expect(output).toBeDefined();
     });
 
-    it('handles already-exited processes', async () => {
+    it('returns the output of an already-exited process', async () => {
       const runner = new NativeTaskRunner();
       const task = await runner.run('echo "done"');
 
       // Wait for the process to complete.
       await runner.wait(task);
 
-      // Stopping should not throw.
-      const output = await runner.stop(task);
-      expect(output).toBeDefined();
+      // Stopping should not throw, and reading the output once must not have
+      // consumed it.
+      expect(await runner.stop(task)).toContain('done');
     });
 
     it('escalates to SIGKILL after timeout', async () => {
