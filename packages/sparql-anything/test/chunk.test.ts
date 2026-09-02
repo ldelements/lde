@@ -1,6 +1,13 @@
 import { chunk } from '../src/index.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -124,6 +131,68 @@ describe('chunk', () => {
     await expect(
       chunk(path, { rows: 2, into: join(workDir, 'chunks') }),
     ).rejects.toThrow('holds no rows to chunk');
+  });
+
+  it('surfaces a failure to write as a rejection, not a crash', async () => {
+    const input = await writeInput(4);
+    const into = join(workDir, 'chunks');
+    // A directory where the first chunk's file belongs: writing to it fails
+    // with EISDIR, and the failure arrives while the loop waits on a line.
+    await mkdir(join(into, 'places-0000.txt'), { recursive: true });
+
+    await expect(chunk(input, { rows: 2, into })).rejects.toThrow('EISDIR');
+  });
+
+  it('surfaces a write that fails while it is waiting on the next line', async () => {
+    const input = await writeInput(6);
+    const into = join(workDir, 'chunks');
+    // The third chunk cannot be opened, so the failure arrives once the first
+    // two have been written and the loop is reading again.
+    await mkdir(join(into, 'places-0002.txt'), { recursive: true });
+
+    await expect(chunk(input, { rows: 2, into })).rejects.toThrow('EISDIR');
+
+    // The chunks written before it are complete, not truncated.
+    expect(await readFile(join(into, 'places-0001.txt'), 'utf-8')).toBe(
+      'row-2\nrow-3\n',
+    );
+  });
+
+  it('leaves no chunk open when the input cannot be read', async () => {
+    await expect(
+      chunk(join(workDir, 'absent.txt'), {
+        rows: 2,
+        into: join(workDir, 'chunks'),
+      }),
+    ).rejects.toThrow('ENOENT');
+  });
+
+  it('removes the chunks an earlier call made of the same input', async () => {
+    const into = join(workDir, 'chunks');
+    await mkdir(into, { recursive: true });
+    // A longer run's tail, and a file of the caller's that is not ours.
+    await writeFile(join(into, 'places-0007.txt'), 'stale\n');
+    await writeFile(join(into, 'notes.txt'), 'keep me\n');
+    const input = await writeInput(2);
+
+    await chunk(input, { rows: 2, into });
+
+    expect((await readdir(into)).sort()).toEqual([
+      'notes.txt',
+      'places-0000.txt',
+    ]);
+  });
+
+  it('refuses an extension without its leading dot', async () => {
+    const input = await writeInput(2);
+
+    await expect(
+      chunk(input, {
+        rows: 2,
+        into: join(workDir, 'chunks'),
+        extension: 'csv',
+      }),
+    ).rejects.toThrow('is not an extension');
   });
 
   it('refuses a chunk size that is not a whole number of rows', async () => {
