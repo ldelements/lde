@@ -7,6 +7,7 @@ import {
 } from './frame-by-type.js';
 import {
   assertTypeInSchema,
+  DEFAULT_MAX_ENTRIES,
   displayFieldName,
   documentKeyOf,
   fieldNamed,
@@ -319,7 +320,15 @@ function applyField(
     // project nothing rather than fall through and emit the referent IRIs under
     // the field name (the wrong shape).
     if (schema !== undefined) {
-      applyInlineReference(document, node, alias, field, schema, context);
+      applyInlineReference(
+        document,
+        node,
+        alias,
+        field,
+        schema,
+        context,
+        searchType.class === undefined,
+      );
     }
     return;
   }
@@ -342,7 +351,13 @@ function applyField(
       // a filter can reach – an engine welds conditions on an entry's LEAF
       // fields only. `filterable` therefore fans out the id beside the object,
       // exactly as an inline reference's identity companion does.
-      applyLocalIdentity(document, endpoints, field, schema);
+      applyLocalIdentity(
+        document,
+        endpoints,
+        field,
+        schema,
+        searchType.class === undefined,
+      );
       return;
     }
   }
@@ -660,6 +675,7 @@ function applyInlineReference(
   field: ReferenceField & { readonly ref: { readonly typeName: string } },
   schema: SearchSchema,
   context: ProjectionContext,
+  nested: boolean,
 ): void {
   // Resolves for a schema that declares the referent (always so for the schema a
   // type is projected through); a type framed against a foreign schema that
@@ -676,7 +692,7 @@ function applyInlineReference(
     schema,
     context,
   );
-  applyIdentityCompanion(document, referents, field, schema);
+  applyIdentityCompanion(document, referents, field, schema, nested);
 }
 
 /**
@@ -700,6 +716,7 @@ function applyIdentityCompanion(
   referents: readonly ProjectedNode[],
   field: ReferenceField,
   schema: SearchSchema,
+  nested: boolean,
 ): void {
   const names = physicalFields(field, schema);
   if (names.identity === undefined) {
@@ -723,14 +740,51 @@ function applyIdentityCompanion(
   if (ids.length === 0) {
     return;
   }
-  setArray(document, names.identity, ids);
+  setIdentity(document, names.identity, ids, field, nested);
   // Same rule as every other facetable reference: where the target declares a
   // facet policy, the facet reads a narrowed companion of its own, so an
   // excluded id is never seen by the engine rather than merely unlabelled.
   const policy = inheritedFacetKeys(field, schema);
   if (policy !== undefined) {
-    setArray(document, names.facet as string, ids.filter(policy.only));
+    setIdentity(
+      document,
+      names.facet as string,
+      ids.filter(policy.only),
+      field,
+      nested,
+    );
   }
+}
+
+/**
+ * Write an identity companion under the arity of the reference it belongs to –
+ * `array` decides the shape here exactly as it does for every other kind
+ * ({@link applyFacet}).
+ *
+ * It matters most where the companion is a **nested** leaf. That is the field a
+ * weld actually names – the endpoint's own id is a level deeper than a weld can
+ * reach – and a weld asks whether ONE entry satisfies every condition. A
+ * companion holding a list inside an entry stands for each of its ids at once,
+ * so the entry answers the weld with none of them; a Typesense 30.2 engine does
+ * not answer at all, and hangs (ADR 26). The entry fans out instead
+ * ({@link tuplesOf}), which leaves exactly one id per entry for this to write.
+ *
+ * A top-level companion is unaffected: it is a flat field standing for the whole
+ * document rather than for one entry, so an `array` reference's companion holds
+ * every id its entries reference, as it always has.
+ */
+function setIdentity(
+  document: ProjectedNode,
+  name: string,
+  ids: readonly string[],
+  field: ReferenceField,
+  nested: boolean,
+): void {
+  if (!nested || field.array === true) {
+    setArray(document, name, ids);
+    return;
+  }
+  setString(document, name, ids[0]);
 }
 
 /**
@@ -746,6 +800,7 @@ function applyLocalIdentity(
   endpoints: readonly ProjectedNode[],
   field: ReferenceField,
   schema: SearchSchema,
+  nested: boolean,
 ): void {
   const names = physicalFields(field, schema);
   if (names.identity === undefined) {
@@ -760,9 +815,7 @@ function applyLocalIdentity(
       .map((endpoint) => endpoint.id)
       .filter((id): id is string => typeof id === 'string'),
   );
-  if (ids.length > 0) {
-    setArray(document, names.identity, ids);
-  }
+  setIdentity(document, names.identity, ids, field, nested);
 }
 
 /** The id a value under an identity field carries: the value itself when the
@@ -797,8 +850,22 @@ function applyNestedReferents(
   schema: SearchSchema,
   context: ProjectionContext,
 ): readonly ProjectedNode[] {
-  const referents = values
-    .filter(isObject)
+  // One node may stand for several entries: a weldable leaf is single-valued,
+  // so an edge the graph gave several roles or several endpoints fans out into
+  // one entry per combination BEFORE it is projected (ADR 26). The cap bounds
+  // the DOCUMENT, not each edge – a document holds as many edges as the graph
+  // states, so a per-edge cap would still let the product grow with the input.
+  const limit = isInlineReference(field)
+    ? (field.ref.maxEntries ?? DEFAULT_MAX_ENTRIES)
+    : Number.POSITIVE_INFINITY;
+  const nodes: FramedNode[] = [];
+  for (const value of values.filter(isObject)) {
+    if (nodes.length >= limit) {
+      break;
+    }
+    nodes.push(...tuplesOf(value, nestedType, field, limit - nodes.length));
+  }
+  const referents = nodes
     .map((referent) => projectFields(referent, nestedType, schema, context))
     // Fields, not identity, are what makes something a referent: a literal
     // value object under the alias (dirty source data), or a node this
@@ -811,6 +878,72 @@ function applyNestedReferents(
   }
   document[field.name] = field.array === true ? referents : referents[0];
   return referents;
+}
+
+/**
+ * Split one framed edge node into the entries it stands for: the cartesian
+ * product of its **weldable** leaves’ values, one value each.
+ *
+ * A weld asks whether ONE entry satisfies every condition, so a leaf a weld can
+ * name (`filterable` – `searchSchema` refuses `array` on one) states a single
+ * value. An edge the graph gave two roles and two endpoints is therefore four
+ * entries rather than one entry holding two lists, which stands for all four at
+ * once and answers the weld with none of them. See
+ * [ADR 26](../../docs/decisions/0026-fan-out-a-qualified-edge-into-one-entry-per-tuple.md).
+ *
+ * Done on the **framed node**, before projection, so each leaf reaches
+ * {@link applyField} single-valued and passes through `transform`, folding and
+ * the facet companion exactly as a single-valued field always has – no
+ * downstream step learns that fan-out happened. Only the weldable aliases are
+ * split: an `output`-only leaf keeps its list, because nothing welds it, and it
+ * is shared unchanged across the entries the node fans out to.
+ *
+ * Inline references only. A {@link ReferenceStrategy.local local} lookup runs
+ * through this same body but nests the endpoint’s **own Root Type**, whose
+ * fields are multi-valued for reasons of their own – fanning one out would
+ * split a person across their `sameAs` values. What a weld names there is the
+ * flat `${name}_id` companion, which {@link applyLocalIdentity} already writes
+ * beside the object.
+ *
+ * `limit` is what remains of the document’s entry budget
+ * ({@link ReferenceStrategy.maxEntries}, {@link DEFAULT_MAX_ENTRIES}), so the
+ * product stops growing mid-way rather than being built and then trimmed – a
+ * bound in the data’s own units is not a bound (ADR 12), and one pathological
+ * edge would otherwise multiply a document until the run dies.
+ */
+function tuplesOf(
+  node: FramedNode,
+  nestedType: SearchType,
+  field: ReferenceField,
+  limit: number,
+): readonly FramedNode[] {
+  if (!isInlineReference(field)) {
+    return [node];
+  }
+  const weldable = nestedType.fields
+    .filter((nested) => nested.filterable === true)
+    .map((nested) => irAlias(nestedType, nested))
+    // A leaf the frame carries at most one value for is already a tuple
+    // position; splitting it would copy the node to no purpose.
+    .filter((alias) => valuesOf(node, alias).length > 1);
+  if (weldable.length === 0) {
+    return [node];
+  }
+  let tuples: FramedNode[] = [node];
+  for (const alias of weldable) {
+    const values = valuesOf(node, alias);
+    const grown: FramedNode[] = [];
+    for (const tuple of tuples) {
+      for (const value of values) {
+        if (grown.length === limit) {
+          return grown;
+        }
+        grown.push({ ...tuple, [alias]: value });
+      }
+    }
+    tuples = grown;
+  }
+  return tuples;
 }
 
 // --- Framed-IR readers: read a field’s value off the framed node by its

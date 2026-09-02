@@ -46,9 +46,10 @@ const creatorRole = defineSearchType({
   name: 'CreatorRole',
   fields: [
     {
+      // Single-valued: a leaf a weld can name states one value per entry, and
+      // an edge the graph gave several roles fans out (ADR 26).
       name: 'role',
       kind: 'keyword',
-      array: true,
       output: true,
       filterable: true,
       path: `<${SCHEMA}roleName>`,

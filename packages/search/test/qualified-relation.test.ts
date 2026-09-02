@@ -146,6 +146,196 @@ describe('an edge that carries data and resolves a lookup', () => {
   });
 });
 
+describe('fanning an edge out into one entry per tuple', () => {
+  // A weld asks whether ONE entry satisfies every condition, so a leaf a weld
+  // can name holds one value. An edge the graph gave several fans out (ADR 26).
+
+  /** Both leaves weldable, so both are tuple positions. */
+  const weldableEdge = defineSearchType({
+    name: 'CreatorEdge',
+    fields: [
+      {
+        name: 'role',
+        kind: 'keyword',
+        path: `${SCHEMA_ORG}name`,
+        output: true,
+        filterable: true,
+      },
+      {
+        name: 'creator',
+        kind: 'reference',
+        path: `${SCHEMA_ORG}creator`,
+        output: true,
+        filterable: true,
+        ref: { strategy: 'lookup', target: 'Person', local: true },
+      },
+    ],
+  });
+
+  const twoRoles = {
+    '@id': 'https://ex/work/2',
+    [workKey('creator')]: [
+      {
+        [edgeKey('role')]: [{ '@value': 'etser' }, { '@value': 'drukker' }],
+        [edgeKey('creator')]: [
+          { '@id': 'https://a/1', [personKey('sameAs')]: [{ '@id': RKD }] },
+        ],
+      },
+    ],
+  };
+
+  it('splits a multi-valued weldable leaf across entries', () => {
+    const entries = entriesOf(projectDocument(twoRoles, work, schema));
+
+    expect(entries).toHaveLength(2);
+    expect(entries.map((entry) => entry.role)).toEqual(['etser', 'drukker']);
+    // Every entry keeps the endpoint the edge stated: the tuple is what fans
+    // out, not the edge's other values.
+    expect(
+      entries.map((entry) => (entry.creator as SearchDocument).id),
+    ).toEqual([RKD, RKD]);
+  });
+
+  it('takes the product where two weldable leaves are multi-valued', () => {
+    const twoOfEach = {
+      '@id': 'https://ex/work/3',
+      [workKey('creator')]: [
+        {
+          [edgeKey('role')]: [{ '@value': 'etser' }, { '@value': 'drukker' }],
+          [edgeKey('creator')]: [
+            { '@id': 'https://a/1', [personKey('sameAs')]: [{ '@id': RKD }] },
+            { '@id': 'https://a/2' },
+          ],
+        },
+      ],
+    };
+    const entries = entriesOf(
+      projectDocument(
+        twoOfEach,
+        work,
+        searchSchema(work, person, weldableEdge),
+      ),
+    );
+
+    expect(entries.map((entry) => [entry.role, entry.creator_id])).toEqual([
+      ['etser', RKD],
+      ['etser', 'https://a/2'],
+      ['drukker', RKD],
+      ['drukker', 'https://a/2'],
+    ]);
+  });
+
+  it('leaves an output-only list on the entry', () => {
+    // Nothing welds it, so it needs no tuple position – and splitting the entry
+    // over it would multiply entries for a value no filter can name.
+    const noteEdge = defineSearchType({
+      name: 'CreatorEdge',
+      fields: [
+        {
+          name: 'role',
+          kind: 'keyword',
+          path: `${SCHEMA_ORG}name`,
+          output: true,
+          filterable: true,
+        },
+        {
+          name: 'note',
+          kind: 'keyword',
+          path: `${SCHEMA_ORG}description`,
+          array: true,
+          output: true,
+        },
+        {
+          name: 'creator',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}creator`,
+          output: true,
+          ref: { strategy: 'lookup', target: 'Person', local: true },
+        },
+      ],
+    });
+    const annotated = {
+      '@id': 'https://ex/work/6',
+      [workKey('creator')]: [
+        {
+          [edgeKey('role')]: [{ '@value': 'etser' }],
+          [edgeKey('note')]: [
+            { '@value': 'gesigneerd' },
+            { '@value': 'ovaal' },
+          ],
+        },
+      ],
+    };
+    const entries = entriesOf(
+      projectDocument(annotated, work, searchSchema(work, person, noteEdge)),
+    );
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0].note).toEqual(['gesigneerd', 'ovaal']);
+  });
+
+  it('stops at the cap once earlier edges have spent it', () => {
+    // The cap bounds the DOCUMENT, not each edge: a document holds as many
+    // edges as the graph states, so a per-edge cap would still let the entries
+    // grow with the input (ADR 12). `node` states two edges; a budget of one
+    // is spent by the first, and the second contributes nothing.
+    const cappedWork = defineSearchType({
+      name: 'Work',
+      class: `${SCHEMA_ORG}CreativeWork`,
+      fields: [
+        {
+          name: 'creator',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}creator`,
+          array: true,
+          output: true,
+          filterable: true,
+          ref: {
+            strategy: 'inline',
+            typeName: 'CreatorEdge',
+            identity: 'creator',
+            maxEntries: 1,
+          },
+        },
+      ],
+    });
+    const entries = entriesOf(
+      projectDocument(
+        node,
+        cappedWork,
+        searchSchema(cappedWork, person, creatorEdge),
+      ),
+    );
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0].role).toBe('etser');
+  });
+
+  it('does not fan a local lookup out over the endpoint’s own fields', () => {
+    // A `local` lookup nests the endpoint's own Root Type, whose fields are
+    // multi-valued for reasons of their own – `sameAs` here. Splitting on those
+    // would scatter one person across entries; what a weld names is the flat
+    // companion beside the object.
+    const twoAlignments = {
+      '@id': 'https://ex/work/7',
+      [workKey('creator')]: [
+        {
+          [edgeKey('role')]: [{ '@value': 'etser' }],
+          [edgeKey('creator')]: [
+            {
+              '@id': 'https://a/1',
+              [personKey('sameAs')]: [{ '@id': RKD }, { '@id': 'https://a/9' }],
+            },
+          ],
+        },
+      ],
+    };
+    const entries = entriesOf(projectDocument(twoAlignments, work, schema));
+
+    expect(entries).toHaveLength(1);
+  });
+});
+
 describe('the identity companion', () => {
   it('harvests the ids the entries reference', () => {
     // The flat field an engine filters and facets in the nested object’s
@@ -428,6 +618,43 @@ describe('welding conditions to one entry', () => {
   });
 });
 
+describe('a local lookup at the root', () => {
+  it('harvests every endpoint into the flat companion', () => {
+    // A top-level companion stands for the whole DOCUMENT rather than for one
+    // entry, so nothing welds it and an `array` reference's companion holds
+    // every id its endpoints carry – unchanged by the nested rule (ADR 26).
+    const rootLookup = defineSearchType({
+      name: 'Work',
+      class: `${SCHEMA_ORG}CreativeWork`,
+      fields: [
+        {
+          name: 'creator',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}creator`,
+          array: true,
+          output: true,
+          filterable: true,
+          ref: { strategy: 'lookup', target: 'Person', local: true },
+        },
+      ],
+    });
+    const twoEndpoints = {
+      '@id': 'https://ex/work/8',
+      [workKey('creator')]: [
+        { '@id': 'https://a/1', [personKey('sameAs')]: [{ '@id': RKD }] },
+        { '@id': 'https://a/2' },
+      ],
+    };
+    const document = projectDocument(
+      twoEndpoints,
+      rootLookup,
+      searchSchema(rootLookup, person),
+    );
+
+    expect(document.creator_id).toEqual([RKD, 'https://a/2']);
+  });
+});
+
 describe('the identity companion of a local lookup', () => {
   // Its own id is a level deeper than a condition can be welded to, so
   // `filterable` fans it out as a leaf beside the stored object.
@@ -460,49 +687,60 @@ describe('the identity companion of a local lookup', () => {
     );
     const [identified] = document.creator as readonly SearchDocument[];
 
-    expect(identified.creator_id).toEqual([RKD]);
+    expect(identified.creator_id).toBe(RKD);
     expect((identified.creator as SearchDocument).id).toBe(RKD);
   });
 
-  it('holds only the endpoint a single-valued reference stores', () => {
-    // A single-valued reference keeps the first endpoint and drops the rest;
-    // a companion holding a dropped one's id would match a filter whose hit
-    // then shows a different endpoint.
-    const twoEndpoints = {
+  it('holds only the entries the cap admits', () => {
+    // The one place entries are still dropped: a companion holding an id from
+    // a dropped entry would match a filter whose hit then shows no such entry.
+    const cappedWork = defineSearchType({
+      name: 'Work',
+      class: `${SCHEMA_ORG}CreativeWork`,
+      fields: [
+        {
+          name: 'creator',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}creator`,
+          array: true,
+          output: true,
+          filterable: true,
+          ref: {
+            strategy: 'inline',
+            typeName: 'CreatorEdge',
+            identity: 'creator',
+            maxEntries: 2,
+          },
+        },
+      ],
+    });
+    const threeEndpoints = {
       '@id': 'https://ex/work/4',
       [workKey('creator')]: [
         {
           [edgeKey('creator')]: [
             { '@id': 'https://a/1', [personKey('sameAs')]: [{ '@id': RKD }] },
             { '@id': 'https://a/2' },
+            { '@id': 'https://a/3' },
           ],
         },
       ],
     };
-    const singleEndpointEdge = defineSearchType({
-      name: 'CreatorEdge',
-      fields: [
-        {
-          name: 'creator',
-          kind: 'reference',
-          path: `${SCHEMA_ORG}creator`,
-          output: true,
-          filterable: true,
-          ref: { strategy: 'lookup', target: 'Person', local: true },
-        },
-      ],
-    });
     const document = projectDocument(
-      twoEndpoints,
-      work,
-      searchSchema(work, person, singleEndpointEdge),
+      threeEndpoints,
+      cappedWork,
+      searchSchema(cappedWork, person, filterableEdge),
     );
-    const [entry] = document.creator as readonly SearchDocument[];
 
-    expect(entry.creator_id).toEqual([RKD]);
+    expect(document.creator).toHaveLength(2);
+    expect(document.creator_id).toEqual([RKD, 'https://a/2']);
   });
 
-  it('holds every endpoint a multi-valued reference stores', () => {
+  it('fans a multi-valued endpoint out into one entry per endpoint', () => {
+    // The endpoint is what a weld names, so it is single-valued per entry: an
+    // edge the graph gave two endpoints is two entries, not one entry holding
+    // both. One entry holding both stands for either pairing and answers the
+    // weld with neither (ADR 26).
     const jointEdge = defineSearchType({
       name: 'CreatorEdge',
       fields: [
@@ -510,7 +748,6 @@ describe('the identity companion of a local lookup', () => {
           name: 'creator',
           kind: 'reference',
           path: `${SCHEMA_ORG}creator`,
-          array: true,
           output: true,
           filterable: true,
           ref: { strategy: 'lookup', target: 'Person', local: true },
@@ -533,9 +770,13 @@ describe('the identity companion of a local lookup', () => {
       work,
       searchSchema(work, person, jointEdge),
     );
-    const [entry] = document.creator as readonly SearchDocument[];
+    const entries = document.creator as readonly SearchDocument[];
 
-    expect(entry.creator_id).toEqual([RKD, 'https://a/2']);
+    expect(entries).toHaveLength(2);
+    expect(entries.map((entry) => entry.creator_id)).toEqual([
+      RKD,
+      'https://a/2',
+    ]);
   });
 
   it('is absent where the endpoint is not identified', () => {

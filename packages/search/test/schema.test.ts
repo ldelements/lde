@@ -1141,7 +1141,6 @@ describe('searchSchema validation', () => {
           {
             name: 'contentUrl',
             kind: 'keyword',
-            array: true,
             output: true,
             path: 'https://schema.org/contentUrl',
             ...field,
@@ -1227,6 +1226,29 @@ describe('searchSchema validation', () => {
         searchSchema(
           datasetNesting({ strategy: 'inline', typeName: 'MediaObject' }),
           mediaObjectWith(declaration),
+        ),
+      ).not.toThrow();
+    });
+
+    it('rejects a nested field declaring both filterable and array', () => {
+      // A weld asks whether ONE entry satisfies every condition, so a leaf a
+      // weld can name holds one value. A leaf holding a list stands for every
+      // combination at once and answers the weld with none of them – the
+      // projection fans the entry out instead (ADR 26).
+      expect(() =>
+        searchSchema(
+          datasetNesting({ strategy: 'inline', typeName: 'MediaObject' }),
+          mediaObjectWith({ filterable: true, array: true }),
+        ),
+      ).toThrow(/declares both “filterable” and “array”/u);
+    });
+
+    it('accepts an output-only nested field declaring array', () => {
+      // Nothing welds it, so an entry may carry a list for display.
+      expect(() =>
+        searchSchema(
+          datasetNesting({ strategy: 'inline', typeName: 'MediaObject' }),
+          mediaObjectWith({ array: true }),
         ),
       ).not.toThrow();
     });

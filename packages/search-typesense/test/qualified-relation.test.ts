@@ -337,12 +337,23 @@ describe('nested fields of other kinds', () => {
         filterable: true,
       },
       {
+        // Output-only, so it may stay a list: nothing welds it, and a weldable
+        // leaf is single-valued (ADR 26).
         name: 'source',
         kind: 'keyword',
         path: `${SCHEMA_ORG}isBasedOn`,
         array: true,
         output: true,
-        filterable: true,
+      },
+      {
+        // Searchable rather than filterable, so it may stay a list too: free
+        // text is not a weld, and its folded companion is what gets indexed.
+        name: 'attribution',
+        kind: 'keyword',
+        path: `${SCHEMA_ORG}creditText`,
+        array: true,
+        output: true,
+        searchable: { weight: 1 },
       },
     ],
   });
@@ -415,30 +426,23 @@ describe('nested fields of other kinds', () => {
     );
   });
 
-  it('gives a searchable nested keyword its folded companion', () => {
-    expect(richField('credit.note_search')).toMatchObject({
-      type: 'string[]',
-    });
-  });
-
-  it('widens a multi-valued nested numeric under a single-valued edge', () => {
-    // Two ways a list arrives – the field declares one, or an ancestor
-    // flattens it – and `typesenseValueType` honours only the string-shaped
-    // kinds' own `array`, so this one needs widening on its own account.
-    const countEdge = defineSearchType({
-      name: 'CountEdge',
+  it('stems a language-tagged nested text field in its own locale', () => {
+    // The counterpart of the `und` case above: a declared locale stems in
+    // itself, never in `defaultLocale`, so a Dutch note is not stemmed as if
+    // it were English.
+    const taggedEdge = defineSearchType({
+      name: 'TaggedEdge',
       fields: [
         {
-          name: 'position',
-          kind: 'integer',
-          path: `${SCHEMA_ORG}position`,
-          array: true,
-          output: true,
-          filterable: true,
+          name: 'note',
+          kind: 'text',
+          path: `${SCHEMA_ORG}description`,
+          locales: ['nl'],
+          searchable: { weight: 1 },
         },
       ],
     });
-    const singleEdgeWork = defineSearchType({
+    const taggedWork = defineSearchType({
       name: 'Work',
       class: `${SCHEMA_ORG}CreativeWork`,
       fields: [
@@ -446,31 +450,50 @@ describe('nested fields of other kinds', () => {
           name: 'credit',
           kind: 'reference',
           path: `${SCHEMA_ORG}creator`,
+          array: true,
           output: true,
-          ref: { strategy: 'inline', typeName: 'CountEdge' },
+          ref: { strategy: 'inline', typeName: 'TaggedEdge' },
         },
       ],
     });
     const fields =
-      buildCollectionDefinition(singleEdgeWork, {
-        schema: searchSchema(singleEdgeWork, countEdge),
+      buildCollectionDefinition(taggedWork, {
+        schema: searchSchema(taggedWork, taggedEdge),
+        defaultLocale: 'en',
       }).fields ?? [];
 
     expect(
-      fields.find((field) => field.name === 'credit.position'),
-    ).toMatchObject({ type: 'int64[]', index: true });
+      fields.find((field) => field.name === 'credit.note_search_nl'),
+    ).toMatchObject({ type: 'string[]', stem: true, locale: 'nl' });
+  });
+
+  it('gives a searchable nested keyword its folded companion', () => {
+    expect(richField('credit.note_search')).toMatchObject({
+      type: 'string[]',
+    });
   });
 
   it.each([
     ['credit.position', 'int64[]'],
     ['credit.certainty', 'float[]'],
     ['credit.disputed', 'bool[]'],
-    // Already a list on its own: flattening does not double it.
-    ['credit.source', 'string[]'],
   ])('widens indexed nested %s to %s', (name, type) => {
     // An engine checks an indexed field's declared type against what is
     // stored, and the `object[]` above these flattens each value into a list.
     expect(richField(name)).toMatchObject({ type, index: true });
+  });
+
+  it('does not double a nested list that is already one', () => {
+    // A leaf a weld can name is single-valued (ADR 26), so a nested list is
+    // either output-only or searchable. Flattening one under the `object[]`
+    // widens it once, not twice – `string[]`, never `string[][]`.
+    expect(richField('credit.source')).toMatchObject({
+      type: 'string[]',
+      index: false,
+    });
+    expect(richField('credit.attribution_search')).toMatchObject({
+      type: 'string[]',
+    });
   });
 });
 
