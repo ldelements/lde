@@ -852,9 +852,10 @@ function applyNestedReferents(
 ): readonly ProjectedNode[] {
   // One node may stand for several entries: a weldable leaf is single-valued,
   // so an edge the graph gave several roles or several endpoints fans out into
-  // one entry per combination BEFORE it is projected (ADR 26). The cap bounds
-  // the DOCUMENT, not each edge – a document holds as many edges as the graph
-  // states, so a per-edge cap would still let the product grow with the input.
+  // one entry per combination BEFORE it is projected (ADR 26). The budget spans
+  // every edge THIS node states, rather than resetting per edge – a node holds
+  // as many edges as the graph gives it, so a per-edge cap would still let the
+  // entries grow with the input.
   const limit = isInlineReference(field)
     ? (field.ref.maxEntries ?? DEFAULT_MAX_ENTRIES)
     : Number.POSITIVE_INFINITY;
@@ -934,13 +935,21 @@ function tuplesOf(
     const values = valuesOf(node, alias);
     const grown: FramedNode[] = [];
     for (const tuple of tuples) {
+      if (grown.length === limit) {
+        break;
+      }
       for (const value of values) {
         if (grown.length === limit) {
-          return grown;
+          break;
         }
         grown.push({ ...tuple, [alias]: value });
       }
     }
+    // Capped per alias rather than by returning from inside this loop, so every
+    // tuple that survives is split across EVERY weldable alias. Returning early
+    // would hand back tuples whose remaining aliases still held their lists,
+    // and a single-valued leaf then keeps the first value and drops the rest –
+    // silent data loss in place of the fan-out this exists to perform.
     tuples = grown;
   }
   return tuples;

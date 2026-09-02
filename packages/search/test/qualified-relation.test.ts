@@ -311,6 +311,66 @@ describe('fanning an edge out into one entry per tuple', () => {
     expect(entries[0].role).toBe('etser');
   });
 
+  it('fully expands every entry it keeps when the cap bites', () => {
+    // The cap drops whole tuples, never half-expanded ones. Capping by
+    // returning mid-expansion would hand back entries whose remaining weldable
+    // leaves still held their lists – and a single-valued leaf then keeps the
+    // first value and drops the rest, losing data silently instead of fanning
+    // it out.
+    const cappedWork = defineSearchType({
+      name: 'Work',
+      class: `${SCHEMA_ORG}CreativeWork`,
+      fields: [
+        {
+          name: 'creator',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}creator`,
+          array: true,
+          output: true,
+          filterable: true,
+          ref: {
+            strategy: 'inline',
+            typeName: 'CreatorEdge',
+            identity: 'creator',
+            maxEntries: 3,
+          },
+        },
+      ],
+    });
+    const wide = {
+      '@id': 'https://ex/work/9',
+      [workKey('creator')]: [
+        {
+          [edgeKey('role')]: [
+            { '@value': 'etser' },
+            { '@value': 'drukker' },
+            { '@value': 'uitgever' },
+          ],
+          [edgeKey('creator')]: [
+            { '@id': 'https://a/1', [personKey('sameAs')]: [{ '@id': RKD }] },
+            { '@id': 'https://a/2' },
+          ],
+        },
+      ],
+    };
+    const entries = entriesOf(
+      projectDocument(
+        wide,
+        cappedWork,
+        searchSchema(cappedWork, person, weldableEdge),
+      ),
+    );
+
+    expect(entries).toHaveLength(3);
+    // Both leaves participate in every kept tuple; none is pinned to its first
+    // value because expansion stopped early.
+    expect(entries.map((entry) => [entry.role, entry.creator_id])).toEqual([
+      ['etser', RKD],
+      ['etser', 'https://a/2'],
+      ['drukker', RKD],
+    ]);
+  });
+
   it('does not fan a local lookup out over the endpoint’s own fields', () => {
     // A `local` lookup nests the endpoint's own Root Type, whose fields are
     // multi-valued for reasons of their own – `sameAs` here. Splitting on those

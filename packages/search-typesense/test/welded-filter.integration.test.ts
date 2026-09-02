@@ -108,6 +108,33 @@ describe('a welded co-element filter', () => {
     expect(await found(welded(drukker, other))).toEqual([]);
   });
 
+  it('accepts a single-valued edge’s companion, declared as one value', async () => {
+    // A declared type only matters if the engine agrees with it, and here it
+    // disagreed: under a single-valued edge the parent is `object`, nothing
+    // flattens the path, and Typesense rejects a scalar companion declared
+    // `string[]` – the whole import fails. Pinned live, because the collection
+    // definition alone cannot show it.
+    const single = 'single_edge_works';
+    await client.collections().create({
+      name: single,
+      enable_nested_fields: true,
+      fields: [
+        { name: 'credit', type: 'object' },
+        { name: 'credit.role', type: 'string' },
+        // One id per entry, and one entry: no ancestor widens the path.
+        { name: 'credit.agent_id', type: 'string' },
+      ],
+    });
+    const result = await client
+      .collections(single)
+      .documents()
+      .import([{ id: 'w1', credit: { role: etser, agent_id: rembrandt } }], {
+        action: 'create',
+      });
+
+    expect(JSON.stringify(result)).toContain('"success":true');
+  }, 60_000);
+
   it('hangs on 30.2 where an entry holds arrays, which is why we fan out', async () => {
     // The defect this shape exists to avoid, pinned so a future engine bump
     // tells us when it is gone. Typesense answers every OTHER form of this

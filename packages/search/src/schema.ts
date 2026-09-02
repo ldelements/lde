@@ -296,9 +296,15 @@ export type ReferenceStrategy =
        */
       readonly identity?: string;
       /**
-       * Cap on the entries **one document** stores for this reference, across
-       * every edge it holds; entries past it are dropped. Defaults to
-       * {@link DEFAULT_MAX_ENTRIES}.
+       * Cap on the entries this reference stores **per node carrying it** –
+       * across every edge that node states, and so per document for a
+       * reference declared on a Root Type. Entries past it are dropped.
+       * Defaults to {@link DEFAULT_MAX_ENTRIES}.
+       *
+       * A reference nested inside another reference type is budgeted per
+       * *parent entry* rather than per document, so a schema nesting one edge
+       * inside another admits up to the product of their caps. Bounded, but
+       * multiplicatively: set the inner cap with the outer one in mind.
        *
        * A weldable leaf is single-valued, so an edge whose graph values are
        * multi-valued fans out into one entry per combination

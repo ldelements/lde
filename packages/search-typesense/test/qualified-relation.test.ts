@@ -148,17 +148,19 @@ describe('a single-valued edge', () => {
   });
   const singleSchema = searchSchema(singleWork, person, creatorEdge);
 
-  it('declares the nested identity companion as a list', () => {
-    // The projection writes it with `setArray` whatever the arity, and an
-    // indexed field's declared type is checked at import – a `string` here
-    // rejects every document carrying such an edge.
+  it('declares the nested identity companion as a single value', () => {
+    // Nothing flattens the path under a single-valued edge – the parent is
+    // `object`, not `object[]` – and the companion holds one id per entry
+    // (ADR 26). Declaring `string[]` here is what rejects the document: checked
+    // against a live engine, the import fails outright, because Typesense
+    // enforces the declared arity wherever no ancestor widens it.
     const fields =
       buildCollectionDefinition(singleWork, { schema: singleSchema }).fields ??
       [];
 
     expect(
       fields.find((field) => field.name === 'creator.creator_id'),
-    ).toMatchObject({ type: 'string[]', index: true });
+    ).toMatchObject({ type: 'string', index: true });
   });
 });
 
@@ -287,11 +289,12 @@ describe('a local lookup that reaches back', () => {
         fields.find((field) => field.name === 'creator.made.id'),
       ).toMatchObject({ type: scalar, index: false });
       // The identity companion sits BESIDE the object, indexed, because that is
-      // the leaf a filter can weld on – always a list, whatever the arity of
-      // the edge it hangs off.
+      // the leaf a filter can weld on – and it takes the arity of the path that
+      // reaches it, exactly as the `id` above does: one id per entry (ADR 26),
+      // widened only where an `object[]` ancestor multiplies the entries.
       expect(
         fields.find((field) => field.name === 'creator.made_id'),
-      ).toMatchObject({ type: 'string[]', index: true });
+      ).toMatchObject({ type: scalar, index: true });
       // The descent still stops: the cut type's own fields are not walked
       // again.
       expect(
@@ -481,6 +484,118 @@ describe('nested fields of other kinds', () => {
     // An engine checks an indexed field's declared type against what is
     // stored, and the `object[]` above these flattens each value into a list.
     expect(richField(name)).toMatchObject({ type, index: true });
+  });
+
+  it('types a nested identity companion by what its path yields', () => {
+    // The companion holds one id per entry (ADR 26), so its declared type is
+    // decided by the ancestors, exactly as the `id` beside it is. Declaring
+    // `string[]` unconditionally makes Typesense reject, at import, every
+    // document whose edge is single-valued: nothing flattens the path there,
+    // and the engine enforces the declared arity.
+    const person = defineSearchType({
+      name: 'Person',
+      class: `${SCHEMA_ORG}Person`,
+      fields: [
+        {
+          name: 'label',
+          kind: 'text',
+          path: `${SCHEMA_ORG}name`,
+          locales: ['und'],
+          output: true,
+          searchable: { weight: 1 },
+        },
+      ],
+    });
+    const edge = defineSearchType({
+      name: 'IdentifiedEdge',
+      fields: [
+        {
+          name: 'agent',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}creator`,
+          output: true,
+          filterable: true,
+          ref: { strategy: 'lookup', target: 'Person', local: true },
+        },
+      ],
+    });
+    const workWith = (array: boolean) =>
+      defineSearchType({
+        name: 'Work',
+        class: `${SCHEMA_ORG}CreativeWork`,
+        fields: [
+          {
+            name: 'credit',
+            kind: 'reference',
+            path: `${SCHEMA_ORG}creator`,
+            ...(array ? { array: true } : {}),
+            output: true,
+            ref: { strategy: 'inline', typeName: 'IdentifiedEdge' },
+          },
+        ],
+      });
+    const companion = (array: boolean) => {
+      const type = workWith(array);
+      return (
+        buildCollectionDefinition(type, {
+          schema: searchSchema(type, person, edge),
+        }).fields ?? []
+      ).find((field) => field.name === 'credit.agent_id');
+    };
+
+    expect(companion(true)).toMatchObject({ type: 'string[]' });
+    expect(companion(false)).toMatchObject({ type: 'string' });
+  });
+
+  it('widens an indexed nested leaf of a local lookup’s own root type', () => {
+    // `searchSchema` constrains Reference Types, so a weldable leaf there is
+    // single-valued – but this same path also declares the fields of the Root
+    // Type a `local` lookup nests, where `array` and `filterable` meet on an
+    // ordinary facet. Widening must still produce a type.
+    const agent = defineSearchType({
+      name: 'Agent',
+      class: `${SCHEMA_ORG}Person`,
+      fields: [
+        {
+          name: 'label',
+          kind: 'text',
+          path: `${SCHEMA_ORG}name`,
+          locales: ['und'],
+          output: true,
+          searchable: { weight: 1 },
+        },
+        {
+          name: 'nationality',
+          kind: 'keyword',
+          path: `${SCHEMA_ORG}nationality`,
+          array: true,
+          output: true,
+          filterable: true,
+        },
+      ],
+    });
+    const work = defineSearchType({
+      name: 'Work',
+      class: `${SCHEMA_ORG}CreativeWork`,
+      fields: [
+        {
+          name: 'creator',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}creator`,
+          array: true,
+          output: true,
+          ref: { strategy: 'lookup', target: 'Agent', local: true },
+        },
+      ],
+    });
+    const fields =
+      buildCollectionDefinition(work, {
+        schema: searchSchema(work, agent),
+      }).fields ?? [];
+
+    expect(
+      fields.find((field) => field.name === 'creator.nationality'),
+    ).toMatchObject({ type: 'string[]', index: true });
   });
 
   it('does not double a nested list that is already one', () => {

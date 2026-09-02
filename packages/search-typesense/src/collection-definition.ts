@@ -441,7 +441,7 @@ function nestedFields(
           index: false,
           optional: true,
         },
-        ...nestedIdentityFields(prefix, field, schema),
+        ...nestedIdentityFields(prefix, field, schema, flattensToArray),
       );
       continue;
     }
@@ -461,7 +461,7 @@ function nestedFields(
         // an engine welds conditions on an entry's LEAF fields only. Its
         // identity companion is that leaf, so it sits beside the object rather
         // than inside it.
-        ...nestedIdentityFields(prefix, field, schema),
+        ...nestedIdentityFields(prefix, field, schema, flattensToArray),
       );
       continue;
     }
@@ -530,6 +530,7 @@ function nestedIdentityFields(
   prefix: string,
   field: SearchField,
   schema: SearchSchema,
+  flattensToArray: boolean,
 ): CollectionFieldSchema[] {
   const names = physicalFields(field, schema);
   if (names.identity === undefined) {
@@ -538,13 +539,13 @@ function nestedIdentityFields(
   return [
     {
       name: nestedFieldName(prefix, names.identity),
-      // Always a list, whatever the enclosing reference's arity, and whatever
-      // ONE entry holds: a nested field's declared type describes the whole
-      // path across the document, and a document holds many entries – so
-      // `string` here rejects every document carrying such an edge, at import.
-      // The entries themselves store a single id each, which the engine accepts
-      // under this type and which is what makes the weld answerable (ADR 26).
-      type: 'string[]',
+      // Typed by what the PATH yields across the document, exactly as the `id`
+      // beside it is: one value per entry (ADR 26 – this companion is the leaf
+      // a weld names, so it holds a single id), and as many entries as an
+      // `object[]` ancestor allows. Declaring `string[]` unconditionally
+      // rejects, at import, every document whose edge is single-valued –
+      // Typesense enforces the declared arity where nothing flattens it.
+      type: flattensToArray ? 'string[]' : 'string',
       index: true,
       optional: true,
     },
@@ -615,18 +616,18 @@ function nestedLeafFields(
   // itself – its search companion below indexes on its own account.
   const indexed = field.filterable === true;
   const valueType = typesenseValueType(field);
-  // An ancestor's `object[]` flattens this value into a list, so an indexed
-  // leaf must be declared as one or the import rejects every document carrying
-  // the edge. The field's OWN `array` cannot also be widening it here:
-  // `searchSchema` refuses `filterable` alongside `array` on a nested field, so
-  // an indexed leaf is single-valued (ADR 26) – which is what makes the cast
-  // below sound, `typesenseValueType` returning `string[]` only for `array`.
+  // Two ways a list arrives: the field declares one, or an ancestor's
+  // `object[]` flattens it into one. `typesenseValueType` honours `array` only
+  // for the string-shaped kinds, so a multi-valued nested `integer` would
+  // otherwise be declared scalar and rejected at import.
+  //
+  // A weldable leaf of a Reference Type is single-valued (ADR 26), but that
+  // narrows nothing here: this same path declares the fields of the Root Type a
+  // `local` lookup nests, where `array` and `filterable` may legitimately meet.
+  const storesAList = flattensToArray || field.array === true;
   fields.push({
     name: nestedFieldName(prefix, field.name),
-    type:
-      indexed && flattensToArray
-        ? arrayValueType(valueType as Exclude<ValueType, 'string[]'>)
-        : valueType,
+    type: indexed && storesAList ? arrayValueType(valueType) : valueType,
     index: indexed,
     // Always optional: `required` is a promise about the *referent* (this value
     // is on every referent), while Typesense’s flag is about the document.
@@ -654,9 +655,7 @@ function nestedLeafFields(
  * declaration is. Enumerated rather than string-appended so an invalid
  * combination cannot be built.
  */
-function arrayValueType(
-  type: Exclude<ValueType, 'string[]'>,
-): CollectionFieldSchema['type'] {
+function arrayValueType(type: ValueType): CollectionFieldSchema['type'] {
   switch (type) {
     case 'string':
       return 'string[]';
@@ -666,6 +665,13 @@ function arrayValueType(
       return 'float[]';
     case 'bool':
       return 'bool[]';
+    // Already a list, and reachable even though a weldable leaf of a Reference
+    // Type is single-valued (ADR 26): this path also declares the fields of the
+    // Root Type a `local` lookup nests, and `searchSchema` constrains only
+    // Reference Types. A root keyword may be `array` and `filterable` at once –
+    // an ordinary facet – so flattening it must widen no further.
+    case 'string[]':
+      return 'string[]';
   }
 }
 
