@@ -1,4 +1,8 @@
-import { ConversionJob, SparqlAnythingConverter } from '../src/index.js';
+import {
+  ChunkProgress,
+  ConversionJob,
+  SparqlAnythingConverter,
+} from '../src/index.js';
 import { TaskRunner } from '@lde/task-runner';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
@@ -618,6 +622,55 @@ describe('SparqlAnythingConverter', () => {
           taskRunner,
         }),
     ).toThrow('is not a number of chunks to convert at once');
+  });
+
+  it('reports each chunk as it finishes', async () => {
+    const taskRunner = new FakeTaskRunner(workDir);
+    const chunks = await writeChunks(2);
+    const ontologyQuery = join(workDir, 'ontology.rq');
+    await writeFile(ontologyQuery, 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }');
+    const reported: ChunkProgress[] = [];
+
+    await new SparqlAnythingConverter({
+      jarPath: '/bin/sparql-anything.jar',
+      workDir,
+      taskRunner,
+      onChunkConverted: (progress) => reported.push(progress),
+    }).convert(
+      [
+        { queryFile, chunks },
+        { queryFile: ontologyQuery, load: '/data/ontology.rdf' },
+      ],
+      join(workDir, 'output.nt'),
+    );
+
+    expect(reported).toEqual([
+      { index: 1, total: 3, chunk: chunks[0], queryFile },
+      { index: 2, total: 3, chunk: chunks[1], queryFile },
+      // A job without chunks reports too, with none to name.
+      { index: 3, total: 3, chunk: undefined, queryFile: ontologyQuery },
+    ]);
+  });
+
+  it('does not report a chunk that failed', async () => {
+    const chunks = await writeChunks(2);
+    const taskRunner = new FakeTaskRunner(workDir, {
+      failOutputContaining: 'output-1.nt',
+    });
+    const reported: ChunkProgress[] = [];
+
+    await expect(
+      new SparqlAnythingConverter({
+        jarPath: '/bin/sparql-anything.jar',
+        workDir,
+        taskRunner,
+        onChunkConverted: (progress) => reported.push(progress),
+      }).convert([{ queryFile, chunks }], join(workDir, 'output.nt')),
+    ).rejects.toThrow('Process failed');
+
+    expect(reported).toEqual([
+      { index: 1, total: 2, chunk: chunks[0], queryFile },
+    ]);
   });
 
   it('refuses an empty job list rather than writing an empty output', async () => {

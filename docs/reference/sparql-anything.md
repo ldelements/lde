@@ -41,14 +41,15 @@ await converter.convert(
 
 ### Options
 
-| Option        | Type               | Description                                                                                                                   |
-| ------------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
-| `jarPath`     | `string`           | Path to the SPARQL Anything CLI jar, as the task runner sees it                                                               |
-| `workDir`     | `string`           | The task runner's working directory; see [Where files are written](#where-files-are-written)                                  |
-| `heap`        | `string`           | Maximum JVM heap per chunk process, as `-Xmx` takes it (default `'2g'`); see [Memory](#memory)                                |
-| `cliArgs`     | `string[]`         | Further arguments for the SPARQL Anything CLI; see [Memory](#memory)                                                          |
-| `concurrency` | `number`           | How many chunks to convert at once (default `1`); see [Converting several chunks at once](#converting-several-chunks-at-once) |
-| `taskRunner`  | `TaskRunner<Task>` | Runs the SPARQL Anything process for each chunk                                                                               |
+| Option             | Type                 | Description                                                                                                                   |
+| ------------------ | -------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `jarPath`          | `string`             | Path to the SPARQL Anything CLI jar, as the task runner sees it                                                               |
+| `workDir`          | `string`             | The task runner's working directory; see [Where files are written](#where-files-are-written)                                  |
+| `heap`             | `string`             | Maximum JVM heap per chunk process, as `-Xmx` takes it (default `'2g'`); see [Memory](#memory)                                |
+| `cliArgs`          | `string[]`           | Further arguments for the SPARQL Anything CLI; see [Memory](#memory)                                                          |
+| `concurrency`      | `number`             | How many chunks to convert at once (default `1`); see [Converting several chunks at once](#converting-several-chunks-at-once) |
+| `onChunkConverted` | `(progress) => void` | Called as each chunk finishes; see [Following a conversion](#following-a-conversion)                                          |
+| `taskRunner`       | `TaskRunner<Task>`   | Runs the SPARQL Anything process for each chunk                                                                               |
 
 ### Jobs
 
@@ -100,6 +101,19 @@ The first failure aborts the run: no further chunk is started, and the processes
 > A `DockerTaskRunner` configured with a `containerName` runs one task at a time – the name is how other containers address it – so it rejects a second chunk rather than taking the name from the first. Leave `containerName` unset for a converter that runs chunks in parallel.
 
 `cliArgs` is the escape hatch for CLI flags the converter does not model itself, appended to the arguments it sets. It cannot repeat those: `-q`, `-f`, `-o` and `-l` are rejected, in their long and `--flag=value` forms too, because the converter reads back the `--output` it named, in the `--format` it asked for – overriding either leaves it reporting an empty conversion, or concatenating fragments that are not N-Triples. SPARQL Anything documents repetition only for `-v` and `-c`, so a repeated flag has no defined winner to rely on.
+
+### Following a conversion
+
+A conversion says nothing for as long as it takes – a quarter of an hour, over eighteen chunks, for the GeoNames dumps. `onChunkConverted` is called as each one finishes:
+
+```typescript
+onChunkConverted: ({ index, total, chunk }) =>
+  console.log(`Converted ${index}/${total}${chunk === undefined ? '' : `: ${chunk}`}`),
+```
+
+It is called once per chunk, in the order they finish rather than the order they were given, and not at all for a chunk that failed – a failure arrives as the rejection instead. A callback that throws aborts the run, like any other failure.
+
+It is wiring rather than configuration: a runtime that already has somewhere to report progress passes a function that forwards to it, which is why this is a plain callback rather than a reporter interface of its own.
 
 ## Chunking
 

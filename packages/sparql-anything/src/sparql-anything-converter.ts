@@ -58,6 +58,18 @@ export interface ConversionJob {
   load?: string;
 }
 
+/** What a chunk's conversion reports when it is done. */
+export interface ChunkProgress {
+  /** Position of this process in the run, counting from one. */
+  index: number;
+  /** How many processes the run holds in all. */
+  total: number;
+  /** The chunk converted, for a job that has chunks. */
+  chunk?: string;
+  /** The query the job ran, which is what tells two jobs apart. */
+  queryFile: string;
+}
+
 /** Configuration for a {@link SparqlAnythingConverter}. */
 export interface SparqlAnythingConverterOptions<Task> {
   /** Path to the SPARQL Anything CLI jar, as the task runner sees it. */
@@ -94,6 +106,14 @@ export interface SparqlAnythingConverterOptions<Task> {
   concurrency?: number;
   /** Runs the SPARQL Anything process for each chunk. */
   taskRunner: TaskRunner<Task>;
+  /**
+   * Called as each chunk finishes, for a conversion that would otherwise say
+   * nothing for as long as it takes – the GeoNames run is a quarter of an hour
+   * over eighteen chunks. Called once per chunk, in the order they finish
+   * rather than the order they were given, and not at all for a chunk that
+   * failed. A callback that throws aborts the run, like any other failure.
+   */
+  onChunkConverted?: (progress: ChunkProgress) => void;
 }
 
 /**
@@ -108,6 +128,7 @@ export class SparqlAnythingConverter<Task> {
   private readonly cliArgs: string[];
   private readonly concurrency: number;
   private readonly taskRunner: TaskRunner<Task>;
+  private readonly onChunkConverted?: (progress: ChunkProgress) => void;
 
   constructor(options: SparqlAnythingConverterOptions<Task>) {
     this.jarPath = options.jarPath;
@@ -137,6 +158,7 @@ export class SparqlAnythingConverter<Task> {
     }
     this.concurrency = concurrency;
     this.taskRunner = options.taskRunner;
+    this.onChunkConverted = options.onChunkConverted;
   }
 
   /**
@@ -189,7 +211,10 @@ export class SparqlAnythingConverter<Task> {
     runDirName: string,
   ): Promise<number> {
     const pending = processesOf(planned);
-    const state: RunState<Task> = { inFlight: new Set() };
+    const state: RunState<Task> = {
+      total: countOf(planned),
+      inFlight: new Set(),
+    };
 
     // Pulled one at a time rather than with `for...of`: leaving a for-of early
     // closes the iterator, so the first worker to give up would end the queue
@@ -216,7 +241,7 @@ export class SparqlAnythingConverter<Task> {
     if (state.failure !== undefined) {
       throw state.failure;
     }
-    return countOf(planned);
+    return state.total;
   }
 
   /** Converts one chunk, writing `output-<index>.nt` in the run directory. */
@@ -253,6 +278,12 @@ export class SparqlAnythingConverter<Task> {
       state.inFlight.delete(task);
     }
     await assertNonEmpty(join(this.workDir, output), job, chunk);
+    this.onChunkConverted?.({
+      index: index + 1,
+      total: state.total,
+      chunk,
+      queryFile: job.queryFile,
+    });
   }
 
   /** Stops every process still running, so none outlives the run. */
@@ -329,6 +360,8 @@ function countOf(planned: PlannedJob[]): number {
 
 /** What the workers of one run share. */
 interface RunState<Task> {
+  /** How many processes the run holds, for what reports progress. */
+  total: number;
   /** Tasks that have been started and not yet finished. */
   inFlight: Set<Task>;
   /** The first failure, which aborts the run. */
