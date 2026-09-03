@@ -1,3 +1,9 @@
+## 0.1.2 (2026-09-03)
+
+### 🚀 Features
+
+- **sparql-anything:** split a file into the chunks a conversion can hold ([#799](https://github.com/ldelements/lde/pull/799))
+
 ## 0.1.1 (2026-08-31)
 
 ### 🚀 Features
