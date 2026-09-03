@@ -101,6 +101,39 @@ The first failure aborts the run: no further chunk is started, and the processes
 
 `cliArgs` is the escape hatch for CLI flags the converter does not model itself, appended to the arguments it sets. It cannot repeat those: `-q`, `-f`, `-o` and `-l` are rejected, in their long and `--flag=value` forms too, because the converter reads back the `--output` it named, in the `--format` it asked for – overriding either leaves it reporting an empty conversion, or concatenating fragments that are not N-Triples. SPARQL Anything documents repetition only for `-v` and `-c`, so a repeated flag has no defined winner to rely on.
 
+## Chunking
+
+`convert()` takes chunks it does not create, because a caller often has work to do first – filtering rows out, say. `chunk()` produces them:
+
+```typescript
+import { chunk } from '@lde/sparql-anything';
+
+const chunks = await chunk('data/allCountries.txt', {
+  rows: 1_000_000,
+  into: 'data/chunks',
+  header: 'geonameid\tname\tlatitude\tlongitude',
+  extension: '.csv',
+});
+// → ['data/chunks/allCountries-0000.csv', 'data/chunks/allCountries-0001.csv', …]
+```
+
+It streams, so the file never has to fit in memory, and returns the chunk paths in order – which is what a job's `chunks` takes.
+
+| Option      | Type     | Description                                                                               |
+| ----------- | -------- | ----------------------------------------------------------------------------------------- |
+| `rows`      | `number` | Data rows per chunk, chosen together with `heap`: a chunk is what one process has to hold |
+| `into`      | `string` | Directory the chunks are written to, created if it does not exist                         |
+| `header`    | `string` | Line repeated at the top of every chunk; leave out for a format without a header          |
+| `extension` | `string` | Extension for the chunk files (default: the input's own); see below                       |
+
+Set `extension` for a tool that reads the format from the file name – SPARQL Anything does, so a `.txt` export of a CSV has to be chunked as `.csv` to be read as one.
+
+**Splitting is by line**, so every record must be one line. A delimited format that wraps a field in quotes to carry a newline inside it would be cut in two; tab-separated exports, N-Triples and NDJSON are one record per line by definition. Line endings are normalised to `\n`.
+
+Chunks of the same input left by an earlier call are removed first, so a re-run cannot leave a longer run's tail behind for something to pick up. Only those: everything else in the directory is the caller's.
+
+An input with no rows is an error rather than an empty set of chunks: a step that produced an empty file has already failed.
+
 ## How a conversion runs
 
 For each chunk – or once, for a job that has none – the converter:

@@ -1,3 +1,4 @@
+export { chunk, type ChunkOptions } from './chunk.js';
 export {
   SparqlAnythingConverter,
   type ConversionJob,
