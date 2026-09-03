@@ -547,6 +547,72 @@ describe('nested fields of other kinds', () => {
     expect(companion(false)).toMatchObject({ type: 'string' });
   });
 
+  it('declares a multi-valued nested companion as a list, unflattened', () => {
+    // The companion's other route to a list: the reference itself is `array`,
+    // so one entry harvests several ids even where no ancestor multiplies the
+    // entries. Reachable through a locally-nested Root Type, whose fields the
+    // single-valued rule does not constrain – and the projection writes a list
+    // there, so declaring `string` rejects the document at import.
+    const org = defineSearchType({
+      name: 'Membership',
+      fields: [
+        {
+          name: 'org',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}memberOf`,
+          output: true,
+          ref: { strategy: 'lookup', target: 'Person' },
+        },
+      ],
+    });
+    const nestedRoot = defineSearchType({
+      name: 'Person',
+      class: `${SCHEMA_ORG}Person`,
+      fields: [
+        {
+          name: 'label',
+          kind: 'text',
+          path: `${SCHEMA_ORG}name`,
+          locales: ['und'],
+          output: true,
+          searchable: { weight: 1 },
+        },
+        {
+          name: 'affiliation',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}affiliation`,
+          array: true,
+          output: true,
+          filterable: true,
+          ref: { strategy: 'inline', typeName: 'Membership', identity: 'org' },
+        },
+      ],
+    });
+    // Single-valued, so nothing above flattens: only the field's own `array`
+    // makes this a list.
+    const work = defineSearchType({
+      name: 'Work',
+      class: `${SCHEMA_ORG}CreativeWork`,
+      fields: [
+        {
+          name: 'creator',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}creator`,
+          output: true,
+          ref: { strategy: 'lookup', target: 'Person', local: true },
+        },
+      ],
+    });
+    const fields =
+      buildCollectionDefinition(work, {
+        schema: searchSchema(work, nestedRoot, org),
+      }).fields ?? [];
+
+    expect(
+      fields.find((field) => field.name === 'creator.affiliation_id'),
+    ).toMatchObject({ type: 'string[]', index: true });
+  });
+
   it('widens an indexed nested leaf of a local lookup’s own root type', () => {
     // `searchSchema` constrains Reference Types, so a weldable leaf there is
     // single-valued – but this same path also declares the fields of the Root

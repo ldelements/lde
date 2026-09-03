@@ -299,7 +299,9 @@ export type ReferenceStrategy =
        * Cap on the entries this reference stores **per node carrying it** –
        * across every edge that node states, and so per document for a
        * reference declared on a Root Type. Entries past it are dropped.
-       * Defaults to {@link DEFAULT_MAX_ENTRIES}.
+       * Defaults to 100 ({@link DEFAULT_MAX_ENTRIES}). Must be a positive
+       * integer: the budget is counted off one entry at a time, so a cap that
+       * is not one can never be reached.
        *
        * A reference nested inside another reference type is budgeted per
        * *parent entry* rather than per document, so a schema nesting one edge
@@ -1454,6 +1456,7 @@ export interface SearchTypeIssue {
     | 'invalid-locale'
     | 'missing-ref'
     | 'missing-ref-type-name'
+    | 'invalid-max-entries'
     | 'ref-not-allowed'
     | 'text-requires-locales'
     | 'locales-not-allowed'
@@ -1656,6 +1659,18 @@ export function validateSearchType(
           (field.ref?.strategy === 'lookup' && field.ref.target === undefined))
       ) {
         issue('missing-ref-type-name');
+      }
+      // The fan-out budget is counted off one entry at a time, so a fractional
+      // or non-positive cap is never reached and the cartesian product in
+      // `tuplesOf` grows with the data – exactly the unbounded case the cap
+      // exists to prevent (ADR 12). A cap that cannot bind is worse than none,
+      // because the declaration says otherwise.
+      if (
+        field.ref?.strategy === 'inline' &&
+        field.ref.maxEntries !== undefined &&
+        !(Number.isInteger(field.ref.maxEntries) && field.ref.maxEntries > 0)
+      ) {
+        issue('invalid-max-entries');
       }
       // A join addresses the referent's collection – the one a lookup's
       // `target` or an idOnly's `labelSource` names. With neither, the flag

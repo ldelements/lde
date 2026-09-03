@@ -678,6 +678,94 @@ describe('welding conditions to one entry', () => {
   });
 });
 
+describe('nesting is where a node is projected, not what type it is', () => {
+  // A Root Type reached by a `local` lookup is nested exactly as a Reference
+  // Type is – it just happens to have a collection of its own elsewhere. Its
+  // companions must therefore be written under the nested rule too. Deciding
+  // that from the TYPE rather than from the projection context reads a
+  // locally-nested root as a root, and the arity it writes then disagrees with
+  // the one the collection declares: the import fails for every such document.
+  const inner = defineSearchType({
+    name: 'Membership',
+    fields: [
+      {
+        name: 'org',
+        kind: 'reference',
+        path: `${SCHEMA_ORG}memberOf`,
+        output: true,
+        ref: { strategy: 'lookup', target: 'Person' },
+      },
+    ],
+  });
+  const nestedRoot = defineSearchType({
+    name: 'Person',
+    class: `${SCHEMA_ORG}Person`,
+    key: { field: 'sameAs' },
+    fields: [
+      {
+        name: 'label',
+        kind: 'text',
+        path: `${SCHEMA_ORG}name`,
+        locales: ['und'],
+        output: true,
+        searchable: { weight: 1 },
+      },
+      {
+        name: 'sameAs',
+        kind: 'reference',
+        path: `${SCHEMA_ORG}sameAs`,
+        array: true,
+      },
+      {
+        name: 'affiliation',
+        kind: 'reference',
+        path: `${SCHEMA_ORG}affiliation`,
+        output: true,
+        filterable: true,
+        ref: { strategy: 'inline', typeName: 'Membership', identity: 'org' },
+      },
+    ],
+  });
+  const work = defineSearchType({
+    name: 'Work',
+    class: `${SCHEMA_ORG}CreativeWork`,
+    fields: [
+      {
+        name: 'creator',
+        kind: 'reference',
+        path: `${SCHEMA_ORG}creator`,
+        output: true,
+        ref: { strategy: 'lookup', target: 'Person', local: true },
+      },
+    ],
+  });
+
+  it('writes a single-valued companion inside a locally-nested root type', () => {
+    const node = {
+      '@id': 'https://ex/work/10',
+      [workKey('creator')]: [
+        {
+          '@id': 'https://p/1',
+          [personKey('sameAs')]: [{ '@id': RKD }],
+          [alias('Person', 'affiliation')]: [
+            { [alias('Membership', 'org')]: [{ '@id': 'https://o/1' }] },
+          ],
+        },
+      ],
+    };
+    const document = projectDocument(
+      node,
+      work,
+      searchSchema(work, nestedRoot, inner),
+    );
+    const endpoint = document.creator as SearchDocument;
+
+    // A single value, matching what the collection declares for this path -
+    // not the one-element list a root-level companion would carry.
+    expect(endpoint.affiliation_id).toBe('https://o/1');
+  });
+});
+
 describe('a local lookup at the root', () => {
   it('harvests every endpoint into the flat companion', () => {
     // A top-level companion stands for the whole DOCUMENT rather than for one

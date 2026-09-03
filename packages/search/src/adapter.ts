@@ -40,6 +40,7 @@ export {
   labelTargetNameOf,
   documentKeyOf,
   DEFAULT_LABEL_FIELD,
+  DEFAULT_MAX_ENTRIES,
   isRangeFacet,
   isAbsoluteIri,
   isoToUnixSeconds,

@@ -156,11 +156,12 @@ function projectFields(
   searchType: SearchType,
   schema: SearchSchema | undefined,
   context: ProjectionContext,
+  nested = false,
 ): ProjectedNode {
   const id = documentIdOf(node, searchType);
   const document: ProjectedNode = id === undefined ? {} : { id };
   for (const field of searchType.fields) {
-    applyField(document, node, field, searchType, schema, context);
+    applyField(document, node, field, searchType, schema, context, nested);
   }
   return document;
 }
@@ -261,6 +262,7 @@ function applyField(
   searchType: SearchType,
   schema: SearchSchema | undefined,
   context: ProjectionContext,
+  nested: boolean,
 ): void {
   // The three value sources, mutually exclusive by declaration
   // (`validateSearchType`): a projection value, a computed value, a graph path.
@@ -327,7 +329,7 @@ function applyField(
         field,
         schema,
         context,
-        searchType.class === undefined,
+        nested,
       );
     }
     return;
@@ -351,13 +353,7 @@ function applyField(
       // a filter can reach – an engine welds conditions on an entry's LEAF
       // fields only. `filterable` therefore fans out the id beside the object,
       // exactly as an inline reference's identity companion does.
-      applyLocalIdentity(
-        document,
-        endpoints,
-        field,
-        schema,
-        searchType.class === undefined,
-      );
+      applyLocalIdentity(document, endpoints, field, schema, nested);
       return;
     }
   }
@@ -867,7 +863,9 @@ function applyNestedReferents(
     nodes.push(...tuplesOf(value, nestedType, field, limit - nodes.length));
   }
   const referents = nodes
-    .map((referent) => projectFields(referent, nestedType, schema, context))
+    .map((referent) =>
+      projectFields(referent, nestedType, schema, context, true),
+    )
     // Fields, not identity, are what makes something a referent: a literal
     // value object under the alias (dirty source data), or a node this
     // reference type reads nothing from, projects nothing and is no referent.
@@ -935,11 +933,11 @@ function tuplesOf(
     const values = valuesOf(node, alias);
     const grown: FramedNode[] = [];
     for (const tuple of tuples) {
-      if (grown.length === limit) {
+      if (grown.length >= limit) {
         break;
       }
       for (const value of values) {
-        if (grown.length === limit) {
+        if (grown.length >= limit) {
           break;
         }
         grown.push({ ...tuple, [alias]: value });

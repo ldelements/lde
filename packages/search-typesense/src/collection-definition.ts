@@ -540,12 +540,15 @@ function nestedIdentityFields(
     {
       name: nestedFieldName(prefix, names.identity),
       // Typed by what the PATH yields across the document, exactly as the `id`
-      // beside it is: one value per entry (ADR 26 – this companion is the leaf
-      // a weld names, so it holds a single id), and as many entries as an
-      // `object[]` ancestor allows. Declaring `string[]` unconditionally
-      // rejects, at import, every document whose edge is single-valued –
-      // Typesense enforces the declared arity where nothing flattens it.
-      type: flattensToArray ? 'string[]' : 'string',
+      // beside it is, and by the same two routes every other declaration here
+      // uses: an `object[]` ancestor multiplying the entries, or the field's
+      // own `array` making each entry hold a list. A weldable leaf is
+      // single-valued (ADR 26), so a companion that a weld names contributes
+      // one id per entry – but a multi-valued reference reached through a
+      // locally-nested Root Type is not weldable and still harvests a list.
+      // Getting either route wrong rejects the document at import: Typesense
+      // enforces the declared arity wherever nothing widens the path.
+      type: flattensToArray || field.array === true ? 'string[]' : 'string',
       index: true,
       optional: true,
     },
