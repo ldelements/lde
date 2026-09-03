@@ -178,3 +178,22 @@ a message saying to fan out instead. We are pre-release; there is no migration.
 **One array-valued weldable leaf re-arms the hang**, which is why part 1 is a
 refusal rather than a convention. A deployment cannot opt out of it by accident,
 and the failure is at startup rather than a query that never returns.
+
+**A companion’s declared type follows its path, not the leaf.** The flat id a
+weld actually names holds one value per entry, but its declared type describes
+the whole path across the document: `string[]` under an `object[]` edge,
+`string` under a single-valued one. Typesense enforces that strictly wherever
+nothing widens the path – a companion declared `string[]` under a single-valued
+edge fails the import outright, for every document carrying such an edge. This
+is not visible in a collection definition, only against a live engine, which is
+why the integration test asserts the import rather than the declaration.
+
+**A single-valued edge still cannot be welded on 30.2.** Where the reference is
+not `array`, the stored parent is `object` rather than `object[]`, and the
+engine hangs on `credit.{…}` over it whatever the leaves hold – so this is not
+the array defect above and fan-out does not address it. It costs nothing today:
+a qualified relation is multi-valued by nature and every real edge declares
+`array: true`, which is the shape [ADR 24](./0024-carry-data-on-a-reference-edge.md)
+describes. A deployment that genuinely wants one qualified edge per document
+should still declare it `array: true` and rely on the entries, until 31.0 is
+stable.
