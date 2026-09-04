@@ -7,7 +7,6 @@ import {
 } from './frame-by-type.js';
 import {
   assertTypeInSchema,
-  DEFAULT_MAX_ENTRIES,
   displayFieldName,
   documentKeyOf,
   fieldNamed,
@@ -853,49 +852,16 @@ function applyNestedReferents(
   // One node may stand for several entries: a weldable leaf is single-valued,
   // so an edge the graph gave several roles or several endpoints fans out into
   // one entry per combination BEFORE it is projected (ADR 26).
-  //
-  // The budget bounds THAT MULTIPLICATION, and nothing else. A reference whose
-  // type declares no weldable leaf can never fan out, so capping it would
-  // silently truncate a plain list of entries that has always been stored whole
-  // – a data change this decision never asked for. Its length is the graph's
-  // business, as it was before fan-out existed.
-  //
-  // Where it does apply, it spans every edge THIS node states rather than
-  // resetting per edge: a node holds as many edges as the graph gives it, so a
-  // per-edge cap would still let the entries grow with the input (ADR 12).
-  const limit =
-    isInlineReference(field) &&
-    nestedType.fields.some((nested) => nested.filterable === true)
-      ? (field.ref.maxEntries ?? DEFAULT_MAX_ENTRIES)
-      : Number.POSITIVE_INFINITY;
-  // Charged against the entries that SURVIVE, not the framed values considered.
-  // Fields, not identity, are what makes something a referent: a literal value
-  // object under the alias (dirty source data), or a node this reference type
-  // reads nothing from, projects nothing and is no referent. Nesting it would
-  // hand the writer a content-free document – and, for a single-valued
-  // reference, let it win the slot over a real referent. Charging the budget
-  // before that filter lets a run of dirty values spend it all and leave the
-  // real referents behind them with nowhere to go.
-  const referents: ProjectedNode[] = [];
-  for (const value of values.filter(isObject)) {
-    if (referents.length >= limit) {
-      break;
-    }
-    // `tuplesOf` is handed what remains of the budget and never returns more,
-    // so this inner loop cannot overshoot it – the guard belongs on the values,
-    // above, where a fresh edge would otherwise start spending afresh.
-    for (const tuple of tuplesOf(
-      value,
-      nestedType,
-      field,
-      limit - referents.length,
-    )) {
-      const referent = projectFields(tuple, nestedType, schema, context, true);
-      if (Object.keys(referent).length > 0) {
-        referents.push(referent);
-      }
-    }
-  }
+  const referents = values
+    .filter(isObject)
+    .flatMap((value) => tuplesOf(value, nestedType, field))
+    .map((tuple) => projectFields(tuple, nestedType, schema, context, true))
+    // Fields, not identity, are what makes something a referent: a literal
+    // value object under the alias (dirty source data), or a node this
+    // reference type reads nothing from, projects nothing and is no referent.
+    // Nesting it would hand the writer a content-free document – and, for a
+    // single-valued reference, let it win the slot over a real referent.
+    .filter((referent) => Object.keys(referent).length > 0);
   if (referents.length === 0) {
     return referents;
   }
@@ -928,17 +894,17 @@ function applyNestedReferents(
  * flat `${name}_id` companion, which {@link applyLocalIdentity} already writes
  * beside the object.
  *
- * `limit` is what remains of the document’s entry budget
- * ({@link ReferenceStrategy.maxEntries}, {@link DEFAULT_MAX_ENTRIES}), so the
- * product stops growing mid-way rather than being built and then trimmed – a
- * bound in the data’s own units is not a bound (ADR 12), and one pathological
- * edge would otherwise multiply a document until the run dies.
+ * **Unbounded, deliberately and only for now.** The product grows with the
+ * edge's own values, which ADR 12 says is no bound at all. The bound belongs
+ * where the data enters memory – the CONSTRUCT already paid for those values,
+ * the subject index already holds them, and the framed node already
+ * materialised them – not here, at the last and cheapest step to skip. See
+ * [#826](https://github.com/ldelements/lde/issues/826).
  */
 function tuplesOf(
   node: FramedNode,
   nestedType: SearchType,
   field: ReferenceField,
-  limit: number,
 ): readonly FramedNode[] {
   if (!isInlineReference(field)) {
     return [node];
@@ -955,24 +921,9 @@ function tuplesOf(
   let tuples: FramedNode[] = [node];
   for (const alias of weldable) {
     const values = valuesOf(node, alias);
-    const grown: FramedNode[] = [];
-    for (const tuple of tuples) {
-      if (grown.length >= limit) {
-        break;
-      }
-      for (const value of values) {
-        if (grown.length >= limit) {
-          break;
-        }
-        grown.push({ ...tuple, [alias]: value });
-      }
-    }
-    // Capped per alias rather than by returning from inside this loop, so every
-    // tuple that survives is split across EVERY weldable alias. Returning early
-    // would hand back tuples whose remaining aliases still held their lists,
-    // and a single-valued leaf then keeps the first value and drops the rest –
-    // silent data loss in place of the fan-out this exists to perform.
-    tuples = grown;
+    tuples = tuples.flatMap((tuple) =>
+      values.map((value) => ({ ...tuple, [alias]: value })),
+    );
   }
   return tuples;
 }

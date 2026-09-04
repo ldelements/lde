@@ -1230,40 +1230,6 @@ describe('searchSchema validation', () => {
       ).not.toThrow();
     });
 
-    it.each([
-      ['a fraction', 2.5],
-      ['zero', 0],
-      ['a negative', -1],
-    ])('rejects maxEntries that is %s', (_label, maxEntries) => {
-      // The budget is counted off one entry at a time, so a cap that is not a
-      // positive integer is never reached and the fan-out grows with the data –
-      // the unbounded case the cap exists to prevent. A cap that cannot bind is
-      // worse than none, because the declaration claims otherwise.
-      expect(() =>
-        searchSchema(
-          datasetNesting({
-            strategy: 'inline',
-            typeName: 'MediaObject',
-            maxEntries,
-          }),
-          mediaObjectWith({}),
-        ),
-      ).toThrow(/invalid-max-entries/u);
-    });
-
-    it('accepts a positive integer maxEntries', () => {
-      expect(() =>
-        searchSchema(
-          datasetNesting({
-            strategy: 'inline',
-            typeName: 'MediaObject',
-            maxEntries: 5,
-          }),
-          mediaObjectWith({}),
-        ),
-      ).not.toThrow();
-    });
-
     it('rejects a nested field declaring both filterable and array', () => {
       // A weld asks whether ONE entry satisfies every condition, so a leaf a
       // weld can name holds one value. A leaf holding a list stands for every

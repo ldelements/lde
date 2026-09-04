@@ -295,37 +295,6 @@ export type ReferenceStrategy =
        * keyed on a label, so two endpoints that share a label are never merged.
        */
       readonly identity?: string;
-      /**
-       * Cap on the entries this reference stores **per node carrying it** –
-       * across every edge that node states, and so per document for a
-       * reference declared on a Root Type. Defaults to 100
-       * ({@link DEFAULT_MAX_ENTRIES}). Must be a positive integer: the budget
-       * is counted off one entry at a time, so a cap that is not one can never
-       * be reached.
-       *
-       * It bounds the **fan-out** ([ADR 26](../../docs/decisions/0026-fan-out-a-qualified-edge-into-one-entry-per-tuple.md)),
-       * so it applies only where the reference type declares a weldable leaf to
-       * fan out on; a display-only nesting stores every entry the graph states,
-       * as it always has. Entries past the cap are dropped silently, and in
-       * declaration order rather than representatively – it guards against data
-       * that is already wrong, and is not a sampling policy.
-       *
-       * A reference nested inside another reference type is budgeted per
-       * *parent entry* rather than per document, so a schema nesting one edge
-       * inside another admits up to the product of their caps. Bounded, but
-       * multiplicatively: set the inner cap with the outer one in mind.
-       *
-       * A weldable leaf is single-valued, so an edge whose graph values are
-       * multi-valued fans out into one entry per combination
-       * ([ADR 26](../../docs/decisions/0026-fan-out-a-qualified-edge-into-one-entry-per-tuple.md)).
-       * That product is bounded by the edge’s own data, and a bound in the
-       * data’s own units is not a bound
-       * ([ADR 12](../../docs/decisions/0012-bound-memory-by-the-unit-of-work-not-the-input.md)):
-       * one pathological edge would otherwise multiply a document until the run
-       * dies. Raise it for a corpus whose edges are legitimately wide; the
-       * default is far above what a qualified relation produces in practice.
-       */
-      readonly maxEntries?: number;
     };
 
 /** An IRI-valued reference to another entity, resolved at the surface. */
@@ -1244,8 +1213,7 @@ function assertNoInlineCycle(
  * condition, so a leaf a weld can name states one value per entry. A leaf
  * holding a list stands for every combination at once and answers the weld with
  * none of them. Multiplicity belongs to the entry list instead – the projection
- * emits one entry per combination
- * ({@link ReferenceStrategy.maxEntries maxEntries}). An `output`-only nested
+ * emits one entry per combination. An `output`-only nested
  * leaf is untouched: nothing welds it, so it may carry a list for display.
  *
  * Checked schema-wide, like the label sources and for the same reason: a single
@@ -1278,7 +1246,7 @@ function assertServiceableNestedFields(
       }
       if (field.filterable === true && field.array === true) {
         throw new Error(
-          `Nested field “${referenceType.name}.${field.name}” declares both “filterable” and “array”: a weld asks whether ONE entry satisfies every condition, and an entry holding a list has no single value to test – it stands for each combination at once, so the weld degenerates into the cross-product it exists to exclude. Declare the field single-valued; the projection emits one entry per combination (see “maxEntries”).`,
+          `Nested field “${referenceType.name}.${field.name}” declares both “filterable” and “array”: a weld asks whether ONE entry satisfies every condition, and an entry holding a list has no single value to test – it stands for each combination at once, so the weld degenerates into the cross-product it exists to exclude. Declare the field single-valued; the projection emits one entry per combination.`,
         );
       }
     }
@@ -1335,14 +1303,6 @@ const UNSERVICEABLE_INLINE_ROLES = ['searchable', 'sortable'] as const;
 /** The label field name a type falls back to when it declares no
  *  {@link SearchTypeBase.labelField}. */
 export const DEFAULT_LABEL_FIELD = 'label';
-
-/**
- * Entries one document stores for an inline reference that declares no
- * {@link ReferenceStrategy.maxEntries maxEntries} of its own. Well above what a
- * qualified relation produces – a measured corpus averages under four – so the
- * default bounds the pathological case without truncating a real one.
- */
-export const DEFAULT_MAX_ENTRIES = 100;
 
 /** The `name` the type serves its label under: its declared
  *  {@link SearchTypeBase.labelField}, else `label`. */
@@ -1463,7 +1423,6 @@ export interface SearchTypeIssue {
     | 'invalid-locale'
     | 'missing-ref'
     | 'missing-ref-type-name'
-    | 'invalid-max-entries'
     | 'ref-not-allowed'
     | 'text-requires-locales'
     | 'locales-not-allowed'
@@ -1666,18 +1625,6 @@ export function validateSearchType(
           (field.ref?.strategy === 'lookup' && field.ref.target === undefined))
       ) {
         issue('missing-ref-type-name');
-      }
-      // The fan-out budget is counted off one entry at a time, so a fractional
-      // or non-positive cap is never reached and the cartesian product in
-      // `tuplesOf` grows with the data – exactly the unbounded case the cap
-      // exists to prevent (ADR 12). A cap that cannot bind is worse than none,
-      // because the declaration says otherwise.
-      if (
-        field.ref?.strategy === 'inline' &&
-        field.ref.maxEntries !== undefined &&
-        !(Number.isInteger(field.ref.maxEntries) && field.ref.maxEntries > 0)
-      ) {
-        issue('invalid-max-entries');
       }
       // A join addresses the referent's collection – the one a lookup's
       // `target` or an idOnly's `labelSource` names. With neither, the flag

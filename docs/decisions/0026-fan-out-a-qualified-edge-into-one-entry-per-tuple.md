@@ -133,30 +133,36 @@ like every other reference. Measured on 1 000 000 documents this halves the
 entries per document (3.74 against 7.49) and gives 15 facet buckets rather than
 30 that split one role across languages.
 
-### What bounds it
+### What bounds it – nothing yet, and deliberately so
 
 A cartesian product over an edge’s own values is a bound stated in the data’s own
 units, which [ADR 12](./0012-bound-memory-by-the-unit-of-work-not-the-input.md)
-says is not a bound. An inline reference therefore declares `maxEntries`
-(default 100), so a pathological edge cannot multiply a document until the run
-dies.
+says is not a bound. Fan-out therefore needs one, and **this decision does not
+supply it**.
 
-**It bounds the multiplication and nothing else.** A reference whose type
-declares no weldable leaf can never fan out, and is not capped: its entry list
-is as long as the graph makes it, exactly as it was before this decision.
-Capping it would silently shorten data no one asked us to shorten. By the same
-reading a `local` lookup is uncapped – it nests the endpoint’s own document
-rather than a product, so nothing here multiplies. Whether _that_ list wants a
-bound of its own is an ADR 12 question this decision does not answer.
+An earlier draft capped the entries a document may store (`maxEntries`, default
+100). That was the wrong place, for a reason worth recording: by the time the
+projection runs, every cost has already been paid. The CONSTRUCT matched those
+values and the endpoint paid for it, they crossed the wire, the subject index
+holds them, and framing has materialised them into one node. Capping the
+_product_ declines the last and cheapest step while keeping all the expensive
+ones – and it bounds nothing that framing did not already hold.
 
-**The drop is silent, and truncation is not representative.** Entries past the
-cap are discarded with no diagnostic: the projection has no reporting channel,
-and inventing one for a case that should never arise in real data is not worth
-the seam. Truncation also fills the product in declaration order, so a bound
-that binds part-way through keeps every combination of the earlier leaves and
-few of the later ones. Both are acceptable because the cap is a guard against
-data that is already wrong, not a sampling policy – but a deployment that sees
-it bite is looking at a modelling error, not at a tuning knob.
+The bound belongs where the data enters memory. Capping values **per leaf** at
+the framing seam bounds the framed node itself, and makes the product
+`k^(weldable leaves)` – leaf count is a schema constant, so that is a bound in
+the schema’s own units rather than a number written against the data’s. It also
+bounds the linear case an entry cap never addressed: a wide edge, or a
+display-only nesting of ten thousand entries, both of which predate fan-out and
+are equally unbounded today.
+
+That belongs to the framing seam, which serves every consumer rather than this
+one, and wants its own evidence and its own record. Tracked in
+[#826](https://github.com/ldelements/lde/issues/826).
+
+**Until then the fan-out is unbounded**, exactly as the entry list it replaces
+always was. What changed is that the growth can now be multiplicative rather
+than linear, which is why the bound is worth doing rather than assuming.
 
 ## Consequences
 

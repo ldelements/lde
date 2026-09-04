@@ -564,10 +564,12 @@ knowing when you declare an edge:
   IRI single-valued and resolve labels at the surface; declaring the label
   multi-valued makes fan-out emit an entry per language and splits one role
   across two facet buckets.
-- `maxEntries` on the inline reference caps the entries one document stores
-  (default 100), so a pathological edge cannot multiply a document without
-  bound. An `output`-only nested leaf is untouched by all of this: nothing welds
-  it, so it may carry a list for display.
+- An `output`-only nested leaf is untouched by all of this: nothing welds it, so
+  it may carry a list for display.
+- Fan-out is **not yet bounded**. An edge with pathologically many values
+  multiplies into as many entries; the bound belongs at the framing seam, where
+  the values enter memory, rather than on the product
+  ([#826](https://github.com/ldelements/lde/issues/826)).
 
 See [ADR 26](../decisions/0026-fan-out-a-qualified-edge-into-one-entry-per-tuple).
 
