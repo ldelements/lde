@@ -34,7 +34,7 @@
     "commander": "^15.0.0",
     "cron": "^4.1.0",
     "drizzle-kit": "1.0.0-rc.5-ab785fc",
-    "drizzle-orm": "1.0.0-rc.5-ab785fc",
+    "drizzle-orm": "1.0.0-rc.5-169397b",
     "postgres": "^3.4.9",
     "tslib": "^2.3.0"
   },
