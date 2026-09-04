@@ -1,3 +1,13 @@
+## 0.29.3 (2026-09-04)
+
+### 🩹 Fixes
+
+- **search-typesense:** replace what a local lookup stated with the resolved document ([#819](https://github.com/ldelements/lde/pull/819))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.24.3
+
 ## 0.29.2 (2026-08-31)
 
 ### 🧱 Updated Dependencies
