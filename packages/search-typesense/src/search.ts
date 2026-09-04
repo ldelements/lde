@@ -1083,15 +1083,19 @@ function nestedValue(
 
 /**
  * Rebuild a {@link ReferenceStrategy.local local} lookup: the endpoint’s own
- * document as this document stated it, with the **resolved** document overlaid
+ * document as this document stated it, **replaced** by the resolved document
  * where the lookup found one.
  *
- * Both sides are the target type’s flat physical shape, so the merge is a plain
- * override and the authoritative value wins field by field. Three cases fall
- * out of one expression, which is the point of storing local fields
- * unconditionally:
+ * Replaced rather than merged, because both sides are the target type’s flat
+ * physical shape and a logical field fans out into several physical ones: a
+ * name this document stated in one language would survive beside the target’s
+ * name in another, and a field the target’s record does not carry would
+ * survive after the target dropped it. The resolved document carries what the
+ * projection asked for, and a resolved entry says exactly that – what a plain
+ * lookup says too. Three cases fall out of one expression, which is the point
+ * of storing local fields unconditionally:
  *
- * - identified and indexed → the target’s own record, over what was stated here;
+ * - identified and indexed → the target’s own record;
  * - identified but not indexed → what was stated here, plus the `id`, rather
  *   than a bare IRI;
  * - not identified → what was stated here, with no `id` at all.
@@ -1106,7 +1110,7 @@ function localLookupValue(
 ): SearchValue | undefined {
   const fetched =
     resolved?.via === 'lookup' ? resolved.documents : new Map<string, never>();
-  const merged = (Array.isArray(raw) ? raw : [raw])
+  const entries = (Array.isArray(raw) ? raw : [raw])
     .filter(
       (entry): entry is Record<string, unknown> =>
         typeof entry === 'object' && entry !== null,
@@ -1114,11 +1118,16 @@ function localLookupValue(
     .map((entry) => {
       const id = typeof entry.id === 'string' ? entry.id : undefined;
       const authoritative = id === undefined ? undefined : fetched.get(id);
-      return authoritative === undefined
-        ? entry
-        : { ...entry, ...authoritative };
+      return authoritative ?? entry;
     });
-  return nestedValue(merged, field, target, labels, schema, resolved?.children);
+  return nestedValue(
+    entries,
+    field,
+    target,
+    labels,
+    schema,
+    resolved?.children,
+  );
 }
 
 /**

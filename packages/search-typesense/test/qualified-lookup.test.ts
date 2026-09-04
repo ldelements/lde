@@ -10,11 +10,12 @@ const person = defineSearchType({
     {
       name: 'label',
       kind: 'text',
-      locales: ['nl'],
+      locales: ['nl', 'und'],
       output: true,
       searchable: { weight: 1 },
     },
     { name: 'birthDate', kind: 'keyword', output: true },
+    { name: 'deathDate', kind: 'keyword', output: true },
   ],
 });
 
@@ -77,8 +78,14 @@ const hits = {
         title_nl: 'Eerste',
         creator: [
           {
+            // Stated in another language than the target's record, plus a
+            // field that record does not carry: what a merge would leak.
             role: 'etser',
-            creator: { id: 'https://p/1', label_nl: 'Rembrandt' },
+            creator: {
+              id: 'https://p/1',
+              label_und: 'Rembrandt',
+              deathDate: '1669-10-04',
+            },
           },
           { role: 'auteur', creator: { label_nl: 'Jan Jansen' } },
         ],
@@ -351,7 +358,7 @@ describe('resolving a lookup inside an edge', () => {
     }
   });
 
-  it('overlays the resolved document on what the work stated', async () => {
+  it('replaces what the work stated with the resolved document', async () => {
     const { fake } = client();
     const engine = createTypesenseSearchEngine(fake.client, schema, {
       collections,
@@ -360,7 +367,9 @@ describe('resolving a lookup inside an edge', () => {
     const result = await engine.search(work as never, { ...base, resolve });
     const [identified] = entriesOf(result.hits[1]);
 
-    // The authoritative record wins over the name this work published.
+    // The authoritative record is all there is: neither the `und` name this
+    // work published nor the `deathDate` the target's record lacks survives,
+    // so the reference cannot disagree with the document it resolves to.
     expect(identified.creator).toEqual({
       id: 'https://p/1',
       label: { nl: ['Rembrandt Harmenszoon van Rijn'] },
@@ -410,7 +419,8 @@ describe('resolving a lookup inside an edge', () => {
     expect(lookups).toHaveLength(0);
     expect(identified.creator).toEqual({
       id: 'https://p/1',
-      label: { nl: ['Rembrandt'] },
+      label: { und: ['Rembrandt'] },
+      deathDate: '1669-10-04',
     });
   });
 });

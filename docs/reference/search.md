@@ -495,8 +495,9 @@ field's [`description`](#describing-a-field).
 
 **`local: true`** on a lookup additionally stores the endpoint's own fields, as
 this document states them, projected through the target's own declaration. The
-resolved document is overlaid on them at query time. That is what lets one field
-serve both populations:
+resolved document replaces them at query time – replaces rather than merges, so
+a name this document stated in one language cannot survive beside the target's
+name in another. That is what lets one field serve both populations:
 
 | the endpoint            | what the entry carries                               |
 | ----------------------- | ---------------------------------------------------- |
