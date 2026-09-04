@@ -371,6 +371,97 @@ describe('fanning an edge out into one entry per tuple', () => {
     ]);
   });
 
+  it('does not cap a reference that cannot fan out', () => {
+    // The budget bounds the multiplication, and a type with no weldable leaf
+    // never multiplies. Capping it would silently shorten a plain list of
+    // entries that has always been stored whole – a data change this decision
+    // never asked for.
+    const displayOnly = defineSearchType({
+      name: 'CreatorEdge',
+      fields: [
+        {
+          name: 'role',
+          kind: 'keyword',
+          path: `${SCHEMA_ORG}name`,
+          output: true,
+        },
+      ],
+    });
+    const displayWork = defineSearchType({
+      name: 'Work',
+      class: `${SCHEMA_ORG}CreativeWork`,
+      fields: [
+        {
+          name: 'creator',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}creator`,
+          array: true,
+          output: true,
+          ref: { strategy: 'inline', typeName: 'CreatorEdge' },
+        },
+      ],
+    });
+    const wide = {
+      '@id': 'https://ex/work/11',
+      [workKey('creator')]: Array.from({ length: 300 }, (_, index) => ({
+        [edgeKey('role')]: [{ '@value': `role-${index}` }],
+      })),
+    };
+    const entries = entriesOf(
+      projectDocument(
+        wide,
+        displayWork,
+        searchSchema(displayWork, displayOnly),
+      ),
+    );
+
+    expect(entries).toHaveLength(300);
+  });
+
+  it('spends the budget on entries that survive, not values considered', () => {
+    // A run of values the reference type reads nothing from – dirty source
+    // data – must not consume the budget and leave the real referents behind
+    // them with nowhere to go.
+    const cappedWork = defineSearchType({
+      name: 'Work',
+      class: `${SCHEMA_ORG}CreativeWork`,
+      fields: [
+        {
+          name: 'creator',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}creator`,
+          array: true,
+          output: true,
+          filterable: true,
+          ref: {
+            strategy: 'inline',
+            typeName: 'CreatorEdge',
+            identity: 'creator',
+            maxEntries: 3,
+          },
+        },
+      ],
+    });
+    const dirtyThenReal = {
+      '@id': 'https://ex/work/12',
+      [workKey('creator')]: [
+        { [`${SCHEMA_ORG}unrelated`]: [{ '@value': 'x' }] },
+        { [`${SCHEMA_ORG}unrelated`]: [{ '@value': 'y' }] },
+        { [`${SCHEMA_ORG}unrelated`]: [{ '@value': 'z' }] },
+        { [edgeKey('role')]: [{ '@value': 'etser' }] },
+      ],
+    };
+    const entries = entriesOf(
+      projectDocument(
+        dirtyThenReal,
+        cappedWork,
+        searchSchema(cappedWork, person, weldableEdge),
+      ),
+    );
+
+    expect(entries.map((entry) => entry.role)).toEqual(['etser']);
+  });
+
   it('does not fan a local lookup out over the endpoint’s own fields', () => {
     // A `local` lookup nests the endpoint's own Root Type, whose fields are
     // multi-valued for reasons of their own – `sameAs` here. Splitting on those
@@ -738,6 +829,69 @@ describe('nesting is where a node is projected, not what type it is', () => {
         ref: { strategy: 'lookup', target: 'Person', local: true },
       },
     ],
+  });
+
+  it('keeps every id where only facetable earned the companion', () => {
+    // An identity is earned by `filterable` OR `facetable`, and fan-out splits
+    // weldable leaves only. A facetable-only companion is therefore never
+    // split, so narrowing it to one id would drop the rest – silently, since
+    // the collection declares it a list.
+    const facetedRoot = defineSearchType({
+      name: 'Person',
+      class: `${SCHEMA_ORG}Person`,
+      fields: [
+        {
+          name: 'label',
+          kind: 'text',
+          path: `${SCHEMA_ORG}name`,
+          locales: ['und'],
+          output: true,
+          searchable: { weight: 1 },
+        },
+        {
+          name: 'affiliation',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}affiliation`,
+          array: true,
+          output: true,
+          facetable: true,
+          ref: { strategy: 'inline', typeName: 'Membership', identity: 'org' },
+        },
+      ],
+    });
+    const work = defineSearchType({
+      name: 'Work',
+      class: `${SCHEMA_ORG}CreativeWork`,
+      fields: [
+        {
+          name: 'creator',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}creator`,
+          output: true,
+          ref: { strategy: 'lookup', target: 'Person', local: true },
+        },
+      ],
+    });
+    const node = {
+      '@id': 'https://ex/work/13',
+      [workKey('creator')]: [
+        {
+          '@id': 'https://p/1',
+          [alias('Person', 'affiliation')]: [
+            { [alias('Membership', 'org')]: [{ '@id': 'https://o/1' }] },
+            { [alias('Membership', 'org')]: [{ '@id': 'https://o/2' }] },
+          ],
+        },
+      ],
+    };
+    const document = projectDocument(
+      node,
+      work,
+      searchSchema(work, facetedRoot, inner),
+    );
+    const endpoint = document.creator as SearchDocument;
+
+    expect(endpoint.affiliation_id).toEqual(['https://o/1', 'https://o/2']);
   });
 
   it('writes a single-valued companion inside a locally-nested root type', () => {

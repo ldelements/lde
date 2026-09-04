@@ -613,6 +613,67 @@ describe('nested fields of other kinds', () => {
     ).toMatchObject({ type: 'string[]', index: true });
   });
 
+  it('declares a facetable-only companion as a list', () => {
+    // An identity is earned by `filterable` OR `facetable`, and only a weldable
+    // leaf fans out – so a facetable-only companion still harvests every id its
+    // entry references, and must be declared as the list the projection writes.
+    const org = defineSearchType({
+      name: 'Membership',
+      fields: [
+        {
+          name: 'org',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}memberOf`,
+          output: true,
+          ref: { strategy: 'lookup', target: 'Person' },
+        },
+      ],
+    });
+    const facetedRoot = defineSearchType({
+      name: 'Person',
+      class: `${SCHEMA_ORG}Person`,
+      fields: [
+        {
+          name: 'label',
+          kind: 'text',
+          path: `${SCHEMA_ORG}name`,
+          locales: ['und'],
+          output: true,
+          searchable: { weight: 1 },
+        },
+        {
+          name: 'affiliation',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}affiliation`,
+          output: true,
+          facetable: true,
+          ref: { strategy: 'inline', typeName: 'Membership', identity: 'org' },
+        },
+      ],
+    });
+    const work = defineSearchType({
+      name: 'Work',
+      class: `${SCHEMA_ORG}CreativeWork`,
+      fields: [
+        {
+          name: 'creator',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}creator`,
+          output: true,
+          ref: { strategy: 'lookup', target: 'Person', local: true },
+        },
+      ],
+    });
+    const fields =
+      buildCollectionDefinition(work, {
+        schema: searchSchema(work, facetedRoot, org),
+      }).fields ?? [];
+
+    expect(
+      fields.find((field) => field.name === 'creator.affiliation_id'),
+    ).toMatchObject({ type: 'string[]' });
+  });
+
   it('widens an indexed nested leaf of a local lookup’s own root type', () => {
     // `searchSchema` constrains Reference Types, so a weldable leaf there is
     // single-valued – but this same path also declares the fields of the Root

@@ -138,8 +138,25 @@ entries per document (3.74 against 7.49) and gives 15 facet buckets rather than
 A cartesian product over an edge’s own values is a bound stated in the data’s own
 units, which [ADR 12](./0012-bound-memory-by-the-unit-of-work-not-the-input.md)
 says is not a bound. An inline reference therefore declares `maxEntries`
-(default 100): entries past it are dropped and reported, rather than a
-pathological edge multiplying a document until the run dies.
+(default 100), so a pathological edge cannot multiply a document until the run
+dies.
+
+**It bounds the multiplication and nothing else.** A reference whose type
+declares no weldable leaf can never fan out, and is not capped: its entry list
+is as long as the graph makes it, exactly as it was before this decision.
+Capping it would silently shorten data no one asked us to shorten. By the same
+reading a `local` lookup is uncapped – it nests the endpoint’s own document
+rather than a product, so nothing here multiplies. Whether _that_ list wants a
+bound of its own is an ADR 12 question this decision does not answer.
+
+**The drop is silent, and truncation is not representative.** Entries past the
+cap are discarded with no diagnostic: the projection has no reporting channel,
+and inventing one for a case that should never arise in real data is not worth
+the seam. Truncation also fills the product in declaration order, so a bound
+that binds part-way through keeps every combination of the earlier leaves and
+few of the later ones. Both are acceptable because the cap is a guard against
+data that is already wrong, not a sampling policy – but a deployment that sees
+it bite is looking at a modelling error, not at a tuning knob.
 
 ## Consequences
 

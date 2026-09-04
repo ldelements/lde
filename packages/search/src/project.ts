@@ -776,7 +776,11 @@ function setIdentity(
   field: ReferenceField,
   nested: boolean,
 ): void {
-  if (!nested || field.array === true) {
+  // `filterable` is the whole condition: fan-out splits weldable leaves only
+  // (`tuplesOf`), so that is the only case where an entry is guaranteed to hold
+  // one id. An identity may also be earned by `facetable` alone, which nothing
+  // splits – narrowing there would silently keep the first id and drop the rest.
+  if (!nested || field.array === true || field.filterable !== true) {
     setArray(document, name, ids);
     return;
   }
@@ -848,30 +852,50 @@ function applyNestedReferents(
 ): readonly ProjectedNode[] {
   // One node may stand for several entries: a weldable leaf is single-valued,
   // so an edge the graph gave several roles or several endpoints fans out into
-  // one entry per combination BEFORE it is projected (ADR 26). The budget spans
-  // every edge THIS node states, rather than resetting per edge – a node holds
-  // as many edges as the graph gives it, so a per-edge cap would still let the
-  // entries grow with the input.
-  const limit = isInlineReference(field)
-    ? (field.ref.maxEntries ?? DEFAULT_MAX_ENTRIES)
-    : Number.POSITIVE_INFINITY;
-  const nodes: FramedNode[] = [];
+  // one entry per combination BEFORE it is projected (ADR 26).
+  //
+  // The budget bounds THAT MULTIPLICATION, and nothing else. A reference whose
+  // type declares no weldable leaf can never fan out, so capping it would
+  // silently truncate a plain list of entries that has always been stored whole
+  // – a data change this decision never asked for. Its length is the graph's
+  // business, as it was before fan-out existed.
+  //
+  // Where it does apply, it spans every edge THIS node states rather than
+  // resetting per edge: a node holds as many edges as the graph gives it, so a
+  // per-edge cap would still let the entries grow with the input (ADR 12).
+  const limit =
+    isInlineReference(field) &&
+    nestedType.fields.some((nested) => nested.filterable === true)
+      ? (field.ref.maxEntries ?? DEFAULT_MAX_ENTRIES)
+      : Number.POSITIVE_INFINITY;
+  // Charged against the entries that SURVIVE, not the framed values considered.
+  // Fields, not identity, are what makes something a referent: a literal value
+  // object under the alias (dirty source data), or a node this reference type
+  // reads nothing from, projects nothing and is no referent. Nesting it would
+  // hand the writer a content-free document – and, for a single-valued
+  // reference, let it win the slot over a real referent. Charging the budget
+  // before that filter lets a run of dirty values spend it all and leave the
+  // real referents behind them with nowhere to go.
+  const referents: ProjectedNode[] = [];
   for (const value of values.filter(isObject)) {
-    if (nodes.length >= limit) {
+    if (referents.length >= limit) {
       break;
     }
-    nodes.push(...tuplesOf(value, nestedType, field, limit - nodes.length));
+    // `tuplesOf` is handed what remains of the budget and never returns more,
+    // so this inner loop cannot overshoot it – the guard belongs on the values,
+    // above, where a fresh edge would otherwise start spending afresh.
+    for (const tuple of tuplesOf(
+      value,
+      nestedType,
+      field,
+      limit - referents.length,
+    )) {
+      const referent = projectFields(tuple, nestedType, schema, context, true);
+      if (Object.keys(referent).length > 0) {
+        referents.push(referent);
+      }
+    }
   }
-  const referents = nodes
-    .map((referent) =>
-      projectFields(referent, nestedType, schema, context, true),
-    )
-    // Fields, not identity, are what makes something a referent: a literal
-    // value object under the alias (dirty source data), or a node this
-    // reference type reads nothing from, projects nothing and is no referent.
-    // Nesting it would hand the writer a content-free document – and, for a
-    // single-valued reference, let it win the slot over a real referent.
-    .filter((referent) => Object.keys(referent).length > 0);
   if (referents.length === 0) {
     return referents;
   }

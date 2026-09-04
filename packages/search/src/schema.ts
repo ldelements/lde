@@ -298,10 +298,17 @@ export type ReferenceStrategy =
       /**
        * Cap on the entries this reference stores **per node carrying it** –
        * across every edge that node states, and so per document for a
-       * reference declared on a Root Type. Entries past it are dropped.
-       * Defaults to 100 ({@link DEFAULT_MAX_ENTRIES}). Must be a positive
-       * integer: the budget is counted off one entry at a time, so a cap that
-       * is not one can never be reached.
+       * reference declared on a Root Type. Defaults to 100
+       * ({@link DEFAULT_MAX_ENTRIES}). Must be a positive integer: the budget
+       * is counted off one entry at a time, so a cap that is not one can never
+       * be reached.
+       *
+       * It bounds the **fan-out** ([ADR 26](../../docs/decisions/0026-fan-out-a-qualified-edge-into-one-entry-per-tuple.md)),
+       * so it applies only where the reference type declares a weldable leaf to
+       * fan out on; a display-only nesting stores every entry the graph states,
+       * as it always has. Entries past the cap are dropped silently, and in
+       * declaration order rather than representatively – it guards against data
+       * that is already wrong, and is not a sampling policy.
        *
        * A reference nested inside another reference type is budgeted per
        * *parent entry* rather than per document, so a schema nesting one edge
