@@ -927,21 +927,50 @@ function tuplesOf(
   const identity = field.ref.identity;
   const weldable = nestedType.fields
     .filter((nested) => nested.filterable === true || nested.name === identity)
-    .map((nested) => irAlias(nestedType, nested))
-    // A leaf the frame carries at most one value for is already a tuple
-    // position; splitting it would copy the node to no purpose.
-    .filter((alias) => valuesOf(node, alias).length > 1);
+    .map((nested) => ({ nested, alias: irAlias(nestedType, nested) }))
+    // A leaf the frame carries at most one READABLE value for is already a
+    // tuple position; splitting it would copy the node to no purpose.
+    .filter(({ nested, alias }) => splittable(node, alias, nested).length > 1);
   if (weldable.length === 0) {
     return [node];
   }
   let tuples: FramedNode[] = [node];
-  for (const alias of weldable) {
-    const values = valuesOf(node, alias);
+  for (const { nested, alias } of weldable) {
+    const values = splittable(node, alias, nested);
     tuples = tuples.flatMap((tuple) =>
       values.map((value) => ({ ...tuple, [alias]: value })),
     );
   }
   return tuples;
+}
+
+/**
+ * The framed values of one leaf that fan-out may split on: those the field can
+ * actually READ.
+ *
+ * A leaf reads its own kind of value and passes over the rest: a `keyword`
+ * takes literals and ignores an IRI stated beside them, which real data does –
+ * a role named both as a string and as a Wikidata entity on one node.
+ * Splitting on a value the leaf then reads nothing from mints an entry the leaf
+ * is absent from – the same endpoint, apparently in no role at all, shown to a
+ * reader and matched by a filter. So the split follows the reader.
+ *
+ * `keyword` is the only kind that needs narrowing. A `text` field has no filter
+ * operator (`filterOperatorFor`), so nothing welds it and it is never a tuple
+ * position. A `reference` is, and both of its shapes are meaningful: an IRI,
+ * and – for a {@link ReferenceStrategy.local local} lookup – a node the graph
+ * named inline, which has no IRI and is a referent all the same.
+ */
+function splittable(
+  node: FramedNode,
+  alias: string,
+  field: SearchField,
+): readonly unknown[] {
+  const values = valuesOf(node, alias);
+  if (field.kind === 'keyword') {
+    return values.filter((value) => literalString(value) !== undefined);
+  }
+  return values;
 }
 
 // --- Framed-IR readers: read a field’s value off the framed node by its
