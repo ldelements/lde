@@ -441,7 +441,7 @@ function nestedFields(
           index: false,
           optional: true,
         },
-        ...nestedIdentityFields(prefix, field, schema),
+        ...nestedIdentityFields(prefix, field, schema, flattensToArray),
       );
       continue;
     }
@@ -461,7 +461,7 @@ function nestedFields(
         // an engine welds conditions on an entry's LEAF fields only. Its
         // identity companion is that leaf, so it sits beside the object rather
         // than inside it.
-        ...nestedIdentityFields(prefix, field, schema),
+        ...nestedIdentityFields(prefix, field, schema, flattensToArray),
       );
       continue;
     }
@@ -530,6 +530,7 @@ function nestedIdentityFields(
   prefix: string,
   field: SearchField,
   schema: SearchSchema,
+  flattensToArray: boolean,
 ): CollectionFieldSchema[] {
   const names = physicalFields(field, schema);
   if (names.identity === undefined) {
@@ -538,11 +539,24 @@ function nestedIdentityFields(
   return [
     {
       name: nestedFieldName(prefix, names.identity),
-      // Always a list, whatever the enclosing reference's arity: the projection
-      // writes it with `setArray`, and an indexed field's declared type is
-      // checked against what is stored – a `string` here rejects every
-      // document carrying such an edge, at import.
-      type: 'string[]',
+      // Typed by what the PATH yields across the document, exactly as the `id`
+      // beside it is, and by the same two routes every other declaration here
+      // uses: an `object[]` ancestor multiplying the entries, or the field's
+      // own `array` making each entry hold a list. A weldable leaf is
+      // single-valued (ADR 26), so a companion that a weld names contributes
+      // one id per entry – but a multi-valued reference reached through a
+      // locally-nested Root Type is not weldable and still harvests a list.
+      // Getting either route wrong rejects the document at import: Typesense
+      // enforces the declared arity wherever nothing widens the path.
+      // `filterable` is the condition because it is what the projection writes
+      // a single id under, not because it decides the split: `tuplesOf` splits
+      // the identity field whatever Role earned it. A `facetable`-only
+      // companion is declared a list, which is what a facet reads and what the
+      // projection writes for it.
+      type:
+        flattensToArray || field.array === true || field.filterable !== true
+          ? 'string[]'
+          : 'string',
       index: true,
       optional: true,
     },
@@ -617,6 +631,10 @@ function nestedLeafFields(
   // `object[]` flattens it into one. `typesenseValueType` honours `array` only
   // for the string-shaped kinds, so a multi-valued nested `integer` would
   // otherwise be declared scalar and rejected at import.
+  //
+  // A weldable leaf of a Reference Type is single-valued (ADR 26), but that
+  // narrows nothing here: this same path declares the fields of the Root Type a
+  // `local` lookup nests, where `array` and `filterable` may legitimately meet.
   const storesAList = flattensToArray || field.array === true;
   fields.push({
     name: nestedFieldName(prefix, field.name),
@@ -658,8 +676,11 @@ function arrayValueType(type: ValueType): CollectionFieldSchema['type'] {
       return 'float[]';
     case 'bool':
       return 'bool[]';
-    // Already a list: a multi-valued declaration under a multi-valued ancestor
-    // flattens no further.
+    // Already a list, and reachable even though a weldable leaf of a Reference
+    // Type is single-valued (ADR 26): this path also declares the fields of the
+    // Root Type a `local` lookup nests, and `searchSchema` constrains only
+    // Reference Types. A root keyword may be `array` and `filterable` at once –
+    // an ordinary facet – so flattening it must widen no further.
     case 'string[]':
       return 'string[]';
   }

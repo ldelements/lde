@@ -146,6 +146,276 @@ describe('an edge that carries data and resolves a lookup', () => {
   });
 });
 
+describe('fanning an edge out into one entry per tuple', () => {
+  // A weld asks whether ONE entry satisfies every condition, so a leaf a weld
+  // can name holds one value. An edge the graph gave several fans out (ADR 26).
+
+  /** Both leaves weldable, so both are tuple positions. */
+  const weldableEdge = defineSearchType({
+    name: 'CreatorEdge',
+    fields: [
+      {
+        name: 'role',
+        kind: 'keyword',
+        path: `${SCHEMA_ORG}name`,
+        output: true,
+        filterable: true,
+      },
+      {
+        name: 'creator',
+        kind: 'reference',
+        path: `${SCHEMA_ORG}creator`,
+        output: true,
+        filterable: true,
+        ref: { strategy: 'lookup', target: 'Person', local: true },
+      },
+    ],
+  });
+
+  const twoRoles = {
+    '@id': 'https://ex/work/2',
+    [workKey('creator')]: [
+      {
+        [edgeKey('role')]: [{ '@value': 'etser' }, { '@value': 'drukker' }],
+        [edgeKey('creator')]: [
+          { '@id': 'https://a/1', [personKey('sameAs')]: [{ '@id': RKD }] },
+        ],
+      },
+    ],
+  };
+
+  it('splits a multi-valued weldable leaf across entries', () => {
+    const entries = entriesOf(projectDocument(twoRoles, work, schema));
+
+    expect(entries).toHaveLength(2);
+    expect(entries.map((entry) => entry.role)).toEqual(['etser', 'drukker']);
+    // Every entry keeps the endpoint the edge stated: the tuple is what fans
+    // out, not the edge's other values.
+    expect(
+      entries.map((entry) => (entry.creator as SearchDocument).id),
+    ).toEqual([RKD, RKD]);
+  });
+
+  it('takes the product where two weldable leaves are multi-valued', () => {
+    const twoOfEach = {
+      '@id': 'https://ex/work/3',
+      [workKey('creator')]: [
+        {
+          [edgeKey('role')]: [{ '@value': 'etser' }, { '@value': 'drukker' }],
+          [edgeKey('creator')]: [
+            { '@id': 'https://a/1', [personKey('sameAs')]: [{ '@id': RKD }] },
+            { '@id': 'https://a/2' },
+          ],
+        },
+      ],
+    };
+    const entries = entriesOf(
+      projectDocument(
+        twoOfEach,
+        work,
+        searchSchema(work, person, weldableEdge),
+      ),
+    );
+
+    expect(entries.map((entry) => [entry.role, entry.creator_id])).toEqual([
+      ['etser', RKD],
+      ['etser', 'https://a/2'],
+      ['drukker', RKD],
+      ['drukker', 'https://a/2'],
+    ]);
+  });
+
+  it('leaves an output-only list on the entry', () => {
+    // Nothing welds it, so it needs no tuple position – and splitting the entry
+    // over it would multiply entries for a value no filter can name.
+    const noteEdge = defineSearchType({
+      name: 'CreatorEdge',
+      fields: [
+        {
+          name: 'role',
+          kind: 'keyword',
+          path: `${SCHEMA_ORG}name`,
+          output: true,
+          filterable: true,
+        },
+        {
+          name: 'note',
+          kind: 'keyword',
+          path: `${SCHEMA_ORG}description`,
+          array: true,
+          output: true,
+        },
+        {
+          name: 'creator',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}creator`,
+          output: true,
+          ref: { strategy: 'lookup', target: 'Person', local: true },
+        },
+      ],
+    });
+    const annotated = {
+      '@id': 'https://ex/work/6',
+      [workKey('creator')]: [
+        {
+          [edgeKey('role')]: [{ '@value': 'etser' }],
+          [edgeKey('note')]: [
+            { '@value': 'gesigneerd' },
+            { '@value': 'ovaal' },
+          ],
+        },
+      ],
+    };
+    const entries = entriesOf(
+      projectDocument(annotated, work, searchSchema(work, person, noteEdge)),
+    );
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0].note).toEqual(['gesigneerd', 'ovaal']);
+  });
+
+  it('does not emit two entries for values that collapse to one', () => {
+    // Fan-out splits RAW framed values, but a `transform` can map two of them
+    // onto the same stored value. Before fan-out they met inside one entry and
+    // were deduped there; split across entries they would reach the index and
+    // the API as byte-identical duplicates.
+    const canonicalising = defineSearchType({
+      name: 'CreatorEdge',
+      fields: [
+        {
+          name: 'role',
+          kind: 'keyword',
+          path: `${SCHEMA_ORG}name`,
+          output: true,
+          filterable: true,
+          transform: (value: string) => value.toLowerCase(),
+        },
+        {
+          name: 'creator',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}creator`,
+          output: true,
+          ref: { strategy: 'lookup', target: 'Person', local: true },
+        },
+      ],
+    });
+    const spelled = {
+      '@id': 'https://ex/work/15',
+      [workKey('creator')]: [
+        {
+          [edgeKey('role')]: [{ '@value': 'Etser' }, { '@value': 'etser' }],
+        },
+      ],
+    };
+    const entries = entriesOf(
+      projectDocument(
+        spelled,
+        work,
+        searchSchema(work, person, canonicalising),
+      ),
+    );
+
+    expect(entries).toEqual([{ role: 'etser' }]);
+  });
+
+  it('treats the identity field as a tuple position', () => {
+    // Nothing welds the identity field by name, but the flat companion
+    // harvested from it is the leaf a weld uses to name the endpoint. An entry
+    // whose identity field holds three ids stands for three endpoints at once –
+    // the same tuple problem, one field further in – and the companion would
+    // otherwise keep the first and drop the rest, silently.
+    const endpointEdge = defineSearchType({
+      name: 'CreatorEdge',
+      fields: [
+        {
+          name: 'creator',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}creator`,
+          // Multi-valued, and NOT filterable – so only its role as the
+          // reference's identity makes it a tuple position.
+          array: true,
+          output: true,
+          ref: { strategy: 'lookup', target: 'Person' },
+        },
+      ],
+    });
+    const identityWork = defineSearchType({
+      name: 'Work',
+      class: `${SCHEMA_ORG}CreativeWork`,
+      fields: [
+        {
+          name: 'creator',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}creator`,
+          array: true,
+          output: true,
+          filterable: true,
+          ref: {
+            strategy: 'inline',
+            typeName: 'CreatorEdge',
+            identity: 'creator',
+          },
+        },
+      ],
+    });
+    const threeEndpoints = {
+      '@id': 'https://ex/work/14',
+      [workKey('creator')]: [
+        {
+          [edgeKey('creator')]: [
+            { '@id': 'https://a/1' },
+            { '@id': 'https://a/2' },
+            { '@id': 'https://a/3' },
+          ],
+        },
+      ],
+    };
+    const document = projectDocument(
+      threeEndpoints,
+      identityWork,
+      searchSchema(identityWork, person, endpointEdge),
+    );
+    const entries = entriesOf(document);
+
+    // One endpoint per entry, and every id still reachable.
+    expect(entries).toHaveLength(3);
+    expect(entries.map((entry) => entry.creator)).toEqual([
+      ['https://a/1'],
+      ['https://a/2'],
+      ['https://a/3'],
+    ]);
+    expect(document.creator_id).toEqual([
+      'https://a/1',
+      'https://a/2',
+      'https://a/3',
+    ]);
+  });
+
+  it('does not fan a local lookup out over the endpoint’s own fields', () => {
+    // A `local` lookup nests the endpoint's own Root Type, whose fields are
+    // multi-valued for reasons of their own – `sameAs` here. Splitting on those
+    // would scatter one person across entries; what a weld names is the flat
+    // companion beside the object.
+    const twoAlignments = {
+      '@id': 'https://ex/work/7',
+      [workKey('creator')]: [
+        {
+          [edgeKey('role')]: [{ '@value': 'etser' }],
+          [edgeKey('creator')]: [
+            {
+              '@id': 'https://a/1',
+              [personKey('sameAs')]: [{ '@id': RKD }, { '@id': 'https://a/9' }],
+            },
+          ],
+        },
+      ],
+    };
+    const entries = entriesOf(projectDocument(twoAlignments, work, schema));
+
+    expect(entries).toHaveLength(1);
+  });
+});
+
 describe('the identity companion', () => {
   it('harvests the ids the entries reference', () => {
     // The flat field an engine filters and facets in the nested object’s
@@ -428,6 +698,194 @@ describe('welding conditions to one entry', () => {
   });
 });
 
+describe('nesting is where a node is projected, not what type it is', () => {
+  // A Root Type reached by a `local` lookup is nested exactly as a Reference
+  // Type is – it just happens to have a collection of its own elsewhere. Its
+  // companions must therefore be written under the nested rule too. Deciding
+  // that from the TYPE rather than from the projection context reads a
+  // locally-nested root as a root, and the arity it writes then disagrees with
+  // the one the collection declares: the import fails for every such document.
+  const inner = defineSearchType({
+    name: 'Membership',
+    fields: [
+      {
+        name: 'org',
+        kind: 'reference',
+        path: `${SCHEMA_ORG}memberOf`,
+        output: true,
+        ref: { strategy: 'lookup', target: 'Person' },
+      },
+    ],
+  });
+  const nestedRoot = defineSearchType({
+    name: 'Person',
+    class: `${SCHEMA_ORG}Person`,
+    key: { field: 'sameAs' },
+    fields: [
+      {
+        name: 'label',
+        kind: 'text',
+        path: `${SCHEMA_ORG}name`,
+        locales: ['und'],
+        output: true,
+        searchable: { weight: 1 },
+      },
+      {
+        name: 'sameAs',
+        kind: 'reference',
+        path: `${SCHEMA_ORG}sameAs`,
+        array: true,
+      },
+      {
+        name: 'affiliation',
+        kind: 'reference',
+        path: `${SCHEMA_ORG}affiliation`,
+        output: true,
+        filterable: true,
+        ref: { strategy: 'inline', typeName: 'Membership', identity: 'org' },
+      },
+    ],
+  });
+  const work = defineSearchType({
+    name: 'Work',
+    class: `${SCHEMA_ORG}CreativeWork`,
+    fields: [
+      {
+        name: 'creator',
+        kind: 'reference',
+        path: `${SCHEMA_ORG}creator`,
+        output: true,
+        ref: { strategy: 'lookup', target: 'Person', local: true },
+      },
+    ],
+  });
+
+  it('keeps every id where only facetable earned the companion', () => {
+    // An identity is earned by `filterable` OR `facetable`, and fan-out splits
+    // weldable leaves only. A facetable-only companion is therefore never
+    // split, so narrowing it to one id would drop the rest – silently, since
+    // the collection declares it a list.
+    const facetedRoot = defineSearchType({
+      name: 'Person',
+      class: `${SCHEMA_ORG}Person`,
+      fields: [
+        {
+          name: 'label',
+          kind: 'text',
+          path: `${SCHEMA_ORG}name`,
+          locales: ['und'],
+          output: true,
+          searchable: { weight: 1 },
+        },
+        {
+          name: 'affiliation',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}affiliation`,
+          array: true,
+          output: true,
+          facetable: true,
+          ref: { strategy: 'inline', typeName: 'Membership', identity: 'org' },
+        },
+      ],
+    });
+    const work = defineSearchType({
+      name: 'Work',
+      class: `${SCHEMA_ORG}CreativeWork`,
+      fields: [
+        {
+          name: 'creator',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}creator`,
+          output: true,
+          ref: { strategy: 'lookup', target: 'Person', local: true },
+        },
+      ],
+    });
+    const node = {
+      '@id': 'https://ex/work/13',
+      [workKey('creator')]: [
+        {
+          '@id': 'https://p/1',
+          [alias('Person', 'affiliation')]: [
+            { [alias('Membership', 'org')]: [{ '@id': 'https://o/1' }] },
+            { [alias('Membership', 'org')]: [{ '@id': 'https://o/2' }] },
+          ],
+        },
+      ],
+    };
+    const document = projectDocument(
+      node,
+      work,
+      searchSchema(work, facetedRoot, inner),
+    );
+    const endpoint = document.creator as SearchDocument;
+
+    expect(endpoint.affiliation_id).toEqual(['https://o/1', 'https://o/2']);
+  });
+
+  it('writes a single-valued companion inside a locally-nested root type', () => {
+    const node = {
+      '@id': 'https://ex/work/10',
+      [workKey('creator')]: [
+        {
+          '@id': 'https://p/1',
+          [personKey('sameAs')]: [{ '@id': RKD }],
+          [alias('Person', 'affiliation')]: [
+            { [alias('Membership', 'org')]: [{ '@id': 'https://o/1' }] },
+          ],
+        },
+      ],
+    };
+    const document = projectDocument(
+      node,
+      work,
+      searchSchema(work, nestedRoot, inner),
+    );
+    const endpoint = document.creator as SearchDocument;
+
+    // A single value, matching what the collection declares for this path -
+    // not the one-element list a root-level companion would carry.
+    expect(endpoint.affiliation_id).toBe('https://o/1');
+  });
+});
+
+describe('a local lookup at the root', () => {
+  it('harvests every endpoint into the flat companion', () => {
+    // A top-level companion stands for the whole DOCUMENT rather than for one
+    // entry, so nothing welds it and an `array` reference's companion holds
+    // every id its endpoints carry – unchanged by the nested rule (ADR 26).
+    const rootLookup = defineSearchType({
+      name: 'Work',
+      class: `${SCHEMA_ORG}CreativeWork`,
+      fields: [
+        {
+          name: 'creator',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}creator`,
+          array: true,
+          output: true,
+          filterable: true,
+          ref: { strategy: 'lookup', target: 'Person', local: true },
+        },
+      ],
+    });
+    const twoEndpoints = {
+      '@id': 'https://ex/work/8',
+      [workKey('creator')]: [
+        { '@id': 'https://a/1', [personKey('sameAs')]: [{ '@id': RKD }] },
+        { '@id': 'https://a/2' },
+      ],
+    };
+    const document = projectDocument(
+      twoEndpoints,
+      rootLookup,
+      searchSchema(rootLookup, person),
+    );
+
+    expect(document.creator_id).toEqual([RKD, 'https://a/2']);
+  });
+});
+
 describe('the identity companion of a local lookup', () => {
   // Its own id is a level deeper than a condition can be welded to, so
   // `filterable` fans it out as a leaf beside the stored object.
@@ -460,49 +918,15 @@ describe('the identity companion of a local lookup', () => {
     );
     const [identified] = document.creator as readonly SearchDocument[];
 
-    expect(identified.creator_id).toEqual([RKD]);
+    expect(identified.creator_id).toBe(RKD);
     expect((identified.creator as SearchDocument).id).toBe(RKD);
   });
 
-  it('holds only the endpoint a single-valued reference stores', () => {
-    // A single-valued reference keeps the first endpoint and drops the rest;
-    // a companion holding a dropped one's id would match a filter whose hit
-    // then shows a different endpoint.
-    const twoEndpoints = {
-      '@id': 'https://ex/work/4',
-      [workKey('creator')]: [
-        {
-          [edgeKey('creator')]: [
-            { '@id': 'https://a/1', [personKey('sameAs')]: [{ '@id': RKD }] },
-            { '@id': 'https://a/2' },
-          ],
-        },
-      ],
-    };
-    const singleEndpointEdge = defineSearchType({
-      name: 'CreatorEdge',
-      fields: [
-        {
-          name: 'creator',
-          kind: 'reference',
-          path: `${SCHEMA_ORG}creator`,
-          output: true,
-          filterable: true,
-          ref: { strategy: 'lookup', target: 'Person', local: true },
-        },
-      ],
-    });
-    const document = projectDocument(
-      twoEndpoints,
-      work,
-      searchSchema(work, person, singleEndpointEdge),
-    );
-    const [entry] = document.creator as readonly SearchDocument[];
-
-    expect(entry.creator_id).toEqual([RKD]);
-  });
-
-  it('holds every endpoint a multi-valued reference stores', () => {
+  it('fans a multi-valued endpoint out into one entry per endpoint', () => {
+    // The endpoint is what a weld names, so it is single-valued per entry: an
+    // edge the graph gave two endpoints is two entries, not one entry holding
+    // both. One entry holding both stands for either pairing and answers the
+    // weld with neither (ADR 26).
     const jointEdge = defineSearchType({
       name: 'CreatorEdge',
       fields: [
@@ -510,7 +934,6 @@ describe('the identity companion of a local lookup', () => {
           name: 'creator',
           kind: 'reference',
           path: `${SCHEMA_ORG}creator`,
-          array: true,
           output: true,
           filterable: true,
           ref: { strategy: 'lookup', target: 'Person', local: true },
@@ -533,9 +956,13 @@ describe('the identity companion of a local lookup', () => {
       work,
       searchSchema(work, person, jointEdge),
     );
-    const [entry] = document.creator as readonly SearchDocument[];
+    const entries = document.creator as readonly SearchDocument[];
 
-    expect(entry.creator_id).toEqual([RKD, 'https://a/2']);
+    expect(entries).toHaveLength(2);
+    expect(entries.map((entry) => entry.creator_id)).toEqual([
+      RKD,
+      'https://a/2',
+    ]);
   });
 
   it('is absent where the endpoint is not identified', () => {

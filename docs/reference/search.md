@@ -536,6 +536,52 @@ Welding on identity needs the endpoint's `filterable`, which fans out its id as
 a leaf beside the stored object – an engine welds conditions on an entry's own
 leaf fields only. That is a physical detail: you write the logical field.
 
+**A weldable leaf is single-valued.** A nested field declaring `filterable` may
+not also declare `array`; `searchSchema` refuses it. A weld asks whether _one_
+entry satisfies every condition, and an entry holding a list stands for each
+combination at once – so it answers the weld with none of them, and the weld
+degenerates into the cross-product it exists to exclude.
+
+Multiplicity belongs to the entry list instead. Where the graph gives an edge
+several roles or several endpoints, the projection emits **one entry per
+combination**:
+
+```jsonc
+// the graph
+{ "role": ["etser", "etcher"], "creator": ["p1", "p3"] }
+
+// the entries
+[ { "role": "etser",  "creator_id": "p1" },
+  { "role": "etser",  "creator_id": "p3" },
+  { "role": "etcher", "creator_id": "p1" },
+  { "role": "etcher", "creator_id": "p3" } ]
+```
+
+Each entry now answers the weld, and on an `array` edge nothing is dropped – the
+four entries carry what the two lists carried. Four consequences worth knowing
+when you declare an edge:
+
+- **A single-valued edge keeps one entry, so fan-out narrows it.** Declared
+  without `array`, the reference stores the first entry and its companion
+  matches: an edge whose graph gives two endpoints now indexes one, where before
+  fan-out the single entry listed both. That is the ordinary single-valued rule
+  meeting a tuple – the two-endpoint entry was never answerable by a weld – but
+  it is a silent change of what a filter matches. Declare the edge `array: true`
+  wherever the graph may give it more than one value, which for a qualified
+  relation is nearly always.
+- A role stated once per language is **one** role, not two. Index its canonical
+  IRI single-valued and resolve labels at the surface; declaring the label
+  multi-valued makes fan-out emit an entry per language and splits one role
+  across two facet buckets.
+- An `output`-only nested leaf is untouched by all of this: nothing welds it, so
+  it may carry a list for display.
+- Fan-out is **not yet bounded**. An edge with pathologically many values
+  multiplies into as many entries; the bound belongs at the framing seam, where
+  the values enter memory, rather than on the product
+  ([#826](https://github.com/ldelements/lde/issues/826)).
+
+See [ADR 26](../decisions/0026-fan-out-a-qualified-edge-into-one-entry-per-tuple).
+
 Out of scope for now: faceting an edge's own values, which the current engine
 cannot serve correctly.
 
