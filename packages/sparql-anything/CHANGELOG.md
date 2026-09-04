@@ -1,3 +1,9 @@
+## 0.1.3 (2026-09-04)
+
+### 🚀 Features
+
+- **sparql-anything:** report each chunk as it is converted ([#808](https://github.com/ldelements/lde/pull/808))
+
 ## 0.1.2 (2026-09-03)
 
 ### 🚀 Features
