@@ -238,7 +238,7 @@ export type ReferenceStrategy =
       /**
        * Also project the target’s **own fields from this document’s frame**, so
        * the reference stores what the referring document states about the
-       * referent alongside the id – and the resolved document overlays it at
+       * referent alongside the id – and the resolved document replaces it at
        * query time rather than being the only source of it.
        *
        * What it buys is one field where there were two. A referent the graph
