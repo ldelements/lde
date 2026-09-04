@@ -1,3 +1,9 @@
+## 0.24.4 (2026-09-04)
+
+### 🩹 Fixes
+
+- **search:** display every value of an array text field per language ([61d1916d](https://github.com/ldelements/lde/commit/61d1916d))
+
 ## 0.24.3 (2026-09-04)
 
 ### 🩹 Fixes
