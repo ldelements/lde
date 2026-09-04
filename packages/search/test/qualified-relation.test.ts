@@ -318,6 +318,34 @@ describe('fanning an edge out into one entry per tuple', () => {
     expect(entries).toEqual([{ role: 'etser' }]);
   });
 
+  it('splits only on values the leaf can read', () => {
+    // Real data states a role both as a string and as a Wikidata entity on one
+    // node. A `keyword` leaf reads literals and passes over the IRI, so
+    // splitting on it would mint an entry the role is absent from – the same
+    // endpoint, apparently in no role at all, shown to a reader and matched by
+    // a filter.
+    const tagged = {
+      '@id': 'https://ex/work/16',
+      [workKey('creator')]: [
+        {
+          [edgeKey('role')]: [
+            { '@value': 'fotograaf' },
+            { '@id': 'http://www.wikidata.org/entity/Q33231' },
+          ],
+          [edgeKey('creator')]: [
+            { '@id': 'https://a/1', [personKey('sameAs')]: [{ '@id': RKD }] },
+          ],
+        },
+      ],
+    };
+    const entries = entriesOf(
+      projectDocument(tagged, work, searchSchema(work, person, weldableEdge)),
+    );
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0].role).toBe('fotograaf');
+  });
+
   it('treats the identity field as a tuple position', () => {
     // Nothing welds the identity field by name, but the flat companion
     // harvested from it is the leaf a weld uses to name the endpoint. An entry
