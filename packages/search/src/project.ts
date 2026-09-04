@@ -448,9 +448,10 @@ function referenceValues(
 
 /**
  * Project a text field. **Display** (when `output`) preserves *every* language
- * present – one label per language (accents preserved, untagged under `und`),
- * stored `index: false` so extra languages cost nothing – so a value in an
- * undeclared language still renders rather than collapsing to a bare IRI.
+ * present – one label per language, or every label of it for an `array` field
+ * (accents preserved, untagged under `und`), stored `index: false` so extra
+ * languages cost nothing – so a value in an undeclared language still renders
+ * rather than collapsing to a bare IRI.
  * **Search** (folded, when `searchable`) and **sort** (folded primary, when
  * `sortable`) stay on the declared `locales`, which drive the indexed, stemmed,
  * weighted fanout; a value in an undeclared language is not indexed. Absent
@@ -473,13 +474,28 @@ function applyText(
   field: TextField,
 ): void {
   if (field.output) {
-    // First value of each present language wins; a language absent from
-    // `locales` still lands as a display field (kept off the search index).
-    const seenLangs = new Set<string>();
+    // Every present language lands as a display field (kept off the search
+    // index), a language absent from `locales` included. `array` decides the
+    // shape, as it does for every other kind: a declared list keeps every
+    // value of a language, deduped; a single-valued field keeps the first.
+    const valuesPerLang = new Map<string, string[]>();
     for (const { lang, value } of values) {
-      if (!seenLangs.has(lang)) {
-        seenLangs.add(lang);
-        setString(document, displayFieldName(field, lang), value);
+      if (value === '') {
+        continue;
+      }
+      const langValues = valuesPerLang.get(lang);
+      if (langValues === undefined) {
+        valuesPerLang.set(lang, [value]);
+      } else {
+        langValues.push(value);
+      }
+    }
+    for (const [lang, langValues] of valuesPerLang) {
+      const name = displayFieldName(field, lang);
+      if (field.array === true) {
+        setArray(document, name, dedupe(langValues));
+      } else {
+        setString(document, name, langValues[0]);
       }
     }
   }

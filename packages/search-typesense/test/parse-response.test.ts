@@ -184,6 +184,43 @@ describe('parseSearchResponse', () => {
     expect(result.hits[1].document.title).toEqual({ nl: ['Andere'] });
   });
 
+  it('reconstructs every value of an array text field per language', () => {
+    const person: SearchType = {
+      name: 'Person',
+      class: 'https://example.org/Person',
+      fields: [
+        {
+          name: 'alternateName',
+          kind: 'text',
+          locales: ['nl', 'und'],
+          array: true,
+          output: true,
+        },
+      ],
+    };
+    const parsed = parseSearchResponse(
+      {
+        found: 1,
+        hits: [
+          {
+            document: {
+              id: 'https://p/1',
+              alternateName_und: ['Clermont en Chainaye', 'Lambert et Cie'],
+              alternateName_nl: ['Keramische Industrie'],
+            },
+          },
+        ],
+      },
+      person,
+      new Map(),
+      searchSchema(person),
+    );
+    expect(parsed.hits[0].document.alternateName).toEqual({
+      und: ['Clermont en Chainaye', 'Lambert et Cie'],
+      nl: ['Keramische Industrie'],
+    });
+  });
+
   it('resolves reference IRIs to labelled references, id-only when unlabelled', () => {
     expect(result.hits[0].document.publisher).toEqual([
       { id: 'https://org/1', label: { nl: ['Het Utrechts Archief'] } },

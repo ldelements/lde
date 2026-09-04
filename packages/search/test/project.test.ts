@@ -496,6 +496,47 @@ describe('projectDocument', () => {
     expect(document.title_search_nl).toBe('titel ondertitel');
   });
 
+  it('displays every value of a locale for an array text field, deduped', () => {
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/d/8',
+        [dsKey('alternateName')]: [
+          { '@value': 'Clermont en Chainaye' },
+          { '@value': 'Guillaume Lambert et Compagnie' },
+          { '@value': 'Clermont en Chainaye' },
+          { '@value': '' },
+          { '@language': 'nl', '@value': 'Keramische Industrie' },
+        ],
+      },
+      {
+        name: 'Dataset',
+        class: DATASET,
+        fields: [
+          {
+            name: 'alternateName',
+            path: dcterms.alternative.value,
+            kind: 'text',
+            locales: ['nl', 'und'],
+            array: true,
+            output: true,
+            searchable: { weight: 1 },
+          },
+        ],
+      },
+    );
+    // `array` decides the shape for text as for every other kind: every value
+    // of a language lands, not only the first, so what search finds displays.
+    // An empty literal is dropped, as it is for a single-valued field.
+    expect(document.alternateName_und).toEqual([
+      'Clermont en Chainaye',
+      'Guillaume Lambert et Compagnie',
+    ]);
+    expect(document.alternateName_nl).toEqual(['Keramische Industrie']);
+    expect(document.alternateName_search_und).toBe(
+      'clermont en chainaye guillaume lambert et compagnie clermont en chainaye',
+    );
+  });
+
   it('computes a derived field via derive, which may read earlier fields', () => {
     const document = projectDocument(
       {
