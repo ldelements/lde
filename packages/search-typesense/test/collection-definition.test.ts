@@ -237,6 +237,38 @@ describe('und-locale text', () => {
     ]);
   });
 
+  it('types the display field of an array text field as a list', () => {
+    const schema = buildCollectionDefinition(
+      {
+        name: 'Doc',
+        class: 'urn:example:Doc',
+        fields: [
+          {
+            name: 'alternateName',
+            kind: 'text',
+            locales: ['und'],
+            array: true,
+            output: true,
+            searchable: { weight: 1 },
+          },
+        ],
+      },
+      { collectionNameFor: () => 'docs' },
+    );
+    // `array` decides the shape for text as for every other kind: the display
+    // pattern holds every value of a language. The folded search companion is
+    // one string either way.
+    expect(schema.fields).toEqual([
+      {
+        name: 'alternateName_[^_]+',
+        type: 'string[]',
+        index: false,
+        optional: true,
+      },
+      { name: 'alternateName_search_und', type: 'string', optional: true },
+    ]);
+  });
+
   it('emits no display field for a search-only (non-output) text field', () => {
     const schema = buildCollectionDefinition(
       {
@@ -372,6 +404,45 @@ describe('surfaced inline references', () => {
       schema: searchSchema(creativeWork, mediaObject),
     });
   };
+
+  it('types a nested array text field’s display as a list', () => {
+    const person = defineSearchType({
+      name: 'Person',
+      fields: [
+        {
+          name: 'alternateName',
+          kind: 'text',
+          locales: ['und'],
+          array: true,
+          output: true,
+          path: 'https://schema.org/alternateName',
+        },
+      ],
+    });
+    const creativeWork = defineSearchType({
+      name: 'CreativeWork',
+      class: 'https://schema.org/CreativeWork',
+      fields: [
+        {
+          name: 'creator',
+          kind: 'reference',
+          output: true,
+          path: 'https://schema.org/creator',
+          ref: { typeName: 'Person', strategy: 'inline' },
+        },
+      ],
+    });
+    const collection = buildCollectionDefinition(creativeWork, {
+      collectionNameFor: () => 'works',
+      schema: searchSchema(creativeWork, person),
+    });
+    expect(collection.fields).toContainEqual({
+      name: 'creator.alternateName_[^_]+',
+      type: 'string[]',
+      index: false,
+      optional: true,
+    });
+  });
 
   it('stores a multi-valued inline reference as one nested object per referent', () => {
     const collection = definitionFor({ array: true });

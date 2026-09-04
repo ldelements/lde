@@ -99,7 +99,9 @@ export interface SearchFieldBase {
   /** Multi-valued: the field stores a list. Single-valued (the default) stores
    *  the FIRST value the graph carries, whatever their number – for every kind
    *  alike – so one declaration cannot mean a list to the projection and a
-   *  scalar to the collection definition and the API. */
+   *  scalar to the collection definition and the API. For localized `text`
+   *  the list is per language: an `array` field keeps every value of each
+   *  present language, a single-valued one the first of each. */
   readonly array?: boolean;
   /** Always present: a non-null scalar in the API output and
    *  a non-optional field in the engine index. Moot for arrays/booleans/`id`,

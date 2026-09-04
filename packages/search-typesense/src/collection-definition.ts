@@ -92,7 +92,8 @@ export interface CollectionDefinitionOptions {
  * size of the fields you search, facet or sort on – not the whole document.
  * This builder keeps that surface minimal: the `output` display labels land in
  * a single `index: false` regex field (`${name}_<lang>`, one value per present
- * language), kept on disk and read back only for a hit, so they cost no RAM;
+ * language, or every value of it as a `string[]` for an `array` field), kept
+ * on disk and read back only for a hit, so they cost no RAM;
  * only the folded `*_search_${locale}`, facet/reference and `*_sort_${locale}`
  * companions are indexed. Keeping retrieval-only fields un-indexed is the lever
  * for holding a large index’s RAM down.
@@ -273,12 +274,14 @@ function typesenseFields(
       // the folded `*_search` companions, so the display copies stay on disk and
       // off RAM (fetched only for a hit), accents preserved, and a language
       // outside `locales` still renders. This is the memory lever: RAM tracks
-      // the search surface, not the display text. Absent for a non-output field.
+      // the search surface, not the display text. Absent for a non-output
+      // field. An `array` field stores every value of a language, so its
+      // pattern is typed a list – `array` decides the shape for every kind.
       ...(displayPattern !== undefined
         ? [
             {
               name: displayPattern,
-              type: 'string',
+              type: typesenseValueType(field),
               index: false,
               optional: true,
             } satisfies CollectionFieldSchema,
@@ -582,10 +585,11 @@ function nestedLeafFields(
     if (pattern !== undefined) {
       // Display values are never indexed, whatever Roles the field declares:
       // search hits the folded companions below, so the display copies stay on
-      // disk with every language they carry.
+      // disk with every language they carry – every value of it for an
+      // `array` field.
       fields.push({
         name: nestedFieldName(prefix, pattern),
-        type: 'string',
+        type: typesenseValueType(field),
         index: false,
         optional: true,
       });

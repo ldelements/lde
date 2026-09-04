@@ -1024,6 +1024,9 @@ function logicalValue(
  * recovers languages outside the declared `locales` too – a value tagged in an
  * undeclared language, or untagged (`und`), still reconstructs rather than being
  * dropped.
+ *
+ * A display field holds one string for a plain field, or a list of them for an
+ * `array` field.
  */
 function localizedValue(
   flat: Record<string, unknown>,
@@ -1031,12 +1034,15 @@ function localizedValue(
 ): LocalizedValue | undefined {
   const map: Record<string, readonly string[]> = {};
   for (const [key, value] of Object.entries(flat)) {
-    if (typeof value !== 'string') {
+    const lang = displayLangOf(field, key);
+    if (lang === undefined) {
       continue;
     }
-    const lang = displayLangOf(field, key);
-    if (lang !== undefined) {
-      map[lang] = [value];
+    const values = (Array.isArray(value) ? value : [value]).filter(
+      (entry): entry is string => typeof entry === 'string',
+    );
+    if (values.length > 0) {
+      map[lang] = values;
     }
   }
   return Object.keys(map).length > 0 ? map : undefined;

@@ -184,7 +184,8 @@ document on disk), so RAM tracks the _indexed_ surface – roughly 2–3× the s
 of the fields you search, facet or sort on – not the full document.
 `buildCollectionDefinition` keeps that surface minimal: the `output` display
 labels land in one `index: false` regex field (`${name}_<lang>`, one value per
-present language), stored on disk and fetched only for a hit, so they cost no RAM
+present language, or every value of it as a `string[]` for an `array` field),
+stored on disk and fetched only for a hit, so they cost no RAM
 and preserve every language; only the folded `*_search_${locale}`,
 facet/reference and `*_sort_${locale}` companions are indexed. Keeping
 retrieval-only fields un-indexed is the lever for holding a large index’s RAM

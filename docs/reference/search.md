@@ -309,8 +309,11 @@ outside it leaves the field absent, as any unparseable value does.
 `array` field stores a list, and a single-valued one stores the first value –
 for every kind alike, so the projection, the engine collection definition
 (`string` vs `string[]`) and the API output type never describe one declaration
-differently. Declare `array: true` wherever the source may carry several values
-you want to keep, including on an internal field a `derive` counts.
+differently. For localized `text` the list is per language: an `array` field
+keeps every value of each present language, a single-valued one the first of
+each, while search folds every value either way. Declare `array: true` wherever
+the source may carry several values you want to keep, including on an internal
+field a `derive` counts.
 
 A `reference` carries one of three strategies, which decide how much of the
 referent it carries and therefore what it surfaces as:
