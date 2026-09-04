@@ -1,3 +1,168 @@
+## 0.27.0 (2026-09-04)
+
+### 🩹 Fixes
+
+- ⚠️  **search:** fan out a qualified edge into one entry per tuple ([#801](https://github.com/ldelements/lde/pull/801))
+
+### ⚠️  Breaking Changes
+
+- **search:** fan out a qualified edge into one entry per tuple  ([#801](https://github.com/ldelements/lde/pull/801))
+  a nested field may no longer declare both “filterable” and
+  “array”; searchSchema refuses it. Declare the leaf single-valued – the
+  projection now emits one entry per combination.
+  * fix(search): type a nested identity companion by the arity of its path
+  Three defects found reviewing the fan-out, two of them introduced by it and
+  each invisible without a live engine.
+  - restore the already-a-list case when widening a nested leaf. Only Reference
+    Types are held to the single-valued rule, and the same path declares the
+    fields of the Root Type a local lookup nests, where array and filterable meet
+    on an ordinary facet – the leaf was emitted with no type at all, which the
+    engine refuses outright
+  - declare a nested identity companion by what its path yields rather than
+    always as a list. Under a single-valued edge the parent is an object, nothing
+    flattens, and Typesense rejects the scalar the projection writes against a
+    declared list: the whole import fails
+  - expand every tuple the cap keeps. Stopping mid-expansion left the remaining
+    weldable leaves holding their lists, and a single-valued leaf then kept the
+    first value and dropped the rest – losing data quietly rather than fanning it
+    out
+  Two existing tests asserted the arity rule inverted, stating that a companion is
+  always a list and that a single value is what the engine rejects. A live import
+  says the opposite, so both now read the other way.
+  An identity on a Reference Type's field is already refused, and a nested
+  filterable lookup can no longer be an array, so a nested companion never holds
+  more than one id; no change was needed there. The entry budget is per node
+  carrying the reference rather than per document, so nested edges compound it –
+  documented rather than changed.
+  * docs(search): record what a companion's declared type follows, and the arity 30.2 will not weld
+  Two limitations found verifying the fan-out against a live engine, neither
+  visible from a collection definition alone.
+  - a nested identity companion is typed by the path that reaches it rather than
+    by what one entry holds, and Typesense enforces that wherever nothing widens
+    the path
+  - the weld hangs on 30.2 against a single-valued edge whatever its leaves hold,
+    which is a different defect from the array one and is not addressed by fanning
+    out. It costs nothing today, because a qualified relation is multi-valued by
+    nature
+  * fix(search): decide nesting from where a node is projected, not from its type
+  A Root Type reached by a local lookup is nested exactly as a Reference Type is;
+  it just happens to have a collection of its own elsewhere. Reading that from the
+  type made the projection treat a locally-nested root as a root, so it wrote a
+  list where the collection declared a single value – and Typesense rejects the
+  document at import, for every document carrying such a reference.
+  - thread the nesting flag from the call site into projectFields, rather than
+    deriving it from whether the declaring type declares a class
+  - declare a nested identity companion by both routes to a list, the field's own
+    array as well as a flattening ancestor, as every sibling declaration in that
+    function already does
+  - reject a maxEntries that is not a positive integer. The budget is counted off
+    one entry at a time, so a fractional or non-positive cap is never reached and
+    the fan-out grows with the data – the unbounded case the cap exists to
+    prevent. Compare with >= rather than ==, so no cap can be stepped over
+  - export DEFAULT_MAX_ENTRIES beside DEFAULT_LABEL_FIELD, and state the number in
+    the option's own documentation, so the default is legible without it
+  Left alone deliberately: a single-valued inline reference still fans out up to
+  the full budget before keeping one entry. Capping it at one would change which
+  entry survives when the first projects empty, and the waste is bounded.
+  * fix(search): spend the fan-out budget only on what fans out, and on what survives
+  Three ways the entry budget took data it was never meant to touch, each verified
+  against the projection before and after.
+  - cap only a reference that CAN fan out. The budget bounds the multiplication
+    this decision introduces, but it was applied to every inline reference: a
+    display-only nesting of 300 entries silently became 100, shortening a list
+    that has always been stored whole
+  - charge it against the entries that SURVIVE, not the framed values considered.
+    A run of values the reference type reads nothing from – dirty source data,
+    which the emptiness filter exists for – spent the budget and left the real
+    referents behind them with nowhere to go, dropping the reference entirely
+  - narrow a nested companion only where fan-out underwrites it. An identity is
+    earned by filterable OR facetable, and only a weldable leaf is ever split, so
+    a facetable-only companion kept its first id and dropped the rest – silently,
+    because the collection declared it a single value too
+  The declared type follows the same rule, so the two agree again.
+  Also drop an unreachable guard: tuplesOf is handed what remains of the budget
+  and never returns more, so the inner loop cannot overshoot it.
+  The ADR claimed entries past the cap are “dropped and reported”. There is no
+  reporting channel and inventing one for data that should never arise is not
+  worth the seam, so it now says the drop is silent, that truncation follows
+  declaration order rather than being representative, and why a local lookup is
+  uncapped.
+  * refactor(search): drop the entry cap, which guarded the wrong end
+  The fan-out needs a bound – a cartesian product over an edge's own values is no
+  bound at all – but capping the entries a document stores is not it. By the time
+  the projection runs every cost has been paid: the CONSTRUCT matched those values
+  and the endpoint paid for it, they crossed the wire, the subject index holds
+  them, and framing has materialised them into one node. Capping the product
+  declines the last and cheapest step while keeping all the expensive ones, and
+  bounds nothing framing did not already hold.
+  It also missed the case that predates fan-out entirely: a wide edge, or a
+  display-only nesting of ten thousand entries, is linear rather than
+  multiplicative and was never bounded either.
+  - remove maxEntries, its default, its validation and its export
+  - remove the budget from the projection, and with it the survivor-charging and
+    part-way expansion the cap alone made necessary
+  - record in ADR 26 why the bound belongs at the framing seam instead, and that
+    the fan-out is unbounded until it lands
+  The bound is tracked separately, where it can be decided on its own evidence:
+  capping values per leaf where they enter memory makes the product k^(weldable
+  leaves), and leaf count is a schema constant – a bound in the schema's own units
+  rather than a number written against the data's.
+  Lower the branch threshold by 0.01 to match: the tests that raised it existed
+  only to exercise the cap, and the code they covered has gone with it.
+  * fix(search): treat an inline reference's identity field as a tuple position
+  Nothing welds the identity field by name, so fan-out passed over it – but the
+  flat companion harvested FROM it is the leaf a weld uses to name the endpoint.
+  An entry whose identity field held three ids therefore stood for three
+  endpoints at once, and the companion kept the first and dropped the rest: a
+  filter on either of the others missed a document that genuinely carried it,
+  with the entry beside it still listing all three.
+  The same tuple problem the fan-out exists to remove, one field further in, so
+  it takes the same answer: the identity field is a tuple position like any
+  weldable leaf, and multiplicity moves to the entry list. Three endpoints now
+  make three entries holding one endpoint each, and every id stays reachable.
+  This is what the narrowing in setIdentity always assumed. It justified itself
+  with "fan-out splits weldable leaves only", which was true of `filterable`
+  fields and not of the one the companion actually reads.
+  * fix(search): dedupe fanned entries, and say what a single-valued edge drops
+  Fan-out splits RAW framed values, and two distinct ones can still collapse
+  downstream – a transform mapping two spellings onto one canonical value, or a
+  keyed target re-keying two referent IRIs to the same document key. Before
+  fan-out those values met inside one entry and were deduped there; split across
+  entries they reached the index and the API as byte-identical duplicates.
+  - dedupe the projected entries by content, restoring the guarantee the
+    pre-fan-out shape had
+  - document what a single-valued edge now drops. It stores one entry, so an edge
+    the graph gave two endpoints indexes the first where the old single entry
+    listed both. The old shape was never answerable by a weld, so this is the
+    ordinary single-valued rule meeting data that outgrew the declaration – but it
+    changes what a filter matches, and nothing can refuse it at startup because
+    the declaration is only wrong once the data has more than one value
+  - correct the justification shared by setIdentity and nestedIdentityFields.
+    Both claimed a facetable-only identity is never split, which stopped being
+    true when the identity field became a tuple position: it is always split, and
+    `filterable` decides only whether the companion is worth the narrower declared
+    type. The arity was right; the reason given for it was not
+  Also fixes the reference docs promising that nothing is dropped, which held only
+  for an array edge, and counting two consequences before listing three."
+  A	docs/decisions/0026-fan-out-a-qualified-edge-into-one-entry-per-tuple.md
+  M	docs/reference/search.md
+  M	packages/search-pipeline/test/extraction-roundtrip.integration.test.ts
+  M	packages/search-pipeline/test/extraction.test.ts
+  M	packages/search-pipeline/test/nested-fanout.integration.test.ts
+  M	packages/search-typesense/src/collection-definition.ts
+  M	packages/search-typesense/test/qualified-relation.test.ts
+  A	packages/search-typesense/test/welded-filter.integration.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/src/project.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/test/qualified-relation.test.ts
+  M	packages/search/test/schema.test.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.30.0
+- Updated @lde/search to 0.25.0
+
 ## 0.26.4 (2026-09-04)
 
 ### 🧱 Updated Dependencies
