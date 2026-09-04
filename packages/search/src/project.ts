@@ -909,8 +909,15 @@ function tuplesOf(
   if (!isInlineReference(field)) {
     return [node];
   }
+  // `filterable` names the leaves a weld can condition on directly. The
+  // reference's `identity` field joins them: nothing welds it by name, but the
+  // flat companion harvested FROM it is the leaf a weld uses to name the
+  // endpoint ({@link applyIdentityCompanion}). An entry whose identity field
+  // holds three ids stands for three endpoints at once – the same tuple
+  // problem, one field further in – so it is a tuple position like any other.
+  const identity = field.ref.identity;
   const weldable = nestedType.fields
-    .filter((nested) => nested.filterable === true)
+    .filter((nested) => nested.filterable === true || nested.name === identity)
     .map((nested) => irAlias(nestedType, nested))
     // A leaf the frame carries at most one value for is already a tuple
     // position; splitting it would copy the node to no purpose.

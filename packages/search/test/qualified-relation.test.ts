@@ -274,6 +274,79 @@ describe('fanning an edge out into one entry per tuple', () => {
     expect(entries[0].note).toEqual(['gesigneerd', 'ovaal']);
   });
 
+  it('treats the identity field as a tuple position', () => {
+    // Nothing welds the identity field by name, but the flat companion
+    // harvested from it is the leaf a weld uses to name the endpoint. An entry
+    // whose identity field holds three ids stands for three endpoints at once –
+    // the same tuple problem, one field further in – and the companion would
+    // otherwise keep the first and drop the rest, silently.
+    const endpointEdge = defineSearchType({
+      name: 'CreatorEdge',
+      fields: [
+        {
+          name: 'creator',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}creator`,
+          // Multi-valued, and NOT filterable – so only its role as the
+          // reference's identity makes it a tuple position.
+          array: true,
+          output: true,
+          ref: { strategy: 'lookup', target: 'Person' },
+        },
+      ],
+    });
+    const identityWork = defineSearchType({
+      name: 'Work',
+      class: `${SCHEMA_ORG}CreativeWork`,
+      fields: [
+        {
+          name: 'creator',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}creator`,
+          array: true,
+          output: true,
+          filterable: true,
+          ref: {
+            strategy: 'inline',
+            typeName: 'CreatorEdge',
+            identity: 'creator',
+          },
+        },
+      ],
+    });
+    const threeEndpoints = {
+      '@id': 'https://ex/work/14',
+      [workKey('creator')]: [
+        {
+          [edgeKey('creator')]: [
+            { '@id': 'https://a/1' },
+            { '@id': 'https://a/2' },
+            { '@id': 'https://a/3' },
+          ],
+        },
+      ],
+    };
+    const document = projectDocument(
+      threeEndpoints,
+      identityWork,
+      searchSchema(identityWork, person, endpointEdge),
+    );
+    const entries = entriesOf(document);
+
+    // One endpoint per entry, and every id still reachable.
+    expect(entries).toHaveLength(3);
+    expect(entries.map((entry) => entry.creator)).toEqual([
+      ['https://a/1'],
+      ['https://a/2'],
+      ['https://a/3'],
+    ]);
+    expect(document.creator_id).toEqual([
+      'https://a/1',
+      'https://a/2',
+      'https://a/3',
+    ]);
+  });
+
   it('does not fan a local lookup out over the endpoint’s own fields', () => {
     // A `local` lookup nests the endpoint's own Root Type, whose fields are
     // multi-valued for reasons of their own – `sameAs` here. Splitting on those
