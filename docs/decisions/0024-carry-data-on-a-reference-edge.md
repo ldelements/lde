@@ -137,7 +137,7 @@ top-level one does (ADR 22).
 ### 3. A reference resolves where it can, and nests where it cannot
 
 Such a reference stores the endpoint’s locally-projected fields **always**, and
-overlays the resolved document when the lookup succeeds. One field then serves
+replaces it with the resolved document when the lookup succeeds. One field then serves
 both populations: an identified endpoint gets its id and the target’s own
 fields; an unidentified one gets the fields the referring document states, and
 no id.

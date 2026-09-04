@@ -78,7 +78,7 @@ const hits = {
         title_nl: 'Eerste',
         creator: [
           {
-            // Stated in another language than the target's record, plus a
+            // Stated in another language than the target’s record, plus a
             // field that record does not carry: what a merge would leak.
             role: 'etser',
             creator: {
@@ -235,7 +235,7 @@ describe('an edge that is single-valued and stores a bare id', () => {
 describe('an edge whose endpoint is itself multi-valued', () => {
   // A relation qualified once but reaching several endpoints – a joint
   // attribution, say. The entry then holds a LIST of endpoint documents, which
-  // both the id collection and the overlay have to read as one.
+  // both the id collection and the resolution have to read as one.
   const jointEdge = defineSearchType({
     name: 'CreatorEdge',
     fields: [
@@ -311,7 +311,7 @@ describe('an edge whose endpoint is itself multi-valued', () => {
     });
     const [entry] = entriesOf(result.hits[0]);
 
-    // The one that resolved is overlaid; the one that did not keeps what the
+    // The one that resolved is replaced by its document; the other keeps what the
     // work stated. Both stay in the entry, in order.
     expect(entry.creator).toEqual([
       { id: 'https://p/1', label: { nl: ['Eerste'] } },
@@ -368,7 +368,7 @@ describe('resolving a lookup inside an edge', () => {
     const [identified] = entriesOf(result.hits[1]);
 
     // The authoritative record is all there is: neither the `und` name this
-    // work published nor the `deathDate` the target's record lacks survives,
+    // work published nor the `deathDate` the target’s record lacks survives,
     // so the reference cannot disagree with the document it resolves to.
     expect(identified.creator).toEqual({
       id: 'https://p/1',
