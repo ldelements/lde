@@ -274,6 +274,50 @@ describe('fanning an edge out into one entry per tuple', () => {
     expect(entries[0].note).toEqual(['gesigneerd', 'ovaal']);
   });
 
+  it('does not emit two entries for values that collapse to one', () => {
+    // Fan-out splits RAW framed values, but a `transform` can map two of them
+    // onto the same stored value. Before fan-out they met inside one entry and
+    // were deduped there; split across entries they would reach the index and
+    // the API as byte-identical duplicates.
+    const canonicalising = defineSearchType({
+      name: 'CreatorEdge',
+      fields: [
+        {
+          name: 'role',
+          kind: 'keyword',
+          path: `${SCHEMA_ORG}name`,
+          output: true,
+          filterable: true,
+          transform: (value: string) => value.toLowerCase(),
+        },
+        {
+          name: 'creator',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}creator`,
+          output: true,
+          ref: { strategy: 'lookup', target: 'Person', local: true },
+        },
+      ],
+    });
+    const spelled = {
+      '@id': 'https://ex/work/15',
+      [workKey('creator')]: [
+        {
+          [edgeKey('role')]: [{ '@value': 'Etser' }, { '@value': 'etser' }],
+        },
+      ],
+    };
+    const entries = entriesOf(
+      projectDocument(
+        spelled,
+        work,
+        searchSchema(work, person, canonicalising),
+      ),
+    );
+
+    expect(entries).toEqual([{ role: 'etser' }]);
+  });
+
   it('treats the identity field as a tuple position', () => {
     // Nothing welds the identity field by name, but the flat companion
     // harvested from it is the leaf a weld uses to name the endpoint. An entry

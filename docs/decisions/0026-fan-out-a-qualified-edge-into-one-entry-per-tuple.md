@@ -118,8 +118,17 @@ Fan-out happens on the **framed node**, before the entry is projected, so each
 leaf passes through `transform`, folding and the facet companion exactly as a
 single-valued field always has. Nothing downstream learns a new shape.
 
-Nothing is dropped: the four entries carry what the two arrays carried. What
-changes is that each one now answers the weld.
+Nothing is dropped **where the reference is `array`**: the four entries carry
+what the two arrays carried, and each one now answers the weld.
+
+A single-valued reference is the exception, and worth stating plainly. It stores
+one entry, so an edge the graph gave two endpoints indexes the first and drops
+the second – where before fan-out the single entry listed both. The old shape
+was not answerable by a weld (that is the whole tuple problem), so this is the
+ordinary single-valued rule meeting data that outgrew the declaration rather
+than a new kind of loss. It cannot be refused at startup, because the
+declaration is only wrong once the data has more than one value. A qualified
+relation is multi-valued by nature, so declare the edge `array: true`.
 
 ### 3. Language variants are labels, not values
 

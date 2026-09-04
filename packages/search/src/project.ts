@@ -775,10 +775,12 @@ function setIdentity(
   field: ReferenceField,
   nested: boolean,
 ): void {
-  // `filterable` is the whole condition: fan-out splits weldable leaves only
-  // (`tuplesOf`), so that is the only case where an entry is guaranteed to hold
-  // one id. An identity may also be earned by `facetable` alone, which nothing
-  // splits – narrowing there would silently keep the first id and drop the rest.
+  // `filterable` is the whole condition, and it is about the COMPANION rather
+  // than about the split. `tuplesOf` splits the identity field whatever Role
+  // earned it, so an entry holds one id either way – but only a `filterable`
+  // reference has a weld to serve, and only there is the single value worth the
+  // narrower declared type the collection then matches. A `facetable`-only
+  // companion stays a list, which is what a facet reads.
   if (!nested || field.array === true || field.filterable !== true) {
     setArray(document, name, ids);
     return;
@@ -862,11 +864,18 @@ function applyNestedReferents(
     // Nesting it would hand the writer a content-free document – and, for a
     // single-valued reference, let it win the slot over a real referent.
     .filter((referent) => Object.keys(referent).length > 0);
-  if (referents.length === 0) {
-    return referents;
+  // Fan-out splits RAW framed values, and two distinct ones can still collapse
+  // downstream – a `transform` mapping two spellings onto one canonical value,
+  // or a keyed target re-keying two referent IRIs to the same document key. The
+  // pre-fan-out shape deduped, because those values met inside one entry and
+  // `applyFacet` deduped them there; split across entries they would reach the
+  // index and the API as byte-identical duplicates instead.
+  const distinct = dedupeBy(referents, (referent) => JSON.stringify(referent));
+  if (distinct.length === 0) {
+    return distinct;
   }
-  document[field.name] = field.array === true ? referents : referents[0];
-  return referents;
+  document[field.name] = field.array === true ? distinct : distinct[0];
+  return distinct;
 }
 
 /**
@@ -1073,6 +1082,19 @@ function setNumber(
 
 function dedupe(values: readonly string[]): string[] {
   return [...new Set(values)];
+}
+
+/** Keep the first of each distinct `key`, in order. */
+function dedupeBy<T>(values: readonly T[], key: (value: T) => string): T[] {
+  const seen = new Set<string>();
+  return values.filter((value) => {
+    const identity = key(value);
+    if (seen.has(identity)) {
+      return false;
+    }
+    seen.add(identity);
+    return true;
+  });
 }
 
 function setString(

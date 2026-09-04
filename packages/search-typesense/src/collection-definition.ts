@@ -548,9 +548,11 @@ function nestedIdentityFields(
       // locally-nested Root Type is not weldable and still harvests a list.
       // Getting either route wrong rejects the document at import: Typesense
       // enforces the declared arity wherever nothing widens the path.
-      // `filterable` is what makes an entry hold exactly one id: fan-out splits
-      // weldable leaves only. An identity earned by `facetable` alone is never
-      // split, so its entries still harvest a list.
+      // `filterable` is the condition because it is what the projection writes
+      // a single id under, not because it decides the split: `tuplesOf` splits
+      // the identity field whatever Role earned it. A `facetable`-only
+      // companion is declared a list, which is what a facet reads and what the
+      // projection writes for it.
       type:
         flattensToArray || field.array === true || field.filterable !== true
           ? 'string[]'

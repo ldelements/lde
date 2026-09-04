@@ -557,9 +557,18 @@ combination**:
   { "role": "etcher", "creator_id": "p3" } ]
 ```
 
-Nothing is dropped, and each entry now answers the weld. Two consequences worth
-knowing when you declare an edge:
+Each entry now answers the weld, and on an `array` edge nothing is dropped – the
+four entries carry what the two lists carried. Four consequences worth knowing
+when you declare an edge:
 
+- **A single-valued edge keeps one entry, so fan-out narrows it.** Declared
+  without `array`, the reference stores the first entry and its companion
+  matches: an edge whose graph gives two endpoints now indexes one, where before
+  fan-out the single entry listed both. That is the ordinary single-valued rule
+  meeting a tuple – the two-endpoint entry was never answerable by a weld – but
+  it is a silent change of what a filter matches. Declare the edge `array: true`
+  wherever the graph may give it more than one value, which for a qualified
+  relation is nearly always.
 - A role stated once per language is **one** role, not two. Index its canonical
   IRI single-valued and resolve labels at the surface; declaring the label
   multi-valued makes fan-out emit an entry per language and splits one role
