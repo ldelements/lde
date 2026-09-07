@@ -122,6 +122,33 @@ describe('an edge that carries data and resolves a lookup', () => {
     expect(entries[1].role).toBe('auteur');
   });
 
+  it('gives an entry no id, however the graph named the edge', () => {
+    // A Reference Type is nested in its referrer and kept in no collection of
+    // its own, so an entry carries fields and no document key (ADR 24). The
+    // edge below IS a named node, and still gets none: nothing reads it – the
+    // collection declares an `id` for a locally-nested Root Type alone, and a
+    // weld names the flat companion beside the entry. Emitting it would make an
+    // entry's shape depend on whether a publisher minted an IRI for a
+    // relationship, which is arbitrary to a consumer.
+    const named = {
+      '@id': 'https://ex/work/17',
+      [workKey('creator')]: [
+        {
+          '@id': 'https://ex/work/17#production-role-1',
+          [edgeKey('role')]: [{ '@value': 'etser' }],
+        },
+      ],
+    };
+    const [entry] = entriesOf(projectDocument(named, work, schema));
+
+    expect(entry).not.toHaveProperty('id');
+    expect(entry.role).toBe('etser');
+    // The endpoint keeps its own, because a Root Type IS keyed in a collection
+    // and the lookup resolves against exactly that key.
+    const [resolved] = entriesOf(projectDocument(node, work, schema));
+    expect((resolved.creator as SearchDocument).id).toBe(RKD);
+  });
+
   it('re-keys an identified endpoint through the target’s key field', () => {
     // Stored as the key the Person collection files the document under, not as
     // the IRI the publisher minted – otherwise the lookup resolves nothing at
