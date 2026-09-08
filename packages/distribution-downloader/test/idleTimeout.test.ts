@@ -30,15 +30,16 @@ describe('LastModifiedDownloader idle timeout', () => {
       pendingResponses.push(response);
       response.writeHead(200);
       if (request.url === '/trickle') {
-        // Ten chunks 20 ms apart: 200 ms in total, never idle for long.
+        // Twenty chunks 50 ms apart: 1 s in total, never idle for long. The
+        // margins are wide because CI runners run many test suites at once.
         let chunksSent = 0;
         const interval = setInterval(() => {
           response.write('chunk ');
-          if (++chunksSent === 10) {
+          if (++chunksSent === 20) {
             clearInterval(interval);
             response.end();
           }
-        }, 20);
+        }, 50);
       } else {
         // One chunk, then silence.
         response.write('partial');
@@ -59,10 +60,10 @@ describe('LastModifiedDownloader idle timeout', () => {
 
   it('completes a slow download whose total time exceeds the timeout', async () => {
     await downloader.download(serverDistribution('/trickle'), serverFile, {
-      timeout: 100,
+      timeout: 500,
     });
 
-    expect(await fs.readFile(serverFile, 'utf8')).toBe('chunk '.repeat(10));
+    expect(await fs.readFile(serverFile, 'utf8')).toBe('chunk '.repeat(20));
   });
 
   it('aborts a stalled download and removes the partial file', async () => {
