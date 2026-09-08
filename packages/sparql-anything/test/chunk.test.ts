@@ -183,6 +183,29 @@ describe('chunk', () => {
     ]);
   });
 
+  // Writing 10,001 files takes a few seconds, so leave it room on a slow runner.
+  it(
+    'removes chunks past the 10,000th, whose index has five digits',
+    { timeout: 30_000 },
+    async () => {
+      const into = join(workDir, 'chunks');
+      const input = join(workDir, 'places.txt');
+      // One character per row keeps 10,001 rows small.
+      await writeFile(input, 'x\n'.repeat(10_001));
+      const firstPaths = await chunk(input, { rows: 1, into });
+      expect(firstPaths[10_000].endsWith('places-10000.txt')).toBe(true);
+
+      const secondPaths = await chunk(input, { rows: 5_000, into });
+
+      expect(secondPaths).toHaveLength(3);
+      expect((await readdir(into)).sort()).toEqual([
+        'places-0000.txt',
+        'places-0001.txt',
+        'places-0002.txt',
+      ]);
+    },
+  );
+
   it('refuses an extension without its leading dot', async () => {
     const input = await writeInput(2);
 

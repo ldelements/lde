@@ -146,8 +146,10 @@ async function removeChunksOf(
   extension: string,
   into: string,
 ): Promise<void> {
+  // Four digits or more: the index is padded to four, and grows past them
+  // from the 10,000th chunk on.
   const chunkFile = new RegExp(
-    `^${escapeForRegExp(name)}-\\d{4}${escapeForRegExp(extension)}$`,
+    `^${escapeForRegExp(name)}-\\d{4,}${escapeForRegExp(extension)}$`,
   );
   const entries = await readdir(into, { withFileTypes: true });
   await Promise.all(
