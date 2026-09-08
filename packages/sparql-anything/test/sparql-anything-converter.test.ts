@@ -32,6 +32,11 @@ interface FakeTaskRunnerOptions {
   missingOutputContaining?: string;
   /**
    * When set, chunks whose output path contains this get an `--output` that
+   * does not end in a newline, as a writer other than Jena’s might leave.
+   */
+  unterminatedOutputContaining?: string;
+  /**
+   * When set, chunks whose output path contains this get an `--output` that
    * cannot be inspected – a symlink to itself, which fails `stat` with ELOOP.
    */
   unreadableOutputContaining?: string;
@@ -93,6 +98,7 @@ class FakeTaskRunner implements TaskRunner<{ command: string }> {
     const {
       emptyOutputContaining,
       missingOutputContaining,
+      unterminatedOutputContaining,
       unreadableOutputContaining,
     } = this.options;
     if (matches(outputFile, missingOutputContaining)) {
@@ -105,7 +111,11 @@ class FakeTaskRunner implements TaskRunner<{ command: string }> {
     }
     await writeFile(
       path,
-      matches(outputFile, emptyOutputContaining) ? '' : `${outputFile}\n`,
+      matches(outputFile, emptyOutputContaining)
+        ? ''
+        : matches(outputFile, unterminatedOutputContaining)
+          ? outputFile
+          : `${outputFile}\n`,
     );
   }
 
@@ -386,8 +396,56 @@ describe('SparqlAnythingConverter', () => {
     // The FakeTaskRunner writes each chunk's output path as that file's
     // content, so the result reflects the order the chunks were processed.
     expect(await readFile(outputPath, 'utf-8')).toMatch(
-      /^sparql-anything-\S+\/output-0\.nt\n\nsparql-anything-\S+\/output-1\.nt\n\nsparql-anything-\S+\/output-2\.nt\n$/,
+      /^sparql-anything-\S+\/output-0\.nt\nsparql-anything-\S+\/output-1\.nt\nsparql-anything-\S+\/output-2\.nt\n$/,
     );
+  });
+
+  it('concatenates outputs byte for byte, as cat would', async () => {
+    const taskRunner = new FakeTaskRunner(workDir);
+    const chunks = await writeChunks(3);
+    const outputPath = join(workDir, 'output.nt');
+
+    await converterFor(taskRunner).convert(jobsFor(chunks), outputPath);
+
+    const outputs = taskRunner.commands.map(
+      (command) => `${tokenAfter(command, '--output')}\n`,
+    );
+    expect(await readFile(outputPath, 'utf-8')).toBe(outputs.join(''));
+  });
+
+  it('separates an output that does not end in a newline from the next', async () => {
+    const taskRunner = new FakeTaskRunner(workDir, {
+      unterminatedOutputContaining: 'output-0.nt',
+    });
+    const chunks = await writeChunks(2);
+    const outputPath = join(workDir, 'output.nt');
+
+    await converterFor(taskRunner).convert(jobsFor(chunks), outputPath);
+
+    expect(await readFile(outputPath, 'utf-8')).toMatch(
+      /^sparql-anything-\S+\/output-0\.nt\nsparql-anything-\S+\/output-1\.nt\n$/,
+    );
+  });
+
+  it('concatenates more than ten outputs without a listener leak warning', async () => {
+    const taskRunner = new FakeTaskRunner(workDir);
+    const chunks = await writeChunks(12);
+    const warnings: Error[] = [];
+    const onWarning = (warning: Error) => warnings.push(warning);
+    process.on('warning', onWarning);
+
+    try {
+      await converterFor(taskRunner).convert(
+        jobsFor(chunks),
+        join(workDir, 'output.nt'),
+      );
+      // Node emits process warnings on a later tick, so give them one.
+      await new Promise((resolve) => setImmediate(resolve));
+    } finally {
+      process.off('warning', onWarning);
+    }
+
+    expect(warnings).toEqual([]);
   });
 
   it('leaves nothing behind in the working directory', async () => {
@@ -540,7 +598,7 @@ describe('SparqlAnythingConverter', () => {
     }).convert([{ queryFile, chunks }], outputPath);
 
     expect(await readFile(outputPath, 'utf-8')).toMatch(
-      /^sparql-anything-\S+\/output-0\.nt\n\nsparql-anything-\S+\/output-1\.nt\n\nsparql-anything-\S+\/output-2\.nt\n$/,
+      /^sparql-anything-\S+\/output-0\.nt\nsparql-anything-\S+\/output-1\.nt\nsparql-anything-\S+\/output-2\.nt\n$/,
     );
   });
 

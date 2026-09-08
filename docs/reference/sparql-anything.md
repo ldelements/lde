@@ -159,4 +159,4 @@ For each chunk – or once, for a job that has none – the converter:
 
 Converting an empty list of jobs is an error rather than an empty output: a step that produced none has already failed.
 
-Finally, the `.nt` files are concatenated, in the order the jobs and their chunks were given, into the output path. The concatenation streams, so multi-gigabyte outputs do not have to fit in memory. N-Triples has no prefixes or document structure, so concatenating per-chunk files always yields a single valid document.
+Finally, the `.nt` files are concatenated, in the order the jobs and their chunks were given, into the output path. The concatenation streams, so multi-gigabyte outputs do not have to fit in memory, and it is byte for byte what `cat` would give: a newline is inserted only after a file that does not end in one, so two triples never share a line and no blank line is added between files. N-Triples has no prefixes or document structure, so concatenating per-chunk files always yields a single valid document.
