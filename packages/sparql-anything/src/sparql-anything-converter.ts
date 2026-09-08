@@ -1,7 +1,7 @@
 import { shellQuote, TaskRunner } from '@lde/task-runner';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
-import { finished, pipeline } from 'node:stream/promises';
+import { pipeline } from 'node:stream/promises';
 import { basename, join } from 'node:path';
 
 /** Placeholder in the query file that is replaced with each chunk's path. */
@@ -445,27 +445,37 @@ async function assertNonEmpty(
   }
 }
 
+/** The byte that ends an N-Triples line. */
+const NEWLINE = '\n'.charCodeAt(0);
+
 /**
  * Concatenates `inputPaths` into `outputPath`, streaming so multi-GB outputs do
  * not have to fit in memory. N-Triples has no prefixes or document structure, so
  * concatenating per-chunk files yields a single valid document.
+ *
+ * One pipeline over every input rather than one per input into a shared
+ * destination: each pipeline() leaves its listeners on the destination, and
+ * past ten of them Node warns of a leak.
  */
 async function concatenate(
   inputPaths: string[],
   outputPath: string,
 ): Promise<void> {
-  const output = createWriteStream(outputPath);
-  for (const [index, inputPath] of inputPaths.entries()) {
-    // A newline between files, in case one does not end in one: N-Triples
-    // tolerates the blank line, but not two triples sharing a line.
-    if (index > 0) {
-      output.write('\n');
+  await pipeline(async function* () {
+    let endsInNewline = true;
+    for (const inputPath of inputPaths) {
+      // A newline between files only when one does not end in one, so the
+      // result is byte for byte what `cat` gives: N-Triples tolerates a blank
+      // line, but not two triples sharing a line.
+      if (!endsInNewline) {
+        yield '\n';
+      }
+      for await (const chunk of createReadStream(
+        inputPath,
+      ) as AsyncIterable<Buffer>) {
+        yield chunk;
+        endsInNewline = chunk.at(-1) === NEWLINE;
+      }
     }
-    await pipeline(createReadStream(inputPath), output, { end: false });
-  }
-  output.end();
-  // pipeline() with `end: false` resolves once the source ends, not once the
-  // destination is flushed and closed, so await that before reporting success.
-  // On an earlier rejection pipeline() has already destroyed the stream.
-  await finished(output);
+  }, createWriteStream(outputPath));
 }
