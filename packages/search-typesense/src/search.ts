@@ -1052,9 +1052,11 @@ function localizedValue(
  * Rebuild a surfaced inline reference from the nested object(s) the engine
  * stored: one {@link NestedDocument} per referent, each carrying its Reference
  * Type’s own output fields – so a multi-valued reference keeps every referent’s
- * values grouped rather than smeared across parallel arrays. `id` is carried
- * only when the referent had one; a blank-node referent nests without it, since
- * a nested document is read, not addressed. A nested reference type may itself
+ * values grouped rather than smeared across parallel arrays. An entry of a
+ * Reference Type carries no `id` – a nested document is read, not addressed –
+ * so the one read back here belongs to a {@link ReferenceStrategy.local local}
+ * lookup's Root Type, whose collection files it under that key. A nested
+ * reference type may itself
  * surface an inline reference, which recurses through {@link reconstructDocument}.
  */
 function nestedValue(

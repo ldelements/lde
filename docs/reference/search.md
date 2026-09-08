@@ -381,12 +381,20 @@ is indexed. So a schema can nest ten fields for display and index one, and pay
 for the one.
 
 A referent needs no identity of its own: the nesting carries its fields, not a
-document key. A blank-node referent – whose `@id` JSON-LD 1.1 framing prunes –
-nests exactly like a named one, minus the `id`, so a profile that allows a blank
-node here needs no flattening workaround. A blank node label (`_:b0`) never
-becomes that `id`: framing mints it per call. Only a root, which is keyed, must
-be an IRI. Fields are what make a referent, so a value that projects none – a
-literal under the reference’s alias, say – nests nothing.
+document key. An entry of a Reference Type carries **no `id` at all** – named
+node or blank – because nothing resolves an entry by key: it is kept in no
+collection, a weld names the flat identity companion beside it, and an entry's
+own key answers no query. So a profile that allows a blank node here needs no
+flattening workaround, and an entry's shape never depends on whether a publisher
+minted an IRI for the thing it describes.
+
+A `local` lookup is the exception, because it
+nests a **Root Type**: there the `id` is the key that type's own collection files
+the referent under, and the lookup resolves against exactly it. Only a keyed
+document has an id, and it must be an IRI – a blank node label (`_:b0`) never
+becomes one, since framing mints it per call. Fields are what make a referent,
+so a value that projects none – a literal under the reference's alias, say –
+nests nothing.
 
 So RDF depth and API shape stay independent: inline as deep as the source
 demands, expose exactly the flat fields you want. Framing follows the inline
