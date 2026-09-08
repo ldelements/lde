@@ -2,7 +2,7 @@ import { shellQuote, TaskRunner } from '@lde/task-runner';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { pipeline } from 'node:stream/promises';
-import { basename, join } from 'node:path';
+import { basename, isAbsolute, join } from 'node:path';
 
 /** Placeholder in the query file that is replaced with each chunk's path. */
 const SOURCE_PLACEHOLDER = '{SOURCE}';
@@ -167,7 +167,9 @@ export class SparqlAnythingConverter<Task> {
    *
    * `queryFile` is read here, so it must be readable by this process; the chunk
    * and `load` paths are passed to SPARQL Anything as given, so those must be
-   * readable by the task runner.
+   * readable by the task runner. `load` is the one input SPARQL Anything does
+   * not fail on when it is missing, so it is checked here first, where a
+   * relative path resolves against `workDir` on both sides.
    *
    * Jobs of different shapes belong in one call: they are run by one converter,
    * so a long job and a short one pack together instead of draining in phases.
@@ -178,7 +180,7 @@ export class SparqlAnythingConverter<Task> {
         'Cannot convert without jobs; a run that produced none has failed upstream, and an empty output would hide that',
       );
     }
-    const planned = await plan(jobs);
+    const planned = await plan(jobs, this.workDir);
     // A fresh directory per run: a previous run's output left in place would
     // otherwise satisfy the non-empty check below with stale triples.
     const runDir = await mkdtemp(join(this.workDir, 'sparql-anything-'));
@@ -246,7 +248,7 @@ export class SparqlAnythingConverter<Task> {
 
   /** Converts one chunk, writing `output-<index>.nt` in the run directory. */
   private async convertChunk(
-    { index, job, chunk, query }: PlannedProcess,
+    { index, job, chunk, query, outputMayBeEmpty }: PlannedProcess,
     runDirName: string,
     state: RunState<Task>,
   ): Promise<void> {
@@ -277,7 +279,7 @@ export class SparqlAnythingConverter<Task> {
     } finally {
       state.inFlight.delete(task);
     }
-    await assertNonEmpty(join(this.workDir, output), job, chunk);
+    await checkOutput(join(this.workDir, output), job, chunk, outputMayBeEmpty);
     this.onChunkConverted?.({
       index: index + 1,
       total: state.total,
@@ -334,6 +336,8 @@ interface PlannedProcess {
   chunk?: string;
   /** The job's query as written, with `{SOURCE}` still in it. */
   query: string;
+  /** Whether an empty output is a result rather than a failure. */
+  outputMayBeEmpty: boolean;
 }
 
 /**
@@ -343,9 +347,9 @@ interface PlannedProcess {
  */
 function* processesOf(planned: PlannedJob[]): Generator<PlannedProcess> {
   let index = 0;
-  for (const { job, query } of planned) {
+  for (const { job, query, outputMayBeEmpty } of planned) {
     for (const chunk of job.chunks ?? [undefined]) {
-      yield { index: index++, job, chunk, query };
+      yield { index: index++, job, chunk, query, outputMayBeEmpty };
     }
   }
 }
@@ -373,6 +377,11 @@ interface PlannedJob {
   job: ConversionJob;
   /** The query as written, with `{SOURCE}` still in it. */
   query: string;
+  /**
+   * Whether an empty output is a result rather than a failure: true unless the
+   * job has a `load` this process could not see.
+   */
+  outputMayBeEmpty: boolean;
 }
 
 /**
@@ -388,10 +397,14 @@ interface PlannedJob {
  * through the placeholder, so either half on its own is a misconfiguration
  * that SPARQL Anything would report as a parse error, or not at all.
  */
-async function plan(jobs: ConversionJob[]): Promise<PlannedJob[]> {
+async function plan(
+  jobs: ConversionJob[],
+  workDir: string,
+): Promise<PlannedJob[]> {
   const planned: PlannedJob[] = [];
   for (const job of jobs) {
     const query = await readFile(job.queryFile, 'utf-8');
+    const outputMayBeEmpty = await checkLoad(job, workDir);
     const namesSource = query.includes(SOURCE_PLACEHOLDER);
     if (job.chunks === undefined) {
       if (namesSource) {
@@ -411,23 +424,77 @@ async function plan(jobs: ConversionJob[]): Promise<PlannedJob[]> {
         );
       }
     }
-    planned.push({ job, query });
+    planned.push({ job, query, outputMayBeEmpty });
   }
   return planned;
 }
 
 /**
- * Throws unless the job's output holds at least one byte. SPARQL Anything
- * exits 0 when it cannot read or parse an input: it logs the problem, writes an
- * empty output and stops. Without this guard a run stays green while its output
- * silently misses every triple of the chunk.
+ * Checks the job's `load` before any process runs, and says whether its
+ * outputs may be empty.
+ *
+ * A missing or unparseable chunk makes SPARQL Anything exit non-zero, which
+ * aborts the run on its own. A missing `--load` file does not: it logs the
+ * problem and runs the query anyway, with exit 0, so a query that reads only
+ * loaded data writes an empty output – the same as one whose FILTER matched
+ * nothing. Seeing the file from here resolves that: a relative path resolves
+ * against `workDir` for the runner as for this process, so one that is missing
+ * or empty fails now, naming the file. An absolute path is the runner's – under
+ * a container's mount, say – and one this process cannot find proves nothing,
+ * so the job's outputs then have to be non-empty.
  */
-async function assertNonEmpty(
+async function checkLoad(
+  job: ConversionJob,
+  workDir: string,
+): Promise<boolean> {
+  if (job.load === undefined) {
+    return true;
+  }
+  const size = await sizeOf(
+    isAbsolute(job.load) ? job.load : join(workDir, job.load),
+  );
+  if (size === undefined) {
+    if (isAbsolute(job.load)) {
+      return false;
+    }
+    throw new Error(
+      `Load file ‘${job.load}’ does not exist under ‘${workDir}’; a step that should have produced it has failed upstream`,
+    );
+  }
+  if (size === 0) {
+    throw new Error(
+      `Load file ‘${job.load}’ is empty; a step that produced it has failed upstream, and converting nothing would hide that`,
+    );
+  }
+  return true;
+}
+
+/**
+ * Throws when the process left no output, or an empty one where that cannot be
+ * told from a missing `--load` file (see {@link checkLoad}). Without this a
+ * run stays green while its output silently misses every triple of the job.
+ */
+async function checkOutput(
   outputPath: string,
   job: ConversionJob,
-  chunk?: string,
+  chunk: string | undefined,
+  outputMayBeEmpty: boolean,
 ): Promise<void> {
-  const size = await stat(outputPath).then(
+  const size = await sizeOf(outputPath);
+  const subject = `‘${job.queryFile}’${chunk === undefined ? '' : ` over ‘${chunk}’`}`;
+  if (size === undefined) {
+    throw new Error(`SPARQL Anything produced no output for ${subject}`);
+  }
+  if (size === 0 && !outputMayBeEmpty) {
+    throw new Error(
+      `SPARQL Anything produced no output for ${subject}, and its load file ‘${job.load}’ cannot be seen from here; a missing --load is the one input SPARQL Anything exits 0 on`,
+    );
+  }
+}
+
+/** The size of the file at `path` in bytes, or undefined when there is none. */
+async function sizeOf(path: string): Promise<number | undefined> {
+  return stat(path).then(
     (stats) => stats.size,
     (error: NodeJS.ErrnoException) => {
       // Anything but a missing file is a problem of its own, and reporting it
@@ -435,14 +502,9 @@ async function assertNonEmpty(
       if (error.code !== 'ENOENT') {
         throw error;
       }
-      return 0;
+      return undefined;
     },
   );
-  if (size === 0) {
-    throw new Error(
-      `SPARQL Anything produced no output for ‘${job.queryFile}’${chunk === undefined ? '' : ` over ‘${chunk}’`}; it exits successfully when it cannot read or parse an input`,
-    );
-  }
 }
 
 /** The byte that ends an N-Triples line. */
