@@ -99,6 +99,8 @@ Chunks of every job are converted through one pool, in the order the jobs and th
 
 The first failure aborts the run: no further chunk is started, and the processes still going are stopped rather than left writing into a directory the converter is about to delete. A process that cannot be stopped – one that has just exited, say – does not change what is reported: the conversion failure is the one worth reading.
 
+An interrupted run ends the same way. For as long as a conversion runs, the converter listens for `SIGINT` and `SIGTERM` – a Ctrl-C, or a CI job being cancelled – and on either it stops the processes still going, removes its run directory, and then lets the signal end the process as it would have anyway. Without that, the JVMs would outlive the process that started them: the task runner spawns each one in a process group of its own, which is what lets it stop them as a whole, but nothing would tell it to.
+
 > [!NOTE]
 > A `DockerTaskRunner` configured with a `containerName` runs one task at a time – the name is how other containers address it – so it rejects a second chunk rather than taking the name from the first. Leave `containerName` unset for a converter that runs chunks in parallel.
 
