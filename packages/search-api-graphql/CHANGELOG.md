@@ -1,3 +1,26 @@
+## 0.29.0 (2026-09-09)
+
+### 🩹 Fixes
+
+- ⚠️  **search:** let a derive read a Reference Type entry’s node IRI ([#843](https://github.com/ldelements/lde/pull/843))
+
+### ⚠️  Breaking Changes
+
+- **search:** let a derive read a Reference Type entry’s node IRI  ([#843](https://github.com/ldelements/lde/pull/843))
+  an edge type built from a Reference Type loses its `id`
+    field"
+  M	docs/reference/search.md
+  M	packages/search-api-graphql/src/build-schema.ts
+  M	packages/search-api-graphql/test/build-schema.test.ts
+  M	packages/search-api-graphql/vite.config.ts
+  M	packages/search/src/project.ts
+  M	packages/search/test/project.test.ts
+  M	packages/search/test/qualified-relation.test.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.27.0
+
 ## 0.28.0 (2026-09-09)
 
 ### 🧱 Updated Dependencies
