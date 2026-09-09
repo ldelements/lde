@@ -1,6 +1,7 @@
 import { Distribution } from '@lde/dataset';
 import filenamifyUrl from 'filenamify-url';
 import { dirname, join, resolve, sep } from 'node:path';
+import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { createWriteStream } from 'node:fs';
 import { access, mkdir, rm, stat } from 'node:fs/promises';
@@ -26,6 +27,17 @@ const noopLogger: Logger = {
 
 export interface DownloadOptions {
   logger?: Logger;
+  /**
+   * Idle timeout in milliseconds: the download is aborted when no bytes have
+   * arrived for this long, whether while waiting for the response headers or
+   * midway through the body. A large file that keeps flowing is never cut off,
+   * however long it takes. Defaults to 300 000 ms (5 minutes).
+   */
+  timeout?: number;
+  /**
+   * Cancels the download when aborted; the partial file is removed.
+   */
+  signal?: AbortSignal;
 }
 
 export interface DownloadResult {
@@ -64,30 +76,62 @@ export class LastModifiedDownloader implements Downloader {
       return { path: filePath, headers: new Headers() };
     }
 
-    const downloadResponse = await fetch(downloadUrl, {
-      signal: AbortSignal.timeout(300_000),
-    });
-    if (!downloadResponse.ok || !downloadResponse.body) {
-      throw new Error(
-        `Failed to download ${downloadUrl}: ${downloadResponse.statusText}`,
+    const idleTimeout = options?.timeout ?? 300_000;
+    const idleAbortController = new AbortController();
+    let idleTimer: NodeJS.Timeout | undefined;
+    const restartIdleTimer = () => {
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(
+        () =>
+          idleAbortController.abort(
+            new Error(`No data received for ${idleTimeout} ms`),
+          ),
+        idleTimeout,
       );
-    }
+    };
+    const signal =
+      options?.signal === undefined
+        ? idleAbortController.signal
+        : AbortSignal.any([options.signal, idleAbortController.signal]);
 
+    restartIdleTimer();
     try {
-      await mkdir(dirname(filePath), { recursive: true });
-      await pipeline(downloadResponse.body, createWriteStream(filePath));
-    } catch (error) {
-      await rm(filePath, { force: true });
-      throw new Error(`Failed to save ${downloadUrl} to ${filePath}: ${error}`);
-    }
+      const downloadResponse = await fetch(downloadUrl, { signal });
+      if (!downloadResponse.ok || !downloadResponse.body) {
+        throw new Error(
+          `Failed to download ${downloadUrl}: ${downloadResponse.statusText}`,
+        );
+      }
 
-    const stats = await stat(filePath);
-    if (stats.size <= 1) {
-      logger.debug(`Distribution download ${downloadUrl} is empty`);
-      throw new Error('Distribution download is empty');
-    }
+      try {
+        await mkdir(dirname(filePath), { recursive: true });
+        await pipeline(
+          downloadResponse.body,
+          new Transform({
+            transform(chunk, _encoding, callback) {
+              restartIdleTimer();
+              callback(null, chunk);
+            },
+          }),
+          createWriteStream(filePath),
+        );
+      } catch (error) {
+        await rm(filePath, { force: true });
+        throw new Error(
+          `Failed to save ${downloadUrl} to ${filePath}: ${error}`,
+        );
+      }
 
-    return { path: filePath, headers: downloadResponse.headers };
+      const stats = await stat(filePath);
+      if (stats.size <= 1) {
+        logger.debug(`Distribution download ${downloadUrl} is empty`);
+        throw new Error('Distribution download is empty');
+      }
+
+      return { path: filePath, headers: downloadResponse.headers };
+    } finally {
+      clearTimeout(idleTimer);
+    }
   }
 
   private async localFileIsUpToDate(
