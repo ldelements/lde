@@ -1,3 +1,37 @@
+## 0.26.0 (2026-09-09)
+
+### 🩹 Fixes
+
+- ⚠️  **search:** give a Reference Type's entries no id ([#832](https://github.com/ldelements/lde/pull/832))
+
+### ⚠️  Breaking Changes
+
+- **search:** give a Reference Type's entries no id  ([#832](https://github.com/ldelements/lde/pull/832))
+  a nested entry of a Reference Type no longer carries `id`. In a
+  GraphQL surface the emitted edge type loses its `id` field. Two entries that
+  differed only by the node IRI behind them now deduplicate into one, which is
+  what two statements of the same fact should be.
+  * docs(search): say that a nested entry has no id, in the three places that claimed otherwise
+  Dropping the id from a Reference Type's entries left three descriptions of the
+  contract it replaced, each still drawing a distinction that no longer exists –
+  that a named referent nests with an id and a blank one without.
+  - NestedDocument, the public result type a consumer reads. Its JSDoc would have
+    them write `entry.id` handling that can never fire for an inline reference
+  - the reference docs, which AGENTS.md makes the source of truth
+  - nestedValue, where reconstruction reads the id back. The code is right – the
+    id it finds belongs to a local lookup's Root Type – but the comment described
+    the old contract
+  Each now says the same thing: an entry of a Reference Type carries no id, and a
+  local lookup is the exception because it nests a Root Type, whose collection
+  files the referent under exactly that key."
+  M	docs/reference/search.md
+  M	packages/search-typesense/src/search.ts
+  M	packages/search/src/engine.ts
+  M	packages/search/src/project.ts
+  M	packages/search/test/project.test.ts
+  M	packages/search/test/qualified-relation.test.ts
+  M	packages/search/vite.config.ts
+
 ## 0.25.0 (2026-09-04)
 
 ### 🩹 Fixes
