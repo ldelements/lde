@@ -159,10 +159,13 @@ export type SearchValue =
  * values grouped together, so a multi-valued reference never degrades into
  * parallel arrays a consumer has to pair by index.
  *
- * `id` is present only when the referent is a named node: nesting carries the
- * referent’s fields, not a document key, so a blank-node referent nests exactly
- * like a named one, minus the `id`. Distinct from {@link Reference}, which is
- * what an `idOnly`/`labelOnly` reference carries – there the IRI *is* the value.
+ * **No `id`**: nesting carries the referent’s fields, not a document key, and a
+ * Reference Type is kept in no collection for a key to address it in. A named
+ * node and a blank one therefore nest alike. The exception is a
+ * {@link ReferenceStrategy.local local} lookup, which nests a Root Type – there
+ * the `id` is the key its own collection files the referent under, and the
+ * lookup resolves against it. Distinct from {@link Reference}, which is what an
+ * `idOnly`/`labelOnly` reference carries – there the IRI *is* the value.
  */
 export interface NestedDocument {
   readonly [field: string]: SearchValue | undefined;

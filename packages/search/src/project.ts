@@ -33,11 +33,11 @@ import {
 } from './schema.js';
 
 /**
- * A projected node: the fields of one {@link SearchType}, flat. A root always
- * carries the `id` that keys it – it is a {@link SearchDocument} – but an inline
- * referent carries one only when the referent is a named node: a nested document
- * is not a document key, so nesting needs the referent’s fields, not its
- * identity.
+ * A projected node: the fields of one {@link SearchType}, flat. A **Root Type**
+ * carries the `id` that keys it – as a root it is a {@link SearchDocument}, and
+ * nested by a {@link ReferenceStrategy.local local} lookup it is what the lookup
+ * resolves against. A **Reference Type** never does: it is kept in no collection,
+ * so nesting needs the referent’s fields and not its identity.
  */
 export type ProjectedNode = Record<string, unknown>;
 
@@ -195,6 +195,18 @@ function documentIdOf(
   node: FramedNode,
   searchType: SearchType,
 ): string | undefined {
+  // A Reference Type is nested inside its referrer and keyed in no collection
+  // of its own, so its entries carry no `id` – whether or not the graph happened
+  // to name the node. Nesting carries a referent's FIELDS, not a document key
+  // (ADR 24), and nothing reads one here: the collection declares an `id` for a
+  // locally-nested Root Type alone, a weld names the flat identity companion
+  // beside the entry, and an entry's own key answers no query. Emitting it made
+  // an entry's shape depend on whether a publisher minted an IRI for a
+  // relationship – arbitrary to a consumer, and a field the collection never
+  // declared.
+  if (searchType.class === undefined) {
+    return undefined;
+  }
   const nodeIri = documentKey(node);
   if (nodeIri === undefined || searchType.key === undefined) {
     return nodeIri;
@@ -654,7 +666,10 @@ function applyProjectionValue(
  * {@link ProjectedNode} for a single reference, an array for an `array` one.
  * A referent needs **no identity**: nesting carries its fields, not a document
  * key, so a blank-node referent – whose `@id` JSON-LD 1.1 framing prunes when its
- * label occurs once – nests exactly like a named one, minus the `id`.
+ * label occurs once – nests exactly like a named one. Neither carries an `id`:
+ * a Reference Type is kept in no collection, so nothing resolves an entry by
+ * key, and an entry's shape no longer depends on whether a publisher minted an
+ * IRI for the relationship ({@link documentIdOf}).
  * The referent is projected in full – internal fields included – so the
  * declaring type’s (or the reference type’s own) derives can read them;
  * {@link pruneInternalFields} then removes the internal fields from a *surfaced*

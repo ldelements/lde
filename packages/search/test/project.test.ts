@@ -967,10 +967,7 @@ describe('projectDocument', () => {
     );
 
     // The literal contributed no referent, so the real one takes the slot.
-    expect(document.creator).toEqual({
-      id: 'https://ex/c/3',
-      label_nl: 'Naam',
-    });
+    expect(document.creator).toEqual({ label_nl: 'Naam' });
   });
 
   it('skips an inline reference the given schema does not declare', () => {
@@ -1048,10 +1045,7 @@ describe('projectDocument', () => {
 
     // An output inline reference surfaces its referent as a nested Search
     // Document (its Reference Type’s projected fields), not a bare IRI.
-    expect(document.creator).toEqual({
-      id: 'https://ex/c/1',
-      label_nl: 'Naam',
-    });
+    expect(document.creator).toEqual({ label_nl: 'Naam' });
   });
 
   it('prunes an internal helper field from a surfaced (output) inline referent, after a derive reads it', () => {
@@ -1122,7 +1116,6 @@ describe('projectDocument', () => {
     const [referent] = document.creator as SearchDocument[];
     // The derive read the helper (sortLabel carries its value)…
     expect(referent).toMatchObject({
-      id: 'https://ex/c/2',
       label_nl: 'Naam',
       sortLabel: 'Alt',
     });
@@ -1473,7 +1466,9 @@ describe('projectRoots', () => {
   it('keeps blank-node and named referents of one inline reference side by side', async () => {
     // The reproduction from the field: a work whose media are one blank node
     // (an image) and one named node (a IIIF manifest). Each referent keeps its
-    // own values grouped; only the named one is keyed.
+    // own values grouped, and neither is keyed: a Reference Type is nested in
+    // its referrer rather than kept in a collection, so nesting carries a
+    // referent's fields and never a document key (ADR 24).
     const mediaObject = defineSearchType({
       name: 'MediaObject',
       fields: [
@@ -1534,10 +1529,7 @@ describe('projectRoots', () => {
           // Single-valued by declaration → the IRI itself.
           thumbnailUrl: 'https://ex/thumb.jpg',
         },
-        {
-          id: 'https://ex/iiif/manifest',
-          encodingFormat: ['application/ld+json'],
-        },
+        { encodingFormat: ['application/ld+json'] },
       ]),
     );
     expect(documents[0].media).toHaveLength(2);
@@ -1699,10 +1691,7 @@ describe('projection-time values', () => {
       { dataset: 'https://ex/d/1' },
     );
 
-    expect(document.media).toEqual({
-      id: 'https://ex/m/1',
-      dataset: 'https://ex/d/1',
-    });
+    expect(document.media).toEqual({ dataset: 'https://ex/d/1' });
   });
 });
 
