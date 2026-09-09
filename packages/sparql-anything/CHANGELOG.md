@@ -1,3 +1,9 @@
+## 0.1.4 (2026-09-09)
+
+### 🩹 Fixes
+
+- **sparql-anything:** concatenate outputs without blank lines or listener leaks ([d12221bc](https://github.com/ldelements/lde/commit/d12221bc))
+
 ## 0.1.3 (2026-09-04)
 
 ### 🚀 Features
