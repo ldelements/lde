@@ -600,8 +600,9 @@ export class Pipeline<Out = Quad> {
 
     // Derive the source-change fingerprint from the probed source: null for a
     // live SPARQL endpoint (always reprocess) or when no source is available.
-    // Reassigned to the dump's fingerprint if a reactive fallback later imports
-    // one, so change-detection can skip an unchanged dump on the next run.
+    // Reassigned to the dump’s fingerprint once a reactive fallback has re-run
+    // the stages against one, so change-detection can skip an unchanged dump
+    // on a next run where the endpoint fails probing.
     let fingerprint = probed.source
       ? sourceFingerprint(probed.source.distribution, probed.source.probeResult)
       : null;
@@ -713,22 +714,27 @@ export class Pipeline<Out = Quad> {
           );
           if (fallback instanceof ResolvedDistribution) {
             // The dump is now the dataset's effective source: report it as
-            // selected/validated and adopt its change fingerprint so the next
+            // selected/validated under its own change fingerprint so the next
             // run can skip an unchanged dump (the endpoint's fingerprint is
             // null, which would force a re-import every run).
+            let fallbackFingerprint = fingerprint;
             if (fallback.importedFrom) {
               const dumpProbeResult = probed.probeResults.find(
                 (result) =>
                   result.url === fallback.importedFrom!.accessUrl.toString(),
               );
               if (dumpProbeResult) {
-                fingerprint = sourceFingerprint(
+                fallbackFingerprint = sourceFingerprint(
                   fallback.importedFrom,
                   dumpProbeResult,
                 );
               }
             }
-            this.reportSelectedDistribution(dataset, fallback, fingerprint);
+            this.reportSelectedDistribution(
+              dataset,
+              fallback,
+              fallbackFingerprint,
+            );
             // Discard the endpoint-sourced partial output before the re-run so
             // the dump-sourced stats replace it rather than appending to it.
             await runWriter.reset?.(dataset);
@@ -739,6 +745,15 @@ export class Pipeline<Out = Quad> {
               runWriter,
               context,
             );
+            // Adopt the dump’s fingerprint only once the re-run has succeeded.
+            // If the reset or the re-run throws, or a stage fails against the
+            // dump, the dataset is recorded ‘failed’ under the endpoint’s
+            // fingerprint (null), so the next run retries it; recorded under
+            // the dump’s, a transient failure would freeze it out until the
+            // dump changes.
+            if (!stageFailed) {
+              fingerprint = fallbackFingerprint;
+            }
           } else if (fallback.importFailed) {
             // A failed dump import is a deep validity verdict on that dump –
             // surface it rather than silently keeping the endpoint's partial

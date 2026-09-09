@@ -238,11 +238,21 @@ export class ConsoleReporter implements ProgressReporter {
     }
   }
 
-  stageFailed(_stage: string, error: Error): void {
+  stageFailed(stage: string, error: Error): void {
     if (this.activeSpinner) {
       this.activeSpinner.suffixText = chalk.red(error.message);
       this.activeSpinner.fail();
       this.activeSpinner = undefined;
+    } else {
+      // The pipeline also reports failures outside any stage – a writer
+      // flush, a provenance write, the reactive dump fallback – where no
+      // spinner is running. Those must leave a trace too: a failure that
+      // prints nothing is worse than the failure itself.
+      this.printLine(
+        logSymbols.error,
+        `${chalk.bold(stage)} failed: ${chalk.red(error.message)}`,
+        1,
+      );
     }
   }
 
