@@ -85,7 +85,7 @@ const resolver = new ImportResolver(new SparqlDistributionResolver(), {
 ```
 
 - `'sparql'` (default) – use the dataset’s own SPARQL endpoint when one is available; import a data dump only when no endpoint responds.
-- `'sparqlWithImportFallback'` – like `'sparql'`, but also fall back to the data dump when the endpoint passes probing yet a stage fails against it at runtime. The pipeline discards the endpoint-sourced partial output and re-runs all stages against the import. Once the re-run completes, the dataset is recorded under the dump’s change fingerprint, so an [unchanged dump](../guide/skip-unchanged-datasets) is skipped next run; if the reset or the re-run throws, the record keeps the endpoint’s fingerprint and the dataset is retried. Use this when endpoints are present but unreliable for heavy aggregate queries.
+- `'sparqlWithImportFallback'` – like `'sparql'`, but also fall back to the data dump when the endpoint passes probing yet a stage fails against it at runtime. The pipeline discards the endpoint-sourced partial output and re-runs all stages against the import. Once the re-run succeeds, the dataset is recorded under the dump’s change fingerprint, so a next run in which the endpoint fails probing can skip an [unchanged dump](../guide/skip-unchanged-datasets); a run in which the endpoint passes probing tries it again first. If the reset or the re-run fails, the record keeps the endpoint’s fingerprint and the dataset is retried. Use this when endpoints are present but unreliable for heavy aggregate queries.
 - `'import'` – always import the data dump, even when a working endpoint is advertised.
 
 `SparqlDistributionResolver` accepts a `timeout` option (default: 5000 ms) that bounds each probe request.

@@ -600,9 +600,9 @@ export class Pipeline<Out = Quad> {
 
     // Derive the source-change fingerprint from the probed source: null for a
     // live SPARQL endpoint (always reprocess) or when no source is available.
-    // Reassigned to the dump's fingerprint once a reactive fallback has re-run
+    // Reassigned to the dump’s fingerprint once a reactive fallback has re-run
     // the stages against one, so change-detection can skip an unchanged dump
-    // on the next run.
+    // on a next run where the endpoint fails probing.
     let fingerprint = probed.source
       ? sourceFingerprint(probed.source.distribution, probed.source.probeResult)
       : null;
@@ -745,12 +745,15 @@ export class Pipeline<Out = Quad> {
               runWriter,
               context,
             );
-            // Adopt the dump's fingerprint only once the re-run has completed.
-            // If the reset or the re-run throws, the dataset is recorded
-            // 'failed' under the endpoint's fingerprint (null), so the next
-            // run retries it; recorded under the dump's, a transient failure
-            // would freeze it out until the dump changes.
-            fingerprint = fallbackFingerprint;
+            // Adopt the dump’s fingerprint only once the re-run has succeeded.
+            // If the reset or the re-run throws, or a stage fails against the
+            // dump, the dataset is recorded ‘failed’ under the endpoint’s
+            // fingerprint (null), so the next run retries it; recorded under
+            // the dump’s, a transient failure would freeze it out until the
+            // dump changes.
+            if (!stageFailed) {
+              fingerprint = fallbackFingerprint;
+            }
           } else if (fallback.importFailed) {
             // A failed dump import is a deep validity verdict on that dump –
             // surface it rather than silently keeping the endpoint's partial
