@@ -1,3 +1,9 @@
+## 0.36.5 (2026-09-09)
+
+### 🩹 Fixes
+
+- **pipeline:** surface reactive fallback failures and retry them next run ([#841](https://github.com/ldelements/lde/pull/841))
+
 ## 0.36.4 (2026-08-31)
 
 ### 🧱 Updated Dependencies
