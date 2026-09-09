@@ -1985,6 +1985,61 @@ describe('Pipeline', () => {
       );
     });
 
+    it("keeps the endpoint's fingerprint when the fallback re-run throws, so the next run retries", async () => {
+      // The dump imports, but the writer reset before the re-run throws. Were
+      // the failure recorded under the dump's fingerprint, the next run would
+      // see an unchanged dump and skip the dataset for good.
+      const dumpProbe = new DataDumpProbeResult(
+        dumpDistribution.accessUrl.toString(),
+        new Response('', {
+          status: 200,
+          headers: {
+            'Content-Length': '1000',
+            'Last-Modified': 'Sat, 01 Jun 2024 00:00:00 GMT',
+          },
+        }),
+        0,
+      );
+      const stage = makeStage('aggregate');
+      vi.spyOn(stage, 'run').mockRejectedValue(
+        new Error('endpoint killed the heavy query'),
+      );
+      const resolver = makeFallbackResolver();
+      resolver.probe = vi.fn(
+        async (ds: Dataset) => new ProbedDistributions(ds, [dumpProbe], null),
+      );
+      const failingWriter = makeWriter();
+      failingWriter.runWriter.reset.mockRejectedValue(
+        new Error('delete-by-filter timed out'),
+      );
+      const store = {
+        get: vi.fn().mockResolvedValue(null),
+        set: vi.fn().mockResolvedValue(undefined),
+      };
+      const reporter = makeReporter();
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [stage],
+        writers: failingWriter,
+        distributionResolver: resolver,
+        provenanceStore: store,
+        pipelineVersion: 'v1',
+        reporter,
+      });
+
+      await pipeline.run();
+
+      expect(reporter.stageFailed).toHaveBeenCalledWith(
+        'reactive-dump-fallback',
+        expect.objectContaining({ message: 'delete-by-filter timed out' }),
+      );
+      expect(store.set).toHaveBeenCalledWith(
+        dataset.iri,
+        expect.objectContaining({ sourceFingerprint: null, status: 'failed' }),
+      );
+    });
+
     it('recovers via the dump when an expectsOutput stage is empty on the endpoint', async () => {
       // End-to-end: a real stage whose query yields nothing on the endpoint
       // (a truncated COUNT) but has data in the dump. expectsOutput turns the

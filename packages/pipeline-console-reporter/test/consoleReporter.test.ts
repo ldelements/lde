@@ -124,6 +124,37 @@ describe('ConsoleReporter', () => {
     });
   });
 
+  describe('stageFailed', () => {
+    it('fails the running stage spinner with the error', () => {
+      const reporter = new ConsoleReporter();
+      const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+
+      reporter.stageStart('transform');
+      reporter.stageFailed('transform', new Error('HTTP status 502'));
+
+      const output = spy.mock.calls.map((c) => String(c[0])).join('');
+      expect(output).toContain('Stage');
+      expect(output).toContain('HTTP status 502');
+    });
+
+    it('still prints when no spinner is running', () => {
+      // The pipeline reports writer, provenance and fallback failures outside
+      // any stage; dropping those would hide exactly the errors that leave a
+      // dataset recorded as failed.
+      const reporter = new ConsoleReporter();
+      const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+
+      reporter.stageFailed(
+        'reactive-dump-fallback',
+        new Error('delete-by-filter timed out'),
+      );
+
+      const output = spy.mock.calls.map((c) => String(c[0])).join('');
+      expect(output).toContain('reactive-dump-fallback');
+      expect(output).toContain('delete-by-filter timed out');
+    });
+  });
+
   describe('concurrent spinners', () => {
     it('stageStart after importStarted does not crash and produces output for both', () => {
       const reporter = new ConsoleReporter();
