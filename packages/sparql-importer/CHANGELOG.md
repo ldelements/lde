@@ -1,3 +1,9 @@
+## 0.6.11 (2026-09-09)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-downloader to 0.6.9
+
 ## 0.6.10 (2026-08-31)
 
 ### 🧱 Updated Dependencies

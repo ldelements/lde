@@ -1,3 +1,9 @@
+## 0.1.5 (2026-09-09)
+
+### 🩹 Fixes
+
+- **sparql-anything:** remove stale chunks with five or more digits ([#834](https://github.com/ldelements/lde/pull/834))
+
 ## 0.1.4 (2026-09-09)
 
 ### 🩹 Fixes

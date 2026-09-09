@@ -1,6 +1,6 @@
 {
   "name": "@lde/distribution-downloader",
-  "version": "0.6.8",
+  "version": "0.6.9",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
     "directory": "packages/distribution-downloader"

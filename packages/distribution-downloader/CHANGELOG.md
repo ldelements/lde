@@ -1,3 +1,9 @@
+## 0.6.9 (2026-09-09)
+
+### 🩹 Fixes
+
+- **distribution-downloader:** time out on a stalled transfer instead of a slow one ([#835](https://github.com/ldelements/lde/pull/835))
+
 ## 0.6.8 (2026-07-24)
 
 ### 🧱 Updated Dependencies
