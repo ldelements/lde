@@ -117,12 +117,24 @@ export function projectDocument(
  * {@link ReferenceStrategy.local local} lookup projects its endpoint through.
  * The second matters more than it looks – a Root Type’s reading-device fields
  * exist for its OWN derives, and nothing in a referring document wants them.
+ *
+ * A Reference Type entry’s `id` is pruned here too. It is a reading device of
+ * the same kind: the node IRI a derive on the referrer may read, and never a
+ * document key – an entry is kept in no collection, a weld names the flat
+ * identity companion beside it, and an entry's own key answers no query (ADR
+ * 24). Left in, it would make an entry's shape depend on whether a publisher
+ * minted an IRI for a relationship, and be a field the collection never
+ * declared. A Root Type keeps its `id` wherever it nests: that is the key its
+ * own collection files it under, and a `local` lookup resolves against it.
  */
 function pruneInternalFields(
   document: ProjectedNode,
   searchType: SearchType,
   schema: SearchSchema | undefined,
 ): void {
+  if (searchType.class === undefined) {
+    delete document.id;
+  }
   for (const field of searchType.fields) {
     if (isInternalField(field)) {
       delete document[field.name];
@@ -190,23 +202,20 @@ function documentKey(node: FramedNode): string | undefined {
  * The key is assigned before any `derive` runs, so a derive sees the key and
  * never the node IRI; a deployment that wants the node IRI declares a plain
  * `idOnly` reference over the same path.
+ *
+ * A Reference Type has no key, so its entry gets the node IRI itself – as a
+ * reading device only. A Reference Type is nested in its referrer and kept in
+ * no collection, so nothing downstream resolves an entry by key, and
+ * {@link pruneInternalFields} removes the `id` again before the document
+ * leaves the projection, exactly as it removes a no-role helper field. What
+ * stays is the window in between: a `derive` on the referrer reads the entry's
+ * IRI where that IRI is the data – a IIIF manifest among a work's media, stated
+ * by its `@id` and nothing else – and surfaces it under a field of its own.
  */
 function documentIdOf(
   node: FramedNode,
   searchType: SearchType,
 ): string | undefined {
-  // A Reference Type is nested inside its referrer and keyed in no collection
-  // of its own, so its entries carry no `id` – whether or not the graph happened
-  // to name the node. Nesting carries a referent's FIELDS, not a document key
-  // (ADR 24), and nothing reads one here: the collection declares an `id` for a
-  // locally-nested Root Type alone, a weld names the flat identity companion
-  // beside the entry, and an entry's own key answers no query. Emitting it made
-  // an entry's shape depend on whether a publisher minted an IRI for a
-  // relationship – arbitrary to a consumer, and a field the collection never
-  // declared.
-  if (searchType.class === undefined) {
-    return undefined;
-  }
   const nodeIri = documentKey(node);
   if (nodeIri === undefined || searchType.key === undefined) {
     return nodeIri;
@@ -884,8 +893,18 @@ function applyNestedReferents(
   // or a keyed target re-keying two referent IRIs to the same document key. The
   // pre-fan-out shape deduped, because those values met inside one entry and
   // `applyFacet` deduped them there; split across entries they would reach the
-  // index and the API as byte-identical duplicates instead.
-  const distinct = dedupeBy(referents, (referent) => JSON.stringify(referent));
+  // index and the API as byte-identical duplicates instead. A Reference Type
+  // entry's `id` is left out of the comparison: it is pruned before the
+  // document leaves the projection, so two statements of one fact through two
+  // edge nodes are the one entry they will be once it is gone. A Root Type's
+  // `id` is its key and stays part of what makes an entry distinct.
+  const distinct = dedupeBy(referents, (referent) =>
+    JSON.stringify(
+      nestedType.class === undefined
+        ? { ...referent, id: undefined }
+        : referent,
+    ),
+  );
   if (distinct.length === 0) {
     return distinct;
   }

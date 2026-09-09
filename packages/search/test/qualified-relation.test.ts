@@ -125,11 +125,12 @@ describe('an edge that carries data and resolves a lookup', () => {
   it('gives an entry no id, however the graph named the edge', () => {
     // A Reference Type is nested in its referrer and kept in no collection of
     // its own, so an entry carries fields and no document key (ADR 24). The
-    // edge below IS a named node, and still gets none: nothing reads it – the
-    // collection declares an `id` for a locally-nested Root Type alone, and a
-    // weld names the flat companion beside the entry. Emitting it would make an
-    // entry's shape depend on whether a publisher minted an IRI for a
-    // relationship, which is arbitrary to a consumer.
+    // edge below IS a named node, and still leaves without one: the node IRI
+    // is a reading device for the referrer's derives, pruned like an internal
+    // field – the collection declares an `id` for a locally-nested Root Type
+    // alone, and a weld names the flat companion beside the entry. Kept, it
+    // would make an entry's shape depend on whether a publisher minted an IRI
+    // for a relationship, which is arbitrary to a consumer.
     const named = {
       '@id': 'https://ex/work/17',
       [workKey('creator')]: [
@@ -147,6 +148,28 @@ describe('an edge that carries data and resolves a lookup', () => {
     // and the lookup resolves against exactly that key.
     const [resolved] = entriesOf(projectDocument(node, work, schema));
     expect((resolved.creator as SearchDocument).id).toBe(RKD);
+  });
+
+  it('collapses two edge nodes stating one fact into one entry', () => {
+    // Two Role nodes, one role: the node IRI is pruned, so what would be two
+    // byte-identical entries past the projection is deduplicated as one –
+    // which is what two statements of the same fact should be.
+    const twice = {
+      '@id': 'https://ex/work/18',
+      [workKey('creator')]: [
+        {
+          '@id': 'https://ex/work/18#production-role-1',
+          [edgeKey('role')]: [{ '@value': 'etser' }],
+        },
+        {
+          '@id': 'https://ex/work/18#production-role-2',
+          [edgeKey('role')]: [{ '@value': 'etser' }],
+        },
+      ],
+    };
+    const entries = entriesOf(projectDocument(twice, work, schema));
+
+    expect(entries).toEqual([{ role: 'etser' }]);
   });
 
   it('re-keys an identified endpoint through the target’s key field', () => {
