@@ -1535,6 +1535,78 @@ describe('projectRoots', () => {
     expect(documents[0].media).toHaveLength(2);
   });
 
+  it('lets a derive on the referrer read an entry’s IRI before it is pruned', async () => {
+    // The manifest's `@id` IS the manifest URL, and the profile states it
+    // nowhere else. The entry carries it as `id` for exactly as long as a
+    // derive can read it – like an internal field – and leaves the projection
+    // without it, so the stored shape is the same for the named node and the
+    // blank one.
+    const mediaObject = defineSearchType({
+      name: 'MediaObject',
+      fields: [
+        {
+          name: 'encodingFormat',
+          kind: 'keyword',
+          array: true,
+          output: true,
+          path: 'https://schema.org/encodingFormat',
+        },
+      ],
+    });
+    const creativeWork = defineSearchType({
+      name: 'CreativeWork',
+      class: 'https://schema.org/CreativeWork',
+      fields: [
+        {
+          name: 'media',
+          kind: 'reference',
+          array: true,
+          output: true,
+          path: 'https://schema.org/associatedMedia',
+          ref: { typeName: 'MediaObject', strategy: 'inline' },
+        },
+        {
+          name: 'manifest',
+          kind: 'keyword',
+          output: true,
+          derive: (document) =>
+            (document.media as readonly SearchDocument[] | undefined)?.find(
+              (entry) =>
+                (entry.encodingFormat as string[]).includes(
+                  'application/ld+json',
+                ),
+            )?.id,
+        },
+      ],
+    });
+    const nestedSchema = searchSchema(creativeWork, mediaObject);
+    const mediaAlias = alias('CreativeWork', 'media');
+    const quads = new Parser({ format: 'N-Triples' }).parse(`
+      <https://ex/w/1> <${mediaAlias}> _:b0 .
+      _:b0 <${alias('MediaObject', 'encodingFormat')}> "image/jpeg" .
+      <https://ex/w/1> <${mediaAlias}> <https://ex/iiif/manifest> .
+      <https://ex/iiif/manifest> <${alias('MediaObject', 'encodingFormat')}> "application/ld+json" .
+    `);
+
+    const documents: SearchDocument[] = [];
+    for await (const document of projectRoots(
+      quads,
+      ['https://ex/w/1'],
+      nestedSchema,
+      creativeWork,
+    )) {
+      documents.push(document);
+    }
+
+    expect(documents[0].manifest).toBe('https://ex/iiif/manifest');
+    expect(documents[0].media).toEqual(
+      expect.arrayContaining([
+        { encodingFormat: ['image/jpeg'] },
+        { encodingFormat: ['application/ld+json'] },
+      ]),
+    );
+  });
+
   it('rejects a searchType not in the schema (no forged schema)', async () => {
     const foreign: SearchType = {
       name: 'Other',

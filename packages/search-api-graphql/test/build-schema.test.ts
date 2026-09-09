@@ -1279,10 +1279,10 @@ describe('nested inline references', () => {
     const sdl = printSchema(buildGraphQLSchema(nestedSchema));
     expect(sdl).toMatch(/media: \[MediaObject!\]!/);
     // Each field is typed by exactly the per-kind rules a root type’s fields
-    // get. `id` is nullable: a referent needs no identity, so a blank-node one
-    // nests without one.
+    // get. No `id`: an entry of a Reference Type is read, not addressed, so
+    // the projection never fills one and the type does not offer it.
     expect(sdl).toMatch(
-      /type MediaObject \{\s+id: IRI\s+contentUrl: \[String!\]!\s+width: Int\s+caption: \[LanguageString!\]!\s+\}/,
+      /type MediaObject \{\s+contentUrl: \[String!\]!\s+width: Int\s+caption: \[LanguageString!\]!\s+\}/,
     );
     // An Internal Field inside a Reference Type stays out of the API.
     expect(sdl).not.toMatch(/rawWidth/);
@@ -1297,12 +1297,11 @@ describe('nested inline references', () => {
           document: {
             media: [
               {
-                id: 'https://ex/m/1',
                 contentUrl: ['https://ex/1.jpg'],
                 width: 4096,
                 caption: { nl: ['Voorkant'] },
               },
-              // A blank-node referent: no id, and no width.
+              // A referent that states no width.
               { contentUrl: ['https://ex/2.jpg'] },
             ],
           },
@@ -1316,7 +1315,7 @@ describe('nested inline references', () => {
         creativeWorks {
           items {
             id
-            media { id contentUrl width caption { language value } }
+            media { contentUrl width caption { language value } }
           }
         }
       }`,
@@ -1333,13 +1332,11 @@ describe('nested inline references', () => {
             id: 'https://ex/w/1',
             media: [
               {
-                id: 'https://ex/m/1',
                 contentUrl: ['https://ex/1.jpg'],
                 width: 4096,
                 caption: [{ language: 'nl', value: 'Voorkant' }],
               },
               {
-                id: null,
                 contentUrl: ['https://ex/2.jpg'],
                 width: null,
                 caption: [],
@@ -1381,12 +1378,8 @@ describe('nested inline references', () => {
         searchSchema(CREATIVE_WORK_WITH_MEDIA, media, thumbnail),
       ),
     );
-    expect(sdl).toMatch(
-      /type MediaObject \{\s+id: IRI\s+thumbnail: Thumbnail\s+\}/,
-    );
-    expect(sdl).toMatch(
-      /type Thumbnail \{\s+id: IRI\s+contentUrl: \[String!\]!\s+\}/,
-    );
+    expect(sdl).toMatch(/type MediaObject \{\s+thumbnail: Thumbnail\s+\}/);
+    expect(sdl).toMatch(/type Thumbnail \{\s+contentUrl: \[String!\]!\s+\}/);
   });
 });
 

@@ -551,22 +551,26 @@ export function buildGraphQLSchema(
           GraphQLFieldConfig<Source, SearchContext>
         > => ({
           // A lookup resolves a document by IRI, so its `id` is always there.
-          // An inline referent’s is nullable, and load-bearing: a referent
-          // needs no identity, so a blank-node one nests exactly like a named
-          // one, minus this.
+          // An inline referent has none: an entry of a Reference Type is read,
+          // not addressed, so the projection carries no `id` past its own
+          // derives, and a field that is never filled is not offered.
           //
-          // A `local` lookup is the exception among lookups, for that same
+          // A `local` lookup is the exception among lookups, for a related
           // reason: it stores what the referring document says about the
           // endpoint whether or not the endpoint is identified, so an entry
           // may legitimately arrive without one. Declared non-null, every such
           // entry would fail the response instead of serving what it has.
-          id: {
-            type:
-              field.ref?.strategy === 'lookup' &&
-              !nullableIdTargets.has(typeName)
-                ? new GraphQLNonNull(iriScalar)
-                : iriScalar,
-          },
+          ...(nested.class === undefined
+            ? {}
+            : {
+                id: {
+                  type:
+                    field.ref?.strategy === 'lookup' &&
+                    !nullableIdTargets.has(typeName)
+                      ? new GraphQLNonNull(iriScalar)
+                      : iriScalar,
+                },
+              }),
           ...Object.fromEntries(
             outputFields(nested).map((nestedField) => [
               nestedField.name,
