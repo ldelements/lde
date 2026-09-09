@@ -144,7 +144,7 @@ Set `extension` for a tool that reads the format from the file name – SPARQL A
 
 **Splitting is by line**, so every record must be one line. A delimited format that wraps a field in quotes to carry a newline inside it would be cut in two; tab-separated exports, N-Triples and NDJSON are one record per line by definition. Line endings are normalised to `\n`.
 
-Chunks of the same input left by an earlier call are removed first, so a re-run cannot leave a longer run's tail behind for something to pick up. Only those: everything else in the directory is the caller's.
+Chunks of the same input left by an earlier call are removed first, so a re-run cannot leave a longer run's tail behind for something to pick up. Only those: everything else in the directory is the caller's. Take the paths `chunk()` returns as the list of chunks to convert, rather than rediscovering them by name in the directory – a listing would also pick up whatever else is there.
 
 An input with no rows is an error rather than an empty set of chunks: a step that produced an empty file has already failed.
 
