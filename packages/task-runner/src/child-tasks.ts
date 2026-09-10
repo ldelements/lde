@@ -3,7 +3,8 @@ import process from 'node:process';
 
 /**
  * The tasks a runner has going, which must not outlive the process that
- * started them.
+ * started them. For implementing a task runner; a runner’s users never
+ * see it.
  *
  * While any runner has tasks going, the process listens for `SIGINT` and
  * `SIGTERM` – a Ctrl-C, or a cancelled job – and on either stops every task
@@ -16,7 +17,7 @@ import process from 'node:process';
  * Nothing listens while no task is going, so idle runners leave the process’s
  * signal handling as they found it.
  */
-export class LiveTasks<Task> {
+export class ChildTasks<Task> {
   private readonly tasks = new Set<Task>();
 
   /**

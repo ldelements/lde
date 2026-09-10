@@ -1,4 +1,4 @@
-import { LiveTasks, TaskRunner } from '@lde/task-runner';
+import { ChildTasks, TaskRunner } from '@lde/task-runner';
 import { ChildProcess, spawn } from 'node:child_process';
 import process from 'node:process';
 
@@ -54,7 +54,7 @@ export class NativeTaskRunner implements TaskRunner<ChildProcess> {
    */
   private states = new WeakMap<ChildProcess, TaskState>();
   /** The processes still going, stopped when this process is told to stop. */
-  private liveTasks = new LiveTasks<ChildProcess>((task) => this.stop(task));
+  private childTasks = new ChildTasks<ChildProcess>((task) => this.stop(task));
 
   constructor(options?: NativeTaskRunnerOptions) {
     this.cwd = options?.cwd;
@@ -74,8 +74,8 @@ export class NativeTaskRunner implements TaskRunner<ChildProcess> {
       closed: new Promise((resolve) => task.once('close', resolve)),
     };
     this.states.set(task, state);
-    this.liveTasks.add(task);
-    void state.closed.then(() => this.liveTasks.delete(task));
+    this.childTasks.add(task);
+    void state.closed.then(() => this.childTasks.delete(task));
 
     for (const stream of [task.stdout, task.stderr]) {
       // Decode across chunk boundaries: a multi-byte character split over two

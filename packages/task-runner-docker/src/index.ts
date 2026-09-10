@@ -1,5 +1,5 @@
 import process from 'node:process';
-import { LiveTasks, TaskRunner } from '@lde/task-runner';
+import { ChildTasks, TaskRunner } from '@lde/task-runner';
 import Docker, { Container, ContainerCreateOptions } from 'dockerode';
 
 export interface DockerTaskRunnerOptions {
@@ -36,7 +36,7 @@ export class DockerTaskRunner implements TaskRunner<Container> {
    */
   private nameHolder?: Container | 'starting';
   /** The containers still going, stopped when this process is told to stop. */
-  private liveTasks = new LiveTasks<Container>((task) => this.stop(task));
+  private childTasks = new ChildTasks<Container>((task) => this.stop(task));
 
   constructor(options: DockerTaskRunnerOptions) {
     this.options = {
@@ -154,7 +154,7 @@ export class DockerTaskRunner implements TaskRunner<Container> {
       await this.options.docker.createContainer(containerOptions);
 
     await container.start();
-    this.liveTasks.add(container);
+    this.childTasks.add(container);
     if (this.options.containerName) {
       this.nameHolder = container;
     }
@@ -167,7 +167,7 @@ export class DockerTaskRunner implements TaskRunner<Container> {
    * held, and no longer stops it along with this process.
    */
   private forget(task: Container): void {
-    this.liveTasks.delete(task);
+    this.childTasks.delete(task);
     if (this.nameHolder === task) {
       this.nameHolder = undefined;
     }
