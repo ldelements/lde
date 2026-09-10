@@ -10,7 +10,7 @@ import {
   fieldNamed,
   labelFieldOf,
   nestedReferenceType,
-  rootTypeNamed,
+  referencedTargetsOf,
 } from '@lde/search/adapter';
 import { escapeFilterValue } from './query-compiler.js';
 
@@ -31,17 +31,25 @@ import { escapeFilterValue } from './query-compiler.js';
 export type ResolvedReferents =
   | {
       readonly via: 'lookup';
-      /** The Root Type these referents are declared by – reconstruction reads
-       *  them through the target’s own declaration, never the referrer’s. */
-      readonly target: RootType;
-      readonly documents: ReadonlyMap<string, Record<string, unknown>>;
-      /** Keyed by the reference field’s name on the type this level carries. */
-      readonly children: ReadonlyMap<string, ResolvedReferents>;
+      /** By IRI. A lookup naming several targets holds referents of any of
+       *  them here, each saying which. */
+      readonly documents: ReadonlyMap<string, ResolvedReferent>;
     }
   | {
       readonly via: 'nested';
       readonly children: ReadonlyMap<string, ResolvedReferents>;
     };
+
+/** One referent a lookup level fetched. */
+export interface ResolvedReferent {
+  /** The Root Type this referent is declared by – the target whose collection
+   *  answered for it. Reconstruction reads it through that target’s own
+   *  declaration, never the referrer’s. */
+  readonly target: RootType;
+  readonly document: Record<string, unknown>;
+  /** The levels below, keyed by the reference field’s name on `target`. */
+  readonly children: ReadonlyMap<string, ResolvedReferents>;
+}
 
 /** Typesense caps a filter list; the same batch size the label lookup uses. */
 const BATCH_SIZE = 200;
@@ -104,45 +112,67 @@ export async function resolveProjection(
         // hand-built query from throwing here rather than at the port’s guard.
         return undefined;
       }
-      const target = rootTypeNamed(schema, field.ref.target);
-      const collection =
-        target === undefined ? undefined : collections.get(target.class);
-      if (target === undefined || collection === undefined) {
-        return undefined;
-      }
-      const include = includeFields(target, level.fields, level.resolve);
-      const iris = distinctIris(parents, name);
-      // Nothing to read: no referent named, or the selection reduced to the
-      // `id` the referring document already carries.
-      if (iris.length === 0 || include.length <= 1) {
-        return undefined;
-      }
-      const documents = await fetchReferents(
-        client,
-        collection,
-        iris,
-        include,
-        onError,
+      const targets = referencedTargetsOf(field, schema).filter((target) =>
+        collections.has(target.class),
       );
-      return [
-        name,
-        {
-          via: 'lookup',
-          target,
-          documents,
+      const iris = distinctIris(parents, name);
+      if (targets.length === 0 || iris.length === 0) {
+        return undefined;
+      }
+      // One fetch per target, concurrently: a referent lives in one of the
+      // collections, and which one is what a lookup naming several targets
+      // exists to find out – so with several, every collection is asked even
+      // for a selection reduced to `id`, since the answer types the referent.
+      // With one target, a selection reduced to the `id` the referring
+      // document already carries reads nothing.
+      const perTarget = await Promise.all(
+        targets.map(async (target) => {
+          const include = includeFields(target, level.fields, level.resolve);
+          if (targets.length === 1 && include.length <= 1) {
+            return undefined;
+          }
+          const fetched = await fetchReferents(
+            client,
+            collections.get(target.class) as string,
+            iris,
+            include,
+            onError,
+          );
           // The level below reads the IRIs off the documents this one just
           // fetched – one more round-trip for the page, whatever its size.
-          children: await resolveProjection(
+          const children = await resolveProjection(
             client,
             level.resolve,
             target,
             schema,
             collections,
-            [...documents.values()],
+            [...fetched.values()],
             onError,
-          ),
-        },
-      ] as const;
+          );
+          return { target, fetched, children };
+        }),
+      );
+      // Declaration order is precedence: an IRI two collections hold belongs
+      // to the target declared first.
+      const documents = new Map<string, ResolvedReferent>();
+      for (const resolved of perTarget) {
+        if (resolved === undefined) {
+          continue;
+        }
+        for (const [iri, document] of resolved.fetched) {
+          if (!documents.has(iri)) {
+            documents.set(iri, {
+              target: resolved.target,
+              document,
+              children: resolved.children,
+            });
+          }
+        }
+      }
+      if (perTarget.every((resolved) => resolved === undefined)) {
+        return undefined;
+      }
+      return [name, { via: 'lookup', documents }] as const;
     }),
   );
   for (const level of levels) {

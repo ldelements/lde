@@ -169,7 +169,25 @@ export type SearchValue =
  */
 export interface NestedDocument {
   readonly [field: string]: SearchValue | undefined;
+  /**
+   * The `name` of the Root Type this document is read through, where the
+   * field that carries it is a `lookup` naming **several** targets – the
+   * declaration it was resolved or stored against. Such a lookup serves
+   * referents of any of its targets under one field, and this is what tells a
+   * surface which one each referent is, so it can type the value per referent
+   * instead of claiming one kind for all of them. Absent where there is
+   * nothing to tell apart: a single-target lookup, or an inline reference’s
+   * entry. Keyed by a symbol so it can never collide with a declared field
+   * name.
+   */
+  readonly [NESTED_DOCUMENT_TYPE]?: string;
 }
+
+/** The key under which a {@link NestedDocument} carries the `name` of the
+ *  Root Type it is read through. */
+export const NESTED_DOCUMENT_TYPE: unique symbol = Symbol(
+  'lde.search.nestedDocumentType',
+);
 
 /**
  * A JSON-LD-style language map (`@container: @language`, `@set` arrays); the key
