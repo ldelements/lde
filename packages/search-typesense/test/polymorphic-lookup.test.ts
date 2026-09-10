@@ -407,17 +407,19 @@ describe('a lookup naming one target', () => {
   });
 });
 
-describe('a stored referent field with no entries', () => {
-  it('reconstructs nothing', async () => {
+describe('an edge stating no endpoint', () => {
+  it('reconstructs the entry without one', async () => {
     const { fake } = client({
       found: 1,
-      hits: [{ document: { id: 'https://w/4', creator: [] } }],
+      hits: [
+        { document: { id: 'https://w/4', creator: [{ role: 'drukker' }] } },
+      ],
     });
     const engine = createTypesenseSearchEngine(fake.client, schema, {
       collections,
     });
     const result = await engine.search(edgedWork as never, base);
-    expect(result.hits[0].document).toEqual({});
+    expect(result.hits[0].document).toEqual({ creator: [{ role: 'drukker' }] });
   });
 });
 
