@@ -99,6 +99,8 @@ Chunks of every job are converted through one pool, in the order the jobs and th
 
 The first failure aborts the run: no further chunk is started, and the processes still going are stopped rather than left writing into a directory the converter is about to delete. A process that cannot be stopped – one that has just exited, say – does not change what is reported: the conversion failure is the one worth reading.
 
+An interrupted run – a Ctrl-C, or a cancelled CI job – ends the same way: the [task runner stops the processes it has going](./task-runner#tasks-end-with-the-process) and ends this process, and the converter removes its run directory on the way out.
+
 > [!NOTE]
 > A `DockerTaskRunner` configured with a `containerName` runs one task at a time – the name is how other containers address it – so it rejects a second chunk rather than taking the name from the first. Leave `containerName` unset for a converter that runs chunks in parallel.
 
