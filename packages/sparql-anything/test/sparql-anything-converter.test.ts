@@ -190,7 +190,6 @@ describe('SparqlAnythingConverter', () => {
   });
 
   afterEach(async () => {
-    vi.restoreAllMocks();
     await rm(workDir, { recursive: true, force: true });
   });
 
@@ -690,124 +689,35 @@ describe('SparqlAnythingConverter', () => {
     ]);
   });
 
-  /**
-   * Stands in for `process.kill`, which would end the test process when the
-   * converter raises the signal again. Records what the converter had done by
-   * then: the process exits right after, so nothing later counts. Restored
-   * after each test, which also forgets its calls, so assert before that.
-   */
-  function stubProcessKill() {
-    const atKill: { files?: string[]; listeners?: number }[] = [];
-    const kill = vi.spyOn(process, 'kill').mockImplementation(() => {
-      atKill.push({
-        files: readdirSync(workDir),
-        listeners: process.listenerCount('SIGINT'),
-      });
-      return true;
-    });
-    return { kill, atKill };
-  }
-
-  /** Delivers `signal` to this process as Node does, without the OS. */
-  function interrupt(signal: NodeJS.Signals): void {
-    process.emit(signal, signal);
-  }
-
-  it('stops the running chunks and cleans up when the process is interrupted', async () => {
-    const chunks = await writeChunks(3);
-    const taskRunner = new FakeTaskRunner(workDir, { waitForAll: 200 });
-    const listenersBefore = process.listenerCount('SIGINT');
-    const { kill, atKill } = stubProcessKill();
-    const run = new SparqlAnythingConverter({
-      jarPath: '/bin/sparql-anything.jar',
-      workDir,
-      concurrency: 2,
-      taskRunner,
-    }).convert([{ queryFile, chunks }], join(workDir, 'output.nt'));
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    interrupt('SIGINT');
-
-    await expect(run).rejects.toThrow('Interrupted by SIGINT');
-
-    expect(taskRunner.stopped).toHaveLength(2);
-    // The third chunk was never started.
-    expect(taskRunner.commands).toHaveLength(2);
-    // Raised again, with the run directory and the listener gone, so the
-    // process ends as it would have without the converter listening.
-    expect(kill).toHaveBeenCalledExactlyOnceWith(process.pid, 'SIGINT');
-    expect(atKill).toEqual([
-      {
-        files: ['chunk-0.csv', 'chunk-1.csv', 'chunk-2.csv', 'places.rq'],
-        listeners: listenersBefore,
-      },
-    ]);
-  });
-
-  it('ignores a second signal while it is already stopping', async () => {
+  it('removes the run directory when the process ends mid-run', async () => {
     const chunks = await writeChunks(2);
     const taskRunner = new FakeTaskRunner(workDir, { waitForAll: 200 });
-    const { kill } = stubProcessKill();
-    const run = new SparqlAnythingConverter({
-      jarPath: '/bin/sparql-anything.jar',
-      workDir,
-      concurrency: 2,
-      taskRunner,
-    }).convert([{ queryFile, chunks }], join(workDir, 'output.nt'));
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    interrupt('SIGINT');
-    interrupt('SIGINT');
-
-    await expect(run).rejects.toThrow('Interrupted by SIGINT');
-
-    expect(taskRunner.stopped).toHaveLength(2);
-    expect(kill).toHaveBeenCalledOnce();
-  });
-
-  it('keeps listening for a run still going when another has finished', async () => {
-    const chunks = await writeChunks(3);
-    const finishing = new FakeTaskRunner(workDir);
-    const running = new FakeTaskRunner(workDir, { waitForAll: 200 });
-    const { kill } = stubProcessKill();
-    const run = new SparqlAnythingConverter({
-      jarPath: '/bin/sparql-anything.jar',
-      workDir,
-      concurrency: 2,
-      taskRunner: running,
-    }).convert(
-      [{ queryFile, chunks: chunks.slice(1) }],
-      join(workDir, 'output.nt'),
-    );
-    // Finishing removes only its own listener, not the other run’s.
-    await converterFor(finishing).convert(
-      [{ queryFile, chunks: chunks.slice(0, 1) }],
-      join(workDir, 'finished.nt'),
-    );
-    interrupt('SIGTERM');
-
-    await expect(run).rejects.toThrow('Interrupted by SIGTERM');
-
-    expect(finishing.stopped).toHaveLength(0);
-    expect(running.stopped).toHaveLength(2);
-    expect(kill).toHaveBeenCalledExactlyOnceWith(process.pid, 'SIGTERM');
-  });
-
-  it('stops listening for signals once the run is done', async () => {
-    const taskRunner = new FakeTaskRunner(workDir);
-    const chunks = await writeChunks(1);
-    const listenersBefore = {
-      SIGINT: process.listenerCount('SIGINT'),
-      SIGTERM: process.listenerCount('SIGTERM'),
-    };
-
-    await converterFor(taskRunner).convert(
+    const listenersBefore = process.listeners('exit');
+    const run = converterFor(taskRunner).convert(
       jobsFor(chunks),
       join(workDir, 'output.nt'),
     );
+    await vi.waitFor(() => expect(taskRunner.peakInFlight).toBe(1));
+    const [onExit] = process
+      .listeners('exit')
+      .filter((listener) => !listenersBefore.includes(listener));
+    expect(onExit).toBeDefined();
 
-    expect({
-      SIGINT: process.listenerCount('SIGINT'),
-      SIGTERM: process.listenerCount('SIGTERM'),
-    }).toEqual(listenersBefore);
+    // As Node calls it: the process is ending, so no further turn of the
+    // event loop follows.
+    onExit?.(130);
+
+    expect(readdirSync(workDir)).toEqual([
+      'chunk-0.csv',
+      'chunk-1.csv',
+      'places.rq',
+    ]);
+    // Ended in the way it would when the interrupted run's process stops.
+    await expect(run).rejects.toThrow();
+    // Removed again once the run has ended, along with the directory.
+    expect(process.listeners('exit')).toEqual(listenersBefore);
+    // Removing it twice is not an error.
+    onExit?.(130);
   });
 
   it('rejects a concurrency that is not a whole number of processes', () => {

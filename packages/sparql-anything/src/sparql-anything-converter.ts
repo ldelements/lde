@@ -1,8 +1,9 @@
 import { shellQuote, TaskRunner } from '@lde/task-runner';
-import { createReadStream, createWriteStream } from 'node:fs';
+import { createReadStream, createWriteStream, rmSync } from 'node:fs';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { pipeline } from 'node:stream/promises';
 import { basename, isAbsolute, join } from 'node:path';
+import process from 'node:process';
 
 /** Placeholder in the query file that is replaced with each chunk's path. */
 const SOURCE_PLACEHOLDER = '{SOURCE}';
@@ -21,13 +22,6 @@ const HEAP_SIZE = /^(?!0+[kmg]?$)\d+[kmg]?$/i;
  * take a quarter of host memory until the OOM killer takes the container.
  */
 const DEFAULT_HEAP = '2g';
-
-/**
- * The signals that end this process on a Ctrl-C or a cancelled job. The
- * processes a run started would survive them: a task runner spawns each in a
- * process group of its own, which is what lets it stop them as a whole.
- */
-const STOP_SIGNALS: NodeJS.Signals[] = ['SIGINT', 'SIGTERM'];
 
 /**
  * Arguments the converter sets itself, with their aliases. Passing one again
@@ -192,13 +186,19 @@ export class SparqlAnythingConverter<Task> {
     // otherwise satisfy the non-empty check below with stale triples.
     const runDir = await mkdtemp(join(this.workDir, 'sparql-anything-'));
     const runDirName = basename(runDir);
-    const state: RunState<Task> = {
-      total: countOf(planned),
-      inFlight: new Set(),
+    // The process may end before the cleanup below: interrupted, its task
+    // runner stops the processes and ends it. Synchronous, because an 'exit'
+    // listener gets no further turn of the event loop.
+    const removeRunDirOnExit = (): void => {
+      try {
+        rmSync(runDir, { recursive: true, force: true });
+      } catch {
+        // The process is ending; there is no one left to report to.
+      }
     };
-    const stopListeningForSignals = this.stopOnSignal(state, runDir);
+    process.once('exit', removeRunDirOnExit);
     try {
-      const count = await this.runAll(planned, runDirName, state);
+      const count = await this.runAll(planned, runDirName);
       // By index, not by completion: the order the jobs and their chunks were
       // given is the order of the triples, however the processes finished.
       await concatenate(
@@ -208,47 +208,9 @@ export class SparqlAnythingConverter<Task> {
         outputPath,
       );
     } finally {
-      stopListeningForSignals();
+      process.off('exit', removeRunDirOnExit);
       await rm(runDir, { recursive: true, force: true });
     }
-  }
-
-  /**
-   * Stops the run when this process is told to stop, so that a Ctrl-C or a
-   * cancelled job does not leave the processes running and the run directory
-   * behind, which `convert()`’s cleanup never gets to. The signal is then
-   * raised again with the listeners gone, so the process ends as it would have
-   * without them, with the same exit status.
-   *
-   * Returns what removes the listeners again. Each run listens for itself, so
-   * one that ends does not stop listening for another still going.
-   */
-  private stopOnSignal(state: RunState<Task>, runDir: string): () => void {
-    let stopping = false;
-    const onSignal = async (signal: NodeJS.Signals): Promise<void> => {
-      // A second signal while stopping changes nothing: the processes have
-      // been told to stop, and the run is about to end.
-      if (stopping) {
-        return;
-      }
-      stopping = true;
-      // The run’s failure now, whatever else went wrong: no further chunk is
-      // started while the processes are being stopped.
-      state.failure = new Error(`Interrupted by ${signal}`);
-      await this.stopInFlight(state);
-      await rm(runDir, { recursive: true, force: true });
-      stopListening();
-      process.kill(process.pid, signal);
-    };
-    const stopListening = (): void => {
-      for (const signal of STOP_SIGNALS) {
-        process.off(signal, onSignal);
-      }
-    };
-    for (const signal of STOP_SIGNALS) {
-      process.on(signal, onSignal);
-    }
-    return stopListening;
   }
 
   /**
@@ -262,9 +224,12 @@ export class SparqlAnythingConverter<Task> {
   private async runAll(
     planned: PlannedJob[],
     runDirName: string,
-    state: RunState<Task>,
   ): Promise<number> {
     const pending = processesOf(planned);
+    const state: RunState<Task> = {
+      total: countOf(planned),
+      inFlight: new Set(),
+    };
 
     // Pulled one at a time rather than with `for...of`: leaving a for-of early
     // closes the iterator, so the first worker to give up would end the queue

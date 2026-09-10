@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type Docker from 'dockerode';
 import type { ContainerCreateOptions } from 'dockerode';
 import { DockerTaskRunner } from '../src/index.js';
@@ -8,9 +8,11 @@ function createFakeDocker(): Docker & {
   created: ContainerCreateOptions[];
   failNextCreate: boolean;
   failNextWait: boolean;
+  stopped: number;
 } {
   const fake = {
     created: [] as ContainerCreateOptions[],
+    stopped: 0,
     failNextCreate: false,
     failNextWait: false,
     async pull() {
@@ -42,7 +44,10 @@ function createFakeDocker(): Docker & {
             ? Promise.reject(new Error('connection reset'))
             : Promise.resolve({ StatusCode: 0 }),
         logs: () => Promise.resolve(Buffer.from('')),
-        stop: () => Promise.resolve(),
+        stop: () => {
+          fake.stopped++;
+          return Promise.resolve();
+        },
       };
     },
   };
@@ -50,6 +55,7 @@ function createFakeDocker(): Docker & {
     created: ContainerCreateOptions[];
     failNextCreate: boolean;
     failNextWait: boolean;
+    stopped: number;
   };
 }
 
@@ -184,5 +190,25 @@ describe('DockerTaskRunner', () => {
 
     // Starting a task again stays idempotent: each removes what the last left.
     expect(docker.created).toHaveLength(3);
+  });
+
+  it('stops a running container when this process is interrupted', async () => {
+    const docker = createFakeDocker();
+    const runner = new DockerTaskRunner({ image: 'alpine', docker });
+    const exit = vi
+      .spyOn(process, 'exit')
+      .mockImplementation(() => undefined as never);
+    const task = await runner.run('sleep 60');
+    try {
+      process.emit('SIGINT', 'SIGINT');
+
+      await vi.waitFor(() => expect(exit).toHaveBeenCalledWith(130));
+      expect(docker.stopped).toBe(1);
+    } finally {
+      vi.restoreAllMocks();
+      // Ended by the signal, as far as the runner knows, so it no longer
+      // listens for the next test.
+      await runner.wait(task);
+    }
   });
 });

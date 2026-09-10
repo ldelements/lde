@@ -1,5 +1,5 @@
 import process from 'node:process';
-import { TaskRunner } from '@lde/task-runner';
+import { LiveTasks, TaskRunner } from '@lde/task-runner';
 import Docker, { Container, ContainerCreateOptions } from 'dockerode';
 
 export interface DockerTaskRunnerOptions {
@@ -35,6 +35,8 @@ export class DockerTaskRunner implements TaskRunner<Container> {
    * overlap would otherwise both find it free.
    */
   private nameHolder?: Container | 'starting';
+  /** The containers still going, stopped when this process is told to stop. */
+  private liveTasks = new LiveTasks<Container>((task) => this.stop(task));
 
   constructor(options: DockerTaskRunnerOptions) {
     this.options = {
@@ -48,7 +50,7 @@ export class DockerTaskRunner implements TaskRunner<Container> {
     // its own – a dropped connection, say – leaves it running, and freeing the
     // name would let the next task remove a container still doing its work.
     const result = await task.wait();
-    this.releaseName(task);
+    this.forget(task);
 
     const logs = (
       await task.logs({
@@ -152,6 +154,7 @@ export class DockerTaskRunner implements TaskRunner<Container> {
       await this.options.docker.createContainer(containerOptions);
 
     await container.start();
+    this.liveTasks.add(container);
     if (this.options.containerName) {
       this.nameHolder = container;
     }
@@ -159,8 +162,12 @@ export class DockerTaskRunner implements TaskRunner<Container> {
     return container;
   }
 
-  /** Frees the container name, once the task holding it is no longer running. */
-  private releaseName(task: Container): void {
+  /**
+   * Forgets a task that is no longer running: frees the container name it
+   * held, and no longer stops it along with this process.
+   */
+  private forget(task: Container): void {
+    this.liveTasks.delete(task);
     if (this.nameHolder === task) {
       this.nameHolder = undefined;
     }
@@ -177,7 +184,7 @@ export class DockerTaskRunner implements TaskRunner<Container> {
     }
     // Only now: a stop that did not happen leaves the container running, and
     // its name is still its own.
-    this.releaseName(task);
+    this.forget(task);
 
     const logs = await task.logs({
       stdout: true,
