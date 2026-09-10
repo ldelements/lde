@@ -526,7 +526,27 @@ describe('SparqlAnythingConverter', () => {
         [{ queryFile: ontologyQuery, load: '/data/ontology.rdf' }],
         join(workDir, 'output.nt'),
       ),
-    ).rejects.toThrow(/produced no output for ‘.*ontology\.rq’;/);
+    ).rejects.toThrow(
+      /produced no output for ‘.*ontology\.rq’, and its load file/,
+    );
+  });
+
+  it('accepts an empty output from a chunkless job without --load', async () => {
+    // A missing input named in the query makes SPARQL Anything exit non-zero,
+    // so an empty output with exit 0 can only be a query that matched nothing.
+    const taskRunner = new FakeTaskRunner(workDir, {
+      emptyOutputContaining: 'output-0.nt',
+    });
+    const ontologyQuery = join(workDir, 'ontology.rq');
+    await writeFile(ontologyQuery, 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }');
+    const outputPath = join(workDir, 'output.nt');
+
+    await converterFor(taskRunner).convert(
+      [{ queryFile: ontologyQuery }],
+      outputPath,
+    );
+
+    expect(await readFile(outputPath, 'utf-8')).toBe('');
   });
 
   it('refuses a job whose query names {SOURCE} but has no chunk', async () => {
@@ -743,21 +763,103 @@ describe('SparqlAnythingConverter', () => {
     await expect(readFile(outputPath, 'utf-8')).rejects.toThrow();
   });
 
-  it('aborts when a chunk produces an empty output', async () => {
+  it('accepts an empty output from a chunk, as one the query filtered out', async () => {
     const chunks = await writeChunks(3);
-    // SPARQL Anything exits 0 but writes nothing when it cannot read an input.
+    const taskRunner = new FakeTaskRunner(workDir, {
+      emptyOutputContaining: 'output-1.nt',
+    });
+    const outputPath = join(workDir, 'output.nt');
+    const converted: ChunkProgress[] = [];
+
+    await new SparqlAnythingConverter({
+      jarPath: '/bin/sparql-anything.jar',
+      workDir,
+      taskRunner,
+      onChunkConverted: (progress) => converted.push(progress),
+    }).convert(jobsFor(chunks), outputPath);
+
+    // The filtered chunk contributes nothing to the concatenation; the others
+    // are unaffected, and it is reported as converted like any other.
+    expect(taskRunner.commands).toHaveLength(3);
+    const output = await readFile(outputPath, 'utf-8');
+    expect(output).toMatch(/output-0\.nt/);
+    expect(output).not.toMatch(/output-1\.nt/);
+    expect(output).toMatch(/output-2\.nt/);
+    expect(converted.map(({ chunk }) => chunk)).toEqual(chunks);
+  });
+
+  it('aborts when a job whose --load it cannot see produces an empty output', async () => {
+    // An absolute load path the task runner sees but this process does not –
+    // under a container's mount, say. SPARQL Anything exits 0 when --load is
+    // missing, so nothing tells a filtered chunk from a query that read only
+    // the loaded data and found none.
+    const chunks = await writeChunks(3);
     const taskRunner = new FakeTaskRunner(workDir, {
       emptyOutputContaining: 'output-1.nt',
     });
     const outputPath = join(workDir, 'output.nt');
 
     await expect(
-      converterFor(taskRunner).convert(jobsFor(chunks), outputPath),
-    ).rejects.toThrow('produced no output');
+      converterFor(taskRunner).convert(
+        jobsFor(chunks, '/mount/reference.ttl'),
+        outputPath,
+      ),
+    ).rejects.toThrow(
+      'load file ‘/mount/reference.ttl’ cannot be seen from here',
+    );
 
     // The second chunk was empty, so the third never ran and nothing was merged.
     expect(taskRunner.commands).toHaveLength(2);
     await expect(readFile(outputPath, 'utf-8')).rejects.toThrow();
+  });
+
+  it('accepts an empty output from a job whose --load it saw to be non-empty', async () => {
+    const chunks = await writeChunks(2);
+    await writeFile(join(workDir, 'reference.ttl'), '<a> <b> <c> .\n');
+    const taskRunner = new FakeTaskRunner(workDir, {
+      emptyOutputContaining: 'output-0.nt',
+    });
+    const outputPath = join(workDir, 'output.nt');
+
+    await converterFor(taskRunner).convert(
+      jobsFor(chunks, 'reference.ttl'),
+      outputPath,
+    );
+
+    const output = await readFile(outputPath, 'utf-8');
+    expect(output).not.toMatch(/output-0\.nt/);
+    expect(output).toMatch(/output-1\.nt/);
+  });
+
+  it('refuses a relative --load path that does not exist under workDir before starting anything', async () => {
+    const taskRunner = new FakeTaskRunner(workDir);
+    const [chunk] = await writeChunks(1);
+
+    await expect(
+      converterFor(taskRunner).convert(
+        jobsFor([chunk], 'reference.ttl'),
+        join(workDir, 'output.nt'),
+      ),
+    ).rejects.toThrow(
+      `Load file ‘reference.ttl’ does not exist under ‘${workDir}’`,
+    );
+
+    expect(taskRunner.commands).toHaveLength(0);
+  });
+
+  it('refuses an empty --load path before starting anything', async () => {
+    const taskRunner = new FakeTaskRunner(workDir);
+    const [chunk] = await writeChunks(1);
+    await writeFile(join(workDir, 'reference.ttl'), '');
+
+    await expect(
+      converterFor(taskRunner).convert(
+        jobsFor([chunk], 'reference.ttl'),
+        join(workDir, 'output.nt'),
+      ),
+    ).rejects.toThrow('Load file ‘reference.ttl’ is empty');
+
+    expect(taskRunner.commands).toHaveLength(0);
   });
 
   it('aborts when a chunk produces no output file', async () => {

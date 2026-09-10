@@ -69,13 +69,15 @@ A query and its chunks have to agree: a query naming `{SOURCE}` without chunks, 
 
 `workDir` is the task runner's working directory – `cwd` for a `NativeTaskRunner`, `mountDir` for a `DockerTaskRunner`. The converter writes its generated query files and per-process outputs into a fresh subdirectory there and removes it when the conversion ends, then refers to them by a path relative to `workDir`, so the identical command works on the host and inside a container.
 
-Per-run directories matter for more than tidiness: an output left over from an earlier run would satisfy the non-empty check below with stale triples.
+Per-run directories matter for more than tidiness: an output left over from an earlier run would satisfy the output check below with stale triples.
 
 `jarPath`, and each job's `load` and `chunks` paths, are passed through as given, because only the caller knows how the runner sees them – in a container the jar usually lives in the image, while the chunks have to be under the mount.
 
 ### Loading existing RDF
 
 `load` is optional. Pass it to combine the converted data with RDF you already have – a lookup table the query joins against, for instance. SPARQL Anything reads a **file** into the default graph, and a **directory** as one named graph per RDF file it holds, so the two are not interchangeable. Leave `load` unset and no `--load` is passed at all.
+
+A missing `--load` is the one input SPARQL Anything does not fail on: it logs the problem, runs the query without the data and exits 0. The converter therefore checks the file before any process starts. A **relative** path is relative to `workDir` for the runner and the converter alike, so one that is missing or empty fails then, naming the file. An **absolute** path is the runner's, and one the converter cannot find on its own side proves nothing – the job runs, and its outputs are held to the stricter check under [How a conversion runs](#how-a-conversion-runs).
 
 ### Memory
 
@@ -155,7 +157,7 @@ For each chunk – or once, for a job that has none – the converter:
 1. Replaces the literal `{SOURCE}` in the job’s query with the chunk’s path and writes the result to a temporary `.rq` file. The query is read once per job, and interpolated per chunk.
 2. Runs `java -Xmx<heap> -jar <jar> -q <query> [--load <load>] --format NT --output <chunk>.nt [cliArgs]`, with every path quoted, so a space or a shell metacharacter in a filename can neither break the command nor inject into it.
 3. Waits for the process; a non-zero exit **aborts the whole conversion** so a crashed chunk can never be silently dropped from the output.
-4. Checks that the output is not empty. SPARQL Anything exits successfully when it cannot read or parse an input – it logs the problem and writes nothing – so an empty or missing output **aborts the conversion** too.
+4. Checks the output. A missing output **aborts the conversion**. An empty one is **accepted as no triples** – a chunk whose rows the query filtered out entirely – and contributes nothing to the concatenation, unless the job has a `load` the converter could not see: then the empty output could as well be a missing `--load` file, which SPARQL Anything exits 0 on, and it **aborts the conversion** too.
 
 Converting an empty list of jobs is an error rather than an empty output: a step that produced none has already failed.
 
