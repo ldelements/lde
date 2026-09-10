@@ -1,3 +1,9 @@
+## 0.1.6 (2026-09-10)
+
+### 🩹 Fixes
+
+- **sparql-anything:** accept an empty output as no triples unless --load could not be checked ([#836](https://github.com/ldelements/lde/pull/836))
+
 ## 0.1.5 (2026-09-09)
 
 ### 🩹 Fixes
