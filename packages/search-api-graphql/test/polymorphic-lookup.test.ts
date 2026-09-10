@@ -49,13 +49,6 @@ const person: SearchType = {
       output: true,
       ref: { strategy: 'lookup', target: 'Place' },
     },
-    // Shared in name only: each member points it at a different type.
-    {
-      name: 'affiliation',
-      kind: 'reference',
-      output: true,
-      ref: { strategy: 'lookup', target: 'Organization' },
-    },
   ],
 };
 const organization: SearchType = {
@@ -74,12 +67,6 @@ const organization: SearchType = {
     { name: 'homepage', kind: 'keyword', output: true },
     {
       name: 'address',
-      kind: 'reference',
-      output: true,
-      ref: { strategy: 'lookup', target: 'Place' },
-    },
-    {
-      name: 'affiliation',
       kind: 'reference',
       output: true,
       ref: { strategy: 'lookup', target: 'Place' },
@@ -157,6 +144,36 @@ describe('serving a lookup over several targets', () => {
     expect(sdl).toMatch(
       /type PersonReference implements[^}]*birthDate: String/,
     );
+  });
+
+  it('refuses a declaration spelling the derived name itself', () => {
+    // A Reference Type named `PersonOrOrganization` would put its filter
+    // under the interface's filter name; refused rather than served wrongly.
+    const spelled: SearchType = {
+      name: 'PersonOrOrganization',
+      fields: [{ name: 'note', kind: 'keyword', output: true }],
+    };
+    const nesting = (fields: readonly SearchField[]): SearchType => ({
+      ...work,
+      fields,
+    });
+    const note: SearchField = {
+      name: 'note',
+      kind: 'reference',
+      output: true,
+      ref: { strategy: 'inline', typeName: 'PersonOrOrganization' },
+    };
+    // Whichever registers first, the other is refused.
+    for (const fields of [
+      [...work.fields, note],
+      [note, ...work.fields],
+    ]) {
+      expect(() =>
+        buildGraphQLSchema(
+          searchSchema(nesting(fields), person, organization, place, spelled),
+        ),
+      ).toThrow(/collides with another type name/);
+    }
   });
 
   it('refuses a declaration spelling the derived name itself', () => {

@@ -372,6 +372,55 @@ describe('a stored referent of several possible kinds', () => {
   });
 });
 
+describe('a lookup naming one target', () => {
+  it('reads nothing for a selection reduced to id', async () => {
+    const single = defineSearchType({
+      ...work,
+      name: 'SingleWork',
+      class: 'https://example.org/SingleWork',
+      fields: [
+        {
+          ...work.fields[1],
+          ref: { strategy: 'lookup', target: 'Person' },
+        },
+      ],
+    });
+    const { fake, searches } = client({
+      found: 1,
+      hits: [{ document: { id: 'https://w/3', creator: ['https://p/1'] } }],
+    });
+    const engine = createTypesenseSearchEngine(
+      fake.client,
+      searchSchema(single, person),
+      { collections: { ...collections, SingleWork: 'singles' } },
+    );
+
+    const result = await engine.search(single as never, {
+      ...base,
+      resolve: { creator: { fields: [] } },
+    });
+
+    expect(searches).toHaveLength(0);
+    expect(
+      (result.hits[0].document as Record<string, unknown>).creator,
+    ).toEqual([{ id: 'https://p/1', label: { nl: ['Frank Koel'] } }]);
+  });
+});
+
+describe('a stored referent field with no entries', () => {
+  it('reconstructs nothing', async () => {
+    const { fake } = client({
+      found: 1,
+      hits: [{ document: { id: 'https://w/4', creator: [] } }],
+    });
+    const engine = createTypesenseSearchEngine(fake.client, schema, {
+      collections,
+    });
+    const result = await engine.search(edgedWork as never, base);
+    expect(result.hits[0].document).toEqual({});
+  });
+});
+
 describe('declaring the collection for a stored referent of several kinds', () => {
   it('declares the union of the targets’ fields once, plus the discriminator', () => {
     const definition = buildCollectionDefinition(edgedWork, { schema });
@@ -390,5 +439,78 @@ describe('declaring the collection for a stored referent of several kinds', () =
         (field) => field.name === `creator.creator.${TARGET_FIELD}`,
       ),
     ).toMatchObject({ type: 'string[]', index: false, optional: true });
+  });
+
+  it('declares a single-valued referent as one object with one discriminator', () => {
+    const single = defineSearchType({
+      ...edgedWork,
+      name: 'Print',
+      class: 'https://example.org/Print',
+      fields: [
+        {
+          name: 'creator',
+          kind: 'reference',
+          output: true,
+          ref: {
+            strategy: 'lookup',
+            target: ['Person', 'Organization'],
+            local: true,
+          },
+        },
+      ],
+    });
+    const definition = buildCollectionDefinition(single, {
+      schema: searchSchema(single, person, organization),
+    });
+    expect(
+      definition.fields?.find((field) => field.name === 'creator'),
+    ).toMatchObject({ type: 'object' });
+    expect(
+      definition.fields?.find(
+        (field) => field.name === `creator.${TARGET_FIELD}`,
+      ),
+    ).toMatchObject({ type: 'string' });
+  });
+
+  it('still declares the discriminator where the descent is cut', () => {
+    // Person reaches back to itself and to the root: both already on the
+    // path, so the nesting stops – but the projection stores the referent
+    // as an `{ id, _target }` object all the same.
+    const knowing = defineSearchType({
+      ...person,
+      fields: [
+        ...person.fields,
+        {
+          name: 'related',
+          kind: 'reference',
+          output: true,
+          ref: {
+            strategy: 'lookup',
+            target: ['Person', 'Painting'],
+            local: true,
+          },
+        },
+      ],
+    });
+    const painting = defineSearchType({
+      ...edgedWork,
+      labelField: 'title',
+      fields: [
+        {
+          name: 'title',
+          kind: 'text',
+          locales: ['nl'],
+          output: true,
+          searchable: { weight: 1 },
+        },
+        ...edgedWork.fields,
+      ],
+    });
+    const definition = buildCollectionDefinition(painting, {
+      schema: searchSchema(painting, knowing, organization, creatorEdge),
+    });
+    const names = definition.fields?.map((field) => field.name) ?? [];
+    expect(names).toContain('creator.creator.related');
+    expect(names).toContain(`creator.creator.related.${TARGET_FIELD}`);
   });
 });

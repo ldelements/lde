@@ -656,22 +656,9 @@ export function buildGraphQLSchema(
     ) {
       return undefined;
     }
-    // A reference field is shared only where every member serves it as the
-    // same emitted type – same strategy, same referent – or the interface
-    // would offer one field of two types: an `idOnly` surfaces as an `IRI`
-    // where a lookup to the same name surfaces as an object.
-    if (
-      declared.kind === 'reference' &&
-      counterparts.some(
-        (counterpart) =>
-          (counterpart as ReferenceField).ref?.strategy !==
-            declared.ref?.strategy ||
-          referencedTypeName(counterpart as ReferenceField) !==
-            referencedTypeName(declared),
-      )
-    ) {
-      return undefined;
-    }
+    // A shared reference field is served as one emitted type on every
+    // member: `searchSchema` holds the targets to the same strategy and the
+    // same referent for a name they share, so nothing is checked here.
     const required =
       !nullableId &&
       counterparts.every((counterpart) => counterpart?.required === true);
