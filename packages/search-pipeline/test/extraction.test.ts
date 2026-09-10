@@ -11,10 +11,9 @@ import { defineSearchType, searchSchema } from '@lde/search';
 import {
   fieldNamed,
   irAlias,
-  labelSourceNameOf,
-  localLookupTypeOf,
+  localLookupTargetsOf,
+  referencedTargetsOf,
   referenceTypeNamed,
-  rootTypeNamed,
 } from '@lde/search/adapter';
 import type { SearchSchema, SearchType } from '@lde/search';
 import { extractionQuery, extractionQueryString } from '../src/extraction.js';
@@ -720,26 +719,27 @@ describe('extraction ⟷ projection contract', () => {
       }
       // A `local` lookup: the projection shapes the referent through the
       // TARGET’s own declaration, so it reads that type’s aliases off it.
-      const local = localLookupTypeOf(field, schema);
-      if (local !== undefined && !onPath.has(local.name)) {
-        for (const alias of projectionReads(local, schema, onPath)) {
+      const local = localLookupTargetsOf(field, schema).filter(
+        (target) => !onPath.has(target.name),
+      );
+      for (const target of local) {
+        for (const alias of projectionReads(target, schema, onPath)) {
           aliases.add(alias);
         }
-        continue;
       }
       // A reference into a keyed type: the projection reads the referent’s key
       // candidates off the frame, under the TARGET’s alias for its key field.
-      const targetName = labelSourceNameOf(field);
-      const target =
-        targetName === undefined
-          ? undefined
-          : rootTypeNamed(schema, targetName);
-      const keyField =
-        target?.key === undefined
-          ? undefined
-          : fieldNamed(target, target.key.field);
-      if (target !== undefined && keyField !== undefined) {
-        aliases.add(irAlias(target, keyField));
+      for (const target of referencedTargetsOf(field, schema)) {
+        if (local.includes(target)) {
+          continue;
+        }
+        const keyField =
+          target.key === undefined
+            ? undefined
+            : fieldNamed(target, target.key.field);
+        if (keyField !== undefined) {
+          aliases.add(irAlias(target, keyField));
+        }
       }
     }
     return aliases;

@@ -167,12 +167,23 @@ editor.
   `id`, since a referent needs no identity – so a client selects a nested
   object’s fields directly and renders one referent at a time. A `local` lookup
   gets the nullable `id` too, and for the same reason: it carries what the
-  document states about an endpoint whether or not the endpoint is identified; scalars/booleans
+  document states about an endpoint whether or not the endpoint is identified.
+  A lookup naming [several targets](./search#a-referent-of-several-kinds) is
+  served as an **interface** named for the set (`creator` over `Person` and
+  `Organization` → `PersonOrOrganizationReference`), implemented by each
+  target’s own reference type; it carries `id` plus every field the targets
+  declare alike, with the weakest nullability any of them keeps, and resolves
+  per referent to the type whose collection answered for it, or that a stored
+  referent was projected through – so `__typename` is true per referent, and
+  `... on PersonReference { birthDate }` reaches what only a person has. An
+  IRI no collection holds has no kind to report and is served as the first
+  target declared, since an interface must resolve to some type; scalars/booleans
   per kind; `date` → ISO 8601 string; nullability from `required` / `array` /
   `kind`.
 - **`where`** one input per `filterable` field, typed by what the field keys on:
   a `keyword` holds literals (`KeywordFilter`), a `reference` holds identity
-  (`‹Target›Filter`, or `IRIFilter` when it names no target), and the numeric
+  (`‹Target›Filter`, or `IRIFilter` when it names no target, or a filter named
+  for the set – `PersonOrOrganizationFilter` – when it names several), and the numeric
   kinds take `IntRange` / `FloatRange` / `DateRange`, a `boolean` a plain
   `Boolean`. Every type also gets **`id: ‹Type›Filter`** – the document’s IRI,
   declared by no type and filterable on all of them
@@ -328,7 +339,12 @@ when a shorter, higher-precision list is what you want.
 **Known limit**: the refined strategy resolves only when the target is itself a
 root collection. A `ref` to a type no collection serves has no `‹Type›Where.id`
 to match against, so fall back to the coarse strategy – which is also the right
-one for a reference declared with no target at all (`IRIFilter`).
+one for a reference declared with no target at all (`IRIFilter`), and for one
+declared with [several](./search#a-referent-of-several-kinds): its filter is
+named for the set (`PersonOrOrganizationFilter`) rather than for any one
+member’s `id`, so resolving through `PersonWhere.id` does not reach it, by
+design – the name is truthful about what the field admits. Its `in` element is
+still `IRI`, so coarse discovery finds it.
 
 Two further notes. `IRI` is wire-compatible with `String`, but GraphQL checks
 variable usage **nominally**, so a variable must be declared `[IRI!]` rather than

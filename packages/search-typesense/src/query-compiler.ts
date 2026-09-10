@@ -23,7 +23,7 @@ import {
   isRangeFacet,
   isWelded,
   joinGraph,
-  localLookupTypeOf,
+  localLookupTargetsOf,
   pageForOffset,
   physicalFields,
   nestedReferenceType,
@@ -268,16 +268,24 @@ function collectSearchable(
     if (isInternalField(field)) {
       continue;
     }
+    const referenceType = nestedReferenceType(schema, field);
     const nested =
-      nestedReferenceType(schema, field) ?? localLookupTypeOf(field, schema);
+      referenceType === undefined
+        ? localLookupTargetsOf(field, schema)
+        : [referenceType];
     // Cut on the CHILD, not on entry, and against the set this level was
     // reached with – the same boundary the collection's own walk cuts at
     // (`nestedFields`). Returning on entry instead skipped the companions of
     // the level the collection HAD declared, leaving them indexed and absent
-    // from `query_by` wherever a type reached itself.
-    if (nested !== undefined && !onPath.has(nested.name)) {
+    // from `query_by` wherever a type reached itself. Several targets each
+    // contribute their searchable fields: the one nested object declares them
+    // all, and free text has to reach a referent of either kind.
+    for (const nestedType of nested) {
+      if (onPath.has(nestedType.name)) {
+        continue;
+      }
       collectSearchable(
-        nested,
+        nestedType,
         locale,
         schema,
         qualify(prefix, field.name),
