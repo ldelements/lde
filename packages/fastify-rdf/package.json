@@ -25,7 +25,7 @@
     "!**/*.tsbuildinfo"
   ],
   "dependencies": {
-    "@fastify/accepts": "^5.0.0",
+    "@fastify/accepts": "^5.0.5",
     "@tpluscode/rdf-ns-builders": "^5.0.0",
     "fastify-plugin": "^6.0.0",
     "n3": "^2.4.0",
@@ -35,9 +35,9 @@
   },
   "devDependencies": {
     "@rdfjs/types": "^2.0.0",
-    "fastify": "^5.12.1"
+    "fastify": "^5.12.3"
   },
   "peerDependencies": {
-    "fastify": "^5.12.1"
+    "fastify": "^5.12.3"
   }
 }
