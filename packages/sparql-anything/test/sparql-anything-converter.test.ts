@@ -4,7 +4,7 @@ import {
   SparqlAnythingConverter,
 } from '../src/index.js';
 import { TaskRunner } from '@lde/task-runner';
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   mkdtemp,
   readdir,
@@ -13,6 +13,7 @@ import {
   symlink,
   writeFile,
 } from 'node:fs/promises';
+import { readdirSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -686,6 +687,37 @@ describe('SparqlAnythingConverter', () => {
     expect(taskRunner.stopped).toEqual([
       expect.stringContaining('output-1.nt'),
     ]);
+  });
+
+  it('removes the run directory when the process ends mid-run', async () => {
+    const chunks = await writeChunks(2);
+    const taskRunner = new FakeTaskRunner(workDir, { waitForAll: 200 });
+    const listenersBefore = process.listeners('exit');
+    const run = converterFor(taskRunner).convert(
+      jobsFor(chunks),
+      join(workDir, 'output.nt'),
+    );
+    await vi.waitFor(() => expect(taskRunner.peakInFlight).toBe(1));
+    const [onExit] = process
+      .listeners('exit')
+      .filter((listener) => !listenersBefore.includes(listener));
+    expect(onExit).toBeDefined();
+
+    // As Node calls it: the process is ending, so no further turn of the
+    // event loop follows.
+    onExit?.(130);
+
+    expect(readdirSync(workDir)).toEqual([
+      'chunk-0.csv',
+      'chunk-1.csv',
+      'places.rq',
+    ]);
+    // Ended in the way it would when the interrupted run's process stops.
+    await expect(run).rejects.toThrow();
+    // Removed again once the run has ended, along with the directory.
+    expect(process.listeners('exit')).toEqual(listenersBefore);
+    // Removing it twice is not an error.
+    onExit?.(130);
   });
 
   it('rejects a concurrency that is not a whole number of processes', () => {
