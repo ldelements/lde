@@ -1,0 +1,45 @@
+{
+  "total": {
+    "lines": { "total": 457, "covered": 457, "skipped": 0, "pct": 100 },
+    "statements": { "total": 468, "covered": 468, "skipped": 0, "pct": 100 },
+    "functions": { "total": 119, "covered": 119, "skipped": 0, "pct": 100 },
+    "branches": { "total": 330, "covered": 321, "skipped": 0, "pct": 97.27 },
+    "branchesTrue": { "total": 0, "covered": 0, "skipped": 0, "pct": "Unknown" }
+  },
+  "/Users/david/src/lde-issue-717-polymorphic-lookup/packages/search-api-graphql/src/build-schema.ts": {
+    "lines": { "total": 328, "covered": 328, "skipped": 0, "pct": 100 },
+    "functions": { "total": 83, "covered": 83, "skipped": 0, "pct": 100 },
+    "statements": { "total": 331, "covered": 331, "skipped": 0, "pct": 100 },
+    "branches": { "total": 235, "covered": 229, "skipped": 0, "pct": 97.44 }
+  },
+  "/Users/david/src/lde-issue-717-polymorphic-lookup/packages/search-api-graphql/src/facet-batch.ts": {
+    "lines": { "total": 37, "covered": 37, "skipped": 0, "pct": 100 },
+    "functions": { "total": 14, "covered": 14, "skipped": 0, "pct": 100 },
+    "statements": { "total": 42, "covered": 42, "skipped": 0, "pct": 100 },
+    "branches": { "total": 20, "covered": 20, "skipped": 0, "pct": 100 }
+  },
+  "/Users/david/src/lde-issue-717-polymorphic-lookup/packages/search-api-graphql/src/handler.ts": {
+    "lines": { "total": 16, "covered": 16, "skipped": 0, "pct": 100 },
+    "functions": { "total": 5, "covered": 5, "skipped": 0, "pct": 100 },
+    "statements": { "total": 17, "covered": 17, "skipped": 0, "pct": 100 },
+    "branches": { "total": 19, "covered": 19, "skipped": 0, "pct": 100 }
+  },
+  "/Users/david/src/lde-issue-717-polymorphic-lookup/packages/search-api-graphql/src/language.ts": {
+    "lines": { "total": 11, "covered": 11, "skipped": 0, "pct": 100 },
+    "functions": { "total": 4, "covered": 4, "skipped": 0, "pct": 100 },
+    "statements": { "total": 12, "covered": 12, "skipped": 0, "pct": 100 },
+    "branches": { "total": 8, "covered": 7, "skipped": 0, "pct": 87.5 }
+  },
+  "/Users/david/src/lde-issue-717-polymorphic-lookup/packages/search-api-graphql/src/print-sdl.ts": {
+    "lines": { "total": 11, "covered": 11, "skipped": 0, "pct": 100 },
+    "functions": { "total": 2, "covered": 2, "skipped": 0, "pct": 100 },
+    "statements": { "total": 11, "covered": 11, "skipped": 0, "pct": 100 },
+    "branches": { "total": 7, "covered": 7, "skipped": 0, "pct": 100 }
+  },
+  "/Users/david/src/lde-issue-717-polymorphic-lookup/packages/search-api-graphql/src/projection.ts": {
+    "lines": { "total": 54, "covered": 54, "skipped": 0, "pct": 100 },
+    "functions": { "total": 11, "covered": 11, "skipped": 0, "pct": 100 },
+    "statements": { "total": 55, "covered": 55, "skipped": 0, "pct": 100 },
+    "branches": { "total": 41, "covered": 39, "skipped": 0, "pct": 95.12 }
+  }
+}

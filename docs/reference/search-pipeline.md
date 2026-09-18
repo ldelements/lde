@@ -424,7 +424,12 @@ guarantees one output triple per genuine value:
   because a `local` lookup stores its endpoint by id whether or not the document
   says anything about it – conjoining would drop the id along with the absent
   fields. It subsumes the key hop below, the key field being one of the target's
-  own.
+  own. A lookup naming [several targets](./search#a-referent-of-several-kinds)
+  expands through every one of them inside the same `OPTIONAL` union – a
+  referent is of one kind, and the other targets' branches bind nothing for it –
+  and reads the referent’s `rdf:type` in an `OPTIONAL` of its own, emitted as
+  `rdf:type` so framing carries it as `@type`: that is what the projection
+  matches against each target’s `class` to tell which kind the referent is.
 - **A key hop stays inside its branch.** A reference naming a target that
   declares a [document key](./search#document-key) gets its branch extended with
   an `OPTIONAL` hop reading the referent’s key field, emitted under the target’s

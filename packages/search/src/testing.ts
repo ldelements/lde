@@ -11,7 +11,9 @@ import {
   facetableFields,
   filterableFields,
   ID_FIELD,
-  inheritedFacetKeys,
+  identityFieldOf,
+  inheritedFacetPolicies,
+  referencedTargetsOf,
   nestedReferenceType,
   outputFields,
   type RootType,
@@ -269,8 +271,19 @@ export function describeSearchEngineContract(
       // second assertion bites.
       for (const searchType of types()) {
         for (const field of facetableFields(searchType)) {
-          const policy = inheritedFacetKeys(field, engine().schema);
-          if (policy === undefined) {
+          // A bucket keyed on an id of one target is admitted by that
+          // target’s policy, and a target declaring none admits every one of
+          // its ids. Which target a bucket belongs to is not visible here, so
+          // the contract is checked only where every target constrains: then
+          // a bucket failing every policy belongs to no admitting target.
+          const policies = [
+            ...inheritedFacetPolicies(field, engine().schema).values(),
+          ];
+          const targets = referencedTargetsOf(
+            identityFieldOf(field, engine().schema) ?? field,
+            engine().schema,
+          );
+          if (policies.length === 0 || policies.length < targets.length) {
             continue;
           }
           const result = await engine().search(searchType, {
@@ -280,7 +293,9 @@ export function describeSearchEngineContract(
           });
           const buckets = result.facets[field.name] ?? [];
           for (const bucket of buckets) {
-            expect(policy.only(bucket.value)).toBe(true);
+            expect(policies.some((policy) => policy.only(bucket.value))).toBe(
+              true,
+            );
             expect(bucket.label).toBeDefined();
           }
           if (field.output !== true || field.filterable !== true) {
@@ -288,7 +303,7 @@ export function describeSearchEngineContract(
           }
           const excluded = result.hits
             .flatMap((hit) => referenceIds(hit.document[field.name]))
-            .find((id) => !policy.only(id));
+            .find((id) => !policies.some((policy) => policy.only(id)));
           if (excluded === undefined) {
             continue;
           }

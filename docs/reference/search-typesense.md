@@ -200,15 +200,25 @@ down.
 - runs the search;
 - resolves reference (and reference-facet) labels **per reference field**
   from the collection of the `SearchType` its `labelSource` names – all
-  sources bundled into a single lookup. A reference without a `labelSource`
-  stays id-only. With `labelCacheTtlMs` set, each label-source collection is
-  instead loaded once into an in-memory cache;
+  sources bundled into a single lookup. A reference naming
+  [several targets](./search#a-referent-of-several-kinds) sends its IRIs to
+  every one of their collections in the same round-trip. An IRI two of them
+  hold is labelled by the collection the type’s fields name first – label
+  precedence is settled per type, not per field, since one page’s labels are
+  one map keyed by IRI. A reference without a
+  `labelSource` stays id-only. With `labelCacheTtlMs` set, each label-source
+  collection is instead loaded once into an in-memory cache;
 - reconstructs the logical `SearchResult` (`parseSearchResponse`) – language
   maps, labelled references, labelled facet buckets, and one nested Search
   Document per referent of a surfaced inline reference (each referent’s values
   grouped, `id` only where the referent had one). Nesting is rebuilt here,
   below every API surface, so a second surface inherits it rather than
-  reimplementing it.
+  reimplementing it. A projected lookup naming several targets fetches from
+  each target’s collection concurrently, still one round-trip per level, and
+  marks each nested document with the target whose collection answered for it
+  (`NESTED_DOCUMENT_TYPE`, a symbol key, so it never surfaces as a field); a
+  stored referent no collection answers for is read through the target its
+  stored discriminator names.
 
 A label source is just another `SearchType` in the schema (with an `output`,
 `searchable` text field under its

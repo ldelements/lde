@@ -11,7 +11,8 @@ import {
   isInlineReference,
   isInternalField,
   joinGraph,
-  localLookupTypeOf,
+  localLookupTargetsOf,
+  TARGET_FIELD,
   nestedFieldName,
   nestedReferenceType,
   physicalFields,
@@ -148,25 +149,24 @@ export function buildCollectionDefinition(
 }
 
 /**
- * The type a field nests, or `undefined` when it nests nothing. Throws when the
- * type carries an inline reference the caller gave no schema to resolve: the
- * collection would silently store the reference as a string the projection
- * never writes, so every document would fail to import.
+ * The types a field nests – one for an inline reference or a single-target
+ * `local` lookup, several for a `local` lookup naming several targets – or
+ * none when it nests nothing. Throws when the type carries an inline reference
+ * the caller gave no schema to resolve: the collection would silently store
+ * the reference as a string the projection never writes, so every document
+ * would fail to import.
  */
-function nestedTypeOf(
+function nestedTypesOf(
   searchType: SearchType,
   field: SearchField,
   schema: SearchSchema | undefined,
-): SearchType | undefined {
+): readonly SearchType[] {
   const nested =
-    schema === undefined
-      ? undefined
-      : (nestedReferenceType(schema, field) ??
-        localLookupTypeOf(field, schema));
+    schema === undefined ? [] : nestedTypesOfNestedField(field, schema);
   // Reached only for a field carrying a Role, so an inline reference here
   // stores entries: a Role-less one is an internal reading device, pruned
   // before the writer.
-  if (nested === undefined && isInlineReference(field)) {
+  if (nested.length === 0 && isInlineReference(field)) {
     throw new Error(
       `Building the collection for “${searchType.name}” needs the search schema its surfaced inline reference “${field.name}” resolves against; pass it as the collection-definition option “schema”.`,
     );
@@ -246,13 +246,14 @@ function typesenseFields(
   if (isInternalField(field)) {
     return [];
   }
-  const nested = nestedTypeOf(searchType, field, schema);
-  if (nested !== undefined) {
+  const nested = nestedTypesOf(searchType, field, schema);
+  if (nested.length > 0) {
     return [
-      ...nestedFields(
+      ...nestedObjectFields(
         field.name,
         field,
         nested,
+        nested.length > 1,
         schema as SearchSchema,
         defaultLocale,
         false,
@@ -373,6 +374,67 @@ function typesenseFields(
  * the children rather than declared, and this is the one place that invariant
  * can be got wrong.
  */
+function nestedObjectFields(
+  prefix: string,
+  reference: SearchField,
+  nestedTypes: readonly SearchType[],
+  polymorphic: boolean,
+  schema: SearchSchema,
+  defaultLocale: string | undefined,
+  withinArray: boolean,
+  onPath: ReadonlySet<string>,
+): CollectionFieldSchema[] {
+  // `polymorphic` is about the DECLARATION, `nestedTypes` about what is
+  // descended into here: a lookup naming several targets of which only one is
+  // still off the path stores a discriminator all the same.
+  if (!polymorphic) {
+    return nestedFields(
+      prefix,
+      reference,
+      nestedTypes[0],
+      schema,
+      defaultLocale,
+      withinArray,
+      onPath,
+    );
+  }
+  // A lookup naming several targets stores a referent of whichever kind it
+  // turns out to be under ONE nested object, so the object declares the union
+  // of the targets’ fields – each declared once, and `searchSchema` has
+  // already refused two targets declaring one name differently – plus the
+  // discriminator the projection writes to say which kind an entry is.
+  const byName = new Map<string, CollectionFieldSchema>();
+  for (const nestedType of nestedTypes) {
+    for (const declared of nestedFields(
+      prefix,
+      reference,
+      nestedType,
+      schema,
+      defaultLocale,
+      withinArray,
+      onPath,
+    )) {
+      if (!byName.has(declared.name)) {
+        byName.set(declared.name, declared);
+      }
+    }
+  }
+  const flattensToArray = withinArray || reference.array === true;
+  const children = [...byName.values()].filter(
+    (declared) => declared.name !== prefix,
+  );
+  children.push(targetField(prefix, flattensToArray));
+  return [
+    {
+      name: prefix,
+      type: flattensToArray ? 'object[]' : 'object',
+      index: children.some((child) => child.index !== false),
+      optional: reference.required !== true,
+    },
+    ...children,
+  ];
+}
+
 function nestedFields(
   prefix: string,
   reference: SearchField,
@@ -413,8 +475,11 @@ function nestedFields(
     if (isInternalField(field)) {
       continue;
     }
-    const deeper = nestedTypeOfNestedField(field, schema);
-    if (deeper !== undefined && walked.has(deeper.name)) {
+    const deeper = nestedTypesOfNestedField(field, schema);
+    // Descend into the types not yet on the path; where every one is, the
+    // cycle stops here.
+    const descend = deeper.filter((type) => !walked.has(type.name));
+    if (deeper.length > 0 && descend.length === 0) {
       // The cycle stops here, and so does the frame – but a value is still
       // stored: the extraction falls back to the target's key hop, and the
       // projection writes the referent as an `{id}` object beside its identity
@@ -432,6 +497,9 @@ function nestedFields(
           index: false,
           optional: true,
         },
+        // A cut lookup naming several targets still says which one it
+        // stored, exactly as an expanded one does.
+        ...(deeper.length > 1 ? [targetField(boundary, boundaryArray)] : []),
         {
           // Always a Root Type, so always identified: `searchSchema` rejects
           // inline cycles, so the only way to arrive at a type already on the
@@ -445,12 +513,13 @@ function nestedFields(
       );
       continue;
     }
-    if (deeper !== undefined) {
+    if (descend.length > 0) {
       children.push(
-        ...nestedFields(
+        ...nestedObjectFields(
           nestedFieldName(prefix, field.name),
           field,
-          deeper,
+          descend,
+          deeper.length > 1,
           schema,
           defaultLocale,
           flattensToArray,
@@ -563,14 +632,28 @@ function nestedIdentityFields(
   ];
 }
 
-/** The type a *nested* field itself nests: another inline reference’s type, or
- *  the Root Type a {@link ReferenceStrategy.local local} lookup projects its
- *  endpoint through. */
-function nestedTypeOfNestedField(
+/** The stored discriminator of a lookup naming several targets
+ *  ({@link TARGET_FIELD}): a stored value, never indexed. */
+function targetField(prefix: string, array: boolean): CollectionFieldSchema {
+  return {
+    name: nestedFieldName(prefix, TARGET_FIELD),
+    type: array ? 'string[]' : 'string',
+    index: false,
+    optional: true,
+  };
+}
+
+/** The types a field nests: another inline reference’s type, or the Root
+ *  Types a {@link ReferenceStrategy.local local} lookup projects its endpoint
+ *  through. */
+function nestedTypesOfNestedField(
   field: SearchField,
   schema: SearchSchema,
-): SearchType | undefined {
-  return nestedReferenceType(schema, field) ?? localLookupTypeOf(field, schema);
+): readonly SearchType[] {
+  const referenceType = nestedReferenceType(schema, field);
+  return referenceType === undefined
+    ? localLookupTargetsOf(field, schema)
+    : [referenceType];
 }
 
 /**

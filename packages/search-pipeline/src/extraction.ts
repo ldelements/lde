@@ -14,13 +14,11 @@ import {
   fieldNamed,
   irAlias,
   isInlineReference,
-  labelSourceNameOf,
-  localLookupTypeOf,
+  localLookupTargetsOf,
+  referencedTargetsOf,
   referenceTypeNamed,
-  rootTypeNamed,
 } from '@lde/search/adapter';
 import type {
-  ReferenceField,
   RootType,
   SearchField,
   SearchSchema,
@@ -30,6 +28,8 @@ import type {
 const factory = new AstFactory();
 const parser = new Parser();
 const generator = new Generator();
+
+const RDF_TYPE = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
 
 /** Options for {@link extractionQuery}. */
 export interface ExtractionOptions {
@@ -81,6 +81,12 @@ export interface ExtractionOptions {
  *   `OPTIONAL`, so a referent with no key candidate keeps its row. The root side
  *   needs nothing: a key field is a declared field, so its own branch and
  *   template triple are already there.
+ * - **references naming several targets**: the referent may be of any of them,
+ *   so its branch also reads the referent’s `rdf:type` (`OPTIONAL`, emitted
+ *   as is – framing carries it as `@type`), which is what the projection
+ *   matches against each target’s `class` to tell which one it is. Every
+ *   target then contributes its own expansion or key hop, so whichever the
+ *   referent turns out to be, its declaration is in the frame.
  *
  * Wire the result into a `SparqlConstructReader` (see `searchStages`), which
  * runs it per batch with the roots injected as VALUES.
@@ -196,36 +202,43 @@ function buildFor(
           factory.gen(),
         ),
       ];
-      const local = localTargetOf(field, schema, onPath);
-      if (local === undefined) {
-        // Only where no local expansion follows: a `local` lookup reads the
-        // target’s every path-bearing field, and a keyed target’s key field is
-        // one of them, so emitting the hop as well would state it twice.
-        const keyed = keyedTargetOf(field, schema);
-        if (keyed !== undefined) {
-          const built = buildKeyHop(
-            keyed.target,
-            keyed.keyField,
-            value,
-            counter,
-          );
-          template.push(built.triple);
-          patterns.push(built.pattern);
+      const targets = referencedTargetsOf(field, schema);
+      if (targets.length > 1) {
+        const built = buildTypeHop(value, counter);
+        template.push(built.triple);
+        patterns.push(built.pattern);
+      }
+      const local = localTargetsOf(field, schema, onPath);
+      const expansions: PatternGroup[] = [];
+      for (const target of targets) {
+        if (!local.includes(target)) {
+          // Only where no local expansion follows: a `local` lookup reads the
+          // target’s every path-bearing field, and a keyed target’s key field
+          // is one of them, so emitting the hop as well would state it twice.
+          const keyed = keyedFieldOf(target);
+          if (keyed !== undefined) {
+            const built = buildKeyHop(target, keyed, value, counter);
+            template.push(built.triple);
+            patterns.push(built.pattern);
+          }
+          continue;
         }
-      } else {
-        const nested = buildFor(local, value, schema, counter, onPath);
+        const nested = buildFor(target, value, schema, counter, onPath);
         template.push(...nested.template);
-        // `OPTIONAL`, unlike an inline reference’s conjoined nesting: this
-        // referent is stored by id whether or not the referring document says
-        // anything about it, and conjoining would drop both together.
-        if (nested.branches.length > 0) {
-          patterns.push(
-            factory.patternOptional(
-              [factory.patternUnion(nested.branches, factory.gen())],
-              factory.gen(),
-            ),
-          );
-        }
+        expansions.push(...nested.branches);
+      }
+      // `OPTIONAL`, unlike an inline reference’s conjoined nesting: this
+      // referent is stored by id whether or not the referring document says
+      // anything about it, and conjoining would drop both together. Several
+      // targets’ expansions share the one UNION: a referent is of one kind,
+      // and the branches of the others simply bind nothing for it.
+      if (expansions.length > 0) {
+        patterns.push(
+          factory.patternOptional(
+            [factory.patternUnion(expansions, factory.gen())],
+            factory.gen(),
+          ),
+        );
       }
       branches.push(factory.patternGroup(patterns, factory.gen()));
     }
@@ -234,45 +247,60 @@ function buildFor(
 }
 
 /**
- * The Root Type a {@link ReferenceStrategy.local} lookup expands into here, or
- * `undefined` where the field declares none – or where that type is already on
- * this path, which is where the recursion stops.
+ * The Root Types a {@link ReferenceStrategy.local} lookup expands into here:
+ * none where the field declares none, and never one already on this path,
+ * which is where the recursion stops.
  */
-function localTargetOf(
+function localTargetsOf(
   field: SearchField,
   schema: SearchSchema,
   visiting: ReadonlySet<string>,
-): RootType | undefined {
-  const local = localLookupTypeOf(field, schema);
-  return local === undefined || visiting.has(local.name) ? undefined : local;
+): readonly RootType[] {
+  return localLookupTargetsOf(field, schema).filter(
+    (target) => !visiting.has(target.name),
+  );
 }
 
 /**
- * The keyed Root Type a reference points at, with the field its key is read
- * from: a `lookup`’s `target` or an `idOnly`’s `labelSource`
- * ({@link labelSourceNameOf}) that declares a {@link RootType.key}, or
- * `undefined` for every other field. Naming the target is exactly the boundary
- * the projection re-keys along, so the extraction reads the same declarations
- * rather than a rule of its own: a reference that names no target keeps the
- * node IRI, and needs no hop.
+ * The field a Root Type’s key is read from, when it declares a
+ * {@link RootType.key}. Naming the target is exactly the boundary the
+ * projection re-keys along ({@link referencedTargetsOf}), so the extraction
+ * reads the same declarations rather than a rule of its own: a reference that
+ * names no target keeps the node IRI, and needs no hop.
  */
-function keyedTargetOf(
-  field: SearchField,
-  schema: SearchSchema,
-): { readonly target: RootType; readonly keyField: KeyedField } | undefined {
-  if (field.kind !== 'reference') {
-    return undefined;
-  }
-  const targetName = labelSourceNameOf(field as ReferenceField);
-  const target =
-    targetName === undefined ? undefined : rootTypeNamed(schema, targetName);
-  if (target?.key === undefined) {
+function keyedFieldOf(target: RootType): KeyedField | undefined {
+  if (target.key === undefined) {
     return undefined;
   }
   // `searchSchema` guarantees a declared, path-bearing key field, so the target
   // – which came out of the schema – always has one.
-  const keyField = fieldNamed(target, target.key.field) as KeyedField;
-  return { target, keyField };
+  return fieldNamed(target, target.key.field) as KeyedField;
+}
+
+/**
+ * The one-triple hop that reads a referent’s `rdf:type`, for a reference whose
+ * referent may be of several kinds: emitted under `rdf:type` itself, which
+ * framing turns into the node’s `@type`, and bound in an `OPTIONAL` so an
+ * untyped referent keeps its row and falls back to the first target declared.
+ */
+function buildTypeHop(
+  referent: TermVariable,
+  counter: VariableCounter,
+): { readonly triple: TripleNesting; readonly pattern: Pattern } {
+  const type = factory.termVariable(`t${counter.next++}`, factory.gen());
+  const predicate = factory.termNamed(factory.gen(), RDF_TYPE);
+  return {
+    triple: factory.triple(referent, predicate, type),
+    pattern: factory.patternOptional(
+      [
+        factory.patternBgp(
+          [factory.triple(referent, predicate, type)],
+          factory.gen(),
+        ),
+      ],
+      factory.gen(),
+    ),
+  };
 }
 
 /** A key field as the schema guarantees it: path-bearing. */

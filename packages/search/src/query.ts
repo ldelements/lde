@@ -4,6 +4,8 @@ import {
   ID_FIELD,
   isoToUnixSeconds,
   nestedReferenceType,
+  referencedTargetsOf,
+  type SearchField,
   type SearchSchema,
   type SearchType,
 } from './schema.js';
@@ -535,7 +537,7 @@ export function validateQuery(
       issues.push({ part: 'facets', field: name, reason: 'not-facetable' });
     }
   }
-  collectProjectionIssues(query.resolve, searchType, schema, issues);
+  collectProjectionIssues(query.resolve, [searchType], schema, issues);
   for (const sort of query.orderBy) {
     if (
       sort.field !== 'relevance' &&
@@ -568,40 +570,61 @@ export function validateQuery(
  */
 function collectProjectionIssues(
   projection: ReferenceProjection | undefined,
-  searchType: SearchType,
+  searchTypes: readonly SearchType[],
   schema: SearchSchema,
   issues: QueryIssue[],
 ): void {
   for (const [name, level] of Object.entries(projection ?? {})) {
-    const field = fieldNamed(searchType, name);
-    if (field === undefined) {
+    // A level is read against every type it may be reached through: a lookup
+    // naming several targets resolves a referent of any of them, so the level
+    // below is valid wherever ANY of those targets serves it – a field one
+    // target declares and another does not is exactly what a polymorphic
+    // selection asks for.
+    const fields = searchTypes
+      .map((searchType) => fieldNamed(searchType, name))
+      .filter((field): field is SearchField => field !== undefined);
+    if (fields.length === 0) {
       issues.push({ part: 'resolve', field: name, reason: 'unknown-field' });
       continue;
     }
     // Descending into an inline reference is free, so a nested level is valid
     // wherever the entries exist – what it is *for* is the lookup below it.
-    const nested = nestedReferenceType(schema, field);
-    if (nested !== undefined) {
+    // `searchSchema` holds the targets of one lookup to one declaration per
+    // name, so a name is nested or a lookup, never both; each is still read
+    // on its own here rather than one deciding for the other.
+    const nested: SearchType[] = [];
+    for (const field of fields) {
+      const referenceType = nestedReferenceType(schema, field);
+      if (referenceType !== undefined) {
+        nested.push(referenceType);
+      }
+    }
+    if (nested.length > 0) {
       collectProjectionIssues(level.resolve, nested, schema, issues);
-      continue;
     }
-    if (field.kind !== 'reference' || field.ref?.strategy !== 'lookup') {
-      issues.push({ part: 'resolve', field: name, reason: 'not-resolvable' });
-      continue;
-    }
-    const targetName = field.ref.target;
-    const target = [...schema.values()].find(
-      (rootType) => rootType.name === targetName,
+    const lookups = fields.filter(
+      (field) => field.kind === 'reference' && field.ref?.strategy === 'lookup',
     );
-    if (target === undefined) {
+    if (lookups.length === 0) {
+      if (nested.length === 0) {
+        issues.push({ part: 'resolve', field: name, reason: 'not-resolvable' });
+      }
+      continue;
+    }
+    const targets = lookups.flatMap((field) =>
+      referencedTargetsOf(field, schema),
+    );
+    if (targets.length === 0) {
       // searchSchema rejects a lookup whose target it cannot resolve, so this
       // is a query built against a different schema than the engine serves.
       issues.push({ part: 'resolve', field: name, reason: 'not-resolvable' });
       continue;
     }
     for (const wanted of level.fields ?? []) {
-      const targetField = fieldNamed(target, wanted);
-      if (targetField === undefined || targetField.output !== true) {
+      const served = targets.some(
+        (target) => fieldNamed(target, wanted)?.output === true,
+      );
+      if (!served) {
         issues.push({
           part: 'resolve',
           field: `${name}.${wanted}`,
@@ -609,7 +632,7 @@ function collectProjectionIssues(
         });
       }
     }
-    collectProjectionIssues(level.resolve, target, schema, issues);
+    collectProjectionIssues(level.resolve, targets, schema, issues);
   }
 }
 
