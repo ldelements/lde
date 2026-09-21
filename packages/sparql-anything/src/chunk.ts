@@ -19,6 +19,12 @@ export interface ChunkOptions {
    */
   into: string;
   /**
+   * Name the chunks are built from: `places` gives `places-0000.csv`. Defaults
+   * to the file name of a path input, and is required for a line source, which
+   * has no name of its own. It is a file name, not a path.
+   */
+  name?: string;
+  /**
    * Line repeated at the top of every chunk, for a format whose columns are
    * named. Leave it out for a format without a header, such as N-Triples.
    *
@@ -27,10 +33,11 @@ export interface ChunkOptions {
    */
   header?: string;
   /**
-   * Extension for the chunk files, leading dot included: `'.csv'`. Defaults to
-   * the input's own, and is worth setting for a tool that reads the format
-   * from the name – SPARQL Anything does, so a `.txt` export of a CSV has to
-   * be chunked as `.csv` to be read as one.
+   * Extension for the chunk files, leading dot included: `'.csv'`; `''` for
+   * none. Defaults to the input's own for a path, and is required for a line
+   * source, which has none to default to. It decides how the chunk is read:
+   * SPARQL Anything takes the format from the name, so a `.txt` export of a
+   * CSV has to be chunked as `.csv` to be read as one.
    */
   extension?: string;
 }
@@ -48,8 +55,31 @@ export interface ChunkOptions {
  * two. Tab-separated exports, N-Triples and NDJSON are all one record per line
  * by definition. Line endings are normalised to `\n`.
  */
-export async function chunk(
+export function chunk(
   inputPath: string,
+  options: ChunkOptions,
+): Promise<string[]>;
+/**
+ * Splits a stream of lines into chunks of `rows` rows each, and returns their
+ * paths in order.
+ *
+ * This is chunking a table a caller produces itself – filtering rows out,
+ * adding a column – which would otherwise be written to disk only for this to
+ * read it back and write the same bytes again. Every value is one row: one
+ * that holds a line ending of its own is rejected rather than written as the
+ * several rows it would become, which would put more in a chunk than `rows`
+ * says it holds. A trailing `\r` is a line ending and is dropped.
+ *
+ * `name` and `extension` are both required here, because a stream has no file
+ * name to take either from, and a chunk of no known format is one SPARQL
+ * Anything cannot read. Pass `''` for no extension.
+ */
+export function chunk(
+  lines: AsyncIterable<string>,
+  options: ChunkOptions & { name: string; extension: string },
+): Promise<string[]>;
+export async function chunk(
+  input: string | AsyncIterable<string>,
   options: ChunkOptions,
 ): Promise<string[]> {
   const { rows, into, header } = options;
@@ -58,25 +88,52 @@ export async function chunk(
       `‘${rows}’ is not a number of rows to a chunk; give a whole number of one or more`,
     );
   }
-  const extension = options.extension ?? extname(inputPath);
+  const inputPath = typeof input === 'string' ? input : undefined;
+  const name =
+    options.name ??
+    (inputPath === undefined
+      ? undefined
+      : basename(inputPath, extname(inputPath)));
+  if (name === undefined) {
+    throw new Error(
+      'a stream of lines has no name to call its chunks after; pass ‘name’',
+    );
+  }
+  if (name === '' || name !== basename(name)) {
+    throw new Error(
+      `‘${name}’ is not a name for the chunks; give a file name without a directory`,
+    );
+  }
+  const extension =
+    options.extension ??
+    (inputPath === undefined ? undefined : extname(inputPath));
+  if (extension === undefined) {
+    throw new Error(
+      'a stream of lines has no extension to give its chunks; pass ‘extension’, or ‘’ for none',
+    );
+  }
   if (extension !== '' && !extension.startsWith('.')) {
     throw new Error(
       `‘${extension}’ is not an extension; give one with its leading dot, such as ‘.csv’`,
     );
   }
-  const name = basename(inputPath, extname(inputPath));
 
   await mkdir(into, { recursive: true });
   await removeChunksOf(name, extension, into);
 
-  const lines = createInterface({
-    input: createReadStream(inputPath),
-    crlfDelay: Infinity,
-  });
+  const lineReader =
+    inputPath === undefined
+      ? undefined
+      : createInterface({
+          input: createReadStream(inputPath),
+          crlfDelay: Infinity,
+        });
+  const lines = lineReader ?? oneRowPerValue(input as AsyncIterable<string>);
 
   const paths: string[] = [];
   let chunkFile: WriteStream | undefined;
   let rowsWritten = 0;
+  let writeFailed = false;
 
   const write = async (text: string): Promise<void> => {
     if (!chunkFile!.write(text)) {
@@ -96,6 +153,12 @@ export async function chunk(
 
   try {
     for await (const line of lines) {
+      // A write can fail while this is waiting on the next line rather than
+      // on the stream, and an 'error' nobody listens for ends the process
+      // instead of this call. Stop reading; closing the chunk reports it.
+      if (writeFailed) {
+        break;
+      }
       if (chunkFile === undefined) {
         const path = join(
           into,
@@ -103,10 +166,13 @@ export async function chunk(
         );
         paths.push(path);
         chunkFile = createWriteStream(path);
-        // A write can fail while this is waiting on the next line rather than
-        // on the stream, and an 'error' nobody listens for ends the process
-        // instead of this call. Stop reading; closing the chunk reports it.
-        chunkFile.on('error', () => lines.close());
+        chunkFile.on('error', () => {
+          writeFailed = true;
+          // A file is read ahead of the loop, so ending it here stops it
+          // sooner than the check above would; a stream of lines is pulled a
+          // value at a time and has nothing to close.
+          lineReader?.close();
+        });
         if (header !== undefined) {
           await write(`${header}\n`);
         }
@@ -125,16 +191,44 @@ export async function chunk(
     // Whatever went wrong – a write, or the read that feeds it – the chunk
     // still open would otherwise keep its handle and its half of a row.
     chunkFile?.destroy();
-    lines.close();
+    lineReader?.close();
   }
 
   if (paths.length === 0) {
     throw new Error(
-      `‘${inputPath}’ holds no rows to chunk; a step that produced an empty file has failed upstream, and converting nothing would hide that`,
+      `‘${inputPath ?? name}’ holds no rows to chunk; a step that produced an empty input has failed upstream, and converting nothing would hide that`,
     );
   }
 
   return paths;
+}
+
+/**
+ * Holds a stream to one row per value, the way `readline` holds a file to one
+ * row per line.
+ *
+ * A value carrying a line ending of its own would be counted as one row and
+ * written as several, so a chunk would hold more than `rows` says – the bound
+ * a conversion's memory is sized against. It is also how a byte stream
+ * arrives, its values falling wherever the reads did rather than on lines, so
+ * the same check names that mistake instead of silently cutting records in
+ * two.
+ */
+async function* oneRowPerValue(
+  lines: AsyncIterable<string>,
+): AsyncGenerator<string> {
+  for await (const line of lines) {
+    // A trailing \r is the other half of a CRLF ending, not data; dropping it
+    // is the normalisation a file gets from crlfDelay.
+    const row = line.endsWith('\r') ? line.slice(0, -1) : line;
+    if (row.includes('\n')) {
+      const excerpt = row.length > 40 ? `${row.slice(0, 40)}…` : row;
+      throw new Error(
+        `‘${excerpt}’ holds a line ending, so it is more than one row; give this one value per row, reading a byte stream through ‘readline’ first`,
+      );
+    }
+    yield row;
+  }
 }
 
 /**
