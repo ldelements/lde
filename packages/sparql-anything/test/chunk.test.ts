@@ -225,4 +225,130 @@ describe('chunk', () => {
       chunk(input, { rows: 0, into: join(workDir, 'chunks') }),
     ).rejects.toThrow('is not a number of rows to a chunk');
   });
+
+  describe('of a stream of lines', () => {
+    /** Yields `rows` numbered rows, as a caller producing a table would. */
+    async function* rowsOf(rows: number): AsyncGenerator<string> {
+      for (let index = 0; index < rows; index++) {
+        yield `row-${index}`;
+      }
+    }
+
+    it('splits the lines into chunks named after ‘name’', async () => {
+      const paths = await chunk(rowsOf(5), {
+        rows: 2,
+        into: join(workDir, 'chunks'),
+        name: 'places',
+        extension: '.csv',
+      });
+
+      expect(paths.map((path) => path.replace(`${workDir}/`, ''))).toEqual([
+        'chunks/places-0000.csv',
+        'chunks/places-0001.csv',
+        'chunks/places-0002.csv',
+      ]);
+      expect(await readFile(paths[0], 'utf-8')).toBe('row-0\nrow-1\n');
+      expect(await readFile(paths[2], 'utf-8')).toBe('row-4\n');
+    });
+
+    it('repeats the header at the top of every chunk', async () => {
+      const paths = await chunk(rowsOf(3), {
+        rows: 2,
+        into: join(workDir, 'chunks'),
+        name: 'places',
+        header: 'id\tname',
+      });
+
+      expect(await readFile(paths[0], 'utf-8')).toBe(
+        'id\tname\nrow-0\nrow-1\n',
+      );
+      // No extension to take from a stream, and none asked for.
+      expect(paths[0].endsWith('places-0000')).toBe(true);
+    });
+
+    it('removes the chunks an earlier call made of the same name', async () => {
+      const into = join(workDir, 'chunks');
+      await mkdir(into, { recursive: true });
+      await writeFile(join(into, 'places-0007.csv'), 'stale\n');
+
+      await chunk(rowsOf(2), {
+        rows: 2,
+        into,
+        name: 'places',
+        extension: '.csv',
+      });
+
+      expect(await readdir(into)).toEqual(['places-0000.csv']);
+    });
+
+    it('refuses a name that is a path rather than a file name', async () => {
+      await expect(
+        chunk(rowsOf(2), {
+          rows: 2,
+          into: join(workDir, 'chunks'),
+          name: '../places',
+        }),
+      ).rejects.toThrow('is not a name for the chunks');
+    });
+
+    it('refuses a stream with no name to call its chunks after', async () => {
+      await expect(
+        // A JavaScript caller can leave out what the overload requires.
+        (
+          chunk as (
+            input: AsyncIterable<string>,
+            options: object,
+          ) => Promise<string[]>
+        )(rowsOf(2), { rows: 2, into: join(workDir, 'chunks') }),
+      ).rejects.toThrow('pass ‘name’');
+    });
+
+    it('refuses a stream with no rows rather than producing no chunks', async () => {
+      await expect(
+        chunk(rowsOf(0), {
+          rows: 2,
+          into: join(workDir, 'chunks'),
+          name: 'places',
+        }),
+      ).rejects.toThrow('holds no rows to chunk');
+    });
+
+    it('surfaces a write that fails while it is waiting on the next line', async () => {
+      const into = join(workDir, 'chunks');
+      // The third chunk cannot be opened, so the failure arrives once the
+      // first two have been written and the loop is pulling lines again.
+      await mkdir(join(into, 'places-0002'), { recursive: true });
+
+      await expect(
+        chunk(rowsOf(6), { rows: 2, into, name: 'places' }),
+      ).rejects.toThrow('EISDIR');
+
+      expect(await readFile(join(into, 'places-0001'), 'utf-8')).toBe(
+        'row-2\nrow-3\n',
+      );
+    });
+
+    it('stops pulling lines once a write has failed', async () => {
+      const into = join(workDir, 'chunks');
+      // The only chunk this size cannot be opened, so the failure arrives
+      // while the loop is waiting on a line rather than on a chunk it closes.
+      await mkdir(join(into, 'places-0000'), { recursive: true });
+      let linesPulled = 0;
+      async function* slowly(): AsyncGenerator<string> {
+        for (let index = 0; index < 100; index++) {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          linesPulled++;
+          yield `row-${index}`;
+        }
+      }
+
+      await expect(
+        chunk(slowly(), { rows: 1_000, into, name: 'places' }),
+      ).rejects.toThrow('EISDIR');
+
+      // The producer is a pipeline of its own; leaving it running would keep
+      // reading whatever feeds it long after there is anywhere to put it.
+      expect(linesPulled).toBeLessThan(100);
+    });
+  });
 });
