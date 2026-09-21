@@ -1,3 +1,12 @@
+## 0.16.2 (2026-09-21)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/task-runner-docker to 0.3.1
+- Updated @lde/task-runner-native to 0.2.19
+- Updated @lde/sparql-importer to 0.6.12
+- Updated @lde/task-runner to 0.2.15
+
 ## 0.16.1 (2026-09-09)
 
 ### 🧱 Updated Dependencies

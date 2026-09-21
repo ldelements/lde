@@ -1,6 +1,6 @@
 {
   "name": "@lde/sparql-qlever",
-  "version": "0.16.1",
+  "version": "0.16.2",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
     "directory": "packages/sparql-qlever"
@@ -26,11 +26,11 @@
   "dependencies": {
     "@lde/dataset": "^0.7.9",
     "@lde/distribution-downloader": "^0.6.9",
-    "@lde/sparql-importer": "^0.6.11",
+    "@lde/sparql-importer": "^0.6.12",
     "@lde/sparql-server": "^0.4.14",
-    "@lde/task-runner": "^0.2.14",
-    "@lde/task-runner-docker": "^0.3.0",
-    "@lde/task-runner-native": "^0.2.18",
+    "@lde/task-runner": "^0.2.15",
+    "@lde/task-runner-docker": "^0.3.1",
+    "@lde/task-runner-native": "^0.2.19",
     "@lde/wait-for-sparql": "^0.2.17",
     "rdf-parse": "^5.0.0",
     "rdf-serialize": "^5.1.0",

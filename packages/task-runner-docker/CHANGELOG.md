@@ -1,3 +1,13 @@
+## 0.3.1 (2026-09-21)
+
+### 🚀 Features
+
+- **task-runner:** stop running tasks when the process is interrupted ([#837](https://github.com/ldelements/lde/pull/837))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/task-runner to 0.2.15
+
 ## 0.3.0 (2026-08-31)
 
 ### 🩹 Fixes
