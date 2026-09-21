@@ -1,3 +1,9 @@
+## 0.1.7 (2026-09-21)
+
+### 🚀 Features
+
+- **sparql-anything:** chunk a stream of lines, not only a file ([#865](https://github.com/ldelements/lde/pull/865))
+
 ## 0.1.6 (2026-09-10)
 
 ### 🩹 Fixes
