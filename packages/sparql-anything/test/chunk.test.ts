@@ -8,6 +8,7 @@ import {
   rm,
   writeFile,
 } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -256,14 +257,77 @@ describe('chunk', () => {
         rows: 2,
         into: join(workDir, 'chunks'),
         name: 'places',
+        extension: '.csv',
         header: 'id\tname',
       });
 
       expect(await readFile(paths[0], 'utf-8')).toBe(
         'id\tname\nrow-0\nrow-1\n',
       );
-      // No extension to take from a stream, and none asked for.
-      expect(paths[0].endsWith('places-0000')).toBe(true);
+      expect(await readFile(paths[1], 'utf-8')).toBe('id\tname\nrow-2\n');
+    });
+
+    it('gives the chunks no extension when asked for none', async () => {
+      const paths = await chunk(rowsOf(2), {
+        rows: 2,
+        into: join(workDir, 'chunks'),
+        name: 'graph',
+        extension: '',
+      });
+
+      expect(paths[0].endsWith('graph-0000')).toBe(true);
+    });
+
+    it('normalises CRLF line endings', async () => {
+      async function* crlf(): AsyncGenerator<string> {
+        yield 'row-0\r';
+        yield 'row-1\r';
+      }
+
+      const paths = await chunk(crlf(), {
+        rows: 2,
+        into: join(workDir, 'chunks'),
+        name: 'places',
+        extension: '.csv',
+      });
+
+      expect(await readFile(paths[0], 'utf-8')).toBe('row-0\nrow-1\n');
+    });
+
+    it('refuses a value that is more than one row', async () => {
+      async function* twoRowsInOne(): AsyncGenerator<string> {
+        yield 'row-0';
+        yield `${'x'.repeat(100)}\n${'y'.repeat(100)}`;
+      }
+
+      // Counted as one row and written as two, this would put more in a chunk
+      // than ‘rows’ says it holds – the bound the conversion is sized against.
+      await expect(
+        chunk(twoRowsInOne(), {
+          rows: 1_000,
+          into: join(workDir, 'chunks'),
+          name: 'places',
+          extension: '.csv',
+        }),
+      ).rejects.toThrow(
+        // Named, and cut short: a value this size is what a byte stream yields.
+        `‘${'x'.repeat(40)}…’ holds a line ending, so it is more than one row`,
+      );
+    });
+
+    it('names the mistake of handing it a byte stream rather than lines', async () => {
+      const input = await writeInput(3);
+
+      await expect(
+        // A Readable is typed as an AsyncIterable of any, so this typechecks;
+        // its values are buffers that fall wherever the reads did, not lines.
+        chunk(createReadStream(input, 'utf-8'), {
+          rows: 1_000,
+          into: join(workDir, 'chunks'),
+          name: 'places',
+          extension: '.csv',
+        }),
+      ).rejects.toThrow('reading a byte stream through ‘readline’ first');
     });
 
     it('removes the chunks an earlier call made of the same name', async () => {
@@ -287,20 +351,33 @@ describe('chunk', () => {
           rows: 2,
           into: join(workDir, 'chunks'),
           name: '../places',
+          extension: '.csv',
         }),
       ).rejects.toThrow('is not a name for the chunks');
     });
 
+    /** Calls `chunk()` the way JavaScript can: without what the overload asks. */
+    const chunkWithout = chunk as (
+      input: AsyncIterable<string>,
+      options: object,
+    ) => Promise<string[]>;
+
     it('refuses a stream with no name to call its chunks after', async () => {
       await expect(
-        // A JavaScript caller can leave out what the overload requires.
-        (
-          chunk as (
-            input: AsyncIterable<string>,
-            options: object,
-          ) => Promise<string[]>
-        )(rowsOf(2), { rows: 2, into: join(workDir, 'chunks') }),
+        chunkWithout(rowsOf(2), { rows: 2, into: join(workDir, 'chunks') }),
       ).rejects.toThrow('pass ‘name’');
+    });
+
+    it('refuses a stream with no extension to give its chunks', async () => {
+      // SPARQL Anything takes the format from the name, so a chunk with no
+      // extension is one it cannot read – too sharp an edge to default to.
+      await expect(
+        chunkWithout(rowsOf(2), {
+          rows: 2,
+          into: join(workDir, 'chunks'),
+          name: 'places',
+        }),
+      ).rejects.toThrow('pass ‘extension’');
     });
 
     it('refuses a stream with no rows rather than producing no chunks', async () => {
@@ -309,6 +386,7 @@ describe('chunk', () => {
           rows: 2,
           into: join(workDir, 'chunks'),
           name: 'places',
+          extension: '.csv',
         }),
       ).rejects.toThrow('holds no rows to chunk');
     });
@@ -320,7 +398,7 @@ describe('chunk', () => {
       await mkdir(join(into, 'places-0002'), { recursive: true });
 
       await expect(
-        chunk(rowsOf(6), { rows: 2, into, name: 'places' }),
+        chunk(rowsOf(6), { rows: 2, into, name: 'places', extension: '' }),
       ).rejects.toThrow('EISDIR');
 
       expect(await readFile(join(into, 'places-0001'), 'utf-8')).toBe(
@@ -343,7 +421,7 @@ describe('chunk', () => {
       }
 
       await expect(
-        chunk(slowly(), { rows: 1_000, into, name: 'places' }),
+        chunk(slowly(), { rows: 1_000, into, name: 'places', extension: '' }),
       ).rejects.toThrow('EISDIR');
 
       // The producer is a pipeline of its own; leaving it running would keep
