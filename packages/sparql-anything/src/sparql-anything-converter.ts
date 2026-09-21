@@ -208,8 +208,12 @@ export class SparqlAnythingConverter<Task> {
         outputPath,
       );
     } finally {
-      process.off('exit', removeRunDirOnExit);
+      // Removed only once the directory is gone: an interrupted run ends the
+      // process from the same turn of the event loop that settles the stops,
+      // which can be before this removal has reached the disk. Removing it
+      // twice costs nothing – `force` passes over a directory that is gone.
       await rm(runDir, { recursive: true, force: true });
+      process.off('exit', removeRunDirOnExit);
     }
   }
 

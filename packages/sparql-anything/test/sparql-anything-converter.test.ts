@@ -707,7 +707,7 @@ describe('SparqlAnythingConverter', () => {
     // event loop follows.
     onExit?.(130);
 
-    expect(readdirSync(workDir)).toEqual([
+    expect(readdirSync(workDir).sort()).toEqual([
       'chunk-0.csv',
       'chunk-1.csv',
       'places.rq',

@@ -143,6 +143,96 @@ describe('ChildTasks', () => {
     childTasks.delete('one');
   });
 
+  it('answers the signal before a listener the process already had', async () => {
+    const order: string[] = [];
+    const host = vi.fn(() => {
+      order.push('host');
+    });
+    process.on('SIGINT', host);
+    const childTasks = new ChildTasks<string>(async (task) => {
+      order.push(`stop ${task}`);
+    });
+    childTasks.add('one');
+    try {
+      interrupt('SIGINT');
+      await settled();
+    } finally {
+      process.off('SIGINT', host);
+    }
+
+    // What a runner’s stop() does before its first await – sending a process
+    // group its SIGTERM – happens even when the host listener ends the process.
+    expect(order).toEqual(['stop one', 'host']);
+    childTasks.delete('one');
+  });
+
+  it('stops a task started while the tasks a signal found are being stopped', async () => {
+    const stopped: string[] = [];
+    const childTasks = new ChildTasks<string>(async (task) => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      stopped.push(task);
+    });
+    childTasks.add('one');
+
+    interrupt('SIGINT');
+    await settled();
+    childTasks.add('two');
+    expect(exit).not.toHaveBeenCalled();
+
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(stopped).toEqual(['one', 'two']);
+    expect(exit).toHaveBeenCalledExactlyOnceWith(130);
+    childTasks.delete('one');
+    childTasks.delete('two');
+  });
+
+  it('listens again once a signal the process survived has been answered', async () => {
+    const stopped: string[] = [];
+    const stop = async (task: string): Promise<void> => {
+      stopped.push(task);
+    };
+    const before = new ChildTasks<string>(stop);
+    before.add('one');
+    const host = vi.fn();
+    process.on('SIGINT', host);
+    try {
+      interrupt('SIGINT');
+      await settled();
+
+      // The host listener let the process live on, and ‘one’ is going still:
+      // a task started now must be bound to the process just the same.
+      const after = new ChildTasks<string>(stop);
+      after.add('two');
+      interrupt('SIGINT');
+      await settled();
+      after.delete('two');
+    } finally {
+      process.off('SIGINT', host);
+    }
+
+    expect(stopped).toEqual(['one', 'one', 'two']);
+    expect(exit).not.toHaveBeenCalled();
+    before.delete('one');
+  });
+
+  it('leaves the listening off when the signal it survived ended the last task', async () => {
+    const childTasks = new ChildTasks<string>(() => Promise.resolve());
+    childTasks.add('one');
+    const host = vi.fn();
+    process.on('SIGINT', host);
+    try {
+      interrupt('SIGINT');
+      // The task ends as it is stopped, before the stops have settled.
+      childTasks.delete('one');
+      await settled();
+    } finally {
+      process.off('SIGINT', host);
+    }
+
+    expect(exit).not.toHaveBeenCalled();
+    expect(listeners()).toEqual(listenersBefore);
+  });
+
   it('stops listening once the tasks a signal found have ended', async () => {
     const childTasks = new ChildTasks<string>(() => Promise.resolve());
     childTasks.add('one');
