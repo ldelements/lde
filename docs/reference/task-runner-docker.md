@@ -50,6 +50,7 @@ await runner.stop(container);
 - Runs commands as the current user (UID/GID) for file permissions
 - Binds `port` to the **same** port number on the host and in the container
 - Stops containers (without removing) so logs remain available via `docker logs`
+- Stops running containers when this process is interrupted – see [Tasks end with the process](./task-runner#tasks-end-with-the-process)
 - Removes previous containers with the same name on restart
 
 ## Output and errors

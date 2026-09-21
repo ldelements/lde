@@ -1,8 +1,9 @@
 import { shellQuote, TaskRunner } from '@lde/task-runner';
-import { createReadStream, createWriteStream } from 'node:fs';
+import { createReadStream, createWriteStream, rmSync } from 'node:fs';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { pipeline } from 'node:stream/promises';
 import { basename, isAbsolute, join } from 'node:path';
+import process from 'node:process';
 
 /** Placeholder in the query file that is replaced with each chunk's path. */
 const SOURCE_PLACEHOLDER = '{SOURCE}';
@@ -185,6 +186,17 @@ export class SparqlAnythingConverter<Task> {
     // otherwise satisfy the non-empty check below with stale triples.
     const runDir = await mkdtemp(join(this.workDir, 'sparql-anything-'));
     const runDirName = basename(runDir);
+    // The process may end before the cleanup below: interrupted, its task
+    // runner stops the processes and ends it. Synchronous, because an 'exit'
+    // listener gets no further turn of the event loop.
+    const removeRunDirOnExit = (): void => {
+      try {
+        rmSync(runDir, { recursive: true, force: true });
+      } catch {
+        // The process is ending; there is no one left to report to.
+      }
+    };
+    process.once('exit', removeRunDirOnExit);
     try {
       const count = await this.runAll(planned, runDirName);
       // By index, not by completion: the order the jobs and their chunks were
@@ -196,7 +208,12 @@ export class SparqlAnythingConverter<Task> {
         outputPath,
       );
     } finally {
+      // Removed only once the directory is gone: an interrupted run ends the
+      // process from the same turn of the event loop that settles the stops,
+      // which can be before this removal has reached the disk. Removing it
+      // twice costs nothing – `force` passes over a directory that is gone.
       await rm(runDir, { recursive: true, force: true });
+      process.off('exit', removeRunDirOnExit);
     }
   }
 

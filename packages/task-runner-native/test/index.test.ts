@@ -1,6 +1,6 @@
 import { NativeTaskRunner } from '../src/index.js';
 import { ChildProcess } from 'node:child_process';
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -188,6 +188,24 @@ describe('NativeTaskRunner', () => {
       // Stopping should not throw, and reading the output once must not have
       // consumed it.
       expect(await runner.stop(task)).toContain('done');
+    });
+
+    it('stops a running process when this process is interrupted', async () => {
+      const runner = new NativeTaskRunner();
+      const exit = vi
+        .spyOn(process, 'exit')
+        .mockImplementation(() => undefined as never);
+      const task = await runner.run('sleep 60');
+      try {
+        // Give the process time to start.
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        process.emit('SIGTERM', 'SIGTERM');
+
+        await vi.waitFor(() => expect(task.signalCode).toBe('SIGTERM'));
+        await vi.waitFor(() => expect(exit).toHaveBeenCalledWith(143));
+      } finally {
+        vi.restoreAllMocks();
+      }
     });
 
     it('escalates to SIGKILL after timeout', async () => {
