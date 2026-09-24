@@ -64,6 +64,28 @@ const gqlSchema = buildGraphQLSchema(searchSchema(DATASET, PERSON), {
 });
 ```
 
+A `tieBreak` orders the results that the primary sort leaves tied. Sorted by
+date, all datasets registered in one go share a date and come back in whatever
+order the engine stored them. A reindex can change that order, so a client
+paging through the block may see a dataset twice or miss one:
+
+```ts
+types: {
+  Dataset: { tieBreak: [{ field: 'title', direction: 'asc' }] },
+},
+```
+
+The tie-break is appended after the sort that the request and `queryDefaults`
+settled on. Terms on a field that is already sorted on are skipped. A query
+without a sort keeps the engine’s default order – relevance for a free-text
+query, the collection’s default sorting field otherwise. To have ties broken
+there too, set a default sort in `queryDefaults`. A facet-only query
+(`perPage: 0`) gets no tie-break at all. Clients never see the tie-break in the
+`orderBy` input. It may have at most two terms, each on a `sortable` field,
+because Typesense sorts on at most three terms and one is the primary sort.
+Documents that tie on every term, such as two datasets with the same title,
+still come back in storage order.
+
 Shared types (`LanguageString`, the facet buckets, filter inputs and reference
 types such as a common `Agent`) are created once and reused across root types.
 

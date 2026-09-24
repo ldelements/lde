@@ -520,6 +520,23 @@ describe('buildSearchParams', () => {
     ).toBe('title_sort_nl:asc,status_rank:asc');
   });
 
+  it('rejects more sort terms than Typesense accepts', () => {
+    expect(() =>
+      buildSearchParams(
+        {
+          ...base,
+          orderBy: [
+            { field: 'datePosted', direction: 'desc' },
+            { field: 'title', direction: 'asc' },
+            { field: 'size', direction: 'asc' },
+            { field: 'status_rank', direction: 'asc' },
+          ],
+        },
+        schema,
+      ),
+    ).toThrow(/at most 3 sort terms.*datePosted, title, size, status_rank/);
+  });
+
   it('pins page to 1 for a facet-only (limit:0) query instead of dividing by zero', () => {
     const params = buildSearchParams({ ...base, limit: 0 }, schema);
     expect(params.per_page).toBe(0);
