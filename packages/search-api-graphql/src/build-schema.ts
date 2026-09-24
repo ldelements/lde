@@ -105,8 +105,10 @@ export interface SearchTypeOptions {
    *
    * Deployment policy rather than a client choice, so it adds nothing to the
    * `orderBy` input. Each term names a `sortable` field – the only kind an
-   * engine indexes for sorting – and there are at most two, so the whole sort
-   * stays within Typesense’s cap of three terms.
+   * engine indexes for sorting – and there are at most two, so a single
+   * primary sort plus the tie-break stays within Typesense’s cap of three
+   * terms. A {@link queryDefaults} sort of two terms or more leaves room for
+   * less; the engine rejects a longer sort per query, naming its terms.
    */
   readonly tieBreak?: readonly Sort[];
 }
