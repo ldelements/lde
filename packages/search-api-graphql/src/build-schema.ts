@@ -30,10 +30,12 @@ import {
   type SearchQuery,
   type SearchSchema,
   type SearchType,
+  type Sort,
 } from '@lde/search';
 import {
   AND_KEY,
   facetableFields,
+  fieldNamed,
   filterableFields,
   labelTargetNameOf,
   localLookupTypeOf,
@@ -84,12 +86,31 @@ export interface SearchTypeOptions {
   /** Root query field; defaults to the lowercased plural of the type’s `name`
    *  (e.g. `Dataset` → `datasets`). */
   readonly queryField?: string;
-  /** Consumer policy applied to every query of this type (default status, sort,
-   *  tie-breaks). */
+  /** Consumer policy applied to every query of this type (default status,
+   *  default sort). */
   readonly queryDefaults?: (
     query: SearchQuery,
     context: SearchContext,
   ) => SearchQuery;
+  /**
+   * Sorts that order results the primary sort leaves tied, in precedence
+   * order – e.g. `[{ field: 'title', direction: 'asc' }]`, so a block of
+   * datasets sharing a date comes back in the same order on every page.
+   *
+   * Appended after the sort the request and {@link queryDefaults} settled on;
+   * a term on a field already sorted on is skipped. A query with no sort keeps
+   * the engine’s default order untouched – set a default sort in
+   * {@link queryDefaults} to have the tie-break follow it. A facet-only query
+   * (`perPage: 0`) fetches no results to order and gets none.
+   *
+   * Deployment policy rather than a client choice, so it adds nothing to the
+   * `orderBy` input. Each term names a `sortable` field – the only kind an
+   * engine indexes for sorting – and there are at most two, so a single
+   * primary sort plus the tie-break stays within Typesense’s cap of three
+   * terms. A {@link queryDefaults} sort of two terms or more leaves room for
+   * less; the engine rejects a longer sort per query, naming its terms.
+   */
+  readonly tieBreak?: readonly Sort[];
 }
 
 export interface BuildGraphQLSchemaOptions {
@@ -231,11 +252,27 @@ export function buildGraphQLSchema(
     [...schema.values()].map((searchType) => [searchType.name, searchType]),
   );
   const rootTypeNames = new Set(rootTypesByName.keys());
-  for (const name of Object.keys(options.types ?? {})) {
-    if (!rootTypeNames.has(name)) {
+  for (const [name, typeOptions] of Object.entries(options.types ?? {})) {
+    const rootType = rootTypesByName.get(name);
+    if (rootType === undefined) {
       throw new Error(
         `Options given for type “${name}”, which is not in the search schema.`,
       );
+    }
+    const tieBreak = typeOptions.tieBreak ?? [];
+    if (tieBreak.length > MAX_TIE_BREAK_TERMS) {
+      throw new Error(
+        `Tie-break for type “${name}” may have at most ${MAX_TIE_BREAK_TERMS} terms; got ${tieBreak.length}. It follows a primary sort, and Typesense sorts on 3 terms at most.`,
+      );
+    }
+    for (const sort of tieBreak) {
+      // Only a `sortable` field is indexed for sorting, so any other would
+      // build fine and fail every query.
+      if (fieldNamed(rootType, sort.field)?.sortable !== true) {
+        throw new Error(
+          `Tie-break for type “${name}” sorts on “${sort.field}”, which is not sortable. Declare it on the type with \`sortable: true\`.`,
+        );
+      }
     }
   }
 
@@ -1045,9 +1082,12 @@ export function buildGraphQLSchema(
         // What the client selected decides what each lookup fetches, so the
         // engine carries the referent fields this query asked for and no more.
         const resolve = projectionFor(info, searchType, schema);
-        const finalQuery = typeOptions?.queryDefaults
-          ? typeOptions.queryDefaults(built, context)
-          : built;
+        const finalQuery = withTieBreak(
+          typeOptions?.queryDefaults
+            ? typeOptions.queryDefaults(built, context)
+            : built,
+          typeOptions?.tieBreak ?? [],
+        );
         // Items + total only; facets are resolved lazily per selected key.
         const result = await context.engine.search(searchType, {
           ...finalQuery,
@@ -1210,6 +1250,30 @@ function argsToQuery(
     // Facets are requested per-key by the facets resolver, not via an arg.
     facets: [],
     locale: context.acceptLanguage[0] ?? 'und',
+  };
+}
+
+/** One primary sort plus the tie-break stays within Typesense’s three terms. */
+const MAX_TIE_BREAK_TERMS = 2;
+
+/** Append the {@link SearchTypeOptions.tieBreak} terms to a query’s `orderBy`,
+ *  as that option documents. */
+function withTieBreak(
+  query: SearchQuery,
+  tieBreak: readonly Sort[],
+): SearchQuery {
+  // An empty `orderBy` leaves the order to the engine’s own default (relevance,
+  // a default sorting field), which a tie-break alone would replace.
+  if (query.orderBy.length === 0 || query.limit === 0) {
+    return query;
+  }
+  const sorted = new Set(query.orderBy.map((sort) => sort.field));
+  return {
+    ...query,
+    orderBy: [
+      ...query.orderBy,
+      ...tieBreak.filter((sort) => !sorted.has(sort.field)),
+    ],
   };
 }
 
