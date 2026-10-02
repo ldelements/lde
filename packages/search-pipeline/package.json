@@ -34,7 +34,7 @@
   "devDependencies": {
     "@lde/search-typesense": "^0.32.1",
     "@rdfjs/types": "^2.0.1",
-    "n3": "^2.4.0",
+    "n3": "^2.7.12",
     "testcontainers": "^12.1.0",
     "typesense": "^3.0.6"
   },
