@@ -1338,4 +1338,127 @@ describe('Stage', () => {
       expect(reader.read.mock.calls[0][1]).toBe(distribution);
     });
   });
+
+  describe('bindingsProvider', () => {
+    it('passes custom bindings to the reader separately from selector bindings', async () => {
+      const reader = capturingExecutor([q1]);
+      const stage = new Stage({
+        name: 'withProvider',
+        readers: reader,
+        itemSelector: mockItemSelector([
+          { s: namedNode('http://example.org/s1') },
+        ]),
+        bindingsProvider: {
+          bindings: () => [
+            { type: namedNode('http://example.org/CustomType') },
+          ],
+        },
+      });
+
+      await stage.run(dataset, distribution, collectingWriter());
+
+      const options = reader.read.mock.calls[0][2] as {
+        bindings: unknown[];
+        customBindings: unknown[];
+      };
+      expect(options.bindings).toEqual([
+        { s: namedNode('http://example.org/s1') },
+      ]);
+      expect(options.customBindings).toEqual([
+        { type: namedNode('http://example.org/CustomType') },
+      ]);
+    });
+
+    it('passes custom bindings to the reader when there is no item selector', async () => {
+      const reader = capturingExecutor([q1]);
+      const stage = new Stage({
+        name: 'withProvider',
+        readers: reader,
+        bindingsProvider: {
+          bindings: () => [
+            { type: namedNode('http://example.org/CustomType') },
+          ],
+        },
+      });
+
+      await stage.run(dataset, distribution, collectingWriter());
+
+      const options = reader.read.mock.calls[0][2] as {
+        customBindings: unknown[];
+      };
+      expect(options.customBindings).toEqual([
+        { type: namedNode('http://example.org/CustomType') },
+      ]);
+    });
+
+    it('passes the full predefined + custom bindings to the item selector', async () => {
+      const seenOptions: { datasetBindings?: unknown[] }[] = [];
+      const selector: ItemSelector = {
+        async *select(_distribution, _batchSize, options) {
+          seenOptions.push(options ?? {});
+          yield { s: namedNode('http://example.org/s1') };
+        },
+      };
+      const reader = capturingExecutor([q1]);
+      const stage = new Stage({
+        name: 'withProvider',
+        readers: reader,
+        itemSelector: selector,
+        bindingsProvider: {
+          bindings: () => [
+            { type: namedNode('http://example.org/CustomType') },
+          ],
+        },
+      });
+
+      await stage.run(dataset, distribution, collectingWriter());
+
+      expect(seenOptions[0].datasetBindings).toEqual([
+        {
+          dataset: namedNode('http://example.org/dataset'),
+          type: namedNode('http://example.org/CustomType'),
+        },
+      ]);
+    });
+
+    it('awaits an async provider', async () => {
+      const reader = capturingExecutor([q1]);
+      const stage = new Stage({
+        name: 'withAsyncProvider',
+        readers: reader,
+        bindingsProvider: {
+          bindings: async () => [
+            { type: namedNode('http://example.org/CustomType') },
+          ],
+        },
+      });
+
+      await stage.run(dataset, distribution, collectingWriter());
+
+      const options = reader.read.mock.calls[0][2] as {
+        customBindings: unknown[];
+      };
+      expect(options.customBindings).toEqual([
+        { type: namedNode('http://example.org/CustomType') },
+      ]);
+    });
+
+    it('behaves exactly as before when no bindingsProvider is configured', async () => {
+      const reader = capturingExecutor([q1]);
+      const stage = new Stage({
+        name: 'withoutProvider',
+        readers: reader,
+        itemSelector: mockItemSelector([
+          { s: namedNode('http://example.org/s1') },
+        ]),
+      });
+
+      await stage.run(dataset, distribution, collectingWriter());
+
+      const options = reader.read.mock.calls[0][2] as { bindings: unknown[] };
+      expect(options.bindings).toEqual([
+        { s: namedNode('http://example.org/s1') },
+      ]);
+    });
+  });
 });

@@ -10,6 +10,7 @@ import {
 } from '@traqula/rules-sparql-1-1';
 import type { ItemSelector, SelectOptions } from '../stage.js';
 import { withDefaultGraph } from './graph.js';
+import { injectValuesOuter } from './values.js';
 import type { VariableBindings } from './reader.js';
 import {
   ConstantTimeoutPolicy,
@@ -136,9 +137,12 @@ export class SparqlItemSelector implements ItemSelector {
     const endpoint = distribution.accessUrl!;
     // Per call, so concurrent selections over different datasets cannot see
     // each other's graph scope or page window.
-    const query = structuredClone(this.parsed);
+    let query = structuredClone(this.parsed);
     if (distribution.namedGraph) {
       withDefaultGraph(query, distribution.namedGraph);
+    }
+    if (options?.datasetBindings && options.datasetBindings.length > 0) {
+      query = injectValuesOuter(query, options.datasetBindings);
     }
     const policy = options?.timeout ?? defaultTimeoutPolicy;
     let offset = 0;
