@@ -1,6 +1,6 @@
-import { Dataset, Distribution, assertSafeIri } from '@lde/dataset';
+import { Dataset, Distribution } from '@lde/dataset';
 import { SparqlEndpointFetcher } from 'fetch-sparql-endpoint';
-import type { NamedNode, Quad } from '@rdfjs/types';
+import type { NamedNode, Literal, Quad } from '@rdfjs/types';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { Transform } from 'node:stream';
@@ -12,7 +12,8 @@ import isNetworkError from 'is-network-error';
 import pRetry from 'p-retry';
 import { quadToStringQuad } from 'rdf-string';
 import { withDefaultGraph } from './graph.js';
-import { injectValues } from './values.js';
+import { injectValues, injectValuesOuter, mergeBindings } from './values.js';
+import { predefinedDatasetBindings } from './datasetBindings.js';
 import {
   ConstantTimeoutPolicy,
   type TimeoutOutcome,
@@ -33,15 +34,22 @@ export class NotSupported {
   constructor(public readonly message: string) {}
 }
 
-/** A single row of variable bindings (variable name → NamedNode). */
-export type VariableBindings = Record<string, NamedNode>;
+/** A single row of variable bindings (variable name → NamedNode or Literal). */
+export type VariableBindings = Record<string, NamedNode | Literal>;
 
 export interface ReadOptions {
   /**
-   * Variable bindings to inject as a VALUES clause into the query.
-   * When non-empty, a VALUES block is prepended to the WHERE clause.
+   * Per-item variable bindings (typically an {@link ItemSelector}'s rows).
+   * Injected at the innermost sub-SELECT – see {@link injectValues}.
    */
   bindings?: VariableBindings[];
+
+  /**
+   * Extra bindings from a custom {@link DatasetBindingsProvider}, merged
+   * with {@link predefinedDatasetBindings} and injected at the outermost
+   * scope – see {@link injectValuesOuter}.
+   */
+  customBindings?: VariableBindings[];
 
   /**
    * Per-call {@link TimeoutPolicy}. When supplied, the reader calls
@@ -114,8 +122,9 @@ export interface SparqlConstructReaderOptions {
    *
    * SPARQL CONSTRUCT queries can produce duplicate triples — for example,
    * constant triples (like `?dataset a edm:ProvidedCHO`) are emitted for
-   * every solution row. When enabled, a streaming identity filter removes
-   * duplicates inline without buffering.
+   * every solution row; a multi-valued dataset binding (`?datasetLanguage`,
+   * `?datasetPublisherName`) does the same. When enabled, a streaming
+   * identity filter removes duplicates inline without buffering.
    *
    * The dedup set is scoped to each {@link read} call, so memory stays
    * bounded to the number of unique quads per call (typically one batch).
@@ -137,7 +146,12 @@ export interface SparqlConstructReaderOptions {
  * Template substitution (applied in order):
  * 1. `#subjectFilter#` — replaced with `distribution.subjectFilter` (deferred to read)
  * 2. `FROM <graph>` — set via `withDefaultGraph` if the distribution has a named graph
- * 3. `?dataset` — replaced with the dataset IRI (string substitution on the serialised query)
+ * 3. Per-item (selector) bindings — injected at the innermost sub-SELECT
+ *    (see {@link injectValues}).
+ * 4. Dataset-level bindings — `?dataset`, the DCAT bindings
+ *    (`?datasetPublisher`, `?datasetPublisherName`, `?datasetLicense`,
+ *    `?datasetLanguage`), and any {@link DatasetBindingsProvider} rows,
+ *    injected at the outermost scope (see {@link injectValuesOuter}).
  *
  * @example
  * ```typescript
@@ -215,14 +229,18 @@ export class SparqlConstructReader implements Reader {
       withDefaultGraph(ast, distribution.namedGraph);
     }
 
-    const bindings = options?.bindings;
-    if (bindings !== undefined && bindings.length > 0) {
-      ast = injectValues(ast, bindings);
+    const itemBindings = options?.bindings ?? [];
+    if (itemBindings.length > 0) {
+      ast = injectValues(ast, itemBindings);
     }
 
-    let query = this.generator.generate(ast);
-    assertSafeIri(dataset.iri.toString());
-    query = query.replaceAll('?dataset', `<${dataset.iri}>`);
+    const datasetBindings = mergeBindings(
+      predefinedDatasetBindings(dataset),
+      options?.customBindings ?? [],
+    );
+    ast = injectValuesOuter(ast, datasetBindings);
+
+    const query = this.generator.generate(ast);
 
     const policy = options?.timeout ?? defaultTimeoutPolicy;
 
