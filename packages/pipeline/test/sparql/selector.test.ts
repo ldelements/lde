@@ -753,4 +753,43 @@ describe('SparqlItemSelector', () => {
       expect(queries[2]).not.toContain('urn:graph:1');
     });
   });
+
+  describe('datasetBindings', () => {
+    it('injects a VALUES clause when datasetBindings are provided', async () => {
+      const { fetcher, queries } = pagedFetcher([
+        [{ uri: namedNode('http://example.com/1') }],
+      ]);
+      const selector = new SparqlItemSelector({
+        query,
+        fetcher: fetcher as never,
+      });
+
+      for await (const _row of selector.select(distribution, 10, {
+        datasetBindings: [{ dataset: namedNode('http://example.com/dataset') }],
+      })) {
+        // consume
+      }
+
+      expect(queries[0]).toContain('VALUES');
+      expect(queries[0]).toContain('<http://example.com/dataset>');
+    });
+
+    it('leaves the query unchanged when datasetBindings is omitted or empty', async () => {
+      const { fetcher, queries } = pagedFetcher([[], []]);
+      const selector = new SparqlItemSelector({
+        query,
+        fetcher: fetcher as never,
+      });
+
+      await selectAll(selector, 10);
+      for await (const _row of selector.select(distribution, 10, {
+        datasetBindings: [],
+      })) {
+        // consume
+      }
+
+      expect(queries[0]).not.toContain('VALUES');
+      expect(queries[1]).not.toContain('VALUES');
+    });
+  });
 });
