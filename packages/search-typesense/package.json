@@ -28,7 +28,7 @@
     "@lde/search": "^0.27.0",
     "@lde/text-normalization": "^0.1.2",
     "tslib": "^2.3.0",
-    "typesense": "^3.0.6"
+    "typesense": "^3.1.1"
   },
   "devDependencies": {
     "n3": "^2.7.12",
