@@ -16,7 +16,7 @@ import {
   isoToUnixSeconds,
   isInternalField,
   isRangeFacet,
-  labelSourceNameOf,
+  labelSourceNamesOf,
   nestedFieldName,
   nestedReferenceType,
   outputFields,
@@ -1564,26 +1564,43 @@ describe('searchSchema validation', () => {
       );
     });
 
-    it('reads the label source name off a lookup’s target and an idOnly’s labelSource', () => {
+    it('reads the label source names off a lookup’s target and an idOnly’s labelSource', () => {
       expect(
-        labelSourceNameOf({
+        labelSourceNamesOf({
           name: 'publisher',
           kind: 'reference',
           ref: { strategy: 'lookup', target: 'Organization' },
         }),
-      ).toBe('Organization');
+      ).toEqual(['Organization']);
       expect(
-        labelSourceNameOf({
+        labelSourceNamesOf({
           name: 'license',
           kind: 'reference',
           labelSource: 'Term',
           ref: { strategy: 'idOnly' },
         }),
-      ).toBe('Term');
+      ).toEqual(['Term']);
+      // Several targets, in the order declared: the one shape for one and
+      // for many, so no reader branches on which it was given.
+      expect(
+        labelSourceNamesOf({
+          name: 'creator',
+          kind: 'reference',
+          ref: { strategy: 'lookup', target: ['Person', 'Organization'] },
+        }),
+      ).toEqual(['Person', 'Organization']);
+      expect(
+        labelSourceNamesOf({
+          name: 'creator',
+          kind: 'reference',
+          labelSource: ['Person', 'Organization'],
+          ref: { strategy: 'idOnly' },
+        }),
+      ).toEqual(['Person', 'Organization']);
       // Resolves nothing: no target, no label source.
       expect(
-        labelSourceNameOf({ name: 'license', kind: 'reference' }),
-      ).toBeUndefined();
+        labelSourceNamesOf({ name: 'license', kind: 'reference' }),
+      ).toEqual([]);
     });
 
     it('rejects a labelSource on anything but an idOnly reference', () => {

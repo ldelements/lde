@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { defineSearchType, searchSchema } from '@lde/search';
-import { labelTargetNameOf } from '@lde/search/adapter';
+import { labelTargetNamesOf } from '@lde/search/adapter';
 import { buildCollectionDefinition } from '../src/collection-definition.js';
 import { buildSearchParams } from '../src/query-compiler.js';
 
@@ -765,9 +765,9 @@ describe('a facet policy over the companion', () => {
 describe('labelling the buckets of an edge’s facet', () => {
   it('reads the label target through the identity companion', () => {
     // An inline reference names no label source of its own, so reading only
-    // `labelSourceNameOf` left its buckets unlabelled – the facet policy was
+    // `labelSourceNamesOf` left its buckets unlabelled – the facet policy was
     // inherited one level in, but the labels were not.
-    expect(labelTargetNameOf(work.fields[0], schema)).toBe('Person');
+    expect(labelTargetNamesOf(work.fields[0], schema)).toEqual(['Person']);
   });
 
   it('names nothing for an inline reference without an identity', () => {
@@ -787,11 +787,11 @@ describe('labelling the buckets of an edge’s facet', () => {
     });
 
     expect(
-      labelTargetNameOf(
+      labelTargetNamesOf(
         displayOnly.fields[0],
         searchSchema(displayOnly, person, creatorEdge),
       ),
-    ).toBeUndefined();
+    ).toEqual([]);
   });
 });
 

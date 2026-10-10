@@ -1,5 +1,5 @@
 import {
-  labelSourceNameOf,
+  labelSourceNamesOf,
   referenceFields,
   type ReferenceField,
   type RootType,
@@ -177,7 +177,9 @@ function declaredEdges(
     // field, which a Reference Type cannot carry (a nested field is `output`
     // only). So a joinable edge always has a collection at the far end without
     // a rule of its own.
-    const target = byName.get(labelSourceNameOf(field) as string) as RootType;
+    // One target, never several: `validateSearchType` refuses `joinable` on a
+    // reference naming more than one.
+    const target = byName.get(labelSourceNamesOf(field)[0]) as RootType;
     const claimed = claimedBy.get(target.name);
     if (claimed !== undefined) {
       throw new Error(

@@ -1,6 +1,7 @@
 import type { Client } from 'typesense';
 import type { SearchParams } from 'typesense/lib/Typesense/Documents.js';
 import {
+  NESTED_DOCUMENT_TYPE,
   type FacetBucket,
   type FacetsOutcome,
   type LocalizedValue,
@@ -31,13 +32,15 @@ import {
   isUnsatisfiable,
   joinGraph,
   labelFieldOf,
-  labelSourceNameOf,
-  labelTargetNameOf,
-  localLookupTypeOf,
+  labelSourceNamesOf,
+  labelTargetNamesOf,
+  localLookupTargetsOf,
   nestedReferenceType,
   outputFields,
   physicalFields,
+  referencedTargetsOf,
   referenceFields,
+  storedTargetOf,
 } from '@lde/search/adapter';
 import {
   buildSearchParams,
@@ -45,7 +48,11 @@ import {
   type BuildSearchParamsOptions,
 } from './query-compiler.js';
 import { deriveCollectionName } from './collection-name.js';
-import { resolveProjection, type ResolvedReferents } from './lookup.js';
+import {
+  resolveProjection,
+  type ResolvedReferent,
+  type ResolvedReferents,
+} from './lookup.js';
 
 /** Where the engine reads documents – plus every query-compiler knob
  *  ({@link BuildSearchParamsOptions}), declared once there and forwarded
@@ -189,7 +196,12 @@ export function createTypesenseSearchEngine<
   const typesByName = new Map(
     [...schema.values()].map((searchType) => [searchType.name, searchType]),
   );
-  const labelSources = new Map<string, ReadonlyMap<string, LabelSource>>(
+  // Per field, one source per target it names, in order of precedence – a
+  // reference naming several targets reads labels from every one of them.
+  const labelSources = new Map<
+    string,
+    ReadonlyMap<string, readonly LabelSource[]>
+  >(
     [...schema.values()].map((searchType) => [
       searchType.class,
       new Map(
@@ -197,21 +209,19 @@ export function createTypesenseSearchEngine<
           // An INLINE reference names its label target one level in, through
           // its identity companion: the companion holds that field's ids, so
           // that field's target is what can label them.
-          .filter((field) => labelTargetNameOf(field, schema) !== undefined)
-          .map((field) => {
-            const source = typesByName.get(
-              labelTargetNameOf(field, schema) as string,
-            ) as RootType;
-            const labelField = labelFieldOf(source) as TextField;
-            return [
-              field.name,
-              {
+          .filter((field) => labelTargetNamesOf(field, schema).length > 0)
+          .map((field) => [
+            field.name,
+            labelTargetNamesOf(field, schema).map((targetName) => {
+              const source = typesByName.get(targetName) as RootType;
+              const labelField = labelFieldOf(source) as TextField;
+              return {
                 collection: collections.get(source.class) as string,
                 labelField,
                 queryBy: physicalFields(labelField).search.join(','),
-              },
-            ];
-          }),
+              };
+            }),
+          ]),
       ),
     ]),
   );
@@ -242,7 +252,9 @@ export function createTypesenseSearchEngine<
       type,
       [
         ...new Map(
-          [...sources.values()].map((source) => [source.collection, source]),
+          [...sources.values()]
+            .flat()
+            .map((source) => [source.collection, source]),
         ).values(),
       ],
     ]),
@@ -252,7 +264,7 @@ export function createTypesenseSearchEngine<
   // not re-derive or re-resolve them on every search.
   const outputReferenceSources = new Map<
     string,
-    readonly { name: string; source: LabelSource }[]
+    readonly { name: string; sources: readonly LabelSource[] }[]
   >(
     [...schema.values()].map((searchType) => {
       const sources = labelSources.get(searchType.class);
@@ -272,13 +284,13 @@ export function createTypesenseSearchEngine<
               // the entry – and their FACET buckets are labelled by a separate
               // path that reads the companion.
               nestedReferenceType(schema, field) === undefined &&
-              localLookupTypeOf(field, schema) === undefined,
+              localLookupTargetsOf(field, schema).length === 0,
           )
           .map((field) => ({
             name: field.name,
-            source: (sources as Map<string, LabelSource>).get(
+            sources: (sources as Map<string, readonly LabelSource[]>).get(
               field.name,
-            ) as LabelSource,
+            ) as readonly LabelSource[],
           })),
       ];
     }),
@@ -441,6 +453,7 @@ export function createTypesenseSearchEngine<
           [response],
           labelSources.get(searchType.class),
           outputReferenceSources.get(searchType.class) ?? [],
+          distinctLabelSources.get(searchType.class) ?? [],
         ),
       );
       // What the caller asked to resolve, level by level. Independent of the
@@ -520,6 +533,7 @@ export function createTypesenseSearchEngine<
           responses,
           labelSources.get(searchType.class),
           outputReferenceSources.get(searchType.class) ?? [],
+          distinctLabelSources.get(searchType.class) ?? [],
         ),
       );
       // multi_search reports a failed entry inline instead of rejecting the
@@ -632,37 +646,44 @@ async function loadAllLabels(
  */
 function labelLookupGroups(
   responses: readonly TypesenseSearchResponse[],
-  sources: ReadonlyMap<string, LabelSource> | undefined,
-  outputSources: readonly { name: string; source: LabelSource }[],
+  sources: ReadonlyMap<string, readonly LabelSource[]> | undefined,
+  outputSources: readonly { name: string; sources: readonly LabelSource[] }[],
+  ordered: readonly LabelSource[],
 ): LabelLookupGroup[] {
   if (sources === undefined || sources.size === 0) {
     return [];
   }
-  const irisByCollection = new Map<
-    string,
-    { source: LabelSource; iris: Set<string> }
-  >();
-  const add = (source: LabelSource, iri: string): void => {
-    let group = irisByCollection.get(source.collection);
-    if (group === undefined) {
-      group = { source, iris: new Set() };
-      irisByCollection.set(source.collection, group);
+  // One group per collection, in the order the TYPE’s fields first name them
+  // – seeded up front rather than in the order the hits happen to mention
+  // them, because `fetchLabels` reads group order as precedence and a label
+  // is resolved per type, not per field: an IRI two collections hold gets the
+  // label of the one the type declares first, whichever field carried it.
+  const irisByCollection = new Map(
+    ordered.map((source) => [
+      source.collection,
+      { source, iris: new Set<string>() },
+    ]),
+  );
+  // An IRI of a field naming several targets travels to EVERY one of their
+  // collections: which holds it is not known until one answers.
+  const add = (fieldSources: readonly LabelSource[], iri: string): void => {
+    for (const source of fieldSources) {
+      irisByCollection.get(source.collection)?.iris.add(iri);
     }
-    group.iris.add(iri);
   };
   for (const response of responses) {
     // Hits only carry labels for OUTPUT reference fields (reconstructDocument
     // skips non-output fields); `outputSources` pairs each with its resolved
     // source, precomputed per type.
     for (const hit of response.hits ?? []) {
-      for (const { name, source } of outputSources) {
+      for (const { name, sources: fieldSources } of outputSources) {
         const raw = hit.document[name];
         if (Array.isArray(raw)) {
           for (const value of raw) {
-            add(source, String(value));
+            add(fieldSources, String(value));
           }
         } else if (typeof raw === 'string') {
-          add(source, raw);
+          add(fieldSources, raw);
         }
       }
     }
@@ -670,19 +691,18 @@ function labelLookupGroups(
     // like `class`); resolve them in the same lookup. Skip a non-source facet
     // (e.g. a keyword facet) in one check instead of probing every bucket.
     for (const facet of response.facet_counts ?? []) {
-      const source = sources.get(facet.field_name);
-      if (source === undefined) {
+      const facetSources = sources.get(facet.field_name);
+      if (facetSources === undefined) {
         continue;
       }
       for (const bucket of facet.counts) {
-        add(source, bucket.value);
+        add(facetSources, bucket.value);
       }
     }
   }
-  return [...irisByCollection.values()].map(({ source, iris }) => ({
-    source,
-    iris: [...iris],
-  }));
+  return [...irisByCollection.values()]
+    .filter(({ iris }) => iris.size > 0)
+    .map(({ source, iris }) => ({ source, iris: [...iris] }));
 }
 
 /**
@@ -797,12 +817,20 @@ export async function fetchLabels(
       return;
     }
     for (const hit of result.hits ?? []) {
+      const id = String(hit.document.id);
+      // First group wins: the groups arrive in the order a field declares its
+      // targets, so an IRI two collections hold is labelled by the target
+      // declared first – the same precedence the lookup and the projection
+      // apply.
+      if (labels.has(id)) {
+        continue;
+      }
       const label = localizedValue(
         hit.document,
         groupPerSearch[index].source.labelField,
       );
       if (label !== undefined) {
-        labels.set(String(hit.document.id), label);
+        labels.set(id, label);
       }
     }
   });
@@ -823,7 +851,10 @@ function mergeLabels(
   const merged = new Map<string, LocalizedValue>();
   for (const map of maps) {
     for (const [iri, label] of map) {
-      merged.set(iri, label);
+      // First source wins, as it does for a fetched lookup (`fetchLabels`).
+      if (!merged.has(iri)) {
+        merged.set(iri, label);
+      }
     }
   }
   return merged;
@@ -889,7 +920,7 @@ export function parseSearchResponse(
   // its IRIs.
   const referenceFacets = new Set(
     referenceFields(searchType)
-      .filter((field) => labelTargetNameOf(field, schema) !== undefined)
+      .filter((field) => labelTargetNamesOf(field, schema).length > 0)
       .map((field) => field.name),
   );
   const facets: Record<string, FacetBucket[]> = {};
@@ -965,19 +996,19 @@ function logicalValue(
           nested,
           labels,
           schema,
-          resolved?.children,
+          resolved?.via === 'nested' ? resolved.children : undefined,
         );
       }
       // Checked BEFORE the plain lookup below, because a `local` lookup
       // resolves through the same kind of level while storing a different
       // shape: its stored value is the endpoint's own document, not an id, so
       // reading it as one would stringify the object into a bogus `id`.
-      const localType = localLookupTypeOf(field, schema);
-      if (localType !== undefined) {
+      const localTargets = localLookupTargetsOf(field, schema);
+      if (localTargets.length > 0) {
         return localLookupValue(
           flat[field.name],
           field,
-          localType,
+          localTargets,
           resolved,
           labels,
           schema,
@@ -1071,18 +1102,9 @@ function nestedValue(
     (referent): referent is Record<string, unknown> =>
       typeof referent === 'object' && referent !== null,
   );
-  const documents: NestedDocument[] = referents.map((referent) => {
-    const document = reconstructDocument(
-      referent,
-      referenceType,
-      labels,
-      schema,
-      children,
-    );
-    return typeof referent.id === 'string'
-      ? { id: referent.id, ...document }
-      : document;
-  });
+  const documents: NestedDocument[] = referents.map((referent) =>
+    nestedDocument(referent, referenceType, labels, schema, children),
+  );
   if (documents.length === 0) {
     return undefined;
   }
@@ -1111,14 +1133,16 @@ function nestedValue(
 function localLookupValue(
   raw: unknown,
   field: ReferenceField,
-  target: SearchType,
+  targets: readonly RootType[],
   resolved: ResolvedReferents | undefined,
   labels: ReadonlyMap<string, LocalizedValue>,
   schema: SearchSchema,
 ): SearchValue | undefined {
   const fetched =
-    resolved?.via === 'lookup' ? resolved.documents : new Map<string, never>();
-  const entries = (Array.isArray(raw) ? raw : [raw])
+    resolved?.via === 'lookup'
+      ? resolved.documents
+      : new Map<string, ResolvedReferent>();
+  const documents = (Array.isArray(raw) ? raw : [raw])
     .filter(
       (entry): entry is Record<string, unknown> =>
         typeof entry === 'object' && entry !== null,
@@ -1126,16 +1150,67 @@ function localLookupValue(
     .map((entry) => {
       const id = typeof entry.id === 'string' ? entry.id : undefined;
       const authoritative = id === undefined ? undefined : fetched.get(id);
-      return authoritative ?? entry;
+      // An entry no collection answered for is read through the declaration
+      // it was stored under – which it says itself where there were several
+      // to choose from, and the only one otherwise.
+      const referent: ResolvedReferent = authoritative ?? {
+        target: storedTargetOf(entry, targets),
+        document: entry,
+        children: new Map(),
+      };
+      return typedDocument(
+        targets.length > 1,
+        referent.target,
+        nestedDocument(
+          referent.document,
+          referent.target,
+          labels,
+          schema,
+          referent.children,
+        ),
+      );
     });
-  return nestedValue(
-    entries,
-    field,
-    target,
+  if (documents.length === 0) {
+    return undefined;
+  }
+  return field.array === true ? documents : documents[0];
+}
+
+/**
+ * A nested document read through one of a lookup’s **several** targets, marked
+ * with that type’s name ({@link NESTED_DOCUMENT_TYPE}) so a surface can tell
+ * which it is – the marker is a symbol, so it never surfaces as a field. A
+ * single-target lookup marks nothing: there is nothing to tell apart.
+ */
+function typedDocument(
+  polymorphic: boolean,
+  target: RootType,
+  document: NestedDocument,
+): NestedDocument {
+  return polymorphic
+    ? { ...document, [NESTED_DOCUMENT_TYPE]: target.name }
+    : document;
+}
+
+/** One nested document rebuilt from a flat referent, carrying its `id` where
+ *  it has one – the shared body of every nesting that reads a referent. */
+function nestedDocument(
+  referent: Record<string, unknown>,
+  searchType: SearchType,
+  labels: ReadonlyMap<string, LocalizedValue>,
+  schema: SearchSchema,
+  children: ReadonlyMap<string, ResolvedReferents> | undefined,
+): NestedDocument {
+  const document = reconstructDocument(
+    referent,
+    searchType,
     labels,
     schema,
-    resolved?.children,
+    children,
   );
+  return typeof referent.id === 'string'
+    ? { id: referent.id, ...document }
+    : document;
 }
 
 /**
@@ -1157,20 +1232,21 @@ function lookupValue(
     return undefined;
   }
   const iris = Array.isArray(raw) ? (raw as string[]) : [String(raw)];
+  const polymorphic = referencedTargetsOf(field, schema).length > 1;
   const documents: NestedDocument[] = iris.map((iri) => {
     const referent = resolved.documents.get(iri);
     return referent === undefined
       ? { id: iri }
-      : {
+      : typedDocument(polymorphic, referent.target, {
           id: iri,
           ...reconstructDocument(
-            referent,
-            resolved.target,
+            referent.document,
+            referent.target,
             labels,
             schema,
-            resolved.children,
+            referent.children,
           ),
-        };
+        });
   });
   return field.array === true ? documents : documents[0];
 }
@@ -1191,7 +1267,7 @@ function referenceValue(
     // a label, even if the (cached, full-collection) map happens to hold this
     // IRI from another source.
     const label =
-      labelSourceNameOf(field) === undefined ? undefined : labels.get(iri);
+      labelSourceNamesOf(field).length === 0 ? undefined : labels.get(iri);
     return label === undefined ? { id: iri } : { id: iri, label };
   });
   return field.array === true ? references : references[0];

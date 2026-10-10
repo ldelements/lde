@@ -3,7 +3,7 @@ import { projectDocument, type SearchDocument } from '../src/project.js';
 import {
   defineSearchType,
   inlineFramingDepth,
-  labelTargetNameOf,
+  labelTargetNamesOf,
   physicalFields,
   searchSchema,
 } from '../src/schema.js';
@@ -1412,11 +1412,11 @@ describe('the label target a facet reads', () => {
   it('is the identity companion’s target, one level in', () => {
     // An inline reference names no label source of its own, so reading only
     // its own declaration would leave its facet buckets unlabelled.
-    expect(labelTargetNameOf(work.fields[0], schema)).toBe('Person');
+    expect(labelTargetNamesOf(work.fields[0], schema)).toEqual(['Person']);
   });
 
   it('is nothing for a field that references nothing', () => {
-    expect(labelTargetNameOf(creatorEdge.fields[0], schema)).toBeUndefined();
+    expect(labelTargetNamesOf(creatorEdge.fields[0], schema)).toEqual([]);
   });
 
   it('is nothing against a schema that does not declare the edge’s type', () => {
@@ -1425,7 +1425,7 @@ describe('the label target a facet reads', () => {
     // reading every schema-less path in the projection makes.
     const foreign = searchSchema(person);
 
-    expect(labelTargetNameOf(work.fields[0], foreign)).toBeUndefined();
+    expect(labelTargetNamesOf(work.fields[0], foreign)).toEqual([]);
   });
 });
 

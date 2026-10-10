@@ -236,7 +236,19 @@ export type ReferenceStrategy =
     }
   | {
       readonly strategy: 'lookup';
-      readonly target: string;
+      /**
+       * The Root Type whose collection the fields are read from – or
+       * **several**, where the referent may be any of them: a `creator` that
+       * is a `Person` or an `Organization`. Each value then resolves against
+       * every named collection and reports which one held it, so a surface can
+       * type it per value rather than claiming one kind for all of them.
+       *
+       * Order is precedence. A value that several collections hold – two Root
+       * Types whose `class` selections overlap – belongs to the first target
+       * declared, and so does a stored referent whose `rdf:type` matches none
+       * of them. List the most specific type first.
+       */
+      readonly target: string | readonly string[];
       /**
        * Also project the target’s **own fields from this document’s frame**, so
        * the reference stores what the referring document states about the
@@ -287,7 +299,7 @@ export type ReferenceStrategy =
        * identifies the edge. Naming it is also what gives the companion a
        * **target**: the named field’s own `target` is the Root Type whose keys
        * these ids are, which is what a facet policy is inherited through
-       * ({@link inheritedFacetKeys}) and what types the filter at the surface.
+       * ({@link inheritedFacetPolicies}) and what types the filter at the surface.
        *
        * The companion holds ids only, so a facet over it is exact and
        * identity-keyed: an entry whose endpoint the graph named inline – a
@@ -310,20 +322,22 @@ export interface ReferenceField extends SearchFieldBase, Searchable {
   readonly from?: ProjectionValue;
   /**
    * The `name` of the Root Type whose collection labels this reference’s facet
-   * buckets. Only an `idOnly` reference declares one: a `lookup` reads its
-   * labels from the `target` it already names, and an `inline` reference
-   * carries the referent’s own fields. The named type must declare an `output`,
+   * buckets – or several, in order of precedence, where the referent may be
+   * any of them (the same range a `lookup`’s `target` states). Only an
+   * `idOnly` reference declares one: a `lookup` reads its labels from the
+   * `target` it already names, and an `inline` reference carries the
+   * referent’s own fields. Each named type must declare an `output`,
    * `searchable` text field under its {@link SearchTypeBase.labelField} name
    * (`label` by default; validated by {@link searchSchema}), so an engine can
    * both reconstruct the label and search it (typeahead).
    */
-  readonly labelSource?: string;
+  readonly labelSource?: string | readonly string[];
   /**
    * Turn this reference into an **engine-level join**, so a query can filter
    * this type by a condition on the referent – `“every object published by
    * institution X”` in one round-trip instead of two. Valid only where the
    * reference names the type it resolves against – a `lookup`’s `target` or an
-   * `idOnly`’s {@link ReferenceField.labelSource} ({@link labelSourceNameOf}) –
+   * `idOnly`’s {@link ReferenceField.labelSource} ({@link labelSourceNamesOf}) –
    * which already asserts that this field’s values are ids of documents in that
    * type’s collection, exactly the fact a join needs.
    *
@@ -474,7 +488,7 @@ export interface KeyField {
  * A {@link RootType}’s **facet policy**: which of its documents get a facet
  * bucket, as a predicate over the document key. Declared once, on the type,
  * and inherited by every facetable reference that *names* the type – a
- * `lookup`’s `target`, an `idOnly`’s `labelSource` ({@link labelSourceNameOf})
+ * `lookup`’s `target`, an `idOnly`’s `labelSource` ({@link labelSourceNamesOf})
  * – because *which of a type’s ids deserve a bucket* is a fact about the type,
  * not about each field that points at it. A per-field policy would be one rule
  * declared N times, and forgetting one would silently reintroduce the buckets
@@ -725,7 +739,7 @@ export function referenceTypeNamed(
 
 /**
  * The {@link RootType} a declaration names – a `lookup`’s `target`, an
- * `idOnly`’s {@link ReferenceField.labelSource} ({@link labelSourceNameOf}), a
+ * `idOnly`’s {@link ReferenceField.labelSource} ({@link labelSourceNamesOf}), a
  * join edge – or `undefined` when the schema declares no Root Type by that
  * name. The one reading of *which type does this point at*, so the projection
  * (which re-keys a reference through its target’s {@link KeyField}), the
@@ -880,35 +894,43 @@ function framingReach(
     // the cut as “reach 0, and nothing else to count” left the innermost
     // referent’s key one hop outside the frame, so it stored a node IRI that
     // matches nothing in the target’s collection.
-    const local = localLookupTypeOf(field, schema);
-    if (local !== undefined && !onPath.has(local.name)) {
-      furthest = Math.max(furthest, hops + framingReach(schema, local, onPath));
-      continue;
+    //
+    // Several targets each contribute their own reach: a referent is framed
+    // once, and the frame has to hold whichever declaration it turns out to
+    // match, so the furthest of them decides.
+    // The field’s own traversal counts whatever it names.
+    furthest = Math.max(furthest, hops);
+    const local = localLookupTargetsOf(field, schema).filter(
+      (target) => !onPath.has(target.name),
+    );
+    for (const target of local) {
+      furthest = Math.max(
+        furthest,
+        hops + framingReach(schema, target, onPath),
+      );
     }
     // A keyed target’s key field is itself path-bearing, so its own traversal
     // counts too – the extraction reads it off the referent with that path.
-    const keyPath = keyedTargetKeyPath(field, schema);
-    furthest = Math.max(
-      furthest,
-      hops + (keyPath === undefined ? 0 : pathHopCount(keyPath)),
-    );
+    // Counted for every target that is not locally expanded above, cut ones
+    // included: there the extraction falls back to exactly this hop.
+    for (const target of referencedTargetsOf(field, schema)) {
+      if (local.includes(target)) {
+        continue;
+      }
+      const keyPath = keyPathOf(target);
+      furthest = Math.max(
+        furthest,
+        hops + (keyPath === undefined ? 0 : pathHopCount(keyPath)),
+      );
+    }
   }
   return furthest;
 }
 
-/** The `path` of the key field of the keyed Root Type a reference names, when
- *  it names one that declares a {@link RootType.key}. */
-function keyedTargetKeyPath(
-  field: SearchField,
-  schema: SearchSchema,
-): string | undefined {
-  if (field.kind !== 'reference') {
-    return undefined;
-  }
-  const targetName = labelSourceNameOf(field);
-  const target =
-    targetName === undefined ? undefined : rootTypeNamed(schema, targetName);
-  if (target?.key === undefined) {
+/** The `path` of a Root Type’s key field, when it declares a
+ *  {@link RootType.key}. */
+function keyPathOf(target: RootType): string | undefined {
+  if (target.key === undefined) {
     return undefined;
   }
   // `searchSchema` guarantees a key field that is declared and path-bearing –
@@ -1058,7 +1080,7 @@ function assertIdentityCompanion(
   }
   if (
     identityField.kind !== 'reference' ||
-    labelSourceNameOf(identityField) === undefined
+    labelSourceNamesOf(identityField).length === 0
   ) {
     throw new Error(
       `${where} names identity “${identity}”, which names no target: an identity companion holds ids of documents in a collection, so the field it harvests must be a reference declaring a “lookup” target or a label source.`,
@@ -1329,15 +1351,41 @@ export function labelFieldOf(searchType: SearchType): TextField | undefined {
 }
 
 /**
- * The Root Type a reference resolves labels from, by name: a `lookup`’s
- * `target`, an `idOnly`’s {@link ReferenceField.labelSource}, or `undefined`
- * when it resolves none. One reading for the two declarations, so a consumer
- * never branches on the strategy to find the collection.
+ * The Root Types a reference resolves labels from, by name and in order of
+ * precedence: a `lookup`’s `target`, an `idOnly`’s
+ * {@link ReferenceField.labelSource}, or none when it resolves none. One
+ * reading for the two declarations, so a consumer never branches on the
+ * strategy to find the collection – and one **shape** for the one-target and
+ * the several-target declaration, so a consumer never branches on that either:
+ * a single name is the list of one.
  */
-export function labelSourceNameOf(field: ReferenceField): string | undefined {
-  return field.ref?.strategy === 'lookup'
-    ? field.ref.target
-    : field.labelSource;
+export function labelSourceNamesOf(field: ReferenceField): readonly string[] {
+  const declared =
+    field.ref?.strategy === 'lookup' ? field.ref.target : field.labelSource;
+  return declared === undefined
+    ? []
+    : typeof declared === 'string'
+      ? [declared]
+      : declared;
+}
+
+/**
+ * The Root Types a reference resolves against ({@link labelSourceNamesOf}),
+ * resolved in the given schema and in order of precedence. A name the schema
+ * does not declare as a Root Type is skipped – `searchSchema` rejects such a
+ * declaration, so this only happens for a field read against a foreign schema,
+ * where it resolves what it can.
+ */
+export function referencedTargetsOf(
+  field: SearchField,
+  schema: SearchSchema | undefined,
+): readonly RootType[] {
+  if (schema === undefined || field.kind !== 'reference') {
+    return [];
+  }
+  return labelSourceNamesOf(field)
+    .map((name) => rootTypeNamed(schema, name))
+    .filter((target): target is RootType => target !== undefined);
 }
 
 /**
@@ -1380,32 +1428,115 @@ function assertResolvableLabelSources(
           );
         }
       }
-      const sourceName =
-        field.kind === 'reference' && field.ref?.strategy === 'lookup'
-          ? field.ref.target
-          : labelSource;
-      if (sourceName === undefined) {
+      if (field.kind !== 'reference') {
         continue;
       }
-      const source = rootTypeNamed(schema, sourceName);
-      if (source === undefined) {
-        // A name that IS declared, just not as a Root Type, is the confusing
-        // case: telling the author to declare a type they already declared
-        // would send them looking in the wrong place. Only a Root Type has a
-        // collection to resolve against, so name that instead.
-        throw new Error(
-          referenceTypeNamed(schema, sourceName) === undefined
-            ? `Reference “${searchType.name}.${field.name}” names unknown label source “${sourceName}”; declare a SearchType with that name.`
-            : `Reference “${searchType.name}.${field.name}” names label source “${sourceName}”, which is a Reference Type; a label source must be a Root Type, since a resolved label is read from that type’s own collection.`,
-        );
+      const sources: RootType[] = [];
+      for (const sourceName of labelSourceNamesOf(field)) {
+        const source = rootTypeNamed(schema, sourceName);
+        if (source === undefined) {
+          // A name that IS declared, just not as a Root Type, is the confusing
+          // case: telling the author to declare a type they already declared
+          // would send them looking in the wrong place. Only a Root Type has a
+          // collection to resolve against, so name that instead.
+          throw new Error(
+            referenceTypeNamed(schema, sourceName) === undefined
+              ? `Reference “${searchType.name}.${field.name}” names unknown label source “${sourceName}”; declare a SearchType with that name.`
+              : `Reference “${searchType.name}.${field.name}” names label source “${sourceName}”, which is a Reference Type; a label source must be a Root Type, since a resolved label is read from that type’s own collection.`,
+          );
+        }
+        if (labelFieldOf(source) === undefined) {
+          throw new Error(
+            `Reference “${searchType.name}.${field.name}” uses label source “${sourceName}”, which must declare an output, searchable text field “${labelFieldNameOf(source)}”.`,
+          );
+        }
+        sources.push(source);
       }
-      if (labelFieldOf(source) === undefined) {
+      assertCompatibleTargets(searchType, field, sources);
+    }
+  }
+}
+
+/**
+ * The targets of a reference naming **several** may not disagree about a
+ * field they both declare: a stored referent of either kind lands in one
+ * nested object, which an engine declares once, so `birthDate` cannot be a
+ * `date` on one target and a `keyword` on the other, nor a list on one and a
+ * single value on the other – nor an id on one and a nested document on the
+ * other, nor indexed on one and stored only on the other. Everything that
+ * decides a nested field’s physical shape has to agree: kind, arity, the
+ * Roles it opts into, and for a reference the strategy and what it points at.
+ * A field only one target declares is fine – the other simply never fills it
+ * – and so is a `text` field whose locales differ, since display stores every
+ * present language regardless.
+ */
+function assertCompatibleTargets(
+  searchType: SearchType,
+  field: ReferenceField,
+  targets: readonly RootType[],
+): void {
+  const seen = new Map<string, { target: RootType; field: SearchField }>();
+  for (const target of targets) {
+    for (const declared of target.fields) {
+      const earlier = seen.get(declared.name);
+      if (earlier === undefined) {
+        seen.set(declared.name, { target, field: declared });
+        continue;
+      }
+      if (describeShape(earlier.field) !== describeShape(declared)) {
         throw new Error(
-          `Reference “${searchType.name}.${field.name}” uses label source “${sourceName}”, which must declare an output, searchable text field “${labelFieldNameOf(source)}”.`,
+          `Reference “${searchType.name}.${field.name}” names targets “${earlier.target.name}” and “${target.name}”, which both declare “${declared.name}” but not alike (${describeShape(earlier.field)} vs ${describeShape(declared)}); a referent of either kind is stored in one shape, so a field the targets share must be declared the same on both.`,
         );
       }
     }
   }
+}
+
+/**
+ * Everything that decides a field’s physical shape, spelled out for a message
+ * comparing two declarations: kind and arity, the Roles it carries, and for a
+ * reference its strategy, what it points at, and whether it stores a copy.
+ */
+function describeShape(field: SearchField): string {
+  const roles: string[] = ['filterable', 'facetable', 'sortable'].filter(
+    (role) => field[role as 'filterable' | 'facetable' | 'sortable'] === true,
+  );
+  if (field.searchable !== undefined) {
+    roles.push('searchable');
+  }
+  const ref =
+    field.kind === 'reference' && field.ref !== undefined
+      ? [
+          field.ref.strategy,
+          ...labelSourceNamesOf(field),
+          ...(field.ref.strategy === 'inline' ? [field.ref.typeName] : []),
+          ...(field.ref.strategy === 'lookup' && field.ref.local === true
+            ? ['local']
+            : []),
+        ]
+      : [];
+  return [
+    field.array === true ? `${field.kind} list` : field.kind,
+    ...(ref.length > 0 ? [`→ ${ref.join(' ')}`] : []),
+    ...(roles.length > 0 ? [`(${roles.join(', ')})`] : []),
+  ].join(' ');
+}
+
+/**
+ * The Root Type a stored referent was projected through, among the targets
+ * its lookup names: the one its discriminator names ({@link TARGET_FIELD}),
+ * or the first declared where it carries none – a single-target lookup stores
+ * none, and the first target is also what an unmatched referent was projected
+ * through. The one reading of a stored discriminator, so the projection
+ * (which prunes through it) and an engine adapter (which reconstructs through
+ * it) cannot read it differently.
+ */
+export function storedTargetOf(
+  entry: Readonly<Record<string, unknown>>,
+  targets: readonly RootType[],
+): RootType {
+  const name = entry[TARGET_FIELD];
+  return targets.find((target) => target.name === name) ?? targets[0];
 }
 
 /**
@@ -1441,6 +1572,8 @@ export interface SearchTypeIssue {
     | 'joinable-not-allowed'
     | 'joinable-without-label-source'
     | 'joinable-with-inline-ref'
+    | 'joinable-with-several-targets'
+    | 'duplicate-target'
     | 'reserved-field-name'
     | 'key-field-unknown'
     | 'key-field-not-reference'
@@ -1484,9 +1617,29 @@ export const ID_FIELD = 'id';
 export const AND_KEY = 'and';
 export const OR_KEY = 'or';
 
+/**
+ * The physical name under which a stored referent of a lookup naming
+ * **several** targets records which of them it belongs to: the `name` of the
+ * Root Type whose `class` its `rdf:type` matched first, or the first target
+ * declared where none did. Written by the projection, read by an engine
+ * adapter to reconstruct the referent through the right declaration when no
+ * collection answers for it – an unidentified referent, or an identified one
+ * whose document is not indexed. A single-target lookup stores none: there is
+ * nothing to tell apart.
+ *
+ * Reserved schema-wide ({@link validateSearchType} rejects a field of this
+ * name), so it can never shadow a declared field of a stored entry.
+ */
+export const TARGET_FIELD = '_target';
+
 /** The logical field names no {@link SearchType} may declare, each because a
  *  surface already gives that name a meaning of its own. */
-const RESERVED_FIELD_NAMES: readonly string[] = [ID_FIELD, AND_KEY, OR_KEY];
+const RESERVED_FIELD_NAMES: readonly string[] = [
+  ID_FIELD,
+  AND_KEY,
+  OR_KEY,
+  TARGET_FIELD,
+];
 
 /** Kinds that can feed full-text search (project a folded search field). */
 const SEARCHABLE_KINDS: readonly FieldKind[] = ['text', 'keyword', 'reference'];
@@ -1622,18 +1775,30 @@ export function validateSearchType(
         field.output === true &&
         ((field.ref?.strategy === 'inline' &&
           field.ref.typeName === undefined) ||
-          (field.ref?.strategy === 'lookup' && field.ref.target === undefined))
+          (field.ref?.strategy === 'lookup' &&
+            labelSourceNamesOf(field as ReferenceField).length === 0))
       ) {
         issue('missing-ref-type-name');
       }
       // A join addresses the referent's collection – the one a lookup's
       // `target` or an idOnly's `labelSource` names. With neither, the flag
       // states an edge to nowhere.
-      if (
-        field.joinable === true &&
-        labelSourceNameOf(field as ReferenceField) === undefined
-      ) {
+      const targets = labelSourceNamesOf(field as ReferenceField);
+      if (field.joinable === true && targets.length === 0) {
         issue('joinable-without-label-source');
+      }
+      // An engine reference names ONE collection, and ids that live in
+      // several have no single collection to reference – so a reference whose
+      // referent may be any of several types can never be an engine edge. Its
+      // labels, facets and id filters all work from this document; a
+      // condition on the referent’s own fields does not (#717).
+      if (field.joinable === true && targets.length > 1) {
+        issue('joinable-with-several-targets');
+      }
+      // Precedence between targets is declaration order, so a name declared
+      // twice would have to mean two different ranks.
+      if (new Set(targets).size !== targets.length) {
+        issue('duplicate-target');
       }
       // An inline reference is stored as a NESTED OBJECT, not as an id an
       // engine can point a reference field at, so the two cannot both hold:
@@ -1895,46 +2060,48 @@ export function identityFieldName(name: string): string {
 }
 
 /**
- * The Root Type whose labels a reference’s **facet buckets** read – its own
- * label source, or, for an inline reference, the one its
- * {@link ReferenceStrategy.identity identity companion} points at.
+ * The Root Types whose labels a reference’s **facet buckets** read, by name and
+ * in order of precedence – its own label sources, or, for an inline reference,
+ * those its {@link ReferenceStrategy.identity identity companion} points at.
+ * Empty for a field that labels no bucket.
  *
- * The same one-level-in reading {@link inheritedFacetKeys} makes, and for the
- * same reason: the companion holds that field’s ids, so the type that names
- * those ids is the type that can label them. Kept together with it so a facet
- * cannot inherit a policy from one type and its labels from another – or, as
- * happened first, inherit the policy and no labels at all.
+ * The same one-level-in reading {@link inheritedFacetPolicies} makes, and for
+ * the same reason: the companion holds that field’s ids, so the types that
+ * name those ids are the types that can label them. Kept together with it so a
+ * facet cannot inherit a policy from one type and its labels from another –
+ * or, as happened first, inherit the policy and no labels at all.
  */
-export function labelTargetNameOf(
+export function labelTargetNamesOf(
   field: SearchField,
   schema: SearchSchema | undefined,
-): string | undefined {
+): readonly string[] {
   if (field.kind !== 'reference') {
-    return undefined;
+    return [];
   }
-  return labelSourceNameOf(identityFieldOf(field, schema) ?? field);
+  return labelSourceNamesOf(identityFieldOf(field, schema) ?? field);
 }
 
 /**
- * The Root Type a {@link ReferenceStrategy.local local} lookup projects its
- * referents through, or `undefined` for every other field. Such a reference
- * stores nested documents shaped by the **target’s own declaration** – so it
- * needs no reference type of its own, and reconstructs through the same path a
- * resolved referent does.
+ * The Root Types a {@link ReferenceStrategy.local local} lookup projects its
+ * referents through, in order of precedence – or none for every other field.
+ * Such a reference stores nested documents shaped by the **target’s own
+ * declaration** – so it needs no reference type of its own, and reconstructs
+ * through the same path a resolved referent does. With several targets, each
+ * referent is projected through the one its `rdf:type` matches
+ * ({@link TARGET_FIELD}).
  */
-export function localLookupTypeOf(
+export function localLookupTargetsOf(
   field: SearchField,
   schema: SearchSchema | undefined,
-): RootType | undefined {
+): readonly RootType[] {
   if (
-    schema === undefined ||
     field.kind !== 'reference' ||
     field.ref?.strategy !== 'lookup' ||
     field.ref.local !== true
   ) {
-    return undefined;
+    return [];
   }
-  return rootTypeNamed(schema, field.ref.target);
+  return referencedTargetsOf(field, schema);
 }
 
 /**
@@ -1942,7 +2109,7 @@ export function localLookupTypeOf(
  * {@link ReferenceStrategy.identity identity companion} harvests, or
  * `undefined` where the field declares none (or the schema cannot resolve its
  * reference type). The one reading of *which nested field identifies the edge*,
- * so the projection (which harvests it), {@link inheritedFacetKeys} (which
+ * so the projection (which harvests it), {@link inheritedFacetPolicies} (which
  * reads its target’s facet policy) and an adapter’s filter compiler cannot
  * resolve it differently.
  */
@@ -2318,7 +2485,7 @@ export function unixSecondsToIso(seconds: number): string {
  * The facet is the one member that depends on more than the declaration: a
  * facetable reference whose target declares a {@link FacetKeys facet policy}
  * facets a `${name}_facet` companion rather than itself, and only the `schema`
- * can resolve that target ({@link inheritedFacetKeys}). Without one the field
+ * can resolve that target ({@link inheritedFacetPolicies}). Without one the field
  * facets on its own name – the same reading the projection makes without a
  * schema, where it cannot re-key a reference either.
  */
@@ -2348,7 +2515,7 @@ export function physicalFields(
   // otherwise a level further in than an engine can weld a condition to.
   const nestsAnObject =
     identityFieldOf(field, schema) !== undefined ||
-    (localLookupTypeOf(field, schema) !== undefined &&
+    (localLookupTargetsOf(field, schema).length > 0 &&
       field.filterable === true);
   const identity = nestsAnObject ? identityFieldName(field.name) : undefined;
   const filtered = identity ?? field.name;
@@ -2358,7 +2525,7 @@ export function physicalFields(
     facet:
       field.facetable !== true
         ? undefined
-        : inheritedFacetKeys(field, schema) === undefined
+        : inheritedFacetPolicies(field, schema).size === 0
           ? filtered
           : `${filtered}_facet`,
     identity,
@@ -2366,9 +2533,13 @@ export function physicalFields(
 }
 
 /**
- * The {@link FacetKeys facet policy} a field inherits: the `facetKeys` of the
- * Root Type it names ({@link labelSourceNameOf}), when the field is a facetable
- * reference and the schema resolves that type. The boundary is *naming the
+ * The {@link FacetKeys facet policies} a field inherits, keyed by the `name` of
+ * the Root Type declaring each: the `facetKeys` of every type the field names
+ * ({@link labelSourceNamesOf}) that declares one, when the field is a facetable
+ * reference and the schema resolves those types. Empty where nothing is
+ * inherited. With several targets, an id is admitted to a bucket by the policy
+ * of the target it belongs to, and unconditionally where that target declares
+ * none. The boundary is *naming the
  * target* – the same line along which a reference is re-keyed and a join is
  * drawn – so a reference that names no type inherits nothing, whatever type
  * its values happen to point at; and a `derive`d reference, which produces its
@@ -2384,21 +2555,24 @@ export function physicalFields(
  * rather than declaring it twice is what keeps *which of a type’s ids deserve
  * a bucket* a fact about the type.
  */
-export function inheritedFacetKeys(
+export function inheritedFacetPolicies(
   field: SearchField,
   schema: SearchSchema | undefined,
-): FacetKeys | undefined {
+): ReadonlyMap<string, FacetKeys> {
+  const policies = new Map<string, FacetKeys>();
   if (
     schema === undefined ||
     field.kind !== 'reference' ||
     field.facetable !== true ||
     field.derive !== undefined
   ) {
-    return undefined;
+    return policies;
   }
   const identity = identityFieldOf(field, schema);
-  const targetName = labelSourceNameOf(identity ?? field);
-  return targetName === undefined
-    ? undefined
-    : rootTypeNamed(schema, targetName)?.facetKeys;
+  for (const target of referencedTargetsOf(identity ?? field, schema)) {
+    if (target.facetKeys !== undefined) {
+      policies.set(target.name, target.facetKeys);
+    }
+  }
+  return policies;
 }

@@ -13,7 +13,7 @@ import {
 import {
   fieldNamed,
   nestedReferenceType,
-  rootTypeNamed,
+  referencedTargetsOf,
 } from '@lde/search/adapter';
 
 type Fragments = Readonly<Record<string, FragmentDefinitionNode>>;
@@ -164,34 +164,40 @@ function fromSelections(
       if (field.kind !== 'reference' || field.ref?.strategy !== 'lookup') {
         continue;
       }
-      // The target's own declaration decides what its selections mean, so the
-      // level below is read against it rather than against this type.
+      // The targets' own declarations decide what the selections mean, so the
+      // level below is read against them rather than against this type.
       // `searchSchema` rejects a lookup whose target it cannot resolve, so a
       // schema always resolves its own – which is why this reads the schema
-      // rather than taking a resolver that could answer nothing.
-      const target = rootTypeNamed(schema, field.ref.target) as SearchType;
-      // Only what the target actually serves. A selection carries more than
+      // rather than taking a resolver that could answer nothing. A lookup
+      // naming several targets is served as an interface, and a client
+      // reaches one target’s own fields through an inline fragment on its
+      // type; the fragment’s fields are read like any other, and each target
+      // takes the ones it serves.
+      const targets = referencedTargetsOf(field, schema);
+      // Only what a target actually serves. A selection carries more than
       // that: `id` is on the referring document already, and every GraphQL
       // client worth the name injects `__typename` into every selection set –
       // asking the engine for either would fail the query at the port's guard.
       const wanted = fieldsOf(selected.selectionSet, fragments)
         .map((node) => node.name.value)
-        .filter((name) => servesField(target, name));
+        .filter((name) => targets.some((target) => servesField(target, name)));
       const entry = (projection[selected.name.value] ??= {});
       entry.fields = [...new Set([...(entry.fields ?? []), ...wanted])];
       if (selected.selectionSet !== undefined) {
-        const below = fromSelections(
-          [selected.selectionSet],
-          target,
-          fragments,
-          schema,
-        );
-        if (Object.keys(below).length > 0) {
-          // Merged level by level, not key by key: one lookup selected twice –
-          // two fragments each spreading it – must union what each asked for,
-          // or the second selection silently replaces the first and a field
-          // the client asked for is never fetched.
-          entry.resolve = mergeProjections(entry.resolve, below);
+        for (const target of targets) {
+          const below = fromSelections(
+            [selected.selectionSet],
+            target,
+            fragments,
+            schema,
+          );
+          if (Object.keys(below).length > 0) {
+            // Merged level by level, not key by key: one lookup selected twice
+            // – two fragments each spreading it – must union what each asked
+            // for, or the second selection silently replaces the first and a
+            // field the client asked for is never fetched.
+            entry.resolve = mergeProjections(entry.resolve, below);
+          }
         }
       }
     }

@@ -10,21 +10,25 @@ import {
   displayFieldName,
   documentKeyOf,
   fieldNamed,
-  inheritedFacetKeys,
+  identityFieldOf,
+  inheritedFacetPolicies,
   inlineFramingDepth,
   irAlias,
   isAbsoluteIri,
   isInternalField,
   isInlineReference,
   isoToUnixSeconds,
-  labelSourceNameOf,
-  localLookupTypeOf,
+  localLookupTargetsOf,
   physicalFields,
+  referencedTargetsOf,
   referenceTypeNamed,
-  rootTypeNamed,
+  storedTargetOf,
+  TARGET_FIELD,
   type KeywordField,
   type ProjectionValue,
+  type FacetKeys,
   type ReferenceField,
+  type ReferenceType,
   type RootType,
   type SearchField,
   type SearchSchema,
@@ -143,16 +147,27 @@ function pruneInternalFields(
     if (schema === undefined || field.kind !== 'reference') {
       continue;
     }
-    const nestedType =
+    const nestedTypes: readonly SearchType[] =
       field.ref?.strategy === 'inline'
-        ? referenceTypeNamed(schema, field.ref.typeName)
-        : localLookupTypeOf(field, schema);
+        ? [referenceTypeNamed(schema, field.ref.typeName)].filter(
+            (type): type is ReferenceType => type !== undefined,
+          )
+        : localLookupTargetsOf(field, schema);
     const nested = document[field.name];
-    if (nestedType === undefined || nested === undefined) {
+    if (nestedTypes.length === 0 || nested === undefined) {
       continue;
     }
     for (const referent of Array.isArray(nested) ? nested : [nested]) {
-      pruneInternalFields(referent as ProjectedNode, nestedType, schema);
+      pruneInternalFields(
+        referent as ProjectedNode,
+        nestedTypes.length === 1
+          ? nestedTypes[0]
+          : storedTargetOf(
+              referent as ProjectedNode,
+              nestedTypes as readonly RootType[],
+            ),
+        schema,
+      );
     }
   }
 }
@@ -359,13 +374,13 @@ function applyField(
   // is an entry like any other, minus its `id`. Same reason as above for
   // needing a schema: without one there is no target to project through.
   if (field.kind === 'reference' && schema !== undefined) {
-    const localType = localLookupTypeOf(field, schema);
-    if (localType !== undefined) {
+    const localTargets = localLookupTargetsOf(field, schema);
+    if (localTargets.length > 0) {
       const endpoints = applyNestedReferents(
         document,
         valuesOf(node, alias),
         field,
-        localType,
+        localTargets,
         schema,
         context,
       );
@@ -382,13 +397,12 @@ function applyField(
       return applyText(document, langValuesOf(node, alias), field);
     case 'keyword':
       return applyFacet(document, literalsOf(node, alias), field, schema);
-    case 'reference':
-      return applyFacet(
-        document,
-        referenceValues(node, alias, field, schema),
-        field,
-        schema,
-      );
+    case 'reference': {
+      const targetsById = new Map<string, RootType>();
+      const values = referenceValues(node, alias, field, schema, targetsById);
+      rememberTargets(document, targetsById);
+      return applyFacet(document, values, field, schema, targetsById);
+    }
     case 'integer':
       return setNumber(
         document,
@@ -451,30 +465,118 @@ function referenceValues(
   alias: string,
   field: ReferenceField,
   schema: SearchSchema | undefined,
+  targetsById: Map<string, RootType>,
 ): readonly string[] {
-  const targetName = labelSourceNameOf(field);
-  if (schema === undefined || targetName === undefined) {
-    return irisOf(node, alias);
-  }
   // Guaranteed declared: `searchSchema` validates that every named target
   // resolves, and the projection only ever runs against a type of its schema.
-  const target = rootTypeNamed(schema, targetName) as RootType;
-  if (target.key === undefined) {
+  const targets = referencedTargetsOf(field, schema);
+  if (targets.length === 0) {
     return irisOf(node, alias);
   }
-  const keyFieldName = target.key.field;
   return valuesOf(node, alias)
     .map((value) => {
       const iri = iriString(value);
-      return iri === undefined
-        ? undefined
-        : documentKeyOf(
-            target,
-            iri,
-            isObject(value) ? keyCandidatesOf(value, target, keyFieldName) : [],
-          );
+      if (iri === undefined) {
+        return undefined;
+      }
+      // Each referent is re-keyed through the target IT belongs to – the one
+      // its `rdf:type` matches – so a person keyed on an authority IRI and an
+      // organization keyed on nothing store, under one field, the ids their
+      // own collections file them under.
+      const target = targetOfReferent(value, targets);
+      const keyed =
+        target.key === undefined
+          ? iri
+          : documentKeyOf(
+              target,
+              iri,
+              isObject(value)
+                ? keyCandidatesOf(value, target, target.key.field)
+                : [],
+            );
+      // Remembered only where there was a choice: a single-target reference
+      // stays byte-identical to what it was, symbol keys included. Keyed by
+      // what the field STORES – the value after its own `transform`, which
+      // `applyFacet` applies before it reads this map.
+      if (keyed !== undefined && targets.length > 1) {
+        targetsById.set(
+          field.transform === undefined ? keyed : field.transform(keyed),
+          target,
+        );
+      }
+      return keyed;
     })
     .filter((value): value is string => value !== undefined);
+}
+
+/**
+ * The Root Type a framed referent belongs to, among the targets its reference
+ * names: the first whose `class` is among the referent’s `rdf:type`s, which
+ * the extraction emits and framing carries as `@type`; else the first target
+ * declared. One target needs no evidence at all. This is the one reading of
+ * *which of several targets is this*, so re-keying, the facet policy and the
+ * stored discriminator ({@link TARGET_FIELD}) cannot disagree.
+ */
+function targetOfReferent(
+  value: unknown,
+  targets: readonly RootType[],
+): RootType {
+  if (targets.length === 1 || !isObject(value)) {
+    return targets[0];
+  }
+  const raw = value['@type'];
+  const classes = new Set(
+    (Array.isArray(raw) ? raw : [raw]).filter(
+      (type): type is string => typeof type === 'string',
+    ),
+  );
+  return targets.find((target) => classes.has(target.class)) ?? targets[0];
+}
+
+/**
+ * The targets the reference values of a projected node were resolved through,
+ * by id – kept beside the node under a symbol, so it never reaches the
+ * writer, for the one reader that needs it after projection: the identity
+ * companion of an inline reference, which admits an entry’s id to a facet by
+ * the policy of the target that id belongs to. Only a reference naming
+ * several targets has anything to remember.
+ */
+const REFERENT_TARGETS: unique symbol = Symbol('referentTargets');
+
+type WithReferentTargets = ProjectedNode & {
+  [REFERENT_TARGETS]?: Map<string, RootType>;
+};
+
+function rememberTargets(
+  document: ProjectedNode,
+  targetsById: ReadonlyMap<string, RootType>,
+): void {
+  if (targetsById.size === 0) {
+    return;
+  }
+  const node = document as WithReferentTargets;
+  const remembered = (node[REFERENT_TARGETS] ??= new Map());
+  for (const [id, target] of targetsById) {
+    remembered.set(id, target);
+  }
+}
+
+/**
+ * Whether an id deserves a facet bucket, by the {@link FacetKeys facet policy}
+ * of the target it belongs to: admitted where that target declares none, and
+ * by its `only` where it does. `targetName` is the target the id was resolved
+ * or stored against; an id whose target is unknown falls back to the first
+ * declared, the same precedence every other reading of several targets uses.
+ */
+function admitsFacet(
+  policies: ReadonlyMap<string, FacetKeys>,
+  targets: readonly RootType[],
+  targetName: string | undefined,
+  id: string,
+): boolean {
+  // Policies are inherited from targets, so where any exists a target does.
+  const policy = policies.get(targetName ?? targets[0].name);
+  return policy === undefined || policy.only(id);
 }
 
 /**
@@ -575,7 +677,7 @@ function foldedSearchValue(values: readonly string[]): string {
  * already-read raw values).
  *
  * A reference inheriting a {@link FacetKeys facet policy} from the type it
- * names ({@link inheritedFacetKeys}) also writes the `${name}_facet` companion
+ * names ({@link inheritedFacetPolicies}) also writes the `${name}_facet` companion
  * the engine facets instead of the field: the subset of **what the field
  * stores** that the policy admits. So it is written after the field’s own
  * `transform` and the IRI filter, from the same `values` – for a keyed target
@@ -599,6 +701,7 @@ function applyFacet(
   raw: readonly string[],
   field: KeywordField | ReferenceField,
   schema: SearchSchema | undefined,
+  targetsById?: ReadonlyMap<string, RootType>,
 ): void {
   // A `reference` stores identity, so what it stores must be an IRI whatever
   // route the value arrived by. {@link iriString} guards the graph path, but a
@@ -613,21 +716,27 @@ function applyFacet(
   const folded = dedupe(values.map((value) => fold(value)));
   const names = physicalFields(field, schema);
   const searchField = names.search[0];
-  const policy = inheritedFacetKeys(field, schema);
+  const policies = inheritedFacetPolicies(field, schema);
+  const inherited = policies.size > 0;
   // `names.facet` is the companion exactly when a policy is inherited –
-  // physicalFields reads the same `inheritedFacetKeys`.
+  // physicalFields reads the same `inheritedFacetPolicies`.
   const facetField = names.facet as string;
   // The companion is a subset of what the field STORES – for a single-valued
   // field its first value, not the first admitted of all of them, or the facet
   // would count a value no filter on the field can reproduce.
   const stored = field.array === true ? values : values.slice(0, 1);
-  const admitted = policy === undefined ? [] : stored.filter(policy.only);
+  const targets = referencedTargetsOf(field, schema);
+  const admitted = !inherited
+    ? []
+    : stored.filter((id) =>
+        admitsFacet(policies, targets, targetsById?.get(id)?.name, id),
+      );
   if (field.array === true) {
     setArray(document, field.name, stored);
     if (field.searchable) {
       setArray(document, searchField, folded);
     }
-    if (policy !== undefined) {
+    if (inherited) {
       setArray(document, facetField, admitted);
     }
     return;
@@ -636,7 +745,7 @@ function applyFacet(
   if (field.searchable) {
     setString(document, searchField, folded[0]);
   }
-  if (policy !== undefined) {
+  if (inherited) {
     setString(document, facetField, admitted[0]);
   }
 }
@@ -707,7 +816,7 @@ function applyInlineReference(
     document,
     valuesOf(node, alias),
     field,
-    referenceType,
+    [referenceType],
     schema,
     context,
   );
@@ -746,16 +855,27 @@ function applyIdentityCompanion(
   // keeps the first referent and drops the rest, and a companion holding an id
   // from a dropped one would match a filter whose hit shows no such entry.
   const stored = field.array === true ? referents : referents.slice(0, 1);
-  const ids = dedupe(
-    stored.flatMap((referent) =>
-      (Array.isArray(referent[identity])
-        ? referent[identity]
-        : [referent[identity]]
-      )
-        .map(identityValue)
-        .filter((id): id is string => id !== undefined),
-    ),
-  );
+  // Each id with the target it was resolved through, for the facet policy
+  // below: a stored endpoint says so itself ({@link TARGET_FIELD}), a bare id
+  // was remembered when the entry was projected ({@link rememberTargets}).
+  const targetById = new Map<string, string | undefined>();
+  for (const referent of stored) {
+    const remembered = (referent as WithReferentTargets)[REFERENT_TARGETS];
+    const raw = referent[identity];
+    for (const value of Array.isArray(raw) ? raw : [raw]) {
+      const id = identityValue(value);
+      if (id === undefined || targetById.has(id)) {
+        continue;
+      }
+      targetById.set(
+        id,
+        isObject(value) && typeof value[TARGET_FIELD] === 'string'
+          ? value[TARGET_FIELD]
+          : remembered?.get(id)?.name,
+      );
+    }
+  }
+  const ids = [...targetById.keys()];
   if (ids.length === 0) {
     return;
   }
@@ -763,12 +883,18 @@ function applyIdentityCompanion(
   // Same rule as every other facetable reference: where the target declares a
   // facet policy, the facet reads a narrowed companion of its own, so an
   // excluded id is never seen by the engine rather than merely unlabelled.
-  const policy = inheritedFacetKeys(field, schema);
-  if (policy !== undefined) {
+  const policies = inheritedFacetPolicies(field, schema);
+  if (policies.size > 0) {
+    const targets = referencedTargetsOf(
+      identityFieldOf(field, schema) as SearchField,
+      schema,
+    );
     setIdentity(
       document,
       names.facet as string,
-      ids.filter(policy.only),
+      ids.filter((id) =>
+        admitsFacet(policies, targets, targetById.get(id), id),
+      ),
       field,
       nested,
     );
@@ -871,7 +997,7 @@ function applyNestedReferents(
   document: ProjectedNode,
   values: readonly unknown[],
   field: ReferenceField,
-  nestedType: SearchType,
+  nestedTypes: readonly SearchType[],
   schema: SearchSchema,
   context: ProjectionContext,
 ): readonly ProjectedNode[] {
@@ -880,8 +1006,28 @@ function applyNestedReferents(
   // one entry per combination BEFORE it is projected (ADR 26).
   const referents = values
     .filter(isObject)
-    .flatMap((value) => tuplesOf(value, nestedType, field))
-    .map((tuple) => projectFields(tuple, nestedType, schema, context, true))
+    .flatMap((value) => {
+      // A lookup naming several targets projects each referent through the
+      // one it belongs to, and stores which – so an engine adapter can read
+      // an entry no collection answers for through the right declaration.
+      const nestedType =
+        nestedTypes.length === 1
+          ? nestedTypes[0]
+          : targetOfReferent(value, nestedTypes as readonly RootType[]);
+      return tuplesOf(value, nestedType, field).map((tuple) => {
+        const projected = projectFields(
+          tuple,
+          nestedType,
+          schema,
+          context,
+          true,
+        );
+        if (nestedTypes.length > 1 && Object.keys(projected).length > 0) {
+          projected[TARGET_FIELD] = nestedType.name;
+        }
+        return projected;
+      });
+    })
     // Fields, not identity, are what makes something a referent: a literal
     // value object under the alias (dirty source data), or a node this
     // reference type reads nothing from, projects nothing and is no referent.
@@ -900,7 +1046,7 @@ function applyNestedReferents(
   // `id` is its key and stays part of what makes an entry distinct.
   const distinct = dedupeBy(referents, (referent) =>
     JSON.stringify(
-      nestedType.class === undefined
+      nestedTypes[0].class === undefined
         ? { ...referent, id: undefined }
         : referent,
     ),

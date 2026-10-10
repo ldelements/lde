@@ -80,6 +80,7 @@ export type {
 
 // Engine port + the logical result document returned across it. An engine is
 // bound to the whole SearchSchema at construction by its adapter factory.
+export { NESTED_DOCUMENT_TYPE } from './engine.js';
 export type {
   SearchEngine,
   SearchResult,

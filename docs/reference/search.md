@@ -338,7 +338,9 @@ fields are read from, and the name its emitted type derives from (GraphQL:
 named per query rather than per declaration, by a
 [projection](#projecting-what-a-lookup-carries); asked for nothing in
 particular, it carries the target's label. Only an `inline` reference’s
-`ref.typeName` resolves to a declared Reference Type.
+`ref.typeName` resolves to a declared Reference Type. Where the referent may be
+of several kinds, `target` lists them – see
+[A referent of several kinds](#a-referent-of-several-kinds).
 
 Note what this makes true of `kind`: **a `reference` holds identity, a `keyword`
 holds a literal.** A field over an IRI-valued property is a `reference` whatever
@@ -602,6 +604,61 @@ See [ADR 26](../decisions/0026-fan-out-a-qualified-edge-into-one-entry-per-tuple
 
 Out of scope for now: faceting an edge's own values, which the current engine
 cannot serve correctly.
+
+#### A referent of several kinds
+
+A profile often ranges one property over several classes – SCHEMA-AP-NDE’s
+`creator` is a `Person` _or_ an `Organization`. A lookup naming one target can
+label and type only half of such a field: every organization comes back
+unlabelled, and typed as a person. So a `lookup` (and an `idOnly`’s
+`labelSource`) may name **several** targets:
+
+```ts
+{
+  name: 'creator',
+  kind: 'reference',
+  path: `${SCHEMA}creator`,
+  output: true,
+  ref: { strategy: 'lookup', target: ['Person', 'Organization'], local: true },
+}
+```
+
+Each referent then resolves against every named collection and is read through
+the declaration of whichever one holds it: its label, its own fields, its
+[key](#document-key) and its [facet policy](#facet-policy) are those of _its_
+target, per value. A GraphQL surface serves the field as an interface named for
+the set (`PersonOrOrganizationReference`), implemented by each target’s own
+reference type, so `__typename` says which kind each referent is and an inline
+fragment reaches the fields only one kind has. The interface itself carries
+`id` and whatever every target declares alike.
+
+**Order is precedence.** A referent two collections hold – two Root Types
+whose `class` selections overlap – belongs to the first target listed, and so
+does a stored referent whose `rdf:type` matches none of them. List the most
+specific type first.
+
+**A stored referent says which kind it is.** A [`local`](#data-on-the-edge)
+lookup stores what the referring document states, and most such referents are
+never identified, so no collection can ever say what they are. The extraction
+therefore reads the referent’s `rdf:type` and the projection matches it against
+each target’s `class`, projecting the entry through the matching declaration
+and recording which under a reserved physical name (`_target`, which no type
+may declare). A stored referent that no collection answers for – unidentified,
+or identified but not indexed – is then still served as the kind it was stated
+to be. The nested object declares the union of the targets’ fields, so two
+targets that both declare a field must declare it alike – same `kind`, same
+arity, same Roles, and for a reference the same strategy and referent;
+`searchSchema` rejects the pair otherwise.
+
+**No join.** A reference naming several targets can never be
+[`joinable`](#filtering-across-collections): an engine reference names one
+collection, and ids that live in several have no single collection to
+reference. Its labels, facets and id filters all work from the referring
+document; a condition on the referent’s own fields (“works whose creator died
+before 1900”) does not, and needs a representation of its own
+([#845](https://github.com/ldelements/lde/issues/845) lists three).
+
+See [ADR 27](../decisions/0027-resolve-a-reference-across-several-targets).
 
 #### Naming the label field
 
