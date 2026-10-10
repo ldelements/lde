@@ -125,6 +125,16 @@ export function buildSearchParams(
     options.schema,
   );
   const filterBy = compileFilterBy(query.where, searchType, options);
+  // Typesense answers a longer `sort_by` with an error naming no field; say
+  // which terms, since some came from a policy (a tie-break) the client
+  // never wrote.
+  if (query.orderBy.length > MAX_SORT_TERMS) {
+    throw new Error(
+      `Typesense sorts on at most ${MAX_SORT_TERMS} sort terms; got ${query.orderBy.length} (${query.orderBy
+        .map((sort) => sort.field)
+        .join(', ')}). Shorten the tie-break or the default sort.`,
+    );
+  }
   const sortBy = query.orderBy
     .map((sort) => compileSort(sort, searchType, query.locale))
     .join(',');
@@ -629,6 +639,9 @@ function storedBound(
     ? isoToUnixSeconds(bound)
     : bound;
 }
+
+/** Typesense’s cap on `sort_by` terms, `_text_match` included. */
+const MAX_SORT_TERMS = 3;
 
 /**
  * One `sort_by` term. `relevance` maps to Typesense’s `_text_match`; a localized

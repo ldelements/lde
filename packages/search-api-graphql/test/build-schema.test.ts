@@ -859,6 +859,132 @@ describe('buildGraphQLSchema', () => {
     ]);
   });
 
+  describe('tieBreak', () => {
+    const tieBreak = [{ field: 'title', direction: 'asc' }] as const;
+
+    async function orderByFor(
+      source: string,
+      typeOptions: Parameters<typeof buildGraphQLSchema>[1] = {
+        types: { [schema.name]: { tieBreak } },
+      },
+    ) {
+      const { engine, received } = fakeEngine(canned);
+      const result = await graphql({
+        schema: buildGraphQLSchema(
+          searchSchema(schema, organization, term),
+          typeOptions,
+        ),
+        source,
+        contextValue: { engine, acceptLanguage: ['nl'] },
+      });
+      expect(result.errors).toBeUndefined();
+      return received().orderBy;
+    }
+
+    it('appends the tie-break after the requested sort', async () => {
+      expect(
+        await orderByFor(
+          `{ datasets(orderBy: { field: DATE_POSTED }) { pagination { total } } }`,
+        ),
+      ).toEqual([
+        { field: 'datePosted', direction: 'desc' },
+        { field: 'title', direction: 'asc' },
+      ]);
+    });
+
+    it('skips a tie-break term on the field already sorted on', async () => {
+      expect(
+        await orderByFor(
+          `{ datasets(orderBy: { field: TITLE }) { pagination { total } } }`,
+        ),
+      ).toEqual([{ field: 'title', direction: 'desc' }]);
+    });
+
+    it('leaves a query without a sort to the engine’s default order', async () => {
+      expect(
+        await orderByFor(
+          `{ datasets(query: "atlas") { pagination { total } } }`,
+        ),
+      ).toEqual([]);
+    });
+
+    it('follows an explicit relevance sort', async () => {
+      expect(
+        await orderByFor(
+          `{ datasets(query: "atlas", orderBy: { field: RELEVANCE }) { pagination { total } } }`,
+        ),
+      ).toEqual([
+        { field: 'relevance', direction: 'desc' },
+        { field: 'title', direction: 'asc' },
+      ]);
+    });
+
+    it('adds no tie-break to a facet-only query', async () => {
+      expect(
+        await orderByFor(
+          `{ datasets(perPage: 0, orderBy: { field: DATE_POSTED }) { pagination { total } } }`,
+        ),
+      ).toEqual([{ field: 'datePosted', direction: 'desc' }]);
+    });
+
+    it('breaks ties in the sort a queryDefaults policy chose', async () => {
+      expect(
+        await orderByFor(`{ datasets { pagination { total } } }`, {
+          types: {
+            [schema.name]: {
+              tieBreak,
+              queryDefaults: (query) => ({
+                ...query,
+                orderBy: [{ field: 'datePosted', direction: 'desc' }],
+              }),
+            },
+          },
+        }),
+      ).toEqual([
+        { field: 'datePosted', direction: 'desc' },
+        { field: 'title', direction: 'asc' },
+      ]);
+    });
+
+    it('rejects a tie-break on an undeclared field', () => {
+      expect(() =>
+        buildGraphQLSchema(searchSchema(schema, organization, term), {
+          types: {
+            [schema.name]: { tieBreak: [{ field: 'nope', direction: 'asc' }] },
+          },
+        }),
+      ).toThrow(/tie-break.*“nope”.*not sortable/i);
+    });
+
+    it('rejects a tie-break on a field the engine does not sort', () => {
+      expect(() =>
+        buildGraphQLSchema(searchSchema(schema, organization, term), {
+          types: {
+            [schema.name]: {
+              tieBreak: [{ field: 'keyword', direction: 'asc' }],
+            },
+          },
+        }),
+      ).toThrow(/tie-break.*“keyword”.*not sortable/i);
+    });
+
+    it('rejects a tie-break too long to follow a primary sort', () => {
+      expect(() =>
+        buildGraphQLSchema(searchSchema(schema, organization, term), {
+          types: {
+            [schema.name]: {
+              tieBreak: [
+                { field: 'title', direction: 'asc' },
+                { field: 'size', direction: 'asc' },
+                { field: 'datePosted', direction: 'asc' },
+              ],
+            },
+          },
+        }),
+      ).toThrow(/at most 2 terms; got 3/);
+    });
+  });
+
   it('derives nullability: required scalar non-null, optional scalar nullable, arrays/booleans non-null', () => {
     const sdl = printSchema(
       buildGraphQLSchema(
