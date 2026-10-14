@@ -540,6 +540,13 @@ export function buildGraphQLSchema(
         ? rootTypesByName.get(field.ref.target)
         : nestedReferenceType(schema, field)
     ) as SearchType;
+    // An inline entry carries no `id`, so its output fields are all a client
+    // can select; GraphQL refuses an object type with none.
+    if (nested.class === undefined && outputFields(nested).length === 0) {
+      throw new Error(
+        `Inline reference “${owner.name}.${field.name}” is \`output\`, but its reference type “${typeName}” declares no \`output\` field, so the API has nothing to serve for an entry; mark a field of “${typeName}” \`output\`, or drop \`output\` from the reference.`,
+      );
+    }
     referenceTypes.set(
       typeName,
       new GraphQLObjectType({
@@ -564,11 +571,9 @@ export function buildGraphQLSchema(
             ? {}
             : {
                 id: {
-                  type:
-                    field.ref?.strategy === 'lookup' &&
-                    !nullableIdTargets.has(typeName)
-                      ? new GraphQLNonNull(iriScalar)
-                      : iriScalar,
+                  type: nullableIdTargets.has(typeName)
+                    ? iriScalar
+                    : new GraphQLNonNull(iriScalar),
                 },
               }),
           ...Object.fromEntries(
