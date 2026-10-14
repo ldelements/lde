@@ -1,0 +1,14 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <https://example.org/> .
+
+ex:DistributionShape
+    a sh:NodeShape ;
+    sh:targetClass ex:Distribution ;
+    sh:or (
+        [ sh:property [ sh:path ex:accessURL ; sh:minCount 1 ] ]
+        [ sh:property [ sh:path ex:downloadURL ; sh:minCount 1 ] ]
+    ) ;
+    sh:or (
+        [ sh:property [ sh:path ex:mediaType ; sh:minCount 1 ] ]
+        [ sh:property [ sh:path ex:format ; sh:minCount 1 ] ]
+    ) .

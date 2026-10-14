@@ -1,3 +1,23 @@
+## 0.7.0 (2026-10-14)
+
+### 🩹 Fixes
+
+- ⚠️  **docgen:** keep every sh:or list on a shape ([#894](https://github.com/ldelements/lde/pull/894))
+
+### ⚠️  Breaking Changes
+
+- **docgen:** keep every sh:or list on a shape  ([#894](https://github.com/ldelements/lde/pull/894))
+  `or` is now an array of sh:or lists, even when a shape
+  has only one. Replace `property.or | map: "datatype"` with
+  `property.or | first | map: "datatype"`, or loop over `or`, and remove
+  any `"or": {"@container": "@list"}` from custom frames."
+  M	docs/reference/docgen.md
+  M	packages/docgen/frames/shacl.frame.jsonld
+  M	packages/docgen/src/frame.ts
+  A	packages/docgen/test/fixtures/multiple-or.ttl
+  M	packages/docgen/test/fixtures/template.liquid
+  M	packages/docgen/test/frame.test.ts
+
 ## 0.6.22 (2026-08-24)
 
 This was a version bump only for @lde/docgen to align it with other projects, there were no code changes.

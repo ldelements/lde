@@ -59,3 +59,4 @@ dist-docker
 
 # VitePress
 docs/.vitepress/cache
+.vitest

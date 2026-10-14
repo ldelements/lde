@@ -1152,6 +1152,30 @@ describe('buildGraphQLSchema', () => {
       );
     });
 
+    it('rejects a surfaced inline reference whose entries show no field', () => {
+      // An entry has no `id`, so without an output field it would be an empty
+      // GraphQL type, which graphql-js refuses with a far vaguer error.
+      const edge: SearchType = {
+        name: 'Edge',
+        fields: [{ name: 'note', kind: 'keyword', filterable: true }],
+      };
+      const withEdge: SearchType = {
+        name: 'Thing',
+        class: 'https://example.org/Thing',
+        fields: [
+          {
+            name: 'edge',
+            kind: 'reference',
+            output: true,
+            ref: { strategy: 'inline', typeName: 'Edge' },
+          },
+        ],
+      };
+      expect(() => buildGraphQLSchema(searchSchema(withEdge, edge))).toThrow(
+        /Inline reference “Thing\.edge”.*“Edge” declares no `output` field/,
+      );
+    });
+
     it('rejects a duplicate root type name at declaration time', () => {
       const alsoPerson: SearchType = {
         name: 'Person',

@@ -396,15 +396,22 @@ becomes one, since framing mints it per call. Fields are what make a referent,
 so a value that projects none – a literal under the reference's alias, say –
 nests nothing.
 
-A `derive` still sees the node's IRI. During projection every entry carries it
+A `derive` still sees the node’s IRI. During projection every entry carries it
 as `id`, the way an [internal field](#field-model) is populated for a derive and
 pruned before the document leaves: a derive on the referrer reads it, and the
 index and the API never do. That is for the referent whose IRI _is_ the data –
-SCHEMA-AP-NDE puts a IIIF Presentation manifest among a work's `associatedMedia`
+SCHEMA-AP-NDE puts a IIIF Presentation manifest among a work’s `associatedMedia`
 with `@id` set to the manifest URL and no `contentUrl`, so a derive on the work
-picks the manifest out by its `encodingFormat`, reads the entry's `id`, and
-surfaces it under a field of its own. Nothing to declare, and the entry's shape
+picks the manifest out by its `encodingFormat`, reads the entry’s `id`, and
+surfaces it under a field of its own. Nothing to declare, and the entry’s shape
 past the projection is still the same for a named node and a blank one.
+
+The `id` is not enumerable, so it is no field: an entry that projects nothing
+else is still no referent, and spreading or serializing an entry leaves it out.
+A derive that wants the IRI must therefore read `entry.id` off the entry itself,
+not off a copy made with `{ ...entry }`. Two named referents with the same
+fields both reach a derive, and are stored as one entry once their IRIs are
+pruned.
 
 So RDF depth and API shape stay independent: inline as deep as the source
 demands, expose exactly the flat fields you want. Framing follows the inline

@@ -1,3 +1,13 @@
+## 0.29.1 (2026-10-14)
+
+### 🩹 Fixes
+
+- **search:** keep a Reference Type entry’s IRI out of its fields ([#895](https://github.com/ldelements/lde/pull/895))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.27.1
+
 ## 0.29.0 (2026-09-09)
 
 ### 🩹 Fixes

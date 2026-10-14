@@ -121,8 +121,8 @@ export function projectDocument(
  * A Reference Type entry’s `id` is pruned here too. It is a reading device of
  * the same kind: the node IRI a derive on the referrer may read, and never a
  * document key – an entry is kept in no collection, a weld names the flat
- * identity companion beside it, and an entry's own key answers no query (ADR
- * 24). Left in, it would make an entry's shape depend on whether a publisher
+ * identity companion beside it, and an entry’s own key answers no query (ADR
+ * 24). Left in, it would make an entry’s shape depend on whether a publisher
  * minted an IRI for a relationship, and be a field the collection never
  * declared. A Root Type keeps its `id` wherever it nests: that is the key its
  * own collection files it under, and a `local` lookup resolves against it.
@@ -154,6 +154,13 @@ function pruneInternalFields(
     for (const referent of Array.isArray(nested) ? nested : [nested]) {
       pruneInternalFields(referent as ProjectedNode, nestedType, schema);
     }
+    // Two entries that differed only in their node IRI are one entry now that
+    // it is gone – two edge nodes stating the same fact.
+    if (nestedType.class === undefined && Array.isArray(nested)) {
+      document[field.name] = dedupeBy(nested, (referent) =>
+        JSON.stringify(referent),
+      );
+    }
   }
 }
 
@@ -169,12 +176,29 @@ function projectFields(
   context: ProjectionContext,
   nested = false,
 ): ProjectedNode {
-  const id = documentIdOf(node, searchType);
-  const document: ProjectedNode = id === undefined ? {} : { id };
+  const document = emptyDocument(documentIdOf(node, searchType), searchType);
   for (const field of searchType.fields) {
     applyField(document, node, field, searchType, schema, context, nested);
   }
   return document;
+}
+
+/** A document holding only its `id`, if it has one. A Reference Type entry’s
+ *  IRI is a reading device, so it is not enumerable there: a derive reads
+ *  `entry.id`, but `Object.keys`, a spread and `JSON.stringify` see only the
+ *  entry’s fields ({@link documentIdOf}). */
+function emptyDocument(
+  id: string | undefined,
+  searchType: SearchType,
+): ProjectedNode {
+  if (id === undefined || searchType.class !== undefined) {
+    return id === undefined ? {} : { id };
+  }
+  return Object.defineProperty({}, 'id', {
+    value: id,
+    configurable: true,
+    writable: true,
+  });
 }
 
 /**
@@ -207,10 +231,14 @@ function documentKey(node: FramedNode): string | undefined {
  * reading device only. A Reference Type is nested in its referrer and kept in
  * no collection, so nothing downstream resolves an entry by key, and
  * {@link pruneInternalFields} removes the `id` again before the document
- * leaves the projection, exactly as it removes a no-role helper field. What
- * stays is the window in between: a `derive` on the referrer reads the entry's
- * IRI where that IRI is the data – a IIIF manifest among a work's media, stated
- * by its `@id` and nothing else – and surfaces it under a field of its own.
+ * leaves the projection, exactly as it removes a no-role helper field. Until
+ * then it is not enumerable, so no step that walks an entry’s keys mistakes it
+ * for a field. What stays is the window in between: a `derive` on the referrer
+ * reads the entry’s IRI where that IRI is the data – a IIIF manifest among a
+ * work’s media, whose URL is its `@id` and stated nowhere else – and surfaces
+ * it under a field of its own. The entry still needs a field of its own (the
+ * manifest’s `encodingFormat`) to be a referent at all; an `@id` alone is not
+ * one.
  */
 function documentIdOf(
   node: FramedNode,
@@ -675,10 +703,10 @@ function applyProjectionValue(
  * {@link ProjectedNode} for a single reference, an array for an `array` one.
  * A referent needs **no identity**: nesting carries its fields, not a document
  * key, so a blank-node referent – whose `@id` JSON-LD 1.1 framing prunes when its
- * label occurs once – nests exactly like a named one. Neither carries an `id`:
- * a Reference Type is kept in no collection, so nothing resolves an entry by
- * key, and an entry's shape no longer depends on whether a publisher minted an
- * IRI for the relationship ({@link documentIdOf}).
+ * label occurs once – nests exactly like a named one. Neither leaves the
+ * projection with an `id`: a Reference Type is kept in no collection, so
+ * nothing resolves an entry by key. A named referent carries its IRI as a
+ * non-enumerable `id` only while derives run ({@link documentIdOf}).
  * The referent is projected in full – internal fields included – so the
  * declaring type’s (or the reference type’s own) derives can read them;
  * {@link pruneInternalFields} then removes the internal fields from a *surfaced*
@@ -893,17 +921,13 @@ function applyNestedReferents(
   // or a keyed target re-keying two referent IRIs to the same document key. The
   // pre-fan-out shape deduped, because those values met inside one entry and
   // `applyFacet` deduped them there; split across entries they would reach the
-  // index and the API as byte-identical duplicates instead. A Reference Type
-  // entry's `id` is left out of the comparison: it is pruned before the
-  // document leaves the projection, so two statements of one fact through two
-  // edge nodes are the one entry they will be once it is gone. A Root Type's
-  // `id` is its key and stays part of what makes an entry distinct.
+  // index and the API as byte-identical duplicates instead. The `id` is part
+  // of the key even where it is not enumerable: two named referents with the
+  // same fields are two IRIs a derive on the referrer may want, so they stay
+  // apart until {@link pruneInternalFields} drops a Reference Type entry’s `id`
+  // and dedupes what is left.
   const distinct = dedupeBy(referents, (referent) =>
-    JSON.stringify(
-      nestedType.class === undefined
-        ? { ...referent, id: undefined }
-        : referent,
-    ),
+    JSON.stringify([referent.id, referent]),
   );
   if (distinct.length === 0) {
     return distinct;

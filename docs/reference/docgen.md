@@ -108,6 +108,7 @@ Value shapes to expect:
 - **Plain strings** arrive as bare strings.
 - **Numbers** (e.g. `sh:minCount`) arrive as native JavaScript numbers, so numeric comparisons in templates work.
 - **Language-tagged strings** (e.g. `sh:description "…"@en`) arrive as `{"@value": …, "@language": …}` objects – render them through the `lang` filter rather than directly.
+- **`sh:or`** arrives as `or`, an array with one entry per `sh:or` list on the shape, and each entry is an array of alternatives. A shape can carry more than one `sh:or` list, so `or` is an array even when there is only one: take <code v-pre>{{ property.or | first | map: "datatype" }}</code> for the common single list, or loop over `or` to show every list.
 
 The Liquid engine’s root is set to the template’s directory with extension `.liquid`, so `{% include %}` and `{% render %}` of sibling partials work out of the box.
 
@@ -140,4 +141,4 @@ The default frame selects all `sh:NodeShape` resources and provides type coercio
 npx @lde/docgen@latest from-shacl shapes.ttl template.liquid -f my-frame.jsonld
 ```
 
-Plain objects are merged key-by-key, with user values winning; arrays and primitives in your frame replace the default. To override a built-in coercion (e.g. change `severity` from `@vocab` to `@id`), redefine the same key in your `@context`.
+Plain objects are merged key-by-key, with user values winning; arrays and primitives in your frame replace the default. To override a built-in coercion (e.g. change `severity` from `@vocab` to `@id`), redefine the same key in your `@context`. Leave `or` out of your `@context`: an `"@container": "@list"` on it keeps only one `sh:or` list per shape.
