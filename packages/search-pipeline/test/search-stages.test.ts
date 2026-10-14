@@ -291,6 +291,17 @@ describe('selectByClass', () => {
     // A blank node has no stable document key, so it can never become a search
     // document (framing skips it). Filtering at the endpoint also keeps result
     // pages full, so pagination is not cut short by client-side dropped rows.
+    expect(await sentQuery()).toMatch(/isblank\(\?root\)/i);
+  });
+
+  it('selects each root once', async () => {
+    // A root typed in several named graphs matches once per graph on an engine
+    // whose default graph is their union (QLever); without DISTINCT, each copy
+    // costs a batch slot and a re-read of the same root.
+    expect(await sentQuery()).toMatch(/SELECTDISTINCT\?root/i);
+  });
+
+  async function sentQuery(): Promise<string> {
     let query = '';
     nock('http://example.org')
       .post('/sparql')
@@ -308,8 +319,8 @@ describe('selectByClass', () => {
       void row;
     }
 
-    expect(query.replace(/\s+/g, '')).toMatch(/isblank\(\?root\)/i);
-  });
+    return query.replace(/\s+/g, '');
+  }
 });
 
 describe('registrySource', () => {

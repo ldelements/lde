@@ -248,7 +248,9 @@ check ([ADR 13](../decisions/0013-project-inside-the-batch-per-root-type)).
 type’s `class` really is the source class), **not** a default. It excludes
 blank-node subjects (`FILTER(!isBlank(?root))`): a blank node has no stable
 document key, so it can never become a search document – a custom selector
-should exclude them too.
+should exclude them too. It also selects `DISTINCT` roots, so a root typed in
+several named graphs is selected once on an engine whose default graph is their
+union.
 
 ## Registry-sourced root types
 
