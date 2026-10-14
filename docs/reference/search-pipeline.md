@@ -444,9 +444,12 @@ step** – buffering a whole result to deduplicate it would defeat the
 batch-bounded streaming memory model above. The only residual duplication is
 linear and comes from duplicate _input_ – a custom non-`DISTINCT` selector
 feeding a root more than once, as one does over a union default graph where the
-root is typed in several named graphs – which the projection’s streaming per-quad
-subject index collapses as a cheap backstop, not as a compensator for
-query-shape inflation. Validated on a real QLever index over the full source
+root is typed in several named graphs, or several readers merged into one
+batch – which the projection’s streaming per-quad subject index collapses as a
+cheap backstop, not as a compensator for query-shape inflation. The backstop
+stays even though JSON-LD framing folds a repeated plain value on its own: it
+does not fold a repeated RDF list cell, and without the backstop memory per
+batch would grow with the duplication factor. Validated on a real QLever index over the full source
 dump: raw CONSTRUCT output equalled the distinct set for a type with distinct
 roots, and the projected documents were byte-identical to those from a
 deduplicating engine.

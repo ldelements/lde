@@ -1373,6 +1373,53 @@ describe('projectRoots', () => {
     ]);
   });
 
+  it('projects duplicate quads exactly as it projects them once', async () => {
+    // Two readers merged into one batch – or a non-deduplicating engine – can
+    // repeat a triple. Framing collapses the copies, so no multi-valued field
+    // grows and no count derive (the canary) is off by one.
+    const counted = defineSearchType({
+      name: 'Dataset',
+      class: DATASET,
+      fields: [
+        ...fields,
+        {
+          name: 'class_count',
+          kind: 'integer',
+          sortable: true,
+          derive: (document) =>
+            (document.class as readonly string[] | undefined)?.length ?? 0,
+        },
+      ],
+    });
+    const countedSchema = searchSchema(counted);
+    const quads = new Parser({ format: 'N-Triples' }).parse(`
+      <https://ex/d/1> <${dsKey('title')}> "Titel"@nl .
+      <https://ex/d/1> <${dsKey('keyword')}> "Erfgoed"@nl .
+      <https://ex/d/1> <${dsKey('class')}> <http://schema.org/Person> .
+      <https://ex/d/1> <${dsKey('class')}> <http://schema.org/Place> .
+      <https://ex/d/1> <${dsKey('size')}> "1234"^^<${xsd.integer.value}> .
+    `);
+    const project = async (batch: typeof quads) => {
+      const documents: SearchDocument[] = [];
+      for await (const document of projectRoots(
+        batch,
+        ['https://ex/d/1'],
+        countedSchema,
+        counted,
+      )) {
+        documents.push(document);
+      }
+      return documents;
+    };
+
+    const once = await project(quads);
+    const twice = await project([...quads, ...quads]);
+
+    expect(twice).toEqual(once);
+    expect(twice[0].keyword).toEqual(['Erfgoed']);
+    expect(twice[0].class_count).toBe(2);
+  });
+
   it('yields a bare document, not paired with a searchType', async () => {
     const quads = new Parser({ format: 'N-Triples' }).parse(
       `<https://ex/d/1> <${dsKey('title')}> "Titel"@nl .`,

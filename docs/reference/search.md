@@ -901,7 +901,8 @@ the pipeline selector already holds them, so nothing is discovered from
 each root’s subgraph is framed one at a time and its document yielded as
 produced, so beyond a subject index memory stays flat at scale (framing the
 whole graph at once is roughly O(N²)). Duplicate triples are collapsed first,
-because some SPARQL engines (e.g. QLever) do not deduplicate `CONSTRUCT` output.
+because some SPARQL engines (e.g. QLever) do not deduplicate `CONSTRUCT` output
+and a batch merges several readers’ output unfiltered.
 Every predicate a value comes from is read through a field’s `path`; a `derive`
 computes only from the document projected so far, so `path` is the whole
 statement of what the projection reads. `assertTypeInSchema` guards that
