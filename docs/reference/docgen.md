@@ -120,8 +120,9 @@ Property shapes with the same `sh:path` are common in SHACL (e.g. one for cardin
 | ----------------------- | --------------------------------------------------- | ------------------------------------------------------------------- |
 | `lang`                  | Select a value by language tag                      | <code v-pre>{{ property.description \| lang: "en" }}</code>         |
 | `mergePropertiesByPath` | Merge property shapes that share the same `sh:path` | `{% assign merged = nodeShape.property \| mergePropertiesByPath %}` |
+| `expandIri`             | Expand a compact IRI with a prefix from the frame   | <code v-pre>{{ property.path \| expandIri }}</code>                 |
 
-`lang` returns the **first** value matching the language tag, and an empty string when none matches. `mergePropertiesByPath` resolves key conflicts first-value-wins: when merged property shapes both define a key, the first shape’s value is kept.
+`lang` returns the **first** value matching the language tag, and an empty string when none matches. `mergePropertiesByPath` resolves key conflicts first-value-wins: when merged property shapes both define a key, the first shape’s value is kept. `expandIri` uses the prefixes in the frame’s `@context`, including those added by a custom frame, and returns an absolute IRI or a name with an unknown prefix unchanged – so a template can link `schema:name` to `https://schema.org/name`.
 
 ## Custom frames
 

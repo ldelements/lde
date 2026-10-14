@@ -1,10 +1,10 @@
 import { Liquid } from 'liquidjs';
 import { dirname } from 'path';
-import type { NodeObject } from 'jsonld';
+import type { ContextDefinition, NodeObject } from 'jsonld';
 
 export async function render(
   shapes: NodeObject,
-  templatePath: string
+  templatePath: string,
 ): Promise<string> {
   const templatesDir = dirname(templatePath);
   const engine = new Liquid({
@@ -23,7 +23,7 @@ export async function render(
         .flat()
         .filter((node: any) => node['@language'] === language);
       return filtered[0]?.['@value'] ?? '';
-    }
+    },
   );
 
   engine.registerFilter('mergePropertiesByPath', (properties: object[]) => {
@@ -34,7 +34,7 @@ export async function render(
         acc[path].push(propertyShape);
         return acc;
       },
-      {}
+      {},
     );
 
     return Object.entries(grouped).map(([_path, propertyShapes]) => {
@@ -51,5 +51,46 @@ export async function render(
     });
   });
 
+  const prefixes = prefixesOf(shapes['@context']);
+  engine.registerFilter('expandIri', (compactIri: unknown) =>
+    expandIri(compactIri, prefixes),
+  );
+
   return engine.renderFile(templatePath, { nodeShapes: shapes['@graph'] });
+}
+
+/**
+ * Expand a compact IRI such as `schema:name` with a prefix from the frame’s
+ * `@context`. Anything else, such as an absolute IRI or an unknown prefix, is
+ * returned unchanged.
+ */
+function expandIri(compactIri: unknown, prefixes: Map<string, string>) {
+  if (typeof compactIri !== 'string') return compactIri;
+  const separator = compactIri.indexOf(':');
+  if (separator === -1) return compactIri;
+  const suffix = compactIri.slice(separator + 1);
+  if (suffix.startsWith('//')) return compactIri;
+  const namespace = prefixes.get(compactIri.slice(0, separator));
+  return namespace === undefined ? compactIri : namespace + suffix;
+}
+
+function prefixesOf(context: NodeObject['@context']): Map<string, string> {
+  const prefixes = new Map<string, string>();
+  for (const definition of [context].flat()) {
+    if (definition === null || typeof definition !== 'object') continue;
+    for (const [term, value] of Object.entries(
+      definition as ContextDefinition,
+    )) {
+      if (term.startsWith('@') || term.includes(':')) continue;
+      const iri =
+        typeof value === 'string'
+          ? value
+          : (value as { '@id'?: unknown } | null)?.['@id'];
+      // As in JSON-LD 1.1, only a term whose IRI ends in a delimiter is a prefix.
+      if (typeof iri === 'string' && /[/#:]$/.test(iri)) {
+        prefixes.set(term, iri);
+      }
+    }
+  }
+  return prefixes;
 }
