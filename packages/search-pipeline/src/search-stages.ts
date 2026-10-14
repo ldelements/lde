@@ -195,8 +195,9 @@ export function searchStages(
 
 /**
  * An {@link ItemSelector} that selects every instance of a root type’s source
- * class: `SELECT DISTINCT ?‹rootVariable› WHERE { ?‹rootVariable› a <class> }`. A
- * convenience for the **object grain**, where {@link RootType.class} really is
+ * class:
+ * `SELECT DISTINCT ?‹rootVariable› WHERE { ?‹rootVariable› a <class> FILTER(!isBlank(?‹rootVariable›)) }`.
+ * A convenience for the **object grain**, where {@link RootType.class} really is
  * the source class – **not** a default: root selection is a deployment concern,
  * and three of the Dataset Register’s four catalog types have no source class at
  * all (their entry point – “registered, newest registration, has a title” – is a
