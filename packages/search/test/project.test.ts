@@ -1536,7 +1536,7 @@ describe('projectRoots', () => {
   });
 
   it('lets a derive on the referrer read an entry’s IRI before it is pruned', async () => {
-    // The manifest's `@id` IS the manifest URL, and the profile states it
+    // The manifest’s `@id` IS the manifest URL, and the profile states it
     // nowhere else. The entry carries it as `id` for exactly as long as a
     // derive can read it – like an internal field – and leaves the projection
     // without it, so the stored shape is the same for the named node and the
@@ -1605,6 +1605,76 @@ describe('projectRoots', () => {
         { encodingFormat: ['application/ld+json'] },
       ]),
     );
+  });
+
+  it('keeps every entry IRI for a derive, then stores each distinct entry once', async () => {
+    // Two manifests with the same fields are two IRIs to the derive, and one
+    // entry once the IRIs are pruned. A named node that projects no field is
+    // no referent, IRI or not.
+    const mediaObject = defineSearchType({
+      name: 'MediaObject',
+      fields: [
+        {
+          name: 'encodingFormat',
+          kind: 'keyword',
+          array: true,
+          output: true,
+          path: 'https://schema.org/encodingFormat',
+        },
+      ],
+    });
+    const creativeWork = defineSearchType({
+      name: 'CreativeWork',
+      class: 'https://schema.org/CreativeWork',
+      fields: [
+        {
+          name: 'media',
+          kind: 'reference',
+          array: true,
+          output: true,
+          path: 'https://schema.org/associatedMedia',
+          ref: { typeName: 'MediaObject', strategy: 'inline' },
+        },
+        {
+          name: 'manifests',
+          kind: 'keyword',
+          array: true,
+          output: true,
+          derive: (document) =>
+            (document.media as readonly SearchDocument[] | undefined)?.map(
+              (entry) => entry.id,
+            ),
+        },
+      ],
+    });
+    const nestedSchema = searchSchema(creativeWork, mediaObject);
+    const mediaAlias = alias('CreativeWork', 'media');
+    const formatAlias = alias('MediaObject', 'encodingFormat');
+    const quads = new Parser({ format: 'N-Triples' }).parse(`
+      <https://ex/w/1> <${mediaAlias}> <https://ex/iiif/a> .
+      <https://ex/iiif/a> <${formatAlias}> "application/ld+json" .
+      <https://ex/w/1> <${mediaAlias}> <https://ex/iiif/b> .
+      <https://ex/iiif/b> <${formatAlias}> "application/ld+json" .
+      <https://ex/w/1> <${mediaAlias}> <https://ex/m/empty> .
+    `);
+
+    const documents: SearchDocument[] = [];
+    for await (const document of projectRoots(
+      quads,
+      ['https://ex/w/1'],
+      nestedSchema,
+      creativeWork,
+    )) {
+      documents.push(document);
+    }
+
+    expect([...(documents[0].manifests as string[])].sort()).toEqual([
+      'https://ex/iiif/a',
+      'https://ex/iiif/b',
+    ]);
+    expect(documents[0].media).toEqual([
+      { encodingFormat: ['application/ld+json'] },
+    ]);
   });
 
   it('rejects a searchType not in the schema (no forged schema)', async () => {
