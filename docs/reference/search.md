@@ -408,8 +408,10 @@ past the projection is still the same for a named node and a blank one.
 
 The `id` is not enumerable, so it is no field: an entry that projects nothing
 else is still no referent, and spreading or serializing an entry leaves it out.
-Two named referents with the same fields both reach a derive, and are stored as
-one entry once their IRIs are pruned.
+A derive that wants the IRI must therefore read `entry.id` off the entry itself,
+not off a copy made with `{ ...entry }`. Two named referents with the same
+fields both reach a derive, and are stored as one entry once their IRIs are
+pruned.
 
 So RDF depth and API shape stay independent: inline as deep as the source
 demands, expose exactly the flat fields you want. Framing follows the inline

@@ -493,9 +493,10 @@ export function buildGraphQLSchema(
    * referenced shape. A **surfaced inline** reference is served as the nested
    * object its Reference Type declares – its own `output` fields, configured by
    * exactly the same per-kind rules a root type’s fields are – so the response
-   * shape matches the data’s shape. Its `id` is nullable: a referent needs no
-   * identity, and a blank-node one nests without one. Every other reference
-   * stays the id-plus-label pair its strategy carries.
+   * shape matches the data’s shape. It offers no `id`: a referent needs no
+   * identity, so the projection stores none, and its `output` fields are all a
+   * client can select. Every other reference stays the id-plus-label pair its
+   * strategy carries.
    */
   function registerReferenceType(field: SearchField, owner: SearchType): void {
     if (

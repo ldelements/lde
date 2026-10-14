@@ -176,23 +176,29 @@ function projectFields(
   context: ProjectionContext,
   nested = false,
 ): ProjectedNode {
-  const id = documentIdOf(node, searchType);
-  const document: ProjectedNode = {};
-  if (id !== undefined) {
-    // A Reference Type entry’s IRI is a reading device, so it is not
-    // enumerable: a derive reads `entry.id`, but `Object.keys`, a spread and
-    // `JSON.stringify` see only the entry’s fields ({@link documentIdOf}).
-    Object.defineProperty(document, 'id', {
-      value: id,
-      enumerable: searchType.class !== undefined,
-      configurable: true,
-      writable: true,
-    });
-  }
+  const document = emptyDocument(documentIdOf(node, searchType), searchType);
   for (const field of searchType.fields) {
     applyField(document, node, field, searchType, schema, context, nested);
   }
   return document;
+}
+
+/** A document holding only its `id`, if it has one. A Reference Type entry’s
+ *  IRI is a reading device, so it is not enumerable there: a derive reads
+ *  `entry.id`, but `Object.keys`, a spread and `JSON.stringify` see only the
+ *  entry’s fields ({@link documentIdOf}). */
+function emptyDocument(
+  id: string | undefined,
+  searchType: SearchType,
+): ProjectedNode {
+  if (id === undefined || searchType.class !== undefined) {
+    return id === undefined ? {} : { id };
+  }
+  return Object.defineProperty({}, 'id', {
+    value: id,
+    configurable: true,
+    writable: true,
+  });
 }
 
 /**
@@ -229,8 +235,10 @@ function documentKey(node: FramedNode): string | undefined {
  * then it is not enumerable, so no step that walks an entry’s keys mistakes it
  * for a field. What stays is the window in between: a `derive` on the referrer
  * reads the entry’s IRI where that IRI is the data – a IIIF manifest among a
- * work’s media, stated by its `@id` and nothing else – and surfaces it under a
- * field of its own.
+ * work’s media, whose URL is its `@id` and stated nowhere else – and surfaces
+ * it under a field of its own. The entry still needs a field of its own (the
+ * manifest’s `encodingFormat`) to be a referent at all; an `@id` alone is not
+ * one.
  */
 function documentIdOf(
   node: FramedNode,
