@@ -1,0 +1,30 @@
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+# Records with hash sub-resources, as in Huis van Hilde
+# (https://hdl.handle.net/21.12153/sit3939#media-1): the records and their
+# sub-resources share one URI space, https://hdl.handle.net/21.12153/.
+<https://hdl.handle.net/21.12153/sit1> rdfs:label "Site 1" .
+<https://hdl.handle.net/21.12153/sit1#media-1> rdfs:label "Media 1" .
+<https://hdl.handle.net/21.12153/sit1#media-2> rdfs:label "Media 2" .
+<https://hdl.handle.net/21.12153/sit1#media-3> rdfs:label "Media 3" .
+<https://hdl.handle.net/21.12153/sit2> rdfs:label "Site 2" .
+<https://hdl.handle.net/21.12153/sit2#media-1> rdfs:label "Media 1" .
+<https://hdl.handle.net/21.12153/sit2#media-2> rdfs:label "Media 2" .
+<https://hdl.handle.net/21.12153/sit2#media-3> rdfs:label "Media 3" .
+
+# A hash vocabulary, as in http://www.w3.org/2004/02/skos/core#: one document,
+# so its URI space stays http://example.org/vocab/core#.
+<http://example.org/vocab/core#Concept> rdfs:label "Concept" .
+<http://example.org/vocab/core#Scheme> rdfs:label "Scheme" .
+
+# Records as fragments of a single document: http://example.com/data#.
+<http://example.com/data#rec1> rdfs:label "Record 1" .
+<http://example.com/data#rec2> rdfs:label "Record 2" .
+<http://example.com/data#rec3> rdfs:label "Record 3" .
+
+# Hash IRIs on hosts without a path have no directory to share: each host keeps
+# its own URI space instead of merging into http://.
+<http://a.example#x> rdfs:label "A x" .
+<http://a.example#y> rdfs:label "A y" .
+<http://b.example#x> rdfs:label "B x" .
+<http://b.example#y> rdfs:label "B y" .

@@ -64,6 +64,8 @@ Global and domain-specific factories accept `VoidStageOptions` (`transform`) and
 
 The scalar count stages (`countSubjects`, `countProperties`, `countObjectLiterals`, `countObjectUris`, `countTriples`) set the stage’s `expectsOutput` flag: each query is a single `COUNT` that always returns exactly one row, so zero output can only mean the endpoint truncated the response. The stage then fails – triggering the pipeline’s reactive dump fallback – instead of silently storing a missing count. `countDatatypes` deliberately does not set the flag: its query joins the count with a `SELECT DISTINCT ?datatype` group, so a dataset with no literals legitimately yields zero rows.
 
+`subjectUriSpaces` emits the ten largest subject URI spaces, each with more than one entity. A subject’s URI space is the directory of its document, the IRI without fragment: `https://example.org/id/record1` belongs to `https://example.org/id/`. Hash IRIs keep their document as URI space when they all share one, as a hash vocabulary does (`http://www.w3.org/2004/02/skos/core#`). When they spread over several documents in one directory, as sub-resources of records do (`https://example.org/id/record1#media`), they belong to the directory, together with the records.
+
 #### Per-class stages (iterated with a class selector):
 
 | Factory                   | Query                                                                                                                                                                                 |
