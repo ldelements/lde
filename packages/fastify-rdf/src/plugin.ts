@@ -4,6 +4,7 @@ import { fastifyPlugin } from 'fastify-plugin';
 import { fastifyAccepts } from '@fastify/accepts';
 import { rdfSerializer } from 'rdf-serialize';
 import { rdfParser } from 'rdf-parse';
+import { FetchDocumentLoader } from 'jsonld-context-parser';
 import { Store } from 'n3';
 import { Readable } from 'node:stream';
 import {
@@ -85,10 +86,19 @@ async function streamToDataset(
 async function registerRdfParsers(
   server: FastifyInstance,
   parseAll: boolean,
+  fetch: typeof globalThis.fetch | undefined,
 ): Promise<void> {
   const contentTypes = (await rdfParser.getContentTypes()).filter(
     (type) => type !== 'application/json',
   );
+  // rdf-parse only routes JSON-LD context requests through a document loader
+  // set under this Comunica context key; a plain `fetch` option is ignored.
+  const parseContext = fetch
+    ? {
+        '@comunica/actor-rdf-parse-jsonld:documentLoader':
+          new FetchDocumentLoader(fetch),
+      }
+    : {};
 
   const jsonLdType = 'application/ld+json';
 
@@ -135,7 +145,7 @@ async function registerRdfParsers(
         ? request.body
         : Buffer.from(JSON.stringify(request.body));
       request.body = await streamToDataset(
-        rdfParser.parse(Readable.from(raw), { contentType }),
+        rdfParser.parse(Readable.from(raw), { ...parseContext, contentType }),
       );
     } catch (cause) {
       const error = new Error('Invalid RDF body', {
@@ -248,7 +258,7 @@ async function fastifyRdfPlugin(
     },
   );
 
-  await registerRdfParsers(server, options.parseRdf ?? false);
+  await registerRdfParsers(server, options.parseRdf ?? false, options.fetch);
 }
 
 /**

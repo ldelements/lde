@@ -29,6 +29,14 @@ export interface FastifyRdfOptions {
    * @default false
    */
   parseRdf?: boolean;
+
+  /**
+   * Fetch used to load remote documents, such as JSON-LD contexts, while
+   * parsing RDF request bodies. Pass one to answer context requests from a
+   * local copy or cache instead of the network.
+   * @default globalThis.fetch
+   */
+  fetch?: typeof globalThis.fetch;
 }
 
 /**
