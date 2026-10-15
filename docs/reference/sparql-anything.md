@@ -106,6 +106,10 @@ An interrupted run – a Ctrl-C, or a cancelled CI job – ends the same way: th
 
 `cliArgs` is the escape hatch for CLI flags the converter does not model itself, appended to the arguments it sets. It cannot repeat those: `-q`, `-f`, `-o` and `-l` are rejected, in their long and `--flag=value` forms too, because the converter reads back the `--output` it named, in the `--format` it asked for – overriding either leaves it reporting an empty conversion, or concatenating fragments that are not N-Triples. SPARQL Anything documents repetition only for `-v` and `-c`, so a repeated flag has no defined winner to rely on.
 
+### On Kubernetes
+
+The JVMs can run in a sidecar with a memory limit of its own, through [`HttpTaskRunner`](./task-runner-http), so a conversion that runs out of memory takes down the sidecar and not the pipeline. The pod is set up as in the [Kubernetes example](./task-runner-http#kubernetes), with a JRE image such as `eclipse-temurin:21-jre` in place of the QLever image and the jar on the shared volume. Pass the shared volume’s path, which is the same in both containers, as both `workDir` and the runner’s `cwd`, and give the sidecar a memory limit of `concurrency × heap` plus what each JVM needs beyond its heap.
+
 ### Following a conversion
 
 A conversion says nothing for as long as it takes – a quarter of an hour, over eighteen chunks, for the GeoNames dumps. `onChunkConverted` is called as each one finishes:
