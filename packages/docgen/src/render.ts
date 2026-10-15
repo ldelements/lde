@@ -1,5 +1,5 @@
 import { Liquid } from 'liquidjs';
-import { dirname } from 'path';
+import { basename, dirname } from 'path';
 import type { ContextDefinition, NodeObject } from 'jsonld';
 
 export async function render(
@@ -56,7 +56,10 @@ export async function render(
     expandIri(compactIri, prefixes),
   );
 
-  return engine.renderFile(templatePath, { nodeShapes: shapes['@graph'] });
+  // The root is the template’s folder, so look the template up by its name there.
+  return engine.renderFile(basename(templatePath), {
+    nodeShapes: shapes['@graph'],
+  });
 }
 
 /**

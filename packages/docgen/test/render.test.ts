@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { join } from 'node:path';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { join, relative } from 'node:path';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { render } from '../src/render.js';
 
@@ -10,6 +10,27 @@ async function renderTemplate(context: unknown, template: string) {
   await writeFile(templatePath, template);
   return render({ '@context': context, '@graph': [] } as never, templatePath);
 }
+
+describe('render', () => {
+  it('renders a template in a subfolder, given a path relative to the working directory', async () => {
+    // A path such as assets/diagram.mmd.liquid, as a spec’s Makefile passes it.
+    const directory = await mkdtemp(join(process.cwd(), 'docgen-render-'));
+    try {
+      await mkdir(join(directory, 'assets'));
+      await writeFile(join(directory, 'assets', 'diagram.liquid'), 'diagram');
+      const relativePath = relative(
+        process.cwd(),
+        join(directory, 'assets', 'diagram.liquid'),
+      );
+
+      expect(await render({ '@graph': [] } as never, relativePath)).toBe(
+        'diagram',
+      );
+    } finally {
+      await rm(directory, { recursive: true });
+    }
+  });
+});
 
 describe('expandIri', () => {
   it('expands a compact IRI with a prefix from the frame’s context', async () => {
