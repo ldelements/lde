@@ -10,15 +10,15 @@ npm install @lde/sparql-qlever
 
 ## `createQlever()`
 
-`createQlever()` returns a paired `{ importer, server }` that share a single task runner – and therefore the same Docker container or working directory – so the server can serve the index the importer built.
+`createQlever()` returns a paired `{ importer, server }` that share a single task runner – and therefore the same Docker container, sidecar or working directory – so the server can serve the index the importer built.
 
 | Option          | Default                               | Description                                                                                                                   |
 | --------------- | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `mode`          | –                                     | `'docker'` or `'native'`; see below.                                                                                          |
+| `mode`          | –                                     | `'docker'`, `'native'` or `'remote'`; see below.                                                                              |
 | `image`         | –                                     | (docker mode, required) Docker image to run QLever from, e.g. `adfreiburg/qlever:latest`.                                     |
 | `containerName` | –                                     | (docker mode) Name for the container; a previous container with the same name is removed on `run()`.                          |
 | `network`       | –                                     | (docker mode, requires `containerName`) Docker network the QLever containers join; see [Networking](#networking-docker-mode). |
-| `dataDir`       | –                                     | Directory where downloaded data files and the index are stored. **Must be absolute in docker mode.**                          |
+| `dataDir`       | –                                     | Directory where downloaded data files and the index are stored. **Must be absolute in docker mode; required in remote mode.** |
 | `indexName`     | `'data'`                              | Base name of the QLever index files.                                                                                          |
 | `port`          | `7001`                                | Port the SPARQL server listens on. In docker mode, bound to the same port number on the host.                                 |
 | `downloader`    | `new LastModifiedDownloader(dataDir)` | [`Downloader`](https://github.com/ldelements/lde/tree/main/packages/distribution-downloader) used to fetch distributions.     |
@@ -56,6 +56,22 @@ Native mode runs the same commands directly on the host, with `dataDir` as the w
 
 - the `qlever-index` and `qlever-server` binaries on `PATH`;
 - a POSIX shell with `cat` and `gunzip` (commands run with `shell: true`), plus `unzip` for zip-compressed distributions.
+
+### Remote mode
+
+Native mode on Kubernetes puts QLever in the pipeline container, under its memory limit. QLever can grow well past `memory-max-size`, which bounds query processing and the result cache but not the loaded index, and when the container runs out of memory Kubernetes kills the pipeline along with QLever.
+
+Remote mode runs the same commands in a QLever sidecar of the pipeline pod instead, through the task agent of [`@lde/task-runner-http`](./task-runner-http). The sidecar has its own memory limit. When QLever exceeds it, Kubernetes restarts only the sidecar: the running import or server start fails, `ImportResolver` fails that one dataset, and the run moves on to the next dataset once the agent is back.
+
+```ts
+const { importer, server } = createQlever({
+  mode: 'remote',
+  dataDir: '/data',
+});
+// Query endpoint: http://localhost:7001/sparql
+```
+
+`dataDir` is required, and both containers must mount it at that path: the importer writes downloads and settings there, and the agent runs QLever with it as working directory. The sidecar runs the unmodified upstream QLever image, so the pipeline image needs no QLever and a QLever upgrade needs no image build. See [Kubernetes](./task-runner-http#kubernetes) for the pod.
 
 ## Supported formats
 

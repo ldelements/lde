@@ -17,6 +17,9 @@
       "path": "../task-runner-native/tsconfig.lib.json"
     },
     {
+      "path": "../task-runner-http/tsconfig.lib.json"
+    },
+    {
       "path": "../task-runner-docker/tsconfig.lib.json"
     },
     {

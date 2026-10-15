@@ -4,6 +4,7 @@ Interfaces for running shell commands as tasks. Implementations run commands:
 
 - [in Docker containers](./task-runner-docker) – isolated environment
 - [natively on the host](./task-runner-native) – direct execution
+- [in another container of the pod](./task-runner-http) – through a task agent on `127.0.0.1`, for a sidecar with its own memory limit
 
 ## Installation
 

@@ -51,6 +51,7 @@
     "nx": "23.3.0",
     "prettier": "^3.9.6",
     "prettier-plugin-packagejson": "^3.0.2",
+    "rolldown": "^1.2.14",
     "tslib": "^2.3.0",
     "typescript": "~6.0.3",
     "typescript-eslint": "8.71.1",

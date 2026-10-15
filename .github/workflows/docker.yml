@@ -37,7 +37,8 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       startsWith(github.event.release.tag_name, '@lde/search-api-server@') ||
-      startsWith(github.event.release.tag_name, '@lde/search-indexer@')
+      startsWith(github.event.release.tag_name, '@lde/search-indexer@') ||
+      startsWith(github.event.release.tag_name, '@lde/task-runner-http@')
     # Each architecture builds AND boots natively on its own runner, so the
     # docker:smoke gate covers both – an emulated (QEMU) arm64 build could
     # only ever boot-test amd64.

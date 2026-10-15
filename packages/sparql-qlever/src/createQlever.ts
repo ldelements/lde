@@ -1,4 +1,5 @@
 import { DockerTaskRunner } from '@lde/task-runner-docker';
+import { HttpTaskRunner } from '@lde/task-runner-http';
 import { NativeTaskRunner } from '@lde/task-runner-native';
 import { TaskRunner } from '@lde/task-runner';
 import {
@@ -45,13 +46,24 @@ export type QleverOptions = {
       containerName: string;
     }
   | { mode: 'native' }
+  | {
+      /**
+       * Run QLever in another container of the same pod, such as a sidecar
+       * with its own memory limit, through the task agent of
+       * `@lde/task-runner-http`. Both containers mount `dataDir` at the same
+       * path.
+       */
+      mode: 'remote';
+      /** Absolute, and the same path in both containers. */
+      dataDir: string;
+    }
 );
 
 /**
  * Create a paired QLever {@link Importer} and {@link Server} that share a
  * single {@link TaskRunner}. In pipeline setups the importer and server must
- * use the same runner (and therefore the same Docker container or working
- * directory) so that the server can serve the index the importer built.
+ * use the same runner (and therefore the same Docker container, sidecar or
+ * working directory) so that the server can serve the index the importer built.
  */
 export function createQlever(options: QleverOptions) {
   const port = options.port ?? 7001;
@@ -70,7 +82,9 @@ export function createQlever(options: QleverOptions) {
           network: options.network,
           port: hostname ? undefined : port,
         })
-      : new NativeTaskRunner({ cwd: options.dataDir });
+      : options.mode === 'remote'
+        ? new HttpTaskRunner({ cwd: options.dataDir })
+        : new NativeTaskRunner({ cwd: options.dataDir });
 
   return {
     importer: new Importer({

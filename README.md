@@ -205,6 +205,10 @@ await pipeline.run();
   <td><a href="packages/task-runner-native">@lde/task-runner-native</a><br><a href="https://www.npmjs.com/package/@lde/task-runner-native"><img src="https://img.shields.io/npm/v/@lde/task-runner-native" alt="npm"></a></td>
   <td>Run tasks natively on the host system</td>
 </tr>
+<tr>
+  <td><a href="packages/task-runner-http">@lde/task-runner-http</a><br><a href="https://www.npmjs.com/package/@lde/task-runner-http"><img src="https://img.shields.io/npm/v/@lde/task-runner-http" alt="npm"></a></td>
+  <td>Run tasks in another container of the pod, such as a sidecar</td>
+</tr>
 </table>
 
 ## Architecture

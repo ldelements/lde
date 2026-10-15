@@ -30,6 +30,7 @@
     "@lde/sparql-server": "^0.4.14",
     "@lde/task-runner": "^0.2.16",
     "@lde/task-runner-docker": "^0.3.2",
+    "@lde/task-runner-http": "^0.0.0",
     "@lde/task-runner-native": "^0.2.20",
     "@lde/wait-for-sparql": "^0.2.18",
     "rdf-parse": "^5.0.0",
@@ -40,5 +41,20 @@
   "devDependencies": {
     "@rdfjs/types": "^2.0.0",
     "@types/yauzl": "^3.4.0"
+  },
+  "nx": {
+    "targets": {
+      "test": {
+        "dependsOn": [
+          "^build",
+          {
+            "projects": [
+              "@lde/task-runner-http"
+            ],
+            "target": "docker:build"
+          }
+        ]
+      }
+    }
   }
 }
