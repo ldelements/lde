@@ -167,7 +167,7 @@ describe('writerFactoryFrom', () => {
 });
 
 describe('distributionResolverFrom', () => {
-  it('leaves the pipeline its endpoint-only default without QLEVER_IMAGE', () => {
+  it('leaves the pipeline its endpoint-only default without a QLever', () => {
     expect(
       distributionResolverFrom(configFromEnvironment(minimal)),
     ).toBeUndefined();
@@ -178,6 +178,18 @@ describe('distributionResolverFrom', () => {
       configFromEnvironment({
         ...minimal,
         QLEVER_IMAGE: 'adfreiburg/qlever:latest',
+        IMPORT_STRATEGY: 'import',
+        DATA_DIR: '/tmp/qlever-data',
+      }),
+    );
+    expect(resolver).toBeInstanceOf(ImportResolver);
+  });
+
+  it('builds the QLever import path for a sidecar', () => {
+    const resolver = distributionResolverFrom(
+      configFromEnvironment({
+        ...minimal,
+        QLEVER_MODE: 'remote',
         IMPORT_STRATEGY: 'import',
         DATA_DIR: '/tmp/qlever-data',
       }),

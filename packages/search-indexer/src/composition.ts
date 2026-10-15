@@ -70,11 +70,12 @@ export function writerFactoryFrom(
 }
 
 /**
- * The distribution resolver the configuration describes: with `QLEVER_IMAGE`
- * set, an {@link ImportResolver} that imports data dumps into a
- * pipeline-controlled QLever sibling container over the mounted Docker
- * socket; without it, `undefined`, leaving the pipeline its endpoint-only
- * default (a bare {@link SparqlDistributionResolver}).
+ * The distribution resolver the configuration describes: with a QLever
+ * configured, an {@link ImportResolver} that imports data dumps into a
+ * pipeline-controlled QLever – a sibling container over the mounted Docker
+ * socket, or a sidecar in the indexer’s pod; without one, `undefined`,
+ * leaving the pipeline its endpoint-only default (a bare
+ * {@link SparqlDistributionResolver}).
  */
 export function distributionResolverFrom(
   config: IndexerConfig,
@@ -82,23 +83,26 @@ export function distributionResolverFrom(
   if (!config.qlever) {
     return undefined;
   }
-  const { importer, server } = config.qlever.network
-    ? createQlever({
-        mode: 'docker',
-        image: config.qlever.image,
-        dataDir: config.qlever.dataDir,
-        network: config.qlever.network,
-        // The network-scoped name doubles as the endpoint hostname. It keeps
-        // stacks on different networks from removing each other’s QLever;
-        // indexers sharing one network would still collide, so run at most
-        // one indexer per network.
-        containerName: `qlever-${config.qlever.network}`,
-      })
-    : createQlever({
-        mode: 'docker',
-        image: config.qlever.image,
-        dataDir: config.qlever.dataDir,
-      });
+  const { importer, server } =
+    config.qlever.mode === 'remote'
+      ? createQlever({ mode: 'remote', dataDir: config.qlever.dataDir })
+      : config.qlever.network
+        ? createQlever({
+            mode: 'docker',
+            image: config.qlever.image,
+            dataDir: config.qlever.dataDir,
+            network: config.qlever.network,
+            // The network-scoped name doubles as the endpoint hostname. It keeps
+            // stacks on different networks from removing each other’s QLever;
+            // indexers sharing one network would still collide, so run at most
+            // one indexer per network.
+            containerName: `qlever-${config.qlever.network}`,
+          })
+        : createQlever({
+            mode: 'docker',
+            image: config.qlever.image,
+            dataDir: config.qlever.dataDir,
+          });
   return new ImportResolver(new SparqlDistributionResolver(), {
     importer,
     server,

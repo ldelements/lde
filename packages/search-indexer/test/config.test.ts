@@ -59,6 +59,7 @@ describe('configFromEnvironment', () => {
       defaultLocale: 'nl',
       provenance: undefined,
       qlever: {
+        mode: 'docker',
         image: 'adfreiburg/qlever:latest',
         strategy: 'import',
         dataDir: '/mnt/data',
@@ -196,6 +197,7 @@ describe('configFromEnvironment', () => {
         QLEVER_IMAGE: 'adfreiburg/qlever:latest',
       });
       expect(config.qlever).toEqual({
+        mode: 'docker',
         image: 'adfreiburg/qlever:latest',
         strategy: 'sparql',
         dataDir: '/data',
@@ -215,7 +217,9 @@ describe('configFromEnvironment', () => {
     it('rejects a strategy without an image', () => {
       expect(() =>
         configFromEnvironment({ ...minimal, IMPORT_STRATEGY: 'import' }),
-      ).toThrowError(/IMPORT_STRATEGY requires QLEVER_IMAGE/);
+      ).toThrowError(
+        /IMPORT_STRATEGY requires QLEVER_IMAGE or QLEVER_MODE=remote/,
+      );
     });
 
     it('reads the Docker network QLever joins', () => {
@@ -224,13 +228,70 @@ describe('configFromEnvironment', () => {
         QLEVER_IMAGE: 'adfreiburg/qlever:latest',
         QLEVER_NETWORK: 'app_default',
       });
-      expect(config.qlever?.network).toBe('app_default');
+      expect(config.qlever).toMatchObject({ network: 'app_default' });
     });
 
     it('rejects a network without an image', () => {
       expect(() =>
         configFromEnvironment({ ...minimal, QLEVER_NETWORK: 'app_default' }),
       ).toThrowError(/QLEVER_NETWORK requires QLEVER_IMAGE/);
+    });
+
+    it('reads a QLever sidecar without an image', () => {
+      const config = configFromEnvironment({
+        ...minimal,
+        QLEVER_MODE: 'remote',
+        IMPORT_STRATEGY: 'import',
+        DATA_DIR: '/mnt/data',
+      });
+      expect(config.qlever).toEqual({
+        mode: 'remote',
+        strategy: 'import',
+        dataDir: '/mnt/data',
+      });
+    });
+
+    it('rejects an image or network for a QLever sidecar', () => {
+      let message = '';
+      try {
+        configFromEnvironment({
+          ...minimal,
+          QLEVER_MODE: 'remote',
+          QLEVER_IMAGE: 'adfreiburg/qlever:latest',
+          QLEVER_NETWORK: 'app_default',
+        });
+      } catch (error) {
+        message = (error as Error).message;
+      }
+      expect(message).toMatch(
+        /QLEVER_IMAGE cannot be combined with QLEVER_MODE=remote/,
+      );
+      expect(message).toMatch(
+        /QLEVER_NETWORK cannot be combined with QLEVER_MODE=remote/,
+      );
+    });
+
+    it('treats an empty mode as unset', () => {
+      const config = configFromEnvironment({
+        ...minimal,
+        QLEVER_MODE: '',
+        QLEVER_IMAGE: 'adfreiburg/qlever:latest',
+      });
+      expect(config.qlever).toMatchObject({ mode: 'docker' });
+    });
+
+    it('requires an image in Docker mode', () => {
+      expect(() =>
+        configFromEnvironment({ ...minimal, QLEVER_MODE: 'docker' }),
+      ).toThrowError(/QLEVER_MODE=docker requires QLEVER_IMAGE/);
+    });
+
+    it('rejects an unknown mode', () => {
+      expect(() =>
+        configFromEnvironment({ ...minimal, QLEVER_MODE: 'native' }),
+      ).toThrowError(
+        /QLEVER_MODE must be one of “docker”, “remote”, got “native”/,
+      );
     });
   });
 });
