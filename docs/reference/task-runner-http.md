@@ -54,7 +54,7 @@ task-agent --version
 
 The agent always listens on `127.0.0.1`, and there is no option to change that. It runs any command it receives, so the only question is who can reach it. Inside a pod, that is the other containers of the pod, and those can already run code of their own. Reaching the agent over a network would need authentication and TLS, which it does not have.
 
-For the same reason, a kubelet `httpGet` or `tcpSocket` probe cannot reach it: those connect to the pod’s IP address. Use `--probe` in an `exec` probe instead.
+For the same reason, the startup probe is an `exec` probe that runs `task-agent --probe` inside the sidecar, where `127.0.0.1` is the agent. Kubelet runs `httpGet` and `tcpSocket` probes from the node, against the pod’s IP address, and pointing their `host` at `127.0.0.1` reaches the node’s loopback, not the pod’s. Letting the agent listen on the pod’s IP address would make those probes work, but anything on the cluster network could then run commands in the sidecar, which is exactly what the `127.0.0.1` binding prevents. An `exec` probe costs nothing in exposure, and `--probe` saves relying on `curl` or `wget`, which the QLever image may not have.
 
 The executable is built from Node 24 for glibc Linux, on amd64 and arm64. It does not run on musl (Alpine). It needs only the libraries every glibc distribution has: Node 26 and later link `libatomic` too, which the Ubuntu-based QLever image lacks.
 

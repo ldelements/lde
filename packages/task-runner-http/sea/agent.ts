@@ -50,7 +50,8 @@ export async function startTaskAgent(
   const server = Fastify({ forceCloseConnections: true });
 
   // For the container’s startup probe, which runs the agent’s own executable
-  // with --probe: a kubelet probe from outside cannot reach 127.0.0.1.
+  // with --probe: kubelet’s own probes connect to the pod’s IP address, and
+  // listening there would open the agent to the cluster network.
   server.get('/health', async (request, reply) => reply.code(204).send());
 
   server.post<{ Body: RunRequest; Reply: TaskId }>(

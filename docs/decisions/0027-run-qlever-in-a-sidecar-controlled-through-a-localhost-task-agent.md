@@ -75,6 +75,8 @@ containers.
 - The agent needs no Kubernetes permissions, and the sidecar exists only while
   the Job runs.
 - Both containers must mount the data directory at the same path, and the
-  sidecar needs an `exec` startup probe (`task-agent --probe`): kubelet probes
-  cannot reach `127.0.0.1`.
+  sidecar needs an `exec` startup probe (`task-agent --probe`): kubelet’s
+  `httpGet` and `tcpSocket` probes connect from the node to the pod’s IP
+  address. Listening there instead would let anything on the cluster network
+  run commands in the sidecar.
 - The agent is a component LDE must maintain and keep secure.
