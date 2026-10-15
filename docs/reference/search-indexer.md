@@ -178,13 +178,10 @@ as containerd-based Kubernetes. Use remote mode there.
 
 ### Remote mode
 
-`QLEVER_MODE=remote` runs QLever in a sidecar of the indexer’s pod, with its
-own memory limit, controlled through the task agent of
-[`@lde/task-runner-http`](./task-runner-http)
-([ADR 27](../decisions/0027-run-qlever-in-a-sidecar-controlled-through-a-localhost-task-agent)).
-When QLever runs out of memory, Kubernetes restarts only the sidecar, and only
-the dataset being imported fails. The pod sets the sidecar’s image, so
-`QLEVER_IMAGE` and `QLEVER_NETWORK` are rejected in this mode.
+`QLEVER_MODE=remote` runs QLever in a sidecar of the indexer’s pod, through
+the task agent of [`@lde/task-runner-http`](./task-runner-http); see
+[remote mode](./sparql-qlever#remote-mode) for why. The pod sets the sidecar’s
+image, so `QLEVER_IMAGE` and `QLEVER_NETWORK` are rejected in this mode.
 
 Mount the data volume at `DATA_DIR` in both the indexer and the sidecar. Set
 the pod up as in the [Kubernetes example](./task-runner-http#kubernetes), with
