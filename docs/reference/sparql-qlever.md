@@ -59,9 +59,9 @@ Native mode runs the same commands directly on the host, with `dataDir` as the w
 
 ### Remote mode
 
-Native mode on Kubernetes puts QLever in the pipeline container, under its memory limit. QLever can grow well past `memory-max-size`, which bounds query processing and the result cache but not the loaded index, and when the container runs out of memory Kubernetes kills the pipeline along with QLever.
+Native mode on Kubernetes puts QLever in the pipeline container, so the pipeline image must install QLever and an out-of-memory kill takes the pipeline down too ([ADR 27](../decisions/0027-run-qlever-in-a-sidecar-controlled-through-a-localhost-task-agent)).
 
-Remote mode runs the same commands in a QLever sidecar of the pipeline pod instead, through the task agent of [`@lde/task-runner-http`](./task-runner-http). The sidecar has its own memory limit. When QLever exceeds it, Kubernetes restarts only the sidecar: the running import or server start fails, `ImportResolver` fails that one dataset, and the run moves on to the next dataset once the agent is back.
+Remote mode runs the same commands in a QLever sidecar of the pipeline pod instead, through the task agent of [`@lde/task-runner-http`](./task-runner-http). The sidecar runs the unmodified upstream QLever image, so the pipeline image needs no QLever and an upgrade needs no image build. When QLever exceeds the sidecar’s memory limit, Kubernetes restarts only the sidecar: the running import or server start fails, `ImportResolver` fails that one dataset, and the run moves on to the next dataset once the agent is back.
 
 ```ts
 const { importer, server } = createQlever({
@@ -71,7 +71,7 @@ const { importer, server } = createQlever({
 // Query endpoint: http://localhost:7001/sparql
 ```
 
-`dataDir` is required, and both containers must mount it at that path: the importer writes downloads and settings there, and the agent runs QLever with it as working directory. The sidecar runs the unmodified upstream QLever image, so the pipeline image needs no QLever and a QLever upgrade needs no image build. See [Kubernetes](./task-runner-http#kubernetes) for the pod.
+`dataDir` is required, and both containers must mount it at that path: the importer writes downloads and settings there, and the agent runs QLever with it as working directory. See [Kubernetes](./task-runner-http#kubernetes) for the pod.
 
 ## Supported formats
 

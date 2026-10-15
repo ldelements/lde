@@ -1,6 +1,6 @@
 # @lde/task-runner-http
 
-Run tasks in another container of the same pod, such as a sidecar with its own memory limit, through a task agent that listens on `127.0.0.1`. The agent ships as a single executable in `ghcr.io/ldelements/task-runner-http`.
+Run tasks in another container of the same pod, such as a sidecar with its own image and memory limit, through a task agent that listens on `127.0.0.1`. The agent ships as a single executable in `ghcr.io/ldelements/task-runner-http`.
 
 ## Installation
 

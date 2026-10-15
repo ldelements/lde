@@ -15,14 +15,20 @@ Implements [#905](https://github.com/ldelements/lde/issues/905).
 ## Context
 
 In native mode, `qlever-index` and `qlever-server` are child processes of the
-pipeline. On Kubernetes they share its container’s memory limit, and when the
-container runs out of memory, Kubernetes kills the pipeline with them.
-`--memory-max-size` does not prevent this: it bounds query processing and the
-result cache, not the loaded index. One oversized dump ends the whole run
-instead of failing one dataset.
+pipeline, so they must be installed in the pipeline’s image. Every pipeline
+image that imports data through QLever – the search indexer’s, and those of applications built on
+LDE – then carries the QLever engine and its native libraries, and has to be
+rebuilt for each QLever upgrade. The pipeline and QLever cannot be deployed,
+versioned or sized separately.
 
-`ImportResolver` already copes with a QLever that dies: the dataset fails and
-the next one gets a fresh server. What is missing is isolation.
+They also share the container’s memory limit, so an out-of-memory kill takes
+the pipeline down too. `--memory-max-size` does not
+prevent this: it bounds query processing and the result cache, not the loaded
+index. One oversized dump ends the whole run instead of failing one dataset.
+`ImportResolver` already copes with a QLever that dies – the dataset fails and
+the next one gets a fresh server – but not with a pipeline that dies with it.
+
+What is missing is a separate QLever container that the pipeline controls.
 
 The Docker-socket path of ADR 16 isolates QLever but is unavailable on
 containerd-based clusters. Two Kubernetes-native ways to control a separate
@@ -57,8 +63,7 @@ containers.
 - **QLever runs as a native sidecar from the unmodified upstream image.** The
   agent is a Node single executable for glibc Linux, shipped in a small LDE
   image; an init container copies it into a shared `emptyDir` and the sidecar
-  runs it as its command. The pipeline image no longer needs QLever, and a
-  QLever upgrade needs no image build.
+  runs it as its command.
 - **The executable is built from Node 24.** From Node 26, the Linux binaries
   link `libatomic`, which the Ubuntu-based QLever image does not have. A smoke
   test runs the executable in the QLever image to keep it that way.
@@ -68,6 +73,8 @@ containers.
 
 ## Consequences
 
+- Pipeline images no longer install QLever. A QLever upgrade is a change to
+  the pod spec.
 - When QLever runs out of memory, Kubernetes restarts only the sidecar. The
   running task fails, that dataset fails, and `run()` waits up to six minutes
   for the agent to come back – longer than Kubernetes’ maximum restart

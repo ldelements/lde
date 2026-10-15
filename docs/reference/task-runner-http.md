@@ -1,6 +1,6 @@
 # @lde/task-runner-http
 
-Run tasks in another container of the same Kubernetes pod, through a task agent that listens on `127.0.0.1`. The usual reason is memory: a sidecar has its own memory limit, so a task that runs out of memory takes down the sidecar and not the process that started it. [`@lde/sparql-qlever`](./sparql-qlever#remote-mode) uses it to run QLever this way, and [`@lde/sparql-anything`](./sparql-anything#on-kubernetes) can run its JVMs this way.
+Run tasks in another container of the same Kubernetes pod, through a task agent that listens on `127.0.0.1`. The tool lives in its own image, so the two are built and upgraded separately. The sidecar has its own memory limit: a task that runs out of memory takes down the sidecar, not the process that started it. [`@lde/sparql-qlever`](./sparql-qlever#remote-mode) uses it to run QLever this way, and [`@lde/sparql-anything`](./sparql-anything#on-kubernetes) can run its JVMs this way.
 
 The package has two halves:
 

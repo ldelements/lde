@@ -108,7 +108,7 @@ An interrupted run – a Ctrl-C, or a cancelled CI job – ends the same way: th
 
 ### On Kubernetes
 
-The JVMs can run in a sidecar with a memory limit of its own, through [`HttpTaskRunner`](./task-runner-http), so a conversion that runs out of memory takes down the sidecar and not the pipeline. The pod is set up as in the [Kubernetes example](./task-runner-http#kubernetes), with a JRE image such as `eclipse-temurin:21-jre` in place of the QLever image and the jar on the shared volume. Pass the shared volume’s path, which is the same in both containers, as both `workDir` and the runner’s `cwd`, and give the sidecar a memory limit of `concurrency × heap` plus what each JVM needs beyond its heap.
+The JVMs can run in a sidecar through [`HttpTaskRunner`](./task-runner-http). The pipeline image then needs no JRE, and a conversion that runs out of memory kills the sidecar, not the pipeline. The pod is set up as in the [Kubernetes example](./task-runner-http#kubernetes), with a JRE image such as `eclipse-temurin:21-jre` in place of the QLever image and the jar on the shared volume. Pass the shared volume’s path, which is the same in both containers, as both `workDir` and the runner’s `cwd`, and give the sidecar a memory limit of `concurrency × heap` plus what each JVM needs beyond its heap.
 
 ### Following a conversion
 
