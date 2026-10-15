@@ -70,6 +70,15 @@ describe('NativeTaskRunner', () => {
       expect(output).toContain('test output');
     });
 
+    it('reports the signal that killed the process', async () => {
+      const runner = new NativeTaskRunner();
+      const task = await runner.run('sleep 60');
+      process.kill(-task.pid!, 'SIGKILL');
+      await expect(runner.wait(task)).rejects.toThrow(
+        'Process was killed by SIGKILL',
+      );
+    });
+
     it('rejects on non-zero exit code', async () => {
       const runner = new NativeTaskRunner();
       const task = await runner.run('exit 1');
@@ -162,7 +171,9 @@ describe('NativeTaskRunner', () => {
       const task = await runner.run('sleep 60');
       await runner.stop(task);
 
-      await expect(runner.wait(task)).rejects.toThrow('Process failed');
+      await expect(runner.wait(task)).rejects.toThrow(
+        'Process was killed by SIGTERM',
+      );
     });
   });
 

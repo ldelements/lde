@@ -48,4 +48,4 @@ await runner.stop(task2); // Sends SIGTERM, then SIGKILL after timeout
 
 ## Output and errors
 
-`wait()` resolves with the process’s combined stdout and stderr output. When the process exits with a non-zero code, it rejects with an error of the form `Process failed with code N: <output>`. Calling `stop()` on a process that has already exited resolves immediately with the buffered output.
+`wait()` resolves with the process’s combined stdout and stderr output. When the process exits with a non-zero code, it rejects with an error of the form `Process failed with code N: <output>`, and when a signal kills it, `Process was killed by SIGKILL: <output>`. Calling `stop()` on a process that has already exited resolves immediately with the buffered output.
