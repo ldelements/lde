@@ -1,6 +1,7 @@
 import { NativeTaskRunner } from '@lde/task-runner-native';
 import { randomUUID } from 'node:crypto';
 import { ChildProcess } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
 import Fastify from 'fastify';
 import { defaultPort } from '../src/protocol.js';
 import type {
@@ -71,9 +72,10 @@ export async function startTaskAgent(
     },
     async (request, reply) => {
       const runner = new NativeTaskRunner({ cwd: request.body.cwd });
+      const oomKillsAtStart = await oomKills();
       const process = await runner.run(request.body.command);
       const id = randomUUID();
-      tasks.set(id, { runner, process });
+      tasks.set(id, { runner, process, oomKillsAtStart });
       return reply.code(201).send({ id });
     },
   );
@@ -92,7 +94,7 @@ export async function startTaskAgent(
       try {
         return { output: await task.runner.wait(task.process) };
       } catch (error) {
-        return { error: (error as Error).message };
+        return { error: await explain(error as Error, task) };
       } finally {
         tasks.delete(request.params.id);
       }
@@ -131,4 +133,50 @@ export async function startTaskAgent(
 interface Task {
   runner: NativeTaskRunner;
   process: ChildProcess;
+  /** The container’s out-of-memory kill count when the task started. */
+  oomKillsAtStart: number | undefined;
+}
+
+/**
+ * The agent’s cgroup, which on cgroup v2 is the container’s own: its memory
+ * limit and how often the kernel killed a process for exceeding it.
+ */
+const cgroup = '/sys/fs/cgroup';
+
+/**
+ * Why a task failed, in its words, preceded by the reason when the kernel
+ * killed a process in this container for exceeding its memory limit while the
+ * task ran. That is the usual reason a task dies here: the agent survives it
+ * whenever the kernel kills only the largest process, as Docker has it, while
+ * Kubernetes by default kills the whole container, agent included.
+ */
+async function explain(error: Error, task: Task): Promise<string> {
+  const oomKillsNow = await oomKills();
+  if (
+    task.oomKillsAtStart === undefined ||
+    oomKillsNow === undefined ||
+    oomKillsNow === task.oomKillsAtStart
+  ) {
+    return error.message;
+  }
+  const limit = await memoryLimit();
+  return `Ran out of memory: the kernel killed a process in the agent’s container${limit === undefined ? '' : ` at its memory limit of ${limit}`}. ${error.message}`;
+}
+
+/** The number of out-of-memory kills in the container, if the system says. */
+async function oomKills(): Promise<number | undefined> {
+  try {
+    const events = await readFile(`${cgroup}/memory.events`, 'utf8');
+    const match = /^oom_kill (\d+)$/m.exec(events);
+    return match === null ? undefined : Number(match[1]);
+  } catch {
+    // No cgroup v2 here: not Linux, or not in a container.
+    return undefined;
+  }
+}
+
+/** The container’s memory limit in MiB, if it has one. */
+async function memoryLimit(): Promise<string | undefined> {
+  const max = (await readFile(`${cgroup}/memory.max`, 'utf8')).trim();
+  return max === 'max' ? undefined : `${Math.round(Number(max) / 2 ** 20)} MiB`;
 }

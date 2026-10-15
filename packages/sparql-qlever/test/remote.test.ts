@@ -5,6 +5,7 @@ import { tmpdir, userInfo } from 'node:os';
 import { join, resolve } from 'node:path';
 import { ImportSuccessful } from '@lde/sparql-importer';
 import { Distribution } from '@lde/dataset';
+import { HttpTaskRunner } from '@lde/task-runner-http';
 import { createQlever } from '../src/createQlever.js';
 
 /** Built by `nx run @lde/task-runner-http:docker:build`, which test depends on. */
@@ -71,6 +72,11 @@ describe('createQlever in remote mode', () => {
       sidecar,
       '--network',
       `container:${pod}`,
+      // A memory limit of its own, as a sidecar has, without swap to soften it.
+      '--memory',
+      '2g',
+      '--memory-swap',
+      '2g',
       '--user',
       `${userInfo().uid}:${userInfo().gid}`,
       '-v',
@@ -135,6 +141,15 @@ describe('createQlever in remote mode', () => {
     } finally {
       await server.stop();
     }
+  }, 120_000);
+
+  it('says when a task ran out of memory', async () => {
+    const runner = new HttpTaskRunner({ cwd: dataDir });
+    // /dev/zero has no line ends, so tail holds all of it, looking for one.
+    const task = await runner.run('tail /dev/zero');
+    await expect(runner.wait(task)).rejects.toThrow(
+      'Ran out of memory: the kernel killed a process in the agent’s container at its memory limit of 2048 MiB.',
+    );
   }, 120_000);
 });
 

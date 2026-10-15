@@ -95,7 +95,7 @@ export class HttpTaskRunner implements TaskRunner<HttpTask> {
     } catch (error) {
       if (error instanceof Error && 'code' in error) {
         throw new Error(
-          `Lost the task agent while waiting for task ${task.id}: ${error.message}`,
+          `Lost the task agent while waiting for task ${task.id}: ${error.message}. Its container ended, which usually means it ran out of memory; Kubernetes records why as the container’s last state, which kubectl describe pod shows.`,
           { cause: error },
         );
       }
