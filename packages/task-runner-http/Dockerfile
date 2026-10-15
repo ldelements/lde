@@ -4,7 +4,7 @@
 # as the upstream QLever image. See docs/reference/task-runner-http.md.
 #
 # `nx run @lde/task-runner-http:docker:build` bundles the agent and its
-# dependencies into dist-sea/agent.cjs first (bundle-agent), so this build
+# dependencies into dist-agent/agent.cjs first (bundle-agent), so this build
 # needs no npm install. Each architecture is built on its own runner
 # (.github/workflows/docker.yml), because the executable is that platform’s
 # Node binary with the bundle injected.
@@ -15,7 +15,7 @@
 FROM node:24-bookworm-slim AS sea
 
 WORKDIR /build
-COPY dist-sea/agent.cjs sea/sea-config.json ./
+COPY dist-agent/agent.cjs agent/sea-config.json ./
 RUN node --experimental-sea-config sea-config.json \
   && cp "$(command -v node)" task-agent \
   && npx --yes postject@1.0.0-alpha.6 task-agent NODE_SEA_BLOB sea-prep.blob \

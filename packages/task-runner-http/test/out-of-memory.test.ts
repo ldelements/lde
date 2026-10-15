@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { startTaskAgent, TaskAgent } from '../sea/agent.js';
+import { startTaskAgent, TaskAgent } from '../agent/agent.js';
 import { HttpTaskRunner } from '../src/index.js';
 
 /**

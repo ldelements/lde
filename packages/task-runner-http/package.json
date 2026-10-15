@@ -43,11 +43,11 @@
           "^production"
         ],
         "outputs": [
-          "{projectRoot}/dist-sea"
+          "{projectRoot}/dist-agent"
         ],
         "options": {
           "cwd": "{projectRoot}",
-          "command": "rolldown -c sea/rolldown.config.mjs"
+          "command": "rolldown -c agent/rolldown.config.mjs"
         },
         "dependsOn": [
           "^build"
