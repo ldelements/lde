@@ -3,6 +3,11 @@ import type { Quad } from '@rdfjs/types';
 import type { Reader, VariableBindings } from './sparql/reader.js';
 import { NotSupported } from './sparql/reader.js';
 import type { TimeoutPolicy } from './sparql/timeoutPolicy.js';
+import { mergeBindings } from './sparql/values.js';
+import {
+  predefinedDatasetBindings,
+  type DatasetBindingsProvider,
+} from './sparql/datasetBindings.js';
 import { batch } from './batch.js';
 import type { Validator } from './validator.js';
 import type { DatasetWriter } from './writer/writer.js';
@@ -178,6 +183,13 @@ export interface StageOptions<Out = Quad> {
     /** What to do when a batch fails validation. @default 'write' */
     onInvalid?: 'write' | 'skip' | 'halt';
   };
+  /**
+   * Supplies additional per-dataset bindings beyond the built-in DCAT ones
+   * (see {@link predefinedDatasetBindings}), for values this library can't
+   * know about (e.g. a caller-local `edm:type`). Handed to both the item
+   * selector and every reader.
+   */
+  bindingsProvider?: DatasetBindingsProvider;
 }
 
 export interface RunOptions {
@@ -195,6 +207,12 @@ export interface RunOptions {
 export interface SelectOptions {
   /** Per-call timeout policy. */
   timeout?: TimeoutPolicy;
+  /**
+   * Dataset-level bindings so an {@link ItemSelector} can inject the same
+   * `VALUES` a reader would, e.g. to filter selected items by
+   * `?datasetLicense`.
+   */
+  datasetBindings?: VariableBindings[];
 }
 
 export class Stage<Out = Quad> {
@@ -213,6 +231,7 @@ export class Stage<Out = Quad> {
   private readonly project?: BatchTransform<Out>;
   private readonly queueCapacity?: number;
   private readonly sourceFor?: StageOptions<Out>['sourceFor'];
+  private readonly bindingsProvider?: DatasetBindingsProvider;
 
   constructor(options: StageOptions<Out>) {
     if (options.project && !options.itemSelector) {
@@ -247,6 +266,7 @@ export class Stage<Out = Quad> {
     this.queueCapacity = options.queueCapacity;
     this.sourceFor = options.sourceFor;
     this.sourcesOwnData = options.sourceFor !== undefined;
+    this.bindingsProvider = options.bindingsProvider;
   }
 
   /** The validator for this stage, if configured. */
@@ -266,19 +286,35 @@ export class Stage<Out = Quad> {
     const distribution = this.sourceFor
       ? this.sourceFor(dataset, resolved)
       : resolved;
+    const customBindings = this.bindingsProvider
+      ? await this.bindingsProvider.bindings(dataset, distribution)
+      : [];
+
     if (this.itemSelector) {
+      // Readers compute predefined bindings themselves; the selector can't, so it gets the full set.
+      const datasetBindings = mergeBindings(
+        predefinedDatasetBindings(dataset),
+        customBindings,
+      );
       return this.runWithSelector(
         this.itemSelector.select(distribution, this.batchSize, {
           timeout,
+          datasetBindings,
         }),
         dataset,
         distribution,
         writer,
         options,
+        customBindings,
       );
     }
 
-    const streams = await this.readAll(dataset, distribution, timeout);
+    const streams = await this.readAll(
+      dataset,
+      distribution,
+      timeout,
+      customBindings,
+    );
     if (streams instanceof NotSupported) {
       return streams;
     }
@@ -356,6 +392,7 @@ export class Stage<Out = Quad> {
     distribution: Distribution,
     writer: DatasetWriter<Out>,
     options?: RunOptions,
+    customBindings: VariableBindings[] = [],
   ): Promise<NotSupported | void> {
     // Peek the first batch to detect an empty selector before starting the
     // writer (important because e.g. SparqlUpdateWriter does CLEAR GRAPH).
@@ -430,6 +467,7 @@ export class Stage<Out = Quad> {
                 this.readers.map(async ({ reader, transforms }) => {
                   const result = await reader.read(dataset, distribution, {
                     bindings,
+                    customBindings,
                     timeout: options?.timeout,
                   });
                   if (result instanceof NotSupported) return [];
@@ -556,10 +594,12 @@ export class Stage<Out = Quad> {
     dataset: Dataset,
     distribution: Distribution,
     timeout: TimeoutPolicy | undefined,
+    customBindings: VariableBindings[] = [],
   ): Promise<AsyncIterable<Quad>[] | NotSupported> {
     const results = await Promise.all(
       this.readers.map(async ({ reader, transforms }) => {
         const result = await reader.read(dataset, distribution, {
+          customBindings,
           timeout,
         });
         if (result instanceof NotSupported) return result;

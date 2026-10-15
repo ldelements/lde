@@ -112,7 +112,7 @@ describe('SparqlConstructReader', () => {
       );
     });
 
-    it('substitutes ?dataset with dataset IRI', async () => {
+    it('binds ?dataset to the dataset IRI via a VALUES clause', async () => {
       const fetcher = new SparqlEndpointFetcher();
       const querySpy = vi.spyOn(fetcher, 'fetchTriples');
 
@@ -135,12 +135,51 @@ describe('SparqlConstructReader', () => {
 
       expect(querySpy).toHaveBeenCalledWith(
         expect.any(String),
+        expect.stringContaining('VALUES'),
+      );
+      expect(querySpy).toHaveBeenCalledWith(
+        expect.any(String),
         expect.stringContaining(`<${datasetIri}>`),
       );
       expect(querySpy).toHaveBeenCalledWith(
         expect.any(String),
-        expect.not.stringContaining('?dataset'),
+        expect.stringContaining('?dataset'),
       );
+    });
+
+    it('binds a user-written ?dataset variable correctly rather than corrupting the query text', async () => {
+      const datasetIri = 'http://foo.org/id/dataset/foo';
+
+      const reader = new SparqlConstructReader({
+        query: `CONSTRUCT {
+          ?dataset ?p ?o .
+        }
+        WHERE {
+          ?dataset ?p ?o .
+          FILTER(?dataset = <${datasetIri}>)
+        }`,
+      });
+
+      const distribution = Distribution.sparql(
+        new URL(`http://localhost:${port}/sparql`),
+        'http://foo.org/id/graph/foo',
+      );
+
+      const dataset = new Dataset({
+        iri: new URL(datasetIri),
+        distributions: [distribution],
+      });
+
+      const result = await reader.read(dataset, distribution);
+
+      const quads = [];
+      for await (const quad of result) {
+        quads.push(quad);
+      }
+      expect(quads.length).toBe(2);
+      for (const quad of quads) {
+        expect(quad.subject.value).toBe(datasetIri);
+      }
     });
 
     it('uses distribution accessUrl as endpoint', async () => {
@@ -252,6 +291,134 @@ describe('SparqlConstructReader', () => {
     });
   });
 
+  describe('DCAT dataset bindings', () => {
+    it('binds datasetPublisher and datasetLicense when present', async () => {
+      const fetcher = new SparqlEndpointFetcher();
+      const querySpy = vi.spyOn(fetcher, 'fetchTriples');
+
+      const reader = new SparqlConstructReader({
+        query: `CONSTRUCT { ?dataset ?p ?datasetPublisher . ?dataset ?p ?datasetLicense } WHERE { ?dataset ?p ?o }`,
+        fetcher,
+      });
+
+      const distribution = Distribution.sparql(
+        new URL(`http://localhost:${port}/sparql`),
+        'http://foo.org/id/graph/foo',
+      );
+
+      const dataset = new Dataset({
+        iri: new URL('http://foo.org/id/dataset/foo'),
+        distributions: [distribution],
+        publisher: {
+          iri: new URL('http://example.org/publisher'),
+          name: { nl: 'Naam' },
+        },
+        license: new URL('http://example.org/license'),
+      });
+
+      await reader.read(dataset, distribution);
+
+      expect(querySpy).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.stringContaining('<http://example.org/publisher>'),
+      );
+      expect(querySpy).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.stringContaining('<http://example.org/license>'),
+      );
+    });
+
+    it('leaves datasetPublisher/datasetLicense unbound when the dataset has neither', async () => {
+      const fetcher = new SparqlEndpointFetcher();
+      const querySpy = vi.spyOn(fetcher, 'fetchTriples');
+
+      const reader = new SparqlConstructReader({
+        query: `CONSTRUCT { ?dataset ?p ?o } WHERE { ?dataset ?p ?o }`,
+        fetcher,
+      });
+
+      const distribution = Distribution.sparql(
+        new URL(`http://localhost:${port}/sparql`),
+        'http://foo.org/id/graph/foo',
+      );
+
+      const dataset = new Dataset({
+        iri: new URL('http://foo.org/id/dataset/foo'),
+        distributions: [distribution],
+      });
+
+      await reader.read(dataset, distribution);
+
+      const query = querySpy.mock.calls[0][1] as string;
+      expect(query).not.toContain('datasetPublisher');
+      expect(query).not.toContain('datasetLicense');
+    });
+
+    it('produces one triple per language value for a multi-valued dataset', async () => {
+      const datasetIri = 'http://foo.org/id/dataset/foo';
+
+      const reader = new SparqlConstructReader({
+        query: `CONSTRUCT { ?dataset <http://purl.org/dc/terms/language> ?datasetLanguage } WHERE { ?dataset ?p ?o }`,
+      });
+
+      const distribution = Distribution.sparql(
+        new URL(`http://localhost:${port}/sparql`),
+        'http://foo.org/id/graph/foo',
+      );
+
+      const dataset = new Dataset({
+        iri: new URL(datasetIri),
+        distributions: [distribution],
+        language: ['nl', 'en'],
+      });
+
+      const result = await reader.read(dataset, distribution);
+
+      const quads = [];
+      for await (const quad of result) {
+        quads.push(quad);
+      }
+      const languages = quads.map((quad) => quad.object.value).sort();
+      expect(languages).toEqual(['en', 'nl']);
+    });
+
+    it('produces one triple per publisher name translation, tagged with its language', async () => {
+      const datasetIri = 'http://foo.org/id/dataset/foo';
+
+      const reader = new SparqlConstructReader({
+        query: `CONSTRUCT { ?dataset <http://purl.org/dc/terms/title> ?datasetPublisherName } WHERE { ?dataset ?p ?o }`,
+      });
+
+      const distribution = Distribution.sparql(
+        new URL(`http://localhost:${port}/sparql`),
+        'http://foo.org/id/graph/foo',
+      );
+
+      const dataset = new Dataset({
+        iri: new URL(datasetIri),
+        distributions: [distribution],
+        publisher: {
+          iri: new URL('http://example.org/publisher'),
+          name: { nl: 'Naam', en: 'Name' },
+        },
+      });
+
+      const result = await reader.read(dataset, distribution);
+
+      const quads = [];
+      for await (const quad of result) {
+        quads.push(quad);
+      }
+      const byLang = Object.fromEntries(
+        quads.map((quad) => [
+          (quad.object as { language?: string }).language,
+          quad.object.value,
+        ]),
+      );
+      expect(byLang).toEqual({ nl: 'Naam', en: 'Name' });
+    });
+  });
+
   describe('bindings', () => {
     it('injects a VALUES clause when bindings are provided', async () => {
       const fetcher = new SparqlEndpointFetcher();
@@ -285,7 +452,7 @@ describe('SparqlConstructReader', () => {
       );
     });
 
-    it('does not inject a VALUES clause without bindings', async () => {
+    it('injects only the dataset VALUES clause without selector bindings', async () => {
       const fetcher = new SparqlEndpointFetcher();
       const querySpy = vi.spyOn(fetcher, 'fetchTriples');
 
@@ -307,11 +474,11 @@ describe('SparqlConstructReader', () => {
 
       expect(querySpy).toHaveBeenCalledWith(
         expect.any(String),
-        expect.not.stringContaining('VALUES'),
+        expect.stringContaining('VALUES ?dataset {'),
       );
     });
 
-    it('does not inject a VALUES clause when bindings array is empty', async () => {
+    it('injects only the dataset VALUES clause when the selector bindings array is empty', async () => {
       const fetcher = new SparqlEndpointFetcher();
       const querySpy = vi.spyOn(fetcher, 'fetchTriples');
 
@@ -333,7 +500,7 @@ describe('SparqlConstructReader', () => {
 
       expect(querySpy).toHaveBeenCalledWith(
         expect.any(String),
-        expect.not.stringContaining('VALUES'),
+        expect.stringContaining('VALUES ?dataset'),
       );
     });
   });

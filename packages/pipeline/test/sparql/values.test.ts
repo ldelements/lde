@@ -6,9 +6,14 @@ import type {
   QueryConstruct,
   PatternValues,
 } from '@traqula/rules-sparql-1-1';
-import { findSubSelect, injectValues } from '../../src/sparql/values.js';
+import {
+  findSubSelect,
+  injectValues,
+  mergeBindings,
+} from '../../src/sparql/values.js';
+import type { VariableBindings } from '../../src/sparql/reader.js';
 
-const { namedNode } = DataFactory;
+const { namedNode, literal } = DataFactory;
 const parser = new Parser();
 
 function parseConstruct(sparql: string): QueryConstruct {
@@ -193,5 +198,63 @@ describe('injectValues', () => {
 
     const subSelectAfter = findSubSelect(original.where.patterns)!;
     expect(subSelectAfter.where.patterns.length).toBe(originalInnerLength);
+  });
+
+  it('injects a plain string literal binding', () => {
+    const result = injectValues(baseQuery, [{ class: literal('nl') }]);
+
+    const values = result.where.patterns.find(
+      (p): p is PatternValues => p.subType === 'values',
+    );
+    expect(values!.values[0]['class']).toMatchObject({
+      type: 'term',
+      subType: 'literal',
+      value: 'nl',
+    });
+  });
+
+  it('injects a language-tagged literal binding', () => {
+    const result = injectValues(baseQuery, [{ class: literal('Naam', 'nl') }]);
+
+    const values = result.where.patterns.find(
+      (p): p is PatternValues => p.subType === 'values',
+    );
+    expect(values!.values[0]['class']).toMatchObject({
+      type: 'term',
+      subType: 'literal',
+      value: 'Naam',
+      langOrIri: 'nl',
+    });
+  });
+});
+
+describe('mergeBindings', () => {
+  it('returns the item-level rows unchanged when dataset-level is empty', () => {
+    const itemLevel = [{ s: namedNode('http://example.org/1') }];
+    expect(mergeBindings([], itemLevel)).toBe(itemLevel);
+  });
+
+  it('returns the dataset-level rows unchanged when item-level is empty', () => {
+    const datasetLevel = [{ dataset: namedNode('http://example.org/dataset') }];
+    expect(mergeBindings(datasetLevel, [])).toBe(datasetLevel);
+  });
+
+  it('cross-products dataset-level and item-level rows', () => {
+    const datasetLevel: VariableBindings[] = [
+      { dataset: namedNode('http://example.org/dataset') },
+      { dataset: namedNode('http://example.org/dataset'), lang: literal('en') },
+    ];
+    const itemLevel: VariableBindings[] = [
+      { s: namedNode('http://example.org/1') },
+      { s: namedNode('http://example.org/2') },
+    ];
+
+    const result = mergeBindings(datasetLevel, itemLevel);
+
+    expect(result).toHaveLength(4);
+    for (const row of result) {
+      expect(row['dataset']).toBeDefined();
+      expect(row['s']).toBeDefined();
+    }
   });
 });

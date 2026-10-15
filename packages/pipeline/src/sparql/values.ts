@@ -5,11 +5,23 @@ import {
   type PatternValues,
   type QueryConstruct,
   type QuerySelect,
+  type TermIri,
+  type TermLiteral,
   type ValuePatternRow,
 } from '@traqula/rules-sparql-1-1';
+import type { NamedNode, Literal } from '@rdfjs/types';
 import type { VariableBindings } from './reader.js';
 
 const F = new AstFactory();
+
+function termToAstTerm(node: NamedNode | Literal): TermIri | TermLiteral {
+  if (node.termType === 'Literal') {
+    return node.language
+      ? F.termLiteral(F.gen(), node.value, node.language)
+      : F.termLiteral(F.gen(), node.value);
+  }
+  return F.termNamed(F.gen(), node.value);
+}
 
 /**
  * Find the first SubSelect within a list of patterns, looking through
@@ -84,36 +96,72 @@ function injectIntoInnermost(
   return F.patternGroup(mapped, F.gen());
 }
 
-/**
- * Inject a VALUES clause into a parsed CONSTRUCT query for the given binding rows.
- *
- * Each row's keys become SPARQL variables; NamedNode values become IRIs in the
- * VALUES block. The VALUES clause is injected into the innermost subquery so
- * that SPARQL engines can constrain scans early.
- *
- * The caller owns parsing and stringifying; this function operates on the AST.
- */
-export function injectValues(
-  query: QueryConstruct,
-  bindings: VariableBindings[],
-): QueryConstruct {
+function buildValuesPattern(bindings: VariableBindings[]): PatternValues {
   const variableNames = bindings.length > 0 ? Object.keys(bindings[0]) : [];
 
   const variables = variableNames.map((name) => F.termVariable(name, F.gen()));
 
   const values: ValuePatternRow[] = bindings.map((row) =>
     Object.fromEntries(
-      Object.entries(row).map(([name, node]) => [
-        name,
-        F.termNamed(F.gen(), node.value),
-      ]),
+      Object.entries(row).map(([name, node]) => [name, termToAstTerm(node)]),
     ),
   );
 
-  const valuesPattern = F.patternValues(variables, values, F.gen());
+  return F.patternValues(variables, values, F.gen());
+}
 
+/**
+ * Injects at the innermost sub-SELECT, for per-item (selector) bindings only.
+ * Dataset-level bindings must use {@link injectValuesOuter} instead – a
+ * sub-SELECT doesn't inherit outer bindings, so injecting them here would
+ * leave an outer `BIND`/`FILTER` referencing them unbound.
+ */
+export function injectValues<Q extends QueryConstruct | QuerySelect>(
+  query: Q,
+  bindings: VariableBindings[],
+): Q {
   return {
     ...query,
-    where: injectIntoInnermost(query.where, valuesPattern),
+    where: injectIntoInnermost(query.where, buildValuesPattern(bindings)),
   };
+}
+
+/**
+ * Injects at the outermost WHERE scope, for dataset-level bindings (the
+ * dataset IRI, DCAT bindings, custom {@link DatasetBindingsProvider} rows).
+ * Not visible inside a nested sub-SELECT – see {@link injectValues}.
+ */
+export function injectValuesOuter<Q extends QueryConstruct | QuerySelect>(
+  query: Q,
+  bindings: VariableBindings[],
+): Q {
+  return {
+    ...query,
+    where: F.patternGroup(
+      [buildValuesPattern(bindings), ...query.where.patterns],
+      F.gen(),
+    ),
+  };
+}
+
+/**
+ * Cross-products two sets of dataset-level binding rows (predefined DCAT
+ * bindings and a custom {@link DatasetBindingsProvider}'s rows), for
+ * {@link injectValuesOuter}. An empty side is the identity. This is also how
+ * a multi-valued binding like `datasetLanguage` ends up as one row per value.
+ */
+export function mergeBindings(
+  a: VariableBindings[],
+  b: VariableBindings[],
+): VariableBindings[] {
+  if (a.length === 0) return b;
+  if (b.length === 0) return a;
+
+  const merged: VariableBindings[] = [];
+  for (const rowA of a) {
+    for (const rowB of b) {
+      merged.push({ ...rowA, ...rowB });
+    }
+  }
+  return merged;
 }
