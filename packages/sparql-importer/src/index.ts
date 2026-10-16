@@ -36,7 +36,20 @@ export class ImportSuccessful {
     public readonly identifier?: string,
     public readonly tripleCount?: number,
     public readonly warnings: string[] = [],
+    /** The engine that built the imported data, when the importer can tell.
+     *  For a cached index this is the engine that built it, which may differ
+     *  from the one that serves it. */
+    public readonly engine?: Engine,
   ) {}
+}
+
+/** A store engine, identified as precisely as it identifies itself. */
+export interface Engine {
+  /** Human-readable name, e.g. `QLever`. */
+  readonly name: string;
+  /** The engine’s own version identifier, such as a release number or a
+   *  commit hash. */
+  readonly version: string;
 }
 
 export class ImportFailed {

@@ -95,6 +95,8 @@ For native formats, the actual `qlever-index` format flag is resolved by priorit
 
 An import that indexes **0 triples** – fresh or from cache – is treated as `ImportFailed`, not success.
 
+A successful import reports the QLever that built the index as `ImportSuccessful.engine`, e.g. `{ name: 'QLever', version: '9352d0' }`, with the `git-hash` from the index’s `meta-data.json` as the version. For a cached index this is the QLever that built it, which may be older than the one serving it.
+
 ## Direct construction
 
 `createQlever()` is a convenience; construct `Importer` and `Server` directly to supply your own task runner:

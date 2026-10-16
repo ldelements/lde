@@ -39,7 +39,7 @@ function stubTaskRunner(tripleCount = 42): TaskRunner<string> & {
       return command;
     },
     async wait() {
-      return `{"num-triples":{"normal":${tripleCount}}}`;
+      return `{"git-hash":"a14e0a","num-triples":{"normal":${tripleCount}}}`;
     },
     async stop() {
       return null;
@@ -79,6 +79,10 @@ describe('Importer', () => {
       const result = await importer.import(distributions);
       expect(result).toBeInstanceOf(ImportSuccessful);
       expect((result as ImportSuccessful).tripleCount).toBe(1);
+      expect((result as ImportSuccessful).engine).toEqual({
+        name: 'QLever',
+        version: expect.stringMatching(/^[0-9a-f]+$/),
+      });
     }, 120_000);
   });
 
@@ -87,11 +91,14 @@ describe('Importer', () => {
     let dataFile: string;
     const indexName = 'test-index';
 
-    /** Write the QLever metadata file that `readTripleCount` reads on cache hits. */
+    /** Write the QLever metadata file that a cache hit reads. */
     async function writeMetadata(tripleCount: number) {
       await writeFile(
         join(tempDir, `${indexName}.meta-data.json`),
-        JSON.stringify({ 'num-triples': { normal: tripleCount } }),
+        JSON.stringify({
+          'git-hash': '9352d0',
+          'num-triples': { normal: tripleCount },
+        }),
       );
     }
 
@@ -129,6 +136,10 @@ describe('Importer', () => {
 
       expect(result).toBeInstanceOf(ImportSuccessful);
       expect((result as ImportSuccessful).tripleCount).toBe(42);
+      expect((result as ImportSuccessful).engine).toEqual({
+        name: 'QLever',
+        version: 'a14e0a',
+      });
       expect(runner.commands.length).toBe(1);
 
       // Cache marker should exist with only the source file name.
@@ -154,6 +165,11 @@ describe('Importer', () => {
       const result = await importer.import(makeDistributions());
       expect(result).toBeInstanceOf(ImportSuccessful);
       expect((result as ImportSuccessful).tripleCount).toBe(42);
+      // The QLever that built the cached index, not the one that would index now.
+      expect((result as ImportSuccessful).engine).toEqual({
+        name: 'QLever',
+        version: '9352d0',
+      });
       expect(runner.commands.length).toBe(1); // Still only one index call.
     });
 

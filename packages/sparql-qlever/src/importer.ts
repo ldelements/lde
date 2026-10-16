@@ -1,4 +1,5 @@
 import {
+  type Engine,
   Importer as ImporterInterface,
   ImporterOptions,
   ImportFailed,
@@ -102,14 +103,21 @@ export class Importer implements ImporterInterface {
       await this.options.downloader.download(distribution);
 
     if (await this.isIndexUpToDate(localFile)) {
-      const tripleCount = await this.readTripleCount(localFile);
+      const metadata = await this.readMetadata(localFile);
+      const tripleCount = this.parseTripleCount(metadata);
       if (tripleCount === 0) {
         return new ImportFailed(
           distribution,
           'Index is cached but contains 0 triples',
         );
       }
-      return new ImportSuccessful(distribution, undefined, tripleCount);
+      return new ImportSuccessful(
+        distribution,
+        undefined,
+        tripleCount,
+        [],
+        this.parseEngine(metadata),
+      );
     }
 
     let indexFile = localFile;
@@ -153,7 +161,13 @@ export class Importer implements ImporterInterface {
 
     await this.writeCacheInfo(localFile);
 
-    return new ImportSuccessful(distribution, undefined, tripleCount, warnings);
+    return new ImportSuccessful(
+      distribution,
+      undefined,
+      tripleCount,
+      warnings,
+      this.parseEngine(logs),
+    );
   }
 
   private parseTripleCount(logs: string): number | undefined {
@@ -162,6 +176,13 @@ export class Importer implements ImporterInterface {
     // Docker log multiplexing prepends binary frame headers to each chunk.
     const match = logs.match(/"num-triples":\{[^}]*"normal":(\d+)/);
     return match ? Number(match[1]) : undefined;
+  }
+
+  /** The QLever that built the index, from the `git-hash` in its metadata:
+   *  QLever has no releases, so the commit is its version. */
+  private parseEngine(metadata: string): Engine | undefined {
+    const match = metadata.match(/"git-hash"\s*:\s*"([0-9a-f]+)"/);
+    return match ? { name: 'QLever', version: match[1] } : undefined;
   }
 
   private cacheInfoPath(dataFile: string): string {
@@ -197,17 +218,16 @@ export class Importer implements ImporterInterface {
     return true;
   }
 
-  /** Read the triple count from QLever's metadata file. */
-  private async readTripleCount(dataFile: string): Promise<number | undefined> {
+  /** Read QLever's metadata file, or an empty string when there is none. */
+  private async readMetadata(dataFile: string): Promise<string> {
     try {
       const metadataPath = join(
         dirname(dataFile),
         `${this.options.indexName}.meta-data.json`,
       );
-      const raw = await readFile(metadataPath, 'utf-8');
-      return this.parseTripleCount(raw);
+      return await readFile(metadataPath, 'utf-8');
     } catch {
-      return undefined;
+      return '';
     }
   }
 

@@ -21,8 +21,9 @@ components program against. It ships no importer of its own.
 supports, downloads it, and indexes it. It resolves to one of three results:
 
 - `ImportSuccessful` – with the imported `distribution`, an optional `identifier`
-  (e.g. the index name), an optional `tripleCount`, and any `warnings` collected
-  along the way;
+  (e.g. the index name), an optional `tripleCount`, any `warnings` collected
+  along the way, and an optional `engine` (`{ name, version }`) naming the store
+  engine that built the imported data, when the importer can tell;
 - `ImportFailed` – with the `distribution` that failed and the `error` message;
 - `NotSupported` – when none of the distributions use a supported format
   (`distribution` is then optional).
