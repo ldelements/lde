@@ -209,8 +209,17 @@ describe('createSearchGraphQLHandler', () => {
     expect(response.headers.get('vary')).toContain('Accept-Language');
   });
 
-  it('reports the languages it served in Content-Language', async () => {
-    const { engine } = fakeEngine();
+  it('reports the displayed languages in Content-Language', async () => {
+    const { engine } = fakeEngine({
+      ...canned,
+      hits: [
+        ...canned.hits,
+        {
+          id: 'https://d/2',
+          document: { title: { nl: ['Alleen Nederlands'] } },
+        },
+      ],
+    });
     const handler = createSearchGraphQLHandler({
       searchSchema: searchSchema(schema),
       engine,
@@ -222,28 +231,19 @@ describe('createSearchGraphQLHandler', () => {
       { 'accept-language': 'en' },
     );
 
+    // The first item displays `en` (its `nl` is served but not displayed);
+    // the second has only `nl`.
     expect(response.headers.get('content-language')).toBe('en, nl');
   });
 
   it('leaves malformed, untagged and case-duplicate tags out of Content-Language', async () => {
-    const { engine } = fakeEngine({
-      ...canned,
-      hits: [
-        {
-          id: 'https://d/1',
-          document: {
-            title: {
-              nl: ['Titel'],
-              NL: ['TITEL'],
-              'en\nX-Injected: 1': ['Title'],
-              UND: ['Zonder taal'],
-              iw: ['כותרת'],
-              und: ['Naamloos'],
-            },
-          },
-        },
-      ],
-    });
+    const titles = ['nl', 'NL', 'en\nX-Injected: 1', 'UND', 'iw', 'und'].map(
+      (language, index) => ({
+        id: `https://d/${index}`,
+        document: { title: { [language]: ['Titel'] } },
+      }),
+    );
+    const { engine } = fakeEngine({ ...canned, hits: titles });
     const handler = createSearchGraphQLHandler({
       searchSchema: searchSchema(schema),
       engine,

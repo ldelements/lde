@@ -70,9 +70,10 @@ export interface SearchContext {
   /** Parsed, ordered `Accept-Language`; drives locale selection and output order. */
   readonly acceptLanguage: readonly string[];
   /**
-   * Collects the language of every tagged `LanguageString` the response
-   * serves, so the transport can report them in `Content-Language`. Optional –
-   * omit when the transport doesn’t report served languages.
+   * Collects the displayed (`[0]`) language of every tagged `LanguageString`
+   * list the response serves, so the transport can report them in
+   * `Content-Language`. Optional – omit when the transport doesn’t report
+   * served languages.
    */
   readonly servedLanguages?: Set<string>;
   /**
@@ -242,10 +243,10 @@ export function buildGraphQLSchema(
       context.acceptLanguage,
       languageOrder,
     );
-    for (const { language } of languageStrings) {
-      if (language !== null) {
-        context.servedLanguages?.add(language);
-      }
+    // Only `[0]` is displayed, so only its language is served.
+    const displayedLanguage = languageStrings[0]?.language;
+    if (displayedLanguage) {
+      context.servedLanguages?.add(displayedLanguage);
     }
     return languageStrings;
   };
