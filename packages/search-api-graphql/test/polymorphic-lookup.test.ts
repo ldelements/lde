@@ -150,6 +150,39 @@ describe('serving a lookup over several targets', () => {
     );
   });
 
+  it('offers a nullable id where a local lookup may store an unidentified referent', () => {
+    const local = printSchema(
+      buildGraphQLSchema(
+        searchSchema(
+          {
+            ...work,
+            fields: [
+              {
+                name: 'creator',
+                kind: 'reference',
+                output: true,
+                ref: {
+                  strategy: 'lookup',
+                  target: ['Person', 'Organization'],
+                  local: true,
+                },
+              },
+            ],
+          },
+          person,
+          organization,
+          place,
+        ),
+      ),
+    );
+    expect(local).toMatch(
+      /interface PersonOrOrganizationReference \{\s+id: IRI\s/,
+    );
+    expect(local).toMatch(
+      /type PersonOrOrganizationUnresolvedReference implements PersonOrOrganizationReference \{\s+id: IRI\s/,
+    );
+  });
+
   it('offers a field every target requires as nullable, since an unresolved referent carries none of it', () => {
     const requiring = (searchType: SearchType): SearchType => ({
       ...searchType,
