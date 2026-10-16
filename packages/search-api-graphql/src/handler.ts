@@ -165,20 +165,37 @@ export function createSearchGraphQLHandler(
 /**
  * A `Content-Language` value for the served languages: tags come from indexed
  * data, so drop any that is not a well-formed language tag (it could make an
- * invalid header) and canonicalise the rest, which folds case-only duplicates.
+ * invalid header) or is untagged in another case (`UND`), and fold case-only
+ * duplicates. Tags keep the spelling the body serves them in, so the header
+ * names the same languages as `LanguageString.language`.
  */
 function toContentLanguage(
   servedLanguages: ReadonlySet<string>,
 ): string | undefined {
-  const canonicalTags = new Set<string>();
+  const tagsByLowerCase = new Map<string, string>();
   for (const language of servedLanguages) {
-    try {
-      canonicalTags.add(Intl.getCanonicalLocales(language)[0]!);
-    } catch {
-      // Not a well-formed BCP 47 tag.
+    const lowerCase = language.toLowerCase();
+    if (
+      lowerCase !== 'und' &&
+      !tagsByLowerCase.has(lowerCase) &&
+      isLanguageTag(language)
+    ) {
+      tagsByLowerCase.set(lowerCase, language);
     }
   }
-  return canonicalTags.size > 0 ? [...canonicalTags].join(', ') : undefined;
+  return tagsByLowerCase.size > 0
+    ? [...tagsByLowerCase.values()].join(', ')
+    : undefined;
+}
+
+/** Whether a string is a well-formed BCP 47 language tag. */
+function isLanguageTag(language: string): boolean {
+  try {
+    Intl.getCanonicalLocales(language);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Ordered languages from an `Accept-Language` header (best first, by q-value). */

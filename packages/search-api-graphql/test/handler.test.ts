@@ -225,7 +225,7 @@ describe('createSearchGraphQLHandler', () => {
     expect(response.headers.get('content-language')).toBe('en, nl');
   });
 
-  it('leaves malformed and case-duplicate tags out of Content-Language', async () => {
+  it('leaves malformed, untagged and case-duplicate tags out of Content-Language', async () => {
     const { engine } = fakeEngine({
       ...canned,
       hits: [
@@ -236,6 +236,8 @@ describe('createSearchGraphQLHandler', () => {
               nl: ['Titel'],
               NL: ['TITEL'],
               'en\nX-Injected: 1': ['Title'],
+              UND: ['Zonder taal'],
+              iw: ['כותרת'],
               und: ['Naamloos'],
             },
           },
@@ -253,7 +255,8 @@ describe('createSearchGraphQLHandler', () => {
     );
 
     expect(response.status).toBe(200);
-    expect(response.headers.get('content-language')).toBe('nl');
+    // `iw` stays as served, not canonicalised to `he`.
+    expect(response.headers.get('content-language')).toBe('nl, iw');
   });
 
   it('sends no Content-Language when it served no language-tagged value', async () => {
