@@ -1,4 +1,5 @@
 import type { LocalizedValue } from '@lde/search';
+import { matchLanguage } from '@lde/search/adapter';
 
 /** One entry of the surface’s best-first `[LanguageString!]!`. `language` is null
  *  for untagged (`und`) values; `[0]` is the value to display and `[0].language`
@@ -15,12 +16,17 @@ export type LanguageOrder = (
 ) => readonly string[];
 
 /**
- * Default ordering: requested languages first (in request order), then the
- * remaining tagged languages, then untagged (`und`) last — so `[0]` is always the
- * best available value.
+ * Default ordering: requested languages first (in request order, each matched
+ * as a language range – `nl-NL` finds `nl` – most specific first), then the
+ * remaining tagged languages, then untagged (`und`) last – so `[0]` is always
+ * the best available value.
  */
 export const defaultLanguageOrder: LanguageOrder = (available, accept) => {
-  const requested = accept.filter((language) => available.includes(language));
+  const requested = [
+    ...new Set(
+      accept.flatMap((language) => matchLanguage(language, available)),
+    ),
+  ];
   const rest = available.filter(
     (language) => language !== 'und' && !requested.includes(language),
   );

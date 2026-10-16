@@ -47,14 +47,17 @@ const canned: SearchResult = {
   facets: {},
 };
 
-function fakeEngine(): { engine: SearchEngine; received: () => SearchQuery } {
+function fakeEngine(result: SearchResult = canned): {
+  engine: SearchEngine;
+  received: () => SearchQuery;
+} {
   let captured: SearchQuery;
   return {
     engine: {
       schema: searchSchema(schema),
       async search(_searchType, query) {
         captured = query;
-        return canned;
+        return result;
       },
       async searchFacets(_searchType, queries) {
         return queries.map((): FacetsOutcome => ({ facets: {} }));
@@ -191,6 +194,87 @@ describe('createSearchGraphQLHandler', () => {
     expect(received().locale).toBe('nl');
   });
 
+  it('declares that responses vary by Accept-Language', async () => {
+    const { engine } = fakeEngine();
+    const handler = createSearchGraphQLHandler({
+      searchSchema: searchSchema(schema),
+      engine,
+    });
+
+    const response = await post(
+      handler,
+      '{ datasets { pagination { total } } }',
+    );
+
+    expect(response.headers.get('vary')).toContain('Accept-Language');
+  });
+
+  it('reports the displayed languages in Content-Language', async () => {
+    const { engine } = fakeEngine({
+      ...canned,
+      hits: [
+        ...canned.hits,
+        {
+          id: 'https://d/2',
+          document: { title: { nl: ['Alleen Nederlands'] } },
+        },
+      ],
+    });
+    const handler = createSearchGraphQLHandler({
+      searchSchema: searchSchema(schema),
+      engine,
+    });
+
+    const response = await post(
+      handler,
+      '{ datasets { items { title { language value } } } }',
+      { 'accept-language': 'en' },
+    );
+
+    // The first item displays `en` (its `nl` is served but not displayed);
+    // the second has only `nl`.
+    expect(response.headers.get('content-language')).toBe('en, nl');
+  });
+
+  it('leaves malformed, untagged and case-duplicate tags out of Content-Language', async () => {
+    const titles = ['nl', 'NL', 'en\nX-Injected: 1', 'UND', 'iw', 'und'].map(
+      (language, index) => ({
+        id: `https://d/${index}`,
+        document: { title: { [language]: ['Titel'] } },
+      }),
+    );
+    const { engine } = fakeEngine({ ...canned, hits: titles });
+    const handler = createSearchGraphQLHandler({
+      searchSchema: searchSchema(schema),
+      engine,
+    });
+
+    const response = await post(
+      handler,
+      '{ datasets { items { title { language value } } } }',
+    );
+
+    expect(response.status).toBe(200);
+    // `iw` stays as served, not canonicalised to `he`.
+    expect(response.headers.get('content-language')).toBe('nl, iw');
+  });
+
+  it('sends no Content-Language when it served no language-tagged value', async () => {
+    const { engine } = fakeEngine();
+    const handler = createSearchGraphQLHandler({
+      searchSchema: searchSchema(schema),
+      engine,
+    });
+
+    const response = await post(
+      handler,
+      '{ datasets { pagination { total } } }',
+      { 'accept-language': 'en' },
+    );
+
+    expect(response.headers.get('content-language')).toBeNull();
+  });
+
   it('serves a self-contained playground on GET', async () => {
     const { engine } = fakeEngine();
     const handler = createSearchGraphQLHandler({
@@ -306,6 +390,78 @@ describe('createSearchGraphQLHandler', () => {
 
     expect(data).toBeUndefined();
     expect(JSON.stringify(errors)).toContain('Cost');
+  });
+
+  it('does not count fragment spreads as extra levels', async () => {
+    const { engine } = fakeEngine();
+    // Inlined, this query has depth 3 and costs 14.75. With flattened
+    // fragments it costs 22.25; unflattened, depth 7 and cost 69.6.
+    const handler = createSearchGraphQLHandler({
+      searchSchema: searchSchema(schema),
+      engine,
+      maxDepth: 3,
+      maxCost: 30,
+    });
+
+    const response = await post(
+      handler,
+      `{ datasets { ...Page } }
+       fragment Page on DatasetSearchResult { pagination { total } items { ...Item } }
+       fragment Item on Dataset { id keyword }`,
+    );
+    const { data, errors } = await response.json();
+
+    expect(errors).toBeUndefined();
+    expect(data.datasets.items).toBeDefined();
+  });
+
+  describe('the cost of a fragment', () => {
+    const page = '{ pagination { total } items { id keyword } }';
+    const inlined = `{ datasets ${page} }`;
+
+    /** The cost graphql-armor scores a query at, read off its rejection. */
+    async function costOf(query: string): Promise<number> {
+      const { engine } = fakeEngine();
+      const handler = createSearchGraphQLHandler({
+        searchSchema: searchSchema(schema),
+        engine,
+        maxCost: 0,
+      });
+      const { errors } = await (await post(handler, query)).json();
+      return Number(/found ([\d.]+)/.exec(errors[0].message)?.[1]);
+    }
+
+    it('adds 2 for an inline fragment', async () => {
+      expect(
+        await costOf(`{ datasets { ... on DatasetSearchResult ${page} } }`),
+      ).toBe((await costOf(inlined)) + 2);
+    });
+
+    it('adds 3 for a named spread', async () => {
+      expect(
+        await costOf(
+          `{ datasets { ...Page } } fragment Page on DatasetSearchResult ${page}`,
+        ),
+      ).toBe((await costOf(inlined)) + 3);
+    });
+
+    it('multiplies the contents of a spread at the operation root by 1.5', async () => {
+      expect(
+        await costOf(`{ ...Query } fragment Query on Query ${inlined}`),
+      ).toBe(3 + 1.5 * (await costOf(inlined)));
+    });
+
+    it('charges a repeated spread 1 plus 1.5× what its first spread scored', async () => {
+      const fragment = `fragment Page on DatasetSearchResult ${page}`;
+      const once = await costOf(`{ datasets { ...Page } } ${fragment}`);
+      // `once` is the `datasets` field (2) plus the first spread (1 + F).
+      const fragmentCost = once - 3;
+      expect(
+        await costOf(
+          `{ a: datasets { ...Page } b: datasets { ...Page } } ${fragment}`,
+        ),
+      ).toBe(once + 2 + 1 + 1.5 * fragmentCost);
+    });
   });
 
   it('answers introspection within the default limits', async () => {

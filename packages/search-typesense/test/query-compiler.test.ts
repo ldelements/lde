@@ -84,6 +84,28 @@ describe('buildSearchParams', () => {
     ).toBe('4,5,1');
   });
 
+  it('boosts the declared locale a regional tag falls under', () => {
+    expect(
+      buildSearchParams({ ...base, text: 'Kaart', locale: 'en-GB' }, schema)
+        .query_by_weights,
+    ).toBe('4,5,1');
+  });
+
+  it('sorts a regional tag on its declared locale’s key', () => {
+    // locales is ['nl', 'en']: without range matching `en-GB` would fall back
+    // to the first locale and sort English readers by the Dutch title.
+    expect(
+      buildSearchParams(
+        {
+          ...base,
+          locale: 'en-GB',
+          orderBy: [{ field: 'title', direction: 'asc' }],
+        },
+        schema,
+      ).sort_by,
+    ).toBe('title_sort_en:asc');
+  });
+
   it('maps offset/limit to numbered pages', () => {
     expect(
       buildSearchParams({ ...base, offset: 40, limit: 20 }, schema).page,

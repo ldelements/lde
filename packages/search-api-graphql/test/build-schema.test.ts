@@ -320,12 +320,13 @@ describe('buildGraphQLSchema', () => {
         keyword: [{ value: 'kaarten', count: 3 }],
       },
     });
+    const servedLanguages = new Set<string>();
     const result = await run(
       `{ datasets { facets {
         publisher { value count label { language value } }
         keyword { value count label { language value } }
       } } }`,
-      { engine, acceptLanguage: ['nl'] },
+      { engine, acceptLanguage: ['nl'], servedLanguages },
     );
     const facets = (result.data?.datasets as Record<string, unknown>)
       .facets as {
@@ -342,6 +343,7 @@ describe('buildGraphQLSchema', () => {
     expect(facets.keyword).toEqual([
       { value: 'kaarten', count: 3, label: null },
     ]);
+    expect([...servedLanguages]).toEqual(['nl']);
   });
 
   it('drops an unselectable bucket rather than nulling the response around it', async () => {

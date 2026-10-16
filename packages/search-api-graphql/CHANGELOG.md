@@ -1,3 +1,25 @@
+## 0.30.3 (2026-10-16)
+
+### 🩹 Fixes
+
+- **search-api-graphql:** send Vary and Content-Language for Accept-Language ([#917](https://github.com/ldelements/lde/pull/917))
+
+## 0.30.2 (2026-10-16)
+
+### 🩹 Fixes
+
+- **search:** match language tags against locales as language ranges ([#919](https://github.com/ldelements/lde/pull/919))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.28.1
+
+## 0.30.1 (2026-10-16)
+
+### 🩹 Fixes
+
+- **search-api-graphql:** flatten fragments in depth and cost limits ([#916](https://github.com/ldelements/lde/pull/916))
+
 ## 0.30.0 (2026-10-15)
 
 ### 🧱 Updated Dependencies

@@ -1099,7 +1099,13 @@ A field with `searchable` but no `output` is **search-only** – folded and stem
 for retrieval but never rendered (e.g. a creator searched here but shown via a
 separate label). **Only listed locales are indexed** (searched and sorted); a
 literal whose language tag is not in `locales` is still **displayed** but not
-matched or sorted on. Display fields are **omitted, never empty**, when a document
+matched or sorted on. A tag is matched against `locales` as a BCP-47 language
+range, not as an exact string: a declared `nl` indexes literals tagged `nl`,
+`nl-NL` and `nl-BE`, the exact tag first. A request in `nl-NL` is boosted and
+sorted on the `nl` keys, and the GraphQL surface lists a document’s `nl` value
+first. A sibling region (`nl-BE` for `nl-NL`) matches only after the exact tag
+and the more general one. The exact match still wins where both are declared
+(`en` beside `en-GB`), and `und` matches nothing but untagged literals. Display fields are **omitted, never empty**, when a document
 lacks that language, and the per-locale search fields likewise, so declare them
 optional in the engine schema and sort with `missing_values: last`. A sort field
 is present whenever the field holds any value in a declared locale (the fallback

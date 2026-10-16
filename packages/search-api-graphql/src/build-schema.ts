@@ -61,6 +61,7 @@ import {
   defaultLanguageOrder,
   toLanguageStrings,
   type LanguageOrder,
+  type LanguageString,
 } from './language.js';
 import { createFacetLoader, type FacetLoader } from './facet-batch.js';
 import { projectionFor } from './projection.js';
@@ -73,6 +74,13 @@ export interface SearchContext {
   readonly engine: SearchEngine;
   /** Parsed, ordered `Accept-Language`; drives locale selection and output order. */
   readonly acceptLanguage: readonly string[];
+  /**
+   * Collects the displayed (`[0]`) language of every tagged `LanguageString`
+   * list the response serves, so the transport can report them in
+   * `Content-Language`. Optional – omit when the transport doesn’t report
+   * served languages.
+   */
+  readonly servedLanguages?: Set<string>;
   /**
    * Called once per affected facet field when its computation fails – for a
    * failed facet query only that query's fields, for a failed batch dispatch
@@ -231,6 +239,22 @@ export function buildGraphQLSchema(
   options: BuildGraphQLSchemaOptions = {},
 ): GraphQLSchema {
   const languageOrder = options.languageOrder ?? defaultLanguageOrder;
+  const serveLanguageStrings = (
+    value: LocalizedValue,
+    context: SearchContext,
+  ): LanguageString[] => {
+    const languageStrings = toLanguageStrings(
+      value,
+      context.acceptLanguage,
+      languageOrder,
+    );
+    // Only `[0]` is displayed, so only its language is served.
+    const displayedLanguage = languageStrings[0]?.language;
+    if (displayedLanguage) {
+      context.servedLanguages?.add(displayedLanguage);
+    }
+    return languageStrings;
+  };
   const maxPerPage = options.maxPerPage ?? 100;
   const rootTypesByName = new Map(
     [...schema.values()].map((searchType) => [searchType.name, searchType]),
@@ -265,9 +289,7 @@ export function buildGraphQLSchema(
       type: new GraphQLList(new GraphQLNonNull(languageString)),
       resolve: (bucket: Source, _args: unknown, context: SearchContext) => {
         const label = bucket.label as LocalizedValue | undefined;
-        return label
-          ? toLanguageStrings(label, context.acceptLanguage, languageOrder)
-          : null;
+        return label ? serveLanguageStrings(label, context) : null;
       },
     },
   });
@@ -411,9 +433,7 @@ export function buildGraphQLSchema(
     type: nonNullListOf(languageString),
     resolve: (source: Source, _args: unknown, context: SearchContext) => {
       const value = resolveLabel(source);
-      return value
-        ? toLanguageStrings(value, context.acceptLanguage, languageOrder)
-        : [];
+      return value ? serveLanguageStrings(value, context) : [];
     },
   });
 

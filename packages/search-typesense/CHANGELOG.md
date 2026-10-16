@@ -1,3 +1,13 @@
+## 0.33.1 (2026-10-16)
+
+### 🩹 Fixes
+
+- **search:** match language tags against locales as language ranges ([#919](https://github.com/ldelements/lde/pull/919))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.28.1
+
 ## 0.33.0 (2026-10-15)
 
 ### 🧱 Updated Dependencies
