@@ -19,6 +19,7 @@ export {
   ProbedDistributions,
   SparqlDistributionResolver,
   type DistributionResolver,
+  type ImportDetails,
   type ProbedSource,
   type ResolveCallbacks,
   type SparqlDistributionResolverOptions,

@@ -1,6 +1,7 @@
 import type { Dataset, Distribution } from '@lde/dataset';
 import type {
   DistributionAnalysisResult,
+  ImportDetails,
   ProgressReporter,
   TimeoutTransitionEvent,
   ValidationReport,
@@ -143,20 +144,18 @@ export class ConsoleReporter implements ProgressReporter {
   distributionSelected(
     _dataset: Dataset,
     distribution: Distribution,
-    importedFrom?: Distribution,
-    importDuration?: number,
-    tripleCount?: number,
+    imported?: ImportDetails,
   ): void {
-    if (importedFrom) {
+    if (imported) {
+      const engine = imported.engine
+        ? ` into ${imported.engine.name} ${imported.engine.version}`
+        : '';
       const count =
-        tripleCount !== undefined
-          ? `${compactNumber.format(tripleCount)} triples, `
+        imported.tripleCount !== undefined
+          ? `${compactNumber.format(imported.tripleCount)} triples, `
           : '';
-      const duration =
-        importDuration !== undefined
-          ? ` in ${chalk.bold(prettyMilliseconds(importDuration))}`
-          : '';
-      const text = `Imported ${importedFrom.accessUrl.toString()} (${count}to ${distribution.accessUrl.toString()})${duration}`;
+      const duration = ` in ${chalk.bold(prettyMilliseconds(imported.duration))}`;
+      const text = `Imported ${imported.from.accessUrl.toString()}${engine} (${count}to ${distribution.accessUrl.toString()})${duration}`;
       if (this.activeSpinner) {
         this.activeSpinner.text = text;
         this.activeSpinner.suffixText = '';

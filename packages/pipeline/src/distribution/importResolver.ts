@@ -23,14 +23,14 @@ export interface ImportResolverOptions {
    * Controls how a dataset's distribution is selected, ordered by how eagerly a
    * data dump is imported:
    *
-   * - `'sparql'` (default) — use a dataset's own SPARQL endpoint when one is
+   * - `'sparql'` (default) – use a dataset's own SPARQL endpoint when one is
    *   available; import a data dump only when no endpoint responds.
-   * - `'sparqlWithImportFallback'` — like `'sparql'`, but additionally fall
+   * - `'sparqlWithImportFallback'` – like `'sparql'`, but additionally fall
    *   back to importing the data dump when the endpoint passes probing yet fails
    *   to serve an analysis stage at runtime. The pipeline then re-runs all
    *   stages locally against the import (see
    *   {@link ImportResolver.resolveFallback}).
-   * - `'import'` — always import a data dump into a local SPARQL server,
+   * - `'import'` – always import a data dump into a local SPARQL server,
    *   even when the dataset advertises a working SPARQL endpoint. Useful when
    *   the remote endpoint is too slow or unreliable.
    *
@@ -215,13 +215,12 @@ export class ImportResolver implements DistributionResolver {
       );
       distribution.subjectFilter = importResult.distribution.subjectFilter;
 
-      return new ResolvedDistribution(
-        distribution,
-        probeResults,
-        importResult.distribution,
-        Date.now() - importStart,
-        importResult.tripleCount,
-      );
+      return new ResolvedDistribution(distribution, probeResults, {
+        from: importResult.distribution,
+        duration: Date.now() - importStart,
+        tripleCount: importResult.tripleCount,
+        engine: importResult.engine,
+      });
     }
 
     if (importResult instanceof ImportFailed) {

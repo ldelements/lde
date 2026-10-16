@@ -1271,19 +1271,17 @@ describe('Pipeline', () => {
       });
     });
 
-    it('distributionSelected reports importedFrom when import was used', async () => {
+    it('distributionSelected reports the import when one was used', async () => {
       const reporter = makeReporter();
       const importedFromDistribution = new Distribution(
         new URL('http://example.org/data.nt'),
         'application/n-triples',
       );
-      const resolved = new ResolvedDistribution(
-        sparqlDistribution,
-        [],
-        importedFromDistribution,
-        1000,
-        42000,
-      );
+      const resolved = new ResolvedDistribution(sparqlDistribution, [], {
+        from: importedFromDistribution,
+        duration: 1000,
+        tripleCount: 42000,
+      });
 
       const pipeline = new Pipeline({
         datasetSelector: makeDatasetSelector(dataset),
@@ -1298,9 +1296,7 @@ describe('Pipeline', () => {
       expect(reporter.distributionSelected).toHaveBeenCalledWith(
         dataset,
         sparqlDistribution,
-        importedFromDistribution,
-        1000,
-        42000,
+        { from: importedFromDistribution, duration: 1000, tripleCount: 42000 },
       );
     });
 
@@ -1310,13 +1306,11 @@ describe('Pipeline', () => {
         new URL('http://example.org/data.nt'),
         'application/n-triples',
       );
-      const resolved = new ResolvedDistribution(
-        sparqlDistribution,
-        [],
-        importedFromDistribution,
-        1000,
-        42000,
-      );
+      const resolved = new ResolvedDistribution(sparqlDistribution, [], {
+        from: importedFromDistribution,
+        duration: 1000,
+        tripleCount: 42000,
+      });
 
       const resolver: DistributionResolver = {
         probe: vi.fn(
@@ -1551,11 +1545,10 @@ describe('Pipeline', () => {
         ),
         resolveFallback: vi.fn(
           async () =>
-            new ResolvedDistribution(
-              importedDistribution,
-              [],
-              dumpDistribution,
-            ),
+            new ResolvedDistribution(importedDistribution, [], {
+              from: dumpDistribution,
+              duration: 0,
+            }),
         ),
       };
     }
@@ -1664,7 +1657,10 @@ describe('Pipeline', () => {
       // The dataset resolves directly to an already-imported dump.
       resolver.resolve = vi.fn(
         async () =>
-          new ResolvedDistribution(importedDistribution, [], dumpDistribution),
+          new ResolvedDistribution(importedDistribution, [], {
+            from: dumpDistribution,
+            duration: 0,
+          }),
       );
 
       const pipeline = new Pipeline({
@@ -1696,11 +1692,10 @@ describe('Pipeline', () => {
       resolver.resolveFallback.mockImplementation(
         async (_probed, callbacks?: ResolveCallbacks) => {
           callbacks?.onImportStart?.();
-          return new ResolvedDistribution(
-            importedDistribution,
-            [],
-            dumpDistribution,
-          );
+          return new ResolvedDistribution(importedDistribution, [], {
+            from: dumpDistribution,
+            duration: 0,
+          });
         },
       );
       const reporter = makeReporter();
@@ -1805,9 +1800,7 @@ describe('Pipeline', () => {
       expect(reporter.distributionSelected).toHaveBeenLastCalledWith(
         dataset,
         importedDistribution,
-        dumpDistribution,
-        undefined,
-        undefined,
+        { from: dumpDistribution, duration: 0 },
       );
       expect(reporter.distributionValidated).toHaveBeenCalledWith(
         dumpDistribution,
@@ -1852,7 +1845,7 @@ describe('Pipeline', () => {
 
     it('re-runs against a non-imported fallback source without a deep verdict', async () => {
       // A custom resolver may fall back to another live source (e.g. a secondary
-      // endpoint) rather than an imported dump: no importedFrom, so no deep
+      // endpoint) rather than an imported dump: no import, so no deep
       // validity verdict and the endpoint's fingerprint is kept.
       const secondaryEndpoint = Distribution.sparql(
         new URL('http://secondary.example.org/sparql'),
@@ -1891,8 +1884,6 @@ describe('Pipeline', () => {
       expect(reporter.distributionSelected).toHaveBeenLastCalledWith(
         dataset,
         secondaryEndpoint,
-        undefined,
-        undefined,
         undefined,
       );
       // No imported distribution → no deep validity verdict for the fallback.
@@ -2547,9 +2538,11 @@ describe('Pipeline', () => {
         | NoDistributionAvailable = new ResolvedDistribution(
         sparqlDistribution,
         [dumpProbe],
-        dumpDistribution,
-        1,
-        100,
+        {
+          from: dumpDistribution,
+          duration: 1,
+          tripleCount: 100,
+        },
       ),
     ): DistributionResolver & {
       probe: ReturnType<typeof vi.fn>;
@@ -2808,13 +2801,11 @@ describe('Pipeline', () => {
 
     it('surfaces an empty deep verdict when an import yields no triples', async () => {
       const resolver = makeDumpResolver(
-        new ResolvedDistribution(
-          sparqlDistribution,
-          [dumpProbe],
-          dumpDistribution,
-          1,
-          0,
-        ),
+        new ResolvedDistribution(sparqlDistribution, [dumpProbe], {
+          from: dumpDistribution,
+          duration: 1,
+          tripleCount: 0,
+        }),
       );
       const reporter = makeReporter();
 
@@ -3236,14 +3227,13 @@ describe('beforeDatasetWrite hook', () => {
       resolve: vi.fn(async () => new ResolvedDistribution(endpoint, [])),
       resolveFallback: vi.fn(
         async () =>
-          new ResolvedDistribution(
-            dump,
-            [],
-            new Distribution(
+          new ResolvedDistribution(dump, [], {
+            from: new Distribution(
               new URL('http://example.org/dump.ttl'),
               'application/n-triples',
             ),
-          ),
+            duration: 0,
+          }),
       ),
     };
     // Writes q1 on the endpoint then hard-fails; writes q2 on the dump re-run.

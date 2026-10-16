@@ -1,6 +1,7 @@
 import type { Dataset, Distribution } from '@lde/dataset';
 import type { ValidityVerdict } from '@lde/distribution-health';
 import type { ValidationReport } from './validator.js';
+import type { ImportDetails } from './distribution/resolver.js';
 import type { TimeoutTransitionEvent } from './sparql/timeoutPolicy.js';
 
 export interface DistributionAnalysisResult {
@@ -46,12 +47,12 @@ export interface ProgressReporter {
     distribution: Distribution,
     verdict: ValidityVerdict,
   ): void;
+  /** Called when a dataset’s source is resolved; `imported` is set when the
+   *  source serves an imported data dump. */
   distributionSelected?(
     dataset: Dataset,
     distribution: Distribution,
-    importedFrom?: Distribution,
-    importDuration?: number,
-    tripleCount?: number,
+    imported?: ImportDetails,
   ): void;
   stageStart?(stage: string): void;
   stageProgress?(update: {

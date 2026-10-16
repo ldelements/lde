@@ -692,11 +692,11 @@ export class Pipeline<Out = Quad> {
       // the analysis stages is empirically incapable. Switch to the dataset’s
       // data dump and re-run all stages locally, discarding the
       // endpoint-sourced partial results. Only a live endpoint
-      // (`importedFrom === undefined`) can fall back – a run already on an
+      // (`imported === undefined`) can fall back – a run already on an
       // imported dump has nowhere further to go.
       if (
         stageFailed &&
-        resolved.importedFrom === undefined &&
+        resolved.imported === undefined &&
         this.distributionResolver.resolveFallback
       ) {
         // A failing fallback import must abort only this dataset, never the
@@ -718,16 +718,13 @@ export class Pipeline<Out = Quad> {
             // run can skip an unchanged dump (the endpoint's fingerprint is
             // null, which would force a re-import every run).
             let fallbackFingerprint = fingerprint;
-            if (fallback.importedFrom) {
+            if (fallback.imported) {
+              const dump = fallback.imported.from;
               const dumpProbeResult = probed.probeResults.find(
-                (result) =>
-                  result.url === fallback.importedFrom!.accessUrl.toString(),
+                (result) => result.url === dump.accessUrl.toString(),
               );
               if (dumpProbeResult) {
-                fallbackFingerprint = sourceFingerprint(
-                  fallback.importedFrom,
-                  dumpProbeResult,
-                );
+                fallbackFingerprint = sourceFingerprint(dump, dumpProbeResult);
               }
             }
             this.reportSelectedDistribution(
@@ -889,19 +886,17 @@ export class Pipeline<Out = Quad> {
     this.reporter?.distributionSelected?.(
       dataset,
       resolved.distribution,
-      resolved.importedFrom,
-      resolved.importDuration,
-      resolved.tripleCount,
+      resolved.imported,
     );
 
-    if (resolved.importedFrom) {
+    if (resolved.imported) {
       this.reporter?.distributionValidated?.(
-        resolved.importedFrom,
+        resolved.imported.from,
         importOutcomeToVerdict(
           new ImportSuccessful(
-            resolved.importedFrom,
+            resolved.imported.from,
             undefined,
-            resolved.tripleCount,
+            resolved.imported.tripleCount,
           ),
           fingerprint,
         ),

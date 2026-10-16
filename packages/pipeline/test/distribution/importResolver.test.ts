@@ -138,6 +138,8 @@ describe('ImportResolver', () => {
             Distribution.sparql(new URL('http://localhost:7878/sparql')),
             'test-graph',
             42000,
+            [],
+            { name: 'QLever', version: '9352d0' },
           ),
         ),
     };
@@ -160,10 +162,14 @@ describe('ImportResolver', () => {
     );
     expect(resolved.probeResults).toHaveLength(1);
     expect(resolved.probeResults[0]).toBeInstanceOf(DataDumpProbeResult);
-    expect(resolved.tripleCount).toBe(42000);
+    expect(resolved.imported?.tripleCount).toBe(42000);
+    expect(resolved.imported?.engine).toEqual({
+      name: 'QLever',
+      version: '9352d0',
+    });
   });
 
-  it('sets importedFrom on ResolvedDistribution when import succeeds', async () => {
+  it('sets imported on ResolvedDistribution when import succeeds', async () => {
     const dataset = makeDataset();
     const inner = innerNoSparqlEndpoint(dataset, [dataDumpProbeResult]);
 
@@ -185,10 +191,10 @@ describe('ImportResolver', () => {
     const result = await resolve(resolver, dataset);
 
     const resolved = result as ResolvedDistribution;
-    expect(resolved.importedFrom).toBe(importedDistribution);
+    expect(resolved.imported?.from).toBe(importedDistribution);
   });
 
-  it('importedFrom is undefined when a SPARQL endpoint is used directly', async () => {
+  it('imported is undefined when a SPARQL endpoint is used directly', async () => {
     const dataset = makeDataset();
     const distribution = Distribution.sparql(new URL(SPARQL_URL));
     const inner = innerWithSparqlEndpoint(dataset, distribution, [
@@ -203,7 +209,7 @@ describe('ImportResolver', () => {
     const result = await resolve(resolver, dataset);
 
     expect(result).toBeInstanceOf(ResolvedDistribution);
-    expect((result as ResolvedDistribution).importedFrom).toBeUndefined();
+    expect((result as ResolvedDistribution).imported).toBeUndefined();
   });
 
   it('returns NoDistributionAvailable with importFailed when import fails', async () => {
@@ -414,8 +420,8 @@ describe('ImportResolver', () => {
       expect(resolved.distribution.accessUrl.toString()).toBe(
         'http://localhost:7001/sparql',
       );
-      expect(resolved.importedFrom).toBe(importedDistribution);
-      expect(resolved.tripleCount).toBe(99);
+      expect(resolved.imported?.from).toBe(importedDistribution);
+      expect(resolved.imported?.tripleCount).toBe(99);
     });
 
     it('returns NoDistributionAvailable without importing when disabled', async () => {

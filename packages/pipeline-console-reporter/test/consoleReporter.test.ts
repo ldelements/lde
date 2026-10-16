@@ -210,17 +210,42 @@ describe('ConsoleReporter', () => {
       reporter.distributionSelected(
         makeDataset(),
         Distribution.sparql(new URL('http://localhost:7001/sparql')),
-        new Distribution(
-          new URL('http://example.org/data.nt'),
-          'application/n-triples',
-        ),
-        5000,
-        4800000,
+        {
+          from: new Distribution(
+            new URL('http://example.org/data.nt'),
+            'application/n-triples',
+          ),
+          duration: 5000,
+          tripleCount: 4800000,
+        },
       );
 
       const output = spy.mock.calls.map((c) => String(c[0])).join('');
       expect(output).toContain('4.8M triples');
       expect(output).toContain('to http://localhost:7001/sparql');
+    });
+
+    it('names the engine that built the import when present', () => {
+      const reporter = new ConsoleReporter();
+      const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+
+      reporter.distributionSelected(
+        makeDataset(),
+        Distribution.sparql(new URL('http://localhost:7001/sparql')),
+        {
+          from: new Distribution(
+            new URL('http://example.org/data.nt'),
+            'application/n-triples',
+          ),
+          duration: 5000,
+          engine: { name: 'QLever', version: '9352d0' },
+        },
+      );
+
+      const output = spy.mock.calls.map((c) => String(c[0])).join('');
+      expect(output).toContain(
+        'Imported http://example.org/data.nt into QLever 9352d0 (to http://localhost:7001/sparql)',
+      );
     });
 
     it('prints "(selected)" without cursor escapes on non-TTY', () => {
@@ -251,11 +276,13 @@ describe('ConsoleReporter', () => {
       reporter.distributionSelected(
         makeDataset(),
         Distribution.sparql(new URL('http://localhost:7001/sparql')),
-        new Distribution(
-          new URL('http://example.org/data.nt'),
-          'application/n-triples',
-        ),
-        5000,
+        {
+          from: new Distribution(
+            new URL('http://example.org/data.nt'),
+            'application/n-triples',
+          ),
+          duration: 5000,
+        },
       );
 
       const output = spy.mock.calls.map((c) => String(c[0])).join('');

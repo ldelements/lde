@@ -1,5 +1,5 @@
 import { Dataset, Distribution } from '@lde/dataset';
-import type { ImportFailed } from '@lde/sparql-importer';
+import type { Engine, ImportFailed } from '@lde/sparql-importer';
 import {
   probe,
   SparqlProbeResult,
@@ -10,10 +10,21 @@ export class ResolvedDistribution {
   constructor(
     readonly distribution: Distribution,
     readonly probeResults: ProbeResultType[],
-    readonly importedFrom?: Distribution,
-    readonly importDuration?: number,
-    readonly tripleCount?: number,
+    /** Set when {@link distribution} serves an imported data dump. */
+    readonly imported?: ImportDetails,
   ) {}
+}
+
+/** How a data dump was imported into the store a dataset is read from. */
+export interface ImportDetails {
+  /** The data dump that was imported. */
+  readonly from: Distribution;
+  /** Milliseconds the import took. */
+  readonly duration: number;
+  /** Triples in the imported data, when the importer can tell. */
+  readonly tripleCount?: number;
+  /** The engine that built the imported data, when the importer can tell. */
+  readonly engine?: Engine;
 }
 
 export class NoDistributionAvailable {
