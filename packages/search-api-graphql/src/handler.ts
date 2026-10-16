@@ -70,12 +70,16 @@ export interface SearchGraphQLHandlerOptions {
   readonly cors?: CORSOptions | boolean;
   /**
    * Reject queries nested deeper than this – a public playground invites
-   * arbitrary queries. Introspection is exempt. @default 15
+   * arbitrary queries. Introspection is exempt, and a fragment adds no level.
+   * @default 15
    */
   readonly maxDepth?: number;
   /**
    * Reject queries costlier than this (graphql-armor cost limit; introspection
-   * is exempt). @default 5000
+   * is exempt). Fragments are flattened: a nested fragment adds a fixed cost
+   * (2 inline, 3 for a named spread) rather than multiplying its contents,
+   * while a spread at the operation root costs its contents 1.5×, and a
+   * repeated named fragment 1 plus 1.5× its first scoring. @default 5000
    */
   readonly maxCost?: number;
   /** Forwarded to {@link SearchContext.onFacetError} on every request. */

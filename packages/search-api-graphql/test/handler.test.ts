@@ -331,6 +331,55 @@ describe('createSearchGraphQLHandler', () => {
     expect(data.datasets.items).toBeDefined();
   });
 
+  describe('the cost of a fragment', () => {
+    const page = '{ pagination { total } items { id keyword } }';
+    const inlined = `{ datasets ${page} }`;
+
+    /** The cost graphql-armor scores a query at, read off its rejection. */
+    async function costOf(query: string): Promise<number> {
+      const { engine } = fakeEngine();
+      const handler = createSearchGraphQLHandler({
+        searchSchema: searchSchema(schema),
+        engine,
+        maxCost: 0,
+      });
+      const { errors } = await (await post(handler, query)).json();
+      return Number(/found ([\d.]+)/.exec(errors[0].message)?.[1]);
+    }
+
+    it('adds 2 for an inline fragment', async () => {
+      expect(
+        await costOf(`{ datasets { ... on DatasetSearchResult ${page} } }`),
+      ).toBe((await costOf(inlined)) + 2);
+    });
+
+    it('adds 3 for a named spread', async () => {
+      expect(
+        await costOf(
+          `{ datasets { ...Page } } fragment Page on DatasetSearchResult ${page}`,
+        ),
+      ).toBe((await costOf(inlined)) + 3);
+    });
+
+    it('multiplies the contents of a spread at the operation root by 1.5', async () => {
+      expect(
+        await costOf(`{ ...Query } fragment Query on Query ${inlined}`),
+      ).toBe(3 + 1.5 * (await costOf(inlined)));
+    });
+
+    it('charges a repeated spread 1 plus 1.5× what its first spread scored', async () => {
+      const fragment = `fragment Page on DatasetSearchResult ${page}`;
+      const once = await costOf(`{ datasets { ...Page } } ${fragment}`);
+      // `once` is the `datasets` field (2) plus the first spread (1 + F).
+      const fragmentCost = once - 3;
+      expect(
+        await costOf(
+          `{ a: datasets { ...Page } b: datasets { ...Page } } ${fragment}`,
+        ),
+      ).toBe(once + 2 + 1 + 1.5 * fragmentCost);
+    });
+  });
+
   it('answers introspection within the default limits', async () => {
     const { engine } = fakeEngine();
     const handler = createSearchGraphQLHandler({
