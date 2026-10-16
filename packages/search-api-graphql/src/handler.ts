@@ -119,8 +119,7 @@ export function createSearchGraphQLHandler(
     cors: options.cors,
     plugins: [
       // Flatten fragments so a fragment spread doesn’t count as an extra level,
-      // which multiplies the cost per fragment: a query then scores about the
-      // same as its inlined form.
+      // which multiplies the cost per fragment. A small cost per spread remains.
       maxDepthPlugin({ n: options.maxDepth ?? 15, flattenFragments: true }),
       costLimitPlugin({
         maxCost: options.maxCost ?? 5000,
