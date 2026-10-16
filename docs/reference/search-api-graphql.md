@@ -114,6 +114,8 @@ fails this – accepts. The endpoint path defaults to `/graphql`
 - **Depth and cost limits** ([graphql-armor](https://escape.tech/graphql-armor/);
   `maxDepth`, default 15, and `maxCost`, default 5000) guard the public
   endpoint against arbitrarily expensive queries; introspection stays exempt.
+  Fragments are flattened, so a fragment spread adds no extra level: a query
+  that uses fragments scores about the same as its inlined form.
 
 To serve **custom fields next to the generated search API**, merge your own
 schema with `buildGraphQLSchema()`’s output (e.g. `@graphql-tools/schema`’s

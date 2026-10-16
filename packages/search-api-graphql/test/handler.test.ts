@@ -308,6 +308,29 @@ describe('createSearchGraphQLHandler', () => {
     expect(JSON.stringify(errors)).toContain('Cost');
   });
 
+  it('does not count fragment spreads as extra levels', async () => {
+    const { engine } = fakeEngine();
+    // Inlined, this query has depth 3 and costs 14.75. With flattened
+    // fragments it costs 22.25; unflattened, depth 7 and cost 69.6.
+    const handler = createSearchGraphQLHandler({
+      searchSchema: searchSchema(schema),
+      engine,
+      maxDepth: 3,
+      maxCost: 30,
+    });
+
+    const response = await post(
+      handler,
+      `{ datasets { ...Page } }
+       fragment Page on DatasetSearchResult { pagination { total } items { ...Item } }
+       fragment Item on Dataset { id keyword }`,
+    );
+    const { data, errors } = await response.json();
+
+    expect(errors).toBeUndefined();
+    expect(data.datasets.items).toBeDefined();
+  });
+
   it('answers introspection within the default limits', async () => {
     const { engine } = fakeEngine();
     const handler = createSearchGraphQLHandler({
