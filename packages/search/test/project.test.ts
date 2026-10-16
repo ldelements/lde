@@ -388,6 +388,37 @@ describe('projectDocument', () => {
     expect(document.title_sort_nl).toBeUndefined();
   });
 
+  it('indexes a regional tag under its declared primary language', () => {
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/d/6a',
+        [dsKey('title')]: { '@language': 'nl-NL', '@value': 'Kaart' },
+      },
+      { name: 'Dataset', class: DATASET, fields },
+    );
+    // locales is ['nl', 'en']: `nl-NL` is Dutch, so it is searched and sorted
+    // under `nl` – and displayed under the tag the publisher gave it.
+    expect(document['title_nl-NL']).toBe('Kaart');
+    expect(document.title_search_nl).toBe('kaart');
+    expect(document.title_sort_nl).toBe('kaart');
+    expect(document.title_search_en).toBeUndefined();
+  });
+
+  it('puts the exact tag first when a regional one shares its locale', () => {
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/d/6c',
+        [dsKey('title')]: [
+          { '@language': 'nl-BE', '@value': 'Plan' },
+          { '@language': 'nl', '@value': 'Kaart' },
+        ],
+      },
+      { name: 'Dataset', class: DATASET, fields },
+    );
+    expect(document.title_sort_nl).toBe('kaart');
+    expect(document.title_search_nl).toBe('kaart plan');
+  });
+
   it('normalises an underscore-style language tag to its BCP-47 shape', () => {
     const document = projectDocument(
       {

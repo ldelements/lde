@@ -1,5 +1,6 @@
 import type { Quad } from '@rdfjs/types';
 import { fold } from '@lde/text-normalization';
+import { matchLanguage } from './language.js';
 import {
   buildSubjectIndex,
   frameSubjects,
@@ -562,11 +563,38 @@ function applyText(
   // here it simply indexes nothing.
   if (field.searchable !== undefined || field.sortable === true) {
     const names = physicalFields(field);
-    const valuesPerLocale = field.locales.map((locale) =>
-      values
-        .filter((value) => value.lang === locale)
-        .map((value) => value.value),
-    );
+    // A literal lands under the declared locale its tag best matches as a
+    // language range, so `nl-NL` titles are keyed under a declared `nl`; within
+    // a locale, the exact tag comes first.
+    const valuesPerLanguage = new Map<string, string[]>();
+    for (const { lang, value } of values) {
+      const languageValues = valuesPerLanguage.get(lang);
+      if (languageValues === undefined) {
+        valuesPerLanguage.set(lang, [value]);
+      } else {
+        languageValues.push(value);
+      }
+    }
+    const languagesPerLocale = new Map<string, [string, string[]][]>();
+    for (const entry of valuesPerLanguage) {
+      const locale = matchLanguage(entry[0], field.locales)[0];
+      if (locale !== undefined) {
+        languagesPerLocale.set(locale, [
+          ...(languagesPerLocale.get(locale) ?? []),
+          entry,
+        ]);
+      }
+    }
+    const valuesPerLocale = field.locales.map((locale) => {
+      const entries = languagesPerLocale.get(locale) ?? [];
+      const ranked = matchLanguage(
+        locale,
+        entries.map(([language]) => language),
+      );
+      return entries
+        .sort(([left], [right]) => ranked.indexOf(left) - ranked.indexOf(right))
+        .flatMap(([, languageValues]) => languageValues);
+    });
     // What every locale’s sort key falls back to: the document’s first value
     // in `locales` order, which is the declaration’s own statement of which
     // language stands in for the others.

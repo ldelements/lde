@@ -47,6 +47,7 @@ export {
 } from './schema.js';
 export type { PhysicalFields } from './schema.js';
 export { physicalNameTokens } from './physical-name.js';
+export { matchLanguage } from './language.js';
 export { joinGraph, MAX_JOIN_DEPTH } from './join-graph.js';
 export type { JoinGraph } from './join-graph.js';
 export {

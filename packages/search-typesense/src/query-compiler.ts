@@ -24,6 +24,7 @@ import {
   isWelded,
   joinGraph,
   localLookupTypeOf,
+  matchLanguage,
   pageForOffset,
   physicalFields,
   nestedReferenceType,
@@ -240,13 +241,14 @@ function collectSearchable(
     const baseWeight = field.searchable.weight;
     if (field.kind === 'text') {
       const locales = field.locales;
+      const activeLocale = matchLanguage(locale, locales)[0];
       search.forEach((name, index) => {
         names.push(qualify(prefix, name));
         // The active locale keeps full weight; `und` is language-neutral, so
         // it is never demoted (an untagged-only field would otherwise always
         // rank below its declared weight).
         weights.push(
-          locales[index] === locale || locales[index] === 'und'
+          locales[index] === activeLocale || locales[index] === 'und'
             ? baseWeight
             : Math.max(1, baseWeight - 1),
         );
@@ -645,9 +647,12 @@ function compileSort(
   }
   const field = fieldNamed(searchType, sort.field);
   if (field !== undefined && field.kind === 'text') {
-    // Sort on the active locale's key, falling back to the first declared
-    // locale (e.g. an und-only field sorted by a user in any language).
-    const index = field.locales.indexOf(locale);
+    // Sort on the key of the declared locale the active one best matches as a
+    // language range (`nl-NL` sorts on `nl`), falling back to the first
+    // declared locale (e.g. an und-only field sorted by a user in any language).
+    const activeLocale = matchLanguage(locale, field.locales)[0];
+    const index =
+      activeLocale === undefined ? -1 : field.locales.indexOf(activeLocale);
     const sortName = physicalFields(field).sort[index === -1 ? 0 : index];
     if (sortName !== undefined) {
       return `${sortName}:${sort.direction}`;
