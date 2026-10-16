@@ -165,24 +165,21 @@ export function createSearchGraphQLHandler(
 /**
  * A `Content-Language` value for the served languages: tags come from indexed
  * data, so drop any that is not a well-formed language tag (it could make an
- * invalid header) and fold case-only duplicates (tags are case-insensitive).
+ * invalid header) and canonicalise the rest, which folds case-only duplicates.
  */
 function toContentLanguage(
   servedLanguages: ReadonlySet<string>,
 ): string | undefined {
-  const tagsByLowerCase = new Map<string, string>();
+  const canonicalTags = new Set<string>();
   for (const language of servedLanguages) {
-    const lowerCase = language.toLowerCase();
-    if (languageTag.test(language) && !tagsByLowerCase.has(lowerCase)) {
-      tagsByLowerCase.set(lowerCase, language);
+    try {
+      canonicalTags.add(Intl.getCanonicalLocales(language)[0]!);
+    } catch {
+      // Not a well-formed BCP 47 tag.
     }
   }
-  return tagsByLowerCase.size > 0
-    ? [...tagsByLowerCase.values()].join(', ')
-    : undefined;
+  return canonicalTags.size > 0 ? [...canonicalTags].join(', ') : undefined;
 }
-
-const languageTag = /^[A-Za-z]{1,8}(-[A-Za-z0-9]{1,8})*$/;
 
 /** Ordered languages from an `Accept-Language` header (best first, by q-value). */
 function parseAcceptLanguage(header: string | null): readonly string[] {
