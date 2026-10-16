@@ -277,6 +277,15 @@ first (in request order), then the remaining tagged languages, then untagged
 `languageOrder` schema option; the default ordering is exported as
 `defaultLanguageOrder` for composing your own.
 
+Because the response depends on `Accept-Language`, the handler sends
+`Vary: Accept-Language` on every GraphQL response, so a shared cache or CDN
+never serves one requester’s language order to the next. It also sends
+`Content-Language` listing every tagged language the response contains, in the
+order first served – a mixed-language result page lists all of them (e.g.
+`Content-Language: en, nl`). A response with no tagged values sends none.
+Negotiation never fails: a language you ask for but the data lacks still gets
+the best available value.
+
 ## Finding which fields accept an IRI
 
 In Linked Data one conceptual filter maps to several predicates, so a consumer

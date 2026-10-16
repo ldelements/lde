@@ -47,14 +47,17 @@ const canned: SearchResult = {
   facets: {},
 };
 
-function fakeEngine(): { engine: SearchEngine; received: () => SearchQuery } {
+function fakeEngine(result: SearchResult = canned): {
+  engine: SearchEngine;
+  received: () => SearchQuery;
+} {
   let captured: SearchQuery;
   return {
     engine: {
       schema: searchSchema(schema),
       async search(_searchType, query) {
         captured = query;
-        return canned;
+        return result;
       },
       async searchFacets(_searchType, queries) {
         return queries.map((): FacetsOutcome => ({ facets: {} }));
@@ -189,6 +192,84 @@ describe('createSearchGraphQLHandler', () => {
       { language: 'en', value: 'Title' },
     ]);
     expect(received().locale).toBe('nl');
+  });
+
+  it('declares that responses vary by Accept-Language', async () => {
+    const { engine } = fakeEngine();
+    const handler = createSearchGraphQLHandler({
+      searchSchema: searchSchema(schema),
+      engine,
+    });
+
+    const response = await post(
+      handler,
+      '{ datasets { pagination { total } } }',
+    );
+
+    expect(response.headers.get('vary')).toContain('Accept-Language');
+  });
+
+  it('reports the languages it served in Content-Language', async () => {
+    const { engine } = fakeEngine();
+    const handler = createSearchGraphQLHandler({
+      searchSchema: searchSchema(schema),
+      engine,
+    });
+
+    const response = await post(
+      handler,
+      '{ datasets { items { title { language value } } } }',
+      { 'accept-language': 'en' },
+    );
+
+    expect(response.headers.get('content-language')).toBe('en, nl');
+  });
+
+  it('leaves malformed and case-duplicate tags out of Content-Language', async () => {
+    const { engine } = fakeEngine({
+      ...canned,
+      hits: [
+        {
+          id: 'https://d/1',
+          document: {
+            title: {
+              nl: ['Titel'],
+              NL: ['TITEL'],
+              'en\nX-Injected: 1': ['Title'],
+              und: ['Naamloos'],
+            },
+          },
+        },
+      ],
+    });
+    const handler = createSearchGraphQLHandler({
+      searchSchema: searchSchema(schema),
+      engine,
+    });
+
+    const response = await post(
+      handler,
+      '{ datasets { items { title { language value } } } }',
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-language')).toBe('nl');
+  });
+
+  it('sends no Content-Language when it served no language-tagged value', async () => {
+    const { engine } = fakeEngine();
+    const handler = createSearchGraphQLHandler({
+      searchSchema: searchSchema(schema),
+      engine,
+    });
+
+    const response = await post(
+      handler,
+      '{ datasets { pagination { total } } }',
+      { 'accept-language': 'en' },
+    );
+
+    expect(response.headers.get('content-language')).toBeNull();
   });
 
   it('serves a self-contained playground on GET', async () => {
