@@ -172,12 +172,13 @@ editor.
   served as an **interface** named for the set (`creator` over `Person` and
   `Organization` → `PersonOrOrganizationReference`), implemented by each
   target’s own reference type; it carries `id` plus every field the targets
-  declare alike, with the weakest nullability any of them keeps, and resolves
-  per referent to the type whose collection answered for it, or that a stored
-  referent was projected through – so `__typename` is true per referent, and
+  declare alike, always nullable, and resolves per referent to the type whose
+  collection answered for it, or that a stored referent was projected through
+  – so `__typename` is true per referent, and
   `... on PersonReference { birthDate }` reaches what only a person has. An
-  IRI no collection holds has no kind to report and is served as the first
-  target declared, since an interface must resolve to some type; scalars/booleans
+  IRI no collection holds – dangling, or its lookup failed – has no kind to
+  report and is served as `PersonOrOrganizationUnresolvedReference`, carrying
+  only its `id`; scalars/booleans
   per kind; `date` → ISO 8601 string; nullability from `required` / `array` /
   `kind`.
 - **`where`** one input per `filterable` field, typed by what the field keys on:

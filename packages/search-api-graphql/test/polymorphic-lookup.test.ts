@@ -144,6 +144,32 @@ describe('serving a lookup over several targets', () => {
     expect(sdl).toMatch(
       /type PersonReference implements[^}]*birthDate: String/,
     );
+    // A referent no collection holds is served as neither target.
+    expect(sdl).toMatch(
+      /type PersonOrOrganizationUnresolvedReference implements PersonOrOrganizationReference \{\s+id: IRI!\s+name: \[LanguageString!\]!\s+homepage: String\s+address: PlaceReference\s+\}/,
+    );
+  });
+
+  it('offers a field every target requires as nullable, since an unresolved referent carries none of it', () => {
+    const requiring = (searchType: SearchType): SearchType => ({
+      ...searchType,
+      fields: searchType.fields.map((declared) =>
+        declared.name === 'homepage'
+          ? ({ ...declared, required: true } as SearchField)
+          : declared,
+      ),
+    });
+    const required = printSchema(
+      buildGraphQLSchema(
+        searchSchema(work, requiring(person), requiring(organization), place),
+      ),
+    );
+    expect(required).toMatch(
+      /interface PersonOrOrganizationReference \{[^}]*homepage: String\s/,
+    );
+    expect(required).toMatch(
+      /type OrganizationReference implements[^}]*homepage: String!/,
+    );
   });
 
   it('refuses a declaration spelling the derived name itself', () => {
@@ -259,8 +285,9 @@ describe('serving a lookup over several targets', () => {
                     location: 'Roermond',
                     [NESTED_DOCUMENT_TYPE]: 'Organization',
                   },
-                  // Untyped – a hand-built document – reads as the first.
-                  { id: 'https://x/1', name: { nl: ['Onbekend'] } },
+                  // Untyped: no collection answered for it, so no target
+                  // may be claimed for it.
+                  { id: 'https://x/1' },
                 ],
               },
             },
@@ -310,10 +337,9 @@ describe('serving a lookup over several targets', () => {
           location: 'Roermond',
         },
         {
-          __typename: 'PersonReference',
+          __typename: 'PersonOrOrganizationUnresolvedReference',
           id: 'https://x/1',
-          name: [{ value: 'Onbekend' }],
-          birthDate: null,
+          name: [],
         },
       ],
     });

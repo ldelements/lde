@@ -122,16 +122,27 @@ The name is derived, not declared: no new option, and the same mechanism that
 derives `‹Target›Reference`.
 
 The interface carries only what is true of every referent: `id`, nullable if
-any member’s is, and every `output` field all targets declare alike, with the
-weakest nullability any of them keeps – an implementation may promise more than
-its interface, never less. Per-type fields stay on the members, reached
-through an inline fragment. `__typename` resolves per referent to the target
-whose collection answered for it, or, for a stored referent no collection
-answers for, to the target its discriminator names. The port marks each nested
-document with that target under a symbol key, so the mark can never collide
-with a declared field. A bare IRI no collection holds is the one referent with
-no kind to report; an interface must still resolve to some object type, so it
-is served as the first target declared.
+any member’s is, and every `output` field all targets declare alike, always
+nullable (below). Per-type fields stay on the members, reached through an
+inline fragment, and keep their own nullability – an implementation may
+promise more than its interface, never less. `__typename` resolves per
+referent to the target whose collection answered for it, or, for a stored
+referent no collection answers for, to the target its discriminator names. The
+port marks each nested document with that target under a symbol key, so the
+mark can never collide with a declared field.
+
+A bare IRI no collection holds – a dangling reference, or one whose lookup
+failed – is the one referent with no kind to report. It is served as a third
+implementation, `PersonOrOrganizationUnresolvedReference`, carrying its `id`
+and nothing else. Claiming the first target for it would repeat the false
+`__typename` this record exists to remove, and a failed lookup would then
+re-type a referent rather than only leave it unlabelled. Dropping it was
+rejected too: a client could not tell a dangling creator from none, the page
+would contradict the filter and facet that matched it, and a transient failure
+would silently remove referents from a cacheable response. The cost is that an
+interface field is nullable even where every target requires it, since the
+unresolved implementation cannot fill it; a client wanting the guarantee
+selects the field through a fragment on a target.
 
 An interface rather than a union, because union members share no fields, so
 even `creator { id name }` would need a fragment and every existing consumer
@@ -178,8 +189,12 @@ unverified engine behaviours. Deferred, to
   a single-target one costs one – still one round-trip per level, the queries
   running concurrently – and asks every collection even for a selection
   reduced to `id`, because the answer is what types the referent. Its stored
-  entries cost one short string each, and its extraction one `OPTIONAL` triple
-  per referent plus every keyed target’s key hop.
+  entries cost one short string each, and its extraction one `rdf:type` hop
+  per referent plus every keyed target’s key hop, each its own branch of one
+  `OPTIONAL` union so multi-valued types and keys multiply against nothing.
+- A client routing on `__typename` handles a third value per target set,
+  `‹Set›UnresolvedReference`, and a field shared by every target is nullable
+  on the interface even where each target requires it.
 - The framing depth of a type nesting a multi-target lookup is the furthest
   any target reaches: the referent is framed once, and the frame has to hold
   whichever declaration it turns out to match.

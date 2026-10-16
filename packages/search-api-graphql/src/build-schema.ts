@@ -438,6 +438,8 @@ export function buildGraphQLSchema(
    */
   const interfaceTypes = new Map<string, GraphQLInterfaceType>();
   const interfaceMembers = new Map<string, readonly string[]>();
+  /** Each interface’s implementation for a referent no collection holds. */
+  const unresolvedTypes: GraphQLObjectType[] = [];
   /**
    * The lookup targets whose emitted type must carry a NULLABLE `id`: those
    * some field reaches through a {@link ReferenceStrategy.local local} lookup,
@@ -580,9 +582,12 @@ export function buildGraphQLSchema(
    * resolved per referent to the target whose collection answered for it,
    * which the port marks on each nested document.
    *
-   * A field the targets share is offered with the weakest nullability any of
-   * them keeps: an implementation may promise more than its interface, never
-   * less.
+   * A referent the port could not type – an IRI no collection holds, or one
+   * whose fetch failed – resolves to a third implementation,
+   * `PersonOrOrganizationUnresolvedReference`, which carries its `id` and
+   * nothing else, rather than to a target it may not be. Every shared field
+   * is therefore nullable on the interface: an implementation may promise
+   * more than its interface, never less, and this one promises only `id`.
    */
   function registerInterfaceType(
     targets: readonly string[],
@@ -594,15 +599,21 @@ export function buildGraphQLSchema(
       return;
     }
     const graphQLName = `${typeName}Reference`;
+    const unresolvedName = `${typeName}UnresolvedReference`;
     // The joined name is derived, so a declared type may spell the same
     // thing – `PersonOrOrganization` as a Reference Type – and its filter
     // would then share a name with this interface’s. Refused, naming both.
-    if (takenTypeNames.has(graphQLName) || takenTypeNames.has(typeName)) {
+    if (
+      takenTypeNames.has(graphQLName) ||
+      takenTypeNames.has(unresolvedName) ||
+      takenTypeNames.has(typeName)
+    ) {
       throw new Error(
         `Reference type “${typeName}” (field “${field.name}” of “${owner.name}”) would be served as “${graphQLName}”, which collides with another type name; rename one.`,
       );
     }
     takenTypeNames.add(graphQLName);
+    takenTypeNames.add(unresolvedName);
     // Reserve the joined name too, so a Reference Type spelling it that
     // registers LATER is refused with the same message.
     takenTypeNames.add(typeName);
@@ -613,52 +624,56 @@ export function buildGraphQLSchema(
       nullableIdTargets.has(member.name),
     );
     interfaceMembers.set(typeName, targets);
-    interfaceTypes.set(
-      typeName,
-      new GraphQLInterfaceType({
-        name: graphQLName,
-        description: `A reference to a ${targets.join(' or a ')}; select \`__typename\` to tell which, and the fields of one through an inline fragment on its type.`,
-        resolveType: (source: Source) => {
-          const resolved = (source as NestedDocument)[NESTED_DOCUMENT_TYPE];
-          // A document the port did not type – a referent no collection
-          // holds, or one built by hand – is read as the first target
-          // declared: an interface must resolve to SOME object type, and the
-          // first target is the precedence every other reading of several
-          // targets applies.
-          return `${
-            typeof resolved === 'string' && targets.includes(resolved)
-              ? resolved
-              : targets[0]
-          }Reference`;
-        },
-        fields: (): Record<
-          string,
-          GraphQLFieldConfig<Source, SearchContext>
-        > => ({
-          id: {
-            type: nullableId ? iriScalar : new GraphQLNonNull(iriScalar),
-          },
-          ...Object.fromEntries(
-            outputFields(members[0])
-              .map((declared) => sharedField(declared, members, nullableId))
-              .filter((shared): shared is SearchField => shared !== undefined)
-              .map((shared) => [shared.name, outputFieldConfig(shared)]),
-          ),
-        }),
+    // One field set for the interface and its unresolved implementation:
+    // what every referent carries, which is all an untyped one can offer.
+    const sharedFields = (): Record<
+      string,
+      GraphQLFieldConfig<Source, SearchContext>
+    > => ({
+      id: {
+        type: nullableId ? iriScalar : new GraphQLNonNull(iriScalar),
+      },
+      ...Object.fromEntries(
+        outputFields(members[0])
+          .map((declared) => sharedField(declared, members))
+          .filter((shared): shared is SearchField => shared !== undefined)
+          .map((shared) => [shared.name, outputFieldConfig(shared)]),
+      ),
+    });
+    const interfaceType = new GraphQLInterfaceType({
+      name: graphQLName,
+      description: `A reference to a ${targets.join(' or a ')}; select \`__typename\` to tell which, and the fields of one through an inline fragment on its type.`,
+      resolveType: (source: Source) => {
+        const resolved = (source as NestedDocument)[NESTED_DOCUMENT_TYPE];
+        // A document the port did not type is one no collection answered
+        // for: claiming any target for it could be false, so it is served as
+        // what it is.
+        return typeof resolved === 'string' && targets.includes(resolved)
+          ? `${resolved}Reference`
+          : unresolvedName;
+      },
+      fields: sharedFields,
+    });
+    interfaceTypes.set(typeName, interfaceType);
+    unresolvedTypes.push(
+      new GraphQLObjectType({
+        name: unresolvedName,
+        description: `A reference to a ${targets.join(' or a ')} that no collection this API serves holds – a dangling IRI, or one whose lookup failed – so only its \`id\` is known.`,
+        interfaces: [interfaceType],
+        fields: sharedFields,
       }),
     );
   }
 
   /**
-   * A field every member declares alike – same kind, same arity – with the
-   * nullability relaxed unless every member requires it. `undefined` where the
-   * members do not all carry it: the interface promises only what holds of
-   * every referent.
+   * A field every member declares alike – same kind, same arity – made
+   * nullable, since an unresolved referent carries none of it. `undefined`
+   * where the members do not all carry it: the interface promises only what
+   * holds of every referent.
    */
   function sharedField(
     declared: SearchField,
     members: readonly RootType[],
-    nullableId: boolean,
   ): SearchField | undefined {
     const counterparts = members.map((member) =>
       fieldNamed(member, declared.name),
@@ -677,10 +692,7 @@ export function buildGraphQLSchema(
     // A shared reference field is served as one emitted type on every
     // member: `searchSchema` holds the targets to the same strategy and the
     // same referent for a name they share, so nothing is checked here.
-    const required =
-      !nullableId &&
-      counterparts.every((counterpart) => counterpart?.required === true);
-    return { ...declared, required } as SearchField;
+    return { ...declared, required: false } as SearchField;
   }
 
   /** Register the object type one referenced shape is served as, under
@@ -1360,7 +1372,11 @@ export function buildGraphQLSchema(
     // An interface's implementations are reachable only through it, so they
     // are listed explicitly; every other reference type is reachable already
     // and listing it twice is harmless.
-    types: [...referenceTypes.values(), ...interfaceTypes.values()],
+    types: [
+      ...referenceTypes.values(),
+      ...interfaceTypes.values(),
+      ...unresolvedTypes,
+    ],
   });
 }
 
