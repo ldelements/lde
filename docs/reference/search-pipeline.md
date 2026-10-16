@@ -248,7 +248,9 @@ check ([ADR 13](../decisions/0013-project-inside-the-batch-per-root-type)).
 type’s `class` really is the source class), **not** a default. It excludes
 blank-node subjects (`FILTER(!isBlank(?root))`): a blank node has no stable
 document key, so it can never become a search document – a custom selector
-should exclude them too.
+should exclude them too. It also selects `DISTINCT` roots, so a root typed in
+several named graphs is selected once on an engine whose default graph is their
+union – a custom selector on such an engine should select `DISTINCT` too.
 
 ## Registry-sourced root types
 
@@ -445,10 +447,14 @@ Because the queries are duplicate-free by construction, correctness and bounded
 output volume do **not** depend on a client-side **post-processing deduplication
 step** – buffering a whole result to deduplicate it would defeat the
 batch-bounded streaming memory model above. The only residual duplication is
-linear and comes from duplicate _input_ – a non-`DISTINCT` selector feeding a
-multi-typed root more than once – which the projection’s streaming per-quad
-subject index collapses as a cheap backstop, not as a compensator for
-query-shape inflation. Validated on a real QLever index over the full source
+linear and comes from duplicate _input_ – a custom non-`DISTINCT` selector
+feeding a root more than once, as one does over a union default graph where the
+root is typed in several named graphs, or several readers merged into one
+batch – which the projection’s streaming per-quad subject index collapses as a
+cheap backstop, not as a compensator for query-shape inflation. The backstop
+stays even though JSON-LD framing folds a repeated plain value on its own: it
+does not fold a repeated RDF list cell, and without the backstop memory per
+batch would grow with the duplication factor. Validated on a real QLever index over the full source
 dump: raw CONSTRUCT output equalled the distinct set for a type with distinct
 roots, and the projected documents were byte-identical to those from a
 deduplicating engine.

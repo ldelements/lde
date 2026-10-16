@@ -12,9 +12,9 @@
         {%- if property.datatype %}
         datatype: {{ property.datatype }}
         {%- elsif property.or %}
-        datatype: {{ property.or | map: "datatype" | join: ", " }}
+        datatype: {{ property.or | first | map: "datatype" | join: ", " }}
         {%- elsif property.node.or %}
-        datatype: {{ property.node.or | map: "datatype" | join: ", " }}
+        datatype: {{ property.node.or | first | map: "datatype" | join: ", " }}
         {%- endif %}
     {% endfor %}
 {% endfor %}

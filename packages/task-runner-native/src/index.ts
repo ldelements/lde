@@ -1,4 +1,4 @@
-import { TaskRunner } from '@lde/task-runner';
+import { ChildTasks, TaskRunner } from '@lde/task-runner';
 import { ChildProcess, spawn } from 'node:child_process';
 import process from 'node:process';
 
@@ -37,11 +37,11 @@ interface TaskState {
    */
   error?: Error;
   /**
-   * Resolves with the exit code once the process closes, `null` when it was
-   * killed by a signal. Never rejects, so nothing has to be awaited for the
+   * Resolves with the exit code once the process closes, or with the signal
+   * that killed it. Never rejects, so nothing has to be awaited for the
    * process to stay healthy.
    */
-  closed: Promise<number | null>;
+  closed: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
 }
 
 export class NativeTaskRunner implements TaskRunner<ChildProcess> {
@@ -53,6 +53,8 @@ export class NativeTaskRunner implements TaskRunner<ChildProcess> {
    * object, however many tasks the runner outlives.
    */
   private states = new WeakMap<ChildProcess, TaskState>();
+  /** The processes still going, stopped when this process is told to stop. */
+  private childTasks = new ChildTasks<ChildProcess>((task) => this.stop(task));
 
   constructor(options?: NativeTaskRunnerOptions) {
     this.cwd = options?.cwd;
@@ -69,9 +71,13 @@ export class NativeTaskRunner implements TaskRunner<ChildProcess> {
     // soon – or how often – the caller gets around to wait() or stop().
     const state: TaskState = {
       output: '',
-      closed: new Promise((resolve) => task.once('close', resolve)),
+      closed: new Promise((resolve) =>
+        task.once('close', (code, signal) => resolve({ code, signal })),
+      ),
     };
     this.states.set(task, state);
+    this.childTasks.add(task);
+    void state.closed.then(() => this.childTasks.delete(task));
 
     for (const stream of [task.stdout, task.stderr]) {
       // Decode across chunk boundaries: a multi-byte character split over two
@@ -96,12 +102,14 @@ export class NativeTaskRunner implements TaskRunner<ChildProcess> {
   /** Resolves with the process's output, or rejects if it failed. */
   async wait(task: ChildProcess): Promise<string> {
     const state = this.states.get(task)!;
-    const code = await state.closed;
+    const { code, signal } = await state.closed;
     if (code === 0) {
       return this.outputOf(state);
     }
     throw new Error(
-      `Process failed with code ${code}: ${this.outputOf(state)}`,
+      code === null
+        ? `Process was killed by ${signal}: ${this.outputOf(state)}`
+        : `Process failed with code ${code}: ${this.outputOf(state)}`,
     );
   }
 

@@ -1,3 +1,15 @@
+## 0.7.0 (2026-10-15)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset to 0.8.0
+
+## 0.6.10 (2026-10-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset to 0.7.10
+
 ## 0.6.9 (2026-09-09)
 
 ### 🩹 Fixes

@@ -398,15 +398,22 @@ becomes one, since framing mints it per call. Fields are what make a referent,
 so a value that projects none – a literal under the reference's alias, say –
 nests nothing.
 
-A `derive` still sees the node's IRI. During projection every entry carries it
+A `derive` still sees the node’s IRI. During projection every entry carries it
 as `id`, the way an [internal field](#field-model) is populated for a derive and
 pruned before the document leaves: a derive on the referrer reads it, and the
 index and the API never do. That is for the referent whose IRI _is_ the data –
-SCHEMA-AP-NDE puts a IIIF Presentation manifest among a work's `associatedMedia`
+SCHEMA-AP-NDE puts a IIIF Presentation manifest among a work’s `associatedMedia`
 with `@id` set to the manifest URL and no `contentUrl`, so a derive on the work
-picks the manifest out by its `encodingFormat`, reads the entry's `id`, and
-surfaces it under a field of its own. Nothing to declare, and the entry's shape
+picks the manifest out by its `encodingFormat`, reads the entry’s `id`, and
+surfaces it under a field of its own. Nothing to declare, and the entry’s shape
 past the projection is still the same for a named node and a blank one.
+
+The `id` is not enumerable, so it is no field: an entry that projects nothing
+else is still no referent, and spreading or serializing an entry leaves it out.
+A derive that wants the IRI must therefore read `entry.id` off the entry itself,
+not off a copy made with `{ ...entry }`. Two named referents with the same
+fields both reach a derive, and are stored as one entry once their IRIs are
+pruned.
 
 So RDF depth and API shape stay independent: inline as deep as the source
 demands, expose exactly the flat fields you want. Framing follows the inline
@@ -658,7 +665,7 @@ document; a condition on the referent’s own fields (“works whose creator die
 before 1900”) does not, and needs a representation of its own
 ([#845](https://github.com/ldelements/lde/issues/845) lists three).
 
-See [ADR 27](../decisions/0027-resolve-a-reference-across-several-targets).
+See [ADR 28](../decisions/0028-resolve-a-reference-across-several-targets).
 
 #### Naming the label field
 
@@ -951,7 +958,8 @@ the pipeline selector already holds them, so nothing is discovered from
 each root’s subgraph is framed one at a time and its document yielded as
 produced, so beyond a subject index memory stays flat at scale (framing the
 whole graph at once is roughly O(N²)). Duplicate triples are collapsed first,
-because some SPARQL engines (e.g. QLever) do not deduplicate `CONSTRUCT` output.
+because some SPARQL engines (e.g. QLever) do not deduplicate `CONSTRUCT` output
+and a batch merges several readers’ output unfiltered.
 Every predicate a value comes from is read through a field’s `path`; a `derive`
 computes only from the document projected so far, so `path` is the whole
 statement of what the projection reads. `assertTypeInSchema` guards that

@@ -1,3 +1,13 @@
+## 0.6.0 (2026-10-15)
+
+This was a version bump only for @lde/fastify-rdf to align it with other projects, there were no code changes.
+
+## 0.5.3 (2026-10-14)
+
+### 🚀 Features
+
+- **fastify-rdf:** add a fetch option for loading remote JSON-LD contexts ([#901](https://github.com/ldelements/lde/pull/901))
+
 ## 0.5.2 (2026-08-24)
 
 This was a version bump only for @lde/fastify-rdf to align it with other projects, there were no code changes.

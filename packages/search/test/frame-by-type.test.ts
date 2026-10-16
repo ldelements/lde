@@ -120,6 +120,29 @@ describe('frameSubjects', () => {
     });
   });
 
+  it('frames a duplicated RDF list as a list', async () => {
+    // Framing alone collapses a repeated plain value, but not a repeated list
+    // cell: jsonld only folds an rdf:first/rdf:rest chain into `@list` when each
+    // cell has exactly one of each, so without the index’s dedup a duplicated
+    // list would frame as its raw cells.
+    const list = quads(`
+      <https://ex/d/1> <${dcterms.subject.value}> _:l1 .
+      _:l1 <${rdf.first.value}> "a" .
+      _:l1 <${rdf.rest.value}> _:l2 .
+      _:l2 <${rdf.first.value}> "b" .
+      _:l2 <${rdf.rest.value}> <${rdf.nil.value}> .
+    `);
+    const nodes = await collect(
+      frameSubjects(
+        buildSubjectIndex([...list, ...list]),
+        ['https://ex/d/1'],
+        3,
+      ),
+    );
+
+    expect(nodes[0][dcterms.subject.value]).toEqual({ '@list': ['a', 'b'] });
+  });
+
   it('scans a one-shot iterable once, framing every given root off one index', async () => {
     const source = quads(`
       <https://ex/d/1> <${dcterms.title.value}> "Titel"@nl .

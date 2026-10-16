@@ -94,6 +94,21 @@ await app.register(fastifyRdf, { parseRdf: true });
 
 Routes without per-route or plugin-level `parseRdf` get JSON fallback for `application/ld+json` (parsed as plain JSON) and 415 Unsupported Media Type for other RDF content types.
 
+#### Remote JSON-LD contexts
+
+A JSON-LD body that references a remote `@context`, such as `https://schema.org/`, makes the parser fetch that context from the network. The live context can change under you: when schema.org dropped its `@type: @id` coercions, IRIs in request bodies started parsing as literals. Pass a `fetch` to control how such documents load, for example to answer them from a bundled copy:
+
+```typescript
+await app.register(fastifyRdf, {
+  fetch: async (input, init) =>
+    String(input) === 'https://schema.org/'
+      ? Response.json(bundledSchemaOrgContext, {
+          headers: { 'content-type': 'application/ld+json' },
+        })
+      : fetch(input, init),
+});
+```
+
 #### Request body errors
 
 | Request body                                                | Response                                                |
@@ -194,6 +209,13 @@ interface FastifyRdfOptions {
    * @default false
    */
   parseRdf?: boolean;
+
+  /**
+   * Fetch used to load remote documents, such as JSON-LD contexts, while
+   * parsing RDF request bodies.
+   * @default globalThis.fetch
+   */
+  fetch?: typeof globalThis.fetch;
 }
 ```
 

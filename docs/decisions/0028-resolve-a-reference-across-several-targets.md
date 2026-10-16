@@ -1,4 +1,4 @@
-# 27. Resolve a reference across several targets
+# 28. Resolve a reference across several targets
 
 Date: 2026-09-10
 

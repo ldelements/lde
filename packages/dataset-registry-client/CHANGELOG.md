@@ -1,3 +1,23 @@
+## 0.10.0 (2026-10-15)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/local-sparql-endpoint to 0.3.0
+- Updated @lde/dataset to 0.8.0
+
+## 0.9.5 (2026-10-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/local-sparql-endpoint to 0.2.16
+- Updated @lde/dataset to 0.7.10
+
+## 0.9.4 (2026-10-14)
+
+### 🩹 Fixes
+
+- **dataset-registry-client:** drop workaround for LDkit count() ignoring $id ([#875](https://github.com/ldelements/lde/pull/875))
+
 ## 0.9.3 (2026-08-24)
 
 This was a version bump only for @lde/dataset-registry-client to align it with other projects, there were no code changes.

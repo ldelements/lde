@@ -1,3 +1,11 @@
+## 0.3.0 (2026-10-15)
+
+This was a version bump only for @lde/local-sparql-endpoint to align it with other projects, there were no code changes.
+
+## 0.2.16 (2026-10-14)
+
+This was a version bump only for @lde/local-sparql-endpoint to align it with other projects, there were no code changes.
+
 ## 0.2.15 (2026-07-24)
 
 This was a version bump only for @lde/local-sparql-endpoint to align it with other projects, there were no code changes.

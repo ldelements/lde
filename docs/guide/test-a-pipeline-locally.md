@@ -38,7 +38,7 @@ describe('SparqlConstructReader', () => {
 
 ## Give each suite a unique port
 
-Test runners execute suites in parallel, so two suites that start an endpoint on the same port collide. This repository’s convention: every test file that starts a local SPARQL endpoint claims its own port, tracked in a single list (in `CLAUDE.md`) so new suites pick a free one.
+Test runners execute suites in parallel, so two suites that start an endpoint on the same port collide. This repository’s convention: every test file that starts a local SPARQL endpoint claims its own port, tracked in a single list (in `AGENTS.md`) so new suites pick a free one.
 
 ## Wait for an endpoint you start yourself
 

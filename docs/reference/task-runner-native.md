@@ -40,11 +40,12 @@ await runner.stop(task2); // Sends SIGTERM, then SIGKILL after timeout
 ## Features
 
 - Runs commands with `shell: true`, so pipelines and redirection work
-- Spawns commands in a detached process group
+- Spawns commands in a detached process group, which is what lets `stop()` stop a pipeline as a whole
+- Stops running processes when this process is interrupted – see [Tasks end with the process](./task-runner#tasks-end-with-the-process)
 - Graceful shutdown with SIGTERM → SIGKILL escalation
 - Handles already-exited processes in `stop()`
 - Captures stdout and stderr output
 
 ## Output and errors
 
-`wait()` resolves with the process’s combined stdout and stderr output. When the process exits with a non-zero code, it rejects with an error of the form `Process failed with code N: <output>`. Calling `stop()` on a process that has already exited resolves immediately with the buffered output.
+`wait()` resolves with the process’s combined stdout and stderr output. When the process exits with a non-zero code, it rejects with an error of the form `Process failed with code N: <output>`, and when a signal kills it, `Process was killed by SIGKILL: <output>`. Calling `stop()` on a process that has already exited resolves immediately with the buffered output.

@@ -1,6 +1,6 @@
 {
   "name": "@lde/fastify-rdf",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "description": "Fastify plugin for serving RDF data with content negotiation",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
@@ -25,19 +25,20 @@
     "!**/*.tsbuildinfo"
   ],
   "dependencies": {
-    "@fastify/accepts": "^5.0.0",
+    "@fastify/accepts": "^5.0.7",
     "@tpluscode/rdf-ns-builders": "^5.0.0",
-    "fastify-plugin": "^6.0.0",
-    "n3": "^2.4.0",
+    "fastify-plugin": "^6.0.1",
+    "jsonld-context-parser": "^3.1.1",
+    "n3": "^2.7.12",
     "rdf-parse": "^5.0.0",
     "rdf-serialize": "^5.1.0",
     "tslib": "^2.3.0"
   },
   "devDependencies": {
     "@rdfjs/types": "^2.0.0",
-    "fastify": "^5.12.1"
+    "fastify": "^5.12.6"
   },
   "peerDependencies": {
-    "fastify": "^5.12.1"
+    "fastify": "^5.12.6"
   }
 }

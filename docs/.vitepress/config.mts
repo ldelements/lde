@@ -68,6 +68,7 @@ const packageGroups: Record<string, string[]> = {
     'task-runner',
     'task-runner-docker',
     'task-runner-native',
+    'task-runner-http',
   ],
 };
 

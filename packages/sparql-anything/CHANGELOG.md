@@ -1,3 +1,37 @@
+## 0.2.0 (2026-10-15)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/task-runner to 0.3.0
+
+## 0.1.9 (2026-10-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/task-runner to 0.2.16
+
+## 0.1.8 (2026-09-21)
+
+### 🚀 Features
+
+- **task-runner:** stop running tasks when the process is interrupted ([#837](https://github.com/ldelements/lde/pull/837))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/task-runner to 0.2.15
+
+## 0.1.7 (2026-09-21)
+
+### 🚀 Features
+
+- **sparql-anything:** chunk a stream of lines, not only a file ([#865](https://github.com/ldelements/lde/pull/865))
+
+## 0.1.6 (2026-09-10)
+
+### 🩹 Fixes
+
+- **sparql-anything:** accept an empty output as no triples unless --load could not be checked ([#836](https://github.com/ldelements/lde/pull/836))
+
 ## 0.1.5 (2026-09-09)
 
 ### 🩹 Fixes

@@ -11,17 +11,19 @@ const defaultFramePath = join(__dirname, '../frames/shacl.frame.jsonld');
 
 export async function frame(
   document: JsonLdArray,
-  userFramePath?: string
+  userFramePath?: string,
 ): Promise<NodeObject> {
   const defaultFrame = await readFrame(defaultFramePath);
   const mergedFrame = userFramePath
     ? deepMerge(defaultFrame, await readFrame(userFramePath))
     : defaultFrame;
 
-  return await jsonld.frame(document, mergedFrame, {
+  const framed = await jsonld.frame(document, mergedFrame, {
     omitGraph: false,
     embed: '@always',
   });
+
+  return listOrAlternatives(framed);
 }
 
 async function readFrame(path: string): Promise<Frame> {
@@ -37,7 +39,7 @@ async function readFrame(path: string): Promise<Frame> {
 function deepMerge(target: Frame, source: Frame): Frame {
   const result = { ...(target as Record<string, unknown>) };
   for (const [key, sourceValue] of Object.entries(
-    source as Record<string, unknown>
+    source as Record<string, unknown>,
   )) {
     const targetValue = result[key];
     if (isPlainObject(targetValue) && isPlainObject(sourceValue)) {
@@ -50,7 +52,33 @@ function deepMerge(target: Frame, source: Frame): Frame {
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return (
-    typeof value === 'object' && value !== null && !Array.isArray(value)
-  );
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Turns every `or` value into an array of `sh:or` lists, each list an array of
+ * alternatives. A shape may carry several `sh:or` lists, which a JSON-LD
+ * `@list` container cannot hold – it keeps one and drops the rest – so the
+ * frame leaves `or` without a container and the `{ "@list": […] }` objects it
+ * yields are unwrapped here.
+ */
+function listOrAlternatives<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map(listOrAlternatives) as T;
+  }
+  if (!isPlainObject(value)) {
+    return value;
+  }
+  const result: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value)) {
+    result[key] =
+      key === 'or'
+        ? [child]
+            .flat()
+            .map((list) =>
+              listOrAlternatives((list as { '@list': unknown })['@list']),
+            )
+        : listOrAlternatives(child);
+  }
+  return result as T;
 }

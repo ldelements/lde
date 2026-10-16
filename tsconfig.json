@@ -97,6 +97,9 @@
     },
     {
       "path": "./packages/sparql-anything"
+    },
+    {
+      "path": "./packages/task-runner-http"
     }
   ],
   "compilerOptions": {

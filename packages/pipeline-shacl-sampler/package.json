@@ -1,6 +1,6 @@
 {
   "name": "@lde/pipeline-shacl-sampler",
-  "version": "0.10.6",
+  "version": "0.11.0",
   "description": "Per-class sampling stages for @lde/pipeline, derived from SHACL shapes",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
@@ -27,12 +27,12 @@
   "dependencies": {
     "@rdfjs/types": "^2.0.1",
     "@tpluscode/rdf-ns-builders": "^5.0.0",
-    "n3": "^2.4.0",
+    "n3": "^2.7.12",
     "rdf-dereference": "^5.0.0",
     "tslib": "^2.3.0"
   },
   "peerDependencies": {
-    "@lde/dataset": "^0.7.9",
-    "@lde/pipeline": "^0.36.6"
+    "@lde/dataset": "^0.8.0",
+    "@lde/pipeline": "^0.37.0"
   }
 }

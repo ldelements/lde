@@ -1,3 +1,11 @@
+## 0.3.0 (2026-10-15)
+
+This was a version bump only for @lde/wait-for-sparql to align it with other projects, there were no code changes.
+
+## 0.2.18 (2026-10-14)
+
+This was a version bump only for @lde/wait-for-sparql to align it with other projects, there were no code changes.
+
 ## 0.2.17 (2026-08-24)
 
 This was a version bump only for @lde/wait-for-sparql to align it with other projects, there were no code changes.

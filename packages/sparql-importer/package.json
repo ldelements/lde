@@ -1,6 +1,6 @@
 {
   "name": "@lde/sparql-importer",
-  "version": "0.6.11",
+  "version": "0.7.0",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
     "directory": "packages/sparql-importer"
@@ -24,9 +24,9 @@
     "!**/*.tsbuildinfo"
   ],
   "dependencies": {
-    "@lde/dataset": "^0.7.9",
-    "@lde/distribution-downloader": "^0.6.9",
-    "@lde/task-runner": "^0.2.14",
+    "@lde/dataset": "^0.8.0",
+    "@lde/distribution-downloader": "^0.7.0",
+    "@lde/task-runner": "^0.3.0",
     "tslib": "^2.3.0"
   }
 }

@@ -20,11 +20,16 @@ export interface SubjectIndex {
 
 /**
  * Iterate `quads` once, grouping each subject’s triples. Duplicate triples are
- * collapsed here because some SPARQL engines (e.g. QLever) do not deduplicate
- * CONSTRUCT output. The source is consumed a single time, so it may be a
- * one-shot iterable (a generator chaining several sources); the whole subject
- * index is held, but never more than that plus one framed subgraph at a time
- * downstream.
+ * collapsed here: some SPARQL engines (e.g. QLever) do not deduplicate
+ * CONSTRUCT output, and a batch merges several readers’ output unfiltered.
+ * Framing would fold a repeated plain value on its own, but not a repeated
+ * RDF list cell (it then frames as raw `rdf:first`/`rdf:rest`), and without the
+ * set the index and every framed subgraph would grow with the duplication
+ * factor rather than with the distinct triples.
+ *
+ * The source is consumed a single time, so it may be a one-shot iterable (a
+ * generator chaining several sources); the whole subject index is held, but
+ * never more than that plus one framed subgraph at a time downstream.
  *
  * Roots are never discovered here – the caller ({@link projectRoots}, from the
  * pipeline selector) already holds them and passes them to {@link frameSubjects}

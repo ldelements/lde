@@ -8,17 +8,33 @@ CONSTRUCT {
 }
 WHERE {
     {
-        # Pre-group distinct subjects before computing namespace to avoid regex on every triple.
-        SELECT ?uriSpace (COUNT(*) AS ?count) {
+        SELECT ?uriSpace (SUM(?groupCount) AS ?count) {
             {
-                SELECT DISTINCT ?s {
-                    #subjectFilter#
-                    ?s ?p ?o .
-                    FILTER(ISIRI(?s))
+                # Group subjects by the directory of their document (the IRI without fragment),
+                # keeping hash IRIs apart. MIN = MAX tells whether a hash group holds a single
+                # document, without the cost of COUNT(DISTINCT ?document).
+                SELECT ?directory ?isHash (COUNT(*) AS ?groupCount)
+                    (MIN(?document) AS ?firstDocument) (MAX(?document) AS ?lastDocument) {
+                    {
+                        # Pre-group distinct subjects before computing namespace to avoid regex on every triple.
+                        SELECT DISTINCT ?s {
+                            #subjectFilter#
+                            ?s ?p ?o .
+                            FILTER(ISIRI(?s))
+                        }
+                    }
+                    BIND(STR(?s) AS ?iri)
+                    BIND(CONTAINS(?iri, "#") AS ?isHash)
+                    BIND(IF(?isHash, STRBEFORE(?iri, "#"), ?iri) AS ?document)
+                    BIND(REPLACE(?document, "[^/]*$", "") AS ?prefix)
+                    # A document without path (http://host, urn:…) is its own directory.
+                    BIND(IF(?prefix = "" || STRENDS(?prefix, "//"), ?document, ?prefix) AS ?directory)
                 }
+                GROUP BY ?directory ?isHash
             }
-            # Extract namespace by removing the local name (everything after the last / or #)
-            BIND(REPLACE(STR(?s), "[^/#]+$", "") AS ?uriSpace)
+            # A hash vocabulary (…/skos/core#) keeps its document as namespace; hash IRIs spread
+            # over several documents (…/record1#media, …/record2#media) share their directory.
+            BIND(IF(?isHash && ?firstDocument = ?lastDocument, CONCAT(?firstDocument, "#"), ?directory) AS ?uriSpace)
         }
         GROUP BY ?uriSpace
         ORDER BY DESC(?count)

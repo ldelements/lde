@@ -68,3 +68,4 @@ Manage SPARQL servers and run tasks.
 | [@lde/task-runner](./task-runner)                     | Task runner core classes and interfaces                           |
 | [@lde/task-runner-docker](./task-runner-docker)       | Run tasks in Docker containers                                    |
 | [@lde/task-runner-native](./task-runner-native)       | Run tasks natively on the host system                             |
+| [@lde/task-runner-http](./task-runner-http)           | Run tasks in another container of the pod, such as a sidecar      |

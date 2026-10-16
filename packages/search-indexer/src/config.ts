@@ -43,9 +43,10 @@ export interface IndexerConfig {
   /** Per-dataset processing memory: skip unchanged datasets
    *  (`PROVENANCE_FILE` + `PIPELINE_VERSION`). */
   readonly provenance?: ProvenanceConfig;
-  /** The QLever import path (`QLEVER_IMAGE` + `IMPORT_STRATEGY` +
-   *  `DATA_DIR`): import data dumps into a pipeline-controlled QLever
-   *  container instead of relying on live SPARQL endpoints alone. */
+  /** The QLever import path (`QLEVER_MODE` + `QLEVER_IMAGE` +
+   *  `IMPORT_STRATEGY` + `DATA_DIR`): import data dumps into a
+   *  pipeline-controlled QLever instead of relying on live SPARQL endpoints
+   *  alone. */
   readonly qlever?: QleverConfig;
 }
 
@@ -67,20 +68,35 @@ export interface ProvenanceConfig {
   readonly pipelineVersion: string;
 }
 
-/** The pipeline-controlled QLever sibling container (Docker socket mode). */
-export interface QleverConfig {
-  /** QLever Docker image to run, e.g. `adfreiburg/qlever:latest`. */
-  readonly image: string;
+/**
+ * The pipeline-controlled QLever the import path imports into, discriminated
+ * by `QLEVER_MODE`.
+ */
+export type QleverConfig = {
   /** When to import a data dump instead of querying a live endpoint. */
   readonly strategy: 'sparql' | 'sparqlWithImportFallback' | 'import';
   /** Directory for downloaded dumps and QLever index caches. */
   readonly dataDir: string;
-  /** Docker network the spawned QLever joins (`QLEVER_NETWORK`), reached by
-   *  container name. Required when the indexer itself runs containerized on
-   *  a bridge network; without it QLever is published on the host and
-   *  addressed as `localhost`. */
-  readonly network?: string;
-}
+} & (
+  | {
+      /** A sibling container the indexer starts over the Docker socket. */
+      readonly mode: 'docker';
+      /** QLever Docker image to run, e.g. `adfreiburg/qlever:latest`. */
+      readonly image: string;
+      /** Docker network the spawned QLever joins (`QLEVER_NETWORK`), reached
+       *  by container name. Required when the indexer itself runs
+       *  containerized on a bridge network; without it QLever is published on
+       *  the host and addressed as `localhost`. */
+      readonly network?: string;
+    }
+  | {
+      /** A sidecar in the indexer’s pod, controlled through the task agent
+       *  of `@lde/task-runner-http`. The pod sets its image. */
+      readonly mode: 'remote';
+    }
+);
+
+const QLEVER_MODES = ['docker', 'remote'] as const;
 
 const IMPORT_STRATEGIES = [
   'sparql',
@@ -271,10 +287,13 @@ function qleverFromEnvironment(
   const image = environment['QLEVER_IMAGE'];
   const strategy = environment['IMPORT_STRATEGY'];
   const network = environment['QLEVER_NETWORK'];
-  if (!image) {
+  // QLEVER_IMAGE alone is how the Docker mode has always been enabled. An
+  // empty QLEVER_MODE, as a template renders an unset one, counts as unset.
+  const mode = environment['QLEVER_MODE'] || (image ? 'docker' : undefined);
+  if (mode === undefined) {
     if (strategy) {
       problems.push(
-        'IMPORT_STRATEGY requires QLEVER_IMAGE: without an import engine there is nothing to import into',
+        'IMPORT_STRATEGY requires QLEVER_IMAGE or QLEVER_MODE=remote: without an import engine there is nothing to import into',
       );
     }
     if (network) {
@@ -282,6 +301,12 @@ function qleverFromEnvironment(
         'QLEVER_NETWORK requires QLEVER_IMAGE: without an import engine there is no QLever container to attach',
       );
     }
+    return undefined;
+  }
+  if (!(QLEVER_MODES as readonly string[]).includes(mode)) {
+    problems.push(
+      `QLEVER_MODE must be one of ${QLEVER_MODES.map((name) => `“${name}”`).join(', ')}, got “${mode}”`,
+    );
     return undefined;
   }
   if (
@@ -292,10 +317,28 @@ function qleverFromEnvironment(
       `IMPORT_STRATEGY must be one of ${IMPORT_STRATEGIES.map((name) => `“${name}”`).join(', ')}, got “${strategy}”`,
     );
   }
-  return {
-    image,
+  const common = {
     strategy: (strategy ?? 'sparql') as QleverConfig['strategy'],
     dataDir: environment['DATA_DIR'] ?? '/data',
-    network,
   };
+  if (mode === 'remote') {
+    if (image) {
+      problems.push(
+        'QLEVER_IMAGE cannot be combined with QLEVER_MODE=remote: the pod sets the QLever sidecar’s image',
+      );
+    }
+    if (network) {
+      problems.push(
+        'QLEVER_NETWORK cannot be combined with QLEVER_MODE=remote: the sidecar shares the indexer’s network namespace',
+      );
+    }
+    return { ...common, mode: 'remote' };
+  }
+  if (!image) {
+    problems.push(
+      'QLEVER_MODE=docker requires QLEVER_IMAGE: the image to start QLever containers from',
+    );
+    return undefined;
+  }
+  return { ...common, mode: 'docker', image, network };
 }

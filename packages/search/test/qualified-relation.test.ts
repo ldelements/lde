@@ -126,10 +126,10 @@ describe('an edge that carries data and resolves a lookup', () => {
     // A Reference Type is nested in its referrer and kept in no collection of
     // its own, so an entry carries fields and no document key (ADR 24). The
     // edge below IS a named node, and still leaves without one: the node IRI
-    // is a reading device for the referrer's derives, pruned like an internal
+    // is a reading device for the referrer’s derives, pruned like an internal
     // field – the collection declares an `id` for a locally-nested Root Type
     // alone, and a weld names the flat companion beside the entry. Kept, it
-    // would make an entry's shape depend on whether a publisher minted an IRI
+    // would make an entry’s shape depend on whether a publisher minted an IRI
     // for a relationship, which is arbitrary to a consumer.
     const named = {
       '@id': 'https://ex/work/17',

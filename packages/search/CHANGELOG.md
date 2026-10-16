@@ -1,3 +1,21 @@
+## 0.28.0 (2026-10-15)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/text-normalization to 0.2.0
+
+## 0.27.2 (2026-10-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/text-normalization to 0.1.3
+
+## 0.27.1 (2026-10-14)
+
+### 🩹 Fixes
+
+- **search:** keep a Reference Type entry’s IRI out of its fields ([#895](https://github.com/ldelements/lde/pull/895))
+
 ## 0.27.0 (2026-09-09)
 
 ### 🩹 Fixes

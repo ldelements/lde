@@ -8,6 +8,7 @@ import {
   rm,
   writeFile,
 } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -224,5 +225,208 @@ describe('chunk', () => {
     await expect(
       chunk(input, { rows: 0, into: join(workDir, 'chunks') }),
     ).rejects.toThrow('is not a number of rows to a chunk');
+  });
+
+  describe('of a stream of lines', () => {
+    /** Yields `rows` numbered rows, as a caller producing a table would. */
+    async function* rowsOf(rows: number): AsyncGenerator<string> {
+      for (let index = 0; index < rows; index++) {
+        yield `row-${index}`;
+      }
+    }
+
+    it('splits the lines into chunks named after ‘name’', async () => {
+      const paths = await chunk(rowsOf(5), {
+        rows: 2,
+        into: join(workDir, 'chunks'),
+        name: 'places',
+        extension: '.csv',
+      });
+
+      expect(paths.map((path) => path.replace(`${workDir}/`, ''))).toEqual([
+        'chunks/places-0000.csv',
+        'chunks/places-0001.csv',
+        'chunks/places-0002.csv',
+      ]);
+      expect(await readFile(paths[0], 'utf-8')).toBe('row-0\nrow-1\n');
+      expect(await readFile(paths[2], 'utf-8')).toBe('row-4\n');
+    });
+
+    it('repeats the header at the top of every chunk', async () => {
+      const paths = await chunk(rowsOf(3), {
+        rows: 2,
+        into: join(workDir, 'chunks'),
+        name: 'places',
+        extension: '.csv',
+        header: 'id\tname',
+      });
+
+      expect(await readFile(paths[0], 'utf-8')).toBe(
+        'id\tname\nrow-0\nrow-1\n',
+      );
+      expect(await readFile(paths[1], 'utf-8')).toBe('id\tname\nrow-2\n');
+    });
+
+    it('gives the chunks no extension when asked for none', async () => {
+      const paths = await chunk(rowsOf(2), {
+        rows: 2,
+        into: join(workDir, 'chunks'),
+        name: 'graph',
+        extension: '',
+      });
+
+      expect(paths[0].endsWith('graph-0000')).toBe(true);
+    });
+
+    it('normalises CRLF line endings', async () => {
+      async function* crlf(): AsyncGenerator<string> {
+        yield 'row-0\r';
+        yield 'row-1\r';
+      }
+
+      const paths = await chunk(crlf(), {
+        rows: 2,
+        into: join(workDir, 'chunks'),
+        name: 'places',
+        extension: '.csv',
+      });
+
+      expect(await readFile(paths[0], 'utf-8')).toBe('row-0\nrow-1\n');
+    });
+
+    it('refuses a value that is more than one row', async () => {
+      async function* twoRowsInOne(): AsyncGenerator<string> {
+        yield 'row-0';
+        yield `${'x'.repeat(100)}\n${'y'.repeat(100)}`;
+      }
+
+      // Counted as one row and written as two, this would put more in a chunk
+      // than ‘rows’ says it holds – the bound the conversion is sized against.
+      await expect(
+        chunk(twoRowsInOne(), {
+          rows: 1_000,
+          into: join(workDir, 'chunks'),
+          name: 'places',
+          extension: '.csv',
+        }),
+      ).rejects.toThrow(
+        // Named, and cut short: a value this size is what a byte stream yields.
+        `‘${'x'.repeat(40)}…’ holds a line ending, so it is more than one row`,
+      );
+    });
+
+    it('names the mistake of handing it a byte stream rather than lines', async () => {
+      const input = await writeInput(3);
+
+      await expect(
+        // A Readable is typed as an AsyncIterable of any, so this typechecks;
+        // its values are buffers that fall wherever the reads did, not lines.
+        chunk(createReadStream(input, 'utf-8'), {
+          rows: 1_000,
+          into: join(workDir, 'chunks'),
+          name: 'places',
+          extension: '.csv',
+        }),
+      ).rejects.toThrow('reading a byte stream through ‘readline’ first');
+    });
+
+    it('removes the chunks an earlier call made of the same name', async () => {
+      const into = join(workDir, 'chunks');
+      await mkdir(into, { recursive: true });
+      await writeFile(join(into, 'places-0007.csv'), 'stale\n');
+
+      await chunk(rowsOf(2), {
+        rows: 2,
+        into,
+        name: 'places',
+        extension: '.csv',
+      });
+
+      expect(await readdir(into)).toEqual(['places-0000.csv']);
+    });
+
+    it('refuses a name that is a path rather than a file name', async () => {
+      await expect(
+        chunk(rowsOf(2), {
+          rows: 2,
+          into: join(workDir, 'chunks'),
+          name: '../places',
+          extension: '.csv',
+        }),
+      ).rejects.toThrow('is not a name for the chunks');
+    });
+
+    /** Calls `chunk()` the way JavaScript can: without what the overload asks. */
+    const chunkWithout = chunk as (
+      input: AsyncIterable<string>,
+      options: object,
+    ) => Promise<string[]>;
+
+    it('refuses a stream with no name to call its chunks after', async () => {
+      await expect(
+        chunkWithout(rowsOf(2), { rows: 2, into: join(workDir, 'chunks') }),
+      ).rejects.toThrow('pass ‘name’');
+    });
+
+    it('refuses a stream with no extension to give its chunks', async () => {
+      // SPARQL Anything takes the format from the name, so a chunk with no
+      // extension is one it cannot read – too sharp an edge to default to.
+      await expect(
+        chunkWithout(rowsOf(2), {
+          rows: 2,
+          into: join(workDir, 'chunks'),
+          name: 'places',
+        }),
+      ).rejects.toThrow('pass ‘extension’');
+    });
+
+    it('refuses a stream with no rows rather than producing no chunks', async () => {
+      await expect(
+        chunk(rowsOf(0), {
+          rows: 2,
+          into: join(workDir, 'chunks'),
+          name: 'places',
+          extension: '.csv',
+        }),
+      ).rejects.toThrow('holds no rows to chunk');
+    });
+
+    it('surfaces a write that fails while it is waiting on the next line', async () => {
+      const into = join(workDir, 'chunks');
+      // The third chunk cannot be opened, so the failure arrives once the
+      // first two have been written and the loop is pulling lines again.
+      await mkdir(join(into, 'places-0002'), { recursive: true });
+
+      await expect(
+        chunk(rowsOf(6), { rows: 2, into, name: 'places', extension: '' }),
+      ).rejects.toThrow('EISDIR');
+
+      expect(await readFile(join(into, 'places-0001'), 'utf-8')).toBe(
+        'row-2\nrow-3\n',
+      );
+    });
+
+    it('stops pulling lines once a write has failed', async () => {
+      const into = join(workDir, 'chunks');
+      // The only chunk this size cannot be opened, so the failure arrives
+      // while the loop is waiting on a line rather than on a chunk it closes.
+      await mkdir(join(into, 'places-0000'), { recursive: true });
+      let linesPulled = 0;
+      async function* slowly(): AsyncGenerator<string> {
+        for (let index = 0; index < 100; index++) {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          linesPulled++;
+          yield `row-${index}`;
+        }
+      }
+
+      await expect(
+        chunk(slowly(), { rows: 1_000, into, name: 'places', extension: '' }),
+      ).rejects.toThrow('EISDIR');
+
+      // The producer is a pipeline of its own; leaving it running would keep
+      // reading whatever feeds it long after there is anywhere to put it.
+      expect(linesPulled).toBeLessThan(100);
+    });
   });
 });

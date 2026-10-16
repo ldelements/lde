@@ -1,3 +1,39 @@
+## 0.33.0 (2026-10-15)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/text-normalization to 0.2.0
+- Updated @lde/pipeline to 0.37.0
+- Updated @lde/dataset to 0.8.0
+- Updated @lde/search to 0.28.0
+
+## 0.32.4 (2026-10-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/text-normalization to 0.1.3
+- Updated @lde/pipeline to 0.36.9
+- Updated @lde/dataset to 0.7.10
+- Updated @lde/search to 0.27.2
+
+## 0.32.3 (2026-10-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.36.8
+
+## 0.32.2 (2026-10-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.27.1
+
+## 0.32.1 (2026-09-21)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.36.7
+
 ## 0.32.0 (2026-09-09)
 
 ### 🧱 Updated Dependencies

@@ -32,7 +32,7 @@ export default mergeConfig(
           // Re-anchored for the polymorphic lookup: the shared-field reading
           // of its interface no longer re-checks what `searchSchema` already
           // guarantees of a field two targets share, so that branch is gone.
-          branches: 97.27,
+          branches: 97.28,
           statements: 100,
         },
       },
