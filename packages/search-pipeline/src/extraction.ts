@@ -203,13 +203,16 @@ function buildFor(
         ),
       ];
       const targets = referencedTargetsOf(field, schema);
+      // Every hop off the referent – its type, each key, each expansion – is
+      // its own branch of ONE optional union: each binds only its own
+      // variables, so a multi-valued type or key multiplies against nothing.
+      const expansions: PatternGroup[] = [];
       if (targets.length > 1) {
         const built = buildTypeHop(value, counter);
         template.push(built.triple);
-        patterns.push(built.pattern);
+        expansions.push(built.pattern);
       }
       const local = localTargetsOf(field, schema, onPath);
-      const expansions: PatternGroup[] = [];
       for (const target of targets) {
         if (!local.includes(target)) {
           // Only where no local expansion follows: a `local` lookup reads the
@@ -219,7 +222,7 @@ function buildFor(
           if (keyed !== undefined) {
             const built = buildKeyHop(target, keyed, value, counter);
             template.push(built.triple);
-            patterns.push(built.pattern);
+            expansions.push(built.pattern);
           }
           continue;
         }
@@ -231,7 +234,8 @@ function buildFor(
       // referent is stored by id whether or not the referring document says
       // anything about it, and conjoining would drop both together. Several
       // targets’ expansions share the one UNION: a referent is of one kind,
-      // and the branches of the others simply bind nothing for it.
+      // and the branches of the others simply bind nothing for it. A
+      // single-branch union serialises to just its group.
       if (expansions.length > 0) {
         patterns.push(
           factory.patternOptional(
@@ -280,18 +284,19 @@ function keyedFieldOf(target: RootType): KeyedField | undefined {
 /**
  * The one-triple hop that reads a referent’s `rdf:type`, for a reference whose
  * referent may be of several kinds: emitted under `rdf:type` itself, which
- * framing turns into the node’s `@type`, and bound in an `OPTIONAL` so an
- * untyped referent keeps its row and falls back to the first target declared.
+ * framing turns into the node’s `@type`. The caller binds it inside the
+ * reference’s `OPTIONAL` union, so an untyped referent keeps its row and falls
+ * back to the first target declared.
  */
 function buildTypeHop(
   referent: TermVariable,
   counter: VariableCounter,
-): { readonly triple: TripleNesting; readonly pattern: Pattern } {
+): { readonly triple: TripleNesting; readonly pattern: PatternGroup } {
   const type = factory.termVariable(`t${counter.next++}`, factory.gen());
   const predicate = factory.termNamed(factory.gen(), RDF_TYPE);
   return {
     triple: factory.triple(referent, predicate, type),
-    pattern: factory.patternOptional(
+    pattern: factory.patternGroup(
       [
         factory.patternBgp(
           [factory.triple(referent, predicate, type)],
@@ -308,21 +313,20 @@ type KeyedField = SearchField & { readonly path: string };
 
 /**
  * The one-field hop that reads a referent’s key: a template triple emitting the
- * key field under the **target’s** IR Alias, and an `OPTIONAL` branch binding
- * it. The referent recursion an inline reference already performs, for a single
- * field and wrapped in `OPTIONAL` rather than conjoined – so a referent with no
- * key candidate keeps its row and still stores its own IRI, instead of the
- * whole reference dropping out of the CONSTRUCT.
+ * key field under the **target’s** IR Alias, and a branch binding it. The
+ * referent recursion an inline reference already performs, for a single field –
+ * bound by the caller inside the reference’s `OPTIONAL` union rather than
+ * conjoined, so a referent with no key candidate keeps its row and still stores
+ * its own IRI, instead of the whole reference dropping out of the CONSTRUCT.
  *
- * It sits inside its own UNION branch (the one the reference contributes), so it
- * multiplies against nothing.
+ * It is a branch of its own in that union, so it multiplies against nothing.
  */
 function buildKeyHop(
   target: RootType,
   keyField: KeyedField,
   referent: TermVariable,
   counter: VariableCounter,
-): { readonly triple: TripleNesting; readonly pattern: Pattern } {
+): { readonly triple: TripleNesting; readonly pattern: PatternGroup } {
   const key = factory.termVariable(`k${counter.next++}`, factory.gen());
   return {
     triple: factory.triple(
@@ -330,7 +334,7 @@ function buildKeyHop(
       factory.termNamed(factory.gen(), irAlias(target, keyField)),
       key,
     ),
-    pattern: factory.patternOptional(
+    pattern: factory.patternGroup(
       [
         factory.patternBgp(
           [factory.triple(referent, liftPath(keyField.path), key)],

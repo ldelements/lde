@@ -34,6 +34,12 @@ export type ResolvedReferents =
       /** By IRI. A lookup naming several targets holds referents of any of
        *  them here, each saying which. */
       readonly documents: ReadonlyMap<string, ResolvedReferent>;
+      /** The levels below, by target name – what a stored referent no
+       *  collection answered for is reconstructed against. */
+      readonly childrenByTarget: ReadonlyMap<
+        string,
+        ReadonlyMap<string, ResolvedReferents>
+      >;
     }
   | {
       readonly via: 'nested';
@@ -155,10 +161,15 @@ export async function resolveProjection(
       // Declaration order is precedence: an IRI two collections hold belongs
       // to the target declared first.
       const documents = new Map<string, ResolvedReferent>();
+      const childrenByTarget = new Map<
+        string,
+        ReadonlyMap<string, ResolvedReferents>
+      >();
       for (const resolved of perTarget) {
         if (resolved === undefined) {
           continue;
         }
+        childrenByTarget.set(resolved.target.name, resolved.children);
         for (const [iri, document] of resolved.fetched) {
           if (!documents.has(iri)) {
             documents.set(iri, {
@@ -172,7 +183,7 @@ export async function resolveProjection(
       if (perTarget.every((resolved) => resolved === undefined)) {
         return undefined;
       }
-      return [name, { via: 'lookup', documents }] as const;
+      return [name, { via: 'lookup', documents, childrenByTarget }] as const;
     }),
   );
   for (const level of levels) {
@@ -265,8 +276,12 @@ function includeFields(
       physical.add(field.name);
     }
   }
+  // With several targets the level below merges every target’s selection,
+  // so ask each collection only for the reference fields it declares.
   for (const name of Object.keys(below ?? {})) {
-    physical.add(name);
+    if (fieldNamed(target, name) !== undefined) {
+      physical.add(name);
+    }
   }
   return [...physical];
 }

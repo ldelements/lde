@@ -354,10 +354,27 @@ export function buildGraphQLSchema(
    * more knowledge of `TermFilter` than it already needs of `terms`.
    */
   const targetFilters = new Map<string, GraphQLInputObjectType>();
-  function targetFilter(typeName: string): GraphQLInputObjectType {
+  /** The joined names of several targets a filter was created for – the
+   *  same name for a declared type is a collision, not a share. */
+  const polymorphicFilterNames = new Set<string>();
+  function targetFilter(
+    typeName: string,
+    polymorphic = false,
+  ): GraphQLInputObjectType {
     const existing = targetFilters.get(typeName);
+    if (
+      existing !== undefined &&
+      polymorphicFilterNames.has(typeName) !== polymorphic
+    ) {
+      throw new Error(
+        `Type “${typeName}” is also the joined name of a lookup’s targets, so both would be filtered through “${existing.name}”; rename one.`,
+      );
+    }
     if (existing !== undefined) {
       return existing;
+    }
+    if (polymorphic) {
+      polymorphicFilterNames.add(typeName);
     }
     const name = `${typeName}Filter`;
     // graphql-js would reject the duplicate too, but only once the whole schema
@@ -976,7 +993,13 @@ export function buildGraphQLSchema(
         // still an `IRI` list, so coarse discovery finds it – refined
         // discovery, which resolves through one target’s own `id`, does not.
         const target = referencedTypeName(field);
-        return target === undefined ? iriFilter : targetFilter(target);
+        return target === undefined
+          ? iriFilter
+          : targetFilter(
+              target,
+              field.ref?.strategy === 'lookup' &&
+                labelSourceNamesOf(field).length > 1,
+            );
       }
       case 'range':
         return field.kind === 'integer'

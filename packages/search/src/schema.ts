@@ -1574,6 +1574,7 @@ export interface SearchTypeIssue {
     | 'joinable-with-inline-ref'
     | 'joinable-with-several-targets'
     | 'duplicate-target'
+    | 'empty-target'
     | 'reserved-field-name'
     | 'key-field-unknown'
     | 'key-field-not-reference'
@@ -1799,6 +1800,15 @@ export function validateSearchType(
       // twice would have to mean two different ranks.
       if (new Set(targets).size !== targets.length) {
         issue('duplicate-target');
+      }
+      // A list of targets names at least one: an empty one would silently
+      // read as no target at all – no re-keying, no labels, no facet policy.
+      const declaredTargets =
+        field.ref?.strategy === 'lookup'
+          ? field.ref.target
+          : (field as ReferenceField).labelSource;
+      if (Array.isArray(declaredTargets) && declaredTargets.length === 0) {
+        issue('empty-target');
       }
       // An inline reference is stored as a NESTED OBJECT, not as an id an
       // engine can point a reference field at, so the two cannot both hold:

@@ -1153,20 +1153,33 @@ function localLookupValue(
       // An entry no collection answered for is read through the declaration
       // it was stored under – which it says itself where there were several
       // to choose from, and the only one otherwise.
-      const referent: ResolvedReferent = authoritative ?? {
-        target: storedTargetOf(entry, targets),
-        document: entry,
-        children: new Map(),
-      };
+      if (authoritative !== undefined) {
+        return typedDocument(
+          targets.length > 1,
+          authoritative.target,
+          nestedDocument(
+            authoritative.document,
+            authoritative.target,
+            labels,
+            schema,
+            authoritative.children,
+          ),
+        );
+      }
+      // Its own lookups resolve against the level its target’s fetch carried
+      // down, so a nested IRI it shares with a fetched referent still nests.
+      const target = storedTargetOf(entry, targets);
       return typedDocument(
         targets.length > 1,
-        referent.target,
+        target,
         nestedDocument(
-          referent.document,
-          referent.target,
+          entry,
+          target,
           labels,
           schema,
-          referent.children,
+          resolved?.via === 'lookup'
+            ? resolved.childrenByTarget.get(target.name)
+            : undefined,
         ),
       );
     });

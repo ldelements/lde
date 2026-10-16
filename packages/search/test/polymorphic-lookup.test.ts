@@ -213,6 +213,29 @@ describe('declaring several targets', () => {
     ).toContainEqual({ field: 'creator', reason: 'missing-ref-type-name' });
   });
 
+  it.each([
+    { ref: { strategy: 'lookup', target: [] } },
+    { ref: { strategy: 'idOnly' }, labelSource: [] },
+  ] as const)(
+    'rejects an empty target list on a reference that is not output: $ref.strategy',
+    (declaration) => {
+      expect(
+        validateSearchType({
+          name: 'Work',
+          class: `${SCHEMA_ORG}CreativeWork`,
+          fields: [
+            {
+              name: 'creator',
+              kind: 'reference',
+              filterable: true,
+              ...declaration,
+            },
+          ],
+        }),
+      ).toContainEqual({ field: 'creator', reason: 'empty-target' });
+    },
+  );
+
   it('refuses joinable: an engine reference names one collection', () => {
     expect(
       validateSearchType({

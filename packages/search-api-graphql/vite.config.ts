@@ -29,10 +29,7 @@ export default mergeConfig(
           // Re-anchored for the selection-set projection: its defensive reads
           // (an unresolvable target, an absent field list) are reachable only
           // from a direct caller, since GraphQL validates the query first.
-          // Re-anchored for the polymorphic lookup: the shared-field reading
-          // of its interface no longer re-checks what `searchSchema` already
-          // guarantees of a field two targets share, so that branch is gone.
-          branches: 97.28,
+          branches: 97.36,
           statements: 100,
         },
       },

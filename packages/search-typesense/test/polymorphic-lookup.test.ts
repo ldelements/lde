@@ -372,6 +372,101 @@ describe('a stored referent of several possible kinds', () => {
   });
 });
 
+describe('a lookup below a referent of several possible kinds', () => {
+  const employedPerson = defineSearchType({
+    ...person,
+    fields: [
+      ...person.fields,
+      {
+        name: 'employer',
+        kind: 'reference',
+        output: true,
+        ref: { strategy: 'lookup', target: 'Organization' },
+      },
+    ],
+  });
+  const employedSchema = searchSchema(
+    edgedWork,
+    employedPerson,
+    organization,
+    creatorEdge,
+  );
+  const hits = {
+    found: 1,
+    hits: [
+      {
+        document: {
+          id: 'https://w/5',
+          creator: [
+            {
+              role: 'auteur',
+              creator: { id: 'https://p/1', [TARGET_FIELD]: 'Person' },
+            },
+            // Identified, not indexed: its own lookup still nests.
+            {
+              role: 'drukker',
+              creator: {
+                id: 'https://p/gone',
+                name_und: 'Piet',
+                employer: 'https://o/1',
+                [TARGET_FIELD]: 'Person',
+              },
+            },
+          ],
+          creator_id: ['https://p/1', 'https://p/gone'],
+        },
+      },
+    ],
+  };
+
+  it('asks each collection only for the lookups its own target declares, and nests a stored entry’s lookup', async () => {
+    const { fake, searches } = client(hits);
+    people['https://p/1'] = {
+      ...people['https://p/1'],
+      employer: 'https://o/1',
+    };
+    try {
+      const engine = createTypesenseSearchEngine(fake.client, employedSchema, {
+        collections,
+      });
+
+      const result = await engine.search(edgedWork as never, {
+        ...base,
+        resolve: {
+          creator: {
+            resolve: {
+              creator: {
+                fields: ['name'],
+                resolve: { employer: { fields: ['name'] } },
+              },
+            },
+          },
+        },
+      });
+      const entries = (result.hits[0].document as Record<string, unknown>)
+        .creator as readonly Record<string, unknown>[];
+      const endpoints = entries.map(
+        (entry) => entry.creator as Record<string, unknown>,
+      );
+
+      for (const search of searches) {
+        if (search.collection === 'organizations') {
+          expect(search.include_fields).not.toContain('employer');
+        }
+      }
+      const zusters = {
+        id: 'https://o/1',
+        name: { nl: ['Zusters Franciscanessen'] },
+      };
+      expect(endpoints[0].employer).toEqual(zusters);
+      expect(endpoints[1].employer).toEqual(zusters);
+    } finally {
+      const { employer: _employer, ...unemployed } = people['https://p/1'];
+      people['https://p/1'] = unemployed;
+    }
+  });
+});
+
 describe('a lookup naming one target', () => {
   it('reads nothing for a selection reduced to id', async () => {
     const single = defineSearchType({

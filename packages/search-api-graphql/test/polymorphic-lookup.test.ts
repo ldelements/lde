@@ -176,34 +176,33 @@ describe('serving a lookup over several targets', () => {
     }
   });
 
-  it('refuses a declaration spelling the derived name itself', () => {
-    // A Reference Type named `PersonOrOrganization` would put its filter
-    // under the interface's filter name; refused rather than served wrongly.
+  it('refuses a declared type beside a non-output lookup filtered under the derived name', () => {
+    // No interface is registered without `output`, but the filter is still
+    // named for the set – so a root type `PersonOrOrganization`, whose `id`
+    // is filtered through its own name, collides there.
     const spelled: SearchType = {
       name: 'PersonOrOrganization',
+      class: 'https://example.org/PersonOrOrganization',
       fields: [{ name: 'note', kind: 'keyword', output: true }],
     };
-    const nesting = (fields: readonly SearchField[]): SearchType => ({
-      ...work,
-      fields,
-    });
-    const note: SearchField = {
-      name: 'note',
-      kind: 'reference',
-      output: true,
-      ref: { strategy: 'inline', typeName: 'PersonOrOrganization' },
+    const filtered: SearchType = {
+      name: 'CreativeWork',
+      class: 'https://schema.org/CreativeWork',
+      fields: [
+        { name: 'title', kind: 'text', locales: ['nl'], output: true },
+        {
+          name: 'creator',
+          kind: 'reference',
+          filterable: true,
+          ref: { strategy: 'lookup', target: ['Person', 'Organization'] },
+        },
+      ],
     };
-    // Whichever registers first, the other is refused.
-    for (const fields of [
-      [...work.fields, note],
-      [note, ...work.fields],
-    ]) {
-      expect(() =>
-        buildGraphQLSchema(
-          searchSchema(nesting(fields), person, organization, place, spelled),
-        ),
-      ).toThrow(/collides with another type name/);
-    }
+    expect(() =>
+      buildGraphQLSchema(
+        searchSchema(filtered, person, organization, place, spelled),
+      ),
+    ).toThrow(/joined name of a lookup’s targets/);
   });
 
   it('shares a reference field only where every target points it at one type', () => {
