@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { type DefaultTheme } from 'vitepress';
-import { withMermaid } from 'vitepress-plugin-mermaid';
+import { withMermaid } from 'vitepress-mermaid-viewer';
 
 const decisionsDir = fileURLToPath(new URL('../decisions', import.meta.url));
 
