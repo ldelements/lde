@@ -20,11 +20,6 @@
     "*.ts": "eslint --fix",
     "*.{ts,json,md}": "prettier --write"
   },
-  "overrides": {
-    "vitepress-plugin-mermaid": {
-      "mermaid": "$mermaid"
-    }
-  },
   "devDependencies": {
     "@commitlint/cli": "^21.2.3",
     "@commitlint/config-conventional": "^21.2.0",
@@ -63,7 +58,7 @@
     "verdaccio": "6.10.5",
     "vite": "8.0.9",
     "vitepress": "^1.6.4",
-    "vitepress-plugin-mermaid": "^2.0.17",
+    "vitepress-mermaid-viewer": "^0.5.1",
     "vitest": "5.0.4"
   },
   "nx": {
