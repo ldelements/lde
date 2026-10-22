@@ -400,6 +400,50 @@ Both bounds are stated in the arguments’ SDL descriptions, so the playground�
 own documentation answers “how large may a page be?” before a request has to
 fail to say it.
 
+### Showing results before facets
+
+A query that selects both `items` and `facets` answers when the slower of the
+two is done. To render results first, split it into two requests and send
+them together:
+
+```graphql
+# Results: no facets selected, so no facet round-trip.
+query Results($query: String, $where: DatasetWhere, $page: Int) {
+  datasets(query: $query, where: $where, page: $page) {
+    pagination {
+      total
+    }
+    items {
+      id
+      title {
+        language
+        value
+      }
+    }
+  }
+}
+
+# Facets: a facet-only query, which fetches no hits.
+query Facets($query: String, $where: DatasetWhere) {
+  datasets(query: $query, where: $where, perPage: 0) {
+    facets {
+      keyword {
+        value
+        count
+      }
+    }
+  }
+}
+```
+
+Pass both the same `query` and `where`, or the counts won’t describe the list
+beside them. `page` belongs to the results query only: when the user pages,
+resend just that query, since the facets don’t change. The facets query still
+runs a search for the total, but fetches no hits.
+
+The API doesn’t enable `@defer`, which would do this in one request but needs
+a client that reads multipart responses.
+
 ## Errors the caller can fix
 
 An invalid argument comes back as an ordinary GraphQL error carrying the
