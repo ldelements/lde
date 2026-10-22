@@ -302,14 +302,15 @@ first (in request order), then the remaining tagged languages, then untagged
 `defaultLanguageOrder` for composing your own.
 
 Because the response depends on `Accept-Language`, the handler sends
-`Vary: Accept-Language` on every response from the endpoint, so a shared cache
-or CDN never serves one requester’s language order to the next. It also sends
-`Content-Language` listing the displayed language – `[0].language` – of every
-localized value in the response, in the order first served. A mixed-language
-result page lists each of them (e.g. `Content-Language: en, nl` when one item
-has no English value); the further languages behind `[0]` are left out, so the
-header grows with what was requested, not with how many languages the data
-holds. A response with no tagged values sends none.
+`Vary: Accept-Language` on every response except the SDL (`?sdl`), which
+doesn’t vary, so a shared cache or CDN never serves one requester’s
+language order to the next. It also sends `Content-Language` listing the
+displayed language – `[0].language` – of every localized value in the response,
+in the order first served. A mixed-language result page lists each of them
+(e.g. `Content-Language: en, nl` when one item has no English value); the
+further languages behind `[0]` are left out, so each value adds at most one
+language, however many the data holds. A response with no tagged values sends
+none.
 Negotiation never fails: a language you ask for but the data lacks still gets
 the best available value.
 
