@@ -107,7 +107,12 @@
   "release": {
     "projectsRelationship": "independent",
     "conventionalCommits": {
-      "useCommitScope": false
+      "useCommitScope": false,
+      "types": {
+        "perf": {
+          "semverBump": "patch"
+        }
+      }
     },
     "version": {
       "preVersionCommand": "npx nx run-many -t build",
