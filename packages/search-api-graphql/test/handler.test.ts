@@ -415,6 +415,119 @@ describe('createSearchGraphQLHandler', () => {
     expect(data.datasets.items).toBeDefined();
   });
 
+  describe('still enforces the limits through fragments', () => {
+    const nested = `{ datasets { ...Page } }
+       fragment Page on DatasetSearchResult { pagination { total } items { ...Item } }
+       fragment Item on Dataset { id keyword }`;
+
+    it('rejects a fragment query deeper than maxDepth', async () => {
+      const { engine } = fakeEngine();
+      // The query above has depth 3 once flattened.
+      const handler = createSearchGraphQLHandler({
+        searchSchema: searchSchema(schema),
+        engine,
+        maxDepth: 2,
+      });
+
+      const { data, errors } = await (await post(handler, nested)).json();
+
+      expect(data).toBeUndefined();
+      expect(JSON.stringify(errors)).toContain('depth');
+    });
+
+    it('rejects a fragment query costlier than maxCost', async () => {
+      const { engine } = fakeEngine();
+      // The query above costs 22.25 once flattened.
+      const handler = createSearchGraphQLHandler({
+        searchSchema: searchSchema(schema),
+        engine,
+        maxCost: 22,
+      });
+
+      const { data, errors } = await (await post(handler, nested)).json();
+
+      expect(data).toBeUndefined();
+      expect(JSON.stringify(errors)).toContain('Cost');
+    });
+  });
+
+  describe('maxSearches', () => {
+    function handlerWith(maxSearches: number) {
+      const { engine } = fakeEngine();
+      return createSearchGraphQLHandler({
+        searchSchema: searchSchema(schema),
+        engine,
+        maxSearches,
+      });
+    }
+
+    it('rejects an operation with more aliased searches than maxSearches', async () => {
+      const { data, errors } = await (
+        await post(
+          handlerWith(2),
+          '{ a: datasets { items { id } } b: datasets { items { id } } c: datasets { items { id } } }',
+        )
+      ).json();
+
+      expect(data).toBeUndefined();
+      expect(errors[0].message).toBe(
+        'Query selects 3 root fields; at most 2 are allowed, as each may run a search.',
+      );
+    });
+
+    it('counts searches inside fragments at the operation root', async () => {
+      const { data, errors } = await (
+        await post(
+          handlerWith(2),
+          `{ a: datasets { items { id } } ...More }
+           fragment More on Query { b: datasets { items { id } } ... on Query { c: datasets { items { id } } } }`,
+        )
+      ).json();
+
+      expect(data).toBeUndefined();
+      expect(errors[0].message).toContain('selects 3 root fields');
+    });
+
+    it('requires a positive integer', () => {
+      expect(() => handlerWith(0)).toThrow(
+        'maxSearches must be a positive integer; got 0.',
+      );
+    });
+
+    it('reports a cyclic fragment instead of recursing into it', async () => {
+      const { data, errors } = await (
+        await post(
+          handlerWith(2),
+          '{ ...Cycle } fragment Cycle on Query { datasets { items { id } } ...Cycle }',
+        )
+      ).json();
+
+      expect(data).toBeUndefined();
+      expect(JSON.stringify(errors)).toContain('Cannot spread fragment');
+    });
+
+    it('leaves an unknown fragment to GraphQL’s own validation', async () => {
+      const { data, errors } = await (
+        await post(handlerWith(2), '{ ...Missing }')
+      ).json();
+
+      expect(data).toBeUndefined();
+      expect(errors[0].message).toBe('Unknown fragment "Missing".');
+    });
+
+    it('counts a search selected twice under one key once, as it runs once', async () => {
+      const { data, errors } = await (
+        await post(
+          handlerWith(1),
+          '{ datasets { items { id } } datasets { pagination { total } } __typename }',
+        )
+      ).json();
+
+      expect(errors).toBeUndefined();
+      expect(data.datasets.items).toBeDefined();
+    });
+  });
+
   describe('the cost of a fragment', () => {
     const page = '{ pagination { total } items { id keyword } }';
     const inlined = `{ datasets ${page} }`;

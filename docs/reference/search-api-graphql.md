@@ -121,10 +121,16 @@ fails this – accepts. The endpoint path defaults to `/graphql`
   form. A named spread directly at the operation root (`{ ...Q }`) costs its
   contents 1.5×. And every repeat of a named fragment costs 1 plus 1.5× what
   its first spread scored, even in another operation of the same document.
-  The cost limit bounds a query’s shape, not how many results it fetches:
-  `perPage` does not enter the cost, so a page of 100 scores like a page of 1.
-  What bounds result volume is `maxPerPage` (a `buildGraphQLSchema` option,
-  default 100), which rejects any larger `perPage`.
+  The cost limit bounds a query’s shape, not how much searching it causes:
+  `perPage` does not enter the cost, so a page of 100 scores like a page of 1,
+  and every alias of a search field runs its own search for a few points.
+  Two other limits bound that work. `maxPerPage` (a `buildGraphQLSchema`
+  option, default 100) rejects any larger `perPage`, and `maxSearches`
+  (default 10) rejects an operation that selects more root fields – each
+  alias counts, as does a custom field merged in; fragments are flattened,
+  and introspection is exempt. Together they cap the generated search fields
+  at `maxSearches` searches of `maxPerPage` results per request, each plus
+  one facet round-trip when facets are selected.
 
 To serve **custom fields next to the generated search API**, merge your own
 schema with `buildGraphQLSchema()`’s output (e.g. `@graphql-tools/schema`’s

@@ -53,6 +53,7 @@ export async function createSearchApiServer(
     playground: config.playground,
     maxDepth: config.maxDepth,
     maxCost: config.maxCost,
+    maxSearches: config.maxSearches,
   });
 
   const adapter = createServerAdapter(

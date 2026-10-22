@@ -16,6 +16,7 @@ describe('configFromEnvironment', () => {
       playground: true,
       maxDepth: undefined,
       maxCost: undefined,
+      maxSearches: undefined,
       typesense: {
         host: 'typesense.internal',
         port: 8108,
@@ -34,6 +35,7 @@ describe('configFromEnvironment', () => {
       PLAYGROUND: 'false',
       MAX_DEPTH: '10',
       MAX_COST: '1000',
+      MAX_SEARCHES: '20',
       TYPESENSE_PORT: '443',
       TYPESENSE_PROTOCOL: 'https',
     });
@@ -44,6 +46,7 @@ describe('configFromEnvironment', () => {
       playground: false,
       maxDepth: 10,
       maxCost: 1000,
+      maxSearches: 20,
       typesense: {
         host: 'typesense.internal',
         port: 443,

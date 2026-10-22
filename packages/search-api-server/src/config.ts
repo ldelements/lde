@@ -18,6 +18,8 @@ export interface ServerConfig {
   readonly maxDepth?: number;
   /** Query cost cap (`MAX_COST`); the handler’s default when absent. */
   readonly maxCost?: number;
+  /** Root fields per operation (`MAX_SEARCHES`); the handler’s default when absent. */
+  readonly maxSearches?: number;
   /** Where the Typesense engine reads (`TYPESENSE_*`). */
   readonly typesense: TypesenseConnection;
 }
@@ -85,6 +87,7 @@ export function configFromEnvironment(
     ),
     maxDepth: integer('MAX_DEPTH'),
     maxCost: integer('MAX_COST'),
+    maxSearches: integer('MAX_SEARCHES'),
     typesense: {
       host: required('TYPESENSE_HOST'),
       port: integer('TYPESENSE_PORT', 8108)!,

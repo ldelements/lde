@@ -8,6 +8,7 @@ import { renderGraphiQL } from '@graphql-yoga/render-graphiql';
 import { maxDepthPlugin } from '@escape.tech/graphql-armor-max-depth';
 import { costLimitPlugin } from '@escape.tech/graphql-armor-cost-limit';
 import Negotiator from 'negotiator';
+import { maxSearchesPlugin } from './max-searches.js';
 import type { SearchEngine, SearchSchema } from '@lde/search';
 import {
   buildGraphQLSchema,
@@ -79,9 +80,19 @@ export interface SearchGraphQLHandlerOptions {
    * is exempt). Fragments are flattened: a nested fragment adds a fixed cost
    * (2 inline, 3 for a named spread) rather than multiplying its contents,
    * while a spread at the operation root costs its contents 1.5×, and a
-   * repeated named fragment 1 plus 1.5× its first scoring. @default 5000
+   * repeated named fragment 1 plus 1.5× its first scoring. The cost does not
+   * scale with `perPage` or count searches; {@link maxSearches} bounds those.
+   * @default 5000
    */
   readonly maxCost?: number;
+  /**
+   * Reject operations that select more root fields than this. Each alias of a
+   * search field runs its own search, which {@link maxCost} does not count;
+   * with `maxPerPage`, this bounds the results those searches fetch. Every
+   * root field counts, including a custom field merged in. Must be a positive
+   * integer. @default 10
+   */
+  readonly maxSearches?: number;
   /** Forwarded to {@link SearchContext.onFacetError} on every request. */
   readonly onFacetError?: SearchContext['onFacetError'];
 }
@@ -130,6 +141,7 @@ export function createSearchGraphQLHandler(
         maxCost: options.maxCost ?? 5000,
         flattenFragments: true,
       }),
+      maxSearchesPlugin(options.maxSearches ?? 10),
     ],
     context: ({ request, servedLanguages }): SearchContext => ({
       engine: options.engine,
