@@ -320,7 +320,7 @@ describe('buildGraphQLSchema', () => {
         keyword: [{ value: 'kaarten', count: 3 }],
       },
     });
-    const servedLanguages = new Set<string>();
+    const servedLanguages = new Map<string, string>();
     const result = await run(
       `{ datasets { facets {
         publisher { value count label { language value } }
@@ -343,7 +343,7 @@ describe('buildGraphQLSchema', () => {
     expect(facets.keyword).toEqual([
       { value: 'kaarten', count: 3, label: null },
     ]);
-    expect([...servedLanguages]).toEqual(['nl']);
+    expect([...servedLanguages.values()]).toEqual(['nl']);
   });
 
   it('drops an unselectable bucket rather than nulling the response around it', async () => {

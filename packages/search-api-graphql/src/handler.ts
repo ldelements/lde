@@ -1,8 +1,9 @@
-import { printSchema, type GraphQLSchema } from 'graphql';
+import { printSchema, type ExecutionResult, type GraphQLSchema } from 'graphql';
 import {
   createYoga,
   type CORSOptions,
   type GraphiQLOptions,
+  type Plugin,
 } from 'graphql-yoga';
 import { renderGraphiQL } from '@graphql-yoga/render-graphiql';
 import { maxDepthPlugin } from '@escape.tech/graphql-armor-max-depth';
@@ -101,8 +102,9 @@ export interface SearchGraphQLHandlerOptions {
  * The served search API: one `fetch` handler covering POST execution, the GET
  * playground, introspection, CORS, depth/cost limits, `Accept-Language`
  * parsing (answered with `Vary: Accept-Language` and a `Content-Language`
- * listing the displayed language of every localized value), and the SDL (`GET <endpoint>?sdl` – the
- * schema contract without a running introspection query).
+ * listing the displayed language of every localized value), and the SDL
+ * (`GET <endpoint>?sdl` – the schema contract without a running introspection
+ * query).
  */
 export function createSearchGraphQLHandler(
   options: SearchGraphQLHandlerOptions,
@@ -115,7 +117,7 @@ export function createSearchGraphQLHandler(
     buildGraphQLSchema(options.searchSchema!, options.schemaOptions);
   const graphqlEndpoint = options.graphqlEndpoint ?? '/graphql';
 
-  const yoga = createYoga<{ servedLanguages: Set<string> }>({
+  const yoga = createYoga<ServedLanguagesContext>({
     schema,
     graphqlEndpoint,
     // Build responses with the runtime’s own Fetch classes, so the handler’s
@@ -142,6 +144,7 @@ export function createSearchGraphQLHandler(
         flattenFragments: true,
       }),
       maxSearchesPlugin(options.maxSearches ?? 10),
+      dropNulledLanguages,
     ],
     context: ({ request, servedLanguages }): SearchContext => ({
       engine: options.engine,
@@ -165,17 +168,52 @@ export function createSearchGraphQLHandler(
         headers: { 'content-type': 'application/graphql; charset=utf-8' },
       });
     }
-    const servedLanguages = new Set<string>();
+    const servedLanguages = new Map<string, string>();
     const response = await yoga.fetch(request, { servedLanguages });
     // Results differ per Accept-Language (output order, search and sort
     // locale), so a shared cache must key on it.
     response.headers.append('vary', 'Accept-Language');
-    const contentLanguage = toContentLanguage(servedLanguages);
+    const contentLanguage = toContentLanguage(servedLanguages.values());
     if (contentLanguage !== undefined) {
       response.headers.set('content-language', contentLanguage);
     }
     return response;
   };
+}
+
+interface ServedLanguagesContext {
+  servedLanguages: Map<string, string>;
+}
+
+/**
+ * GraphQL nulls an object around a failing field after its other fields have
+ * resolved, so drop the languages of localized values that didn’t make it into
+ * the result: `Content-Language` names only languages the body serves.
+ */
+const dropNulledLanguages: Plugin<ServedLanguagesContext> = {
+  onExecute: () => ({
+    onExecuteDone: ({ result, args }) => {
+      const { servedLanguages } = args.contextValue as ServedLanguagesContext;
+      // `@defer`/`@stream` aren’t enabled, so only a subscription in a
+      // caller’s own schema streams; its stream has no `data`, so it reports
+      // no languages.
+      const { data } = result as ExecutionResult;
+      for (const path of servedLanguages.keys()) {
+        if (!isInResult(data, path)) {
+          servedLanguages.delete(path);
+        }
+      }
+    },
+  }),
+};
+
+/** Whether the result holds a non-null value at a dot-separated response path. */
+function isInResult(data: unknown, path: string): boolean {
+  let value = data;
+  for (const key of path.split('.')) {
+    value = (value as Record<string, unknown> | null | undefined)?.[key];
+  }
+  return value !== null && value !== undefined;
 }
 
 /**
@@ -186,7 +224,7 @@ export function createSearchGraphQLHandler(
  * `LanguageString.language`.
  */
 function toContentLanguage(
-  servedLanguages: ReadonlySet<string>,
+  servedLanguages: Iterable<string>,
 ): string | undefined {
   const tagsByLowerCase = new Map<string, string>();
   for (const language of servedLanguages) {

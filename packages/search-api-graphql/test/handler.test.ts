@@ -259,6 +259,28 @@ describe('createSearchGraphQLHandler', () => {
     expect(response.headers.get('content-language')).toBe('nl, iw');
   });
 
+  it('leaves a value that a failing field nulled out of Content-Language', async () => {
+    const { engine } = fakeEngine({
+      ...canned,
+      hits: [{ id: 'not-an-iri', document: { title: { fr: ['Titre'] } } }],
+    });
+    const handler = createSearchGraphQLHandler({
+      searchSchema: searchSchema(schema),
+      engine,
+    });
+
+    // `title` resolves before `id` fails, which nulls the item around it.
+    const response = await post(
+      handler,
+      '{ datasets { items { title { language value } id } } }',
+    );
+    const { data, errors } = await response.json();
+
+    expect(errors).toHaveLength(1);
+    expect(JSON.stringify(data)).not.toContain('Titre');
+    expect(response.headers.get('content-language')).toBeNull();
+  });
+
   it('sends no Content-Language when it served no language-tagged value', async () => {
     const { engine } = fakeEngine();
     const handler = createSearchGraphQLHandler({

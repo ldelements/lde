@@ -13,11 +13,13 @@ import {
   GraphQLSchema,
   GraphQLString,
   printSchema,
+  responsePathAsArray,
   type GraphQLEnumValueConfigMap,
   type GraphQLFieldConfig,
   type GraphQLInputFieldConfig,
   type GraphQLInputType,
   type GraphQLOutputType,
+  type GraphQLResolveInfo,
 } from 'graphql';
 import {
   NESTED_DOCUMENT_TYPE,
@@ -76,11 +78,13 @@ export interface SearchContext {
   readonly acceptLanguage: readonly string[];
   /**
    * Collects the displayed (`[0]`) language of every tagged `LanguageString`
-   * list the response serves, so the transport can report them in
-   * `Content-Language`. Optional – omit when the transport doesn’t report
-   * served languages.
+   * list the response serves, keyed by the list’s response path (e.g.
+   * `datasets.items.0.title`), so the transport can report them in
+   * `Content-Language` – leaving out a list that GraphQL nulled after it
+   * resolved, when a sibling field failed. Optional – omit when the transport
+   * doesn’t report served languages.
    */
-  readonly servedLanguages?: Set<string>;
+  readonly servedLanguages?: Map<string, string>;
   /**
    * Called once per affected facet field when its computation fails – for a
    * failed facet query only that query's fields, for a failed batch dispatch
@@ -242,6 +246,7 @@ export function buildGraphQLSchema(
   const serveLanguageStrings = (
     value: LocalizedValue,
     context: SearchContext,
+    info: GraphQLResolveInfo,
   ): LanguageString[] => {
     const languageStrings = toLanguageStrings(
       value,
@@ -251,7 +256,10 @@ export function buildGraphQLSchema(
     // Only `[0]` is displayed, so only its language is served.
     const displayedLanguage = languageStrings[0]?.language;
     if (displayedLanguage) {
-      context.servedLanguages?.add(displayedLanguage);
+      context.servedLanguages?.set(
+        responsePathAsArray(info.path).join('.'),
+        displayedLanguage,
+      );
     }
     return languageStrings;
   };
@@ -287,9 +295,14 @@ export function buildGraphQLSchema(
     count: { type: new GraphQLNonNull(GraphQLInt) },
     label: {
       type: new GraphQLList(new GraphQLNonNull(languageString)),
-      resolve: (bucket: Source, _args: unknown, context: SearchContext) => {
+      resolve: (
+        bucket: Source,
+        _args: unknown,
+        context: SearchContext,
+        info: GraphQLResolveInfo,
+      ) => {
         const label = bucket.label as LocalizedValue | undefined;
-        return label ? serveLanguageStrings(label, context) : null;
+        return label ? serveLanguageStrings(label, context, info) : null;
       },
     },
   });
@@ -432,9 +445,14 @@ export function buildGraphQLSchema(
     resolveLabel: (source: Source) => LocalizedValue | undefined,
   ) => ({
     type: nonNullListOf(languageString),
-    resolve: (source: Source, _args: unknown, context: SearchContext) => {
+    resolve: (
+      source: Source,
+      _args: unknown,
+      context: SearchContext,
+      info: GraphQLResolveInfo,
+    ) => {
       const value = resolveLabel(source);
-      return value ? serveLanguageStrings(value, context) : [];
+      return value ? serveLanguageStrings(value, context, info) : [];
     },
   });
 
