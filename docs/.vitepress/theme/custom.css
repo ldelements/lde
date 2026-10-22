@@ -8,12 +8,15 @@
 /* Diagrams opting out of down-scaling (useMaxWidth: false) render at natural
    size; let them scroll horizontally instead of overflowing the page. The
    viewer’s flex container would otherwise shrink them to the column width,
-   and plain centering would push their left edge out of scroll reach. */
+   and plain centering would push their left edge out of scroll reach.
+   Browsers without `safe` alignment (Safari < 17.6) drop that declaration,
+   so start-align them first rather than fall back to the viewer’s centering. */
 .vp-doc figure.mermaid {
   overflow-x: auto;
+  justify-content: flex-start;
   justify-content: safe center;
 }
 
-.vp-doc .mermaid svg {
+.vp-doc figure.mermaid > svg {
   flex-shrink: 0;
 }
