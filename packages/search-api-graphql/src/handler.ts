@@ -101,7 +101,7 @@ export interface SearchGraphQLHandlerOptions {
  * The served search API: one `fetch` handler covering POST execution, the GET
  * playground, introspection, CORS, depth/cost limits, `Accept-Language`
  * parsing (answered with `Vary: Accept-Language` and a `Content-Language`
- * listing every language served), and the SDL (`GET <endpoint>?sdl` – the
+ * listing the displayed language of every localized value), and the SDL (`GET <endpoint>?sdl` – the
  * schema contract without a running introspection query).
  */
 export function createSearchGraphQLHandler(
@@ -181,9 +181,9 @@ export function createSearchGraphQLHandler(
 /**
  * A `Content-Language` value for the served languages: tags come from indexed
  * data, so drop any that is not a well-formed language tag (it could make an
- * invalid header) or is untagged in another case (`UND`), and fold case-only
- * duplicates. Tags keep the spelling the body serves them in, so the header
- * names the same languages as `LanguageString.language`.
+ * invalid header) and fold case-only duplicates. Tags keep the spelling the
+ * body serves them in, so the header names the same languages as
+ * `LanguageString.language`.
  */
 function toContentLanguage(
   servedLanguages: ReadonlySet<string>,
@@ -191,11 +191,7 @@ function toContentLanguage(
   const tagsByLowerCase = new Map<string, string>();
   for (const language of servedLanguages) {
     const lowerCase = language.toLowerCase();
-    if (
-      lowerCase !== 'und' &&
-      !tagsByLowerCase.has(lowerCase) &&
-      isLanguageTag(language)
-    ) {
+    if (!tagsByLowerCase.has(lowerCase) && isLanguageTag(language)) {
       tagsByLowerCase.set(lowerCase, language);
     }
   }
@@ -204,7 +200,11 @@ function toContentLanguage(
     : undefined;
 }
 
-/** Whether a string is a well-formed BCP 47 language tag. */
+/**
+ * Whether a string is a well-formed Unicode BCP 47 locale identifier – the
+ * subset of BCP 47 that `Intl` accepts, which excludes private-use (`x-…`)
+ * and grandfathered (`i-klingon`) tags.
+ */
 function isLanguageTag(language: string): boolean {
   try {
     Intl.getCanonicalLocales(language);

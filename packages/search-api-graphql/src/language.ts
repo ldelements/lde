@@ -28,9 +28,9 @@ export const defaultLanguageOrder: LanguageOrder = (available, accept) => {
     ),
   ];
   const rest = available.filter(
-    (language) => language !== 'und' && !requested.includes(language),
+    (language) => !isUntagged(language) && !requested.includes(language),
   );
-  const untagged = available.includes('und') ? ['und'] : [];
+  const untagged = available.filter(isUntagged);
   return [...requested, ...rest, ...untagged];
 };
 
@@ -44,10 +44,15 @@ export function toLanguageStrings(
   for (const language of order(Object.keys(value), accept)) {
     for (const text of value[language] ?? []) {
       result.push({
-        language: language === 'und' ? null : language,
+        language: isUntagged(language) ? null : language,
         value: text,
       });
     }
   }
   return result;
+}
+
+/** Whether a tag is `und` (undetermined); tags are case-insensitive. */
+function isUntagged(language: string): boolean {
+  return language.toLowerCase() === 'und';
 }

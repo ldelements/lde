@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { defaultLanguageOrder } from '../src/language.js';
+import { defaultLanguageOrder, toLanguageStrings } from '../src/language.js';
 
 describe('defaultLanguageOrder', () => {
   it('puts requested languages first, then the rest, then und', () => {
@@ -28,5 +28,23 @@ describe('defaultLanguageOrder', () => {
     expect(
       defaultLanguageOrder(['en', 'en-GB', 'nl'], ['en-GB', 'en', 'nl']),
     ).toEqual(['en-GB', 'en', 'nl']);
+  });
+
+  it('ranks und last in any case', () => {
+    expect(defaultLanguageOrder(['UND', 'nl'], [])).toEqual(['nl', 'UND']);
+  });
+});
+
+describe('toLanguageStrings', () => {
+  it('serves und in any case as untagged', () => {
+    expect(toLanguageStrings({ UND: ['x'] }, [], defaultLanguageOrder)).toEqual(
+      [{ language: null, value: 'x' }],
+    );
+  });
+
+  it('skips a language that a custom order adds but the value lacks', () => {
+    expect(
+      toLanguageStrings({ nl: ['Titel'] }, [], () => ['en', 'nl']),
+    ).toEqual([{ language: 'nl', value: 'Titel' }]);
   });
 });
