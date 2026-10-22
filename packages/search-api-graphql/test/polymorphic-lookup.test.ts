@@ -293,6 +293,21 @@ describe('serving a lookup over several targets', () => {
     );
   });
 
+  it('names the targets in its descriptions, with no article to get wrong', () => {
+    expect(
+      gqlSchema.getType('PersonOrOrganizationReference')?.description,
+    ).toMatch(/^A reference whose target is Person or Organization;/);
+    expect(
+      gqlSchema.getType('PersonOrOrganizationUnresolvedReference')?.description,
+    ).toMatch(/^A reference whose target is Person or Organization, but /);
+    expect(gqlSchema.getType('PersonOrOrganizationFilter')?.description).toBe(
+      'Matches a field holding IRIs of Person or Organization.',
+    );
+    expect(gqlSchema.getType('PersonFilter')?.description).toBe(
+      'Matches a field holding IRIs of Person.',
+    );
+  });
+
   it('reports the target each referent came from, and serves its own fields through a fragment', async () => {
     const engine: SearchEngine = {
       schema,

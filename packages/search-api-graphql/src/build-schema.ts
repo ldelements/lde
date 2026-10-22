@@ -381,8 +381,9 @@ export function buildGraphQLSchema(
   const polymorphicFilterNames = new Set<string>();
   function targetFilter(
     typeName: string,
-    polymorphic = false,
+    targets: readonly string[] = [typeName],
   ): GraphQLInputObjectType {
+    const polymorphic = targets.length > 1;
     const existing = targetFilters.get(typeName);
     if (
       existing !== undefined &&
@@ -417,7 +418,7 @@ export function buildGraphQLSchema(
     takenTypeNames.add(name);
     const filter = new GraphQLInputObjectType({
       name,
-      description: `Matches a field holding IRIs of ${typeName}.`,
+      description: `Matches a field holding IRIs of ${disjunction(targets)}.`,
       fields: { in: { type: new GraphQLList(new GraphQLNonNull(iriScalar)) } },
     });
     targetFilters.set(typeName, filter);
@@ -662,7 +663,7 @@ export function buildGraphQLSchema(
     });
     const interfaceType = new GraphQLInterfaceType({
       name: graphQLName,
-      description: `A reference to a ${targets.join(' or a ')}; select \`__typename\` to tell which, and the fields of one through an inline fragment on its type.`,
+      description: `A reference whose target is ${disjunction(targets)}; select \`__typename\` to tell which, and the fields of one through an inline fragment on its type.`,
       resolveType: (source: Source) => {
         const resolved = (source as NestedDocument)[NESTED_DOCUMENT_TYPE];
         // A document the port did not type is one no collection answered
@@ -678,7 +679,7 @@ export function buildGraphQLSchema(
     unresolvedTypes.push(
       new GraphQLObjectType({
         name: unresolvedName,
-        description: `A reference to a ${targets.join(' or a ')} that no collection this API serves holds – a dangling IRI, or one whose lookup failed – so only its \`id\` is known.`,
+        description: `A reference whose target is ${disjunction(targets)}, but that no collection this API serves holds – a dangling IRI, or one whose lookup failed – so only its \`id\` is known.`,
         interfaces: [interfaceType],
         fields: sharedFields,
       }),
@@ -1029,8 +1030,9 @@ export function buildGraphQLSchema(
           ? iriFilter
           : targetFilter(
               target,
-              field.ref?.strategy === 'lookup' &&
-                labelSourceNamesOf(field).length > 1,
+              field.ref?.strategy === 'lookup'
+                ? labelSourceNamesOf(field)
+                : undefined,
             );
       }
       case 'range':
@@ -1720,4 +1722,12 @@ function rangeInput(
     name,
     fields: { min: { type: bound }, max: { type: bound } },
   });
+}
+
+/** Type names as prose, with no article to get wrong: `Person`,
+ *  `Person or Organization`, `Person, Organization or Group`. */
+function disjunction(names: readonly string[]): string {
+  return names.length > 1
+    ? `${names.slice(0, -1).join(', ')} or ${names[names.length - 1]}`
+    : names.join('');
 }
