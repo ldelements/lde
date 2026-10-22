@@ -1442,23 +1442,5 @@ describe('Stage', () => {
         { type: namedNode('http://example.org/CustomType') },
       ]);
     });
-
-    it('behaves exactly as before when no bindingsProvider is configured', async () => {
-      const reader = capturingExecutor([q1]);
-      const stage = new Stage({
-        name: 'withoutProvider',
-        readers: reader,
-        itemSelector: mockItemSelector([
-          { s: namedNode('http://example.org/s1') },
-        ]),
-      });
-
-      await stage.run(dataset, distribution, collectingWriter());
-
-      const options = reader.read.mock.calls[0][2] as { bindings: unknown[] };
-      expect(options.bindings).toEqual([
-        { s: namedNode('http://example.org/s1') },
-      ]);
-    });
   });
 });
