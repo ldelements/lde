@@ -26,9 +26,11 @@ export interface SearchStageType {
   searchType: RootType;
   /**
    * The selector variable that binds this type’s roots – the CONSTRUCT subject
-   * the batch is complete for. Must **not** be `dataset`: `?dataset` is
-   * substituted with the dataset IRI by the SPARQL reader, so a root bound to it
-   * would never reach the projection. {@link selectByClass} defaults to `root`.
+   * the batch is complete for. Must **not** be one of
+   * `DATASET_BINDING_VARIABLES` (`dataset`, `datasetPublisher`, …): the item
+   * selector and SPARQL reader bind those per dataset, so a root bound to one
+   * would collide with that binding and never reach the projection.
+   * {@link selectByClass} defaults to `root`.
    */
   rootVariable: string;
   /**

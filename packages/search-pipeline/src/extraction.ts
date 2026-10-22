@@ -37,8 +37,9 @@ export interface ExtractionOptions {
    * The variable the roots bind to. Left free in the generated query for the
    * pipeline’s VALUES injection (`injectValues`), so it must match the stage’s
    * `rootVariable` – the variable the item selector projects. Defaults to
-   * `root`, matching `selectByClass`. Must not be `dataset` (the SPARQL reader
-   * substitutes `?dataset` with the dataset IRI).
+   * `root`, matching `selectByClass`. Must not be one of `@lde/pipeline`’s
+   * `DATASET_BINDING_VARIABLES` (`dataset`, `datasetPublisher`, …): the SPARQL
+   * reader binds those per dataset.
    * @default 'root'
    */
   readonly subjectVariable?: string;

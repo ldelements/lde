@@ -207,7 +207,7 @@ interface ItemSelector {
 }
 ```
 
-The distribution is received at run time, so selectors don't need the endpoint URL at construction time. The `batchSize` parameter is set by the stage; `options` carries the per-dataset [timeout policy](#timeout-policies). Use `SparqlItemSelector` for SPARQL-based selection with automatic pagination:
+The distribution is received at run time, so selectors don't need the endpoint URL at construction time. The `batchSize` parameter is set by the stage; `options` carries the per-dataset [timeout policy](#timeout-policies) and, when the stage has one configured, the same [dataset bindings](#dataset-bindings) a reader would get. Use `SparqlItemSelector` for SPARQL-based selection with automatic pagination:
 
 ```typescript
 new SparqlItemSelector({
@@ -265,7 +265,8 @@ The query is templated per dataset and distribution, in order:
 
 1. `#subjectFilter#` is replaced with `distribution.subjectFilter` (the empty string when unset).
 2. When the distribution has a `namedGraph`, a `FROM <graph>` clause is injected for it.
-3. Every literal `?dataset` occurrence is replaced with the dataset’s IRI. This includes a genuine `?dataset` variable, which gets rewritten too – don’t name an ordinary query variable `?dataset`.
+3. Per-item (selector) bindings, if any, are injected as a `VALUES` clause into the innermost sub-SELECT.
+4. [Dataset bindings](#dataset-bindings) are injected as a `VALUES` clause at the outermost scope.
 
 Transient failures – network errors and HTTP 502/503/504 – are retried; `retries` (default: 3) sets how many times. `SparqlConstructReaderOptions.fetcher` injects a custom `SparqlEndpointFetcher`, intended for tests; the reader then uses it as-is, so the per-request budget from the [timeout policy](#timeout-policies) is not enforced (the policy’s hooks still fire, but its own `timeout` governs).
 
@@ -290,6 +291,38 @@ const reader = new SparqlConstructReader({
 The dedup set is scoped to each `read()` call, so memory stays bounded to the number of unique quads per batch. A standalone `deduplicateQuads()` function is also exported for use outside the reader.
 
 Logic that is hard to express in pure SPARQL – cleaning up messy date notations, converting locale-specific dates to ISO 8601 – can be attached to a reader as a **quad transform**, a plain function that post-processes the reader’s output. See the how-to guide [Extend a stage with a quad transform](../guide/extend-a-stage-with-a-quad-transform).
+
+### Dataset bindings
+
+Beyond `?dataset`, a reader or `SparqlItemSelector` can reach a handful of DCAT properties from the `Dataset` in hand, under reserved variable names. Don't reuse these for an unrelated query variable.
+
+| Variable                | From                                         | Multi-valued?                |
+| ----------------------- | -------------------------------------------- | ---------------------------- |
+| `?dataset`              | `dataset.iri`                                | No                           |
+| `?datasetPublisher`     | `dataset.publisher.iri`                      | No                           |
+| `?datasetPublisherName` | `dataset.publisher.name` (language → string) | Yes, one row per translation |
+| `?datasetLicense`       | `dataset.license`                            | No                           |
+| `?datasetLanguage`      | `dataset.language`                           | Yes, one row per language    |
+
+A property absent for a given dataset (no `publisher`, no `license`) leaves its variable unbound rather than `UNDEF`. A multi-valued property expands into one row per value, cross-producted with the rest. Enable [`deduplicate`](#reader) to collapse those duplicates that arise from this.
+
+For a value this library can't know implement `DatasetBindingsProvider` and pass it to `Stage`:
+
+```typescript
+const bindingsProvider: DatasetBindingsProvider = {
+  bindings(dataset) {
+    return [{ type: namedNode(lookupLocalType(dataset)) }];
+  },
+};
+
+new Stage({
+  name: 'enrich',
+  readers: reader,
+  bindingsProvider,
+});
+```
+
+A provider's rows merge with the predefined DCAT bindings and go to every reader and, when configured, the item selector. It may return a `Promise`.
 
 ### Timeout policies
 

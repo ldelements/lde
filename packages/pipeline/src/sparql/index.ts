@@ -14,7 +14,13 @@ export {
   type SparqlItemSelectorOptions,
 } from './selector.js';
 
-export { injectValues } from './values.js';
+export { injectValues, mergeBindings } from './values.js';
+
+export {
+  predefinedDatasetBindings,
+  DATASET_BINDING_VARIABLES,
+  type DatasetBindingsProvider,
+} from './datasetBindings.js';
 
 export { withDefaultGraph } from './graph.js';
 
