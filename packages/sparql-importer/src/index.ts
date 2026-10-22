@@ -31,6 +31,15 @@ export interface Importer {
 }
 
 export class ImportSuccessful {
+  static {
+    brand(this, 'ImportSuccessful');
+  }
+
+  /** Recognises an instance made by any copy of this package, see {@link brand}. */
+  static [Symbol.hasInstance](value: unknown): value is ImportSuccessful {
+    return isBranded(value, 'ImportSuccessful');
+  }
+
   constructor(
     public readonly distribution: Distribution,
     public readonly identifier?: string,
@@ -53,6 +62,15 @@ export interface Engine {
 }
 
 export class ImportFailed {
+  static {
+    brand(this, 'ImportFailed');
+  }
+
+  /** Recognises an instance made by any copy of this package, see {@link brand}. */
+  static [Symbol.hasInstance](value: unknown): value is ImportFailed {
+    return isBranded(value, 'ImportFailed');
+  }
+
   constructor(
     public readonly distribution: Distribution,
     public readonly error: string,
@@ -60,5 +78,36 @@ export class ImportFailed {
 }
 
 export class NotSupported {
+  static {
+    brand(this, 'NotSupported');
+  }
+
+  /** Recognises an instance made by any copy of this package, see {@link brand}. */
+  static [Symbol.hasInstance](value: unknown): value is NotSupported {
+    return isBranded(value, 'NotSupported');
+  }
+
   constructor(public readonly distribution?: Distribution) {}
+}
+
+/**
+ * Mark a result class’s prototype with a registered symbol, so that
+ * `instanceof` holds across copies of this package. An importer and the code
+ * that inspects its results each depend on this package, so version skew or
+ * an unhoisted install gives each its own copy and therefore its own classes.
+ * A plain `instanceof` then fails on every result, and a successful import
+ * matches none of the outcomes its caller checks for.
+ */
+function brand(resultClass: { prototype: object }, name: string): void {
+  Object.defineProperty(resultClass.prototype, brandKey(name), {
+    value: true,
+  });
+}
+
+function isBranded(value: unknown, name: string): boolean {
+  return typeof value === 'object' && value !== null && brandKey(name) in value;
+}
+
+function brandKey(name: string): symbol {
+  return Symbol.for(`@lde/sparql-importer.${name}`);
 }
