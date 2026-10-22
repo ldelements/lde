@@ -6,9 +6,14 @@ CONSTRUCT {
         void-ext:distinctIRIReferenceObjects ?distinctIRIReferenceObjects .
 }
 WHERE {
-    SELECT (COUNT(DISTINCT ?o) AS ?distinctIRIReferenceObjects) {
-        #subjectFilter#
-        ?s ?p ?o .
-        FILTER(ISIRI(?o))
+    # Count groups instead of COUNT(DISTINCT): QLever then needs far less memory,
+    # and Fuseki and Virtuoso are as fast.
+    SELECT (COUNT(*) AS ?distinctIRIReferenceObjects) {
+        SELECT ?o {
+            #subjectFilter#
+            ?s ?p ?o .
+            FILTER(ISIRI(?o))
+        }
+        GROUP BY ?o
     }
 }

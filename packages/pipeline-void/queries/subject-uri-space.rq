@@ -10,31 +10,41 @@ WHERE {
     {
         SELECT ?uriSpace (SUM(?groupCount) AS ?count) {
             {
-                # Group subjects by the directory of their document (the IRI without fragment),
-                # keeping hash IRIs apart. MIN = MAX tells whether a hash group holds a single
-                # document, without the cost of COUNT(DISTINCT ?document).
-                SELECT ?directory ?isHash (COUNT(*) AS ?groupCount)
-                    (MIN(?document) AS ?firstDocument) (MAX(?document) AS ?lastDocument) {
+                # Group the keys by directory, keeping hash IRIs apart. The number of keys in a
+                # hash group is the number of documents it holds.
+                SELECT ?directory ?isHash (SUM(?keyCount) AS ?groupCount)
+                    (COUNT(*) AS ?documents) (MIN(?key) AS ?firstKey) {
                     {
-                        # Pre-group distinct subjects before computing namespace to avoid regex on every triple.
-                        SELECT DISTINCT ?s {
-                            #subjectFilter#
-                            ?s ?p ?o .
-                            FILTER(ISIRI(?s))
+                        # Reduce each distinct subject to one key with a single REPLACE: its
+                        # document followed by "#" for a hash IRI, its directory otherwise.
+                        # Grouping on that key first keeps the per-subject strings to one. The
+                        # pattern uses + rather than *, because Virtuoso rejects a pattern that
+                        # matches the empty string; an IRI ending in / is its own key either way.
+                        SELECT ?key (COUNT(*) AS ?keyCount) {
+                            {
+                                SELECT DISTINCT ?s {
+                                    #subjectFilter#
+                                    ?s ?p ?o .
+                                    FILTER(ISIRI(?s))
+                                }
+                            }
+                            BIND(REPLACE(STR(?s), "(#).*$|[^/#]+$", "$1") AS ?key)
                         }
+                        GROUP BY ?key
                     }
-                    BIND(STR(?s) AS ?iri)
-                    BIND(CONTAINS(?iri, "#") AS ?isHash)
-                    BIND(IF(?isHash, STRBEFORE(?iri, "#"), ?iri) AS ?document)
-                    BIND(REPLACE(?document, "[^/]*$", "") AS ?prefix)
-                    # A document without path (http://host, urn:…) is its own directory.
-                    BIND(IF(?prefix = "" || STRENDS(?prefix, "//"), ?document, ?prefix) AS ?directory)
+                    BIND(STRENDS(?key, "#") AS ?isHash)
+                    BIND(IF(?isHash, REPLACE(?key, "[^/]*#$", ""), ?key) AS ?prefix)
+                    # A subject without hash and without path (http://host, urn:…) is a URI
+                    # space of its own with one entity, which the count filter below drops.
+                    FILTER(?isHash || (?prefix != "" && !STRENDS(?prefix, "//")))
+                    # A hash document without path is its own directory.
+                    BIND(IF(?prefix = "" || STRENDS(?prefix, "//"), STRBEFORE(?key, "#"), ?prefix) AS ?directory)
                 }
                 GROUP BY ?directory ?isHash
             }
             # A hash vocabulary (…/skos/core#) keeps its document as namespace; hash IRIs spread
             # over several documents (…/record1#media, …/record2#media) share their directory.
-            BIND(IF(?isHash && ?firstDocument = ?lastDocument, CONCAT(?firstDocument, "#"), ?directory) AS ?uriSpace)
+            BIND(IF(?isHash && ?documents = 1, ?firstKey, ?directory) AS ?uriSpace)
         }
         GROUP BY ?uriSpace
         ORDER BY DESC(?count)
@@ -43,4 +53,3 @@ WHERE {
     FILTER(?count > 1)  # Only include namespaces with more than 1 entity
     BIND(URI(CONCAT(STR(?dataset), "/.well-known/void#subject-uri-space-", MD5(?uriSpace))) AS ?subset)
 }
-

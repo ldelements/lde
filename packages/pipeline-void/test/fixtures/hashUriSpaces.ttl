@@ -28,3 +28,10 @@
 <http://a.example#y> rdfs:label "A y" .
 <http://b.example#x> rdfs:label "B x" .
 <http://b.example#y> rdfs:label "B y" .
+
+# Subjects without hash and without path are each a URI space of their own
+# with one entity, so they appear nowhere.
+<http://c.example> rdfs:label "C" .
+<http://d.example> rdfs:label "D" .
+<urn:example:1> rdfs:label "URN 1" .
+<urn:example:2> rdfs:label "URN 2" .

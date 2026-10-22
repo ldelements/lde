@@ -6,9 +6,14 @@ CONSTRUCT {
         void-ext:distinctLiterals ?distinctLiterals .
 }
 WHERE {
-    SELECT (COUNT(DISTINCT ?o) AS ?distinctLiterals) {
-        #subjectFilter#
-        ?s ?p ?o .
-        FILTER(ISLITERAL(?o))
+    # Count groups instead of COUNT(DISTINCT): QLever then needs far less memory,
+    # and Fuseki and Virtuoso are as fast. A DISTINCT subquery ran Fuseki out of memory.
+    SELECT (COUNT(*) AS ?distinctLiterals) {
+        SELECT ?o {
+            #subjectFilter#
+            ?s ?p ?o .
+            FILTER(ISLITERAL(?o))
+        }
+        GROUP BY ?o
     }
 }

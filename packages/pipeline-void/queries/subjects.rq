@@ -5,9 +5,14 @@ CONSTRUCT {
         void:distinctSubjects ?count .
 }
 WHERE {
-    SELECT (COUNT(DISTINCT ?s) as ?count) {
-        #subjectFilter#
-        ?s ?p ?o .
-        FILTER(!ISBLANK(?s))
+    # Count groups instead of COUNT(DISTINCT): QLever then needs far less memory,
+    # Virtuoso half the time, and Fuseki is as fast.
+    SELECT (COUNT(*) AS ?count) {
+        SELECT ?s {
+            #subjectFilter#
+            ?s ?p ?o .
+            FILTER(!ISBLANK(?s))
+        }
+        GROUP BY ?s
     }
 }
