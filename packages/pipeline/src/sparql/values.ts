@@ -190,12 +190,14 @@ export function injectValuesOuter<Q extends QueryConstruct | QuerySelect>(
   query: Q,
   bindings: VariableBindings[],
 ): Q {
+  // A bare sub-SELECT (`WHERE { SELECT … }`) is only valid as a group's sole
+  // content, so it needs its own braces once VALUES sits beside it.
+  const patterns = query.where.patterns.map((pattern) =>
+    F.isQuerySelect(pattern) ? F.patternGroup([pattern], F.gen()) : pattern,
+  );
   return {
     ...query,
-    where: F.patternGroup(
-      [buildValuesPattern(bindings), ...query.where.patterns],
-      F.gen(),
-    ),
+    where: F.patternGroup([buildValuesPattern(bindings), ...patterns], F.gen()),
   };
 }
 
