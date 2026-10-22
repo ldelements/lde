@@ -248,7 +248,7 @@ export function classPartitions(options?: VoidStageOptions): Promise<Stage> {
   return createVoidStage(VOID_STAGE_NAMES.classPartitions, options);
 }
 
-// Scalar-aggregate counts: each query is a single COUNT with no GROUP BY/HAVING,
+// Scalar-aggregate counts: each query ends in one COUNT without GROUP BY/HAVING,
 // so it always returns exactly one row. Zero output therefore means the endpoint
 // truncated the response, so they set `expectsOutput` to fail (and trigger the
 // reactive dump fallback) rather than store a missing count.

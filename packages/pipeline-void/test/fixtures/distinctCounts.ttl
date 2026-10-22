@@ -1,0 +1,12 @@
+@prefix ex: <http://example.org/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+# Values recur across subjects and predicates, so each count only matches when
+# its query counts distinct terms rather than triples.
+ex:a ex:p "x", "y", ex:b ;
+    ex:q "x", ex:b .
+ex:b ex:p "x", ex:c .
+ex:c ex:p "1", "1"^^xsd:integer .
+
+# A blank node subject is not counted; its objects are.
+[] ex:p "z", ex:a .

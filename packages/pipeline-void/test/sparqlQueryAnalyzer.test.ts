@@ -26,7 +26,7 @@ describe('named stage functions', () => {
   });
 
   it('marks scalar-aggregate counts as expectsOutput', async () => {
-    // Each is a single COUNT with no GROUP BY/HAVING, so an empty result can
+    // Each ends in one COUNT without GROUP BY/HAVING, so an empty result can
     // only mean a truncated endpoint response.
     const counts = await Promise.all([
       countTriples(),
