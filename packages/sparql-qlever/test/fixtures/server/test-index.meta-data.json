@@ -1,11 +1,25 @@
 {
-  "git-hash": "9352d0",
+  "date-of-index-build": "2026-10-22T12:28:24Z",
+  "encoded-iri-prefixes": {
+    "prefixes-with-leading-angle-brackets": [
+      "<http://qlever.cs.uni-freiburg.de/builtin-functions/graph/"
+    ]
+  },
+  "geo-point-encoding": "z-order",
+  "git-hash": "6fd6171",
+  "graphNameManager": {
+    "allocatedGraphs": 1,
+    "prefix": "http://qlever.cs.uni-freiburg.de/builtin-functions/graph/"
+  },
   "has-all-permutations": true,
-  "index-format-version": { "date": "2024-10-22", "pull-request-number": 1572 },
+  "has-icu-support": true,
+  "index-format-version": { "date": "2026-09-26", "pull-request-number": 3470 },
+  "index-rows-per-block": 31250,
   "locale": { "country": "US", "ignore-punctuation": false, "language": "en" },
   "num-blank-nodes-total": 0,
   "num-objects": { "internal": 0, "normal": 1 },
   "num-predicates": { "internal": 1, "normal": 1 },
   "num-subjects": { "internal": 0, "normal": 1 },
-  "num-triples": { "internal": 1, "normal": 1 }
+  "num-triples": { "internal": 1, "normal": 1 },
+  "vocabulary-type": "on-disk-compressed"
 }

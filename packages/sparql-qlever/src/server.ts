@@ -9,6 +9,13 @@ export interface QleverServerOptions {
   'default-query-timeout'?: string;
   /** Maximum cache size for query results. QLever default: '30G'. */
   'cache-max-size'?: string;
+  /**
+   * Deduplication of CONSTRUCT results: `'none'`, `'full'` (memory grows with
+   * the number of distinct triples) or `'lru:N'` (drops a triple among the N
+   * most recently emitted ones). Needs a QLever image from August 2026 or
+   * later. QLever default: `'none'`.
+   */
+  'construct-deduplication'?: string;
 }
 
 /** Options that have defaults and are always present in the command. */
@@ -28,7 +35,7 @@ export class Server<Task> implements SparqlServer {
   private readonly port: number;
   private readonly hostname: string;
   private readonly qleverOptions: RequiredQleverServerOptions &
-    Pick<QleverServerOptions, 'cache-max-size'>;
+    Pick<QleverServerOptions, 'cache-max-size' | 'construct-deduplication'>;
 
   constructor({
     taskRunner,
@@ -57,6 +64,12 @@ export class Server<Task> implements SparqlServer {
 
     if (this.qleverOptions['cache-max-size'] !== undefined) {
       args.push(`--cache-max-size ${this.qleverOptions['cache-max-size']}`);
+    }
+
+    if (this.qleverOptions['construct-deduplication'] !== undefined) {
+      args.push(
+        `--construct-deduplication ${this.qleverOptions['construct-deduplication']}`,
+      );
     }
 
     this.task = await this.taskRunner.run(args.join(' '));

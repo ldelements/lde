@@ -53,4 +53,25 @@ describe('Server command construction', () => {
     await server.start();
     expect(taskRunner.lastCommand).toContain('--cache-max-size 5G');
   });
+
+  it('includes --construct-deduplication only when option is set', async () => {
+    const withoutOption = createMockTaskRunner();
+    await new Server({
+      taskRunner: withoutOption,
+      indexName: 'test-index',
+    }).start();
+    expect(withoutOption.lastCommand).not.toContain(
+      '--construct-deduplication',
+    );
+
+    const withOption = createMockTaskRunner();
+    await new Server({
+      taskRunner: withOption,
+      indexName: 'test-index',
+      qleverOptions: { 'construct-deduplication': 'lru:10000' },
+    }).start();
+    expect(withOption.lastCommand).toContain(
+      '--construct-deduplication lru:10000',
+    );
+  });
 });

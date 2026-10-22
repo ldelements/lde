@@ -11,7 +11,7 @@
 set -euo pipefail
 
 image="$1"
-sidecar_image="${2:-adfreiburg/qlever:commit-a14e0a0}"
+sidecar_image="${2:-adfreiburg/qlever:commit-6fd6171141}"
 volume="task-agent-smoke-$$"
 container="task-agent-smoke-$$"
 

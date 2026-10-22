@@ -122,11 +122,12 @@ Caching is enabled by default. Disable it by passing `cacheIndex: false` to `cre
 
 Passed to `qlever-server` at startup.
 
-| Option                  | Description                                      | Default |
-| ----------------------- | ------------------------------------------------ | ------- |
-| `memory-max-size`       | Maximum memory for query processing and caching. | `'4G'`  |
-| `default-query-timeout` | Default query timeout.                           | `'30s'` |
-| `cache-max-size`        | Maximum cache size for query results.            | –       |
+| Option                    | Description                                                                                                                                                                                                                       | Default |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `memory-max-size`         | Maximum memory for query processing and caching.                                                                                                                                                                                  | `'4G'`  |
+| `default-query-timeout`   | Default query timeout.                                                                                                                                                                                                            | `'30s'` |
+| `cache-max-size`          | Maximum cache size for query results.                                                                                                                                                                                             | –       |
+| `construct-deduplication` | Deduplication of `CONSTRUCT` results: `'none'`, `'full'` (memory grows with the number of distinct triples) or `'lru:N'` (drops a triple among the N most recently emitted ones). Needs a QLever image from August 2026 or later. | –       |
 
 Example:
 

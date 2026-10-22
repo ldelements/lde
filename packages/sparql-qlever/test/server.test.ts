@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 
 describe('Server', () => {
   describe('start', () => {
-    it('starts and stops QLever', async () => {
+    it('starts QLever, deduplicating CONSTRUCT results, and stops it', async () => {
       const port = 7001;
       const taskRunner = new DockerTaskRunner({
         image: process.env.QLEVER_IMAGE!,
@@ -18,12 +18,26 @@ describe('Server', () => {
         taskRunner,
         indexName: 'test-index',
         port,
+        qleverOptions: { 'construct-deduplication': 'full' },
       });
 
       await server.start();
       expect(server.queryEndpoint.toString()).toEqual(
         `http://localhost:${port}/sparql`,
       );
+
+      // Three solutions instantiate the same triple, which QLever emits once.
+      const response = await fetch(server.queryEndpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/sparql-query',
+          Accept: 'application/n-triples',
+        },
+        body: 'CONSTRUCT { <http://example.com/s> <http://example.com/p> <http://example.com/o> } WHERE { VALUES ?x { 1 2 3 } }',
+      });
+      const triples = (await response.text()).trim().split('\n');
+      expect(triples).toHaveLength(1);
+
       await server.stop();
     }, 120_000);
   });
