@@ -20,7 +20,7 @@ import {
   ID_FIELD,
   isoToUnixSeconds,
   isInternalField,
-  isRangeFacet,
+  isBinnedRangeFacet,
   isWelded,
   joinGraph,
   localLookupTargetsOf,
@@ -152,17 +152,15 @@ export function buildSearchParams(
 }
 
 /**
- * The `facet_by` clause. A range facet facets into the fixed half-open
- * `[min, max)` bins it declares as {@link SearchField.facetRanges} (a
- * histogram), or into one open bin without them; every other facet is a plain
- * per-value facet on the field the declaration facets ({@link physicalFields} –
- * the field itself, or the `${name}_facet` companion of a reference inheriting a
- * facet policy). Typesense reports a range facet’s `stats` over every matching
- * value whatever its bins, which carry the facet’s extent; the open bin asks for
- * those alone, at one count rather than one per distinct value, and its count is
- * dropped on the way back. Typesense range syntax is already
- * start-inclusive/end-exclusive, so the declared bounds pass straight through
- * with no boundary fix-up.
+ * The `facet_by` clause. A facet on a numeric field that declares
+ * {@link SearchField.facetRanges} faceted into those fixed half-open `[min, max)`
+ * bins; every other facet is a plain per-value facet on the
+ * field the declaration facets ({@link physicalFields} – the field itself, or
+ * the `${name}_facet` companion of a reference inheriting a facet policy).
+ * Typesense range syntax is already start-inclusive/end-exclusive, so the
+ * declared bounds pass straight through with no boundary fix-up. A numeric
+ * facet, binned or not, comes back with `stats` over every matching value,
+ * which carry its extent.
  */
 function compileFacetBy(
   facets: readonly string[],
@@ -175,21 +173,12 @@ function compileFacetBy(
       if (field === undefined) {
         return name;
       }
-      if (!isRangeFacet(field)) {
-        return physicalFields(field, schema).facet ?? name;
-      }
-      const bins = field.facetRanges ?? [];
-      return compileRangeFacet(
-        field.name,
-        bins.length > 0 ? bins : [EXTENT_ONLY_BIN],
-      );
+      return isBinnedRangeFacet(field)
+        ? compileRangeFacet(field.name, field.facetRanges)
+        : (physicalFields(field, schema).facet ?? name);
     })
     .join(',');
 }
-
-/** The one open bin a range facet without bins is faceted into, for its
- *  `stats`. Its key is never a declared one, so its count is dropped. */
-const EXTENT_ONLY_BIN: FacetRange = { key: 'extent' };
 
 /** `name(key:[min, max], …)`; a blank bound is open-ended (Typesense `[75, ]`). */
 function compileRangeFacet(

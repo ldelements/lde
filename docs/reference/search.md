@@ -85,7 +85,8 @@ Exports are stratified by audience:
   - `searchableFields`, `facetableFields`, `filterableFields`,
     `sortableFields`, `outputFields`, `referenceFields`, `fieldNamed` – the
     field selectors;
-  - `isInternalField`, `isInlineReference`, `isRangeFacet` – the field
+  - `isInternalField`, `isInlineReference`, `isRangeFacet`,
+    `isBinnedRangeFacet` – the field
     predicates;
   - `referenceTypeNamed` – resolve an inline `ref.typeName` to its declared
     Reference Type;
@@ -945,20 +946,21 @@ documents the query matches, which is what a UI needs to draw a slider or a
 pair of inputs. Like every value at the port, the extent is in stored terms –
 a `date` in Unix seconds – and a surface serves it the way it serves the field
 (the GraphQL surface as ISO 8601). The extent is absent when no matching
-document holds a value. A range facet never returns one bucket per distinct
-value: without bins its `buckets` are empty.
+document holds a value. Its `buckets` count each distinct value, like any
+other facet’s.
 
-It may also declare **`facetRanges`**: fixed half-open `[min, max)` bins (a
-`FacetRange` each), so the facet also returns a histogram – the per-bucket
-counts to draw over that extent. `min` is inclusive, `max`
+It may instead declare **`facetRanges`**: fixed half-open `[min, max)` bins (a
+`FacetRange` each), which make it a **binned range facet** that buckets into
+those bins – the per-bucket counts to draw over that extent. `min` is inclusive, `max`
 exclusive, so contiguous bins partition cleanly with no boundary
 double-counting; omit `min` (or `max`) for an open-ended bin (`< max`, resp.
 `≥ min`). Each bin’s `key` is its stable label, echoed back as the
 `FacetBucket` `value`, and the bucket also carries the bin’s declared
 `min`/`max` bounds, so it is self-describing – a consumer never hardcodes the
-bin formula. Bins are **query-time only**: they shape the facet clause the
-adapter compiles per query and have no index impact, so changing them needs no
-reindex. Engine-neutral by design – the Typesense adapter emits a `facet_by`
+bin formula. Bins are **query-time**: they shape the facet clause the adapter
+compiles per query, so changing them needs no reindex. Giving a field its
+first bins may: the Typesense adapter indexes a binned field for sorting.
+Engine-neutral by design – the Typesense adapter emits a `facet_by`
 range, an OpenSearch adapter would emit a `range` aggregation.
 
 ## Projection

@@ -82,7 +82,7 @@ exports[`collection-definition generator stability > derives a stable Typesense 
       "facet": true,
       "name": "score",
       "optional": true,
-      "sort": true,
+      "sort": false,
       "type": "float",
     },
     {

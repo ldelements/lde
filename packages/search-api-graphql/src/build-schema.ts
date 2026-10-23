@@ -52,6 +52,7 @@ import {
   isAbsoluteIri,
   OR_KEY,
   isRangeFacet,
+  isBinnedRangeFacet,
   joinGraph,
   nestedReferenceType,
   outputFields,
@@ -93,8 +94,8 @@ export interface SearchContext {
   /**
    * Called once per affected facet field when its computation fails – for a
    * failed facet query only that query's fields, for a failed batch dispatch
-   * every selected field. The affected facets degrade to empty lists (a
-   * supplementary facet must not fail the whole query); supply this to log
+   * every selected field. The affected facets degrade to empty: no buckets,
+   * and a `null` extent (a supplementary facet must not fail the whole query); supply this to log
    * the cause. Optional – omit to swallow silently.
    */
   readonly onFacetError?: (field: string, error: unknown) => void;
@@ -357,17 +358,19 @@ export function buildGraphQLSchema(
     number: extentType('FloatExtent', GraphQLFloat),
     date: extentType('DateExtent', GraphQLString, unixSecondsToIso),
   };
+  const rangeFacetPrefixes = { integer: 'Int', number: 'Float', date: 'Date' };
   // A range facet: the extent over the whole collection and over the
-  // documents the other filters leave, plus – for a field declaring bins –
-  // the histogram over the latter. One type per kind and binning, built on
-  // first use so the SDL carries only the ones a schema facets.
+  // documents the other filters leave, plus the buckets over the latter – one
+  // per distinct value, or, for a field declaring bins, one per bin. One type
+  // per kind and binning, built on first use so the SDL carries only the ones
+  // a schema facets.
   const rangeFacetTypes = new Map<string, GraphQLObjectType>();
   function rangeFacetTypeFor(field: NumericField): GraphQLObjectType {
-    const binned = (field.facetRanges ?? []).length > 0;
+    const binned = isBinnedRangeFacet(field);
     const extent = extentTypes[field.kind];
-    const name = `${extent.name.replace(/Extent$/, '')}${
-      binned ? 'Histogram' : 'Range'
-    }Facet`;
+    const name = `${rangeFacetPrefixes[field.kind]}${
+      binned ? 'Binned' : ''
+    }RangeFacet`;
     const existing = rangeFacetTypes.get(name);
     if (existing !== undefined) {
       return existing;
@@ -391,15 +394,23 @@ export function buildGraphQLSchema(
           resolve: async (source: Source) =>
             (await load(source, 'matching')).extent ?? null,
         },
-        ...(binned && {
-          buckets: {
-            type: nonNullListOf(rangeBucket),
-            description:
-              'The declared bins over the same documents as “matching”.',
-            resolve: async (source: Source) =>
-              (await load(source, 'matching')).buckets,
+        buckets: {
+          type: nonNullListOf(binned ? rangeBucket : valueBucket),
+          description: binned
+            ? 'The declared bins over the same documents as “matching”.'
+            : 'One bucket per distinct value over the same documents as “matching”.',
+          resolve: async (source: Source) => {
+            const { buckets } = await load(source, 'matching');
+            // A date’s distinct value is stored as Unix seconds and served as
+            // ISO 8601, like its extent.
+            return field.kind === 'date' && !binned
+              ? buckets.map((bucket) => ({
+                  ...bucket,
+                  value: unixSecondsToIso(Number(bucket.value)),
+                }))
+              : buckets;
           },
-        }),
+        },
       },
     });
     rangeFacetTypes.set(name, type);
@@ -1294,7 +1305,7 @@ export function buildGraphQLSchema(
     });
 
     // Keyed facets object: one field per facetable field, typed by its kind
-    // (numeric fields → a ‹Kind›RangeFacet, or ‹Kind›HistogramFacet with
+    // (numeric fields → a ‹Kind›RangeFacet, or ‹Kind›BinnedRangeFacet with
     // bins; boolean fields → [BooleanBucket!], reference fields →
     // [IRIBucket!], else [ValueBucket!]). Only the selected
     // fields are resolved (GraphQL prunes the rest), so the selection IS the

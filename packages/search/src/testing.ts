@@ -202,8 +202,7 @@ export function describeSearchEngineContract(
     });
 
     it('reports a range facet’s extent, and no other facet’s', async () => {
-      // A slider is drawn from these bounds. A range facet buckets only into
-      // the bins it declares; without them it never buckets per distinct value.
+      // A slider is drawn from these bounds.
       for (const searchType of types()) {
         const fields = facetableFields(searchType);
         const [outcome] = await engine().searchFacets(searchType, [
@@ -221,9 +220,6 @@ export function describeSearchEngineContract(
           if (!isRangeFacet(field)) {
             expect(facet?.extent).toBeUndefined();
             continue;
-          }
-          if ((field.facetRanges ?? []).length === 0) {
-            expect(facet?.buckets ?? []).toEqual([]);
           }
           const extent = facet?.extent;
           if (extent !== undefined) {

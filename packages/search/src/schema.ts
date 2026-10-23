@@ -375,9 +375,10 @@ export interface ReferenceField extends SearchFieldBase, Searchable {
 /**
  * Range-facet bins for a numeric (`integer`/`number`/`date`) facetable field.
  * When set, the field’s range facet buckets into these fixed half-open
- * `[min, max)` ranges (a histogram) – the per-bucket counts a UI slider draws
- * over the extent the facet reports anyway. Without them the facet reports
- * the extent alone, never one bucket per distinct value. Bins are query-time only (no index impact) and
+ * `[min, max)` ranges rather than one bucket per distinct value – the
+ * per-bucket counts a UI slider draws over the extent the facet reports
+ * either way. Changing the bins needs no reindex, though a field’s first bins
+ * may (the Typesense adapter indexes a binned field for sorting). Bins are
  * engine-neutral: the Typesense adapter emits a `facet_by` range, an
  * OpenSearch adapter a `range` aggregation. See {@link FacetRange}.
  */
@@ -2406,15 +2407,26 @@ export function irAlias(searchType: SearchType, field: SearchField): string {
 /**
  * Whether a facet on this field is a **range facet**: the field is numeric
  * (`integer`/`number`/`date`), so its facet reports the extent of its values
- * and buckets only into the bins it declares as
- * {@link RangeFacetable.facetRanges} (a histogram), never one bucket per
- * distinct value. One predicate for the surface’s facet type, the adapter’s
- * facet clause and the facet reconstruction, so they cannot disagree.
+ * besides its buckets. One predicate for the surface’s facet type and the
+ * facet reconstruction, so they cannot disagree.
  */
 export function isRangeFacet(field: SearchField): field is NumericField {
   return (
     field.kind === 'integer' || field.kind === 'number' || field.kind === 'date'
   );
+}
+
+/**
+ * Whether a facet on this field is a **binned range facet**: it buckets into
+ * the fixed bins it declares as non-empty {@link RangeFacetable.facetRanges}
+ * rather than one bucket per distinct value. One predicate for the surface’s
+ * facet type, the adapter’s facet clause and the bucket reconstruction, so
+ * they cannot disagree.
+ */
+export function isBinnedRangeFacet(
+  field: SearchField,
+): field is NumericField & { readonly facetRanges: readonly FacetRange[] } {
+  return field.facetRanges !== undefined && field.facetRanges.length > 0;
 }
 
 /**

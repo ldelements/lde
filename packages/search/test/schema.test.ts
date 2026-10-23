@@ -16,6 +16,7 @@ import {
   isoToUnixSeconds,
   isInternalField,
   isRangeFacet,
+  isBinnedRangeFacet,
   labelSourceNamesOf,
   nestedFieldName,
   nestedReferenceType,
@@ -443,6 +444,20 @@ describe('isRangeFacet', () => {
     expect(
       isRangeFacet({ name: 'open', kind: 'boolean', facetable: true }),
     ).toBe(false);
+  });
+});
+
+describe('isBinnedRangeFacet', () => {
+  it('requires a non-empty facetRanges declaration', () => {
+    const size: SearchField = {
+      name: 'size',
+      kind: 'integer',
+      facetable: true,
+      facetRanges: [{ key: '0', min: 1, max: 10 }],
+    };
+    expect(isBinnedRangeFacet(size)).toBe(true);
+    expect(isBinnedRangeFacet({ ...size, facetRanges: [] })).toBe(false);
+    expect(isBinnedRangeFacet({ ...size, facetRanges: undefined })).toBe(false);
   });
 });
 

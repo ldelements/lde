@@ -3,11 +3,9 @@ import type { SearchParams } from 'typesense/lib/Typesense/Documents.js';
 import {
   NESTED_DOCUMENT_TYPE,
   type Facet,
-  type FacetBucket,
   type FacetsOutcome,
   type LocalizedValue,
   type NestedDocument,
-  type NumericField,
   type Reference,
   type ReferenceField,
   type ResultDocument,
@@ -30,7 +28,7 @@ import {
   facetableFields,
   fieldNamed,
   isInlineReference,
-  isRangeFacet,
+  isBinnedRangeFacet,
   isUnsatisfiable,
   joinGraph,
   labelFieldOf,
@@ -934,60 +932,37 @@ export function parseSearchResponse(
   const facets: Record<string, Facet> = {};
   for (const facet of response.facet_counts ?? []) {
     const labelled = referenceFacets.has(facet.field_name);
+    // A binned facet echoes the declared range key as the bucket value; look
+    // the bin’s half-open bounds back up by key so the bucket is
+    // self-describing.
     const field = fieldNamed(searchType, facet.field_name);
-    if (field !== undefined && isRangeFacet(field)) {
-      facets[facet.field_name] = parseRangeFacet(facet, field);
-      continue;
-    }
+    const rangesByKey =
+      field !== undefined && isBinnedRangeFacet(field)
+        ? new Map(field.facetRanges.map((range) => [range.key, range]))
+        : undefined;
     // A boolean facet is reported with the values stringified; recover the
     // boolean so the bucket carries the term the `is` filter expects.
     const booleanFacet = field?.kind === 'boolean';
-    facets[facet.field_name] = {
-      buckets: facet.counts.map((bucket) => {
-        const label = labelled ? labels.get(bucket.value) : undefined;
-        return {
-          value: bucket.value,
-          count: bucket.count,
-          ...(label !== undefined ? { label } : {}),
-          ...(booleanFacet ? { is: bucket.value === 'true' } : {}),
-        };
-      }),
-    };
+    const buckets = facet.counts.map((bucket) => {
+      const label = labelled ? labels.get(bucket.value) : undefined;
+      const range = rangesByKey?.get(bucket.value);
+      return {
+        value: bucket.value,
+        count: bucket.count,
+        ...(label !== undefined ? { label } : {}),
+        ...(range?.min !== undefined ? { min: range.min } : {}),
+        ...(range?.max !== undefined ? { max: range.max } : {}),
+        ...(booleanFacet ? { is: bucket.value === 'true' } : {}),
+      };
+    });
+    // Only a numeric facet’s stats carry a min and max.
+    const stats = facet.stats;
+    facets[facet.field_name] =
+      stats?.min === undefined
+        ? { buckets }
+        : { buckets, extent: { min: stats.min, max: stats.max } };
   }
   return { hits, total: response.found, facets };
-}
-
-/**
- * A range facet from its Typesense facet: the declared bins (a bucket per
- * reported range key, its half-open bounds looked back up by key so the
- * bucket is self-describing) and the extent from the facet’s `stats`. A facet
- * without bins was faceted into one open bin only for those stats; its key is
- * no declared one, so its count is dropped.
- */
-function parseRangeFacet(
-  facet: NonNullable<TypesenseSearchResponse['facet_counts']>[number],
-  field: NumericField,
-): Facet {
-  const rangesByKey = new Map(
-    (field.facetRanges ?? []).map((range) => [range.key, range]),
-  );
-  const buckets = facet.counts.flatMap((bucket): FacetBucket[] => {
-    const range = rangesByKey.get(bucket.value);
-    return range === undefined
-      ? []
-      : [
-          {
-            value: bucket.value,
-            count: bucket.count,
-            ...(range.min !== undefined ? { min: range.min } : {}),
-            ...(range.max !== undefined ? { max: range.max } : {}),
-          },
-        ];
-  });
-  const stats = facet.stats;
-  return stats?.min === undefined
-    ? { buckets }
-    : { buckets, extent: { min: stats.min, max: stats.max } };
 }
 
 /** Rebuild one logical document from a flat Typesense document. */

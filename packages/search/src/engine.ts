@@ -102,10 +102,8 @@ export type FacetMap<FacetField extends string = string> = Readonly<
  * numeric (`integer`/`number`/`date`) field, the extent of the values those
  * documents hold – the bounds a range slider needs.
  *
- * A numeric field is a **range facet**: it buckets only into the bins it
- * declares as `facetRanges` (a histogram), and without
- * them reports its extent alone (`buckets` empty), never one bucket per
- * distinct value. Every other facet buckets per value and has no extent.
+ * A facet buckets per distinct value, or – a numeric field declaring
+ * `facetRanges` – into those bins. Only a numeric facet has an extent.
  */
 export interface Facet {
   readonly buckets: readonly FacetBucket[];

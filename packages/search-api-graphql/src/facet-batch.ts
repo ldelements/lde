@@ -68,6 +68,9 @@ export function createFacetLoader(
           : []),
       ];
       const facets = new Map<string, Facet>();
+      // A range facet loaded in both scopes fails in two queries but is
+      // reported once.
+      const failed = new Map<string, unknown>();
       try {
         const outcomes = await engine.searchFacets(
           searchType,
@@ -91,16 +94,21 @@ export function createFacetLoader(
               ? new Error('The engine returned no outcome for this query.')
               : outcome.error;
           for (const field of facetQuery.facets) {
-            onFacetError?.(field, error);
+            if (!failed.has(field)) {
+              failed.set(field, error);
+            }
           }
         });
       } catch (error) {
         // A batch-level failure leaves `facets` empty: every facet in the
         // batch degrades to empty, reported once however many scopes it
         // loaded.
-        for (const field of new Set(keys.map((key) => key.field))) {
-          onFacetError?.(field, error);
+        for (const key of keys) {
+          failed.set(key.field, error);
         }
+      }
+      for (const [field, error] of failed) {
+        onFacetError?.(field, error);
       }
       return keys.map((key) => facets.get(cacheKeyOf(key)) ?? EMPTY_FACET);
     },

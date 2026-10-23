@@ -468,7 +468,7 @@ describe('parseSearchResponse range facets', () => {
     expect(result.facets.size).toEqual({ buckets: [] });
   });
 
-  it('reports a range facet without bins as its extent alone, never per value', () => {
+  it('reports a range facet without bins per distinct value, with its extent', () => {
     const created: SearchType = {
       name: 'Dataset',
       class: 'http://www.w3.org/ns/dcat#Dataset',
@@ -495,7 +495,10 @@ describe('parseSearchResponse range facets', () => {
     );
     // Stored terms, like every value at the port: a surface serves ISO.
     expect(result.facets.created).toEqual({
-      buckets: [],
+      buckets: [
+        { value: '-3187296000', count: 1 },
+        { value: '1700000000', count: 1 },
+      ],
       extent: { min: -3187296000, max: 1700000000 },
     });
   });

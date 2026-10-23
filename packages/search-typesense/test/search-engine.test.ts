@@ -484,11 +484,16 @@ describe('createTypesenseSearchEngine (integration)', () => {
     if ('error' in all || 'error' in valid || 'error' in none) {
       throw new Error('Expected facets outcomes.');
     }
-    // No bins declared: the extent alone, never a bucket per distinct date.
-    expect(all.facets.dateCreated).toEqual({
-      buckets: [],
-      extent: { min: bce, max: modern },
-    });
+    // No bins declared: a bucket per distinct date, beside the extent.
+    expect(all.facets.dateCreated?.extent).toEqual({ min: bce, max: modern });
+    expect(
+      [...(all.facets.dateCreated?.buckets ?? [])].sort(
+        (first, second) => Number(first.value) - Number(second.value),
+      ),
+    ).toEqual([
+      { value: String(bce), count: 1 },
+      { value: String(modern), count: 1 },
+    ]);
     // Only d1 (valid) and d2 (valid, no date) remain.
     expect(valid.facets.dateCreated?.extent).toEqual({ min: bce, max: bce });
     expect(none.facets.dateCreated).toEqual({ buckets: [] });

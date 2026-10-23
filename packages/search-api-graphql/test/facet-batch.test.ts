@@ -317,6 +317,8 @@ describe('createFacetLoader', () => {
     const [keyword, status] = await Promise.all([
       load('keyword', 'matching'),
       load('status', 'matching'),
+      // Fails in a second query, and is still one failed facet.
+      load('status', 'all'),
     ]);
 
     // The shared keyword query keeps its buckets; only status degraded.

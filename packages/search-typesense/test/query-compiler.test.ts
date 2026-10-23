@@ -574,16 +574,6 @@ describe('buildSearchParams', () => {
     ).toBe('size(0:[1, 10], 1:[10, 100], 2:[100, ])');
   });
 
-  it('facets a range field without bins into one open bin, for the stats that carry its extent', () => {
-    const dated: SearchType = {
-      ...schema,
-      fields: [{ name: 'datePosted', kind: 'date', facetable: true }],
-    };
-    expect(
-      buildSearchParams({ ...base, facets: ['datePosted'] }, dated).facet_by,
-    ).toBe('datePosted(extent:[, ])');
-  });
-
   it('mixes range and plain facets in one facet_by clause', () => {
     expect(
       buildSearchParams({ ...base, facets: ['keyword', 'size'] }, schema)

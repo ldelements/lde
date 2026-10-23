@@ -273,12 +273,14 @@ role: { in: ["etser"] } } }` asks for _this person in this role_, where the
     widen a selection again. Both are `{ min max }` in the type the field’s
     range filter takes (`IntExtent`, `FloatExtent`, `DateExtent` with ISO 8601
     strings, BCE years included), so a bound feeds straight back into
-    `where`, and either is `null` when no document holds a value. A field
-    with [`facetRanges`](./search#range-facets) returns the
-    `‹Kind›HistogramFacet` variant, which adds `buckets: [RangeBucket!]!` –
-    one bucket per declared half-open `[min, max)` bin over the same
-    documents as `matching`, carrying `min`/`max` (null on an open end) and
-    `count`, with no `value` or `label`;
+    `where`, and either is `null` when no document holds a value. Its
+    `buckets: [ValueBucket!]!` count each distinct value over the same
+    documents as `matching` (a date’s in ISO 8601). A field with
+    [`facetRanges`](./search#range-facets) returns the
+    `‹Kind›BinnedRangeFacet` variant instead, whose `buckets:
+[RangeBucket!]!` hold one bucket per declared half-open `[min, max)` bin,
+    carrying `min`/`max` (null on an open end) and `count`, with no `value`
+    or `label`;
   - a `boolean` field returns `[BooleanBucket!]!` – `value: Boolean!` +
     `count`, and **no `label` field at all**. The value is a real boolean, so
     the bucket a client selects is exactly the term the `where` filter takes

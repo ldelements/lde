@@ -170,15 +170,34 @@ describe('buildCollectionDefinition', () => {
       sort: true,
       optional: true,
     });
-    // A facetable numeric is a range facet, which Typesense answers only on a
-    // field indexed for sorting – sortable or not.
     expect(collection.fields).toContainEqual({
       name: 'score',
       type: 'float',
       facet: true,
-      sort: true,
+      sort: false,
       optional: true,
     });
+  });
+
+  it('indexes a field declaring bins for sorting, which Typesense needs to bin it', () => {
+    const binned = buildCollectionDefinition(
+      {
+        name: 'Doc',
+        class: 'urn:example:Doc',
+        fields: [
+          {
+            name: 'triples',
+            kind: 'integer',
+            facetable: true,
+            facetRanges: [{ key: 'small', max: 100 }],
+          },
+        ],
+      },
+      { collectionNameFor: () => 'docs', defaultLocale: 'en' },
+    );
+    expect(binned.fields).toContainEqual(
+      expect.objectContaining({ name: 'triples', facet: true, sort: true }),
+    );
   });
 
   it('emits a folded, stemmed search companion for a searchable keyword field', () => {

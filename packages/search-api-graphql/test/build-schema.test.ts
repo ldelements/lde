@@ -447,7 +447,10 @@ describe('buildGraphQLSchema', () => {
       total: 0,
       hits: [],
       facets: {
-        datePosted: { buckets: [], extent: { min: bce, max: modern } },
+        datePosted: {
+          buckets: [{ value: String(modern), count: 2 }],
+          extent: { min: bce, max: modern },
+        },
         size: { buckets: [], extent: { min: 3, max: 250 } },
       },
     });
@@ -459,7 +462,11 @@ describe('buildGraphQLSchema', () => {
             status: { in: ["valid"] }
           }
         ) { facets {
-        datePosted { all { min max } matching { min max } }
+        datePosted {
+          all { min max }
+          matching { min max }
+          buckets { value count }
+        }
         size { matching { min max } }
         keyword { value }
       } } }`,
@@ -475,7 +482,13 @@ describe('buildGraphQLSchema', () => {
       max: unixSecondsToIso(modern),
     };
     expect(isoExtent.min).toMatch(/^-001101-/);
-    expect(facets.datePosted).toEqual({ all: isoExtent, matching: isoExtent });
+    // An unbinned range facet keeps one bucket per distinct value, a date’s
+    // in ISO 8601 too.
+    expect(facets.datePosted).toEqual({
+      all: isoExtent,
+      matching: isoExtent,
+      buckets: [{ value: isoExtent.max, count: 2 }],
+    });
     expect(facets.size).toEqual({ matching: { min: 3, max: 250 } });
 
     // ONE dispatch: the shared query (size, keyword), datePosted with its own
@@ -1027,14 +1040,14 @@ describe('buildGraphQLSchema', () => {
     // Facets are a keyed object, one field per facetable field, typed by kind.
     expect(sdl).toMatch(/type DatasetFacets/);
     expect(sdl).toMatch(/keyword: \[ValueBucket!\]!/);
-    // A numeric facet is a range facet: its extent, plus a histogram only
-    // where the field declares bins.
-    expect(sdl).toMatch(/size: IntHistogramFacet!/);
+    // A numeric facet is a range facet: its extent, plus a bucket per bin
+    // where the field declares bins and per distinct value where it doesn’t.
+    expect(sdl).toMatch(/size: IntBinnedRangeFacet!/);
     expect(sdl).toMatch(
-      /type IntHistogramFacet {[^}]*all: IntExtent\n[^}]*matching: IntExtent\n[^}]*buckets: \[RangeBucket!\]!/,
+      /type IntBinnedRangeFacet {[^}]*all: IntExtent\n[^}]*matching: IntExtent\n[^}]*buckets: \[RangeBucket!\]!/,
     );
     expect(sdl).toMatch(/datePosted: DateRangeFacet!/);
-    expect(sdl).toMatch(/type DateRangeFacet {(?![^}]*buckets)[^}]*}/);
+    expect(sdl).toMatch(/type DateRangeFacet {[^}]*buckets: \[ValueBucket!\]!/);
     expect(sdl).toMatch(/type DateExtent {\s*min: String!\s*max: String!/);
     expect(sdl).toMatch(/iiif: \[BooleanBucket!\]!/);
     expect(sdl).toMatch(/input DatasetWhere/);

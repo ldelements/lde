@@ -44,6 +44,7 @@ export {
   documentKeyOf,
   DEFAULT_LABEL_FIELD,
   isRangeFacet,
+  isBinnedRangeFacet,
   isAbsoluteIri,
   isoToUnixSeconds,
   unixSecondsToIso,

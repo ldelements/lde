@@ -88,11 +88,10 @@ Typesense field type comes from each field’s `kind`, and the physical fanout
 field) matches what the projection writes, via `@lde/search`’s `physicalFields`
 and its display helpers, so the index and the documents cannot drift.
 
-A facetable numeric field is indexed for sorting even when it is not
-`sortable`: Typesense answers a range facet only on such a field, and every
-facetable numeric field is a [range facet](./search#range-facets). This
-changes the collection definition of a type with one, so rebuild its
-collection.
+A facetable field that declares [`facetRanges`](./search#range-facets) is
+indexed for sorting even when it is not `sortable`: Typesense answers a binned
+facet only on such a field. This changes the collection definition of a type
+with one, so rebuild its collection.
 
 An **inline reference** is stored as a nested object – `object` or `object[]`,
 which turns on the collection’s `enable_nested_fields` – with one nested
@@ -261,7 +260,7 @@ Beyond `collections`, `TypesenseSearchEngineOptions` carries:
   high-cardinality facet (publisher, keyword) silently truncates to its top
   ten buckets; a deployment with such facets must raise it. Range facets
   return one bucket per declared range regardless, but a value larger than
-  the range count is still safe. A range facet’s extent comes from the
+  the range count is still safe. A numeric facet’s extent comes from the
   facet’s `stats`, which cover every matching value whatever the cap.
 - **`onLabelError`** – called when reference-label resolution fails; the
   search then degrades to id-only references (and reference-facet buckets to
