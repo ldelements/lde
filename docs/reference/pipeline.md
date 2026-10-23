@@ -425,13 +425,12 @@ Pass a single reporter, or an array to have several observe the same run – for
 import { Pipeline } from '@lde/pipeline';
 import { ConsoleReporter } from '@lde/pipeline-console-reporter';
 import { LoggerReporter } from '@lde/pipeline-logger-reporter';
-import pino from 'pino';
 
 new Pipeline({
   // …
   reporter: [
     new ConsoleReporter({ minLevel: 'info' }),
-    new LoggerReporter(pino(pino.destination('pipeline.log'))),
+    new LoggerReporter(logger), // your application’s structured logger
   ],
 });
 ```

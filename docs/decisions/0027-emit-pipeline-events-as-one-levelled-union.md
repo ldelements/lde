@@ -12,7 +12,7 @@ Proposed
 
 That model serves local runs well and production runs badly:
 
-1. **No route into the caller’s logger.** An operator running a pipeline in a container wants structured lines in their own logger (Pino, an OpenTelemetry exporter, plain JSON on stdout), not spinners. Getting there means writing a twenty-method reporter by hand, and the `search-indexer` CLI offers no alternative at all – it hardcodes `new ConsoleReporter()`.
+1. **No route into the caller’s logger.** An operator running a pipeline in a container wants structured lines in their own logger (a structured logger, an OpenTelemetry exporter, plain JSON on stdout), not spinners. Getting there means writing a twenty-method reporter by hand, and the `search-indexer` CLI offers no alternative at all – it hardcodes `new ConsoleReporter()`.
 2. **Events are not self-contained.** `stageStart(stage)`, `stageProgress(update)` and `importStarted()` do not say which dataset they belong to; `stageProgress` does not even name its stage. A reporter must reconstruct ‘where am I’ from the order of earlier calls, which is why `ConsoleReporter` keeps that state in instance fields. A structured log line without its dataset is useless once it is aggregated.
 3. **Severity is implicit.** Whether something deserves attention is sometimes a property of the payload, not the method: `datasetSkipped` with ‘Unchanged since last run’ is routine, while the same method after every distribution failed means data was not indexed. A consumer can only tell the two apart by matching reason strings.
 4. **Errors are flattened.** `importFailed(distribution, error: string)` drops the stack and type a structured logger would serialise.
@@ -86,7 +86,7 @@ The discriminator lives in the envelope: an event type cannot extend `EventEnvel
 
 ### Severity as a library default
 
-The `level` field is the pipeline’s judgement of how loud an event should be, computed in one place (a `levelOf(event)` table), never at the sites that report an event. It uses exactly four levels – the common subset of Pino, the console, OpenTelemetry severity and KafkaJS – and deliberately no `fatal`: the library never ends the process, and an unrecoverable failure surfaces as a rejection from `run()`.
+The `level` field is the pipeline’s judgement of how loud an event should be, computed in one place (a `levelOf(event)` table), never at the sites that report an event. It uses exactly four levels – the common subset of popular Node loggers, the console, OpenTelemetry severity and KafkaJS – and deliberately no `fatal`: the library never ends the process, and an unrecoverable failure surfaces as a rejection from `run()`.
 
 The initial mapping:
 
@@ -112,7 +112,7 @@ new Pipeline({
   // …
   reporter: [
     new ConsoleReporter({ minLevel: 'info' }),
-    new LoggerReporter(pino(pino.destination('pipeline.log'))),
+    new LoggerReporter(logger),
   ],
 });
 ```
@@ -131,7 +131,7 @@ Once the pipeline reports through `onEvent`, none of `ProgressReporter`’s twen
 
 ### Consumers
 
-- A new package, `@lde/pipeline-logger-reporter`, sits beside `@lde/pipeline-console-reporter` and exports `LoggerReporter`. It ships no logger: it accepts any object with Pino-shaped `debug`/`info`/`warn`/`error(obj, msg)` methods and writes one structured line per event – `logger[event.level](event, event.type)` in essence. The shape is the structured-first call of Pino and Bunyan; a message-first logger such as Winston needs a small adapter.
+- A new package, `@lde/pipeline-logger-reporter`, sits beside `@lde/pipeline-console-reporter` and exports `LoggerReporter`. It ships no logger: it accepts any object with structured-first `debug`/`info`/`warn`/`error(obj, msg)` methods and writes one structured line per event – `logger[event.level](event, event.type)` in essence. A message-first logger needs a small adapter.
 - `ConsoleReporter` stays a class and switches on `event.type` inside `onEvent`. Because events now carry their own dataset and stage, it keeps only the state it needs for rendering (the active spinner, the probe lines).
 
 ## Consequences

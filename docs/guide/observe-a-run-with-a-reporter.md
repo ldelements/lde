@@ -19,15 +19,14 @@ Each reporter receives every event, in array order.
 
 ## Log to your own logger
 
-In production you usually want structured log lines rather than spinners. `LoggerReporter` from [@lde/pipeline-logger-reporter](../reference/pipeline-logger-reporter) writes one line per event to a logger you supply, such as Pino, at the event’s level:
+In production you usually want structured log lines rather than spinners. `LoggerReporter` from [@lde/pipeline-logger-reporter](../reference/pipeline-logger-reporter) writes one line per event to your application’s structured logger, at the event’s level:
 
 ```typescript
 import { LoggerReporter } from '@lde/pipeline-logger-reporter';
-import pino from 'pino';
 
 new Pipeline({
   // …
-  reporter: new LoggerReporter(pino({ level: 'info' })),
+  reporter: new LoggerReporter(logger),
 });
 ```
 
