@@ -264,9 +264,20 @@ role: { in: ["etser"] } } }` asks for _this person in this role_, where the
   - a plain value facet returns `[ValueBucket!]!` – the same shape with a
     `String` `value` and a `null` `label`, for token/free-string facets whose
     display the consumer owns (its own i18n, or the value itself);
-  - a numeric field with [`facetRanges`](./search#range-facets) returns
-    `[RangeBucket!]!` instead – one bucket per declared half-open
-    `[min, max)` bin, carrying `min`/`max` (null on an open end) and
+  - a numeric field is a [range facet](./search#range-facets) and returns an
+    object rather than a list: `IntRangeFacet`, `FloatRangeFacet` or
+    `DateRangeFacet`. Its `all` is the extent over the whole collection,
+    ignoring the query’s filters and text but not a `queryDefaults` policy,
+    so it never reaches documents no query can return; its `matching` is the extent with
+    every filter applied except the field’s own range, so a user can always
+    widen a selection again. Both are `{ min max }` in the type the field’s
+    range filter takes (`IntExtent`, `FloatExtent`, `DateExtent` with ISO 8601
+    strings, BCE years included), so a bound feeds straight back into
+    `where`, and either is `null` when no document holds a value. A field
+    with [`facetRanges`](./search#range-facets) returns the
+    `‹Kind›HistogramFacet` variant, which adds `buckets: [RangeBucket!]!` –
+    one bucket per declared half-open `[min, max)` bin over the same
+    documents as `matching`, carrying `min`/`max` (null on an open end) and
     `count`, with no `value` or `label`;
   - a `boolean` field returns `[BooleanBucket!]!` – `value: Boolean!` +
     `count`, and **no `label` field at all**. The value is a real boolean, so
@@ -284,9 +295,10 @@ role: { in: ["etser"] } } }` asks for _this person in this role_, where the
   the request: each selected facet is computed with its own `where`-filter
   removed (skip-own-filter), and the whole selection is **batched per
   request** – facets whose field carries no active filter share one query
-  (the unfiltered browse collapses to a single query) and everything is
-  dispatched as one `engine.searchFacets` call, so a typical page costs the
-  listing search plus one batched facet round-trip.
+  (the unfiltered browse collapses to a single query), a selected `all`
+  adds one unfiltered query, and everything is dispatched as one
+  `engine.searchFacets` call, so a typical page costs the listing search plus
+  one batched facet round-trip.
 
 - **Result envelope**: `items` plus `pagination` – `total` (the full match
   count), `page` and `perPage` (the pagination actually applied, after

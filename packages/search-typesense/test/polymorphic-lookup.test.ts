@@ -3,6 +3,7 @@ import {
   defineSearchType,
   NESTED_DOCUMENT_TYPE,
   searchSchema,
+  type Facet,
   type NestedDocument,
   type SearchQuery,
 } from '@lde/search';
@@ -276,7 +277,9 @@ describe('resolving a lookup over several targets', () => {
       facets: ['creator'],
     });
 
-    expect((result.facets as Record<string, unknown>).creator).toEqual([
+    expect(
+      (result.facets as Record<string, Facet | undefined>).creator?.buckets,
+    ).toEqual([
       { value: 'https://p/1', count: 3, label: { nl: ['Frank Koel'] } },
       {
         value: 'https://o/1',

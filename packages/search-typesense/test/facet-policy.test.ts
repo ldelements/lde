@@ -212,8 +212,10 @@ describe('response boundary', () => {
     });
 
     expect(result.facets).toEqual({
-      locationCreated: [{ value: VENLO, count: 2, label: { und: ['Venlo'] } }],
-      genre: [{ value: 'map', count: 1 }],
+      locationCreated: {
+        buckets: [{ value: VENLO, count: 2, label: { und: ['Venlo'] } }],
+      },
+      genre: { buckets: [{ value: 'map', count: 1 }] },
     });
   });
 
@@ -230,10 +232,10 @@ describe('response boundary', () => {
 
     expect(outcome).toEqual({
       facets: {
-        locationCreated: [
-          { value: VENLO, count: 2, label: { und: ['Venlo'] } },
-        ],
-        genre: [{ value: 'map', count: 1 }],
+        locationCreated: {
+          buckets: [{ value: VENLO, count: 2, label: { und: ['Venlo'] } }],
+        },
+        genre: { buckets: [{ value: 'map', count: 1 }] },
       },
     });
   });
@@ -350,10 +352,10 @@ describe('facet policy end to end (integration)', () => {
     expect(result.total).toBe(4);
     // Three local Kessels – two of them one place by name – and not one bucket
     // among them; the aligned place is the facet, labelled from its document.
-    expect(result.facets.locationCreated).toEqual([
+    expect(result.facets.locationCreated?.buckets).toEqual([
       { value: VENLO, count: 1, label: { und: ['Venlo'] } },
     ]);
-    expect(result.facets.about).toEqual([
+    expect(result.facets.about?.buckets).toEqual([
       { value: VENLO, count: 2, label: { und: ['Venlo'] } },
     ]);
   });

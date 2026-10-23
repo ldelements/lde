@@ -52,7 +52,7 @@ export interface SearchEngine<
    * Typesense `multi_search`), returning one {@link FacetsOutcome} per query,
    * positionally aligned with `queries`. This is what keeps a faceted
    * listing – one skip-own-filter query variant per filtered facet – from
-   * fanning out into per-facet engine calls. Only facet buckets come back: an
+   * fanning out into per-facet engine calls. Only facets come back: an
    * engine answers every query in the batch facet-only (as if `limit: 0` and
    * without ordering, whatever the query carries), so hits are never
    * transferred. Reference-facet buckets carry resolved labels exactly as in
@@ -71,7 +71,7 @@ export interface SearchEngine<
 
 /**
  * One query’s outcome in a {@link SearchEngine.searchFacets} batch – its
- * facet buckets, or the error that failed it. The `allSettled`-style shape
+ * facets, or the error that failed it. The `allSettled`-style shape
  * keeps one failed query (e.g. one failed `multi_search` entry) from
  * discarding its siblings’ results: a caller degrades exactly the facets of
  * the failed query. Discriminate with `'error' in outcome`.
@@ -90,12 +90,42 @@ export interface SearchResult<
 }
 
 /**
- * Facet buckets keyed by facet field name. `Partial` because a result carries
- * buckets only for the fields the query asked for, not every facetable field.
+ * Facets keyed by facet field name. `Partial` because a result carries a facet
+ * only for the fields the query asked for, not every facetable field.
  */
 export type FacetMap<FacetField extends string = string> = Readonly<
-  Partial<Record<FacetField, readonly FacetBucket[]>>
+  Partial<Record<FacetField, Facet>>
 >;
+
+/**
+ * One facet over the documents a query matches: its buckets and, for a
+ * numeric (`integer`/`number`/`date`) field, the extent of the values those
+ * documents hold – the bounds a range slider needs.
+ *
+ * A numeric field is a **range facet**: it buckets only into the bins it
+ * declares as `facetRanges` (a histogram), and without
+ * them reports its extent alone (`buckets` empty), never one bucket per
+ * distinct value. Every other facet buckets per value and has no extent.
+ */
+export interface Facet {
+  readonly buckets: readonly FacetBucket[];
+  /**
+   * The lowest and highest value among the matching documents, for a numeric
+   * facet. Absent on any other facet, and when no matching document holds a
+   * value.
+   */
+  readonly extent?: FacetExtent;
+}
+
+/**
+ * The lowest and highest value a range facet’s documents hold, stored terms
+ * like every other value at this seam: a `date` in Unix seconds, which a
+ * surface serves as ISO 8601 the way it serves the field itself.
+ */
+export interface FacetExtent {
+  readonly min: number;
+  readonly max: number;
+}
 
 /**
  * The facet-field-name union of a search type – the keys a {@link SearchResult}’s

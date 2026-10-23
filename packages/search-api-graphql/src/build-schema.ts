@@ -31,6 +31,7 @@ import {
   type SearchEngine,
   type ReferenceField,
   type ReferenceType,
+  type NumericField,
   type SearchField,
   type SearchQuery,
   type SearchSchema,
@@ -65,7 +66,11 @@ import {
   type LanguageOrder,
   type LanguageString,
 } from './language.js';
-import { createFacetLoader, type FacetLoader } from './facet-batch.js';
+import {
+  createFacetLoader,
+  type FacetLoader,
+  type FacetScope,
+} from './facet-batch.js';
 import { projectionFor } from './projection.js';
 
 /** Populated per request by the transport; no framework type appears here. */
@@ -343,6 +348,63 @@ export function buildGraphQLSchema(
       count: { type: new GraphQLNonNull(GraphQLInt) },
     },
   });
+  // A range facet’s extent, in the type its field’s `range` filter takes
+  // (IntRange, FloatRange, DateRange), so a slider’s bounds feed straight back
+  // into the filter that selects them. A date is stored as Unix seconds and
+  // served as ISO 8601, like the field itself.
+  const extentTypes = {
+    integer: extentType('IntExtent', GraphQLInt),
+    number: extentType('FloatExtent', GraphQLFloat),
+    date: extentType('DateExtent', GraphQLString, unixSecondsToIso),
+  };
+  // A range facet: the extent over the whole collection and over the
+  // documents the other filters leave, plus – for a field declaring bins –
+  // the histogram over the latter. One type per kind and binning, built on
+  // first use so the SDL carries only the ones a schema facets.
+  const rangeFacetTypes = new Map<string, GraphQLObjectType>();
+  function rangeFacetTypeFor(field: NumericField): GraphQLObjectType {
+    const binned = (field.facetRanges ?? []).length > 0;
+    const extent = extentTypes[field.kind];
+    const name = `${extent.name.replace(/Extent$/, '')}${
+      binned ? 'Histogram' : 'Range'
+    }Facet`;
+    const existing = rangeFacetTypes.get(name);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const load = (source: Source, scope: FacetScope) =>
+      (source.load as (scope: FacetScope) => ReturnType<FacetLoader>)(scope);
+    const type = new GraphQLObjectType({
+      name,
+      fields: {
+        all: {
+          type: extent,
+          description:
+            'The lowest and highest value in the whole collection, ignoring every filter and the text of the query; null when no document holds one.',
+          resolve: async (source: Source) =>
+            (await load(source, 'all')).extent ?? null,
+        },
+        matching: {
+          type: extent,
+          description:
+            'The lowest and highest value among the documents every other filter leaves – the field’s own range filter is not applied, so a selection can always be widened again; null when none holds one.',
+          resolve: async (source: Source) =>
+            (await load(source, 'matching')).extent ?? null,
+        },
+        ...(binned && {
+          buckets: {
+            type: nonNullListOf(rangeBucket),
+            description:
+              'The declared bins over the same documents as “matching”.',
+            resolve: async (source: Source) =>
+              (await load(source, 'matching')).buckets,
+          },
+        }),
+      },
+    });
+    rangeFacetTypes.set(name, type);
+    return type;
+  }
   // The pagination actually applied (after queryDefaults), shared across every
   // ‹Type›SearchResult so one client pager fragment serves all root types.
   const paginationType = new GraphQLObjectType({
@@ -1232,8 +1294,9 @@ export function buildGraphQLSchema(
     });
 
     // Keyed facets object: one field per facetable field, typed by its kind
-    // (range fields → [RangeBucket!], boolean fields → [BooleanBucket!],
-    // reference fields → [IRIBucket!], else [ValueBucket!]). Only the selected
+    // (numeric fields → a ‹Kind›RangeFacet, or ‹Kind›HistogramFacet with
+    // bins; boolean fields → [BooleanBucket!], reference fields →
+    // [IRIBucket!], else [ValueBucket!]). Only the selected
     // fields are resolved (GraphQL prunes the rest), so the selection IS the
     // request; how they are computed – skip-own-filter, batched into one
     // engine dispatch – lives in facet-batch.ts.
@@ -1301,9 +1364,23 @@ export function buildGraphQLSchema(
         // What the client selected decides what each lookup fetches, so the
         // engine carries the referent fields this query asked for and no more.
         const resolve = projectionFor(info, searchType, schema);
-        const finalQuery = typeOptions?.queryDefaults
-          ? typeOptions.queryDefaults(built, context)
-          : built;
+        const withDefaults = (query: SearchQuery) =>
+          typeOptions?.queryDefaults
+            ? typeOptions.queryDefaults(query, context)
+            : query;
+        const finalQuery = withDefaults(built);
+        // What a range facet’s `all` extent is computed over: no filter and no
+        // text of the caller’s, but the deployment’s policy still applied, so
+        // the bounds never reach documents no query can return.
+        const unfilteredQuery = (locale: string) =>
+          withDefaults({
+            where: [],
+            orderBy: [],
+            limit: 0,
+            offset: 0,
+            facets: [],
+            locale,
+          });
         // Items + total only; facets are resolved lazily per selected key.
         const result = await context.engine.search(searchType, {
           ...finalQuery,
@@ -1324,6 +1401,7 @@ export function buildGraphQLSchema(
             context.engine,
             searchType,
             finalQuery,
+            unfilteredQuery(built.locale),
             context.onFacetError,
           ),
         };
@@ -1331,13 +1409,12 @@ export function buildGraphQLSchema(
     };
   }
 
-  /** The bucket type a facet’s kind earns: bins for a range facet, a real
-   *  boolean for a boolean one, an `IRI` key for a reference, a literal key
+  /** The bucket type a value facet’s kind earns: a real boolean for a
+   *  boolean one, an `IRI` key for a reference, a literal key
    *  otherwise. The reference test is the one {@link whereFieldType} applies, so
    *  a bucket and the filter it feeds cannot disagree about what the field keys
    *  on. */
   function bucketTypeFor(field: SearchField): GraphQLObjectType {
-    if (isRangeFacet(field)) return rangeBucket;
     if (field.kind === 'boolean') return booleanBucket;
     return field.kind === 'reference' ? iriBucket : valueBucket;
   }
@@ -1355,15 +1432,28 @@ export function buildGraphQLSchema(
           GraphQLFieldConfig<Source, SearchContext>
         > = {};
         for (const field of facetable) {
+          // The skip-own-filter query building, the batching into one
+          // engine dispatch and the degrade-to-empty error handling all live
+          // in the loader (facet-batch.ts).
+          if (isRangeFacet(field)) {
+            fields[field.name] = {
+              type: new GraphQLNonNull(rangeFacetTypeFor(field)),
+              // Resolved synchronously, so the scopes its fields load land in
+              // the same batch as the sibling facets.
+              resolve: (source: Source) => ({
+                load: (scope: FacetScope) =>
+                  (source.loadFacet as FacetLoader)(field.name, scope),
+              }),
+            };
+            continue;
+          }
           const bucketType = bucketTypeFor(field);
           fields[field.name] = {
             type: nonNullListOf(bucketType),
-            // The skip-own-filter query building, the batching into one
-            // engine dispatch and the degrade-to-[] error handling all live
-            // in the loader (facet-batch.ts).
             resolve: async (source: Source) => {
-              const buckets = await (source.loadFacet as FacetLoader)(
+              const { buckets } = await (source.loadFacet as FacetLoader)(
                 field.name,
+                'matching',
               );
               if (bucketType !== iriBucket) {
                 return buckets;
@@ -1730,6 +1820,21 @@ function keyEntriesOf(
     }
   }
   return entries;
+}
+
+function extentType(
+  name: string,
+  bound: typeof GraphQLInt | typeof GraphQLFloat | typeof GraphQLString,
+  serve: (stored: number) => number | string = (stored) => stored,
+): GraphQLObjectType {
+  const field = (key: 'min' | 'max') => ({
+    type: new GraphQLNonNull(bound),
+    resolve: (extent: Source) => serve(extent[key] as number),
+  });
+  return new GraphQLObjectType({
+    name,
+    fields: { min: field('min'), max: field('max') },
+  });
 }
 
 function rangeInput(

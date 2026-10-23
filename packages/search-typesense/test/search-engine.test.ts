@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Client } from 'typesense';
 import {
+  isoToUnixSeconds,
   searchSchema,
   type SearchEngine,
   type SearchQuery,
@@ -89,8 +90,24 @@ const datasetSchema: SearchType = {
     { name: 'status', kind: 'keyword', facetable: true, filterable: true },
     { name: 'statusRank', kind: 'integer', sortable: true },
     { name: 'iiif', kind: 'boolean', facetable: true, filterable: true },
+    { name: 'dateCreated', kind: 'date', facetable: true, filterable: true },
+    {
+      name: 'triples',
+      kind: 'integer',
+      facetable: true,
+      filterable: true,
+      // Bins that leave d3’s value out, so the extent must not come from them.
+      facetRanges: [
+        { key: 'small', min: 1, max: 100 },
+        { key: 'medium', min: 100, max: 10000 },
+      ],
+    },
   ],
 };
+
+// A BCE year, so the extent is read in stored seconds across eras.
+const bce = isoToUnixSeconds('-001100-01-01') as number;
+const modern = isoToUnixSeconds('2001-05-01') as number;
 
 // Flat documents, as the projection would emit them (physical field names).
 const documents = [
@@ -119,6 +136,8 @@ const documents = [
     status: 'valid',
     statusRank: 0,
     iiif: true,
+    dateCreated: bce,
+    triples: 12,
   },
   {
     id: 'd2',
@@ -132,6 +151,7 @@ const documents = [
     statusRank: 0,
     // The negative case, so the facet reports both buckets.
     iiif: false,
+    // d1 and d3 hold the extremes; d2 holds none, as an optional date may.
   },
   {
     id: 'd3',
@@ -144,6 +164,8 @@ const documents = [
     status: 'invalid',
     statusRank: 3,
     iiif: true,
+    dateCreated: modern,
+    triples: 2500000,
   },
 ];
 
@@ -343,7 +365,7 @@ describe('createTypesenseSearchEngine (integration)', () => {
     }
     expect(unsatisfiable.facets).toEqual({});
     // The satisfiable sibling still gets its real counts, positionally aligned.
-    expect(sibling.facets.status?.length).toBeGreaterThan(0);
+    expect(sibling.facets.status?.buckets.length).toBeGreaterThan(0);
   });
 
   it('ranks a full-text query through the weighted query_by fields', async () => {
@@ -364,7 +386,7 @@ describe('createTypesenseSearchEngine (integration)', () => {
     });
 
     // Plain facet: value + count, no label.
-    const keyword = [...(result.facets.keyword ?? [])].sort(
+    const keyword = [...(result.facets.keyword?.buckets ?? [])].sort(
       (a, b) => b.count - a.count,
     );
     expect(keyword).toEqual([
@@ -373,7 +395,7 @@ describe('createTypesenseSearchEngine (integration)', () => {
     ]);
 
     // Reference facet: IRI-keyed buckets carry the resolved data label.
-    const publisher = [...(result.facets.publisher ?? [])].sort(
+    const publisher = [...(result.facets.publisher?.buckets ?? [])].sort(
       (a, b) => b.count - a.count,
     );
     expect(publisher).toEqual([
@@ -409,7 +431,7 @@ describe('createTypesenseSearchEngine (integration)', () => {
       throw new Error('Expected facets outcomes.');
     }
 
-    const keyword = [...(unfiltered.facets.keyword ?? [])].sort(
+    const keyword = [...(unfiltered.facets.keyword?.buckets ?? [])].sort(
       (first, second) => second.count - first.count,
     );
     expect(keyword).toEqual([
@@ -417,7 +439,7 @@ describe('createTypesenseSearchEngine (integration)', () => {
       { value: 'atlas', count: 1 },
     ]);
     // Reference facets carry resolved labels, exactly as in search().
-    const publisher = [...(unfiltered.facets.publisher ?? [])].sort(
+    const publisher = [...(unfiltered.facets.publisher?.buckets ?? [])].sort(
       (first, second) => second.count - first.count,
     );
     expect(publisher).toEqual([
@@ -434,13 +456,55 @@ describe('createTypesenseSearchEngine (integration)', () => {
     ]);
 
     // The filtered query counts only the valid documents (d1, d2).
-    const filteredKeyword = [...(filtered.facets.keyword ?? [])].sort(
+    const filteredKeyword = [...(filtered.facets.keyword?.buckets ?? [])].sort(
       (first, second) => first.value.localeCompare(second.value),
     );
     expect(filteredKeyword).toEqual([
       { value: 'atlas', count: 1 },
       { value: 'kaarten', count: 1 },
     ]);
+  });
+
+  it('reports a range facet’s extent over the matching documents only', async () => {
+    const [all, valid, none] = await engine.searchFacets(datasetSchema, [
+      { ...baseQuery, limit: 0, facets: ['dateCreated'] },
+      {
+        ...baseQuery,
+        limit: 0,
+        where: [{ or: [{ field: 'status', in: ['valid'] }] }],
+        facets: ['dateCreated'],
+      },
+      {
+        ...baseQuery,
+        limit: 0,
+        where: [{ or: [{ field: 'status', in: ['withdrawn'] }] }],
+        facets: ['dateCreated'],
+      },
+    ]);
+    if ('error' in all || 'error' in valid || 'error' in none) {
+      throw new Error('Expected facets outcomes.');
+    }
+    // No bins declared: the extent alone, never a bucket per distinct date.
+    expect(all.facets.dateCreated).toEqual({
+      buckets: [],
+      extent: { min: bce, max: modern },
+    });
+    // Only d1 (valid) and d2 (valid, no date) remain.
+    expect(valid.facets.dateCreated?.extent).toEqual({ min: bce, max: bce });
+    expect(none.facets.dateCreated).toEqual({ buckets: [] });
+  });
+
+  it('reports a binned range facet’s extent beside its bins, beyond them included', async () => {
+    const [outcome] = await engine.searchFacets(datasetSchema, [
+      { ...baseQuery, limit: 0, facets: ['triples'] },
+    ]);
+    if ('error' in outcome) {
+      throw outcome.error;
+    }
+    expect(outcome.facets.triples).toEqual({
+      buckets: [{ value: 'small', count: 1, min: 1, max: 100 }],
+      extent: { min: 12, max: 2500000 },
+    });
   });
 
   it('always rejects a structurally invalid query, before reaching the engine', async () => {

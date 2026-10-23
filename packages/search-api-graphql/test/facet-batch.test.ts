@@ -48,7 +48,7 @@ function recordingEngine(): {
           facets: Object.fromEntries(
             query.facets.map((field) => [
               field,
-              [{ value: `${field}-value`, count: 1 }],
+              { buckets: [{ value: `${field}-value`, count: 1 }] },
             ]),
           ),
         }));
@@ -235,27 +235,29 @@ describe('groupFacetQueries', () => {
 describe('createFacetLoader', () => {
   it('collects same-tick loads into one dispatch and resolves each field from it', async () => {
     const { engine, batches } = recordingEngine();
-    const load = createFacetLoader(engine, dataset, baseQuery);
+    const load = createFacetLoader(engine, dataset, baseQuery, baseQuery);
 
     const [keyword, status] = await Promise.all([
-      load('keyword'),
-      load('status'),
+      load('keyword', 'matching'),
+      load('status', 'matching'),
     ]);
 
     expect(batches).toHaveLength(1);
     expect(batches[0]).toHaveLength(1);
     expect(batches[0][0].facets).toEqual(['keyword', 'status']);
-    expect(keyword).toEqual([{ value: 'keyword-value', count: 1 }]);
-    expect(status).toEqual([{ value: 'status-value', count: 1 }]);
+    expect(keyword).toEqual({
+      buckets: [{ value: 'keyword-value', count: 1 }],
+    });
+    expect(status).toEqual({ buckets: [{ value: 'status-value', count: 1 }] });
   });
 
   it('deduplicates a field loaded twice in the same tick', async () => {
     const { engine, batches } = recordingEngine();
-    const load = createFacetLoader(engine, dataset, baseQuery);
+    const load = createFacetLoader(engine, dataset, baseQuery, baseQuery);
 
     const [first, second] = await Promise.all([
-      load('keyword'),
-      load('keyword'),
+      load('keyword', 'matching'),
+      load('keyword', 'matching'),
     ]);
 
     expect(batches[0][0].facets).toEqual(['keyword']);
@@ -264,10 +266,10 @@ describe('createFacetLoader', () => {
 
   it('starts a fresh batch for a load arriving after the flush', async () => {
     const { engine, batches } = recordingEngine();
-    const load = createFacetLoader(engine, dataset, baseQuery);
+    const load = createFacetLoader(engine, dataset, baseQuery, baseQuery);
 
-    await load('keyword');
-    await load('status');
+    await load('keyword', 'matching');
+    await load('status', 'matching');
 
     expect(batches).toHaveLength(2);
     expect(batches[0][0].facets).toEqual(['keyword']);
@@ -293,7 +295,7 @@ describe('createFacetLoader', () => {
                 facets: Object.fromEntries(
                   query.facets.map((field) => [
                     field,
-                    [{ value: `${field}-value`, count: 1 }],
+                    { buckets: [{ value: `${field}-value`, count: 1 }] },
                   ]),
                 ),
               },
@@ -304,18 +306,24 @@ describe('createFacetLoader', () => {
       ...baseQuery,
       where: [{ or: [{ field: 'status', in: ['valid'] }] }],
     };
-    const load = createFacetLoader(engine, dataset, filtered, (field) =>
-      failed.push(field),
+    const load = createFacetLoader(
+      engine,
+      dataset,
+      filtered,
+      baseQuery,
+      (field) => failed.push(field),
     );
 
     const [keyword, status] = await Promise.all([
-      load('keyword'),
-      load('status'),
+      load('keyword', 'matching'),
+      load('status', 'matching'),
     ]);
 
     // The shared keyword query keeps its buckets; only status degraded.
-    expect(keyword).toEqual([{ value: 'keyword-value', count: 1 }]);
-    expect(status).toEqual([]);
+    expect(keyword).toEqual({
+      buckets: [{ value: 'keyword-value', count: 1 }],
+    });
+    expect(status).toEqual({ buckets: [] });
     expect(failed).toEqual(['status']);
   });
 
@@ -331,19 +339,23 @@ describe('createFacetLoader', () => {
         return [];
       },
     };
-    const load = createFacetLoader(engine, dataset, baseQuery, (field, error) =>
-      failed.push([field, error]),
+    const load = createFacetLoader(
+      engine,
+      dataset,
+      baseQuery,
+      baseQuery,
+      (field, error) => failed.push([field, error]),
     );
 
-    const keyword = await load('keyword');
+    const keyword = await load('keyword', 'matching');
 
-    expect(keyword).toEqual([]);
+    expect(keyword).toEqual({ buckets: [] });
     expect(failed).toHaveLength(1);
     expect(failed[0][0]).toBe('keyword');
     expect(String(failed[0][1])).toMatch(/no outcome/);
   });
 
-  it('degrades every field of a failed dispatch to [], reporting each', async () => {
+  it('degrades every field of a failed dispatch to empty, reporting each', async () => {
     const failed: [string, unknown][] = [];
     const engine: SearchEngine = {
       schema: searchSchema(dataset),
@@ -354,20 +366,48 @@ describe('createFacetLoader', () => {
         throw new Error('facet backend unavailable');
       },
     };
-    const load = createFacetLoader(engine, dataset, baseQuery, (field, error) =>
-      failed.push([field, error]),
+    const load = createFacetLoader(
+      engine,
+      dataset,
+      baseQuery,
+      baseQuery,
+      (field, error) => failed.push([field, error]),
     );
 
     const [keyword, status] = await Promise.all([
-      load('keyword'),
-      load('status'),
+      load('keyword', 'matching'),
+      load('status', 'matching'),
+      // A second scope of the same field is still one failed facet.
+      load('status', 'all'),
     ]);
 
-    expect(keyword).toEqual([]);
-    expect(status).toEqual([]);
+    expect(keyword).toEqual({ buckets: [] });
+    expect(status).toEqual({ buckets: [] });
     expect(failed.map(([field]) => field).sort()).toEqual([
       'keyword',
       'status',
+    ]);
+  });
+
+  it('computes an `all` load over the unfiltered query, in the same dispatch', async () => {
+    const { engine, batches } = recordingEngine();
+    const filtered: SearchQuery = {
+      ...baseQuery,
+      text: 'kaart',
+      where: [{ or: [{ field: 'keyword', in: ['x'] }] }],
+    };
+    const policyOnly: SearchQuery = {
+      ...baseQuery,
+      where: [{ or: [{ field: 'status', in: ['valid'] }] }],
+    };
+    const load = createFacetLoader(engine, dataset, filtered, policyOnly);
+
+    await Promise.all([load('status', 'matching'), load('status', 'all')]);
+
+    expect(batches).toHaveLength(1);
+    expect(batches[0]).toEqual([
+      { ...filtered, facets: ['status'], limit: 0, offset: 0 },
+      { ...policyOnly, facets: ['status'], limit: 0, offset: 0 },
     ]);
   });
 });

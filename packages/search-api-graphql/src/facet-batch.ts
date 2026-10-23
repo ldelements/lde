@@ -1,48 +1,86 @@
 import DataLoader from 'dataloader';
 import type {
   Criterion,
-  FacetBucket,
+  Facet,
   Filter,
   RootType,
   SearchEngine,
   SearchQuery,
 } from '@lde/search';
 
-/** Resolves one selected facet field to its buckets; see {@link createFacetLoader}. */
-export type FacetLoader = (field: string) => Promise<readonly FacetBucket[]>;
+/**
+ * Resolves one selected facet field to its facet; see {@link createFacetLoader}.
+ * `matching` computes it over the documents the other filters leave
+ * (skip-own-filter), `all` over the whole collection, ignoring the query’s
+ * filters and text – the extent a range slider is drawn across.
+ */
+export type FacetLoader = (field: string, scope: FacetScope) => Promise<Facet>;
+
+/** Which documents a {@link FacetLoader} computes a facet over. */
+export type FacetScope = 'matching' | 'all';
 
 /**
  * A per-request batcher behind the keyed facets object. Each selected facet
  * field’s resolver calls the loader; GraphQL resolves the sibling facet
  * fields synchronously, so the loads land in the same tick, where the
  * DataLoader collects them into one batch, which is grouped into the fewest
- * equivalent queries ({@link groupFacetQueries}) and dispatched as ONE
- * `engine.searchFacets` call – one engine round-trip for the whole sidebar
- * instead of one search per facet.
+ * equivalent queries ({@link groupFacetQueries}, plus `unfilteredQuery` – the
+ * deployment’s policy without the caller’s filters – for every `all` load) and
+ * dispatched as ONE `engine.searchFacets` call – one
+ * engine round-trip for the whole sidebar instead of one search per facet.
  *
  * A facet is supplementary: a failed facet query degrades exactly its own
- * facets to empty lists – reported per field via `onFacetError` – while its
- * siblings keep their buckets; only a batch-level failure (the dispatch
- * itself rejecting) degrades every facet. Neither fails the whole GraphQL
- * query, which would null the non-null result and discard the items.
+ * facets to empty – reported per field via `onFacetError` – while its
+ * siblings keep theirs; only a batch-level failure (the dispatch itself
+ * rejecting) degrades every facet. Neither fails the whole GraphQL query,
+ * which would null the non-null result and discard the items.
  */
 export function createFacetLoader(
   engine: SearchEngine,
   searchType: RootType,
   query: SearchQuery,
+  unfilteredQuery: SearchQuery,
   onFacetError?: (field: string, error: unknown) => void,
 ): FacetLoader {
-  const loader = new DataLoader<string, readonly FacetBucket[]>(
-    async (fields) => {
-      const queries = groupFacetQueries(query, fields);
-      const buckets = new Map<string, readonly FacetBucket[]>();
+  const loader = new DataLoader<FacetKey, Facet, string>(
+    async (keys) => {
+      const fieldsIn = (scope: FacetScope) =>
+        keys.filter((key) => key.scope === scope).map((key) => key.field);
+      const unfiltered = fieldsIn('all');
+      const queries = [
+        ...groupFacetQueries(query, fieldsIn('matching')).map((facetQuery) => ({
+          scope: 'matching' as const,
+          facetQuery,
+        })),
+        ...(unfiltered.length > 0
+          ? [
+              {
+                scope: 'all' as const,
+                facetQuery: {
+                  ...unfilteredQuery,
+                  orderBy: [],
+                  limit: 0,
+                  offset: 0,
+                  facets: unfiltered,
+                },
+              },
+            ]
+          : []),
+      ];
+      const facets = new Map<string, Facet>();
       try {
-        const outcomes = await engine.searchFacets(searchType, queries);
-        queries.forEach((facetQuery, index) => {
+        const outcomes = await engine.searchFacets(
+          searchType,
+          queries.map(({ facetQuery }) => facetQuery),
+        );
+        queries.forEach(({ scope, facetQuery }, index) => {
           const outcome = outcomes[index];
           if (outcome !== undefined && !('error' in outcome)) {
             for (const field of facetQuery.facets) {
-              buckets.set(field, outcome.facets[field] ?? []);
+              facets.set(
+                cacheKeyOf({ field, scope }),
+                outcome.facets[field] ?? EMPTY_FACET,
+              );
             }
             return;
           }
@@ -57,16 +95,18 @@ export function createFacetLoader(
           }
         });
       } catch (error) {
-        // A batch-level failure leaves `buckets` empty: every facet in the
-        // batch degrades to [].
-        for (const field of fields) {
+        // A batch-level failure leaves `facets` empty: every facet in the
+        // batch degrades to empty, reported once however many scopes it
+        // loaded.
+        for (const field of new Set(keys.map((key) => key.field))) {
           onFacetError?.(field, error);
         }
       }
-      return fields.map((field) => buckets.get(field) ?? []);
+      return keys.map((key) => facets.get(cacheKeyOf(key)) ?? EMPTY_FACET);
     },
+    { cacheKeyFn: cacheKeyOf },
   );
-  return (field) => loader.load(field);
+  return (field, scope) => loader.load({ field, scope });
 }
 
 /**
@@ -161,3 +201,17 @@ function axisOf(criterion: Criterion): string {
   const on = criterion.on ?? [];
   return on.length === 0 ? criterion.field : [...on, criterion.field].join('.');
 }
+
+/** One facet load: a field, over the documents a scope names. */
+interface FacetKey {
+  readonly field: string;
+  readonly scope: FacetScope;
+}
+
+/** A field name never contains a space, so this cannot conflate two keys. */
+function cacheKeyOf(key: FacetKey): string {
+  return `${key.scope} ${key.field}`;
+}
+
+/** What a facet degrades to: no buckets, and no extent. */
+const EMPTY_FACET: Facet = { buckets: [] };

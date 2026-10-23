@@ -422,16 +422,27 @@ describe('schema selectors', () => {
 });
 
 describe('isRangeFacet', () => {
-  it('requires a non-empty facetRanges declaration', () => {
-    const size: SearchField = {
-      name: 'size',
-      kind: 'integer',
-      facetable: true,
-      facetRanges: [{ key: '0', min: 1, max: 10 }],
-    };
-    expect(isRangeFacet(size)).toBe(true);
-    expect(isRangeFacet({ ...size, facetRanges: [] })).toBe(false);
-    expect(isRangeFacet({ ...size, facetRanges: undefined })).toBe(false);
+  it('holds for every numeric kind, bins or not', () => {
+    for (const kind of ['integer', 'number', 'date'] as const) {
+      expect(isRangeFacet({ name: 'size', kind, facetable: true })).toBe(true);
+    }
+    expect(
+      isRangeFacet({
+        name: 'size',
+        kind: 'integer',
+        facetable: true,
+        facetRanges: [{ key: '0', min: 1, max: 10 }],
+      }),
+    ).toBe(true);
+  });
+
+  it('holds for no other kind', () => {
+    expect(
+      isRangeFacet({ name: 'kind', kind: 'keyword', facetable: true }),
+    ).toBe(false);
+    expect(
+      isRangeFacet({ name: 'open', kind: 'boolean', facetable: true }),
+    ).toBe(false);
   });
 });
 

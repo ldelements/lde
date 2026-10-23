@@ -150,14 +150,14 @@ describe('parseSearchResponse', () => {
   it('carries the total and the facet buckets keyed by field name', () => {
     expect(result.total).toBe(2);
     // A plain facet: buckets carry no label.
-    expect(result.facets.keyword).toEqual([
+    expect(result.facets.keyword?.buckets).toEqual([
       { value: 'kaarten', count: 3 },
       { value: 'atlas', count: 1 },
     ]);
   });
 
   it('attaches resolved labels to reference-facet buckets, id-only when unlabelled', () => {
-    expect(result.facets.publisher).toEqual([
+    expect(result.facets.publisher?.buckets).toEqual([
       {
         value: 'https://org/1',
         count: 2,
@@ -168,7 +168,7 @@ describe('parseSearchResponse', () => {
   });
 
   it('gives boolean-facet buckets a real boolean alongside the engine’s string value', () => {
-    expect(result.facets.iiif).toEqual([
+    expect(result.facets.iiif?.buckets).toEqual([
       { value: 'true', is: true, count: 2 },
       { value: 'false', is: false, count: 1 },
     ]);
@@ -390,7 +390,8 @@ describe('parseSearchResponse range facets', () => {
         facetable: true,
         output: true,
         facetRanges: [
-          { key: '0', min: 1, max: 10 },
+          // Open-ended bottom bin: no lower bound.
+          { key: '0', max: 10 },
           { key: '1', min: 10, max: 100 },
           // Open-ended top bin: no upper bound.
           { key: '2', min: 100 },
@@ -421,12 +422,82 @@ describe('parseSearchResponse range facets', () => {
       new Map(),
       searchSchema(rangeSchema),
     );
-    expect(result.facets.size).toEqual([
-      { value: '0', count: 2, min: 1, max: 10 },
+    expect(result.facets.size?.buckets).toEqual([
+      // The open-ended bins carry only their one bound.
+      { value: '0', count: 2, max: 10 },
       { value: '1', count: 1, min: 10, max: 100 },
-      // The open-ended top bin carries only its lower bound.
       { value: '2', count: 2, min: 100 },
     ]);
+  });
+
+  it('reports the extent from the facet’s stats, not from its bins', () => {
+    const result = parseSearchResponse(
+      {
+        ...rangeResponse,
+        facet_counts: [
+          {
+            ...rangeResponse.facet_counts[0],
+            stats: { min: 3, max: 250 },
+          },
+        ],
+      },
+      rangeSchema,
+      new Map(),
+      searchSchema(rangeSchema),
+    );
+    expect(result.facets.size?.extent).toEqual({ min: 3, max: 250 });
+  });
+
+  it('reports no extent when no matching document holds a value', () => {
+    const result = parseSearchResponse(
+      {
+        found: 0,
+        hits: [],
+        facet_counts: [
+          {
+            field_name: 'size',
+            counts: [], // Typesense reports `total_values: 0` and no bounds.
+            stats: {},
+          },
+        ],
+      },
+      rangeSchema,
+      new Map(),
+      searchSchema(rangeSchema),
+    );
+    expect(result.facets.size).toEqual({ buckets: [] });
+  });
+
+  it('reports a range facet without bins as its extent alone, never per value', () => {
+    const created: SearchType = {
+      name: 'Dataset',
+      class: 'http://www.w3.org/ns/dcat#Dataset',
+      fields: [{ name: 'created', kind: 'date', facetable: true }],
+    };
+    const result = parseSearchResponse(
+      {
+        found: 2,
+        hits: [],
+        facet_counts: [
+          {
+            field_name: 'created',
+            counts: [
+              { value: '-3187296000', count: 1 },
+              { value: '1700000000', count: 1 },
+            ],
+            stats: { min: -3187296000, max: 1700000000 },
+          },
+        ],
+      },
+      created,
+      new Map(),
+      searchSchema(created),
+    );
+    // Stored terms, like every value at the port: a surface serves ISO.
+    expect(result.facets.created).toEqual({
+      buckets: [],
+      extent: { min: -3187296000, max: 1700000000 },
+    });
   });
 });
 
@@ -642,10 +713,10 @@ describe('createTypesenseSearchEngine searchFacets (multi_search batching)', () 
       per_page: 0,
     });
     expect(outcomes[0]).toEqual({
-      facets: { keyword: [{ value: 'keyword-value', count: 1 }] },
+      facets: { keyword: { buckets: [{ value: 'keyword-value', count: 1 }] } },
     });
     expect(outcomes[1]).toEqual({
-      facets: { status: [{ value: 'status-value', count: 1 }] },
+      facets: { status: { buckets: [{ value: 'status-value', count: 1 }] } },
     });
   });
 
@@ -807,13 +878,15 @@ describe('createTypesenseSearchEngine searchFacets (multi_search batching)', () 
     expect(performs).toHaveLength(1);
     expect(outcomes[0]).toEqual({
       facets: {
-        publisher: [
-          {
-            value: 'https://org/1',
-            count: 1,
-            label: { nl: ['Het Utrechts Archief'] },
-          },
-        ],
+        publisher: {
+          buckets: [
+            {
+              value: 'https://org/1',
+              count: 1,
+              label: { nl: ['Het Utrechts Archief'] },
+            },
+          ],
+        },
       },
     });
   });
@@ -861,20 +934,28 @@ describe('createTypesenseSearchEngine searchFacets (multi_search batching)', () 
     expect(performs[1]).toHaveLength(1);
     expect(outcomes[0]).toEqual({
       facets: {
-        publisher: [
-          {
-            value: 'https://org/1',
-            count: 1,
-            label: { nl: ['Het Utrechts Archief'] },
-          },
-        ],
+        publisher: {
+          buckets: [
+            {
+              value: 'https://org/1',
+              count: 1,
+              label: { nl: ['Het Utrechts Archief'] },
+            },
+          ],
+        },
       },
     });
     expect(outcomes[1]).toEqual({
       facets: {
-        publisher: [
-          { value: 'https://org/2', count: 1, label: { nl: ['Rijksmuseum'] } },
-        ],
+        publisher: {
+          buckets: [
+            {
+              value: 'https://org/2',
+              count: 1,
+              label: { nl: ['Rijksmuseum'] },
+            },
+          ],
+        },
       },
     });
   });

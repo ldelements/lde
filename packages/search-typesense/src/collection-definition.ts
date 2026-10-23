@@ -10,6 +10,7 @@ import {
   ID_FIELD,
   isInlineReference,
   isInternalField,
+  isRangeFacet,
   joinGraph,
   localLookupTargetsOf,
   TARGET_FIELD,
@@ -319,7 +320,11 @@ function typesenseFields(
       // the field itself stays a plain stored value – which is also what keeps
       // a membership filter on it exact (`compileMembership`).
       facet: names.facet === field.name,
-      sort: field.sortable ?? false,
+      // Typesense answers a range facet only on a field indexed for sorting,
+      // so a facetable numeric field is, sortable or not.
+      sort:
+        field.sortable === true ||
+        (field.facetable === true && isRangeFacet(field)),
       // A `required` field is non-optional; so is the `default_sorting_field`,
       // which Typesense requires to be present. Everything else may be absent.
       optional: field.required !== true && field.name !== defaultSortingField,

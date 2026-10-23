@@ -860,6 +860,9 @@ sentence written here is the one that reaches the reader.
 
 ### Facet buckets
 
+A query’s facets come back as one `Facet` per requested field: its `buckets`,
+and for a [range facet](#range-facets) its `extent`.
+
 A `FacetBucket` always carries its `value` and `count`; what else it carries is
 decided by the facet’s kind, and a surface types the bucket accordingly (see
 [bucket types](./search-api-graphql#what-it-builds-per-root-type)).
@@ -936,10 +939,18 @@ type its own predicate rather than reuse another’s.
 
 ### Range facets
 
-A facetable numeric field (`integer`/`number`/`date`) may declare
-**`facetRanges`**: fixed half-open `[min, max)` bins (a `FacetRange` each), so
-the facet returns a histogram – the per-bucket counts a UI slider needs –
-rather than one bucket per distinct value. `min` is inclusive, `max`
+A facetable numeric field (`integer`/`number`/`date`) is a **range facet**. Its
+`Facet` carries an **`extent`**: the lowest and highest value among the
+documents the query matches, which is what a UI needs to draw a slider or a
+pair of inputs. Like every value at the port, the extent is in stored terms –
+a `date` in Unix seconds – and a surface serves it the way it serves the field
+(the GraphQL surface as ISO 8601). The extent is absent when no matching
+document holds a value. A range facet never returns one bucket per distinct
+value: without bins its `buckets` are empty.
+
+It may also declare **`facetRanges`**: fixed half-open `[min, max)` bins (a
+`FacetRange` each), so the facet also returns a histogram – the per-bucket
+counts to draw over that extent. `min` is inclusive, `max`
 exclusive, so contiguous bins partition cleanly with no boundary
 double-counting; omit `min` (or `max`) for an open-ended bin (`< max`, resp.
 `≥ min`). Each bin’s `key` is its stable label, echoed back as the

@@ -170,11 +170,13 @@ describe('buildCollectionDefinition', () => {
       sort: true,
       optional: true,
     });
+    // A facetable numeric is a range facet, which Typesense answers only on a
+    // field indexed for sorting – sortable or not.
     expect(collection.fields).toContainEqual({
       name: 'score',
       type: 'float',
       facet: true,
-      sort: false,
+      sort: true,
       optional: true,
     });
   });

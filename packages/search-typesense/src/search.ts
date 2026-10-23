@@ -2,10 +2,12 @@ import type { Client } from 'typesense';
 import type { SearchParams } from 'typesense/lib/Typesense/Documents.js';
 import {
   NESTED_DOCUMENT_TYPE,
+  type Facet,
   type FacetBucket,
   type FacetsOutcome,
   type LocalizedValue,
   type NestedDocument,
+  type NumericField,
   type Reference,
   type ReferenceField,
   type ResultDocument,
@@ -880,6 +882,12 @@ export interface TypesenseSearchResponse {
       readonly value: string;
       readonly count: number;
     }[];
+    /** A numeric facet’s value statistics over the matching documents, binned
+     *  or not and whatever the bucket cap; `min`/`max` are absent when none
+     *  holds a value. (Its `sum` and `avg` overflow on large values; unused.) */
+    readonly stats?:
+      | { readonly min: number; readonly max: number }
+      | { readonly min?: never; readonly max?: never };
   }[];
 }
 
@@ -923,33 +931,63 @@ export function parseSearchResponse(
       .filter((field) => labelTargetNamesOf(field, schema).length > 0)
       .map((field) => field.name),
   );
-  const facets: Record<string, FacetBucket[]> = {};
+  const facets: Record<string, Facet> = {};
   for (const facet of response.facet_counts ?? []) {
     const labelled = referenceFacets.has(facet.field_name);
-    // A range facet echoes the declared range key as the bucket value; look the
-    // bin's half-open bounds back up by key so the bucket is self-describing.
     const field = fieldNamed(searchType, facet.field_name);
-    const rangesByKey =
-      field !== undefined && isRangeFacet(field)
-        ? new Map(field.facetRanges.map((range) => [range.key, range]))
-        : undefined;
+    if (field !== undefined && isRangeFacet(field)) {
+      facets[facet.field_name] = parseRangeFacet(facet, field);
+      continue;
+    }
     // A boolean facet is reported with the values stringified; recover the
     // boolean so the bucket carries the term the `is` filter expects.
     const booleanFacet = field?.kind === 'boolean';
-    facets[facet.field_name] = facet.counts.map((bucket) => {
-      const label = labelled ? labels.get(bucket.value) : undefined;
-      const range = rangesByKey?.get(bucket.value);
-      return {
-        value: bucket.value,
-        count: bucket.count,
-        ...(label !== undefined ? { label } : {}),
-        ...(range?.min !== undefined ? { min: range.min } : {}),
-        ...(range?.max !== undefined ? { max: range.max } : {}),
-        ...(booleanFacet ? { is: bucket.value === 'true' } : {}),
-      };
-    });
+    facets[facet.field_name] = {
+      buckets: facet.counts.map((bucket) => {
+        const label = labelled ? labels.get(bucket.value) : undefined;
+        return {
+          value: bucket.value,
+          count: bucket.count,
+          ...(label !== undefined ? { label } : {}),
+          ...(booleanFacet ? { is: bucket.value === 'true' } : {}),
+        };
+      }),
+    };
   }
   return { hits, total: response.found, facets };
+}
+
+/**
+ * A range facet from its Typesense facet: the declared bins (a bucket per
+ * reported range key, its half-open bounds looked back up by key so the
+ * bucket is self-describing) and the extent from the facet’s `stats`. A facet
+ * without bins was faceted into one open bin only for those stats; its key is
+ * no declared one, so its count is dropped.
+ */
+function parseRangeFacet(
+  facet: NonNullable<TypesenseSearchResponse['facet_counts']>[number],
+  field: NumericField,
+): Facet {
+  const rangesByKey = new Map(
+    (field.facetRanges ?? []).map((range) => [range.key, range]),
+  );
+  const buckets = facet.counts.flatMap((bucket): FacetBucket[] => {
+    const range = rangesByKey.get(bucket.value);
+    return range === undefined
+      ? []
+      : [
+          {
+            value: bucket.value,
+            count: bucket.count,
+            ...(range.min !== undefined ? { min: range.min } : {}),
+            ...(range.max !== undefined ? { max: range.max } : {}),
+          },
+        ];
+  });
+  const stats = facet.stats;
+  return stats?.min === undefined
+    ? { buckets }
+    : { buckets, extent: { min: stats.min, max: stats.max } };
 }
 
 /** Rebuild one logical document from a flat Typesense document. */

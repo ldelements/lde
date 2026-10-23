@@ -38,7 +38,7 @@ const fake: SearchEngine = {
           },
         },
       ],
-      facets: { keyword: [{ value: 'kaarten', count: 3 }] },
+      facets: { keyword: { buckets: [{ value: 'kaarten', count: 3 }] } },
     };
   },
   async searchFacets(
@@ -47,7 +47,7 @@ const fake: SearchEngine = {
   ): Promise<readonly FacetsOutcome[]> {
     return queries.map((query) =>
       query.facets.includes('keyword')
-        ? { facets: { keyword: [{ value: 'kaarten', count: 3 }] } }
+        ? { facets: { keyword: { buckets: [{ value: 'kaarten', count: 3 }] } } }
         : { facets: {} },
     );
   },
@@ -74,7 +74,9 @@ describe('SearchEngine port', () => {
       nl: ['Erfgoed'],
       und: ['kaart'],
     });
-    expect(result.facets.keyword).toEqual([{ value: 'kaarten', count: 3 }]);
+    expect(result.facets.keyword?.buckets).toEqual([
+      { value: 'kaarten', count: 3 },
+    ]);
   });
 });
 
@@ -122,7 +124,7 @@ describe('typed schema-bound engine', () => {
               document: { title: { nl: ['Titel'] } },
             },
           ],
-          facets: { format: [{ value: 'text/turtle', count: 2 }] },
+          facets: { format: { buckets: [{ value: 'text/turtle', count: 2 }] } },
         };
       },
       async searchFacets(
@@ -130,7 +132,7 @@ describe('typed schema-bound engine', () => {
         queries,
       ): Promise<readonly FacetsOutcome[]> {
         return queries.map(() => ({
-          facets: { format: [{ value: 'text/turtle', count: 2 }] },
+          facets: { format: { buckets: [{ value: 'text/turtle', count: 2 }] } },
         }));
       },
     };
@@ -148,7 +150,9 @@ describe('typed schema-bound engine', () => {
     };
     const result = await engine.search(dataset, query);
 
-    expect(result.facets.format).toEqual([{ value: 'text/turtle', count: 2 }]);
+    expect(result.facets.format?.buckets).toEqual([
+      { value: 'text/turtle', count: 2 },
+    ]);
     // @ts-expect-error – a facet key outside the declaration is a compile error
     void result.facets.formaat;
     expect(result.hits[0].document.title).toEqual({ nl: ['Titel'] });
@@ -159,7 +163,7 @@ describe('typed schema-bound engine', () => {
     if ('error' in batchedOutcome) {
       throw new Error('Expected a facets outcome.');
     }
-    expect(batchedOutcome.facets.format).toEqual([
+    expect(batchedOutcome.facets.format?.buckets).toEqual([
       { value: 'text/turtle', count: 2 },
     ]);
     // @ts-expect-error – a facet key outside the declaration is a compile error

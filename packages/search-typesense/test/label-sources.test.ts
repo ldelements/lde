@@ -291,14 +291,14 @@ describe('per-reference label sources', () => {
       facets: ['publisher', 'subject', 'license'],
     });
 
-    expect(result.facets.publisher).toEqual([
+    expect(result.facets.publisher?.buckets).toEqual([
       { value: 'https://org/1', count: 2, label: { nl: ['Het Archief'] } },
     ]);
-    expect(result.facets.subject).toEqual([
+    expect(result.facets.subject?.buckets).toEqual([
       { value: 'https://term/1', count: 5, label: { und: ['Cartography'] } },
     ]);
     // license has no labelSource: buckets stay id-only, no label attached.
-    expect(result.facets.license).toEqual([
+    expect(result.facets.license?.buckets).toEqual([
       { value: 'https://license/1', count: 3 },
     ]);
   });

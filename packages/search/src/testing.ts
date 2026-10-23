@@ -9,6 +9,7 @@ import {
 } from './query.js';
 import {
   facetableFields,
+  isRangeFacet,
   filterableFields,
   ID_FIELD,
   identityFieldOf,
@@ -184,8 +185,8 @@ export function describeSearchEngineContract(
               .filter((field) => field.kind === 'boolean')
               .map((field) => field.name),
           );
-          for (const [name, buckets] of Object.entries(outcome.facets)) {
-            for (const bucket of buckets ?? []) {
+          for (const [name, facet] of Object.entries(outcome.facets)) {
+            for (const bucket of facet?.buckets ?? []) {
               expect(typeof bucket.value).toBe('string');
               expect(typeof bucket.count).toBe('number');
               // A boolean facet MUST carry `is`: a surface types it non-null
@@ -195,6 +196,39 @@ export function describeSearchEngineContract(
                 expect(typeof bucket.is).toBe('boolean');
               }
             }
+          }
+        }
+      }
+    });
+
+    it('reports a range facet’s extent, and no other facet’s', async () => {
+      // A slider is drawn from these bounds. A range facet buckets only into
+      // the bins it declares; without them it never buckets per distinct value.
+      for (const searchType of types()) {
+        const fields = facetableFields(searchType);
+        const [outcome] = await engine().searchFacets(searchType, [
+          {
+            ...browse(searchType),
+            limit: 0,
+            facets: fields.map((field) => field.name),
+          },
+        ]);
+        if (outcome === undefined || 'error' in outcome) {
+          continue; // The batch test above fails on this already.
+        }
+        for (const field of fields) {
+          const facet = outcome.facets[field.name];
+          if (!isRangeFacet(field)) {
+            expect(facet?.extent).toBeUndefined();
+            continue;
+          }
+          if ((field.facetRanges ?? []).length === 0) {
+            expect(facet?.buckets ?? []).toEqual([]);
+          }
+          const extent = facet?.extent;
+          if (extent !== undefined) {
+            expect(typeof extent.min).toBe('number');
+            expect(extent.min <= extent.max).toBe(true);
           }
         }
       }
@@ -291,7 +325,7 @@ export function describeSearchEngineContract(
             limit: 20,
             facets: [field.name],
           });
-          const buckets = result.facets[field.name] ?? [];
+          const buckets = result.facets[field.name]?.buckets ?? [];
           for (const bucket of buckets) {
             expect(policies.some((policy) => policy.only(bucket.value))).toBe(
               true,

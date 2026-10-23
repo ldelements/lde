@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { graphql, printSchema } from 'graphql';
 import {
   searchSchema,
+  unixSecondsToIso,
   type FacetsOutcome,
   type SearchEngine,
   type SearchQuery,
@@ -74,7 +75,14 @@ const schema: SearchType = {
         { key: '1', min: 10 },
       ],
     },
-    { name: 'datePosted', kind: 'date', sortable: true, output: true },
+    {
+      name: 'datePosted',
+      kind: 'date',
+      filterable: true,
+      sortable: true,
+      facetable: true,
+      output: true,
+    },
     { name: 'score', kind: 'number', output: true },
     {
       name: 'terminologySource',
@@ -158,7 +166,7 @@ const canned: SearchResult = {
       },
     },
   ],
-  facets: { keyword: [{ value: 'kaarten', count: 3 }] },
+  facets: { keyword: { buckets: [{ value: 'kaarten', count: 3 }] } },
 };
 
 const datasetOptions = {};
@@ -310,14 +318,16 @@ describe('buildGraphQLSchema', () => {
       total: 0,
       hits: [],
       facets: {
-        publisher: [
-          {
-            value: 'https://org/1',
-            count: 2,
-            label: { nl: ['Het Utrechts Archief'] },
-          },
-        ],
-        keyword: [{ value: 'kaarten', count: 3 }],
+        publisher: {
+          buckets: [
+            {
+              value: 'https://org/1',
+              count: 2,
+              label: { nl: ['Het Utrechts Archief'] },
+            },
+          ],
+        },
+        keyword: { buckets: [{ value: 'kaarten', count: 3 }] },
       },
     });
     const servedLanguages = new Map<string, string>();
@@ -356,10 +366,12 @@ describe('buildGraphQLSchema', () => {
       total: 1,
       hits: canned.hits,
       facets: {
-        publisher: [
-          { value: '_:b0', count: 1 },
-          { value: 'https://org/1', count: 2 },
-        ],
+        publisher: {
+          buckets: [
+            { value: '_:b0', count: 1 },
+            { value: 'https://org/1', count: 2 },
+          ],
+        },
       },
     });
     const result = await run(
@@ -397,28 +409,30 @@ describe('buildGraphQLSchema', () => {
       total: 0,
       hits: [],
       facets: {
-        size: [
-          { value: '0', count: 2, min: 1, max: 10 },
-          // Open-ended top bin: lower bound only.
-          { value: '1', count: 5, min: 10 },
-        ],
-        keyword: [{ value: 'kaarten', count: 3 }],
+        size: {
+          buckets: [
+            { value: '0', count: 2, min: 1, max: 10 },
+            // Open-ended top bin: lower bound only.
+            { value: '1', count: 5, min: 10 },
+          ],
+        },
+        keyword: { buckets: [{ value: 'kaarten', count: 3 }] },
       },
     });
     const result = await run(
       `{ datasets { facets {
-        size { min max count }
+        size { buckets { min max count } }
         keyword { value count }
       } } }`,
       { engine, acceptLanguage: ['nl'] },
     );
     const facets = (result.data?.datasets as Record<string, unknown>)
       .facets as {
-      size: unknown[];
+      size: { buckets: unknown[] };
       keyword: unknown[];
     };
     // RangeBuckets carry their half-open bounds (max null = open-ended top bin).
-    expect(facets.size).toEqual([
+    expect(facets.size.buckets).toEqual([
       { min: 1, max: 10, count: 2 },
       { min: 10, max: null, count: 5 },
     ]);
@@ -426,15 +440,144 @@ describe('buildGraphQLSchema', () => {
     expect(facets.keyword).toEqual([{ value: 'kaarten', count: 3 }]);
   });
 
+  it('serves a range facet’s extent over the collection and over the other filters, in one dispatch', async () => {
+    const bce = -96_890_000_000;
+    const modern = 1_700_000_000;
+    const { engine, facetBatches } = fakeEngine({
+      total: 0,
+      hits: [],
+      facets: {
+        datePosted: { buckets: [], extent: { min: bce, max: modern } },
+        size: { buckets: [], extent: { min: 3, max: 250 } },
+      },
+    });
+    const result = await run(
+      `{ datasets(
+          query: "kaart",
+          where: {
+            datePosted: { min: "2000-01-01" },
+            status: { in: ["valid"] }
+          }
+        ) { facets {
+        datePosted { all { min max } matching { min max } }
+        size { matching { min max } }
+        keyword { value }
+      } } }`,
+      { engine, acceptLanguage: ['nl'] },
+    );
+    expect(result.errors).toBeUndefined();
+    const facets = (result.data?.datasets as Record<string, unknown>)
+      .facets as Record<string, unknown>;
+    // A date is served as ISO 8601, a BCE year included – the terms the
+    // DateRange filter takes.
+    const isoExtent = {
+      min: unixSecondsToIso(bce),
+      max: unixSecondsToIso(modern),
+    };
+    expect(isoExtent.min).toMatch(/^-001101-/);
+    expect(facets.datePosted).toEqual({ all: isoExtent, matching: isoExtent });
+    expect(facets.size).toEqual({ matching: { min: 3, max: 250 } });
+
+    // ONE dispatch: the shared query (size, keyword), datePosted with its own
+    // range dropped, and the unfiltered query for `all`.
+    expect(facetBatches()).toHaveLength(1);
+    const [batch] = facetBatches();
+    expect(batch.map((query) => query.facets)).toEqual([
+      ['size', 'keyword'],
+      ['datePosted'],
+      ['datePosted'],
+    ]);
+    const status = { or: [{ field: 'status', in: ['valid'] }] };
+    // The shared query keeps every filter, the date range included.
+    expect(batch[0].where).toHaveLength(2);
+    expect(batch[0].where).toContainEqual(status);
+    expect(batch[1].where).toEqual([status]);
+    expect(batch[1].text).toBe('kaart');
+    // `all` ignores every filter and the text.
+    expect(batch[2]).toEqual({
+      where: [],
+      orderBy: [],
+      limit: 0,
+      offset: 0,
+      facets: ['datePosted'],
+      locale: 'nl',
+    });
+  });
+
+  it('keeps the deployment’s policy on a range facet’s `all` extent', async () => {
+    const { engine, facetBatches } = fakeEngine({
+      total: 0,
+      hits: [],
+      facets: {},
+    });
+    const valid = { or: [{ field: 'status', in: ['valid'] }] };
+    await graphql({
+      schema: buildGraphQLSchema(searchSchema(schema, organization, term), {
+        types: {
+          Dataset: {
+            queryDefaults: (query) => ({
+              ...query,
+              where: [...query.where, valid],
+            }),
+          },
+        },
+      }),
+      source: `{ datasets(where: { keyword: { in: ["kaarten"] } }) {
+        facets { datePosted { all { min } } }
+      } }`,
+      contextValue: { engine, acceptLanguage: ['nl'] },
+    });
+    // The caller’s keyword filter is gone; the valid-only policy is not.
+    expect(facetBatches()[0].at(-1)?.where).toEqual([valid]);
+  });
+
+  it('shares one range facet type between fields of the same kind and binning', () => {
+    const event = {
+      name: 'Event',
+      class: 'https://schema.org/Event',
+      fields: [
+        { name: 'startDate', kind: 'date', facetable: true },
+        { name: 'endDate', kind: 'date', facetable: true },
+      ],
+    } as const satisfies SearchType;
+    const sdl = printSchema(buildGraphQLSchema(searchSchema(event)));
+    expect(sdl).toMatch(/startDate: DateRangeFacet!/);
+    expect(sdl).toMatch(/endDate: DateRangeFacet!/);
+    expect(sdl.match(/type DateRangeFacet\b/g)).toHaveLength(1);
+  });
+
+  it('serves a null extent where no document holds a value', async () => {
+    const { engine } = fakeEngine({
+      total: 0,
+      hits: [],
+      facets: { datePosted: { buckets: [] } },
+    });
+    const result = await run(
+      `{ datasets { facets { datePosted { all { min } matching { min } } } } }`,
+      { engine, acceptLanguage: ['nl'] },
+    );
+    expect(result.errors).toBeUndefined();
+    expect(
+      (
+        (result.data?.datasets as Record<string, unknown>).facets as Record<
+          string,
+          unknown
+        >
+      ).datePosted,
+    ).toEqual({ all: null, matching: null });
+  });
+
   it('serves boolean-facet buckets as real booleans, ready to send straight back as a filter', async () => {
     const { engine, received } = fakeEngine({
       total: 0,
       hits: [],
       facets: {
-        iiif: [
-          { value: 'true', is: true, count: 1071 },
-          { value: 'false', is: false, count: 342 },
-        ],
+        iiif: {
+          buckets: [
+            { value: 'true', is: true, count: 1071 },
+            { value: 'false', is: false, count: 342 },
+          ],
+        },
       },
     });
     const result = await run(
@@ -460,7 +603,7 @@ describe('buildGraphQLSchema', () => {
     const { engine, facetBatches } = fakeEngine({
       total: 0,
       hits: [],
-      facets: { keyword: [{ value: 'kaarten', count: 1 }] },
+      facets: { keyword: { buckets: [{ value: 'kaarten', count: 1 }] } },
     });
     const result = await run(
       `{ datasets { facets {
@@ -469,23 +612,18 @@ describe('buildGraphQLSchema', () => {
         terminologySource { value count }
         status { value count }
         iiif { value count }
-        size { min max count }
+        size { buckets { count } }
       } } }`,
       { engine, acceptLanguage: ['nl'] },
     );
     const facets = (result.data?.datasets as Record<string, unknown>)
-      .facets as Record<string, unknown[]>;
+      .facets as Record<string, unknown>;
     expect(facets.keyword).toEqual([{ value: 'kaarten', count: 1 }]);
     // Keys the engine returned nothing for resolve to an empty list.
-    for (const key of [
-      'publisher',
-      'terminologySource',
-      'status',
-      'iiif',
-      'size',
-    ]) {
+    for (const key of ['publisher', 'terminologySource', 'status', 'iiif']) {
       expect(facets[key]).toEqual([]);
     }
+    expect(facets.size).toEqual({ buckets: [] });
     // Unfiltered browse: the whole selection collapses to a single facet-only
     // query inside a single searchFacets dispatch.
     expect(facetBatches()).toHaveLength(1);
@@ -506,7 +644,7 @@ describe('buildGraphQLSchema', () => {
     const { engine, facetBatches } = fakeEngine({
       total: 0,
       hits: [],
-      facets: { keyword: [{ value: 'kaarten', count: 1 }] },
+      facets: { keyword: { buckets: [{ value: 'kaarten', count: 1 }] } },
     });
     await run(
       `{ datasets(where: { keyword: { in: ["x"] }, status: { in: ["valid"] } }) {
@@ -889,7 +1027,15 @@ describe('buildGraphQLSchema', () => {
     // Facets are a keyed object, one field per facetable field, typed by kind.
     expect(sdl).toMatch(/type DatasetFacets/);
     expect(sdl).toMatch(/keyword: \[ValueBucket!\]!/);
-    expect(sdl).toMatch(/size: \[RangeBucket!\]!/);
+    // A numeric facet is a range facet: its extent, plus a histogram only
+    // where the field declares bins.
+    expect(sdl).toMatch(/size: IntHistogramFacet!/);
+    expect(sdl).toMatch(
+      /type IntHistogramFacet {[^}]*all: IntExtent\n[^}]*matching: IntExtent\n[^}]*buckets: \[RangeBucket!\]!/,
+    );
+    expect(sdl).toMatch(/datePosted: DateRangeFacet!/);
+    expect(sdl).toMatch(/type DateRangeFacet {(?![^}]*buckets)[^}]*}/);
+    expect(sdl).toMatch(/type DateExtent {\s*min: String!\s*max: String!/);
     expect(sdl).toMatch(/iiif: \[BooleanBucket!\]!/);
     expect(sdl).toMatch(/input DatasetWhere/);
     expect(sdl).toMatch(/status: KeywordFilter/);
