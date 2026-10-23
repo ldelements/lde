@@ -200,7 +200,7 @@ export class ImportResolver implements DistributionResolver {
       } catch (error) {
         callbacks?.onImportFailed?.(
           importResult.distribution,
-          error instanceof Error ? error.message : String(error),
+          error instanceof Error ? error : new Error(String(error)),
         );
         return new NoDistributionAvailable(
           dataset,
@@ -226,7 +226,7 @@ export class ImportResolver implements DistributionResolver {
     if (importResult instanceof ImportFailed) {
       callbacks?.onImportFailed?.(
         importResult.distribution,
-        importResult.error,
+        new Error(importResult.error),
       );
       return new NoDistributionAvailable(
         dataset,
@@ -240,7 +240,7 @@ export class ImportResolver implements DistributionResolver {
       const failedDistribution = importResult.distribution ?? candidates[0];
       callbacks?.onImportFailed?.(
         failedDistribution,
-        'No supported import format',
+        new Error('No supported import format'),
       );
       return new NoDistributionAvailable(
         dataset,

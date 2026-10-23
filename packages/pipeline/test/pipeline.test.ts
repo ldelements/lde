@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -25,7 +25,8 @@ import {
   type ProbeResultType,
 } from '@lde/distribution-probe';
 import type { RunContext, RunWriter, Writer } from '../src/writer/writer.js';
-import type { ProgressReporter } from '../src/progressReporter.js';
+import type { PipelineEvent } from '../src/pipelineEvent.js';
+import type { Reporter } from '../src/reporter.js';
 import type { StageOutputResolver } from '../src/stageOutputResolver.js';
 import type { DatasetSelector } from '../src/selector.js';
 import { sourceFingerprint } from '../src/provenance/sourceFingerprint.js';
@@ -103,41 +104,51 @@ function makeWriter(): Writer & {
   };
 }
 
-type RequiredReporter = Required<ProgressReporter> & {
-  [K in keyof Required<ProgressReporter>]: ReturnType<typeof vi.fn>;
+const eventTypes = [
+  'pipelineStart',
+  'datasetsSelected',
+  'selectionEmpty',
+  'pipelineComplete',
+  'datasetStart',
+  'distributionProbed',
+  'distributionValidated',
+  'importStarted',
+  'importFailed',
+  'distributionSelected',
+  'stageStart',
+  'stageProgress',
+  'stageComplete',
+  'stageFailed',
+  'stageSkipped',
+  'datasetValidated',
+  'datasetComplete',
+  'datasetSkipped',
+  'itemsRejected',
+  'timeoutTightened',
+  'timeoutRelaxed',
+] as const satisfies readonly PipelineEvent['type'][];
+
+type RecordingReporter = Reporter & {
+  events: PipelineEvent[];
+} & {
+  [Type in PipelineEvent['type']]: Mock<
+    (event: Extract<PipelineEvent, { type: Type }>) => void
+  >;
 };
 
-function makeReporter(): RequiredReporter {
+function makeReporter(): RecordingReporter {
+  const events: PipelineEvent[] = [];
+  const spies = Object.fromEntries(
+    eventTypes.map((type) => [type, vi.fn()]),
+  ) as Record<PipelineEvent['type'], Mock>;
   return {
-    pipelineStart: vi.fn<NonNullable<ProgressReporter['pipelineStart']>>(),
-    datasetsSelected:
-      vi.fn<NonNullable<ProgressReporter['datasetsSelected']>>(),
-    selectionEmpty: vi.fn<NonNullable<ProgressReporter['selectionEmpty']>>(),
-    datasetStart: vi.fn<NonNullable<ProgressReporter['datasetStart']>>(),
-    distributionProbed:
-      vi.fn<NonNullable<ProgressReporter['distributionProbed']>>(),
-    importStarted: vi.fn<NonNullable<ProgressReporter['importStarted']>>(),
-    importFailed: vi.fn<NonNullable<ProgressReporter['importFailed']>>(),
-    distributionValidated:
-      vi.fn<NonNullable<ProgressReporter['distributionValidated']>>(),
-    distributionSelected:
-      vi.fn<NonNullable<ProgressReporter['distributionSelected']>>(),
-    stageStart: vi.fn<NonNullable<ProgressReporter['stageStart']>>(),
-    stageProgress: vi.fn<NonNullable<ProgressReporter['stageProgress']>>(),
-    stageComplete: vi.fn<NonNullable<ProgressReporter['stageComplete']>>(),
-    stageFailed: vi.fn<NonNullable<ProgressReporter['stageFailed']>>(),
-    stageSkipped: vi.fn<NonNullable<ProgressReporter['stageSkipped']>>(),
-    datasetValidated:
-      vi.fn<NonNullable<ProgressReporter['datasetValidated']>>(),
-    datasetComplete: vi.fn<NonNullable<ProgressReporter['datasetComplete']>>(),
-    datasetSkipped: vi.fn<NonNullable<ProgressReporter['datasetSkipped']>>(),
-    itemsRejected: vi.fn<NonNullable<ProgressReporter['itemsRejected']>>(),
-    pipelineComplete:
-      vi.fn<NonNullable<ProgressReporter['pipelineComplete']>>(),
-    timeoutTightened:
-      vi.fn<NonNullable<ProgressReporter['timeoutTightened']>>(),
-    timeoutRelaxed: vi.fn<NonNullable<ProgressReporter['timeoutRelaxed']>>(),
-  };
+    ...spies,
+    events,
+    onEvent(event) {
+      events.push(event);
+      spies[event.type](event);
+    },
+  } as RecordingReporter;
 }
 
 function makeStageOutputResolver(): StageOutputResolver & {
@@ -325,7 +336,9 @@ describe('Pipeline', () => {
         reporter,
       }).run();
 
-      expect(reporter.itemsRejected).toHaveBeenCalledWith(dataset, rejection);
+      expect(reporter.itemsRejected).toHaveBeenCalledWith(
+        expect.objectContaining({ dataset, rejection }),
+      );
     });
 
     it('commits – not aborts – when a stage fails for one dataset', async () => {
@@ -626,8 +639,14 @@ describe('Pipeline', () => {
 
       expect(stage.run).not.toHaveBeenCalled();
       expect(reporter.datasetSkipped).toHaveBeenCalledWith(
-        dataset,
-        'No SPARQL endpoint',
+        expect.objectContaining({
+          dataset,
+          level: 'warn',
+          reason: {
+            code: 'noDistributionAvailable',
+            message: 'No SPARQL endpoint',
+          },
+        }),
       );
     });
 
@@ -759,8 +778,10 @@ describe('Pipeline', () => {
       await pipeline.run();
 
       expect(reporter.stageSkipped).toHaveBeenCalledWith(
-        'stage1',
-        'Not supported reason',
+        expect.objectContaining({
+          stage: 'stage1',
+          reason: { code: 'notSupported', message: 'Not supported reason' },
+        }),
       );
       expect(stage2.run).toHaveBeenCalled();
     });
@@ -1076,11 +1097,17 @@ describe('Pipeline', () => {
         }
       }
 
-      expect(reporter.pipelineStart).toHaveBeenCalledWith('my-pipeline');
-      expect(reporter.datasetStart).toHaveBeenCalledWith(dataset);
-      expect(reporter.stageStart).toHaveBeenCalledWith('stage1');
+      expect(reporter.pipelineStart).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'my-pipeline' }),
+      );
+      expect(reporter.datasetStart).toHaveBeenCalledWith(
+        expect.objectContaining({ dataset }),
+      );
+      expect(reporter.stageStart).toHaveBeenCalledWith(
+        expect.objectContaining({ dataset, stage: 'stage1' }),
+      );
       expect(reporter.pipelineComplete).toHaveBeenCalledWith(
-        expect.objectContaining({ duration: expect.any(Number) }),
+        expect.objectContaining({ durationMs: expect.any(Number) }),
       );
     });
 
@@ -1103,17 +1130,25 @@ describe('Pipeline', () => {
 
       await pipeline.run();
 
-      expect(reporter.stageProgress).toHaveBeenCalledWith({
-        itemsProcessed: 3,
-        quadsGenerated: 12,
-        memoryUsageBytes: expect.any(Number),
-        heapUsedBytes: expect.any(Number),
-      });
-      expect(reporter.stageComplete).toHaveBeenCalledWith('stage1', {
-        itemsProcessed: 3,
-        quadsGenerated: 12,
-        duration: expect.any(Number),
-      });
+      expect(reporter.stageProgress).toHaveBeenCalledWith(
+        expect.objectContaining({
+          dataset,
+          stage: 'stage1',
+          itemsProcessed: 3,
+          quadsGenerated: 12,
+          memoryUsageBytes: expect.any(Number),
+          heapUsedBytes: expect.any(Number),
+        }),
+      );
+      expect(reporter.stageComplete).toHaveBeenCalledWith(
+        expect.objectContaining({
+          dataset,
+          stage: 'stage1',
+          itemsProcessed: 3,
+          quadsGenerated: 12,
+          durationMs: expect.any(Number),
+        }),
+      );
     });
 
     it('reports each stage validator’s per-dataset verdict after the stages ran', async () => {
@@ -1142,8 +1177,7 @@ describe('Pipeline', () => {
 
       expect(validator.report).toHaveBeenCalledExactlyOnceWith(dataset);
       expect(reporter.datasetValidated).toHaveBeenCalledExactlyOnceWith(
-        dataset,
-        report,
+        expect.objectContaining({ dataset, report }),
       );
     });
 
@@ -1167,15 +1201,23 @@ describe('Pipeline', () => {
 
       await pipeline.run();
 
-      expect(reporter.stageStart).toHaveBeenCalledWith('parent');
-      expect(reporter.stageStart).toHaveBeenCalledWith('child');
-      expect(reporter.stageComplete).toHaveBeenCalledWith(
-        'parent',
-        expect.objectContaining({ duration: expect.any(Number) }),
+      expect(reporter.stageStart).toHaveBeenCalledWith(
+        expect.objectContaining({ stage: 'parent' }),
+      );
+      expect(reporter.stageStart).toHaveBeenCalledWith(
+        expect.objectContaining({ stage: 'child' }),
       );
       expect(reporter.stageComplete).toHaveBeenCalledWith(
-        'child',
-        expect.objectContaining({ duration: expect.any(Number) }),
+        expect.objectContaining({
+          stage: 'parent',
+          durationMs: expect.any(Number),
+        }),
+      );
+      expect(reporter.stageComplete).toHaveBeenCalledWith(
+        expect.objectContaining({
+          stage: 'child',
+          durationMs: expect.any(Number),
+        }),
       );
     });
 
@@ -1206,8 +1248,12 @@ describe('Pipeline', () => {
       await pipeline.run();
 
       for (const reporter of [first, second]) {
-        expect(reporter.pipelineStart).toHaveBeenCalledWith('my-pipeline');
-        expect(reporter.stageStart).toHaveBeenCalledWith('stage1');
+        expect(reporter.pipelineStart).toHaveBeenCalledWith(
+          expect.objectContaining({ name: 'my-pipeline' }),
+        );
+        expect(reporter.stageStart).toHaveBeenCalledWith(
+          expect.objectContaining({ stage: 'stage1' }),
+        );
         expect(reporter.pipelineComplete).toHaveBeenCalledTimes(1);
       }
     });
@@ -1274,30 +1320,42 @@ describe('Pipeline', () => {
       await pipeline.run();
 
       expect(reporter.distributionProbed).toHaveBeenCalledTimes(3);
-      expect(reporter.distributionProbed).toHaveBeenCalledWith({
-        distribution: sparqlDist,
-        type: 'sparql',
-        available: true,
-        statusCode: 200,
-        warnings: [],
-        fingerprint: sourceFingerprint(sparqlDist, sparqlResult),
-      });
-      expect(reporter.distributionProbed).toHaveBeenCalledWith({
-        distribution: dataDumpDist,
-        type: 'data-dump',
-        available: false,
-        statusCode: 404,
-        warnings: [],
-        fingerprint: sourceFingerprint(dataDumpDist, dataDumpResult),
-      });
-      expect(reporter.distributionProbed).toHaveBeenCalledWith({
-        distribution: downDist,
-        type: 'network-error',
-        available: false,
-        error: 'Connection refused',
-        warnings: [],
-        fingerprint: sourceFingerprint(downDist, networkError),
-      });
+      expect(reporter.distributionProbed).toHaveBeenCalledWith(
+        expect.objectContaining({
+          result: {
+            distribution: sparqlDist,
+            type: 'sparql',
+            available: true,
+            statusCode: 200,
+            warnings: [],
+            fingerprint: sourceFingerprint(sparqlDist, sparqlResult),
+          },
+        }),
+      );
+      expect(reporter.distributionProbed).toHaveBeenCalledWith(
+        expect.objectContaining({
+          result: {
+            distribution: dataDumpDist,
+            type: 'data-dump',
+            available: false,
+            statusCode: 404,
+            warnings: [],
+            fingerprint: sourceFingerprint(dataDumpDist, dataDumpResult),
+          },
+        }),
+      );
+      expect(reporter.distributionProbed).toHaveBeenCalledWith(
+        expect.objectContaining({
+          result: {
+            distribution: downDist,
+            type: 'network-error',
+            available: false,
+            error: 'Connection refused',
+            warnings: [],
+            fingerprint: sourceFingerprint(downDist, networkError),
+          },
+        }),
+      );
     });
 
     it('distributionSelected reports the import when one was used', async () => {
@@ -1323,9 +1381,15 @@ describe('Pipeline', () => {
       await pipeline.run();
 
       expect(reporter.distributionSelected).toHaveBeenCalledWith(
-        dataset,
-        sparqlDistribution,
-        { from: importedFromDistribution, duration: 1000, tripleCount: 42000 },
+        expect.objectContaining({
+          dataset,
+          distribution: sparqlDistribution,
+          imported: {
+            from: importedFromDistribution,
+            duration: 1000,
+            tripleCount: 42000,
+          },
+        }),
       );
     });
 
@@ -1400,21 +1464,23 @@ describe('Pipeline', () => {
       await pipeline.run();
 
       expect(reporter.distributionProbed).toHaveBeenCalledTimes(1);
-      expect(reporter.distributionProbed).toHaveBeenCalledWith({
-        distribution: downDist,
-        type: 'network-error',
-        available: false,
-        error: 'Connection refused',
-        warnings: [],
-        fingerprint: sourceFingerprint(downDist, networkError),
-      });
+      expect(reporter.distributionProbed).toHaveBeenCalledWith(
+        expect.objectContaining({
+          result: {
+            distribution: downDist,
+            type: 'network-error',
+            available: false,
+            error: 'Connection refused',
+            warnings: [],
+            fingerprint: sourceFingerprint(downDist, networkError),
+          },
+        }),
+      );
       expect(reporter.distributionSelected).not.toHaveBeenCalled();
     });
 
-    it('works with partial reporter that only implements pipelineStart', async () => {
-      const partialReporter: ProgressReporter = {
-        pipelineStart: vi.fn(),
-      };
+    it('wraps every event in an envelope shared by the run', async () => {
+      const reporter = makeReporter();
 
       const pipeline = new Pipeline({
         name: 'my-pipeline',
@@ -1422,11 +1488,44 @@ describe('Pipeline', () => {
         stages: [makeStage('stage1')],
         writers: writer,
         distributionResolver: makeResolver(makeResolvedDistribution()),
-        reporter: partialReporter,
+        reporter,
       });
 
-      await expect(pipeline.run()).resolves.toBeUndefined();
-      expect(partialReporter.pipelineStart).toHaveBeenCalledWith('my-pipeline');
+      await pipeline.run();
+
+      const [first] = reporter.events;
+      expect(first).toMatchObject({
+        type: 'pipelineStart',
+        level: 'info',
+        timestamp: expect.any(Date),
+        runId: expect.any(String),
+      });
+      for (const event of reporter.events) {
+        expect(event.runId).toBe(first.runId);
+      }
+      expect(reporter.stageStart).toHaveBeenCalledWith(
+        expect.objectContaining({ level: 'debug' }),
+      );
+    });
+
+    it('gives each run its own runId', async () => {
+      const reporter = makeReporter();
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [makeStage('stage1')],
+        writers: writer,
+        distributionResolver: makeResolver(makeResolvedDistribution()),
+        reporter,
+      });
+
+      await pipeline.run();
+      await pipeline.run();
+
+      const [first, second] = reporter.pipelineStart.mock.calls.map(
+        ([event]) => event.runId,
+      );
+      expect(first).not.toBe(second);
     });
   });
 
@@ -1481,8 +1580,11 @@ describe('Pipeline', () => {
       expect(failingStage.run).toHaveBeenCalledTimes(2);
       expect(reporter.datasetComplete).toHaveBeenCalledTimes(2);
       expect(reporter.stageFailed).toHaveBeenCalledWith(
-        'failing',
-        expect.any(Error),
+        expect.objectContaining({
+          stage: 'failing',
+          level: 'error',
+          error: expect.any(Error),
+        }),
       );
     });
 
@@ -1506,8 +1608,11 @@ describe('Pipeline', () => {
 
       expect(okStage.run).toHaveBeenCalledTimes(1);
       expect(reporter.stageFailed).toHaveBeenCalledWith(
-        'failing',
-        expect.any(Error),
+        expect.objectContaining({
+          stage: 'failing',
+          level: 'error',
+          error: expect.any(Error),
+        }),
       );
       expect(reporter.datasetComplete).toHaveBeenCalledTimes(1);
     });
@@ -1540,8 +1645,11 @@ describe('Pipeline', () => {
 
       expect(flatStage.run).toHaveBeenCalledTimes(1);
       expect(reporter.stageFailed).toHaveBeenCalledWith(
-        'chained',
-        expect.any(Error),
+        expect.objectContaining({
+          stage: 'chained',
+          level: 'error',
+          error: expect.any(Error),
+        }),
       );
     });
   });
@@ -1671,8 +1779,11 @@ describe('Pipeline', () => {
       expect(stage.run).toHaveBeenCalledTimes(1);
       expect(writer.runWriter.reset).not.toHaveBeenCalled();
       expect(reporter.stageFailed).toHaveBeenCalledWith(
-        'aggregate',
-        expect.any(Error),
+        expect.objectContaining({
+          stage: 'aggregate',
+          level: 'error',
+          error: expect.any(Error),
+        }),
       );
     });
 
@@ -1752,7 +1863,10 @@ describe('Pipeline', () => {
       resolver.resolveFallback.mockImplementation(
         async (_probed, callbacks?: ResolveCallbacks) => {
           callbacks?.onImportStart?.();
-          callbacks?.onImportFailed?.(dumpDistribution, 'Parse error');
+          callbacks?.onImportFailed?.(
+            dumpDistribution,
+            new Error('Parse error'),
+          );
           return new NoDistributionAvailable(dataset, 'Import failed', []);
         },
       );
@@ -1769,8 +1883,12 @@ describe('Pipeline', () => {
       await pipeline.run();
 
       expect(reporter.importFailed).toHaveBeenCalledWith(
-        dumpDistribution,
-        'Parse error',
+        expect.objectContaining({
+          dataset,
+          distribution: dumpDistribution,
+          level: 'warn',
+          error: expect.objectContaining({ message: 'Parse error' }),
+        }),
       );
       // Import failed → no re-run, endpoint output is kept.
       expect(stage.run).toHaveBeenCalledTimes(1);
@@ -1827,13 +1945,14 @@ describe('Pipeline', () => {
 
       // The dump, not the failed endpoint, is reported as the source actually used.
       expect(reporter.distributionSelected).toHaveBeenLastCalledWith(
-        dataset,
-        importedDistribution,
-        { from: dumpDistribution, duration: 0 },
+        expect.objectContaining({
+          dataset,
+          distribution: importedDistribution,
+          imported: { from: dumpDistribution, duration: 0 },
+        }),
       );
       expect(reporter.distributionValidated).toHaveBeenCalledWith(
-        dumpDistribution,
-        expect.anything(),
+        expect.objectContaining({ distribution: dumpDistribution }),
       );
     });
 
@@ -1867,8 +1986,11 @@ describe('Pipeline', () => {
       // Both datasets are still attempted and completed.
       expect(reporter.datasetComplete).toHaveBeenCalledTimes(2);
       expect(reporter.stageFailed).toHaveBeenCalledWith(
-        'reactive-dump-fallback',
-        expect.any(Error),
+        expect.objectContaining({
+          stage: 'reactive-dump-fallback',
+          level: 'error',
+          error: expect.any(Error),
+        }),
       );
     });
 
@@ -1911,9 +2033,11 @@ describe('Pipeline', () => {
         expect.objectContaining({ onProgress: expect.any(Function) }),
       );
       expect(reporter.distributionSelected).toHaveBeenLastCalledWith(
-        dataset,
-        secondaryEndpoint,
-        undefined,
+        expect.objectContaining({
+          dataset,
+          distribution: secondaryEndpoint,
+          imported: undefined,
+        }),
       );
       // No imported distribution → no deep validity verdict for the fallback.
       expect(reporter.distributionValidated).not.toHaveBeenCalled();
@@ -1947,8 +2071,7 @@ describe('Pipeline', () => {
       await pipeline.run();
 
       expect(reporter.distributionValidated).toHaveBeenCalledWith(
-        dumpDistribution,
-        expect.anything(),
+        expect.objectContaining({ distribution: dumpDistribution }),
       );
       // The failed import means no re-run; endpoint output is kept.
       expect(stage.run).toHaveBeenCalledTimes(1);
@@ -2051,8 +2174,12 @@ describe('Pipeline', () => {
       await pipeline.run();
 
       expect(reporter.stageFailed).toHaveBeenCalledWith(
-        'reactive-dump-fallback',
-        expect.objectContaining({ message: 'delete-by-filter timed out' }),
+        expect.objectContaining({
+          stage: 'reactive-dump-fallback',
+          error: expect.objectContaining({
+            message: 'delete-by-filter timed out',
+          }),
+        }),
       );
       expect(store.set).toHaveBeenCalledWith(
         dataset.iri,
@@ -2535,8 +2662,12 @@ describe('Pipeline', () => {
 
       await pipeline.run();
 
-      expect(reporter.timeoutTightened).toHaveBeenCalledWith(tightenEvent);
-      expect(reporter.timeoutRelaxed).toHaveBeenCalledWith(relaxEvent);
+      expect(reporter.timeoutTightened).toHaveBeenCalledWith(
+        expect.objectContaining({ dataset, level: 'warn', ...tightenEvent }),
+      );
+      expect(reporter.timeoutRelaxed).toHaveBeenCalledWith(
+        expect.objectContaining({ dataset, level: 'info', ...relaxEvent }),
+      );
     });
   });
 
@@ -2643,8 +2774,11 @@ describe('Pipeline', () => {
       expect(stage.run).not.toHaveBeenCalled();
       expect(store.set).not.toHaveBeenCalled();
       expect(reporter.datasetSkipped).toHaveBeenCalledWith(
-        dataset,
-        'Unchanged since last run',
+        expect.objectContaining({
+          dataset,
+          level: 'info',
+          reason: { code: 'unchanged', message: 'Unchanged since last run' },
+        }),
       );
     });
 
@@ -2792,14 +2926,16 @@ describe('Pipeline', () => {
       await pipeline.run();
 
       expect(reporter.distributionValidated).toHaveBeenCalledWith(
-        dumpDistribution,
-        {
-          valid: false,
-          reason: 'parse-error',
-          message: 'QName not allowed for property: rdf:Description',
-          validatedFingerprint: currentFingerprint,
-          depth: 'deep',
-        },
+        expect.objectContaining({
+          distribution: dumpDistribution,
+          verdict: {
+            valid: false,
+            reason: 'parse-error',
+            message: 'QName not allowed for property: rdf:Description',
+            validatedFingerprint: currentFingerprint,
+            depth: 'deep',
+          },
+        }),
       );
     });
 
@@ -2819,12 +2955,14 @@ describe('Pipeline', () => {
       await pipeline.run();
 
       expect(reporter.distributionValidated).toHaveBeenCalledWith(
-        dumpDistribution,
-        {
-          valid: true,
-          validatedFingerprint: currentFingerprint,
-          depth: 'deep',
-        },
+        expect.objectContaining({
+          distribution: dumpDistribution,
+          verdict: {
+            valid: true,
+            validatedFingerprint: currentFingerprint,
+            depth: 'deep',
+          },
+        }),
       );
     });
 
@@ -2850,13 +2988,15 @@ describe('Pipeline', () => {
       await pipeline.run();
 
       expect(reporter.distributionValidated).toHaveBeenCalledWith(
-        dumpDistribution,
-        {
-          valid: false,
-          reason: 'empty',
-          validatedFingerprint: currentFingerprint,
-          depth: 'deep',
-        },
+        expect.objectContaining({
+          distribution: dumpDistribution,
+          verdict: {
+            valid: false,
+            reason: 'empty',
+            validatedFingerprint: currentFingerprint,
+            depth: 'deep',
+          },
+        }),
       );
     });
 
@@ -2890,13 +3030,19 @@ describe('Pipeline', () => {
 
       await pipeline.run();
 
-      expect(reporter.distributionValidated).toHaveBeenCalledWith(ttl, {
-        valid: false,
-        reason: 'parse-error',
-        message: 'Unexpected "." on line 3.',
-        validatedFingerprint: sourceFingerprint(ttl, probeResult),
-        depth: 'shallow',
-      });
+      expect(reporter.distributionValidated).toHaveBeenCalledWith(
+        expect.objectContaining({
+          distribution: ttl,
+          level: 'warn',
+          verdict: {
+            valid: false,
+            reason: 'parse-error',
+            message: 'Unexpected "." on line 3.',
+            validatedFingerprint: sourceFingerprint(ttl, probeResult),
+            depth: 'shallow',
+          },
+        }),
+      );
     });
 
     it('records the observed fingerprint on the reachability result', async () => {
@@ -2918,8 +3064,10 @@ describe('Pipeline', () => {
 
       expect(reporter.distributionProbed).toHaveBeenCalledWith(
         expect.objectContaining({
-          distribution: dumpDistribution,
-          fingerprint: currentFingerprint,
+          result: expect.objectContaining({
+            distribution: dumpDistribution,
+            fingerprint: currentFingerprint,
+          }),
         }),
       );
     });
@@ -3001,8 +3149,10 @@ describe('Pipeline', () => {
       // every write silently disables skip-unchanged.
       expect(reporter.stageFailed).toHaveBeenCalledTimes(2);
       expect(reporter.stageFailed).toHaveBeenCalledWith(
-        'provenance',
-        expect.objectContaining({ message: 'disk full' }),
+        expect.objectContaining({
+          stage: 'provenance',
+          error: expect.objectContaining({ message: 'disk full' }),
+        }),
       );
     });
 
@@ -3026,8 +3176,10 @@ describe('Pipeline', () => {
 
       await expect(pipeline.run()).resolves.toBeUndefined();
       expect(reporter.stageFailed).toHaveBeenCalledWith(
-        'provenance',
-        expect.objectContaining({ message: 'disk full' }),
+        expect.objectContaining({
+          stage: 'provenance',
+          error: expect.objectContaining({ message: 'disk full' }),
+        }),
       );
     });
 
@@ -3117,8 +3269,13 @@ describe('Pipeline', () => {
       expect(resolver.resolve).not.toHaveBeenCalled();
       expect(stage.run).not.toHaveBeenCalled();
       expect(reporter.datasetSkipped).toHaveBeenCalledWith(
-        dataset,
-        expect.stringContaining('Distribution probing failed'),
+        expect.objectContaining({
+          dataset,
+          reason: {
+            code: 'probeFailed',
+            message: expect.stringContaining('Distribution probing failed'),
+          },
+        }),
       );
     });
 
@@ -3145,8 +3302,13 @@ describe('Pipeline', () => {
 
       expect(stage.run).not.toHaveBeenCalled();
       expect(reporter.datasetSkipped).toHaveBeenCalledWith(
-        dataset,
-        expect.stringContaining('Distribution resolution failed'),
+        expect.objectContaining({
+          dataset,
+          reason: {
+            code: 'resolveFailed',
+            message: expect.stringContaining('Distribution resolution failed'),
+          },
+        }),
       );
     });
   });

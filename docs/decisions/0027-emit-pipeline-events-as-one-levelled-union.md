@@ -56,7 +56,14 @@ interface StageCompleteEvent extends EventEnvelope<'stageComplete'> {
 
 interface DatasetSkippedEvent extends EventEnvelope<'datasetSkipped'> {
   dataset: Dataset;
-  reason: { code: 'unchanged' | 'noValidDistribution' | …; message: string };
+  reason: {
+    code:
+      | 'unchanged'
+      | 'probeFailed'
+      | 'resolveFailed'
+      | 'noDistributionAvailable';
+    message: string;
+  };
 }
 
 interface ImportFailedEvent extends EventEnvelope<'importFailed'> {
@@ -87,7 +94,7 @@ The initial mapping:
 | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `debug` | `stageProgress`, `distributionProbed`, `importStarted`, `stageStart`                                                                                                                                          |
 | `info`  | `pipelineStart`, `pipelineComplete`, `datasetsSelected`, `datasetStart`, `datasetComplete`, `distributionSelected`, `stageComplete`, `timeoutRelaxed`, `datasetSkipped` (`unchanged`), valid verdicts/reports |
-| `warn`  | `selectionEmpty`, `datasetSkipped` (any other reason), `importFailed`, `stageSkipped`, `timeoutTightened`, invalid `distributionValidated`, non-conforming `datasetValidated`                                 |
+| `warn`  | `selectionEmpty`, `datasetSkipped` (any other reason), `importFailed`, `stageSkipped`, `itemsRejected`, `timeoutTightened`, invalid `distributionValidated`, non-conforming `datasetValidated`                |
 | `error` | `stageFailed`                                                                                                                                                                                                 |
 
 The level is a default, not a verdict. A deployment that wants a skipped dataset to page someone remaps on `type` and the structured payload; for that to be possible, skip and failure reasons become `{ code, message }` objects instead of free strings, and failures carry `Error` values instead of messages.
@@ -116,19 +123,21 @@ Reporters run synchronously in array order; a throwing reporter propagates into 
 
 The array is the only way to combine reporters; no combining utility is exported alongside it, so there is one way to do it.
 
-### Replace `ProgressReporter`’s methods with one
+### Replace `ProgressReporter` with `Reporter`
 
-Once the pipeline reports through `onEvent`, none of `ProgressReporter`’s twenty methods is called any more, so they are replaced by the single `onEvent`. `combineReporters` existed only to forward those twenty methods; fanning out to an array is a loop inside the pipeline, so it is removed.
+Once the pipeline reports through `onEvent`, none of `ProgressReporter`’s twenty methods is called any more, so the interface is replaced by `Reporter` rather than kept under its old name. Every existing implementation has to be rewritten either way, so keeping the name would only spare a few imports. A removed export tells an upgrading implementer that the contract changed; the same name with a different shape would instead surface as a puzzling missing-`onEvent` error. ‘Progress’ also no longer describes the interface, which now carries warnings, failures and skips for production logging.
+
+`combineReporters` existed only to forward those twenty methods; fanning out to an array is a loop inside the pipeline, so it is removed.
 
 ### Consumers
 
-- `@lde/pipeline` exports a dependency-free `LoggerReporter` that accepts any object with Pino-shaped `debug`/`info`/`warn`/`error(obj, msg)` methods and writes one structured line per event – `logger[event.level](event, event.type)` in essence.
+- A new package, `@lde/pipeline-logger-reporter`, sits beside `@lde/pipeline-console-reporter` and exports `LoggerReporter`. It ships no logger: it accepts any object with Pino-shaped `debug`/`info`/`warn`/`error(obj, msg)` methods and writes one structured line per event – `logger[event.level](event, event.type)` in essence. The shape is the structured-first call of Pino and Bunyan; a message-first logger such as Winston needs a small adapter.
 - `ConsoleReporter` stays a class and switches on `event.type` inside `onEvent`. Because events now carry their own dataset and stage, it keeps only the state it needs for rendering (the active spinner, the probe lines).
-- The `search-indexer` CLI chooses its reporter by output: `ConsoleReporter` when `process.stderr.isTTY`, a `LoggerReporter` writing JSON lines otherwise, overridable with a `--log-format pretty|json` flag.
 
 ## Consequences
 
-- Wiring a pipeline into a production logger becomes one line, and the indexer image logs structured JSON in a container without configuration.
+- Wiring a pipeline into a production logger becomes one line.
+- The `search-indexer` image keeps its `ConsoleReporter`. Structured logs there would mean choosing a logger, which belongs to the deployment rather than to the library, so that is left open.
 - Every consumer of `ProgressReporter` migrates: `ConsoleReporter`, `searchIndexerPipeline`’s `reporter` option, the reporters in tests, and the ‘Observe a run with a reporter’ guide plus the `pipeline` and `pipeline-console-reporter` reference pages. Pre-release this is accepted.
 - A reporter interested in three events now implements one `onEvent` that ignores the rest, instead of three optional methods. For generic reporters (loggers, forwarders, test collectors) this is simpler; for narrow ones it is a `switch` with a default branch.
 - Adding an event type is a compile-time change for exhaustive reporters, which is the point: a reporter that switches exhaustively on `type` is told when it misses a new event.
