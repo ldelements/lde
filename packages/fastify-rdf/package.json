@@ -29,7 +29,7 @@
     "@tpluscode/rdf-ns-builders": "^5.0.0",
     "fastify-plugin": "^6.0.1",
     "jsonld-context-parser": "^3.1.1",
-    "n3": "^2.7.12",
+    "n3": "^2.13.12",
     "rdf-parse": "^5.0.0",
     "rdf-serialize": "^5.1.0",
     "tslib": "^2.3.0"
