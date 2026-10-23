@@ -6,7 +6,7 @@ import {
   ProbedDistributions,
   ResolvedDistribution,
   type DistributionResolver,
-  type ProgressReporter,
+  type Reporter,
 } from '@lde/pipeline';
 import { defineSearchType, searchSchema, type RootType } from '@lde/search';
 import {
@@ -136,9 +136,9 @@ describe('filtering across collections through declared joins', () => {
     );
 
     const stageFailures: Error[] = [];
-    const reporter: ProgressReporter = {
-      stageFailed: (_stage, error) => {
-        stageFailures.push(error);
+    const reporter: Reporter = {
+      onEvent: (event) => {
+        if (event.type === 'stageFailed') stageFailures.push(event.error);
       },
     };
     const index = async () =>

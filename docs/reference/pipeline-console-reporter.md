@@ -22,7 +22,13 @@ await new Pipeline({
 }).run();
 ```
 
-`ConsoleReporter` takes no constructor options.
+`ConsoleReporter` takes one optional option, `minLevel`: the least severe [event level](./pipeline#levels) to render (default `debug`, everything). With `minLevel: 'info'` it drops the per-stage spinners, progress and probe lines, and prints completions, skips and failures as plain lines:
+
+```typescript
+new ConsoleReporter({ minLevel: 'info' });
+```
+
+For unattended runs, prefer a structured logger through [@lde/pipeline-logger-reporter](./pipeline-logger-reporter).
 
 ## Output
 

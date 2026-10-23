@@ -1,7 +1,23 @@
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { ConsoleReporter } from '../src/consoleReporter.js';
 import { Dataset, Distribution } from '@lde/dataset';
-import type { DistributionAnalysisResult } from '@lde/pipeline';
+import {
+  levelOf,
+  type DistributionAnalysisResult,
+  type PipelineEvent,
+  type PipelineEventPayload,
+} from '@lde/pipeline';
+
+const dataset = makeDataset();
+
+function event(payload: PipelineEventPayload): PipelineEvent {
+  return {
+    ...payload,
+    defaultLevel: levelOf(payload),
+    timestamp: new Date(),
+    runId: 'run-1',
+  } as PipelineEvent;
+}
 
 function makeDataset(): Dataset {
   return new Dataset({
@@ -37,8 +53,13 @@ describe('ConsoleReporter', () => {
       const reporter = new ConsoleReporter();
       const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
 
-      reporter.pipelineStart('test');
-      reporter.selectionEmpty('Selection produced no datasets');
+      reporter.onEvent(event({ type: 'pipelineStart', name: 'test' }));
+      reporter.onEvent(
+        event({
+          type: 'selectionEmpty',
+          message: 'Selection produced no datasets',
+        }),
+      );
 
       const output = spy.mock.calls.map((call) => String(call[0])).join('');
       expect(output).toContain('Selection produced no datasets');
@@ -50,7 +71,12 @@ describe('ConsoleReporter', () => {
       const reporter = new ConsoleReporter();
       const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
 
-      reporter.selectionEmpty('Selection produced no datasets');
+      reporter.onEvent(
+        event({
+          type: 'selectionEmpty',
+          message: 'Selection produced no datasets',
+        }),
+      );
 
       const output = spy.mock.calls.map((call) => String(call[0])).join('');
       expect(output).toContain('Selection produced no datasets');
@@ -62,11 +88,13 @@ describe('ConsoleReporter', () => {
       const reporter = new ConsoleReporter();
       const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
 
-      reporter.datasetValidated(makeDataset(), {
-        conforms: true,
-        violations: 0,
-        quadsValidated: 5000,
-      });
+      reporter.onEvent(
+        event({
+          type: 'datasetValidated',
+          dataset,
+          report: { conforms: true, violations: 0, quadsValidated: 5000 },
+        }),
+      );
 
       const output = spy.mock.calls.map((c) => String(c[0])).join('');
       expect(output).toContain('Validated');
@@ -77,11 +105,13 @@ describe('ConsoleReporter', () => {
       const reporter = new ConsoleReporter();
       const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
 
-      reporter.datasetValidated(makeDataset(), {
-        conforms: false,
-        violations: 3,
-        quadsValidated: 10000,
-      });
+      reporter.onEvent(
+        event({
+          type: 'datasetValidated',
+          dataset,
+          report: { conforms: false, violations: 3, quadsValidated: 10000 },
+        }),
+      );
 
       const output = spy.mock.calls.map((c) => String(c[0])).join('');
       expect(output).toContain('Validated');
@@ -95,12 +125,19 @@ describe('ConsoleReporter', () => {
       const reporter = new ConsoleReporter();
       const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
 
-      reporter.stageStart('transform');
-      reporter.stageComplete('transform', {
-        itemsProcessed: 30_000,
-        quadsGenerated: 327_500,
-        duration: 506_000,
-      });
+      reporter.onEvent(
+        event({ type: 'stageStart', dataset, stage: 'transform' }),
+      );
+      reporter.onEvent(
+        event({
+          type: 'stageComplete',
+          dataset,
+          stage: 'transform',
+          itemsProcessed: 30_000,
+          quadsGenerated: 327_500,
+          durationMs: 506_000,
+        }),
+      );
 
       const output = spy.mock.calls.map((c) => String(c[0])).join('');
       expect(output).toContain('30K items');
@@ -111,12 +148,19 @@ describe('ConsoleReporter', () => {
       const reporter = new ConsoleReporter();
       const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
 
-      reporter.stageStart('transform');
-      reporter.stageComplete('transform', {
-        itemsProcessed: 0,
-        quadsGenerated: 0,
-        duration: 1000,
-      });
+      reporter.onEvent(
+        event({ type: 'stageStart', dataset, stage: 'transform' }),
+      );
+      reporter.onEvent(
+        event({
+          type: 'stageComplete',
+          dataset,
+          stage: 'transform',
+          itemsProcessed: 0,
+          quadsGenerated: 0,
+          durationMs: 1000,
+        }),
+      );
 
       const output = spy.mock.calls.map((c) => String(c[0])).join('');
       expect(output).not.toContain('items');
@@ -129,8 +173,17 @@ describe('ConsoleReporter', () => {
       const reporter = new ConsoleReporter();
       const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
 
-      reporter.stageStart('transform');
-      reporter.stageFailed('transform', new Error('HTTP status 502'));
+      reporter.onEvent(
+        event({ type: 'stageStart', dataset, stage: 'transform' }),
+      );
+      reporter.onEvent(
+        event({
+          type: 'stageFailed',
+          dataset,
+          stage: 'transform',
+          error: new Error('HTTP status 502'),
+        }),
+      );
 
       const output = spy.mock.calls.map((c) => String(c[0])).join('');
       expect(output).toContain('Stage');
@@ -144,9 +197,13 @@ describe('ConsoleReporter', () => {
       const reporter = new ConsoleReporter();
       const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
 
-      reporter.stageFailed(
-        'reactive-dump-fallback',
-        new Error('delete-by-filter timed out'),
+      reporter.onEvent(
+        event({
+          type: 'stageFailed',
+          dataset,
+          stage: 'reactive-dump-fallback',
+          error: new Error('delete-by-filter timed out'),
+        }),
       );
 
       const output = spy.mock.calls.map((c) => String(c[0])).join('');
@@ -160,8 +217,10 @@ describe('ConsoleReporter', () => {
       const reporter = new ConsoleReporter();
       const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
 
-      reporter.importStarted();
-      reporter.stageStart('transform');
+      reporter.onEvent(event({ type: 'importStarted', dataset }));
+      reporter.onEvent(
+        event({ type: 'stageStart', dataset, stage: 'transform' }),
+      );
 
       const output = spy.mock.calls.map((c) => String(c[0])).join('');
       expect(output).toContain('Stage');
@@ -173,11 +232,16 @@ describe('ConsoleReporter', () => {
       const reporter = new ConsoleReporter();
       const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
 
-      reporter.datasetStart(makeDataset());
-      reporter.datasetComplete(makeDataset(), {
-        memoryUsageBytes: 150 * 1024 * 1024,
-        heapUsedBytes: 100 * 1024 * 1024,
-      });
+      reporter.onEvent(event({ type: 'datasetStart', dataset }));
+      reporter.onEvent(
+        event({
+          type: 'datasetComplete',
+          dataset,
+          durationMs: 3_000,
+          memoryUsageBytes: 150 * 1024 * 1024,
+          heapUsedBytes: 100 * 1024 * 1024,
+        }),
+      );
 
       const output = spy.mock.calls.map((c) => String(c[0])).join('');
       expect(output).toContain('150 MB RSS');
@@ -190,11 +254,14 @@ describe('ConsoleReporter', () => {
       const reporter = new ConsoleReporter();
       const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
 
-      reporter.pipelineComplete({
-        duration: 60_000,
-        memoryUsageBytes: 200 * 1024 * 1024,
-        heapUsedBytes: 130 * 1024 * 1024,
-      });
+      reporter.onEvent(
+        event({
+          type: 'pipelineComplete',
+          durationMs: 60_000,
+          memoryUsageBytes: 200 * 1024 * 1024,
+          heapUsedBytes: 130 * 1024 * 1024,
+        }),
+      );
 
       const output = spy.mock.calls.map((c) => String(c[0])).join('');
       expect(output).toContain('200 MB RSS');
@@ -207,17 +274,22 @@ describe('ConsoleReporter', () => {
       const reporter = new ConsoleReporter();
       const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
 
-      reporter.distributionSelected(
-        makeDataset(),
-        Distribution.sparql(new URL('http://localhost:7001/sparql')),
-        {
-          from: new Distribution(
-            new URL('http://example.org/data.nt'),
-            'application/n-triples',
+      reporter.onEvent(
+        event({
+          type: 'distributionSelected',
+          dataset,
+          distribution: Distribution.sparql(
+            new URL('http://localhost:7001/sparql'),
           ),
-          duration: 5000,
-          tripleCount: 4800000,
-        },
+          imported: {
+            from: new Distribution(
+              new URL('http://example.org/data.nt'),
+              'application/n-triples',
+            ),
+            duration: 5000,
+            tripleCount: 4800000,
+          },
+        }),
       );
 
       const output = spy.mock.calls.map((c) => String(c[0])).join('');
@@ -229,17 +301,22 @@ describe('ConsoleReporter', () => {
       const reporter = new ConsoleReporter();
       const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
 
-      reporter.distributionSelected(
-        makeDataset(),
-        Distribution.sparql(new URL('http://localhost:7001/sparql')),
-        {
-          from: new Distribution(
-            new URL('http://example.org/data.nt'),
-            'application/n-triples',
+      reporter.onEvent(
+        event({
+          type: 'distributionSelected',
+          dataset,
+          distribution: Distribution.sparql(
+            new URL('http://localhost:7001/sparql'),
           ),
-          duration: 5000,
-          engine: { name: 'QLever', version: '9352d0' },
-        },
+          imported: {
+            from: new Distribution(
+              new URL('http://example.org/data.nt'),
+              'application/n-triples',
+            ),
+            duration: 5000,
+            engine: { name: 'QLever', version: '9352d0' },
+          },
+        }),
       );
 
       const output = spy.mock.calls.map((c) => String(c[0])).join('');
@@ -253,13 +330,22 @@ describe('ConsoleReporter', () => {
       const reporter = new ConsoleReporter();
       const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
 
-      reporter.datasetStart(makeDataset());
+      reporter.onEvent(event({ type: 'datasetStart', dataset }));
 
       const sparqlUrl = 'http://sparql.example.com/';
-      reporter.distributionProbed(makeProbeResult(sparqlUrl));
-      reporter.distributionSelected(
-        makeDataset(),
-        Distribution.sparql(new URL(sparqlUrl)),
+      reporter.onEvent(
+        event({
+          type: 'distributionProbed',
+          dataset,
+          result: makeProbeResult(sparqlUrl),
+        }),
+      );
+      reporter.onEvent(
+        event({
+          type: 'distributionSelected',
+          dataset,
+          distribution: Distribution.sparql(new URL(sparqlUrl)),
+        }),
       );
 
       const output = spy.mock.calls.map((call) => String(call[0])).join('');
@@ -273,16 +359,21 @@ describe('ConsoleReporter', () => {
       const reporter = new ConsoleReporter();
       const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
 
-      reporter.distributionSelected(
-        makeDataset(),
-        Distribution.sparql(new URL('http://localhost:7001/sparql')),
-        {
-          from: new Distribution(
-            new URL('http://example.org/data.nt'),
-            'application/n-triples',
+      reporter.onEvent(
+        event({
+          type: 'distributionSelected',
+          dataset,
+          distribution: Distribution.sparql(
+            new URL('http://localhost:7001/sparql'),
           ),
-          duration: 5000,
-        },
+          imported: {
+            from: new Distribution(
+              new URL('http://example.org/data.nt'),
+              'application/n-triples',
+            ),
+            duration: 5000,
+          },
+        }),
       );
 
       const output = spy.mock.calls.map((c) => String(c[0])).join('');
@@ -296,12 +387,16 @@ describe('ConsoleReporter', () => {
       const reporter = new ConsoleReporter();
       const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
 
-      reporter.timeoutTightened({
-        endpoint: new URL('https://data.razu.nl/sparql'),
-        fromTimeoutMs: 300_000,
-        toTimeoutMs: 10_000,
-        consecutiveTimeouts: 2,
-      });
+      reporter.onEvent(
+        event({
+          type: 'timeoutTightened',
+          dataset,
+          endpoint: new URL('https://data.razu.nl/sparql'),
+          fromTimeoutMs: 300_000,
+          toTimeoutMs: 10_000,
+          consecutiveTimeouts: 2,
+        }),
+      );
 
       const output = spy.mock.calls.map((c) => String(c[0])).join('');
       expect(output).toContain('Tightened');
@@ -314,16 +409,108 @@ describe('ConsoleReporter', () => {
       const reporter = new ConsoleReporter();
       const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
 
-      reporter.timeoutRelaxed({
-        endpoint: new URL('https://data.razu.nl/sparql'),
-        fromTimeoutMs: 10_000,
-        toTimeoutMs: 300_000,
-        consecutiveTimeouts: 0,
-      });
+      reporter.onEvent(
+        event({
+          type: 'timeoutRelaxed',
+          dataset,
+          endpoint: new URL('https://data.razu.nl/sparql'),
+          fromTimeoutMs: 10_000,
+          toTimeoutMs: 300_000,
+          consecutiveTimeouts: 0,
+        }),
+      );
 
       const output = spy.mock.calls.map((c) => String(c[0])).join('');
       expect(output).toContain('Relaxed');
       expect(output).toContain('https://data.razu.nl/sparql');
+    });
+  });
+
+  describe('minLevel', () => {
+    it('ignores events below the threshold', () => {
+      const reporter = new ConsoleReporter({ minLevel: 'warn' });
+      const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+
+      reporter.onEvent(event({ type: 'datasetStart', dataset }));
+
+      expect(spy).not.toHaveBeenCalled();
+    });
+
+    it('prints a completed stage without its (filtered) start spinner', () => {
+      const reporter = new ConsoleReporter({ minLevel: 'info' });
+      const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+
+      reporter.onEvent(
+        event({ type: 'stageStart', dataset, stage: 'transform' }),
+      );
+      reporter.onEvent(
+        event({
+          type: 'stageComplete',
+          dataset,
+          stage: 'transform',
+          itemsProcessed: 0,
+          quadsGenerated: 0,
+          durationMs: 1000,
+        }),
+      );
+
+      const output = spy.mock.calls.map((c) => String(c[0])).join('');
+      expect(output).toContain('transform');
+      expect(output).toContain('took');
+    });
+
+    it('prints a skipped stage without its (filtered) start spinner', () => {
+      const reporter = new ConsoleReporter({ minLevel: 'info' });
+      const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+
+      reporter.onEvent(
+        event({
+          type: 'stageSkipped',
+          dataset,
+          stage: 'transform',
+          reason: { code: 'notSupported', message: 'No SPARQL endpoint' },
+        }),
+      );
+
+      const output = spy.mock.calls.map((c) => String(c[0])).join('');
+      expect(output).toContain('transform');
+      expect(output).toContain('No SPARQL endpoint');
+    });
+  });
+
+  describe('datasetSkipped', () => {
+    it.each([
+      ['unchanged', 'Unchanged since last run'],
+      ['noDistributionAvailable', 'No SPARQL endpoint'],
+    ] as const)('prints the %s reason', (code, message) => {
+      const reporter = new ConsoleReporter();
+      const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+
+      reporter.onEvent(
+        event({ type: 'datasetSkipped', dataset, reason: { code, message } }),
+      );
+
+      const output = spy.mock.calls.map((c) => String(c[0])).join('');
+      expect(output).toContain(message);
+    });
+  });
+
+  describe('importFailed', () => {
+    it('prints the error message', () => {
+      const reporter = new ConsoleReporter();
+      const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+
+      reporter.onEvent(
+        event({
+          type: 'importFailed',
+          dataset,
+          distribution: Distribution.sparql(new URL('http://example.org/s')),
+          error: new Error('Parse error'),
+        }),
+      );
+
+      const output = spy.mock.calls.map((c) => String(c[0])).join('');
+      expect(output).toContain('Import failed: Parse error');
     });
   });
 });

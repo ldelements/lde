@@ -172,6 +172,10 @@ await pipeline.run();
   <td><a href="packages/pipeline-console-reporter">@lde/pipeline-console-reporter</a><br><a href="https://www.npmjs.com/package/@lde/pipeline-console-reporter"><img src="https://img.shields.io/npm/v/@lde/pipeline-console-reporter" alt="npm"></a></td>
   <td>Console progress reporter for pipelines</td>
 </tr>
+<tr>
+  <td><a href="packages/pipeline-logger-reporter">@lde/pipeline-logger-reporter</a><br><a href="https://www.npmjs.com/package/@lde/pipeline-logger-reporter"><img src="https://img.shields.io/npm/v/@lde/pipeline-logger-reporter" alt="npm"></a></td>
+  <td>Reporter that logs pipeline events to a structured logger of your choice</td>
+</tr>
 <tr><th colspan="2" align="left">Infrastructure – Manage SPARQL servers and run tasks</th></tr>
 <tr>
   <td><a href="packages/host-limiter">@lde/host-limiter</a><br><a href="https://www.npmjs.com/package/@lde/host-limiter"><img src="https://img.shields.io/npm/v/@lde/host-limiter" alt="npm"></a></td>

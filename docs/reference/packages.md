@@ -53,6 +53,7 @@ Observe pipeline runs and endpoint health.
 | ------------------------------------------------------------- | --------------------------------------------------------------------------------- |
 | [@lde/distribution-monitor](./distribution-monitor)           | Monitor DCAT distributions (SPARQL endpoints and data dumps) with periodic probes |
 | [@lde/pipeline-console-reporter](./pipeline-console-reporter) | Console progress reporter for pipelines                                           |
+| [@lde/pipeline-logger-reporter](./pipeline-logger-reporter)   | Reporter that logs pipeline events to a structured logger of your choice          |
 
 ## Infrastructure
 

@@ -4,7 +4,7 @@ import {
   Pipeline,
   type DatasetSelector,
   type DistributionResolver,
-  type ProgressReporter,
+  type Reporter,
   type ProvenanceStore,
   type QuadTransform,
   type ReaderContext,
@@ -107,10 +107,10 @@ export interface SearchIndexerPipelineOptions {
    */
   pipelineVersion?: string;
   /**
-   * Observer(s) of pipeline lifecycle events, e.g. a
+   * Reporter(s) handed every pipeline event, e.g. a
    * `@lde/pipeline-console-reporter` `ConsoleReporter`.
    */
-  reporter?: ProgressReporter | readonly ProgressReporter[];
+  reporter?: Reporter | readonly Reporter[];
 }
 
 /**

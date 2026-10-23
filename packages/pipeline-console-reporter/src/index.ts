@@ -1,1 +1,4 @@
-export { ConsoleReporter } from './consoleReporter.js';
+export {
+  ConsoleReporter,
+  type ConsoleReporterOptions,
+} from './consoleReporter.js';

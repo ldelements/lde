@@ -10,7 +10,7 @@ Where [core concepts](./core-concepts) explains how a pipeline run works, this p
 
 **Publication** serves the results. [@lde/fastify-rdf](../reference/fastify-rdf) adds RDF content negotiation to Fastify, and [@lde/docgen](../reference/docgen) generates documentation from SHACL shapes. The `search-*` packages form a sub-system of their own: [@lde/search](../reference/search) projects RDF into engine-agnostic search documents, [@lde/search-pipeline](../reference/search-pipeline) applies that projection inside a pipeline run, [@lde/search-typesense](../reference/search-typesense) writes the documents to Typesense, and [@lde/search-api-graphql](../reference/search-api-graphql) plus [@lde/search-api-server](../reference/search-api-server) serve them over GraphQL. [@lde/search-indexer](../reference/search-indexer) packages the indexing side as a config-driven Docker image.
 
-**Monitoring** observes the system: [@lde/distribution-monitor](../reference/distribution-monitor) probes DCAT distributions periodically, and [@lde/pipeline-console-reporter](../reference/pipeline-console-reporter) reports pipeline progress to the console.
+**Monitoring** observes the system: [@lde/distribution-monitor](../reference/distribution-monitor) probes DCAT distributions periodically, [@lde/pipeline-console-reporter](../reference/pipeline-console-reporter) reports pipeline progress to the console, and [@lde/pipeline-logger-reporter](../reference/pipeline-logger-reporter) to a structured logger.
 
 **Infrastructure** underpins the rest: [@lde/sparql-server](../reference/sparql-server) starts, stops and controls SPARQL servers, with [@lde/sparql-qlever](../reference/sparql-qlever) as the QLever adapter running on the [@lde/task-runner](../reference/task-runner) abstraction (Docker or native). [@lde/local-sparql-endpoint](../reference/local-sparql-endpoint) spins up throwaway endpoints for tests, and [@lde/wait-for-sparql](../reference/wait-for-sparql) waits for an endpoint to come up.
 
@@ -60,6 +60,7 @@ graph TD
 
   subgraph Monitoring
     pipeline-console-reporter --> pipeline
+    pipeline-logger-reporter --> pipeline
     distribution-monitor --> distribution-probe
   end
 
