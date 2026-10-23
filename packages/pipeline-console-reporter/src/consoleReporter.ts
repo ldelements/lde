@@ -58,7 +58,8 @@ export class ConsoleReporter implements Reporter {
   }
 
   onEvent(event: PipelineEvent): void {
-    if (levels.indexOf(event.level) < levels.indexOf(this.minLevel)) return;
+    if (levels.indexOf(event.defaultLevel) < levels.indexOf(this.minLevel))
+      return;
     switch (event.type) {
       case 'pipelineStart':
         return this.pipelineStart();
@@ -362,8 +363,8 @@ export class ConsoleReporter implements Reporter {
     );
   }
 
-  private datasetSkipped({ level, reason }: DatasetSkippedEvent): void {
-    if (level === 'info') {
+  private datasetSkipped({ defaultLevel, reason }: DatasetSkippedEvent): void {
+    if (defaultLevel === 'info') {
       this.printLine(logSymbols.info, `Skipped: ${reason.message}`, 1);
       return;
     }

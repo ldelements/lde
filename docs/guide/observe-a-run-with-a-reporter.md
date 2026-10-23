@@ -1,6 +1,6 @@
 # Observe a run with a reporter
 
-A reporter observes a pipeline run: the pipeline hands it every event – `datasetStart`, `stageComplete`, `pipelineComplete` and so on – as one `PipelineEvent` value through its `onEvent` method. Each event carries a `type`, a severity `level`, a `timestamp`, the `runId` of its run and, from `datasetStart` on, the `dataset` it belongs to. Use one reporter to watch progress on the console, another to log to your own logger, and a custom one to collect run facts. See the [full event table](../reference/pipeline#events) for everything a reporter can receive.
+A reporter observes a pipeline run: the pipeline hands it every event – `datasetStart`, `stageComplete`, `pipelineComplete` and so on – as one `PipelineEvent` value through its `onEvent` method. Each event carries a `type`, a severity `defaultLevel`, a `timestamp`, the `runId` of its run and, from `datasetStart` on, the `dataset` it belongs to. Use one reporter to watch progress on the console, another to log to your own logger, and a custom one to collect run facts. See the [full event table](../reference/pipeline#events) for everything a reporter can receive.
 
 ## Combine reporters
 
@@ -55,7 +55,7 @@ After `pipeline.run()` resolves, `verdicts` holds every attempted distribution�
 
 ## Change an event’s severity
 
-An event’s `level` is the pipeline’s default. To treat something as more or less severe, remap on `type` and the structured payload – for example, to raise every skipped dataset except an unchanged one to `error` before handing it on:
+An event’s `defaultLevel` is the pipeline’s judgement, not a verdict. To treat something as more or less severe, remap on `type` and the structured payload – for example, to raise every skipped dataset except an unchanged one to `error` before handing it on:
 
 ```typescript
 import type { PipelineEvent, Reporter } from '@lde/pipeline';
@@ -67,7 +67,7 @@ function escalateSkips(reporter: Reporter): Reporter {
         event.type === 'datasetSkipped' &&
         event.reason.code !== 'unchanged'
       ) {
-        return reporter.onEvent({ ...event, level: 'error' });
+        return reporter.onEvent({ ...event, defaultLevel: 'error' });
       }
       reporter.onEvent(event);
     },

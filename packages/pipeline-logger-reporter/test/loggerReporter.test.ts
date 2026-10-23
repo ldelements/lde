@@ -18,7 +18,7 @@ function envelope<Payload extends PipelineEventPayload>(
 ): PipelineEvent {
   return {
     ...payload,
-    level: levelOf(payload),
+    defaultLevel: levelOf(payload),
     timestamp: new Date('2026-10-23T00:00:00.000Z'),
     runId: 'run-1',
   } as PipelineEvent;
@@ -48,9 +48,21 @@ describe('LoggerReporter', () => {
       'stageStart',
     );
     expect(logger.info).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'pipelineStart', name: 'run' }),
+      expect.objectContaining({ type: 'pipelineStart' }),
       'pipelineStart',
     );
+  });
+
+  it('leaves out the level and the logger’s reserved name', () => {
+    const logger = makeLogger();
+
+    new LoggerReporter(logger).onEvent(
+      envelope({ type: 'pipelineStart', name: 'run' }),
+    );
+
+    const [logObject] = logger.info.mock.calls[0];
+    expect(logObject).not.toHaveProperty('name');
+    expect(logObject).not.toHaveProperty('defaultLevel');
   });
 
   it('logs datasets and distributions by IRI and URL, and errors under err', () => {

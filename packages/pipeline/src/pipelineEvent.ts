@@ -12,14 +12,21 @@ export type Level = 'debug' | 'info' | 'warn' | 'error';
 
 /**
  * Fields every {@link PipelineEvent} carries. Owning the `type` discriminator
- * here means no event can join the union without one. `level` is the
+ * here means no event can join the union without one. `defaultLevel` is the
  * pipeline’s default; reporters may remap it.
  */
 export interface EventEnvelope<Type extends string> {
   type: Type;
-  level: Level;
+  defaultLevel: Level;
   timestamp: Date;
   runId: string;
+}
+
+/** The envelope of every event that belongs to a single dataset. */
+export interface DatasetEventEnvelope<
+  Type extends string,
+> extends EventEnvelope<Type> {
+  dataset: Dataset;
 }
 
 export interface Reason<Code extends string> {
@@ -104,54 +111,43 @@ export interface PipelineCompleteEvent
   durationMs: number;
 }
 
-export interface DatasetStartEvent extends EventEnvelope<'datasetStart'> {
-  dataset: Dataset;
-}
+export type DatasetStartEvent = DatasetEventEnvelope<'datasetStart'>;
 
-export interface DistributionProbedEvent extends EventEnvelope<'distributionProbed'> {
-  dataset: Dataset;
+export interface DistributionProbedEvent extends DatasetEventEnvelope<'distributionProbed'> {
   result: DistributionAnalysisResult;
 }
 
 /** Reported for every distribution the pipeline attempted, even when the dataset is otherwise skipped. */
-export interface DistributionValidatedEvent extends EventEnvelope<'distributionValidated'> {
-  dataset: Dataset;
+export interface DistributionValidatedEvent extends DatasetEventEnvelope<'distributionValidated'> {
   distribution: Distribution;
   verdict: ValidityVerdict;
 }
 
-export interface ImportStartedEvent extends EventEnvelope<'importStarted'> {
-  dataset: Dataset;
-}
+export type ImportStartedEvent = DatasetEventEnvelope<'importStarted'>;
 
-export interface ImportFailedEvent extends EventEnvelope<'importFailed'> {
-  dataset: Dataset;
+export interface ImportFailedEvent extends DatasetEventEnvelope<'importFailed'> {
   distribution: Distribution;
   error: Error;
 }
 
 /** `imported` is set when `distribution` serves an imported data dump. */
-export interface DistributionSelectedEvent extends EventEnvelope<'distributionSelected'> {
-  dataset: Dataset;
+export interface DistributionSelectedEvent extends DatasetEventEnvelope<'distributionSelected'> {
   distribution: Distribution;
   imported?: ImportDetails;
 }
 
-export interface StageStartEvent extends EventEnvelope<'stageStart'> {
-  dataset: Dataset;
+export interface StageStartEvent extends DatasetEventEnvelope<'stageStart'> {
   stage: string;
 }
 
 export interface StageProgressEvent
-  extends EventEnvelope<'stageProgress'>, MemoryUsage {
-  dataset: Dataset;
+  extends DatasetEventEnvelope<'stageProgress'>, MemoryUsage {
   stage: string;
   itemsProcessed: number;
   quadsGenerated: number;
 }
 
-export interface StageCompleteEvent extends EventEnvelope<'stageComplete'> {
-  dataset: Dataset;
+export interface StageCompleteEvent extends DatasetEventEnvelope<'stageComplete'> {
   stage: string;
   itemsProcessed: number;
   quadsGenerated: number;
@@ -162,14 +158,12 @@ export interface StageCompleteEvent extends EventEnvelope<'stageComplete'> {
  * Also reported for per-dataset failures outside any stage, with `stage` set
  * to `write`, `provenance` or `reactive-dump-fallback`.
  */
-export interface StageFailedEvent extends EventEnvelope<'stageFailed'> {
-  dataset: Dataset;
+export interface StageFailedEvent extends DatasetEventEnvelope<'stageFailed'> {
   stage: string;
   error: Error;
 }
 
-export interface StageSkippedEvent extends EventEnvelope<'stageSkipped'> {
-  dataset: Dataset;
+export interface StageSkippedEvent extends DatasetEventEnvelope<'stageSkipped'> {
   stage: string;
   reason: StageSkipReason;
 }
@@ -178,19 +172,16 @@ export interface StageSkippedEvent extends EventEnvelope<'stageSkipped'> {
  * Reported once per (dataset, validator) pair, even when nothing was validated:
  * read `quadsValidated` to tell ‘not tested’ from ‘tested and passed’.
  */
-export interface DatasetValidatedEvent extends EventEnvelope<'datasetValidated'> {
-  dataset: Dataset;
+export interface DatasetValidatedEvent extends DatasetEventEnvelope<'datasetValidated'> {
   report: ValidationReport;
 }
 
 export interface DatasetCompleteEvent
-  extends EventEnvelope<'datasetComplete'>, MemoryUsage {
-  dataset: Dataset;
+  extends DatasetEventEnvelope<'datasetComplete'>, MemoryUsage {
   durationMs: number;
 }
 
-export interface DatasetSkippedEvent extends EventEnvelope<'datasetSkipped'> {
-  dataset: Dataset;
+export interface DatasetSkippedEvent extends DatasetEventEnvelope<'datasetSkipped'> {
   reason: DatasetSkipReason;
 }
 
@@ -198,20 +189,15 @@ export interface DatasetSkippedEvent extends EventEnvelope<'datasetSkipped'> {
  * Reported when a writer leaves some of a dataset’s items out rather than
  * failing the dataset, through `RunContext.itemsRejected`.
  */
-export interface ItemsRejectedEvent extends EventEnvelope<'itemsRejected'> {
-  dataset: Dataset;
+export interface ItemsRejectedEvent extends DatasetEventEnvelope<'itemsRejected'> {
   rejection: ItemsRejected;
 }
 
 export interface TimeoutTightenedEvent
-  extends EventEnvelope<'timeoutTightened'>, TimeoutTransitionEvent {
-  dataset: Dataset;
-}
+  extends DatasetEventEnvelope<'timeoutTightened'>, TimeoutTransitionEvent {}
 
 export interface TimeoutRelaxedEvent
-  extends EventEnvelope<'timeoutRelaxed'>, TimeoutTransitionEvent {
-  dataset: Dataset;
-}
+  extends DatasetEventEnvelope<'timeoutRelaxed'>, TimeoutTransitionEvent {}
 
 /** Everything a pipeline run reports, discriminated on `type`. */
 export type PipelineEvent =
@@ -240,7 +226,7 @@ export type PipelineEvent =
 /** A {@link PipelineEvent} without the envelope fields the pipeline fills in. */
 export type PipelineEventPayload = PipelineEvent extends infer Event
   ? Event extends PipelineEvent
-    ? Omit<Event, 'level' | 'timestamp' | 'runId'>
+    ? Omit<Event, 'defaultLevel' | 'timestamp' | 'runId'>
     : never
   : never;
 

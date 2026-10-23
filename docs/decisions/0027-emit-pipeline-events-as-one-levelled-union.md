@@ -37,25 +37,28 @@ type Level = 'debug' | 'info' | 'warn' | 'error';
 
 interface EventEnvelope<Type extends string> {
   type: Type;
-  level: Level;
+  defaultLevel: Level;
   timestamp: Date;
   runId: string;
+}
+
+interface DatasetEventEnvelope<Type extends string>
+  extends EventEnvelope<Type> {
+  dataset: Dataset;
 }
 
 interface PipelineStartEvent extends EventEnvelope<'pipelineStart'> {
   name: string;
 }
 
-interface StageCompleteEvent extends EventEnvelope<'stageComplete'> {
-  dataset: Dataset;
+interface StageCompleteEvent extends DatasetEventEnvelope<'stageComplete'> {
   stage: string;
   itemsProcessed: number;
   quadsGenerated: number;
   durationMs: number;
 }
 
-interface DatasetSkippedEvent extends EventEnvelope<'datasetSkipped'> {
-  dataset: Dataset;
+interface DatasetSkippedEvent extends DatasetEventEnvelope<'datasetSkipped'> {
   reason: {
     code:
       | 'unchanged'
@@ -66,8 +69,7 @@ interface DatasetSkippedEvent extends EventEnvelope<'datasetSkipped'> {
   };
 }
 
-interface ImportFailedEvent extends EventEnvelope<'importFailed'> {
-  dataset: Dataset;
+interface ImportFailedEvent extends DatasetEventEnvelope<'importFailed'> {
   distribution: Distribution;
   error: Error;
 }
@@ -82,11 +84,11 @@ type PipelineEvent =
   | …;
 ```
 
-The discriminator lives in the envelope: an event type cannot extend `EventEnvelope` without naming its `type` literal, so no future event can join the union without one. Individual types let a reporter name exactly what it handles, and they make the context each event carries part of its type: a stage-scoped event has a required `dataset` and `stage`, a run-level one has neither.
+The discriminator lives in the envelope: an event type cannot extend `EventEnvelope` without naming its `type` literal, so no future event can join the union without one. Individual types let a reporter name exactly what it handles, and they make the context each event carries part of its type. Every event that belongs to one dataset extends `DatasetEventEnvelope`, so its `dataset` is guaranteed and a generic consumer finds it with a single `'dataset' in event` check; run-level events such as `pipelineStart` and `pipelineComplete` keep the plain envelope, so `dataset` is never optional. Stage-scoped events add a required `stage`.
 
 ### Severity as a library default
 
-The `level` field is the pipeline’s judgement of how loud an event should be, computed in one place (a `levelOf(event)` table), never at the sites that report an event. It uses exactly four levels – the common subset of popular Node loggers, the console, OpenTelemetry severity and KafkaJS – and deliberately no `fatal`: the library never ends the process, and an unrecoverable failure surfaces as a rejection from `run()`.
+The `defaultLevel` field is the pipeline’s judgement of how loud an event should be, computed in one place (a `levelOf(event)` table), never at the sites that report an event. It uses exactly four levels – the common subset of popular Node loggers, the console, OpenTelemetry severity and KafkaJS – and deliberately no `fatal`: the library never ends the process, and an unrecoverable failure surfaces as a rejection from `run()`.
 
 The initial mapping:
 
@@ -131,7 +133,7 @@ Once the pipeline reports through `onEvent`, none of `ProgressReporter`’s twen
 
 ### Consumers
 
-- A new package, `@lde/pipeline-logger-reporter`, sits beside `@lde/pipeline-console-reporter` and exports `LoggerReporter`. It ships no logger: it accepts any object with structured-first `debug`/`info`/`warn`/`error(obj, msg)` methods and writes one structured line per event – `logger[event.level](event, event.type)` in essence. A message-first logger needs a small adapter.
+- A new package, `@lde/pipeline-logger-reporter`, sits beside `@lde/pipeline-console-reporter` and exports `LoggerReporter`. It ships no logger: it accepts any object with structured-first `debug`/`info`/`warn`/`error(obj, msg)` methods and writes one structured line per event – `logger[event.defaultLevel](event, event.type)` in essence. A message-first logger needs a small adapter.
 - `ConsoleReporter` stays a class and switches on `event.type` inside `onEvent`. Because events now carry their own dataset and stage, it keeps only the state it needs for rendering (the active spinner, the probe lines).
 
 ## Consequences

@@ -411,7 +411,7 @@ async openRun(): Promise<RunWriter> {
 
 ### Reporter
 
-The pipeline reports everything it does as `PipelineEvent`s: plain objects of a discriminated union, each carrying a `type`, a severity `level` (`debug`, `info`, `warn` or `error`), a `timestamp`, the `runId` shared by every event of a run, and its own payload. A reporter is any object with an `onEvent` method:
+The pipeline reports everything it does as `PipelineEvent`s: plain objects of a discriminated union, each carrying a `type`, a severity `defaultLevel` (`debug`, `info`, `warn` or `error`), a `timestamp`, the `runId` shared by every event of a run, and its own payload. A reporter is any object with an `onEvent` method:
 
 ```typescript
 interface Reporter {
@@ -435,17 +435,17 @@ new Pipeline({
 });
 ```
 
-Each reporter receives every event, synchronously and in array order, and filters by `level` itself; a reporter that throws propagates into the run. See the how-to guide [Observe a run with a reporter](../guide/observe-a-run-with-a-reporter).
+Each reporter receives every event, synchronously and in array order, and filters by `defaultLevel` itself; a reporter that throws propagates into the run. See the how-to guide [Observe a run with a reporter](../guide/observe-a-run-with-a-reporter).
 
 Two reporters ship as their own packages: [@lde/pipeline-console-reporter](./pipeline-console-reporter) for a terminal and [@lde/pipeline-logger-reporter](./pipeline-logger-reporter) for a structured logger of your choice.
 
 #### Levels
 
-The `level` is the pipeline’s default, decided in one place (`levelOf`), not a verdict: a reporter that wants a skipped dataset to page someone can remap on `type` and the payload. Skip reasons are `{ code, message }` objects and failures carry `Error` values, so a reporter never matches on message strings. The library has no `fatal`: it never ends the process, and an unrecoverable failure rejects `run()`.
+The `defaultLevel` is the pipeline’s default, decided in one place (`levelOf`), not a verdict: a reporter that wants a skipped dataset to page someone can remap on `type` and the payload. Skip reasons are `{ code, message }` objects and failures carry `Error` values, so a reporter never matches on message strings. The library has no `fatal`: it never ends the process, and an unrecoverable failure rejects `run()`.
 
 #### Events
 
-In rough lifecycle order. Every event below the first four also carries the `dataset` it belongs to; stage events carry the `stage` name.
+In rough lifecycle order. Every event below the first four belongs to one dataset: it extends `DatasetEventEnvelope`, so it always carries that `dataset` and a reporter can find it with `'dataset' in event`. Stage events also carry the `stage` name.
 
 | `type`                  | Level                               | Payload                                                                                  | Reported                                                                                                                                  |
 | ----------------------- | ----------------------------------- | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |

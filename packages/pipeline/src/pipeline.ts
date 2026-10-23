@@ -842,7 +842,7 @@ export class Pipeline<Out = Quad> {
     if (this.reporters.length === 0) return;
     const event = {
       ...payload,
-      level: levelOf(payload),
+      defaultLevel: levelOf(payload),
       timestamp: new Date(),
       runId,
     } as PipelineEvent;

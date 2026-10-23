@@ -13,7 +13,7 @@ const dataset = makeDataset();
 function event(payload: PipelineEventPayload): PipelineEvent {
   return {
     ...payload,
-    level: levelOf(payload),
+    defaultLevel: levelOf(payload),
     timestamp: new Date(),
     runId: 'run-1',
   } as PipelineEvent;
