@@ -230,6 +230,51 @@ export function describeSearchEngineContract(
       }
     });
 
+    it('counts a facet without its own clause, and reports what that clause selects', async () => {
+      // Selecting a value no document carries leaves no hits. The facet still
+      // offers every other value, counted as if nothing were selected, and
+      // keeps the selected one at count 0 so it can be undone.
+      const absent = 'urn:lde:testing:absent-facet-value';
+      for (const searchType of types()) {
+        const field = facetableFields(searchType).find(
+          (candidate) =>
+            candidate.filterable === true &&
+            filterOperatorFor(candidate.kind) === 'in',
+        );
+        if (field === undefined) {
+          continue;
+        }
+        const facetQuery = {
+          ...browse(searchType),
+          facets: [field.name],
+        };
+        const selected = {
+          ...facetQuery,
+          where: [filterOn({ field: field.name, in: [absent] })],
+        };
+        const [unfiltered, filtered] = await engine().searchFacets(searchType, [
+          facetQuery,
+          selected,
+        ]);
+        if ('error' in unfiltered || 'error' in filtered) {
+          throw new Error('Expected facets outcomes.');
+        }
+        const others = unfiltered.facets[field.name]?.buckets ?? [];
+        const result = await engine().search(searchType, selected);
+        expect(result.total).toBe(0);
+        for (const buckets of [
+          filtered.facets[field.name]?.buckets ?? [],
+          result.facets[field.name]?.buckets ?? [],
+        ]) {
+          expect(buckets).toHaveLength(others.length + 1);
+          expect(buckets).toEqual(expect.arrayContaining([...others]));
+          expect(buckets).toContainEqual(
+            expect.objectContaining({ value: absent, count: 0 }),
+          );
+        }
+      }
+    });
+
     it('resolves an empty searchFacets batch to an empty list', async () => {
       for (const searchType of types()) {
         await expect(engine().searchFacets(searchType, [])).resolves.toEqual(

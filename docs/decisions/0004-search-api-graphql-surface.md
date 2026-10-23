@@ -4,7 +4,8 @@ Date: 2026-06-25
 
 ## Status
 
-Accepted
+Accepted. Skip-own-filter moved to the engine port with
+[ADR 29 (Make skip-own-filter what a facet means)](./0029-make-skip-own-filter-what-a-facet-means.md).
 
 Builds on [ADR 3 (Search API core query model)](./0003-search-api-core-query-model.md).
 

@@ -28,6 +28,7 @@ export {
   TARGET_FIELD,
   identityFieldOf,
   identityFieldName,
+  inheritedFacetPolicies,
   referenceFields,
   referenceTypeNamed,
   rootTypeNamed,
@@ -60,12 +61,14 @@ export {
   filterOn,
   isWelded,
   isUnsatisfiable,
+  facetSearches,
   validateQuery,
   assertValidQuery,
   resolvePath,
   pageForOffset,
 } from './query.js';
 export type {
+  FacetSearch,
   FilterOperator,
   QueryIssue,
   ResolvedPath,

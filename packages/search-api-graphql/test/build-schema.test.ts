@@ -491,23 +491,22 @@ describe('buildGraphQLSchema', () => {
     });
     expect(facets.size).toEqual({ matching: { min: 3, max: 250 } });
 
-    // ONE dispatch: the shared query (size, keyword), datePosted with its own
-    // range dropped, and the unfiltered query for `all`.
+    // ONE dispatch: the listing query for every `matching` facet – the
+    // engine drops datePosted’s own range – and the unfiltered query for
+    // `all`.
     expect(facetBatches()).toHaveLength(1);
     const [batch] = facetBatches();
     expect(batch.map((query) => query.facets)).toEqual([
-      ['size', 'keyword'],
-      ['datePosted'],
+      ['datePosted', 'size', 'keyword'],
       ['datePosted'],
     ]);
     const status = { or: [{ field: 'status', in: ['valid'] }] };
-    // The shared query keeps every filter, the date range included.
+    // The listing query keeps every filter, the date range included.
     expect(batch[0].where).toHaveLength(2);
     expect(batch[0].where).toContainEqual(status);
-    expect(batch[1].where).toEqual([status]);
-    expect(batch[1].text).toBe('kaart');
+    expect(batch[0].text).toBe('kaart');
     // `all` ignores every filter and the text.
-    expect(batch[2]).toEqual({
+    expect(batch[1]).toEqual({
       where: [],
       orderBy: [],
       limit: 0,
@@ -653,35 +652,7 @@ describe('buildGraphQLSchema', () => {
     expect(batch[0].limit).toBe(0);
   });
 
-  it('computes a facet with its own where-filter removed (skip-own-filter)', async () => {
-    const { engine, facetBatches } = fakeEngine({
-      total: 0,
-      hits: [],
-      facets: { keyword: { buckets: [{ value: 'kaarten', count: 1 }] } },
-    });
-    await run(
-      `{ datasets(where: { keyword: { in: ["x"] }, status: { in: ["valid"] } }) {
-        facets { keyword { value count } }
-      } }`,
-      { engine, acceptLanguage: ['nl'] },
-    );
-    // The keyword facet query is run with the keyword filter dropped (so its
-    // other options still count), but other filters (status) retained.
-    const [batch] = facetBatches();
-    expect(batch).toHaveLength(1);
-    const facetQuery = batch[0];
-    expect(facetQuery.facets).toEqual(['keyword']);
-    expect(
-      facetQuery.where.find((filter) =>
-        filter.or.some((criterion) => criterion.field === 'keyword'),
-      ),
-    ).toBeUndefined();
-    expect(facetQuery.where).toContainEqual({
-      or: [{ field: 'status', in: ['valid'] }],
-    });
-  });
-
-  it('groups the selected facets by effective where: unfiltered facets share one query, each own-filtered facet gets its own', async () => {
+  it('sends the listing’s filters whole: the engine drops a facet’s own', async () => {
     const { engine, facetBatches } = fakeEngine({
       total: 0,
       hits: [],
@@ -697,17 +668,15 @@ describe('buildGraphQLSchema', () => {
       } }`,
       { engine, acceptLanguage: ['nl'] },
     );
-    // One dispatch: keyword + publisher (no own filter) share the untouched
-    // where; status (own-filtered) needs its own query with that filter dropped.
-    expect(facetBatches()).toHaveLength(1);
-    const [batch] = facetBatches();
-    expect(batch).toHaveLength(2);
-    expect(batch[0].facets).toEqual(['keyword', 'publisher']);
-    expect(batch[0].where).toEqual([
-      { or: [{ field: 'status', in: ['valid'] }] },
+    // One dispatch of one query: skip-own-filter is the engine’s to apply.
+    expect(facetBatches()).toEqual([
+      [
+        expect.objectContaining({
+          facets: ['keyword', 'publisher', 'status'],
+          where: [{ or: [{ field: 'status', in: ['valid'] }] }],
+        }),
+      ],
     ]);
-    expect(batch[1].facets).toEqual(['status']);
-    expect(batch[1].where).toEqual([]);
   });
 
   it('degrades a failed facet batch to empty lists without failing the whole query', async () => {

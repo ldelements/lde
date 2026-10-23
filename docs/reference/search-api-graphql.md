@@ -294,13 +294,15 @@ role: { in: ["etser"] } } }` asks for _this person in this role_, where the
     bucket, not two.
 
   Selecting facet fields IS
-  the request: each selected facet is computed with its own `where`-filter
-  removed (skip-own-filter), and the whole selection is **batched per
-  request** – facets whose field carries no active filter share one query
-  (the unfiltered browse collapses to a single query), a selected `all`
-  adds one unfiltered query, and everything is dispatched as one
-  `engine.searchFacets` call, so a typical page costs the listing search plus
-  one batched facet round-trip.
+  the request, and the whole selection is **batched per request**: one
+  facet query over the listing’s filters, plus one unfiltered query when an
+  `all` is selected, dispatched as one `engine.searchFacets` call, so a
+  typical page costs the listing search plus one batched facet round-trip.
+  The engine computes each facet with its own `where`-filter removed
+  (skip-own-filter) and keeps every value that filter selects among its
+  buckets, with count 0 when the other filters leave it no documents, so a
+  client can render the checkbox that undoes the selection
+  ([facet semantics](./search#facet-buckets)).
 
 - **Result envelope**: `items` plus `pagination` – `total` (the full match
   count), `page` and `perPage` (the pagination actually applied, after

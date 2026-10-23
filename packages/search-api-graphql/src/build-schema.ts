@@ -1309,8 +1309,8 @@ export function buildGraphQLSchema(
     // bins; boolean fields → [BooleanBucket!], reference fields →
     // [IRIBucket!], else [ValueBucket!]). Only the selected
     // fields are resolved (GraphQL prunes the rest), so the selection IS the
-    // request; how they are computed – skip-own-filter, batched into one
-    // engine dispatch – lives in facet-batch.ts.
+    // request; the batching into one engine dispatch lives in facet-batch.ts,
+    // and skip-own-filter in the engine.
     // Like `where`, omitted entirely for a type with no facetable fields (a
     // GraphQL object type must have at least one field).
     const facetable = facetableFields(searchType);
@@ -1443,9 +1443,8 @@ export function buildGraphQLSchema(
           GraphQLFieldConfig<Source, SearchContext>
         > = {};
         for (const field of facetable) {
-          // The skip-own-filter query building, the batching into one
-          // engine dispatch and the degrade-to-empty error handling all live
-          // in the loader (facet-batch.ts).
+          // The batching into one engine dispatch and the degrade-to-empty
+          // error handling live in the loader (facet-batch.ts).
           if (isRangeFacet(field)) {
             fields[field.name] = {
               type: new GraphQLNonNull(rangeFacetTypeFor(field)),

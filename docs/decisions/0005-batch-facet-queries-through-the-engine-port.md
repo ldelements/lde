@@ -4,7 +4,8 @@ Date: 2026-07-06
 
 ## Status
 
-Accepted
+Accepted. Its section “Grouping stays in the surface” is replaced by
+[ADR 29 (Make skip-own-filter what a facet means)](./0029-make-skip-own-filter-what-a-facet-means.md).
 
 Amends [ADR 3 (Search API core query model)](./0003-search-api-core-query-model.md);
 refines the faceting described in

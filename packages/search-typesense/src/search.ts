@@ -1,5 +1,4 @@
 import type { Client } from 'typesense';
-import type { SearchParams } from 'typesense/lib/Typesense/Documents.js';
 import {
   NESTED_DOCUMENT_TYPE,
   type Facet,
@@ -26,7 +25,10 @@ import {
   assertValidQuery,
   displayLangOf,
   facetableFields,
+  facetSearches,
   fieldNamed,
+  filterOn,
+  inheritedFacetPolicies,
   isInlineReference,
   isBinnedRangeFacet,
   isUnsatisfiable,
@@ -41,6 +43,7 @@ import {
   referencedTargetsOf,
   referenceFields,
   storedTargetOf,
+  type FacetSearch,
 } from '@lde/search/adapter';
 import {
   buildSearchParams,
@@ -411,6 +414,75 @@ export function createTypesenseSearchEngine<
     }
   }
 
+  /**
+   * Answer the searches each caller’s query needs and fold them back into one
+   * response per caller: the hits and total of its first search, the facets
+   * of all. Every search travels in ONE `multi_search` – a POST, so a long
+   * `filter_by` (a batch `id` lookup, any membership over many IRIs) is
+   * bounded by the caller’s request, not by Typesense’s 4000-char
+   * query-string limit. A search asking for no document is answered empty
+   * without being sent: its only filter would compile away and hand back the
+   * whole collection ({@link isUnsatisfiable}). Each facet then reports the
+   * values its search selected ({@link withSelectedValues}).
+   *
+   * A failed search fails exactly its caller, which gets an `Error` in its
+   * place; only the transport failing rejects.
+   */
+  async function answer(
+    searchType: RootType,
+    callers: readonly (readonly PlannedSearch[])[],
+  ): Promise<(TypesenseSearchResponse | Error)[]> {
+    const collection = collections.get(searchType.class) as string;
+    const planned = callers.flat();
+    const dispatched = planned.filter(({ query }) => !isUnsatisfiable(query));
+    const results = await performInChunks(
+      client,
+      dispatched.map(({ query }) => ({
+        collection,
+        ...buildSearchParams(query, searchType, searchParamsOptions),
+      })),
+    );
+    const declaredNames = declaredFacetNames.get(
+      searchType.class,
+    ) as ReadonlyMap<string, string>;
+    let entry = 0;
+    const responses = planned.map((search) => {
+      if (isUnsatisfiable(search.query)) {
+        return EMPTY_RESPONSE;
+      }
+      const result = results[entry++];
+      return result === undefined || 'error' in result
+        ? searchError(collection, search, result)
+        : withDeclaredFacetNames(result, declaredNames);
+    });
+    const completed = await withSelectedValues(
+      client,
+      collection,
+      searchType,
+      planned.map((search, index) => ({
+        ...search,
+        response: responses[index] as TypesenseSearchResponse | Error,
+      })),
+      searchParamsOptions,
+    );
+    let next = 0;
+    return callers.map((searches) => {
+      const own = completed.slice(next, (next += searches.length));
+      const failed = own.find((response) => response instanceof Error);
+      if (failed !== undefined) {
+        return failed;
+      }
+      const answered = own as TypesenseSearchResponse[];
+      const [first = EMPTY_RESPONSE] = answered;
+      return {
+        ...first,
+        facet_counts: answered.flatMap(
+          (response) => response.facet_counts ?? [],
+        ),
+      };
+    });
+  }
+
   const engine: TypesenseSearchEngine = {
     schema,
     collectionNameFor(searchType: RootType): string {
@@ -426,28 +498,27 @@ export function createTypesenseSearchEngine<
       // rejected up front, for EVERY caller.
       assertTypeInSchema(schema, searchType);
       assertValidQuery(query, searchType, schema, joins);
-      // Asks for no document (an empty `id` membership): answer it without a
-      // round-trip rather than dispatching a query whose only filter compiles
-      // away, which would hand back the whole collection.
-      if (isUnsatisfiable(query)) {
-        return { total: 0, hits: [], facets: {} };
-      }
-      const params = buildSearchParams(query, searchType, searchParamsOptions);
       const cachedLabelsPromise = startCachedLabels(searchType);
-      // ONE search, but through `multi_search` (POST) like the facet batch and
-      // the label lookup: `documents().search()` is a GET, so a long
-      // `filter_by` – a batch `id` lookup, or any membership over many IRIs –
-      // would overflow Typesense's 4000-char query-string limit. POST puts it
-      // in the body, so the filter is bounded by the caller's request, not by
-      // the URL.
-      const response = withDeclaredFacetNames(
-        await performSingleSearch(
-          client,
-          collections.get(searchType.class) as string,
-          params,
-        ),
-        declaredFacetNames.get(searchType.class) as ReadonlyMap<string, string>,
-      );
+      // The hits come from the query as asked, carrying the facets that share
+      // its `where`; each own-filtered facet is counted by a search of its own
+      // (`facetSearches`), in the same round-trip.
+      const searches = facetSearches(query);
+      const shared = searches.find((search) => search.own === undefined);
+      const [response] = await answer(searchType, [
+        [
+          {
+            query: { ...query, facets: shared?.query.facets ?? [] },
+            selected: {},
+            facetOnly: false,
+          },
+          ...searches
+            .filter((search) => search !== shared)
+            .map(facetOnlySearch),
+        ],
+      ]);
+      if (response instanceof Error) {
+        throw response;
+      }
       const labels = await resolveLabels(cachedLabelsPromise, () =>
         labelLookupGroups(
           [response],
@@ -487,79 +558,37 @@ export function createTypesenseSearchEngine<
       if (queries.length === 0) {
         return [];
       }
-      const collection = collections.get(searchType.class) as string;
       const cachedLabelsPromise = startCachedLabels(searchType);
-      // A query asking for no document faces the same inversion as in
-      // `search()`: its only filter would compile away and it would count
-      // facets over the whole collection. Such a query is answered with empty
-      // facets and kept OUT of the batch, so `dispatched` maps each sent search
-      // back to its caller position.
-      const dispatched = queries
-        .map((query, index) => ({ query, index }))
-        .filter(({ query }) => !isUnsatisfiable(query));
-      if (dispatched.length === 0) {
-        return queries.map(() => ({ facets: {} }));
-      }
-      // The whole batch travels as ONE multi_search round-trip. Each query
-      // compiles as facet-only regardless of what it carries: no hits
+      // Every search of every query travels in ONE multi_search round-trip,
+      // each facet-only regardless of what its query carries: no hits
       // (per_page 0) and no ordering – nothing is transferred or sorted that
       // this method cannot return.
-      const { results: rawResults } = (await client.multiSearch.perform({
-        searches: dispatched.map(({ query }) => ({
-          collection,
-          ...buildSearchParams(
-            { ...query, orderBy: [], limit: 0, offset: 0 },
-            searchType,
-            searchParamsOptions,
-          ),
-        })),
-      })) as {
-        results: readonly (TypesenseSearchResponse | TypesenseErrorEntry)[];
-      };
-      const declaredNames = declaredFacetNames.get(
-        searchType.class,
-      ) as ReadonlyMap<string, string>;
-      const results = rawResults.map((result) =>
-        'error' in result
-          ? result
-          : withDeclaredFacetNames(result, declaredNames),
+      const responses = await answer(
+        searchType,
+        queries.map((query) => facetSearches(query).map(facetOnlySearch)),
       );
       // One label lookup serves every successful facet result in the batch.
-      const responses = results.filter(
-        (result): result is TypesenseSearchResponse => !('error' in result),
-      );
       const labels = await resolveLabels(cachedLabelsPromise, () =>
         labelLookupGroups(
-          responses,
+          responses.filter(
+            (response): response is TypesenseSearchResponse =>
+              !(response instanceof Error),
+          ),
           labelSources.get(searchType.class),
           outputReferenceSources.get(searchType.class) ?? [],
           distinctLabelSources.get(searchType.class) ?? [],
         ),
       );
-      // multi_search reports a failed entry inline instead of rejecting the
-      // call; pass that through as a per-query outcome – naming the facets,
-      // not the position, since the batch order is the caller's internal –
-      // so one failed query never discards its siblings' facets. Every caller
-      // position is answered: a dispatched query by its entry, an
-      // unsatisfiable one by empty facets.
-      const outcomes: FacetsOutcome[] = queries.map(() => ({ facets: {} }));
-      dispatched.forEach(({ index }, entry) => {
-        const result = results[entry];
-        outcomes[index] =
-          result === undefined || 'error' in result
-            ? {
-                error: new Error(
-                  `Typesense facet search for “${queries[index].facets.join('”, “')}” failed${
-                    result?.code !== undefined ? ` (${result.code})` : ''
-                  }: ${result?.error ?? 'no result entry'}`,
-                ),
-              }
-            : {
-                facets: parseSearchResponse(result, searchType, labels, schema)
-                  .facets,
-              };
-      });
-      return outcomes;
+      // A failed query is reported in place, so it never discards its
+      // siblings’ facets.
+      return responses.map((response) =>
+        response instanceof Error
+          ? { error: response }
+          : {
+              facets: parseSearchResponse(response, searchType, labels, schema)
+                .facets,
+            },
+      );
     },
   };
   // The runtime object is string-keyed; the literal-schema typing narrows it.
@@ -728,36 +757,269 @@ function withDeclaredFacetNames(
   };
 }
 
+/** One search a caller’s query needs: a {@link FacetSearch}, and whether it
+ *  counts facets alone or also returns the caller’s hits. */
+interface PlannedSearch extends FacetSearch {
+  readonly facetOnly: boolean;
+}
+
+/** A planned facet search as sent: no hits, and with no hits no ordering. */
+function facetOnlySearch(search: FacetSearch): PlannedSearch {
+  return {
+    query: { ...search.query, orderBy: [], limit: 0, offset: 0 },
+    selected: search.selected,
+    facetOnly: true,
+  };
+}
+
+/** The error a failed or missing `multi_search` entry stands for, naming a
+ *  facet search by its facets – the batch position is the adapter’s own. */
+function searchError(
+  collection: string,
+  search: PlannedSearch,
+  result: TypesenseErrorEntry | undefined,
+): Error {
+  return entryError(
+    search.facetOnly
+      ? `facet search for “${search.query.facets.join('”, “')}”`
+      : `search of “${collection}”`,
+    result,
+  );
+}
+
+/** The error a failed or missing `multi_search` entry stands for. */
+function entryError(
+  subject: string,
+  result: TypesenseErrorEntry | undefined,
+): Error {
+  return new Error(
+    result === undefined
+      ? `Typesense ${subject} returned no result entry.`
+      : `Typesense ${subject} failed${
+          result.code !== undefined ? ` (${result.code})` : ''
+        }: ${result.error}`,
+  );
+}
+
 /**
- * Dispatch one search as a single-entry `multi_search` (POST). `multi_search`
- * reports a failed entry inline instead of rejecting the call, so the entry is
- * translated back into a throw: `search()` rejects on engine failure, and that
- * contract must not weaken just because the transport moved off GET.
+ * Send searches as `multi_search` requests of at most {@link
+ * MULTI_SEARCH_LIMIT} each, concurrently, and return their entries in order.
+ * A request that rejects rejects the whole call: the transport failed.
  */
-async function performSingleSearch(
+async function performInChunks(
+  client: Pick<Client, 'multiSearch'>,
+  searches: readonly Record<string, unknown>[],
+): Promise<(TypesenseSearchResponse | TypesenseErrorEntry)[]> {
+  const chunks: (typeof searches)[] = [];
+  for (let start = 0; start < searches.length; start += MULTI_SEARCH_LIMIT) {
+    chunks.push(searches.slice(start, start + MULTI_SEARCH_LIMIT));
+  }
+  const answered = await Promise.all(
+    chunks.map(
+      async (chunk) =>
+        (
+          (await client.multiSearch.perform({ searches: [...chunk] })) as {
+            results: readonly (TypesenseSearchResponse | TypesenseErrorEntry)[];
+          }
+        ).results,
+    ),
+  );
+  return answered.flat();
+}
+
+/** A response with nothing in it: the answer to a search that asks for no
+ *  document, which is never dispatched. */
+const EMPTY_RESPONSE: TypesenseSearchResponse = { found: 0, hits: [] };
+
+/** The bucket cap Typesense applies when `max_facet_values` is unset. */
+const TYPESENSE_DEFAULT_MAX_FACET_VALUES = 10;
+
+/** The searches Typesense accepts in one `multi_search` request by default
+ *  (`limit_multi_searches`). */
+const MULTI_SEARCH_LIMIT = 50;
+
+/**
+ * Each response with the values its search selected among the facet buckets,
+ * after the engine’s own and in descending count order. A response that is
+ * already an `Error` passes through unchanged.
+ *
+ * A value missing from a facet the engine reported in full matches no
+ * document, so it gets count 0 without another search. A value missing from a
+ * facet cut off at the bucket cap, or narrowed by a facet policy, may still
+ * match documents, so it is counted by a search of its own: the search’s
+ * `where` plus that value. One search per value, because a facet search
+ * filtered on several values of a multi-valued field could cut off the very
+ * values it was asked to count. These searches travel together, in as few
+ * `multi_search` requests as Typesense accepts. The common cases (no
+ * selection, a selection with hits, a facet under the cap) cost nothing.
+ *
+ * A failed count fails exactly the response it was for, which becomes an
+ * `Error` in its place.
+ */
+async function withSelectedValues(
   client: Pick<Client, 'multiSearch'>,
   collection: string,
-  params: SearchParams<object>,
-): Promise<TypesenseSearchResponse> {
-  const { results } = (await client.multiSearch.perform({
-    searches: [{ collection, ...params }],
-  })) as {
-    results: readonly (TypesenseSearchResponse | TypesenseErrorEntry)[];
-  };
-  const [result] = results;
-  if (result === undefined) {
-    throw new Error(
-      `Typesense search of “${collection}” returned no result entry.`,
-    );
+  searchType: RootType,
+  entries: readonly (PlannedSearch & {
+    readonly response: TypesenseSearchResponse | Error;
+  })[],
+  options: BuildSearchParamsOptions,
+): Promise<(TypesenseSearchResponse | Error)[]> {
+  const cap = options.maxFacetValues ?? TYPESENSE_DEFAULT_MAX_FACET_VALUES;
+  const missing = entries.map(({ query, selected, response }) =>
+    response instanceof Error
+      ? []
+      : Object.entries(selected).flatMap(([field, values]) => {
+          const counts =
+            response.facet_counts?.find((facet) => facet.field_name === field)
+              ?.counts ?? [];
+          const present = new Set(counts.map((bucket) => bucket.value));
+          // A facet narrowed by a facet policy never reports a value the
+          // policy excludes, though a filter on the field still matches it:
+          // absent is no proof of 0 there either, so count it. A search that
+          // asks for no document has nothing to count.
+          const uncertain =
+            !isUnsatisfiable(query) &&
+            (counts.length >= cap ||
+              narrowedByPolicy(searchType, field, options));
+          return values
+            .filter((value) => !present.has(value))
+            .map((value) => ({ field, value, uncertain }));
+        }),
+  );
+  const toCount = missing.flatMap((values, entry) =>
+    values
+      .filter(({ uncertain }) => uncertain)
+      .map(({ field, value }) => ({ entry, field, value })),
+  );
+  const found = new Map<string, number | Error>();
+  const key = (entry: number, field: string, value: string): string =>
+    JSON.stringify([entry, field, value]);
+  const chunks: (typeof toCount)[] = [];
+  for (let start = 0; start < toCount.length; start += MULTI_SEARCH_LIMIT) {
+    chunks.push(toCount.slice(start, start + MULTI_SEARCH_LIMIT));
   }
-  if ('error' in result) {
-    throw new Error(
-      `Typesense search of “${collection}” failed${
-        result.code !== undefined ? ` (${result.code})` : ''
-      }: ${result.error}`,
-    );
-  }
-  return result;
+  await Promise.all(
+    chunks.map(async (chunk) => {
+      let results: readonly (TypesenseSearchResponse | TypesenseErrorEntry)[];
+      try {
+        ({ results } = (await client.multiSearch.perform({
+          searches: chunk.map(({ entry, field, value }) => {
+            const { query } = entries[entry] as PlannedSearch;
+            return {
+              collection,
+              ...buildSearchParams(
+                {
+                  ...query,
+                  where: [...query.where, selecting(searchType, field, value)],
+                  facets: [],
+                  orderBy: [],
+                  limit: 0,
+                  offset: 0,
+                },
+                searchType,
+                options,
+              ),
+            };
+          }),
+        })) as {
+          results: readonly (TypesenseSearchResponse | TypesenseErrorEntry)[];
+        });
+      } catch (error) {
+        // The request as a whole failed: so did every count it carried, and
+        // nothing else.
+        for (const { entry, field, value } of chunk) {
+          // The Typesense client rejects with an Error.
+          found.set(key(entry, field, value), error as Error);
+        }
+        return;
+      }
+      chunk.forEach(({ entry, field, value }, index) => {
+        const result = results[index];
+        found.set(
+          key(entry, field, value),
+          result === undefined || 'error' in result
+            ? entryError(
+                `count of facet value “${value}” on “${field}”`,
+                result,
+              )
+            : result.found,
+        );
+      });
+    }),
+  );
+  return entries.map(({ response }, entry) => {
+    const values = missing[entry] as (typeof missing)[number];
+    if (response instanceof Error || values.length === 0) {
+      return response;
+    }
+    const added = new Map<string, { value: string; count: number }[]>();
+    for (const { field, value, uncertain } of values) {
+      // Every uncertain value was counted above.
+      const count = uncertain
+        ? (found.get(key(entry, field, value)) as number | Error)
+        : 0;
+      if (count instanceof Error) {
+        return count;
+      }
+      added.set(field, [...(added.get(field) ?? []), { value, count }]);
+    }
+    const facetCounts = response.facet_counts ?? [];
+    return {
+      ...response,
+      facet_counts: [
+        ...facetCounts.map((facet) => ({
+          ...facet,
+          counts: [
+            ...facet.counts,
+            ...[...(added.get(facet.field_name) ?? [])].sort(byCount),
+          ],
+        })),
+        // A facet the response does not carry at all: an unanswered search’s.
+        ...[...added]
+          .filter(
+            ([field]) =>
+              !facetCounts.some((facet) => facet.field_name === field),
+          )
+          .map(([field, counts]) => ({
+            field_name: field,
+            counts: counts.sort(byCount),
+          })),
+      ],
+    };
+  });
+}
+
+/** The clause that selects one facet value: `is` on a boolean, `in` on
+ *  anything else. */
+function selecting(searchType: RootType, field: string, value: string) {
+  return filterOn(
+    fieldNamed(searchType, field)?.kind === 'boolean'
+      ? { field, is: value === 'true' }
+      : { field, in: [value] },
+  );
+}
+
+/** Orders buckets by descending count, as the engine orders its own. */
+function byCount(
+  first: { readonly count: number },
+  second: { readonly count: number },
+): number {
+  return second.count - first.count;
+}
+
+/** Whether a facet policy narrows the facet on `name` ({@link
+ *  inheritedFacetPolicies}), so its buckets leave out values its field holds. */
+function narrowedByPolicy(
+  searchType: RootType,
+  name: string,
+  options: BuildSearchParamsOptions,
+): boolean {
+  const field = fieldNamed(searchType, name);
+  return (
+    field !== undefined &&
+    inheritedFacetPolicies(field, options.schema).size > 0
+  );
 }
 
 /**
