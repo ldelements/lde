@@ -7,102 +7,112 @@ Date: 2026-10-23
 Accepted
 
 Amends [ADR 5 (Batch facet queries through the engine port)](./0005-batch-facet-queries-through-the-engine-port.md),
-whose section “Grouping stays in the surface” it replaces, and
+replacing its section “Grouping stays in the surface”, and
 [ADR 4 (Search API GraphQL surface)](./0004-search-api-graphql-surface.md),
-which introduced skip-own-filter as a GraphQL concern. Keeps the ownership rules
-of [ADR 18 (Filter across several fields with one clause)](./0018-filter-across-several-fields-with-one-clause.md)
+which put skip-own-filter in the GraphQL surface. Keeps the ownership rules of
+[ADR 18 (Filter across several fields with one clause)](./0018-filter-across-several-fields-with-one-clause.md)
 and [ADR 19 (Filter across collections through declared joins)](./0019-filter-across-collections-through-declared-joins.md).
 
 ## Context
 
-A facet counts with its own filter removed, so a multi-select facet still
-offers the values a user has not picked. ADR 4 put that removal in the GraphQL
-surface, and ADR 5 kept the grouping of facets into queries there. ADR 5 needed
-the port to batch queries; where skip-own-filter lived was taken over from ADR
-4, not weighed.
+A multi-select facet is counted without its own filter (skip-own-filter).
+With `keyword: atlas` selected, the `keyword` facet still counts the other
+keywords as if nothing were selected, so the user can add `kaarten` to the
+selection. Every other filter still applies.
 
-Linked Open Limburg found what that placement costs (limburg/lol#198): select a
-dataset, add a date range that leaves it no documents, and the dataset’s
-bucket disappears, taking the checkbox that would deselect it. The surface
-had dropped the dataset filter before the engine saw the query, so the
-engine had no way to know the value was selected. The engine leaves out a
-value with count 0, and a value past the bucket cap (`maxFacetValues`).
+ADR 4 put skip-own-filter in the GraphQL surface: before sending a facet’s
+query to the engine, the surface removed that facet’s own filter. ADR 5 left
+it there when it moved batching into the engine port, without weighing where
+it belonged.
 
-The first fix added `SearchQuery.facetValues` to the port: values the engine
-must report whatever their count, which the surface filled with what it had
-just removed. It worked, but it widened the port with a field that exists only
-to undo what the layer above did, and every future surface would have had to
-repeat the removal and the hand-back.
+Linked Open Limburg ran into the cost of that placement (limburg/lol#198). A
+user selects a dataset, then adds a date range that matches none of that
+dataset’s documents. The dataset’s bucket disappears from the facet, and with
+it the checkbox to deselect it. The engine leaves out values with count 0, and
+values past the bucket cap (`maxFacetValues`). It could not keep the selected
+dataset, because the surface had removed the filter that selected it before
+the engine saw the query.
 
-The search APIs that offer this treat it as the engine’s concern. Algolia
-computes disjunctive facets from the refinements in the query; Elasticsearch
-and Solr exclude a tagged filter per facet (`post_filter` and filter
-aggregations, `{!ex=tag}`). None of them asks the caller to rewrite the query
-and then report what it removed.
+The first fix added `SearchQuery.facetValues`: values the engine must report
+whatever their count, which the surface filled with the values it had just
+removed. That worked, but the port gained a field whose only job was to undo
+what the surface had done, and every surface would have had to repeat both
+steps.
+
+Other search APIs put skip-own-filter in the engine. Algolia derives
+disjunctive facets from the refinements in the query. Elasticsearch and Solr
+let a facet exclude a tagged filter (`post_filter` with filter aggregations;
+`{!ex=tag}`). None asks the caller to rewrite the query and then say what it
+removed.
 
 ## Decision
 
-### A facet counts without its own clause, and reports what that clause selects
+### The port defines skip-own-filter
 
-At the port, `SearchQuery.facets` means:
+`SearchQuery.facets` now means:
 
 > A facet counts the documents under every `where` clause except its own, and
 > reports every value its own clause selects.
 
-A selected value no other clause leaves a document comes back with count 0,
-and a selected value past the bucket cap with its real count. A surface sends
-the user’s query unchanged. Ownership follows ADR 18: a clause is a facet’s
-own when every criterion in it names that field, on the searched type. A
-clause spanning several fields is nobody’s own, and a criterion reached
-through a join is a different axis (ADR 19).
+A surface sends the user’s query unchanged. A selected value that the other
+clauses leave without documents comes back with count 0; one past the bucket
+cap comes back with its real count.
 
-An `in` selection names its values and an `is` selection its boolean. A range
-names none; its facet still counts without it, which is what a range facet’s
-`matching` extent is.
+A clause is a facet’s own when every criterion in it names that facet’s field
+on the searched type (ADR 18). A clause spanning several fields belongs to no
+facet, and a criterion reached through a join is on a different field
+(ADR 19).
 
-### One planner, shared by every adapter
+An `in` criterion selects its values, and an `is` criterion its boolean. A
+`range` selects no values. Its facet is still counted without it, and that
+count is the range facet’s `matching` extent.
 
-`facetSearches(query)` in `@lde/search/adapter` returns the fewest searches
-that compute a query’s facets under this rule: one search for every facet
-without a clause of its own, sharing the query’s `where`, and one search per
-own-filtered facet with its own clauses removed and the values they selected.
-An adapter sends those searches and reports the selected values; the planner
-fixes which clause belongs to which facet, so engines cannot disagree. The
-contract suite (`@lde/search/testing`) checks the rule against every adapter.
+### One planner for every adapter
 
-The Typesense adapter answers `search()` with the hits search carrying the
-facets that share its `where`, plus one facet-only search per own-filtered
-facet, all in one `multi_search`. It reports a selected value missing from a
-complete facet at count 0, and counts one missing from a capped or
-policy-narrowed facet with a search of its own.
+`facetSearches(query)` in `@lde/search/adapter` plans the searches that
+compute a query’s facets under this rule:
 
-### The surface batches, and no longer rewrites
+- one search, with the query’s `where` intact, for all facets without a clause
+  of their own;
+- one search per facet that has a clause of its own, with that clause removed,
+  plus the values the clause selected.
 
-`searchFacets` stays. The GraphQL surface still needs facets over more than
-one query in a round-trip: over the listing’s filters (`matching`), and over
-the whole collection for a range facet’s `all` extent. Its loader now sends at
-most those two queries, each with `where` intact.
+Adapters run these searches and report the selected values. Because the
+planner decides which clause belongs to which facet, engines cannot disagree
+on it. The contract suite in `@lde/search/testing` checks the rule against
+every adapter.
 
-`facetValues` and its validation reasons are not added.
+The Typesense adapter sends the planned searches in one `multi_search`, the
+hits search carrying the facets without a clause of their own. When a selected value is missing
+from a complete facet, the adapter adds it at count 0. When the facet was
+capped or narrowed by a policy, the value may still have documents, so the
+adapter counts it with an extra search.
+
+### The surface batches but no longer rewrites
+
+`searchFacets` stays, because the GraphQL surface still needs facets from two
+queries in one round-trip: under the listing’s filters for `matching`, and over
+the whole collection for a range facet’s `all` extent. Its loader sends at most
+those two queries, each with `where` intact.
 
 ## Consequences
 
-- A selection is always among its facet’s buckets, on every surface and every
-  engine, with no field in the query to request it.
-- A default a surface adds to `where` – a valid-only `status` – is a selection
-  like any other: its facet counts across every value, as before, and now also
-  reports the default’s values as selected. A range default on a numeric field
-  is dropped for that field’s facet in `matching` and `all` alike, so the two
-  extents agree.
-- `searchFacets` fails a query as a whole: when one of the searches an engine
-  needs for it fails, all of that query’s facets degrade. Before, the surface’s
-  own grouping let the other facets of the same query survive.
-- A caller cannot ask for a facet counted _with_ its own clause: drill-down
-  counts, where selecting narrows the facet itself. When a deployment needs
-  that, a per-facet option on the query can name it, for example
-  `facets: ['publisher', { field: 'keyword', countsUnder: 'allFilters' }]` with
-  `countsUnder: 'otherFilters'` the default. It is not built until something
-  needs it.
-- **Breaking** for a `SearchEngine` implementation: `search()` and
-  `searchFacets()` must apply the rule, which the contract suite now checks. An
-  engine that counted facets under the full `where` returns different buckets.
+- A selected value always appears among its facet’s buckets, on every surface
+  and engine, without the caller asking for it.
+- A default that a surface adds to `where`, such as a valid-only `status`,
+  counts as a selection. The `status` facet counts across all statuses, as
+  before, and now also always reports `valid`. A range default on a numeric
+  field is dropped for that field’s facet in both `matching` and `all`, so the
+  two extents agree.
+- When one of a query’s searches fails, `searchFacets` fails the whole query
+  and all its facets degrade. Before, the surface split a query’s facets over
+  separate queries, so the other facets survived.
+- A caller cannot ask for a facet counted with its own clause applied, as
+  drill-down navigation does, where each selection narrows the facet itself.
+  If a deployment needs that, a per-facet option can express it:
+  `facets: ['publisher', { field: 'keyword', countsUnder: 'allFilters' }]`,
+  with `countsUnder: 'otherFilters'` as the default.
+- **Breaking** for `SearchEngine` implementations: `search()` and
+  `searchFacets()` must apply the rule, which the contract suite checks. An
+  engine that counted facets under the full `where` now returns different
+  buckets.
