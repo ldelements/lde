@@ -106,7 +106,12 @@ those two queries, each with `where` intact.
   two extents agree.
 - When one of a query’s searches fails, `searchFacets` fails the whole query
   and all its facets degrade. Before, the surface split a query’s facets over
-  separate queries, so the other facets survived.
+  separate queries, so the other facets survived. Likewise, `search()` rejects
+  and returns no hits when one of the searches behind its facets fails. We
+  accept both: a facet search fails in practice when the engine or collection
+  is down, which fails the other searches too. A caller that must keep its hits
+  asks `search()` for no facets and gets them from `searchFacets`, as the
+  GraphQL surface does.
 - A caller cannot ask for a facet counted with its own clause applied, as
   drill-down navigation does, where each selection narrows the facet itself.
   If a deployment needs that, a per-facet option can express it:

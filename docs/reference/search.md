@@ -1476,6 +1476,11 @@ so one failed query never discards its siblings’ facets. The same schema
 binding, per-query validation and typed facet keys apply to every query in
 the batch.
 
+`search()`, by contrast, fails as a whole: when one of the searches behind its
+facets fails, it rejects and returns no hits. To keep hits when facets fail,
+call `search()` with `facets: []` and get the facets from `searchFacets`, as
+the GraphQL surface does.
+
 This only works when the types were declared with `defineSearchType` (or
 captured `as const satisfies SearchType`) and composed with `searchSchema()`;
 a plain `: SearchSchema` annotation widens gracefully to string keys.

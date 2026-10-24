@@ -49,6 +49,13 @@ export interface SearchEngine<
   /** The declaration this engine serves – exposed so a surface can route and
    *  a caller can enumerate the searchable types. */
   readonly schema: SearchSchema<Types>;
+  /**
+   * Answer one query: its hits, total and facets. The call fails as a whole:
+   * when any search an engine needs for it fails – including one that counts
+   * a single facet – the returned promise rejects and no hits come back. A
+   * caller that must keep its hits when facets fail asks for no facets here
+   * and gets them from {@link searchFacets}, which reports failures per query.
+   */
   search<T extends RootTypeOf<Types>>(
     searchType: T,
     query: SearchQuery,
