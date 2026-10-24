@@ -24,9 +24,9 @@ export type FacetScope = 'matching' | 'all';
  * its selected values among the buckets, so the whole sidebar costs one
  * engine round-trip.
  *
- * A facet is supplementary: a failed facet query degrades exactly its own
- * facets to empty – reported once per field via `onFacetError` – while the
- * other query keeps its facets; a batch-level failure (the dispatch itself
+ * A facet is supplementary: a failed query degrades all of its facets to
+ * empty – one search behind any of them failing is enough – reported once per
+ * field via `onFacetError`, while the other query keeps its facets; a batch-level failure (the dispatch itself
  * rejecting) degrades every facet. Neither fails the whole GraphQL query,
  * which would null the non-null result and discard the items.
  */
@@ -47,11 +47,10 @@ export function createFacetLoader(
       )
         .map(([scope, scopeQuery]) => ({
           scope,
+          // `searchFacets` answers every query facet-only, whatever its
+          // `orderBy`, `limit` and `offset`.
           facetQuery: {
             ...scopeQuery,
-            orderBy: [],
-            limit: 0,
-            offset: 0,
             // DataLoader has already deduplicated the keys.
             facets: keys
               .filter((key) => key.scope === scope)

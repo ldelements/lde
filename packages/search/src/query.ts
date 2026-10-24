@@ -312,31 +312,6 @@ export function facetSearches(query: SearchQuery): FacetSearch[] {
 }
 
 /**
- * The field a clause belongs to, or `undefined` when it belongs to none: every
- * criterion must constrain the same axis ({@link axisOf}).
- */
-function ownedField(filter: Filter): string | undefined {
-  const [first, ...rest] = filter.or;
-  if (first === undefined) {
-    return undefined;
-  }
-  const key = axisOf(first);
-  return rest.every((criterion) => axisOf(criterion) === key) ? key : undefined;
-}
-
-/**
- * The axis one criterion constrains: its field, qualified by the join path it
- * reaches that field through. `dataset.publisher` and a local `publisher` are
- * different questions, so a selection on one is no selection on the other.
- * Facets are not offered on joined fields, so a joined clause never matches a
- * facet and simply never drops.
- */
-function axisOf(criterion: Criterion): string {
-  const on = criterion.on ?? [];
-  return on.length === 0 ? criterion.field : [...on, criterion.field].join('.');
-}
-
-/**
  * One structural problem {@link validateQuery} found: the query references a
  * field the search type does not declare, uses it in a role it does not opt
  * into, or constrains it with a value that cannot be read. Reported per
@@ -778,4 +753,29 @@ export function assertValidQuery(
  */
 export function pageForOffset(offset: number, limit: number): number {
   return limit > 0 ? Math.floor(offset / limit) + 1 : 1;
+}
+
+/**
+ * The field a clause belongs to, or `undefined` when it belongs to none: every
+ * criterion must constrain the same axis ({@link axisOf}).
+ */
+function ownedField(filter: Filter): string | undefined {
+  const [first, ...rest] = filter.or;
+  if (first === undefined) {
+    return undefined;
+  }
+  const key = axisOf(first);
+  return rest.every((criterion) => axisOf(criterion) === key) ? key : undefined;
+}
+
+/**
+ * The axis one criterion constrains: its field, qualified by the join path it
+ * reaches that field through. `dataset.publisher` and a local `publisher` are
+ * different questions, so a selection on one is no selection on the other.
+ * Facets are not offered on joined fields, so a joined clause never matches a
+ * facet and simply never drops.
+ */
+function axisOf(criterion: Criterion): string {
+  const on = criterion.on ?? [];
+  return on.length === 0 ? criterion.field : [...on, criterion.field].join('.');
 }

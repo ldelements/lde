@@ -120,8 +120,6 @@ describe('createFacetLoader', () => {
         {
           ...filtered,
           facets: ['keyword', 'status'],
-          limit: 0,
-          offset: 0,
         },
       ],
     ]);
@@ -276,8 +274,8 @@ describe('createFacetLoader', () => {
 
     expect(batches).toHaveLength(1);
     expect(batches[0]).toEqual([
-      { ...filtered, facets: ['status'], limit: 0, offset: 0 },
-      { ...policyOnly, facets: ['status'], limit: 0, offset: 0 },
+      { ...filtered, facets: ['status'] },
+      { ...policyOnly, facets: ['status'] },
     ]);
   });
 });

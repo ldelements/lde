@@ -145,6 +145,19 @@ describe('skip-own-filter', () => {
     });
   });
 
+  it('merges a counted value among the buckets by count', async () => {
+    // A value a facet policy hid can outnumber every bucket the engine kept.
+    const { client } = cappedClient(() => ({ found: 5, hits: [] }));
+    const engine = createTypesenseSearchEngine(client, schema, {
+      maxFacetValues: 1,
+    });
+    const result = await engine.search(datasetType, selectingAtlas);
+    expect(result.facets.keyword?.buckets).toEqual([
+      { value: 'atlas', count: 5 },
+      { value: 'kaarten', count: 2 },
+    ]);
+  });
+
   it('splits counts over as many multi_search requests as Typesense accepts', async () => {
     const values = Array.from({ length: 51 }, (_, index) => `value-${index}`);
     const fake = cappedClient(() => ({ found: 1, hits: [] }));

@@ -134,8 +134,8 @@ export interface LabelSource {
  * reference field from its own label source’s collection, all sources bundled
  * into one lookup – and reconstructs the engine-neutral
  * {@link SearchResult} ({@link parseSearchResponse}). `searchFacets` answers
- * a whole facet batch (e.g. a faceted listing’s skip-own-filter query variants) as a
- * single `multi_search` round-trip with one shared label lookup; a failed
+ * a whole facet batch (e.g. a faceted listing’s skip-own-filter query variants) in
+ * one `multi_search` round-trip with one shared label lookup; a failed
  * entry is reported in place as a per-query outcome, so it never discards
  * its siblings’ facets. Every engine specific stays here; consumers see only
  * logical documents.
@@ -417,7 +417,8 @@ export function createTypesenseSearchEngine<
   /**
    * Answer the searches each caller’s query needs and fold them back into one
    * response per caller: the hits and total of its first search, the facets
-   * of all. Every search travels in ONE `multi_search` – a POST, so a long
+   * of all. The searches travel together in one `multi_search` round-trip
+   * (split into requests of {@link MULTI_SEARCH_LIMIT}) – a POST, so a long
    * `filter_by` (a batch `id` lookup, any membership over many IRIs) is
    * bounded by the caller’s request, not by Typesense’s 4000-char
    * query-string limit. A search asking for no document is answered empty
@@ -442,6 +443,10 @@ export function createTypesenseSearchEngine<
         ...buildSearchParams(query, searchType, searchParamsOptions),
       })),
     );
+    const transportFailure = results.find((result) => result instanceof Error);
+    if (transportFailure !== undefined) {
+      throw transportFailure;
+    }
     const declaredNames = declaredFacetNames.get(
       searchType.class,
     ) as ReadonlyMap<string, string>;
@@ -450,7 +455,8 @@ export function createTypesenseSearchEngine<
       if (isUnsatisfiable(search.query)) {
         return EMPTY_RESPONSE;
       }
-      const result = results[entry++];
+      const result = results[entry++] as
+        TypesenseSearchResponse | TypesenseErrorEntry | undefined;
       return result === undefined || 'error' in result
         ? searchError(collection, search, result)
         : withDeclaredFacetNames(result, declaredNames);
@@ -559,7 +565,7 @@ export function createTypesenseSearchEngine<
         return [];
       }
       const cachedLabelsPromise = startCachedLabels(searchType);
-      // Every search of every query travels in ONE multi_search round-trip,
+      // Every search of every query travels in one multi_search round-trip,
       // each facet-only regardless of what its query carries: no hits
       // (per_page 0) and no ordering – nothing is transferred or sorted that
       // this method cannot return.
@@ -809,20 +815,25 @@ function entryError(
 async function performInChunks(
   client: Pick<Client, 'multiSearch'>,
   searches: readonly Record<string, unknown>[],
-): Promise<(TypesenseSearchResponse | TypesenseErrorEntry)[]> {
+): Promise<(TypesenseSearchResponse | TypesenseErrorEntry | Error)[]> {
   const chunks: (typeof searches)[] = [];
   for (let start = 0; start < searches.length; start += MULTI_SEARCH_LIMIT) {
     chunks.push(searches.slice(start, start + MULTI_SEARCH_LIMIT));
   }
   const answered = await Promise.all(
-    chunks.map(
-      async (chunk) =>
-        (
+    chunks.map(async (chunk) => {
+      try {
+        return (
           (await client.multiSearch.perform({ searches: [...chunk] })) as {
             results: readonly (TypesenseSearchResponse | TypesenseErrorEntry)[];
           }
-        ).results,
-    ),
+        ).results;
+      } catch (error) {
+        // The request as a whole failed: so did every search it carried, and
+        // nothing else. The Typesense client rejects with an Error.
+        return chunk.map(() => error as Error);
+      }
+    }),
   );
   return answered.flat();
 }
@@ -840,7 +851,7 @@ const MULTI_SEARCH_LIMIT = 50;
 
 /**
  * Each response with the values its search selected among the facet buckets,
- * after the engine’s own and in descending count order. A response that is
+ * merged with the engine’s own in descending count order. A response that is
  * already an `Error` passes through unchanged.
  *
  * A value missing from a facet the engine reported in full matches no
@@ -895,59 +906,38 @@ async function withSelectedValues(
   const found = new Map<string, number | Error>();
   const key = (entry: number, field: string, value: string): string =>
     JSON.stringify([entry, field, value]);
-  const chunks: (typeof toCount)[] = [];
-  for (let start = 0; start < toCount.length; start += MULTI_SEARCH_LIMIT) {
-    chunks.push(toCount.slice(start, start + MULTI_SEARCH_LIMIT));
-  }
-  await Promise.all(
-    chunks.map(async (chunk) => {
-      let results: readonly (TypesenseSearchResponse | TypesenseErrorEntry)[];
-      try {
-        ({ results } = (await client.multiSearch.perform({
-          searches: chunk.map(({ entry, field, value }) => {
-            const { query } = entries[entry] as PlannedSearch;
-            return {
-              collection,
-              ...buildSearchParams(
-                {
-                  ...query,
-                  where: [...query.where, selecting(searchType, field, value)],
-                  facets: [],
-                  orderBy: [],
-                  limit: 0,
-                  offset: 0,
-                },
-                searchType,
-                options,
-              ),
-            };
-          }),
-        })) as {
-          results: readonly (TypesenseSearchResponse | TypesenseErrorEntry)[];
-        });
-      } catch (error) {
-        // The request as a whole failed: so did every count it carried, and
-        // nothing else.
-        for (const { entry, field, value } of chunk) {
-          // The Typesense client rejects with an Error.
-          found.set(key(entry, field, value), error as Error);
-        }
-        return;
-      }
-      chunk.forEach(({ entry, field, value }, index) => {
-        const result = results[index];
-        found.set(
-          key(entry, field, value),
-          result === undefined || 'error' in result
-            ? entryError(
-                `count of facet value “${value}” on “${field}”`,
-                result,
-              )
-            : result.found,
-        );
-      });
+  const results = await performInChunks(
+    client,
+    toCount.map(({ entry, field, value }) => {
+      const { query } = entries[entry] as PlannedSearch;
+      return {
+        collection,
+        ...buildSearchParams(
+          {
+            ...query,
+            where: [...query.where, selecting(searchType, field, value)],
+            facets: [],
+            orderBy: [],
+            limit: 0,
+            offset: 0,
+          },
+          searchType,
+          options,
+        ),
+      };
     }),
   );
+  toCount.forEach(({ entry, field, value }, index) => {
+    const result = results[index];
+    found.set(
+      key(entry, field, value),
+      result instanceof Error
+        ? result
+        : result === undefined || 'error' in result
+          ? entryError(`count of facet value “${value}” on “${field}”`, result)
+          : result.found,
+    );
+  });
   return entries.map(({ response }, entry) => {
     const values = missing[entry] as (typeof missing)[number];
     if (response instanceof Error || values.length === 0) {
@@ -970,10 +960,13 @@ async function withSelectedValues(
       facet_counts: [
         ...facetCounts.map((facet) => ({
           ...facet,
-          counts: [
-            ...facet.counts,
-            ...[...(added.get(facet.field_name) ?? [])].sort(byCount),
-          ],
+          // Merged by count: a value a policy hid can outnumber every bucket.
+          counts: added.has(facet.field_name)
+            ? [
+                ...facet.counts,
+                ...(added.get(facet.field_name) as typeof facet.counts),
+              ].sort(byCount)
+            : facet.counts,
         })),
         // A facet the response does not carry at all: an unanswered search’s.
         ...[...added]

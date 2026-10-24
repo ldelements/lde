@@ -649,7 +649,6 @@ describe('buildGraphQLSchema', () => {
       'iiif',
       'size',
     ]);
-    expect(batch[0].limit).toBe(0);
   });
 
   it('sends the listing’s filters whole: the engine drops a facet’s own', async () => {

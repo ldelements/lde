@@ -236,8 +236,10 @@ Skip-own-filter takes one search per own-filtered facet: `search()` sends
 the hits search, carrying every facet whose field has no clause of its own,
 together with a facet-only search for each facet that has. `searchFacets` –
 the port’s batch entry point – does the same for a whole batch of queries.
-Either way it is a **single `multi_search` round-trip**, with one bundled label
-lookup shared by every facet result. A failed entry fails its own query, which
+Either way the searches travel together in one `multi_search` round-trip
+(split into concurrent requests of 50, Typesense’s per-request limit), with one
+bundled label lookup shared by every facet result. Only a selected value missing
+from a capped or policy-narrowed facet costs a second round-trip, to count it. A failed entry fails its own query, which
 `searchFacets` reports in place as a per-query outcome, so the other queries’
 facets survive.
 
