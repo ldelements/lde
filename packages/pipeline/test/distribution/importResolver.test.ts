@@ -267,6 +267,33 @@ describe('ImportResolver', () => {
     );
   });
 
+  it('throws when the importer’s result comes from another copy of @lde/sparql-importer', async () => {
+    const dataset = makeDataset();
+    const inner = innerNoSparqlEndpoint(dataset, [dataDumpProbeResult]);
+
+    // What a nested install gives the importer: a class of the same name and
+    // shape, but not the one this resolver checks against.
+    const ImportSuccessfulFromAnotherCopy = class ImportSuccessful {
+      constructor(readonly distribution: Distribution) {}
+    };
+    const mockImporter = {
+      import: vi
+        .fn()
+        .mockResolvedValue(
+          new ImportSuccessfulFromAnotherCopy(dataset.distributions[0]),
+        ),
+    };
+
+    const resolver = new ImportResolver(inner, {
+      importer: mockImporter,
+      server: makeServer(),
+    });
+
+    await expect(resolve(resolver, dataset)).rejects.toThrow(
+      /ImportSuccessful that is not one of this resolver’s import results.*npm dedupe/,
+    );
+  });
+
   describe('import strategy', () => {
     it('ignores an available SPARQL endpoint and imports instead', async () => {
       const dataset = makeDataset();

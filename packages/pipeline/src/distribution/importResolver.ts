@@ -228,6 +228,12 @@ export class ImportResolver implements DistributionResolver {
         importResult.distribution,
         importResult.error,
       );
+      return new NoDistributionAvailable(
+        dataset,
+        'No SPARQL endpoint or importable data dump available',
+        probeResults,
+        importResult,
+      );
     }
 
     if (importResult instanceof NotSupported) {
@@ -243,11 +249,14 @@ export class ImportResolver implements DistributionResolver {
       );
     }
 
-    return new NoDistributionAvailable(
-      dataset,
-      'No SPARQL endpoint or importable data dump available',
-      probeResults,
-      importResult instanceof ImportFailed ? importResult : undefined,
+    // Unreachable by type, but not at runtime: an importer that loads its own
+    // copy of @lde/sparql-importer returns results that fail every instanceof
+    // above. Skipping the dataset here would hide that a successful import
+    // happened at all.
+    const unexpected: never = importResult;
+    throw new Error(
+      `The importer returned a ${(unexpected as object).constructor.name} that is not one of this resolver’s import results. ` +
+        'This usually means @lde/sparql-importer is installed more than once: check with `npm ls @lde/sparql-importer` and run `npm dedupe`.',
     );
   }
 
