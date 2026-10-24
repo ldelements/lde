@@ -232,11 +232,14 @@ its collection is named by the same
 convention as any other type’s – a typed entity collection and a ‘labels
 collection’ are the same kind of thing.
 
-`searchFacets` – the port’s batch entry point – answers a whole batch of
-facet-only queries (e.g. a faceted listing’s skip-own-filter variants) as a
-**single `multi_search` round-trip**, with one bundled label lookup shared by
-every facet result in the batch. A failed entry is reported in place as a
-per-query outcome, so its siblings’ facets survive.
+Skip-own-filter takes one search per own-filtered facet: `search()` sends
+the hits search, carrying every facet whose field has no clause of its own,
+together with a facet-only search for each facet that has. `searchFacets` –
+the port’s batch entry point – does the same for a whole batch of queries.
+Either way it is a **single `multi_search` round-trip**, with one bundled label
+lookup shared by every facet result. A failed entry fails its own query, which
+`searchFacets` reports in place as a per-query outcome, so the other queries’
+facets survive.
 
 **Every query travels as a `multi_search` POST** – the root search included, not
 just the facet batch and the label lookup. Typesense’s per-collection search
@@ -261,7 +264,12 @@ Beyond `collections`, `TypesenseSearchEngineOptions` carries:
   ten buckets; a deployment with such facets must raise it. Range facets
   return one bucket per declared range regardless, but a value larger than
   the range count is still safe. A numeric facet’s extent comes from the
-  facet’s `stats`, which cover every matching value whatever the cap.
+  facet’s `stats`, which cover every matching value whatever the cap. A value
+  a facet’s own filter selects is reported even past the cap: the adapter
+  counts it with one extra search per value – as it does for a value a
+  [facet policy](./search#facet-policy) keeps out of the facet – sent
+  together in as few `multi_search` requests as Typesense accepts (50
+  searches each).
 - **`onLabelError`** – called when reference-label resolution fails; the
   search then degrades to id-only references (and reference-facet buckets to
   unlabelled ones) rather than failing. Omit it and the degradation is

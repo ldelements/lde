@@ -29,7 +29,9 @@ export default mergeConfig(
           // Re-anchored for the selection-set projection: its defensive reads
           // (an unresolvable target, an absent field list) are reachable only
           // from a direct caller, since GraphQL validates the query first.
-          branches: 98.23,
+          // Re-anchored when facet grouping moved to `@lde/search`, taking its
+          // covered branches with it.
+          branches: 98.17,
           statements: 100,
         },
       },

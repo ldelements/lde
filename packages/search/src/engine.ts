@@ -30,6 +30,13 @@ import type {
  * Validation is not the caller’s job: it must hold for every surface and for
  * injected deployment policy.
  *
+ * Facets mean the same on every engine: a facet counts the documents under
+ * every `where` clause except its own (skip-own-filter), and reports every
+ * value its own clause selects, at count 0 when nothing else leaves it a
+ * document ({@link SearchQuery.facets}). An adapter plans the searches with
+ * `facetSearches` from `@lde/search/adapter`, so ownership cannot drift
+ * between engines.
+ *
  * `Types` is the literal tuple {@link searchSchema} captured: with a
  * `defineSearchType` declaration, `search()` only accepts the deployment’s
  * own types (a foreign type is a compile error) and returns facet/document
@@ -50,9 +57,10 @@ export interface SearchEngine<
    * The batch entry point: answer several facet-only queries against one type
    * in a single engine round-trip (where the engine supports one, e.g.
    * Typesense `multi_search`), returning one {@link FacetsOutcome} per query,
-   * positionally aligned with `queries`. This is what keeps a faceted
-   * listing – one skip-own-filter query variant per filtered facet – from
-   * fanning out into per-facet engine calls. Only facets come back: an
+   * positionally aligned with `queries`. This is what keeps a sidebar that
+   * needs facets over more than one query – over the listing’s filters and
+   * over the whole collection – from fanning out into several engine calls.
+   * Only facets come back: an
    * engine answers every query in the batch facet-only (as if `limit: 0` and
    * without ordering, whatever the query carries), so hits are never
    * transferred. Reference-facet buckets carry resolved labels exactly as in
@@ -74,7 +82,8 @@ export interface SearchEngine<
  * facets, or the error that failed it. The `allSettled`-style shape
  * keeps one failed query (e.g. one failed `multi_search` entry) from
  * discarding its siblings’ results: a caller degrades exactly the facets of
- * the failed query. Discriminate with `'error' in outcome`.
+ * the failed query – all of them, also when the engine needed several
+ * searches to answer it. Discriminate with `'error' in outcome`.
  */
 export type FacetsOutcome<FacetField extends string = string> =
   { readonly facets: FacetMap<FacetField> } | { readonly error: unknown };

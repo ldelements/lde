@@ -27,7 +27,14 @@ export interface SearchQuery {
   /** Numbered pagination. */
   readonly limit: number;
   readonly offset: number;
-  /** Logical field names to return facet buckets for. */
+  /**
+   * Logical field names to return facets for. Each facet counts the documents
+   * under every `where` clause except its **own** (skip-own-filter), so a
+   * facet the user selected in still offers its other values; and it reports
+   * every value its own clause selects, with count 0 when the other clauses
+   * leave that value no documents, so a selection can always be undone. See
+   * {@link facetSearches} for what a clause owns.
+   */
   readonly facets: readonly string[];
   /** Selects the per-locale fields to query/sort on (from `Accept-Language`). */
   readonly locale: string;
@@ -222,6 +229,111 @@ export function isUnsatisfiable(query: SearchQuery): boolean {
       criterion.in.length === 0
     );
   });
+}
+
+/**
+ * One search a query’s facets need, with the values each of its facets must
+ * report whatever their count. See {@link facetSearches}.
+ */
+export interface FacetSearch {
+  /** The query to facet on: `where` without its facets’ own clauses, and
+   *  `facets` the fields this search counts. */
+  readonly query: SearchQuery;
+  /** Per facet, the values its own clause selects. Only an own-filtered
+   *  facet has an entry, and only an `in` or `is` selection names values. */
+  readonly selected: Readonly<Record<string, readonly string[]>>;
+  /** The facet whose own clauses this search removed; absent on the search
+   *  that every facet without a clause of its own shares. */
+  readonly own?: string;
+}
+
+/**
+ * The fewest searches that compute a query’s {@link SearchQuery.facets} the way
+ * the port defines them: each facet counts the documents under every `where`
+ * clause except its own. Every facet whose field carries no clause of its own
+ * shares the query’s `where` – one search for all of them, so an unfiltered
+ * browse is a single search – and each own-filtered facet gets a search with
+ * its own clauses removed, together with the values those clauses selected.
+ * The searches keep the query’s text, paging and order; an adapter answering
+ * facets alone strips the hits itself. An adapter answers each facet from the
+ * search that counts it, so every engine computes facets alike.
+ *
+ * A clause is a facet’s **own** when every criterion in it names that field,
+ * on the searched type: an ordinary filter, and equally a same-field
+ * disjunction (`or: [{ created: { max: … } }, { created: { min: … } }]`).
+ * Those are a selection on one axis, and keeping them would offer back only
+ * what the user already picked. A clause spanning several fields is nobody’s
+ * own: it constrains the document as a whole, never one axis, so it always
+ * stays, and every facet counts the same documents under it. A criterion
+ * reached through a join path is a different axis than the local field of the
+ * same name ([ADR 18](../../docs/decisions/0018-filter-across-several-fields-with-one-clause.md)).
+ *
+ * A default a surface adds to `where` (a valid-only `status`) is a clause
+ * like any other: its facet counts across every value and reports the
+ * default’s values as selected.
+ */
+export function facetSearches(query: SearchQuery): FacetSearch[] {
+  const owners = query.where.map(ownedField);
+  const owned = new Set(
+    owners.filter((field): field is string => field !== undefined),
+  );
+  const facets = [...new Set(query.facets)];
+  const shared = facets.filter((field) => !owned.has(field));
+  const searches: FacetSearch[] =
+    shared.length > 0
+      ? [{ query: { ...query, facets: shared }, selected: {} }]
+      : [];
+  for (const field of facets.filter((field) => owned.has(field))) {
+    const own = query.where.filter((_, index) => owners[index] === field);
+    const selected = [
+      ...new Set(
+        own
+          .flatMap((filter) => filter.or)
+          .flatMap((criterion) =>
+            'in' in criterion
+              ? criterion.in
+              : 'is' in criterion
+                ? [String(criterion.is)]
+                : [],
+          ),
+      ),
+    ];
+    searches.push({
+      query: {
+        ...query,
+        where: query.where.filter((_, index) => owners[index] !== field),
+        facets: [field],
+      },
+      selected: selected.length > 0 ? { [field]: selected } : {},
+      own: field,
+    });
+  }
+  return searches;
+}
+
+/**
+ * The field a clause belongs to, or `undefined` when it belongs to none: every
+ * criterion must constrain the same axis ({@link axisOf}).
+ */
+function ownedField(filter: Filter): string | undefined {
+  const [first, ...rest] = filter.or;
+  if (first === undefined) {
+    return undefined;
+  }
+  const key = axisOf(first);
+  return rest.every((criterion) => axisOf(criterion) === key) ? key : undefined;
+}
+
+/**
+ * The axis one criterion constrains: its field, qualified by the join path it
+ * reaches that field through. `dataset.publisher` and a local `publisher` are
+ * different questions, so a selection on one is no selection on the other.
+ * Facets are not offered on joined fields, so a joined clause never matches a
+ * facet and simply never drops.
+ */
+function axisOf(criterion: Criterion): string {
+  const on = criterion.on ?? [];
+  return on.length === 0 ? criterion.field : [...on, criterion.field].join('.');
 }
 
 /**

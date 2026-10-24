@@ -360,6 +360,27 @@ describe('facet policy end to end (integration)', () => {
     ]);
   });
 
+  it('counts a selected value the policy keeps out of the facet, rather than reporting 0', async () => {
+    // Reached through a link rather than a bucket, a local place can still be
+    // selected – and the filter on the field matches it. Its checkbox must
+    // carry that count, not a 0 contradicting the hits beside it.
+    const [outcome] = await engine.searchFacets(work, [
+      {
+        ...baseQuery,
+        limit: 0,
+        where: [{ or: [{ field: 'locationCreated', in: [KESSEL] }] }],
+        facets: ['locationCreated'],
+      },
+    ]);
+    if ('error' in outcome) {
+      throw outcome.error;
+    }
+    expect(outcome.facets.locationCreated?.buckets).toEqual([
+      { value: VENLO, count: 1, label: { und: ['Venlo'] } },
+      { value: KESSEL, count: 1, label: { und: ['Kessel'] } },
+    ]);
+  });
+
   it('keeps the field whole: a local place still displays and still filters exactly', async () => {
     const result = await engine.search(work, {
       ...baseQuery,

@@ -5,7 +5,7 @@ import {
   type SearchEngine,
   type SearchQuery,
 } from '@lde/search';
-import { createFacetLoader, groupFacetQueries } from '../src/facet-batch.js';
+import { createFacetLoader } from '../src/facet-batch.js';
 
 const dataset = {
   name: 'Dataset',
@@ -58,180 +58,6 @@ function recordingEngine(): {
   };
 }
 
-describe('groupFacetQueries', () => {
-  it('collapses an unfiltered selection to a single facet-only query', () => {
-    const queries = groupFacetQueries(baseQuery, [
-      'keyword',
-      'status',
-      'publisher',
-    ]);
-    expect(queries).toEqual([
-      {
-        ...baseQuery,
-        facets: ['keyword', 'status', 'publisher'],
-        limit: 0,
-        offset: 0,
-      },
-    ]);
-  });
-
-  it('gives each own-filtered facet its own query with that filter removed', () => {
-    const filtered: SearchQuery = {
-      ...baseQuery,
-      where: [
-        { or: [{ field: 'keyword', in: ['x'] }] },
-        { or: [{ field: 'status', in: ['valid'] }] },
-      ],
-    };
-    const queries = groupFacetQueries(filtered, [
-      'keyword',
-      'status',
-      'publisher',
-    ]);
-    // publisher (no own filter) keeps the untouched where; keyword and status
-    // each drop only their own filter.
-    expect(queries).toEqual([
-      { ...filtered, facets: ['publisher'], limit: 0, offset: 0 },
-      {
-        ...filtered,
-        where: [{ or: [{ field: 'status', in: ['valid'] }] }],
-        facets: ['keyword'],
-        limit: 0,
-        offset: 0,
-      },
-      {
-        ...filtered,
-        where: [{ or: [{ field: 'keyword', in: ['x'] }] }],
-        facets: ['status'],
-        limit: 0,
-        offset: 0,
-      },
-    ]);
-  });
-
-  it('keeps a multi-field clause whole: it is no single facet’s own', () => {
-    // The entity-page query: one IRI across several fields. The user never made
-    // a selection on `keyword` or `publisher`, so there is nothing to widen
-    // there – keeping the clause is what leaves each facet complete on its own
-    // field, offering exactly the values that would return hits.
-    const related: SearchQuery = {
-      ...baseQuery,
-      where: [
-        {
-          or: [
-            { field: 'keyword', in: ['urn:vg'] },
-            { field: 'publisher', in: ['urn:vg'] },
-          ],
-        },
-      ],
-    };
-    const queries = groupFacetQueries(related, ['keyword', 'publisher']);
-    // No facet owns the clause, so the sidebar stays ONE query, and its where
-    // is untouched.
-    expect(queries).toEqual([
-      {
-        ...related,
-        facets: ['keyword', 'publisher'],
-        limit: 0,
-        offset: 0,
-      },
-    ]);
-  });
-
-  it('keeps a joined clause: a hop out is a different axis', () => {
-    // Ownership is keyed by (path, field), so a condition on the publisher of a
-    // work’s dataset is not a selection on the work’s OWN publisher facet.
-    // Dropping it would count a corpus the sidebar is not showing.
-    const joined: SearchQuery = {
-      ...baseQuery,
-      where: [
-        { or: [{ on: ['dataset'], field: 'publisher', in: ['urn:vg'] }] },
-      ],
-    };
-    expect(groupFacetQueries(joined, ['publisher'])).toEqual([
-      { ...joined, facets: ['publisher'], limit: 0, offset: 0 },
-    ]);
-  });
-
-  it('drops a facet’s own single-field clause while keeping a multi-field one', () => {
-    const both: SearchQuery = {
-      ...baseQuery,
-      where: [
-        {
-          or: [
-            { field: 'keyword', in: ['urn:vg'] },
-            { field: 'publisher', in: ['urn:vg'] },
-          ],
-        },
-        { or: [{ field: 'keyword', in: ['atlas'] }] },
-      ],
-    };
-    const queries = groupFacetQueries(both, ['keyword']);
-    // Only the clause that names `keyword` ALONE is its own and drops; the
-    // cross-field clause stays, so the buckets still describe the related set.
-    expect(queries).toEqual([
-      {
-        ...both,
-        where: [
-          {
-            or: [
-              { field: 'keyword', in: ['urn:vg'] },
-              { field: 'publisher', in: ['urn:vg'] },
-            ],
-          },
-        ],
-        facets: ['keyword'],
-        limit: 0,
-        offset: 0,
-      },
-    ]);
-  });
-
-  it('drops a same-field disjunction from its own facet', () => {
-    // Every criterion names `keyword`, so the clause IS a selection on that one
-    // axis – a multi-select, or two ranges on one field. Skip-own-filter must
-    // drop it; keeping it would compute the facet with the user’s own selection
-    // applied, offering back only what they already picked.
-    const sameField: SearchQuery = {
-      ...baseQuery,
-      where: [
-        {
-          or: [
-            { field: 'keyword', in: ['atlas'] },
-            { field: 'keyword', in: ['kaarten'] },
-          ],
-        },
-      ],
-    };
-    expect(groupFacetQueries(sameField, ['keyword'])).toEqual([
-      { ...sameField, where: [], facets: ['keyword'], limit: 0, offset: 0 },
-    ]);
-  });
-
-  it('treats a clause with no criteria as nobody’s own', () => {
-    // A vacuous clause constrains nothing, so it is not a selection on any
-    // axis – it stays put and no facet claims it.
-    const vacuous: SearchQuery = { ...baseQuery, where: [{ or: [] }] };
-    expect(groupFacetQueries(vacuous, ['keyword'])).toEqual([
-      { ...vacuous, facets: ['keyword'], limit: 0, offset: 0 },
-    ]);
-  });
-
-  it('returns no queries for an empty selection', () => {
-    expect(groupFacetQueries(baseQuery, [])).toEqual([]);
-  });
-
-  it('drops the listing orderBy: a facet-only query has no hits to order', () => {
-    const sorted: SearchQuery = {
-      ...baseQuery,
-      orderBy: [{ field: 'relevance', direction: 'desc' }],
-    };
-    const [facetQuery] = groupFacetQueries(sorted, ['keyword']);
-    expect(facetQuery.orderBy).toEqual([]);
-    expect(facetQuery.limit).toBe(0);
-  });
-});
-
 describe('createFacetLoader', () => {
   it('collects same-tick loads into one dispatch and resolves each field from it', async () => {
     const { engine, batches } = recordingEngine();
@@ -276,7 +102,32 @@ describe('createFacetLoader', () => {
     expect(batches[1][0].facets).toEqual(['status']);
   });
 
-  it('degrades only the facets of a failed query outcome, keeping its siblings', async () => {
+  it('sends the listing query whole: the engine applies skip-own-filter', async () => {
+    const { engine, batches } = recordingEngine();
+    const filtered: SearchQuery = {
+      ...baseQuery,
+      where: [{ or: [{ field: 'status', in: ['valid'] }] }],
+    };
+    const load = createFacetLoader(engine, dataset, filtered, baseQuery);
+
+    await Promise.all([
+      load('keyword', 'matching'),
+      load('status', 'matching'),
+    ]);
+
+    expect(batches).toEqual([
+      [
+        {
+          ...filtered,
+          facets: ['keyword', 'status'],
+          limit: 0,
+          offset: 0,
+        },
+      ],
+    ]);
+  });
+
+  it('degrades only the facets of a failed query outcome, keeping the other query’s', async () => {
     const failed: string[] = [];
     const engine: SearchEngine = {
       schema: searchSchema(dataset),
@@ -287,10 +138,10 @@ describe('createFacetLoader', () => {
         _searchType,
         queries,
       ): Promise<readonly FacetsOutcome[]> {
-        // Fail exactly the own-filtered status query; answer the rest.
-        return queries.map((query) =>
-          query.facets.includes('status')
-            ? { error: new Error('status query failed') }
+        // Fail the `all` query; answer the `matching` one.
+        return queries.map((query, index) =>
+          index === 1
+            ? { error: new Error('unfiltered query failed') }
             : {
                 facets: Object.fromEntries(
                   query.facets.map((field) => [
@@ -302,30 +153,47 @@ describe('createFacetLoader', () => {
         );
       },
     };
-    const filtered: SearchQuery = {
-      ...baseQuery,
-      where: [{ or: [{ field: 'status', in: ['valid'] }] }],
-    };
     const load = createFacetLoader(
       engine,
       dataset,
-      filtered,
+      baseQuery,
       baseQuery,
       (field) => failed.push(field),
     );
 
     const [keyword, status] = await Promise.all([
       load('keyword', 'matching'),
-      load('status', 'matching'),
-      // Fails in a second query, and is still one failed facet.
       load('status', 'all'),
     ]);
 
-    // The shared keyword query keeps its buckets; only status degraded.
     expect(keyword).toEqual({
       buckets: [{ value: 'keyword-value', count: 1 }],
     });
     expect(status).toEqual({ buckets: [] });
+    expect(failed).toEqual(['status']);
+  });
+
+  it('reports a facet failing in both queries once', async () => {
+    const failed: string[] = [];
+    const engine: SearchEngine = {
+      schema: searchSchema(dataset),
+      async search() {
+        throw new Error('not under test');
+      },
+      async searchFacets(_searchType, queries) {
+        return queries.map(() => ({ error: new Error('query failed') }));
+      },
+    };
+    const load = createFacetLoader(
+      engine,
+      dataset,
+      baseQuery,
+      baseQuery,
+      (field) => failed.push(field),
+    );
+
+    await Promise.all([load('status', 'matching'), load('status', 'all')]);
+
     expect(failed).toEqual(['status']);
   });
 

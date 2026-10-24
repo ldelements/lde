@@ -76,6 +76,7 @@ const datasetSchema: SearchType = {
       kind: 'reference',
       array: true,
       facetable: true,
+      filterable: true,
       output: true,
       ref: { strategy: 'lookup', target: 'Organization' },
     },
@@ -510,6 +511,58 @@ describe('createTypesenseSearchEngine (integration)', () => {
       buckets: [{ value: 'small', count: 1, min: 1, max: 100 }],
       extent: { min: 12, max: 2500000 },
     });
+  });
+
+  it('keeps a selected facet value the other filters leave no documents, labelled, at count 0', async () => {
+    // d3 is the only invalid document, published by org/1 only: the selected
+    // org/2 has no documents left, but must stay a bucket the user can undo.
+    const [outcome] = await engine.searchFacets(datasetSchema, [
+      {
+        ...baseQuery,
+        limit: 0,
+        where: [
+          { or: [{ field: 'status', in: ['invalid'] }] },
+          { or: [{ field: 'publisher', in: ['https://org/2'] }] },
+        ],
+        facets: ['publisher'],
+      },
+    ]);
+    if ('error' in outcome) {
+      throw outcome.error;
+    }
+    expect(outcome.facets.publisher?.buckets).toEqual([
+      {
+        value: 'https://org/1',
+        count: 1,
+        label: { nl: ['Het Utrechts Archief'] },
+      },
+      {
+        value: 'https://org/2',
+        count: 0,
+        label: { nl: ['Rijksmuseum'], en: ['Rijksmuseum'], fr: ['Rijksmusée'] },
+      },
+    ]);
+  });
+
+  it('counts a selected facet value the bucket cap cut off', async () => {
+    const capped = createTypesenseSearchEngine(client, fullSchema, {
+      collections: { Dataset: 'datasets', Organization: 'labels' },
+      maxFacetValues: 1,
+    });
+    const result = await capped.search(datasetSchema, {
+      ...baseQuery,
+      where: [
+        { or: [{ field: 'keyword', in: ['atlas', 'kaarten', 'absent'] }] },
+      ],
+      facets: ['keyword'],
+    });
+    // `kaarten` is the one bucket under the cap; `atlas` has a document but was
+    // cut off, so it is counted rather than reported as 0.
+    expect(result.facets.keyword?.buckets).toEqual([
+      { value: 'kaarten', count: 2 },
+      { value: 'atlas', count: 1 },
+      { value: 'absent', count: 0 },
+    ]);
   });
 
   it('always rejects a structurally invalid query, before reaching the engine', async () => {

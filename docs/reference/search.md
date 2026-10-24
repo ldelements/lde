@@ -864,6 +864,21 @@ sentence written here is the one that reaches the reader.
 A query’s facets come back as one `Facet` per requested field: its `buckets`,
 and for a [range facet](#range-facets) its `extent`.
 
+Every engine computes a facet the same way. It counts the documents under
+every `where` clause **except its own** (skip-own-filter), so a facet the user
+selected in still offers its other values, with the counts they would get. And
+it reports **every value its own clause selects**, with count 0 when the other
+clauses leave that value no documents, so a selection that empties the results
+keeps the checkbox that undoes it. A clause is a facet’s own when every
+criterion in it names that field: a clause spanning several fields constrains
+the document as a whole and stays for every facet
+([ADR 18](../decisions/0018-filter-across-several-fields-with-one-clause.md)).
+A default a surface adds to `where`, such as a valid-only `status`, is a clause
+like any other: the `status` facet counts across every status and reports
+`valid` as selected. An adapter plans the searches this takes with
+`facetSearches` from `@lde/search/adapter`
+([ADR 29](../decisions/0029-make-skip-own-filter-what-a-facet-means.md)).
+
 A `FacetBucket` always carries its `value` and `count`; what else it carries is
 decided by the facet’s kind, and a surface types the bucket accordingly (see
 [bucket types](./search-api-graphql#what-it-builds-per-root-type)).
@@ -1454,8 +1469,8 @@ await engine.search(OTHER_TYPE, query); // compile error: not in this schema
 ```
 
 `searchFacets(type, queries)` is the port’s **batch entry point**: several
-facet-only queries – e.g. a faceted listing’s skip-own-filter variants –
-answered in one engine round-trip (Typesense: a single `multi_search`), one
+facet-only queries – e.g. a sidebar’s facets over the listing’s filters and
+over the whole collection – answered in one engine round-trip (Typesense: a single `multi_search`), one
 outcome per query, positionally aligned – its facet map, or an in-place error,
 so one failed query never discards its siblings’ facets. The same schema
 binding, per-query validation and typed facet keys apply to every query in
