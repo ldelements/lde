@@ -1,6 +1,7 @@
 import { Dataset } from '@lde/dataset';
 import type { Quad } from '@rdfjs/types';
 import type { ProvenanceStore } from '../provenance/store.js';
+import type { ItemsRejected } from '../progressReporter.js';
 
 /**
  * Context for one pipeline run, handed to {@link Writer.openRun}.
@@ -24,6 +25,15 @@ export interface RunContext {
    * is when a registry-membership sweep should read it.
    */
   selectedSources(): Iterable<string>;
+  /**
+   * Tell the run’s reporters that this writer left some of a dataset’s items
+   * out rather than failing the dataset – documents the destination refused,
+   * or that miss what the destination requires. Call it once per (dataset,
+   * target) when the dataset is finalized ({@link RunWriter.flush}), so the
+   * counts are the dataset’s whole. Always present when a {@link Pipeline}
+   * drives the run.
+   */
+  itemsRejected?(dataset: Dataset, rejection: ItemsRejected): void;
   /**
    * The pipeline’s per-dataset processing memory, present when skip-unchanged
    * is enabled ({@link PipelineOptions.provenanceStore}).

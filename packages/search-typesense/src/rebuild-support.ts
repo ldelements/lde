@@ -1,3 +1,5 @@
+import type { Dataset } from '@lde/dataset';
+import type { DatasetOutcome, RunContext } from '@lde/pipeline';
 import type { SearchType } from '@lde/search';
 import { joinGraph, referenceFields } from '@lde/search/adapter';
 import {
@@ -5,10 +7,15 @@ import {
   type CollectionDefinitionOptions,
 } from './collection-definition.js';
 import { deriveCollectionName } from './collection-name.js';
+import type { RunDocuments } from './documents.js';
 import { DEFAULT_LOCK_TTL_MS } from './lock.js';
 
 /** Documents imported per Typesense request unless a writer is told otherwise. */
 const DEFAULT_BATCH_SIZE = 1000;
+
+/** The share of a dataset’s documents a collection may reject before the
+ *  dataset fails, unless a writer is told otherwise. */
+const DEFAULT_MAX_REJECTED_SHARE = 0.5;
 
 /**
  * The tuning knobs both rebuild writers share, on top of the collection-definition
@@ -19,6 +26,15 @@ export interface RebuildOptions extends CollectionDefinitionOptions {
   readonly batchSize?: number;
   /** A held lock older than this (ms) is reclaimed (default 10 minutes). */
   readonly lockTtlMs?: number;
+  /**
+   * The largest share of a dataset’s documents, from 0 to 1, this collection
+   * may leave out before the dataset fails (default 0.5). A document is left
+   * out when Typesense refuses it or it lacks a required field, and reported
+   * through {@link RunContext.itemsRejected} either way. A dataset whose every
+   * document was left out always fails, so it cannot go live empty; `0` fails
+   * a dataset on its first rejection.
+   */
+  readonly maxRejectedShare?: number;
 }
 
 /** The shared options resolved to concrete values plus the residual
@@ -26,6 +42,7 @@ export interface RebuildOptions extends CollectionDefinitionOptions {
 export interface ResolvedRebuildOptions {
   readonly batchSize: number;
   readonly lockTtlMs: number;
+  readonly maxRejectedShare: number;
   /** The collection-definition options with `collectionNameFor` resolved to a
    *  total function – the one place the naming convention lives, so the
    *  collection a writer talks to, the definition it creates and the peer
@@ -56,11 +73,18 @@ export function resolveRebuildOptions(
   const {
     batchSize = DEFAULT_BATCH_SIZE,
     lockTtlMs = DEFAULT_LOCK_TTL_MS,
+    maxRejectedShare = DEFAULT_MAX_REJECTED_SHARE,
     ...definitionOptions
   } = options;
+  if (!(maxRejectedShare >= 0 && maxRejectedShare <= 1)) {
+    throw new Error(
+      `maxRejectedShare must be a share from 0 to 1, got ${maxRejectedShare}.`,
+    );
+  }
   const resolved = {
     batchSize,
     lockTtlMs,
+    maxRejectedShare,
     definitionOptions: {
       ...definitionOptions,
       collectionNameFor:
@@ -70,6 +94,49 @@ export function resolveRebuildOptions(
   assertDistinctJoinTargetNames(searchType, resolved.definitionOptions);
   buildCollectionDefinition(searchType, resolved.definitionOptions);
   return resolved;
+}
+
+/**
+ * Finish a dataset’s writes to one collection: land them, report what was
+ * left out ({@link RunContext.itemsRejected}), and fail an otherwise
+ * successful dataset when more was left out than `maxRejectedShare` allows –
+ * or all of it. A dataset that already failed is only reported: its output is
+ * incomplete, so its share says nothing, and failing it twice would blame the
+ * data for what a stage did.
+ *
+ * Both writers settle at the dataset’s flush rather than leave its last
+ * partial batch for the next dataset’s writes to land, so a rejection is
+ * always counted, reported and judged against the dataset it belongs to.
+ */
+export async function settleDataset(
+  documents: RunDocuments<{ id: string }>,
+  dataset: Dataset,
+  outcome: DatasetOutcome,
+  context: RunContext,
+  searchType: SearchType,
+  maxRejectedShare: number,
+): Promise<void> {
+  const writes = await documents.settle(dataset);
+  if (writes.rejected === 0) {
+    return;
+  }
+  context.itemsRejected?.(dataset, { target: searchType.name, ...writes });
+  if (outcome !== 'success') {
+    return;
+  }
+  const limit =
+    writes.rejected === writes.written
+      ? 'every one of them'
+      : writes.rejected > writes.written * maxRejectedShare
+        ? `more than the ${Math.round(maxRejectedShare * 1000) / 10}% maxRejectedShare allows`
+        : undefined;
+  if (limit !== undefined) {
+    throw new Error(
+      `“${searchType.name}” left out ${writes.rejected} of ${writes.written} documents of ${dataset.iri.toString()}, ${limit}: ${writes.reasons
+        .map(({ reason, count }) => `${count} × ${reason}`)
+        .join('; ')}`,
+    );
+  }
 }
 
 /**

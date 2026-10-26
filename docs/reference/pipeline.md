@@ -99,6 +99,7 @@ A run degrades per dataset rather than failing as a whole:
 - A stage failure is caught and reported (`stageFailed`); the dataset is marked failed – its `flush` outcome and provenance record say `'failed'` – and the run continues with the next dataset, after the [reactive dump fallback](#distribution-resolver) has had its chance, when configured.
 - A probe or resolve failure skips the dataset (`datasetSkipped`); the run continues.
 - A per-dataset writer `flush` failure is likewise isolated to that dataset.
+- A writer may leave some of a dataset’s items out rather than fail it – a search index refusing a document – and reports them through `RunContext.itemsRejected`, which the pipeline passes to the reporter (`itemsRejected`).
 - Only failures outside per-dataset processing abort the run – the dataset selector’s iteration and the writer’s `commit` – in which case the pipeline calls `writer.abort(error)` and rethrows.
 - An [empty selection](#empty-selections) also aborts the run, but does **not** rethrow: the run is abandoned rather than failed.
 
@@ -370,7 +371,7 @@ In `n-quads` format it skolemises blank nodes to dataset-scoped IRIs, because su
 
 #### Using a writer standalone
 
-The `RunContext` handed to `openRun` carries the run’s identity (`runId`, `startedAt`), the full selection (`selectedSources()`, complete by commit time – including datasets skipped as unchanged) and the pipeline’s provenance store, when configured. Outside a pipeline, drive the same lifecycle yourself:
+The `RunContext` handed to `openRun` carries the run’s identity (`runId`, `startedAt`), the full selection (`selectedSources()`, complete by commit time – including datasets skipped as unchanged), `itemsRejected(dataset, rejection)` to report items the writer left out, and the pipeline’s provenance store, when configured. Outside a pipeline, drive the same lifecycle yourself:
 
 ```typescript
 const run = await writer.openRun({
@@ -437,6 +438,7 @@ The full event set, in rough lifecycle order:
 | `stageFailed(stage, error)`                                                          | When a stage hard-fails; the run continues (see [Failure isolation](#failure-isolation)).                                                 |
 | `datasetValidated(dataset, report)`                                                  | Once per (dataset, validator) pair after all stages, even when nothing was validated – read `quadsValidated` to distinguish ‘not tested’. |
 | `datasetSkipped(dataset, reason)`                                                    | When a dataset is skipped: probe/resolve failure, no distribution available, or unchanged since the last run.                             |
+| `itemsRejected(dataset, { target, written, rejected, reasons })`                     | When a writer finalizes a dataset it left items out of; `reasons` counts each reason, with a few example ids.                             |
 | `datasetComplete(dataset, { memoryUsageBytes, heapUsedBytes })`                      | When a dataset’s processing ends.                                                                                                         |
 | `pipelineComplete({ duration, memoryUsageBytes, heapUsedBytes })`                    | Once, when the run ends.                                                                                                                  |
 | `timeoutTightened(event)`                                                            | When a [timeout policy](#timeout-policies) tightens an endpoint’s budget after consecutive timeouts.                                      |

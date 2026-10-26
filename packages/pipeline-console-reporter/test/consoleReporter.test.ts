@@ -57,6 +57,34 @@ describe('ConsoleReporter', () => {
     });
   });
 
+  describe('itemsRejected', () => {
+    it('prints how many items went in, how many were left out, and why', () => {
+      const reporter = new ConsoleReporter();
+      const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+
+      reporter.itemsRejected(makeDataset(), {
+        target: 'CreativeWork',
+        written: 753,
+        rejected: 107,
+        reasons: [
+          {
+            reason: 'missing required field “sdDatePublished”',
+            count: 107,
+            examples: ['https://example.org/note/1'],
+          },
+        ],
+      });
+
+      const output = spy.mock.calls.map((call) => String(call[0])).join('');
+      expect(output).toContain('646 of 753 items written');
+      expect(output).toContain('107 rejected');
+      expect(output).toContain(
+        '107 × missing required field “sdDatePublished”',
+      );
+      expect(output).toContain('https://example.org/note/1');
+    });
+  });
+
   describe('datasetValidated', () => {
     it('shows success when validation conforms', () => {
       const reporter = new ConsoleReporter();

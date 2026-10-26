@@ -30,6 +30,7 @@ const REPORTER_METHODS = [
   'datasetValidated',
   'datasetComplete',
   'datasetSkipped',
+  'itemsRejected',
   'pipelineComplete',
   'timeoutTightened',
   'timeoutRelaxed',

@@ -19,6 +19,7 @@ import {
 } from './documents.js';
 import {
   resolveRebuildOptions,
+  settleDataset,
   type RebuildOptions,
   type ResolvedRebuildOptions,
 } from './rebuild-support.js';
@@ -47,6 +48,10 @@ export interface InPlaceRebuildOptions extends RebuildOptions {
  * document several datasets share, and the document itself only with the last
  * of them:
  *
+ * - a document Typesense refuses or that lacks a required field is left out
+ *   of the write; the dataset’s **flush** reports those through
+ *   {@link RunContext.itemsRejected} and fails the dataset, unswept, when they
+ *   exceed `maxRejectedShare`;
  * - a **successful dataset flush** drops what the dataset had and this run did
  *   not rewrite. A failed dataset is not swept – its output is incomplete, and
  *   the next successful run reconciles;
@@ -108,7 +113,8 @@ export class InPlaceRebuild<
   }
 
   async openRun(context: RunContext): Promise<RunWriter<TDocument>> {
-    const { batchSize, lockTtlMs, definitionOptions } = this.resolved;
+    const { batchSize, lockTtlMs, maxRejectedShare, definitionOptions } =
+      this.resolved;
     const name = this.collectionName;
 
     return openLockedRun(this.client, name, lockTtlMs, async () => {
@@ -142,6 +148,7 @@ export class InPlaceRebuild<
         runId: context.runId,
         startedAt: context.startedAt,
         batchSize,
+        schema: definitionOptions.schema,
         maxSweepableSources: this.maxSweepableSources,
       });
 
@@ -150,11 +157,20 @@ export class InPlaceRebuild<
           documents.add(dataset, items),
 
         flush: async (dataset: Dataset, outcome: DatasetOutcome) => {
+          // A dataset that left too much out fails here, unswept like any
+          // other failed dataset.
+          await settleDataset(
+            documents,
+            dataset,
+            outcome,
+            context,
+            this.searchType,
+            maxRejectedShare,
+          );
           if (outcome !== 'success') {
             // A failed dataset’s output is incomplete: sweeping against it
             // would delete documents the run never got to rewrite. Leave the
-            // stale ones for the next successful run to reconcile. The buffered
-            // documents stay buffered; the next flush lands them.
+            // stale ones for the next successful run to reconcile.
             return;
           }
           await documents.dropUnwritten(dataset);
@@ -162,9 +178,12 @@ export class InPlaceRebuild<
 
         // Discard only this run’s partial writes for the dataset (the failed
         // endpoint attempt) so the dump re-run rebuilds it cleanly; the
-        // dataset’s prior-run documents stay for the success sweep.
-        reset: async (dataset: Dataset) =>
-          documents.dropWrittenThisRun(dataset),
+        // dataset’s prior-run documents stay for the success sweep. What the
+        // attempt left out is no longer the dataset’s to answer for.
+        reset: async (dataset: Dataset) => {
+          await documents.settle(dataset);
+          await documents.dropWrittenThisRun(dataset);
+        },
 
         commit: async () => {
           await documents.flush();

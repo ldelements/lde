@@ -2,6 +2,7 @@ import type { Dataset, Distribution } from '@lde/dataset';
 import type {
   DistributionAnalysisResult,
   ImportDetails,
+  ItemsRejected,
   ProgressReporter,
   TimeoutTransitionEvent,
   ValidationReport,
@@ -294,6 +295,22 @@ export class ConsoleReporter implements ProgressReporter {
 
   datasetSkipped(_dataset: Dataset, reason: string): void {
     this.printLine(logSymbols.error, `Skipped: ${chalk.red(reason)}`, 1);
+  }
+
+  itemsRejected(_dataset: Dataset, rejection: ItemsRejected): void {
+    const { target, written, rejected, reasons } = rejection;
+    this.printLine(
+      logSymbols.warning,
+      `${chalk.bold(target)}: ${compactNumber.format(written - rejected)} of ${compactNumber.format(written)} items written, ${chalk.yellow(`${compactNumber.format(rejected)} rejected`)}`,
+      1,
+    );
+    for (const { reason, count, examples } of reasons) {
+      this.printLine(
+        logSymbols.warning,
+        `${compactNumber.format(count)} × ${reason} ${chalk.dim(`(e.g. ${examples.join(', ')})`)}`,
+        2,
+      );
+    }
   }
 
   pipelineComplete(result: {

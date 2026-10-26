@@ -436,23 +436,248 @@ describe('openDocuments', () => {
     expect(requests).toEqual([50, 1]);
   });
 
-  it('reports the documents an import rejected rather than losing them silently', async () => {
-    const client = {
+  /** A client whose imports refuse the documents `refuse` names, with its
+   *  error, and whose updates refuse everything. */
+  const clientRefusing = (refuse: (document: { id: string }) => boolean) =>
+    ({
       collections: () => ({
         documents: () => ({
-          import: async () => [
-            { success: true },
-            { success: false, error: 'bad field' },
-          ],
+          import: async (
+            batch: { id: string }[],
+            { action }: { action: string },
+          ) =>
+            batch.map((document) =>
+              action === 'update' || refuse(document)
+                ? { success: false, error: `bad ${document.id}`, code: 400 }
+                : { success: true },
+            ),
+          // One document both datasets reference, so retracting one rewrites
+          // the other’s membership with an update.
+          search: async () => ({
+            hits: [
+              {
+                document: {
+                  id: 'shared',
+                  referenced_by: [
+                    { dataset: 'http://example.org/dataset/a', run: 1 },
+                    { dataset: 'http://example.org/dataset/b', run: 1 },
+                  ],
+                },
+              },
+            ],
+          }),
         }),
       }),
       multiSearch: { perform: async () => ({ results: [{ hits: [] }] }) },
-    } as unknown as Client;
+    }) as unknown as Client;
 
-    const documents = openDocuments<{ id: string }>(client, 'places', options);
+  const other = new Dataset({
+    iri: new URL('http://example.org/dataset/b'),
+    distributions: [],
+  });
+
+  it('leaves out the documents an import refused, counting them against their dataset', async () => {
+    const documents = openDocuments<{ id: string }>(
+      clientRefusing((document) => document.id !== 'x'),
+      'places',
+      options,
+    );
     await documents.add(dataset, stream([{ id: 'x' }, { id: 'y' }]));
-    await expect(documents.flush()).rejects.toThrow(
-      /upsert into “places” failed for 1\/2 documents: bad field/,
+    // The refused document lands with the other dataset’s batch, yet counts
+    // as the dataset’s own.
+    await documents.add(other, stream([{ id: 'z' }]));
+
+    expect(await documents.settle(dataset)).toEqual({
+      written: 2,
+      rejected: 1,
+      reasons: [{ reason: 'bad y', count: 1, examples: ['y'] }],
+    });
+    expect(await documents.settle(other)).toEqual({
+      written: 1,
+      rejected: 1,
+      reasons: [{ reason: 'bad z', count: 1, examples: ['z'] }],
+    });
+    // Settling starts the count afresh.
+    expect(await documents.settle(dataset)).toEqual({
+      written: 0,
+      rejected: 0,
+      reasons: [],
+    });
+  });
+
+  it('attributes the documents of an owned collection to their dataset too', async () => {
+    const owned = { ...typeWith(), name: 'Work' } as SearchType;
+    const documents = openDocuments<{ id: string }>(
+      clientRefusing((document) => document.id === 'y'),
+      'works',
+      { ...options, searchType: owned },
+    );
+    await documents.add(dataset, stream([{ id: 'x' }]));
+    await documents.add(other, stream([{ id: 'y' }]));
+
+    expect((await documents.settle(dataset)).rejected).toBe(0);
+    expect((await documents.settle(other)).rejected).toBe(1);
+  });
+
+  it('leaves out a document missing a required field before Typesense sees it', async () => {
+    const work = {
+      name: 'Work',
+      class: 'https://example.org/Work',
+      fields: [
+        {
+          name: 'name',
+          kind: 'text',
+          path: 'https://schema.org/name',
+          locales: ['nl'],
+          output: true,
+          required: true,
+        },
+      ],
+    } as SearchType;
+    const { client, imported } = clientAnswering([]);
+    const documents = openDocuments<{ id: string }>(client, 'works', {
+      ...options,
+      searchType: work,
+    });
+    await documents.add(
+      dataset,
+      stream([{ id: 'note' }, { id: 'work', name_nl: 'Titel' }]),
+    );
+
+    expect(await documents.settle(dataset)).toEqual({
+      written: 2,
+      rejected: 1,
+      reasons: [
+        {
+          reason: 'missing required field “name”',
+          count: 1,
+          examples: ['note'],
+        },
+      ],
+    });
+    expect(imported.flat()).toEqual([expect.objectContaining({ id: 'work' })]);
+  });
+
+  it('merges two datasets’ writes of one keyed document, leaving out one missing a field', async () => {
+    const { client, imported } = clientAnswering([]);
+    const documents = openDocuments<{ id: string }>(client, 'places', {
+      ...options,
+      searchType: {
+        ...keyed,
+        fields: [
+          ...keyed.fields,
+          { name: 'title', kind: 'keyword', output: true, required: true },
+        ],
+      } as SearchType,
+    });
+    await documents.add(
+      dataset,
+      stream([{ id: 'place', title: 'Maastricht' }, { id: 'untitled' }]),
+    );
+    await documents.add(other, stream([{ id: 'place', title: 'Maastricht' }]));
+    await documents.flush();
+
+    expect(imported).toEqual([
+      [
+        expect.objectContaining({
+          id: 'place',
+          referenced_by: [
+            { dataset: dataset.iri.toString(), run: expect.any(Number) },
+            { dataset: other.iri.toString(), run: expect.any(Number) },
+          ],
+        }),
+      ],
+    ]);
+    expect((await documents.settle(dataset)).rejected).toBe(1);
+  });
+
+  it('names every required field a refused document lacks', async () => {
+    const work = {
+      name: 'Work',
+      class: 'https://example.org/Work',
+      fields: [
+        { name: 'title', kind: 'keyword', output: true, required: true },
+        { name: 'year', kind: 'integer', output: true, required: true },
+      ],
+    } as SearchType;
+    const documents = openDocuments<{ id: string }>(
+      clientAnswering([]).client,
+      'works',
+      { ...options, searchType: work },
+    );
+    await documents.add(dataset, stream([{ id: 'note' }]));
+
+    expect((await documents.settle(dataset)).reasons[0].reason).toBe(
+      'missing required fields “title”, “year”',
+    );
+  });
+
+  it('keeps a bounded tally however many distinct reasons there are', async () => {
+    const documents = openDocuments<{ id: string }>(
+      clientRefusing(() => true),
+      'places',
+      options,
+    );
+    await documents.add(
+      dataset,
+      stream(Array.from({ length: 30 }, (_, index) => ({ id: `d${index}` }))),
+    );
+
+    const { rejected, reasons } = await documents.settle(dataset);
+    expect(rejected).toBe(30);
+    expect(reasons).toHaveLength(11);
+    expect(reasons[0]).toEqual({
+      reason: 'other reasons',
+      count: 20,
+      examples: ['d10', 'd11', 'd12'],
+    });
+  });
+
+  it('throws on a failure that is not the document’s fault, counting nothing', async () => {
+    const client = {
+      collections: () => ({
+        documents: () => ({
+          import: async (batch: unknown[]) =>
+            batch.map(() => ({
+              success: false,
+              error: 'Rejecting write: running out of resource type',
+              code: 507,
+            })),
+        }),
+      }),
+    } as unknown as Client;
+    const documents = openDocuments<{ id: string }>(client, 'works', {
+      ...options,
+      searchType: { ...typeWith(), name: 'Work' } as SearchType,
+    });
+    await documents.add(dataset, stream([{ id: 'x' }]));
+
+    await expect(documents.settle(dataset)).rejects.toThrow(
+      'Typesense upsert into “works” failed: Rejecting write: running out of resource type (HTTP 507)',
+    );
+  });
+
+  it('counts a refusal once per write merged into the document', async () => {
+    const documents = openDocuments<{ id: string }>(
+      clientRefusing(() => true),
+      'places',
+      options,
+    );
+    await documents.add(dataset, stream([{ id: 'p' }, { id: 'p' }]));
+
+    const { written, rejected } = await documents.settle(dataset);
+    expect({ written, rejected }).toEqual({ written: 2, rejected: 2 });
+  });
+
+  it('still throws when an update of the bookkeeping is refused', async () => {
+    const documents = openDocuments<{ id: string }>(
+      clientRefusing(() => false),
+      'places',
+      options,
+    );
+
+    await expect(documents.dropAll(other)).rejects.toThrow(
+      /update into “places” failed for 1\/1 documents/,
     );
   });
 });

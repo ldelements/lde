@@ -190,6 +190,49 @@ describe('InPlaceRebuild', () => {
     expect(await documentIds(client)).toEqual(['a1', 'a2']);
   });
 
+  it('fails a dataset that left out every document, unswept', async () => {
+    const writer = new InPlaceRebuild<{ id: string; title?: string }>(
+      client,
+      {
+        ...objectType,
+        fields: [
+          { name: 'title', kind: 'keyword', output: true, required: true },
+        ],
+      },
+      { collectionNameFor: () => NAME },
+    );
+    await seed(writer, new Map([[datasetA, [{ id: 'a1', title: 'One' }]]]));
+
+    // A source change left A with nothing but untitled documents.
+    const rejections: unknown[] = [];
+    const run = await writer.openRun({
+      ...makeRunContext([datasetA.iri.toString()]),
+      itemsRejected: (_dataset, rejection) => rejections.push(rejection),
+    });
+    await run.write(datasetA, stream([{ id: 'a2' }]));
+    await expect(run.flush?.(datasetA, 'success')).rejects.toThrow(
+      /left out 1 of 1 documents/,
+    );
+    await run.commit();
+
+    // Sweeping would have emptied A; it keeps what it had instead.
+    expect(await documentIds(client)).toEqual(['a1']);
+    expect(rejections).toEqual([
+      {
+        target: 'Object',
+        written: 1,
+        rejected: 1,
+        reasons: [
+          {
+            reason: 'missing required field “title”',
+            count: 1,
+            examples: ['a2'],
+          },
+        ],
+      },
+    ]);
+  });
+
   it('sweeps every document of a source that left the selection on commit', async () => {
     const writer = new InPlaceRebuild<{ id: string; title: string }>(
       client,

@@ -21,6 +21,33 @@ export interface DistributionAnalysisResult {
   fingerprint?: string | null;
 }
 
+/**
+ * Items a writer left out of a dataset’s output instead of failing the
+ * dataset – documents a destination refused, say – reported once per
+ * (dataset, target) as the writer finalizes the dataset.
+ */
+export interface ItemsRejected {
+  /** The part of the destination that refused them, e.g. a search index’s
+   *  type name. */
+  readonly target: string;
+  /** Items the dataset wrote to {@link target}, the rejected ones included. */
+  readonly written: number;
+  /** Items left out. */
+  readonly rejected: number;
+  /** Why, most frequent first: each distinct reason, how many items it
+   *  rejected, and the ids of a few of them. Bounded by the writer, so a
+   *  reason that varies per item cannot grow it without limit. */
+  readonly reasons: readonly RejectionReason[];
+}
+
+/** One reason a writer rejected items, in {@link ItemsRejected.reasons}. */
+export interface RejectionReason {
+  readonly reason: string;
+  readonly count: number;
+  /** Ids of some of the items rejected for this reason. */
+  readonly examples: readonly string[];
+}
+
 export interface ProgressReporter {
   pipelineStart?(name: string): void;
   datasetsSelected?(count: number, duration: number): void;
@@ -86,6 +113,11 @@ export interface ProgressReporter {
     result: { memoryUsageBytes: number; heapUsedBytes: number },
   ): void;
   datasetSkipped?(dataset: Dataset, reason: string): void;
+  /**
+   * Called when a writer leaves some of a dataset’s items out rather than
+   * failing the dataset ({@link RunContext.itemsRejected}).
+   */
+  itemsRejected?(dataset: Dataset, rejection: ItemsRejected): void;
   pipelineComplete?(result: {
     duration: number;
     memoryUsageBytes: number;

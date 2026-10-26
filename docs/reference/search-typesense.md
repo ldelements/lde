@@ -308,7 +308,32 @@ derive the collection definition from your `SearchType` (via
 `buildCollectionDefinition` does (`defaultLocale` – the stemming locale for
 untagged `und` text, see [Locales](./search#locales) – plus
 `defaultSortingField` and `synonymSets`) and the tuning knobs: `batchSize`
-(documents imported per Typesense request, default 1000) and `lockTtlMs`.
+(documents imported per Typesense request, default 1000), `lockTtlMs` and
+`maxRejectedShare`.
+
+### Rejected documents
+
+A document that cannot be indexed is left out, not allowed to fail its whole
+dataset. Two things leave one out:
+
+- Typesense refuses it, e.g. a document missing a non-optional field or holding
+  a value of the wrong type;
+- it lacks a `required` field Typesense cannot check itself (see
+  `missingRequiredFields` in `@lde/search/adapter`). A text field spreads over a
+  field per language and locale, so no single Typesense field can be made
+  mandatory, and a field of an inline reference’s referent is required of every
+  referent, which a nested Typesense field cannot express. Left in, such a
+  document would fail the GraphQL API at read time.
+
+When the dataset is flushed, the writer reports what it left out through the
+pipeline’s reporter (`itemsRejected`): per collection, how many documents the
+dataset wrote, how many were left out, and each reason with a few example ids.
+
+A dataset that leaves out more than `maxRejectedShare` of its documents (a share
+from 0 to 1, default 0.5) fails like any other failed dataset: Blue/green rolls
+it back and In-place skips its sweep. A dataset whose every document was left
+out always fails, so it can never go live empty. Set `maxRejectedShare: 0` to
+fail a dataset on its first rejection.
 
 ### Blue/green Rebuild
 

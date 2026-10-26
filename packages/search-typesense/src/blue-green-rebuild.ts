@@ -16,6 +16,7 @@ import {
 } from './documents.js';
 import {
   resolveRebuildOptions,
+  settleDataset,
   type RebuildOptions,
   type ResolvedRebuildOptions,
 } from './rebuild-support.js';
@@ -39,6 +40,9 @@ export type BlueGreenRebuildOptions = RebuildOptions;
  *   derived from the {@link SearchType}.
  * - `write` streams documents into the fresh collection, batched across write
  *   calls, each recording the dataset it came from ({@link openDocuments}).
+ * - `write` leaves out a document Typesense refuses or that lacks a required
+ *   field; `flush` reports those through {@link RunContext.itemsRejected} and
+ *   fails the dataset when they exceed `maxRejectedShare`.
  * - `flush` on a **failed** dataset, and `reset` (the pipeline’s dump-fallback
  *   discard), roll that dataset back out of the not-yet-live collection, so a
  *   swap never ships a half-processed dataset; a successful flush leaves the
@@ -85,7 +89,8 @@ export class BlueGreenRebuild<
   }
 
   async openRun(context: RunContext): Promise<RunWriter<TDocument>> {
-    const { batchSize, lockTtlMs, definitionOptions } = this.resolved;
+    const { batchSize, lockTtlMs, maxRejectedShare, definitionOptions } =
+      this.resolved;
     const name = this.collectionName;
 
     return openLockedRun(this.client, name, lockTtlMs, async () => {
@@ -119,6 +124,7 @@ export class BlueGreenRebuild<
         runId: context.runId,
         startedAt: context.startedAt,
         batchSize,
+        schema: definitionOptions.schema,
       });
 
       // Roll a dataset back out of the not-yet-live collection (a failed
@@ -134,13 +140,32 @@ export class BlueGreenRebuild<
 
         flush: async (dataset: Dataset, outcome: DatasetOutcome) => {
           // A successful dataset keeps its streamed documents (they go live at
-          // the swap); a failed one is rolled back so the swap never ships it.
+          // the swap); a failed one – or one that left too much out – is
+          // rolled back so the swap never ships it.
+          try {
+            await settleDataset(
+              documents,
+              dataset,
+              outcome,
+              context,
+              this.searchType,
+              maxRejectedShare,
+            );
+          } catch (error) {
+            await rollback(dataset);
+            throw error;
+          }
           if (outcome !== 'success') {
             await rollback(dataset);
           }
         },
 
-        reset: async (dataset: Dataset) => rollback(dataset),
+        reset: async (dataset: Dataset) => {
+          // The re-run writes the dataset afresh, so what this attempt left
+          // out is no longer the dataset’s to answer for.
+          await documents.settle(dataset);
+          await rollback(dataset);
+        },
 
         commit: async () => {
           await documents.flush();

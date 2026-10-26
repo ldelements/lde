@@ -9,6 +9,7 @@ import {
 import {
   assertTypeInSchema,
   displayFieldName,
+  displayLangOf,
   documentKeyOf,
   fieldNamed,
   identityFieldOf,
@@ -317,6 +318,86 @@ export async function* projectRoots(
   for await (const node of frameSubjects(index, [...new Set(roots)], depth)) {
     yield projectDocument(node, searchType, schema, context);
   }
+}
+
+/**
+ * The `required` fields a projected document
+ * lacks, by name – a field of an inline reference’s referent as
+ * `reference.field` – or none when it has them all.
+ *
+ * An engine cannot always hold a document to `required` itself. A text field
+ * spreads over a display field per language and a search and sort field per
+ * locale, so *a value in some language* is no one physical field it can make
+ * mandatory; and a field of a Reference Type is required of every referent,
+ * which a flag on a nested engine field cannot say. A writer asks this before
+ * it writes, so a document the API would fail to serve is left out instead.
+ *
+ * An array or boolean field is never missing: the API serves an absent one as
+ * empty or false. Neither is a field of a {@link ReferenceStrategy.local local}
+ * lookup’s target: the API relaxes `required` there, because a referrer
+ * states only what it knows about the endpoint.
+ */
+export function missingRequiredFields(
+  document: ProjectedNode,
+  searchType: SearchType,
+  schema?: SearchSchema,
+): readonly string[] {
+  const missing = new Set<string>();
+  for (const field of searchType.fields) {
+    if (isInternalField(field)) {
+      continue;
+    }
+    if (
+      field.required === true &&
+      field.array !== true &&
+      field.kind !== 'boolean' &&
+      !hasValue(document, field, searchType)
+    ) {
+      missing.add(field.name);
+    }
+    const referenceType =
+      schema !== undefined &&
+      field.kind === 'reference' &&
+      field.ref?.strategy === 'inline'
+        ? referenceTypeNamed(schema, field.ref.typeName)
+        : undefined;
+    const nested = document[field.name];
+    if (referenceType === undefined || nested === undefined) {
+      continue;
+    }
+    for (const referent of Array.isArray(nested) ? nested : [nested]) {
+      for (const name of missingRequiredFields(
+        referent as ProjectedNode,
+        referenceType,
+        schema,
+      )) {
+        missing.add(`${field.name}.${name}`);
+      }
+    }
+  }
+  return [...missing];
+}
+
+/** Whether a projected document carries a value for `field`: for text, in any
+ *  of the physical fields it spreads over – never in a sibling field whose
+ *  name only looks like one of them (`title_short` beside `title`). */
+function hasValue(
+  document: ProjectedNode,
+  field: SearchField,
+  searchType: SearchType,
+): boolean {
+  if (field.kind !== 'text') {
+    return document[field.name] !== undefined;
+  }
+  const { search, sort } = physicalFields(field);
+  return Object.keys(document).some(
+    (key) =>
+      document[key] !== undefined &&
+      (search.includes(key) ||
+        sort.includes(key) ||
+        (displayLangOf(field, key) !== undefined &&
+          fieldNamed(searchType, key) === undefined)),
+  );
 }
 
 function applyField(

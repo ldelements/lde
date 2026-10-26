@@ -506,6 +506,8 @@ export class Pipeline<Out = Quad> {
       runId: randomUUID(),
       startedAt: new Date().toISOString(),
       selectedSources: () => selectedSources,
+      itemsRejected: (dataset, rejection) =>
+        this.reporter?.itemsRejected?.(dataset, rejection),
       provenance: this.provenanceStore,
     };
     const openedWriter = await this.writer.openRun(context);

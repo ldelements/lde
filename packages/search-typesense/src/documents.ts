@@ -7,10 +7,12 @@
 import type { Client, CollectionCreateSchema } from 'typesense';
 import type { CollectionFieldSchema } from 'typesense/lib/Typesense/Collection.js';
 import type { Dataset } from '@lde/dataset';
+import type { ItemsRejected, RejectionReason } from '@lde/pipeline';
 import type { RootType, SearchSchema, SearchType } from '@lde/search';
 import {
   datasetField,
   isInternalField,
+  missingRequiredFields,
   physicalFields,
 } from '@lde/search/adapter';
 import { escapeFilterValue } from './query-compiler.js';
@@ -42,6 +44,13 @@ const MAX_SEARCHES_PER_REQUEST = 50;
 /** Stay well under Typesense’s ~4000-char URL query-string limit per delete. */
 const MAX_FILTER_VALUES_LENGTH = 3000;
 
+/** Distinct rejection reasons kept per dataset; the rest are counted under
+ *  one, so a reason that varies per document cannot grow the tally unbounded. */
+const MAX_REJECTION_REASONS = 10;
+
+/** Ids kept per rejection reason, as examples to look up. */
+const MAX_REJECTION_EXAMPLES = 3;
+
 /**
  * Default ceiling on the distinct datasets a collection may hold before the
  * membership sweep refuses to guess. The sweep needs the complete set to spot
@@ -60,6 +69,9 @@ export interface RunDocumentsOptions {
   readonly startedAt: string;
   /** Documents per Typesense import request. */
   readonly batchSize: number;
+  /** The schema the type belongs to, which a required field of an inline
+   *  reference’s referent is declared in. */
+  readonly schema?: SearchSchema;
   /** Most distinct datasets {@link RunDocuments.dropUnselected} may enumerate
    *  before it throws rather than risk missing one that left. */
   readonly maxSweepableSources?: number;
@@ -76,10 +88,21 @@ export interface RunDocumentsOptions {
  * itself; a caller only needs {@link flush} before it finishes the run.
  */
 export interface RunDocuments<TDocument extends { id: string }> {
-  /** Write a dataset’s documents, batched. */
+  /**
+   * Write a dataset’s documents, batched. A document Typesense refuses, or
+   * that lacks a required field Typesense cannot check
+   * ({@link missingRequiredFields}), is left out and counted against its
+   * dataset rather than failing the write – see {@link settle}.
+   */
   add(dataset: Dataset, documents: AsyncIterable<TDocument>): Promise<void>;
   /** Land whatever is still buffered. */
   flush(): Promise<void>;
+  /**
+   * Land whatever is still buffered and account for the dataset’s documents
+   * since it was last settled: how many it wrote, and which were left out and
+   * why. Starts the dataset’s count afresh.
+   */
+  settle(dataset: Dataset): Promise<DatasetWrites>;
   /**
    * Drop what this dataset had and this run did not rewrite – the sweep after
    * a dataset succeeds. A document another dataset still references survives,
@@ -103,6 +126,10 @@ export interface RunDocuments<TDocument extends { id: string }> {
    */
   dropUnselected(selectedDatasets: Iterable<string>): Promise<void>;
 }
+
+/** A dataset’s documents in one collection, as {@link RunDocuments.settle}
+ *  counts them. */
+export type DatasetWrites = Omit<ItemsRejected, 'target'>;
 
 /**
  * Open a run’s documents on a collection.
@@ -329,15 +356,23 @@ function ownedDocuments<TDocument extends { id: string }>(
   const { searchType, runId, batchSize } = options;
   const field = provenanceFieldOf(searchType);
   const buffer = new Batch<Record<string, unknown>>(batchSize);
+  const writes = new WriteTally();
   const run = escapeFilterValue(runId);
   const of = (dataset: Dataset) =>
     `${field}:=${escapeFilterValue(dataset.iri.toString())}`;
 
   const land = async () => {
     const batch = buffer.take();
-    if (batch.length > 0) {
-      await importDocuments(client, collection, batch, 'upsert');
+    if (batch.length === 0) {
+      return;
     }
+    const errors = await upsertDocuments(client, collection, batch);
+    errors.forEach((error, index) => {
+      if (error !== undefined) {
+        const document = batch[index];
+        writes.reject(String(document[field]), String(document.id), error);
+      }
+    });
   };
   const drop = async (filter: string) => {
     await land();
@@ -358,18 +393,25 @@ function ownedDocuments<TDocument extends { id: string }>(
     // unprojected is sweepable but not full-text findable by dataset: absent,
     // never wrong.
     add: async (dataset, documents) => {
+      const iri = dataset.iri.toString();
       const stamp = {
-        [field]: dataset.iri.toString(),
+        [field]: iri,
         [LAST_SEEN_FIELD]: runId,
       };
       for await (const document of documents) {
-        buffer.push({ ...document, ...stamp });
-        if (buffer.full()) {
-          await land();
+        if (writes.admit(iri, document, searchType, options.schema)) {
+          buffer.push({ ...document, ...stamp });
+          if (buffer.full()) {
+            await land();
+          }
         }
       }
     },
     flush: land,
+    settle: async (dataset) => {
+      await land();
+      return writes.take(dataset.iri.toString());
+    },
     dropUnwritten: async (dataset) =>
       drop(`${of(dataset)} && ${LAST_SEEN_FIELD}:!=${run}`),
     dropWrittenThisRun: async (dataset) =>
@@ -406,7 +448,8 @@ function sharedDocuments<TDocument extends { id: string }>(
   collection: string,
   options: RunDocumentsOptions,
 ): RunDocuments<TDocument> {
-  const { batchSize } = options;
+  const { searchType, batchSize } = options;
+  const writes = new WriteTally();
   const run = Date.parse(options.startedAt);
   const facet = `${REFERENCED_BY_FIELD}.dataset`;
   const buffer = new Batch<{
@@ -430,9 +473,11 @@ function sharedDocuments<TDocument extends { id: string }>(
     // Two nodes of one dataset, or two datasets, can key onto one document
     // within a single batch. Later content wins, as a merged document always
     // does – but membership is the union, or the second would erase the first.
+    // `writes` keeps every dataset a write came from, repeats included, so a
+    // refusal counts once per document the datasets wrote – as `admit` did.
     const merged = new Map<
       string,
-      { document: TDocument; datasets: string[] }
+      { document: TDocument; datasets: string[]; writes: string[] }
     >();
     for (const { document, dataset } of batch) {
       const seen = merged.get(document.id);
@@ -444,15 +489,17 @@ function sharedDocuments<TDocument extends { id: string }>(
             : seen.datasets.includes(dataset)
               ? seen.datasets
               : [...seen.datasets, dataset],
+        writes: [...(seen?.writes ?? []), dataset],
       });
     }
     const stored = await storedMembership(client, collection, [
       ...merged.keys(),
     ]);
-    await importDocuments(
+    const entries = [...merged.values()];
+    const errors = await upsertDocuments(
       client,
       collection,
-      [...merged.values()].map(({ document, datasets }) => ({
+      entries.map(({ document, datasets }) => ({
         ...document,
         [REFERENCED_BY_FIELD]: [
           ...(stored.get(document.id) ?? []).filter(
@@ -461,8 +508,16 @@ function sharedDocuments<TDocument extends { id: string }>(
           ...datasets.map((dataset) => ({ dataset, run })),
         ],
       })),
-      'upsert',
     );
+    // A refused document is refused for every write merged into it.
+    errors.forEach((error, index) => {
+      if (error !== undefined) {
+        const { document, writes: merges } = entries[index];
+        for (const dataset of merges) {
+          writes.reject(dataset, document.id, error);
+        }
+      }
+    });
   };
 
   /**
@@ -514,7 +569,7 @@ function sharedDocuments<TDocument extends { id: string }>(
         );
       }
       if (keeping.length > 0) {
-        await importDocuments(client, collection, keeping, 'update');
+        await updateDocuments(client, collection, keeping);
       }
       for (const chunk of chunked(emptied.map(escapeFilterValue))) {
         await deleteByFilter(client, collection, `id:=[${chunk.join(',')}]`);
@@ -526,13 +581,19 @@ function sharedDocuments<TDocument extends { id: string }>(
     add: async (dataset, documents) => {
       const iri = dataset.iri.toString();
       for await (const document of documents) {
-        buffer.push({ document, dataset: iri });
-        if (buffer.full()) {
-          await land();
+        if (writes.admit(iri, document, searchType, options.schema)) {
+          buffer.push({ document, dataset: iri });
+          if (buffer.full()) {
+            await land();
+          }
         }
       }
     },
     flush: land,
+    settle: async (dataset) => {
+      await land();
+      return writes.take(dataset.iri.toString());
+    },
     dropUnwritten: async (dataset) => {
       const iri = dataset.iri.toString();
       await retract(
@@ -705,31 +766,160 @@ class Batch<TItem> {
 }
 
 /**
- * Import one batch, throwing if any individual document fails – Typesense’s
- * bulk import otherwise reports per-document failures without rejecting, which
- * would turn a rejected write into silently missing data.
+ * Each dataset’s documents since it was last settled: how many it wrote, and
+ * which were left out and why. Bounded per dataset by
+ * {@link MAX_REJECTION_REASONS} and {@link MAX_REJECTION_EXAMPLES}, however
+ * many documents are rejected.
  */
-async function importDocuments(
+class WriteTally {
+  private readonly datasets = new Map<
+    string,
+    {
+      written: number;
+      rejected: number;
+      reasons: Map<string, { count: number; examples: string[] }>;
+    }
+  >();
+
+  /**
+   * Count a document the dataset wrote, answering whether it may be imported:
+   * one lacking a required field is rejected here, before Typesense sees it.
+   */
+  admit(
+    dataset: string,
+    document: { id: string },
+    searchType: SearchType,
+    schema: SearchSchema | undefined,
+  ): boolean {
+    this.of(dataset).written += 1;
+    const missing = missingRequiredFields(
+      document as Record<string, unknown>,
+      searchType,
+      schema,
+    );
+    if (missing.length === 0) {
+      return true;
+    }
+    this.reject(
+      dataset,
+      document.id,
+      `missing required ${missing.length === 1 ? 'field' : 'fields'} ${missing
+        .map((name) => `“${name}”`)
+        .join(', ')}`,
+    );
+    return false;
+  }
+
+  /** Count a document of the dataset as left out, for `reason`. */
+  reject(dataset: string, id: string, reason: string): void {
+    const tally = this.of(dataset);
+    tally.rejected += 1;
+    const key =
+      tally.reasons.has(reason) || tally.reasons.size < MAX_REJECTION_REASONS
+        ? reason
+        : 'other reasons';
+    const entry = tally.reasons.get(key) ?? { count: 0, examples: [] };
+    entry.count += 1;
+    if (entry.examples.length < MAX_REJECTION_EXAMPLES) {
+      entry.examples.push(id);
+    }
+    tally.reasons.set(key, entry);
+  }
+
+  /** The dataset’s count, most frequent reason first, starting it afresh. */
+  take(dataset: string): DatasetWrites {
+    const tally = this.datasets.get(dataset);
+    this.datasets.delete(dataset);
+    const reasons: RejectionReason[] = [...(tally?.reasons ?? [])]
+      .map(([reason, { count, examples }]) => ({ reason, count, examples }))
+      .sort((left, right) => right.count - left.count);
+    return {
+      written: tally?.written ?? 0,
+      rejected: tally?.rejected ?? 0,
+      reasons,
+    };
+  }
+
+  private of(dataset: string) {
+    let tally = this.datasets.get(dataset);
+    if (tally === undefined) {
+      tally = { written: 0, rejected: 0, reasons: new Map() };
+      this.datasets.set(dataset, tally);
+    }
+    return tally;
+  }
+}
+
+/**
+ * Upsert one batch, answering each document Typesense refused with its error –
+ * `undefined` for one written – in batch order. Typesense writes the valid
+ * documents of a batch and reports the rest per document without rejecting,
+ * so a caller that ignored the answer would turn a refusal into silently
+ * missing data.
+ *
+ * Only a client error (4xx) refuses the document itself. Any other failure –
+ * the engine out of memory or disk, not ready – says nothing about the data,
+ * so it throws: counted as a rejection, it would let a dataset succeed short
+ * of documents, and an In-place sweep then delete their indexed versions.
+ */
+async function upsertDocuments(
+  client: Client,
+  collection: string,
+  batch: readonly Record<string, unknown>[],
+): Promise<readonly (string | undefined)[]> {
+  const results = await importBatch(client, collection, batch, 'upsert');
+  const failed = results.find(
+    (result) => !result.success && !(result.code >= 400 && result.code < 500),
+  );
+  if (failed !== undefined && !failed.success) {
+    throw new Error(
+      `Typesense upsert into “${collection}” failed: ${failed.error} (HTTP ${failed.code})`,
+    );
+  }
+  return results.map((result) => (result.success ? undefined : result.error));
+}
+
+/**
+ * Update one batch, throwing if any document fails. An update only rewrites
+ * bookkeeping on documents already stored, so a refusal means broken
+ * bookkeeping, not bad source data, and must not be skipped.
+ */
+async function updateDocuments(
+  client: Client,
+  collection: string,
+  batch: readonly Record<string, unknown>[],
+): Promise<void> {
+  const results = await importBatch(client, collection, batch, 'update');
+  const failures = results.flatMap((result) =>
+    result.success ? [] : [result.error],
+  );
+  if (failures.length > 0) {
+    throw new Error(
+      `Typesense update into “${collection}” failed for ${failures.length}/${results.length} documents: ${failures.join('; ')}`,
+    );
+  }
+}
+
+/** Typesense’s answer for one imported document. */
+type ImportResult =
+  | { readonly success: true }
+  | { readonly success: false; readonly error: string; readonly code: number };
+
+/** Import one batch, answering Typesense’s result per document in batch
+ *  order. */
+async function importBatch(
   client: Client,
   collection: string,
   batch: readonly Record<string, unknown>[],
   action: 'upsert' | 'update',
-): Promise<void> {
-  const results = (await client
+): Promise<readonly ImportResult[]> {
+  return (await client
     .collections(collection)
     .documents()
     .import(batch as Record<string, unknown>[], {
       action,
       throwOnFail: false,
-    })) as { success: boolean; error?: string }[];
-  const failures = results.filter((result) => !result.success);
-  if (failures.length > 0) {
-    throw new Error(
-      `Typesense ${action} into “${collection}” failed for ${failures.length}/${results.length} documents: ${failures
-        .map((failure) => failure.error)
-        .join('; ')}`,
-    );
-  }
+    })) as ImportResult[];
 }
 
 /** A whole-collection search; `q: '*'` needs no field to query by. */

@@ -65,6 +65,7 @@ export function combineReporters(
     datasetValidated: (...args) => forward('datasetValidated', ...args),
     datasetComplete: (...args) => forward('datasetComplete', ...args),
     datasetSkipped: (...args) => forward('datasetSkipped', ...args),
+    itemsRejected: (...args) => forward('itemsRejected', ...args),
     pipelineComplete: (...args) => forward('pipelineComplete', ...args),
     timeoutTightened: (...args) => forward('timeoutTightened', ...args),
     timeoutRelaxed: (...args) => forward('timeoutRelaxed', ...args),

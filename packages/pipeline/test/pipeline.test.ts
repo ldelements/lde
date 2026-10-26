@@ -131,6 +131,7 @@ function makeReporter(): RequiredReporter {
       vi.fn<NonNullable<ProgressReporter['datasetValidated']>>(),
     datasetComplete: vi.fn<NonNullable<ProgressReporter['datasetComplete']>>(),
     datasetSkipped: vi.fn<NonNullable<ProgressReporter['datasetSkipped']>>(),
+    itemsRejected: vi.fn<NonNullable<ProgressReporter['itemsRejected']>>(),
     pipelineComplete:
       vi.fn<NonNullable<ProgressReporter['pipelineComplete']>>(),
     timeoutTightened:
@@ -297,6 +298,34 @@ describe('Pipeline', () => {
       expect([...first.selectedSources()]).toEqual([
         'http://example.org/dataset',
       ]);
+    });
+
+    it('passes the rejections a writer reports on to the reporters', async () => {
+      const reporter = makeReporter();
+      const rejection = {
+        target: 'Work',
+        written: 3,
+        rejected: 1,
+        reasons: [{ reason: 'missing name', count: 1, examples: ['urn:x'] }],
+      };
+      const rejectingWriter: Writer = {
+        openRun: async (context) => ({
+          write: () => Promise.resolve(),
+          flush: async (flushed) => context.itemsRejected?.(flushed, rejection),
+          commit: () => Promise.resolve(),
+          abort: () => Promise.resolve(),
+        }),
+      };
+
+      await new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [makeStage('stage1')],
+        writers: rejectingWriter,
+        distributionResolver: makeResolver(makeResolvedDistribution()),
+        reporter,
+      }).run();
+
+      expect(reporter.itemsRejected).toHaveBeenCalledWith(dataset, rejection);
     });
 
     it('commits – not aborts – when a stage fails for one dataset', async () => {

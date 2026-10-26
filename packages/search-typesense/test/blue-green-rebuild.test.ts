@@ -238,25 +238,65 @@ describe('BlueGreenRebuild', () => {
     expect(await aliasTarget(client)).not.toBe(live);
   });
 
-  it('surfaces per-document import failures from write', async () => {
+  it('leaves out a document Typesense refuses, reports it, and ships the rest', async () => {
     const writer = new BlueGreenRebuild(client, datasetType, {
       collectionNameFor: () => NAME,
     });
+    const rejections: unknown[] = [];
+    const run = await writer.openRun({
+      ...makeRunContext(),
+      itemsRejected: (_dataset, rejection) => rejections.push(rejection),
+    });
+
+    // `year` must be an int; a string is a hard validation failure.
+    await run.write(
+      dataset,
+      stream([
+        { id: 'good', title: 'One', year: 2024 },
+        { id: 'bad', title: 't', year: 'nope' },
+      ]),
+    );
+    await run.flush?.(dataset, 'success');
+    await run.commit();
+
+    expect(await liveIds(client)).toEqual(['good']);
+    expect(rejections).toEqual([
+      {
+        target: 'Dataset',
+        written: 2,
+        rejected: 1,
+        reasons: [
+          {
+            reason: expect.stringContaining('year'),
+            count: 1,
+            examples: ['bad'],
+          },
+        ],
+      },
+    ]);
+  });
+
+  it('fails and rolls back a dataset that left out more than its share', async () => {
+    const writer = new BlueGreenRebuild(client, datasetType, {
+      collectionNameFor: () => NAME,
+      maxRejectedShare: 0,
+    });
 
     const run = await writer.openRun(makeRunContext());
-    // `year` must be an int; a string is a hard validation failure.
-    await expect(
-      (async () => {
-        await run.write(
-          dataset,
-          stream([{ id: 'bad', title: 't', year: 'nope' }]),
-        );
-        await run.commit();
-      })(),
-    ).rejects.toThrow(/failed/i);
-    await run.abort(new Error('import failed'));
+    await run.write(
+      dataset,
+      stream([
+        { id: 'good', title: 'One', year: 2024 },
+        { id: 'bad', title: 't', year: 'nope' },
+      ]),
+    );
+    await expect(run.flush?.(dataset, 'success')).rejects.toThrow(
+      /left out 1 of 2 documents/,
+    );
+    await run.commit();
 
-    expect(await aliasTarget(client)).toBeUndefined();
+    // The accepted document went with the rest of its dataset.
+    expect(await liveIds(client)).toEqual([]);
   });
 
   it('publishes an empty collection for an empty run', async () => {

@@ -378,6 +378,31 @@ describe('searchIndexWriter', () => {
     ]);
   });
 
+  it('fails a dataset in every collection when one collection fails it', async () => {
+    const failure = new Error('too many people left out');
+    const fleet = makeFleet({
+      flush: (searchType) =>
+        searchType.class === PERSON
+          ? Promise.reject(failure)
+          : Promise.resolve(),
+    });
+    const run = await openRun(fleet);
+
+    await expect(run.flush?.(dataset, 'success')).rejects.toThrow(
+      AggregateError,
+    );
+
+    // The collection that took the dataset is told it failed after all, so
+    // it is never shipped in one collection and not the other.
+    expect(collectionOf(fleet, WORK).flushes).toEqual([
+      { dataset, outcome: 'success' },
+      { dataset, outcome: 'failed' },
+    ]);
+    expect(collectionOf(fleet, PERSON).flushes).toEqual([
+      { dataset, outcome: 'success' },
+    ]);
+  });
+
   it('resets every collection even when one collection’s reset fails, then surfaces it', async () => {
     const failure = new Error('person reset failed');
     const fleet = makeFleet({

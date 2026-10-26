@@ -199,9 +199,31 @@ export function searchIndexWriter(
           // have rolled back or swept. Every collection is flushed, not just the
           // ones that received documents this dataset: a collection an earlier
           // run held documents for still needs its sweep to reconcile.
-          await settleAll(runs.values(), 'flush', 'collection', (run) =>
-            run.flush?.(dataset, outcome),
-          );
+          //
+          // A dataset fails as a whole, though: when one collection fails it
+          // (a rollback that threw, or a collection refusing too many of its
+          // documents), the collections that took it are flushed again as
+          // failed, so a Blue/green swap never ships the dataset in one
+          // collection and not in the one its documents join to.
+          const flushed: RunWriter<SearchDocument>[] = [];
+          try {
+            await settleAll(
+              runs.values(),
+              'flush',
+              'collection',
+              async (run) => {
+                await run.flush?.(dataset, outcome);
+                flushed.push(run);
+              },
+            );
+          } catch (error) {
+            if (outcome === 'success') {
+              await Promise.allSettled(
+                flushed.map((run) => run.flush?.(dataset, 'failed')),
+              );
+            }
+            throw error;
+          }
         },
 
         reset: async (dataset: Dataset) => {
