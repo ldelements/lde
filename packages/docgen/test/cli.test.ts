@@ -44,6 +44,31 @@ describe('CLI Unit Tests', () => {
     expect(consoleLogSpy).toHaveBeenCalledWith('Mock documentation');
   });
 
+  it('passes the frame and partials folder on', async () => {
+    const generateDocumentation = vi.fn().mockResolvedValue('');
+    vi.doMock('../src/index.js', () => ({ generateDocumentation }));
+
+    process.argv = [
+      'node',
+      'cli.js',
+      'from-shacl',
+      'test.ttl',
+      'template.liquid',
+      '--frame',
+      'frame.jsonld',
+      '--partials',
+      'partials',
+    ];
+    await import('../src/cli.js');
+
+    expect(generateDocumentation).toHaveBeenCalledWith(
+      'test.ttl',
+      'template.liquid',
+      'frame.jsonld',
+      'partials',
+    );
+  });
+
   it('should handle Error instance', async () => {
     vi.doMock('../src/index.js', () => ({
       generateDocumentation: vi.fn().mockRejectedValue(new Error('Test error')),

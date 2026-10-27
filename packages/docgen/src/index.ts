@@ -10,14 +10,17 @@ import { render } from './render.js';
  * @param framePath Optional path to a JSON-LD frame. When provided, it is
  *   deep-merged on top of docgen’s built-in default frame, so consumers only
  *   need to specify their additions (e.g. extra `@context` entries).
+ * @param partialsPath Optional path to a folder of partials that the template
+ *   can `{% render %}` next to those in its own folder, which win on a name clash.
  */
 export async function generateDocumentation(
   rdfPath: string,
   templatePath: string,
-  framePath?: string
+  framePath?: string,
+  partialsPath?: string,
 ): Promise<string> {
   const jsonld = await parseRdfToJsonLd(rdfPath);
   const framed = await frame(jsonld, framePath);
 
-  return render(framed, templatePath);
+  return render(framed, templatePath, partialsPath);
 }

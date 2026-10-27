@@ -32,6 +32,71 @@ describe('render', () => {
   });
 });
 
+describe('partials', () => {
+  // A spec folder with its own partial and a shared folder next to it, under the
+  // working directory so the shared folder can also be given as a relative path.
+  async function specWithSharedPartials() {
+    const directory = await mkdtemp(join(process.cwd(), 'docgen-render-'));
+    await mkdir(join(directory, 'spec'));
+    await mkdir(join(directory, 'shared'));
+    await writeFile(
+      join(directory, 'spec', 'template.liquid'),
+      "{% render 'shared' %} {% render 'both' %}",
+    );
+    await writeFile(join(directory, 'spec', 'both.liquid'), 'own');
+    await writeFile(join(directory, 'shared', 'shared.liquid'), 'shared');
+    await writeFile(join(directory, 'shared', 'both.liquid'), 'not own');
+    return directory;
+  }
+
+  it('renders a partial from the partials folder, and prefers the template’s own', async () => {
+    const directory = await specWithSharedPartials();
+    try {
+      expect(
+        await render(
+          { '@graph': [] } as never,
+          join(directory, 'spec', 'template.liquid'),
+          join(directory, 'shared'),
+        ),
+      ).toBe('shared own');
+    } finally {
+      await rm(directory, { recursive: true });
+    }
+  });
+
+  it('resolves a relative partials folder against the working directory', async () => {
+    const directory = await specWithSharedPartials();
+    try {
+      expect(
+        await render(
+          { '@graph': [] } as never,
+          relative(process.cwd(), join(directory, 'spec', 'template.liquid')),
+          relative(process.cwd(), join(directory, 'shared')),
+        ),
+      ).toBe('shared own');
+    } finally {
+      await rm(directory, { recursive: true });
+    }
+  });
+
+  it('fails on a partials folder that does not exist', async () => {
+    const directory = await specWithSharedPartials();
+    try {
+      for (const partialsPath of [join(directory, 'missing'), '']) {
+        await expect(
+          render(
+            { '@graph': [] } as never,
+            join(directory, 'spec', 'template.liquid'),
+            partialsPath,
+          ),
+        ).rejects.toThrow('Partials folder not found');
+      }
+    } finally {
+      await rm(directory, { recursive: true });
+    }
+  });
+});
+
 describe('expandIri', () => {
   it('expands a compact IRI with a prefix from the frame’s context', async () => {
     const output = await renderTemplate(

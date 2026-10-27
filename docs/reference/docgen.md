@@ -38,9 +38,10 @@ npx @lde/docgen@latest from-shacl <shacl-file> <template-file> [options]
 
 ### Options
 
-| Option               | Description                                                                                                                                                 | Default                              |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
-| `-f, --frame <file>` | Path to a JSON-LD Frame file. Deep-merged on top of the built-in default frame, so it only needs to contain your additions (e.g. extra `@context` entries). | Built-in `frames/shacl.frame.jsonld` |
+| Option                    | Description                                                                                                                                                 | Default                              |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| `-f, --frame <file>`      | Path to a JSON-LD Frame file. Deep-merged on top of the built-in default frame, so it only needs to contain your additions (e.g. extra `@context` entries). | Built-in `frames/shacl.frame.jsonld` |
+| `-p, --partials <folder>` | Path to a folder of partials that the template can render, next to those in its own folder. See [shared partials](#shared-partials).                        | None                                 |
 
 ### Example
 
@@ -96,6 +97,7 @@ const output = await generateDocumentation(
   'shapes.ttl',
   'spec.md.liquid',
   'frames/shacl.frame.jsonld', // optional: path to custom frame
+  'partials', // optional: folder of shared partials
 );
 ```
 
@@ -111,6 +113,17 @@ Value shapes to expect:
 - **`sh:or`** arrives as `or`, an array with one entry per `sh:or` list on the shape, and each entry is an array of alternatives. A shape can carry more than one `sh:or` list, so `or` is an array even when there is only one: take <code v-pre>{{ property.or | first | map: "datatype" }}</code> for the common single list, or loop over `or` to show every list.
 
 The Liquid engine’s root is set to the template’s directory with extension `.liquid`, so `{% include %}` and `{% render %}` of sibling partials work out of the box.
+
+### Shared partials
+
+Several documents built from different shapes often render some parts the same way, such as a cell that shows a property’s cardinality.
+Put those partials in one folder and pass it with `--partials`, so each template can `{% render %}` them by name as if they were its siblings.
+When a partial of the same name sits next to the template, that one wins, so a document can override a shared partial.
+A relative path is resolved against the working directory, not against the template, and docgen fails when the folder does not exist.
+
+```sh
+npx @lde/docgen@latest from-shacl shapes.ttl spec.md.liquid --partials ../shared-partials > spec.md
+```
 
 Property shapes with the same `sh:path` are common in SHACL (e.g. one for cardinality, another for datatype). The `mergePropertiesByPath` filter combines them into a single object per path.
 

@@ -26,6 +26,10 @@ program
     '-f --frame <json-ld-frame-file>',
     'Path to a JSON-LD Frame file. Deep-merged on top of the built-in default frame, so it only needs to contain your additions.'
   )
+  .option(
+    '-p --partials <directory>',
+    'Path to a folder of partials that the template can render, next to those in its own folder. On a name clash, the template’s own partial wins.'
+  )
   .addHelpText(
     'after',
     `
@@ -33,9 +37,14 @@ Example:
   $ npx @lde/docgen@latest from-shacl shacl.ttl template.liquid
     `
   )
-  .action(async (rdfFile: string, templateFile: string, { frame }) => {
+  .action(async (rdfFile: string, templateFile: string, { frame, partials }) => {
     try {
-      const documentation = await generateDocumentation(rdfFile, templateFile, frame);
+      const documentation = await generateDocumentation(
+        rdfFile,
+        templateFile,
+        frame,
+        partials
+      );
       console.log(documentation);
     } catch (error) {
       console.error(`Error: ${error instanceof Error ? error.message : error}`);

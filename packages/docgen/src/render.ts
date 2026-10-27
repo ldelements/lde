@@ -1,14 +1,22 @@
 import { Liquid } from 'liquidjs';
+import { stat } from 'node:fs/promises';
 import { basename, dirname } from 'path';
 import type { ContextDefinition, NodeObject } from 'jsonld';
 
 export async function render(
   shapes: NodeObject,
   templatePath: string,
+  partialsPath?: string,
 ): Promise<string> {
   const templatesDir = dirname(templatePath);
+  if (partialsPath !== undefined) {
+    await assertDirectory(partialsPath);
+  }
   const engine = new Liquid({
     root: templatesDir,
+    // The template’s own folder comes first, so it can override a shared partial.
+    partials:
+      partialsPath === undefined ? templatesDir : [templatesDir, partialsPath],
     extname: '.liquid',
   });
 
@@ -60,6 +68,18 @@ export async function render(
   return engine.renderFile(basename(templatePath), {
     nodeShapes: shapes['@graph'],
   });
+}
+
+/**
+ * Fail early on a partials folder that is missing or empty as a path, rather than
+ * on the first partial that cannot be found there.
+ */
+async function assertDirectory(path: string) {
+  const isDirectory =
+    path !== '' && (await stat(path).catch(() => undefined))?.isDirectory();
+  if (!isDirectory) {
+    throw new Error(`Partials folder not found: '${path}'`);
+  }
 }
 
 /**
