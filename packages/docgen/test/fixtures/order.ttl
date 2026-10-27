@@ -1,0 +1,15 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+
+_:First a sh:NodeShape ; sh:name "First" ;
+    sh:property [ sh:path <https://example.org/last> ; sh:node _:Twelfth ] .
+_:Second a sh:NodeShape ; sh:name "Second" .
+_:Third a sh:NodeShape ; sh:name "Third" .
+_:Fourth a sh:NodeShape ; sh:name "Fourth" .
+_:Fifth a sh:NodeShape ; sh:name "Fifth" .
+_:Sixth a sh:NodeShape ; sh:name "Sixth" .
+_:Seventh a sh:NodeShape ; sh:name "Seventh" .
+_:Eighth a sh:NodeShape ; sh:name "Eighth" .
+_:Ninth a sh:NodeShape ; sh:name "Ninth" .
+_:Tenth a sh:NodeShape ; sh:name "Tenth" .
+_:Eleventh a sh:NodeShape ; sh:name "Eleventh" .
+_:Twelfth a sh:NodeShape ; sh:name "Twelfth" .

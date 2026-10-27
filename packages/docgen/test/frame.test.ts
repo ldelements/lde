@@ -10,6 +10,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const SHACL_PATH = join(__dirname, 'fixtures', 'shacl.ttl');
 const MULTIPLE_OR_PATH = join(__dirname, 'fixtures', 'multiple-or.ttl');
 const PARTIAL_FRAME_PATH = join(__dirname, 'fixtures', 'partial.frame.jsonld');
+const ORDER_PATH = join(__dirname, 'fixtures', 'order.ttl');
 
 describe('frame', () => {
   it('uses the built-in default frame when no user frame is given', async () => {
@@ -66,6 +67,30 @@ describe('frame', () => {
     expect(description?.or).toEqual([
       [{ datatype: 'rdf:langString' }, { datatype: 'xsd:string' }],
     ]);
+  });
+
+  it('keeps shapes in the order of the source file', async () => {
+    const document = await parseRdfToJsonLd(ORDER_PATH);
+    const framed = (await frame(document)) as {
+      '@graph': { name: string; property?: { node: object }[] }[];
+    };
+
+    expect(framed['@graph'].map((shape) => shape.name)).toEqual([
+      'First',
+      'Second',
+      'Third',
+      'Fourth',
+      'Fifth',
+      'Sixth',
+      'Seventh',
+      'Eighth',
+      'Ninth',
+      'Tenth',
+      'Eleventh',
+      'Twelfth',
+    ]);
+    // The position used for sorting is not left behind, also not in embedded shapes.
+    expect(JSON.stringify(framed)).not.toContain('docgen');
   });
 
   it('lets a user frame override a default coercion', async () => {

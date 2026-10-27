@@ -9,6 +9,14 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const defaultFramePath = join(__dirname, '../frames/shacl.frame.jsonld');
 
+// jsonld.frame relabels blank nodes and sorts them by label as a string, so its
+// output does not keep the order of its input. Each node carries its position
+// through framing under this key, which is removed afterwards.
+const positionKey = 'urn:lde:docgen:position';
+
+/**
+ * Frames the shapes, keeping the order of `document` in the `@graph`.
+ */
 export async function frame(
   document: JsonLdArray,
   userFramePath?: string,
@@ -18,16 +26,49 @@ export async function frame(
     ? deepMerge(defaultFrame, await readFrame(userFramePath))
     : defaultFrame;
 
-  const framed = await jsonld.frame(document, mergedFrame, {
+  const positioned = document.map((node, position) => ({
+    ...node,
+    [positionKey]: [{ '@value': position }],
+  })) as JsonLdArray;
+
+  const framed = await jsonld.frame(positioned, mergedFrame, {
     omitGraph: false,
     embed: '@always',
   });
 
-  return listOrAlternatives(framed);
+  return listOrAlternatives(inInputOrder(framed));
 }
 
 async function readFrame(path: string): Promise<Frame> {
   return JSON.parse(await readFile(path, 'utf8')) as Frame;
+}
+
+/**
+ * Sorts the framed `@graph` by each node’s position in the input, then drops
+ * the position from every node, including the copies embedded in other nodes.
+ */
+function inInputOrder(framed: NodeObject): NodeObject {
+  const graph = [...(framed['@graph'] as NodeObject[])].sort(
+    (first, second) =>
+      (first[positionKey] as number) - (second[positionKey] as number),
+  );
+  return withoutPosition({ ...framed, '@graph': graph });
+}
+
+function withoutPosition<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map(withoutPosition) as T;
+  }
+  if (!isPlainObject(value)) {
+    return value;
+  }
+  const result: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value)) {
+    if (key !== positionKey) {
+      result[key] = withoutPosition(child);
+    }
+  }
+  return result as T;
 }
 
 /**

@@ -35,10 +35,12 @@
     "!**/*.tsbuildinfo"
   ],
   "dependencies": {
+    "@rdfjs/types": "^2.0.1",
     "@tpluscode/rdf-ns-builders": "^5.0.0",
     "commander": "^15.0.0",
     "jsonld": "^9.0.0",
     "liquidjs": "^10.30.0",
+    "rdf-data-factory": "^2.1.0",
     "rdf-dereference": "^5.0.0",
     "rdf-serialize": "^5.1.0",
     "stream-to-string": "^1.2.1",
