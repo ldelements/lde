@@ -16,8 +16,8 @@ export default mergeConfig(
           // Re-anchored when the host-limited map moved to @lde/host-limiter:
           // fully covered code leaving the file lowers the ratio without
           // uncovering a line of what stayed.
-          branches: 96.38,
-          statements: 99.6,
+          branches: 96.47,
+          statements: 99.61,
         },
       },
     },

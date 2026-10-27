@@ -12,19 +12,20 @@ npm install @lde/sparql-qlever
 
 `createQlever()` returns a paired `{ importer, server }` that share a single task runner – and therefore the same Docker container, sidecar or working directory – so the server can serve the index the importer built.
 
-| Option          | Default                               | Description                                                                                                                   |
-| --------------- | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `mode`          | –                                     | `'docker'`, `'native'` or `'remote'`; see below.                                                                              |
-| `image`         | –                                     | (docker mode, required) Docker image to run QLever from, e.g. `adfreiburg/qlever:latest`.                                     |
-| `containerName` | –                                     | (docker mode) Name for the container; a previous container with the same name is removed on `run()`.                          |
-| `network`       | –                                     | (docker mode, requires `containerName`) Docker network the QLever containers join; see [Networking](#networking-docker-mode). |
-| `dataDir`       | –                                     | Directory where downloaded data files and the index are stored. **Must be absolute in docker mode; required in remote mode.** |
-| `indexName`     | `'data'`                              | Base name of the QLever index files.                                                                                          |
-| `port`          | `7001`                                | Port the SPARQL server listens on. In docker mode, bound to the same port number on the host.                                 |
-| `downloader`    | `new LastModifiedDownloader(dataDir)` | [`Downloader`](https://github.com/ldelements/lde/tree/main/packages/distribution-downloader) used to fetch distributions.     |
-| `cacheIndex`    | `true`                                | Cache QLever indices and skip re-indexing when source data is unchanged. See [Index caching](#index-caching).                 |
-| `indexOptions`  | –                                     | Options for `qlever-index`. See [Index options](#index-options-indexoptions).                                                 |
-| `serverOptions` | –                                     | Options for `qlever-server`. See [Server options](#server-options-serveroptions).                                             |
+| Option                 | Default                               | Description                                                                                                                   |
+| ---------------------- | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `mode`                 | –                                     | `'docker'`, `'native'` or `'remote'`; see below.                                                                              |
+| `image`                | –                                     | (docker mode, required) Docker image to run QLever from, e.g. `adfreiburg/qlever:latest`.                                     |
+| `containerName`        | –                                     | (docker mode) Name for the container; a previous container with the same name is removed on `run()`.                          |
+| `network`              | –                                     | (docker mode, requires `containerName`) Docker network the QLever containers join; see [Networking](#networking-docker-mode). |
+| `dataDir`              | –                                     | Directory where downloaded data files and the index are stored. **Must be absolute in docker mode; required in remote mode.** |
+| `indexName`            | `'data'`                              | Base name of the QLever index files.                                                                                          |
+| `port`                 | `7001`                                | Port the SPARQL server listens on. In docker mode, bound to the same port number on the host.                                 |
+| `downloader`           | `new LastModifiedDownloader(dataDir)` | [`Downloader`](https://github.com/ldelements/lde/tree/main/packages/distribution-downloader) used to fetch distributions.     |
+| `cacheIndex`           | `true`                                | Cache QLever indices and skip re-indexing when source data is unchanged. See [Index caching](#index-caching).                 |
+| `indexOptions`         | –                                     | Options for `qlever-index`. See [Index options](#index-options-indexoptions).                                                 |
+| `serverOptions`        | –                                     | Options for `qlever-server`. See [Server options](#server-options-serveroptions).                                             |
+| `replaceJsonLdContext` | –                                     | Replace remote JSON-LD contexts when converting JSON-LD. See [JSON-LD contexts](#json-ld-contexts).                           |
 
 ### Docker mode
 
@@ -93,6 +94,27 @@ Compression:
 
 For native formats, the actual `qlever-index` format flag is resolved by priority: the server’s `Content-Type` response header first, then the file extension, then the declared media type as a last resort. A mismatch between these produces a warning on `ImportSuccessful.warnings`.
 
+### JSON-LD contexts
+
+Converting JSON-LD fetches every remote `@context` from its host, so a change to a live context reaches your index without a deploy of yours. Schema.org 30.1, for example, dropped every `@type` from its context: `license` and `url` values became string literals instead of IRIs, and dates plain strings instead of `schema:Date`.
+
+Pass `replaceJsonLdContext` to answer such contexts yourself. It is called with each remote context URL; return the document to use instead – shaped like what the URL serves, so `{ '@context': { … } }` – or `undefined` to fetch it as usual:
+
+```typescript
+import schemaOrgContext from './schema-org-context.json' with { type: 'json' };
+
+createQlever({
+  mode: 'docker',
+  image: 'adfreiburg/qlever:latest',
+  replaceJsonLdContext: (url) =>
+    /^https?:\/\/schema\.org\b/.test(url) ? schemaOrgContext : undefined,
+});
+```
+
+It is a function rather than a list of URLs because one context is often served from several: Schema.org serves the same one from its apex, `docs/jsonldcontext.json` and `version/<release>/`. LDE ships no replacement context of its own.
+
+The importer caches its N-Quads conversion next to the downloaded file and reuses it until the file is downloaded again, so a conversion made before you set `replaceJsonLdContext` stays in use until then. Delete the `*.preprocessed.nq` files, and the index if you [cache it](#index-caching), to convert again.
+
 An import that indexes **0 triples** – fresh or from cache – is treated as `ImportFailed`, not success.
 
 A successful import reports the QLever that built the index as `ImportSuccessful.engine`, e.g. `{ name: 'QLever', version: '9352d0' }`, with the `git-hash` from the index’s `meta-data.json` as the version. For a cached index this is the QLever that built it, which may be older than the one serving it.
@@ -101,7 +123,7 @@ A successful import reports the QLever that built the index as `ImportSuccessful
 
 `createQlever()` is a convenience; construct `Importer` and `Server` directly to supply your own task runner:
 
-- `new Importer(options: QleverImporterOptions)` – `taskRunner` (required), `indexName` (default `'data'`), `downloader` (default `new LastModifiedDownloader()`), `cacheIndex` (default `true`), and `qleverOptions` (the [index options](#index-options-indexoptions)).
+- `new Importer(options: QleverImporterOptions)` – `taskRunner` (required), `indexName` (default `'data'`), `downloader` (default `new LastModifiedDownloader()`), `cacheIndex` (default `true`), `qleverOptions` (the [index options](#index-options-indexoptions)) and `replaceJsonLdContext` (see [JSON-LD contexts](#json-ld-contexts)).
 - `new Server({ taskRunner, indexName, port, qleverOptions })` – `taskRunner` and `indexName` required, `port` default `7001`, `qleverOptions` the [server options](#server-options-serveroptions).
 
 `Server.queryEndpoint` is `http://localhost:<port>/sparql`. `Server.start()` launches `qlever-server` and blocks until the endpoint answers a probe query (via [`@lde/wait-for-sparql`](./wait-for-sparql)).

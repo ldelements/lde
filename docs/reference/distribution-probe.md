@@ -50,6 +50,15 @@ When on, the probe `GET`s the dump – **regardless of size** – and reads only
 - A gzip body that `fetch` did not decompress (a `.gz` dump, or one served with a non-standard `Content-Encoding`) is inflated in-place; a gzip that will not inflate when the **complete** compressed body was read fails as `Distribution is not valid gzip`.
 - Empty bodies (`Distribution is empty`) and bodies that parse to **zero** triples (`Distribution contains no RDF triples`) fail the probe. A deliberately truncated prefix is never mistaken for either – it is inconclusive.
 - **Reachability is settled by the response, so validation never turns a reachable dump into a failure.** If no triple surfaces within `rdfValidationBudgetMs` (default `min(timeoutMs, 2000)`, clamped to `timeoutMs`), the read is aborted and the distribution is reported reachable but unvalidated (no `failureReason`). This bounds the extra latency content validation adds on slow, generate-on-the-fly endpoints.
+- A JSON-LD body’s remote `@context` is fetched from its host. If that host is slow or unreachable, the result is likewise reachable but unvalidated. Pass `replaceJsonLdContext` to answer contexts locally: it is called with each context URL and returns the document to use instead (`{ '@context': { … } }`), or `undefined` to fetch it. A context answered this way is never fetched, so its host can no longer hold up the validation. A replacement the parser rejects, though, makes the result fail or inconclusive like any broken context:
+
+  ```typescript
+  await probe(distribution, {
+    validateRdfContent: true,
+    replaceJsonLdContext: (url) =>
+      /^https?:\/\/schema\.org\b/.test(url) ? schemaOrgContext : undefined,
+  });
+  ```
 
 ### Request headers and credentials
 

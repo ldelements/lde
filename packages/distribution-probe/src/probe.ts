@@ -5,6 +5,10 @@ import {
 } from '@lde/host-limiter';
 import { compressionMediaTypes, Distribution } from '@lde/dataset';
 import { rdfParser } from 'rdf-parse';
+import {
+  FetchDocumentLoader,
+  type IJsonLdContext,
+} from 'jsonld-context-parser';
 import { Readable } from 'node:stream';
 import { createGunzip } from 'node:zlib';
 
@@ -43,7 +47,7 @@ export interface ProbeOptions {
    * carries at least one triple. When `false` (the default) a data dump is only
    * checked for reachability (a `HEAD`, with a body-less `GET` fallback if `HEAD`
    * is unsupported) and its body is never read. When `true`, every declared-RDF
-   * dump — regardless of size — is fetched and validated; non-RDF and
+   * dump – regardless of size – is fetched and validated; non-RDF and
    * undeclared-type distributions are still reachability-only. Validation is
    * opt-in because reading a body forces a slow, generate-on-the-fly endpoint to
    * start producing its export, which a `HEAD` does not.
@@ -56,10 +60,20 @@ export interface ProbeOptions {
    * the distribution is reported reachable but unvalidated (no `failureReason`),
    * never failed. This bounds the extra latency content validation adds on slow,
    * generate-on-the-fly endpoints. Clamped to {@link timeoutMs} (a longer budget
-   * is meaningless — the request times out first). Defaults to
+   * is meaningless – the request times out first). Defaults to
    * `min(timeoutMs, 2000)`.
    */
   rdfValidationBudgetMs?: number;
+  /**
+   * Replace remote JSON-LD contexts when {@link validateRdfContent} parses a
+   * JSON-LD body. Called with the URL of each remote `@context`; return the
+   * parsed document to use instead (shaped like what the URL serves, so
+   * `{ '@context': { … } }`), or `undefined` to fetch it as usual. A matching
+   * function rather than a fixed list, because one context is often served
+   * from several URLs. A context answered here never makes the result
+   * inconclusive for a slow or unreachable context host.
+   */
+  replaceJsonLdContext?: (url: string) => object | undefined;
 }
 
 /**
@@ -114,7 +128,7 @@ const VALIDATION_TIMED_OUT = Symbol('rdf-validation-timed-out');
  * releases the connection. Reachability needs only that the endpoint answered
  * with a success status and produced bytes; a large dump must never be
  * downloaded in full within the probe's timeout budget. 256 KiB comfortably
- * surfaces the first RDF triple — the signal {@link validateBody} needs — while
+ * surfaces the first RDF triple – the signal {@link validateBody} needs – while
  * bounding the read regardless of the dump's true size, chunked transfer, or
  * compression. Applied to both the raw read and, for a gzip body, the inflated
  * output.
@@ -329,7 +343,7 @@ export async function probe(
  *
  * The per-host cap keeps the batch a polite client. Distributions sharing a host
  * (by {@link Distribution.accessUrl}) contend for the same budget, so no single
- * server is hit by the full global pool at once — the burst that trips a rate
+ * server is hit by the full global pool at once – the burst that trips a rate
  * limiter (HTTP 429). When the next queued probe’s host is saturated it is
  * skipped in favour of a later probe on a different host, so one busy host never
  * idles the global pool (no head-of-line blocking).
@@ -407,9 +421,14 @@ function describeNetworkError(error: unknown): string {
     : error.message;
 }
 
+type ResolvedProbeOptions = Required<
+  Omit<ProbeOptions, 'replaceJsonLdContext'>
+> &
+  Pick<ProbeOptions, 'replaceJsonLdContext'>;
+
 function resolveOptions(
   options: ProbeOptions | undefined,
-): Required<ProbeOptions> {
+): ResolvedProbeOptions {
   const retries = options?.retries;
   return {
     timeoutMs: options?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
@@ -429,6 +448,7 @@ function resolveOptions(
         options?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
         DEFAULT_RDF_VALIDATION_BUDGET_MS,
       ),
+    replaceJsonLdContext: options?.replaceJsonLdContext,
   };
 }
 
@@ -494,7 +514,7 @@ function acceptHeader(contentTypes: readonly string[]): string {
 async function probeSparqlEndpoint(
   url: string,
   _distribution: Distribution,
-  options: Required<ProbeOptions>,
+  options: ResolvedProbeOptions,
   authHeaders: Headers,
   start: number,
 ): Promise<SparqlProbeResult | NetworkError> {
@@ -621,15 +641,15 @@ function validateSparqlXmlResults(
 async function probeDataDump(
   url: string,
   distribution: Distribution,
-  options: Required<ProbeOptions>,
+  options: ResolvedProbeOptions,
   authHeaders: Headers,
   start: number,
 ): Promise<DataDumpProbeResult | NetworkError> {
   // Express a preference for the declared media type, but accept anything as a
   // fallback. Servers that implement RFC 9110 §12.5.1 content negotiation will
   // pick the declared type (preserving our ability to detect real Content-Type
-  // mismatches). Servers that reject any non-*/* Accept with 406 — notably
-  // Dataverse's /api/access/datafile/ endpoint (IQSS/dataverse#12410) — fall
+  // mismatches). Servers that reject any non-*/* Accept with 406 – notably
+  // Dataverse's /api/access/datafile/ endpoint (IQSS/dataverse#12410) – fall
   // back to */* and return the file unchanged.
   const headers = new Headers({
     Accept: distribution.mimeType
@@ -653,7 +673,7 @@ async function probeDataDump(
 
   // Validate body content only when asked to and the distribution declares an
   // RDF media type; otherwise the probe is reachability-only and never reads a
-  // body — which keeps it from forcing a slow, generate-on-the-fly endpoint to
+  // body – which keeps it from forcing a slow, generate-on-the-fly endpoint to
   // start producing its export.
   if (
     options.validateRdfContent &&
@@ -712,15 +732,15 @@ function finalizeDataDump(
 /**
  * GET the dump and validate that its body carries a triple, but only for as long
  * as the validation budget allows. Reachability is already settled by the prior
- * HEAD, so any shortfall — a budget that elapses before a triple, a read error,
- * a GET that cannot start — yields a `null` failureReason (reachable,
+ * HEAD, so any shortfall – a budget that elapses before a triple, a read error,
+ * a GET that cannot start – yields a `null` failureReason (reachable,
  * unvalidated), never a failure. Returns the response to draw metadata from
  * (the GET, or the HEAD when the GET could not start) alongside that reason.
  */
 async function validateDumpBody(
   url: string,
   headers: Headers,
-  options: Required<ProbeOptions>,
+  options: ResolvedProbeOptions,
   headResponse: Response,
 ): Promise<{ response: Response; failureReason: string | null }> {
   const budgetMs = Math.min(options.rdfValidationBudgetMs, options.timeoutMs);
@@ -758,6 +778,7 @@ async function validateDumpBody(
           url,
           budgetController.signal,
           truncated,
+          options.replaceJsonLdContext,
         );
   })().catch(() => null);
 
@@ -783,7 +804,7 @@ async function validateDumpBody(
  * Read at most `maxBytes` from a response body, then cancel the stream to free
  * the underlying connection. Returns the bytes read and whether the body was
  * longer than the cap (`truncated`), so the caller can tell a complete, small
- * body — whose emptiness or parse errors are meaningful — from a deliberately
+ * body – whose emptiness or parse errors are meaningful – from a deliberately
  * cut-off prefix of a large one, where only the presence of content is
  * conclusive. This is what keeps the probe from downloading a multi-hundred-MB
  * streamed dump in full just to confirm it is reachable.
@@ -800,7 +821,7 @@ async function readBoundedBody(
   let total = 0;
   let truncated = false;
   // Breaking out of `for await` cancels the stream, which stops any further
-  // download and releases the underlying connection — so a large dump is never
+  // download and releases the underlying connection – so a large dump is never
   // pulled in full once we have the prefix we need.
   for await (const chunk of stream as AsyncIterable<Uint8Array>) {
     chunks.push(chunk);
@@ -815,12 +836,12 @@ async function readBoundedBody(
 
 /**
  * Decode a bounded body to text for RDF validation, inflating it first when it
- * is a gzip stream that `fetch` did not transparently decompress — e.g. a `.gz`
+ * is a gzip stream that `fetch` did not transparently decompress – e.g. a `.gz`
  * data dump served as-is, or one labelled with a non-standard Content-Encoding
  * (`application/gzip`) that undici does not recognise as a content coding.
  * Detection is by the gzip magic on the delivered bytes, so a body that `fetch`
  * already inflated (a standard `Content-Encoding: gzip`) is passed through
- * untouched. A truncated gzip tail is expected — we only read a prefix — and
+ * untouched. A truncated gzip tail is expected – we only read a prefix – and
  * inflates cleanly up to the cut, so it is never mistaken for corruption.
  */
 async function decodeProbeBody(bounded: {
@@ -882,7 +903,7 @@ function gunzipPrefix(
     let total = 0;
     // `resolve` and `destroy` are both idempotent, so the first outcome wins and
     // any later event (e.g. a premature-close error emitted by `destroy`) is a
-    // harmless no-op — no `settled` guard needed.
+    // harmless no-op – no `settled` guard needed.
     function finish(outcome: { truncated: boolean; corrupt: boolean }): void {
       gunzip.destroy();
       resolve({ bytes: Buffer.concat(chunks), ...outcome });
@@ -903,8 +924,8 @@ function gunzipPrefix(
 }
 
 // The RDF serializations whose bodies we parse to confirm they carry triples. A
-// non-empty body in one of these formats that yields zero triples — an empty
-// graph such as a JSON-LD `{}`, an `<rdf:RDF/>`, or prefix-only Turtle — is a
+// non-empty body in one of these formats that yields zero triples – an empty
+// graph such as a JSON-LD `{}`, an `<rdf:RDF/>`, or prefix-only Turtle – is a
 // faulty distribution, not a usable one, so it must be caught here. Other
 // content types (CSV, HTML, …) are left untouched: the probe is not the place
 // to assert what a non-RDF body should contain.
@@ -922,7 +943,7 @@ const rdfContentTypes = [
 // The line/statement-oriented formats (N-Triples, N-Quads, Turtle, TriG, N3) and
 // SAX-based RDF/XML all yield their first triple from the opening chunk, but
 // JSON-LD is a single JSON value whose parser emits nothing until the whole
-// document closes — a truncated JSON-LD body parses to an ‘unclosed document’
+// document closes – a truncated JSON-LD body parses to an ‘unclosed document’
 // error, never a triple. So a truncated body in one of these can only be
 // validated if it happened to fit the read cap in full; beyond that it is
 // inconclusive, and we must not download it in full to find out.
@@ -934,16 +955,17 @@ async function validateBody(
   baseIRI: string,
   budgetSignal: AbortSignal,
   truncated: boolean,
+  replaceJsonLdContext: ProbeOptions['replaceJsonLdContext'],
 ): Promise<string | null> {
   if (body.length === 0) {
     // A complete, empty body is a faulty distribution; an empty *prefix* (a
     // truncated read that yielded no bytes, e.g. a corrupt gzip header) is
-    // inconclusive — the endpoint answered, we just could not validate content.
+    // inconclusive – the endpoint answered, we just could not validate content.
     return truncated ? null : 'Distribution is empty';
   }
 
   // Media types are case-insensitive (RFC 9110 §8.3.1), so normalise before
-  // matching the lower-case allow-list — a server sending `Application/LD+JSON`
+  // matching the lower-case allow-list – a server sending `Application/LD+JSON`
   // must still have its body validated.
   const serialization = contentType?.split(';')[0].trim().toLowerCase();
   if (!serialization || !rdfContentTypes.includes(serialization)) {
@@ -952,7 +974,7 @@ async function validateBody(
 
   if (truncated && nonStreamableRdfContentTypes.includes(serialization)) {
     // A bounded prefix of a non-streamable serialization (JSON-LD) can never
-    // yield a triple, so skip the doomed parse and report it inconclusive — only
+    // yield a triple, so skip the doomed parse and report it inconclusive – only
     // a complete document, small enough to fit the read cap, can be validated.
     return null;
   }
@@ -963,6 +985,7 @@ async function validateBody(
     baseIRI,
     budgetSignal,
     truncated,
+    replaceJsonLdContext,
   );
   switch (outcome.type) {
     case 'empty':
@@ -970,8 +993,8 @@ async function validateBody(
     case 'parseError':
       return outcome.message;
     // 'hasTriples' proves content. 'inconclusive' means the parse timed out or a
-    // remote JSON-LD @context could not be loaded — a third-party hiccup, not
-    // evidence the distribution is faulty — so neither is reported as a failure.
+    // remote JSON-LD @context could not be loaded – a third-party hiccup, not
+    // evidence the distribution is faulty – so neither is reported as a failure.
     default:
       return null;
   }
@@ -995,7 +1018,9 @@ type RdfBodyOutcome =
  * host’s failure. Sharing the caller’s single budget (rather than starting a
  * second, identical timer) keeps that timeout deterministic: it fires once, when
  * the budget elapses, instead of leaving an orphan timer to settle on its own
- * schedule. `baseIRI` resolves any relative IRIs in the document.
+ * schedule. `baseIRI` resolves any relative IRIs in the document. A context
+ * that `replaceJsonLdContext` answers is never fetched, so its host cannot
+ * stall the parse.
  *
  * When `truncated` is true the body is only a bounded prefix of a larger one, so
  * only finding a triple ('hasTriples') is conclusive: a parse error at the cut
@@ -1008,11 +1033,13 @@ function classifyRdfBody(
   baseIRI: string,
   budgetSignal: AbortSignal,
   truncated: boolean,
+  replaceJsonLdContext: ProbeOptions['replaceJsonLdContext'],
 ): Promise<RdfBodyOutcome> {
   return new Promise<RdfBodyOutcome>((resolve) => {
     const quads = rdfParser.parse(Readable.from([body]), {
       contentType,
       baseIRI,
+      ...jsonLdParseContext(replaceJsonLdContext, budgetSignal),
     });
     const onBudgetElapsed = (): void => settle({ type: 'inconclusive' });
     let settled = false;
@@ -1051,6 +1078,30 @@ function classifyRdfBody(
 }
 
 /**
+ * `rdf-parse` context that answers replaced JSON-LD contexts locally and
+ * fetches the rest. rdf-parse only routes context requests through a document
+ * loader set under this Comunica context key. Empty without a replacement, so
+ * the parser keeps its own loader. Context fetches stop when `budgetSignal`
+ * aborts, so none outlive the probe.
+ */
+function jsonLdParseContext(
+  replaceJsonLdContext: ProbeOptions['replaceJsonLdContext'],
+  budgetSignal: AbortSignal,
+) {
+  if (replaceJsonLdContext === undefined) return {};
+  const fetchLoader = new FetchDocumentLoader((url, init) =>
+    fetch(url, { ...init, signal: budgetSignal }),
+  );
+  return {
+    '@comunica/actor-rdf-parse-jsonld:documentLoader': {
+      load: async (url: string): Promise<IJsonLdContext> =>
+        (replaceJsonLdContext(url) as IJsonLdContext | undefined) ??
+        fetchLoader.load(url),
+    },
+  };
+}
+
+/**
  * Whether a parse error is the RDF parser failing to load a remote JSON-LD
  * `@context` (an unreachable or broken third-party context host) rather than a
  * defect in the distribution body itself.
@@ -1066,8 +1117,8 @@ function isRemoteContextError(error: Error): boolean {
  * The declared compressed form (e.g. `application/n-quads+gzip`) is the expected
  * answer for a `+gzip`/`+zip` distribution, since the body is a gzip/zip archive
  * served as-is. The bare media type (`application/n-quads`) is also accepted as a
- * lenient fallback — the RDF serialization is the same and only the compression
- * wrapper is absent — so a server that serves the uncompressed representation is
+ * lenient fallback – the RDF serialization is the same and only the compression
+ * wrapper is absent – so a server that serves the uncompressed representation is
  * not flagged. A different compression suffix or a different base serialization is
  * still a genuine mismatch. The registry strips the suffix into a separate compress
  * format on ingest, so comparing against {@link Distribution.mimeType} alone would

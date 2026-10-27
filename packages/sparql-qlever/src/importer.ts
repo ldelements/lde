@@ -30,6 +30,15 @@ export interface QleverImporterOptions extends ImporterOptions {
   /** @default 'data' */
   indexName?: string;
   qleverOptions?: QleverIndexOptions;
+  /**
+   * Replace remote JSON-LD contexts when converting a JSON-LD distribution.
+   * Called with the URL of each remote `@context`; return the parsed document
+   * to use instead (shaped like what the URL serves, so
+   * `{ '@context': { … } }`), or `undefined` to fetch it as usual. A matching
+   * function rather than a fixed list, because one context is often served
+   * from several URLs.
+   */
+  replaceJsonLdContext?: (url: string) => object | undefined;
 }
 
 /**
@@ -37,9 +46,12 @@ export interface QleverImporterOptions extends ImporterOptions {
  *
  * - Use the QLever CLI because the Graph Store Protocol is not parallelized.
  */
-type ResolvedOptions = Required<QleverImporterOptions> & {
-  qleverOptions: Required<QleverIndexOptions>;
-};
+type ResolvedOptions = Required<
+  Omit<QleverImporterOptions, 'replaceJsonLdContext'>
+> &
+  Pick<QleverImporterOptions, 'replaceJsonLdContext'> & {
+    qleverOptions: Required<QleverIndexOptions>;
+  };
 
 export class Importer implements ImporterInterface {
   private readonly options: ResolvedOptions;
@@ -124,7 +136,11 @@ export class Importer implements ImporterInterface {
     let format: fileFormat;
     const warnings: string[] = [];
     if (needsPreprocessing(distribution)) {
-      const result = await preprocess(localFile, distribution);
+      const result = await preprocess(
+        localFile,
+        distribution,
+        this.options.replaceJsonLdContext,
+      );
       indexFile = result.path;
       format = result.format;
       warnings.push(...result.warnings);

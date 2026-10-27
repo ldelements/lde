@@ -1,5 +1,9 @@
 import { Distribution } from '@lde/dataset';
 import { rdfParser } from 'rdf-parse';
+import {
+  FetchDocumentLoader,
+  type IJsonLdContext,
+} from 'jsonld-context-parser';
 import { rdfSerializer } from 'rdf-serialize';
 import { createGunzip } from 'node:zlib';
 import { createReadStream, createWriteStream, WriteStream } from 'node:fs';
@@ -33,6 +37,12 @@ export interface PreprocessResult {
 }
 
 /**
+ * Called with the URL of each remote JSON-LD `@context`; returns the document
+ * to use instead, or `undefined` to fetch it.
+ */
+type ReplaceJsonLdContext = (url: string) => object | undefined;
+
+/**
  * Whether a distribution needs Node-side preprocessing before `qlever-index`
  * can read it.
  *
@@ -61,11 +71,16 @@ export function needsPreprocessing(distribution: Distribution): boolean {
  * (detected from the file’s magic bytes, not from declared metadata) and zip
  * containers (folds every parseable entry into the output stream in order).
  *
- * Cached: if the output is newer than the input, it is reused as-is.
+ * `replaceJsonLdContext` answers remote JSON-LD contexts locally; see
+ * {@link ReplaceJsonLdContext}.
+ *
+ * Cached: if the output is newer than the input, it is reused as-is – also
+ * when it was converted without the current `replaceJsonLdContext`.
  */
 export async function preprocess(
   localFile: string,
   distribution: Distribution,
+  replaceJsonLdContext?: ReplaceJsonLdContext,
 ): Promise<PreprocessResult> {
   const contentType = distribution.mimeType;
   const label =
@@ -85,9 +100,21 @@ export async function preprocess(
   const warnings: string[] = [];
 
   if (distribution.compressMimeType === ZIP_MIME) {
-    await streamRdfZip(localFile, outputFile, contentType, label, warnings);
+    await streamRdfZip(
+      localFile,
+      outputFile,
+      contentType,
+      label,
+      warnings,
+      replaceJsonLdContext,
+    );
   } else {
-    await streamRdfFile(localFile, outputFile, contentType);
+    await streamRdfFile(
+      localFile,
+      outputFile,
+      contentType,
+      replaceJsonLdContext,
+    );
   }
 
   return { path: outputFile, format: 'nq', warnings };
@@ -117,13 +144,37 @@ async function pipeRdfToWritable(
   input: Readable,
   output: WriteStream,
   contentType: string,
+  replaceJsonLdContext: ReplaceJsonLdContext | undefined,
 ): Promise<void> {
-  const quads = rdfParser.parse(input, { contentType });
+  const quads = rdfParser.parse(input, {
+    contentType,
+    ...jsonLdParseContext(replaceJsonLdContext),
+  });
   const bytes = rdfSerializer.serialize(quads, {
     contentType: 'application/n-quads',
   }) as unknown as Readable;
   bytes.pipe(output, { end: false });
   await finished(bytes);
+}
+
+/**
+ * `rdf-parse` context that answers replaced JSON-LD contexts locally and
+ * fetches the rest. rdf-parse only routes context requests through a document
+ * loader set under this Comunica context key. Empty without a replacement, so
+ * the parser keeps its own loader.
+ */
+function jsonLdParseContext(
+  replaceJsonLdContext: ReplaceJsonLdContext | undefined,
+) {
+  if (replaceJsonLdContext === undefined) return {};
+  const fetchLoader = new FetchDocumentLoader(fetch);
+  return {
+    '@comunica/actor-rdf-parse-jsonld:documentLoader': {
+      load: async (url: string): Promise<IJsonLdContext> =>
+        (replaceJsonLdContext(url) as IJsonLdContext | undefined) ??
+        fetchLoader.load(url),
+    },
+  };
 }
 
 async function closeWritable(output: WriteStream): Promise<void> {
@@ -138,6 +189,7 @@ async function streamRdfFile(
   localFile: string,
   outputFile: string,
   contentType: string,
+  replaceJsonLdContext: ReplaceJsonLdContext | undefined,
 ): Promise<void> {
   const source = createReadStream(localFile);
   const input = (await isGzipFile(localFile))
@@ -145,7 +197,7 @@ async function streamRdfFile(
     : source;
   const output = createWriteStream(outputFile);
   try {
-    await pipeRdfToWritable(input, output, contentType);
+    await pipeRdfToWritable(input, output, contentType, replaceJsonLdContext);
   } finally {
     await closeWritable(output);
   }
@@ -186,6 +238,7 @@ async function streamRdfZip(
   contentType: string,
   label: string,
   warnings: string[],
+  replaceJsonLdContext: ReplaceJsonLdContext | undefined,
 ): Promise<void> {
   const zip = await openZip(zipFile, { lazyEntries: true });
   const output = createWriteStream(outputFile);
@@ -203,7 +256,12 @@ async function streamRdfZip(
           try {
             const stream = await openZipEntry(zip, entry);
             try {
-              await pipeRdfToWritable(stream, output, contentType);
+              await pipeRdfToWritable(
+                stream,
+                output,
+                contentType,
+                replaceJsonLdContext,
+              );
               entriesProcessed++;
             } finally {
               // yauzl lazyEntries won't advance until this stream is released.

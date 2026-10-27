@@ -809,7 +809,7 @@ describe('probe', () => {
     it('does not flag a truncated prefix that yields no triple', async () => {
       // A body larger than the cap made only of comment lines: the parser reaches
       // the end of the prefix with no triple, and the read is truncated, so the
-      // outcome is inconclusive — never an ‘empty distribution’ failure.
+      // outcome is inconclusive – never an ‘empty distribution’ failure.
       headThenGet(
         new Response(
           '# a comment line that carries no triple\n'.repeat(8_000),
@@ -859,7 +859,7 @@ describe('probe', () => {
     it('does not validate a truncated JSON-LD body', async () => {
       // JSON-LD is not streamable: a truncated prefix yields no triple, only an
       // ‘unclosed document’ error. A body larger than the cap is therefore
-      // inconclusive — reachable, never a parse-error failure — and the doomed
+      // inconclusive – reachable, never a parse-error failure – and the doomed
       // parse is skipped entirely.
       const body =
         '{"@context":{"ex":"http://example.org/"},"@graph":[' +
@@ -885,8 +885,8 @@ describe('probe', () => {
     it('does not flag a truncated gzip prefix that inflated nothing', async () => {
       // A gzip whose header carries an (unterminated) FNAME field larger than the
       // read cap: the compressed stream is cut mid-header, so nothing inflates.
-      // Because we cut it ourselves — rather than holding a complete, broken body
-      // — it is a truncated prefix (inconclusive), not a corrupt distribution.
+      // Because we cut it ourselves – rather than holding a complete, broken body
+      // – it is a truncated prefix (inconclusive), not a corrupt distribution.
       const header = Buffer.from([0x1f, 0x8b, 0x08, 0x08, 0, 0, 0, 0, 0, 3]); // FLG=FNAME
       const unterminatedFilename = Buffer.alloc(300 * 1024, 0x41); // 'A', no NUL
       const body = Buffer.concat([header, unterminatedFilename]);
@@ -912,7 +912,7 @@ describe('probe', () => {
     it('marks a complete corrupt gzip body as a failure', async () => {
       // Valid gzip magic and header, then an invalid deflate stream, delivered in
       // full (well under the read cap). We hold the whole compressed body and it
-      // still will not inflate, so the distribution is faulty — not merely
+      // still will not inflate, so the distribution is faulty – not merely
       // inconclusive the way a prefix we cut ourselves would be.
       const corrupt = Buffer.from([
         0x1f, 0x8b, 0x08, 0x00, 0, 0, 0, 0, 0, 3, 9, 9, 9, 9,
@@ -958,7 +958,7 @@ describe('probe', () => {
     it('reports inconclusive when the validation budget elapses', async () => {
       // A body that never delivers a byte: reachability is settled by the HEAD,
       // so once the budget runs out the read is abandoned and the distribution is
-      // reachable but unvalidated — never failed.
+      // reachable but unvalidated – never failed.
       const hangingBody = new ReadableStream<Uint8Array>(); // never enqueues
       vi.mocked(fetch)
         .mockResolvedValueOnce(new Response('', { status: 200 })) // HEAD
@@ -1028,7 +1028,7 @@ describe('probe', () => {
     });
 
     it('does not parse a body served with a non-RDF content type', async () => {
-      // Declared RDF, but the server answers text/plain — there is nothing the
+      // Declared RDF, but the server answers text/plain – there is nothing the
       // RDF parser can validate, so the probe stays a (warning-only) success.
       vi.mocked(fetch)
         .mockResolvedValueOnce(new Response('', { status: 200 })) // HEAD
@@ -1206,6 +1206,69 @@ describe('probe', () => {
         server.closeAllConnections?.();
         server.close();
       }
+    });
+
+    describe('replaceJsonLdContext', () => {
+      // The served context defines no terms, so the body yields no triples
+      // unless a replacement defines `name`.
+      async function startEmptyContextServer() {
+        return startServer((request, response) => {
+          response.setHeader('Content-Type', 'application/ld+json');
+          if (request.url === '/ctx') {
+            response.end(JSON.stringify({ '@context': {} }));
+            return;
+          }
+          response.end(
+            JSON.stringify({
+              '@context': `http://${request.headers.host}/ctx`,
+              '@id': 'http://ex/s',
+              name: 'value',
+            }),
+          );
+        });
+      }
+
+      it('parses the body with the replacement context', async () => {
+        const { server, origin } = await startEmptyContextServer();
+        const replaceJsonLdContext = vi.fn((url: string) =>
+          url === `${origin}/ctx`
+            ? { '@context': { name: 'http://ex/name' } }
+            : undefined,
+        );
+        try {
+          const result = await probe(
+            new Distribution(
+              new URL(`${origin}/data.jsonld`),
+              'application/ld+json',
+            ),
+            { ...VALIDATE_RDF, replaceJsonLdContext },
+          );
+          const dumpResult = result as DataDumpProbeResult;
+          expect(dumpResult.failureReason).toBeNull();
+          expect(replaceJsonLdContext).toHaveBeenCalledWith(`${origin}/ctx`);
+        } finally {
+          server.close();
+        }
+      });
+
+      it('fetches a context the replacement does not answer', async () => {
+        const { server, origin } = await startEmptyContextServer();
+        try {
+          const result = await probe(
+            new Distribution(
+              new URL(`${origin}/data.jsonld`),
+              'application/ld+json',
+            ),
+            { ...VALIDATE_RDF, replaceJsonLdContext: () => undefined },
+          );
+          const dumpResult = result as DataDumpProbeResult;
+          expect(dumpResult.failureReason).toBe(
+            'Distribution contains no RDF triples',
+          );
+        } finally {
+          server.close();
+        }
+      });
     });
   });
 

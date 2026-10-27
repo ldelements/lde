@@ -26,6 +26,7 @@
   "dependencies": {
     "@lde/dataset": "^0.8.0",
     "@lde/host-limiter": "^0.1.0",
+    "jsonld-context-parser": "^2.4.0",
     "rdf-parse": "^5.0.0",
     "tslib": "^2.3.0"
   }

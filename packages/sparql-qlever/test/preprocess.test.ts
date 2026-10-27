@@ -1,8 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Distribution } from '@lde/dataset';
 import { join, resolve } from 'node:path';
-import { copyFile, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { copyFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { needsPreprocessing, preprocess } from '../src/preprocess.js';
 
 function makeDistribution(mediaType: string, compressFormat?: string) {
@@ -125,6 +127,75 @@ describe('preprocess', () => {
     expect(nquads).toContain('Een verhaal uit Utrecht');
     // N-Quads triples end with " ." on each line.
     expect(nquads.trim().split('\n').length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('parses JSON-LD with a replaced remote context', async () => {
+    const file = join(tempDir, 'data.jsonld');
+    await writeFile(
+      file,
+      JSON.stringify({
+        '@context': 'https://schema.org',
+        '@id': 'https://example.org/dataset',
+        license: 'https://creativecommons.org/publicdomain/zero/1.0/',
+      }),
+    );
+    const replaceJsonLdContext = vi.fn((url: string) =>
+      url.startsWith('https://schema.org')
+        ? {
+            '@context': {
+              '@vocab': 'https://schema.org/',
+              license: { '@type': '@id' },
+            },
+          }
+        : undefined,
+    );
+
+    const result = await preprocess(
+      file,
+      makeDistribution('application/ld+json'),
+      replaceJsonLdContext,
+    );
+
+    const nquads = await readFile(result.path, 'utf-8');
+    expect(nquads).toContain(
+      '<https://example.org/dataset> <https://schema.org/license> <https://creativecommons.org/publicdomain/zero/1.0/>',
+    );
+    expect(replaceJsonLdContext).toHaveBeenCalledWith('https://schema.org');
+  });
+
+  it('fetches a remote context the replacement does not answer', async () => {
+    const server = createServer((_request, response) => {
+      response.setHeader('Content-Type', 'application/ld+json');
+      response.end(
+        JSON.stringify({ '@context': { name: 'https://example.org/name' } }),
+      );
+    });
+    await new Promise<void>((resolve) =>
+      server.listen(0, '127.0.0.1', resolve),
+    );
+    const { port } = server.address() as AddressInfo;
+    const file = join(tempDir, 'data.jsonld');
+    await writeFile(
+      file,
+      JSON.stringify({
+        '@context': `http://127.0.0.1:${port}/context.jsonld`,
+        '@id': 'https://example.org/thing',
+        name: 'Fetched',
+      }),
+    );
+
+    try {
+      const result = await preprocess(
+        file,
+        makeDistribution('application/ld+json'),
+        () => undefined,
+      );
+
+      const nquads = await readFile(result.path, 'utf-8');
+      expect(nquads).toContain('<https://example.org/name> "Fetched"');
+    } finally {
+      server.close();
+    }
   });
 
   it('converts plain RDF/XML to N-Quads', async () => {

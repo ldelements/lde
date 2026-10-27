@@ -6,7 +6,11 @@ import {
   Downloader,
   LastModifiedDownloader,
 } from '@lde/distribution-downloader';
-import { Importer, QleverIndexOptions } from './importer.js';
+import {
+  Importer,
+  QleverImporterOptions,
+  QleverIndexOptions,
+} from './importer.js';
 import { QleverServerOptions, Server } from './server.js';
 
 export type QleverOptions = {
@@ -20,6 +24,8 @@ export type QleverOptions = {
   cacheIndex?: boolean;
   /** Options for `qlever-index` (index building). */
   indexOptions?: QleverIndexOptions;
+  /** See {@link QleverImporterOptions.replaceJsonLdContext}. */
+  replaceJsonLdContext?: QleverImporterOptions['replaceJsonLdContext'];
   /** Options for `qlever-server` (query processing). */
   serverOptions?: QleverServerOptions;
 } & (
@@ -94,6 +100,7 @@ export function createQlever(options: QleverOptions) {
         options.downloader ?? new LastModifiedDownloader(options.dataDir),
       cacheIndex: options.cacheIndex,
       qleverOptions: options.indexOptions,
+      replaceJsonLdContext: options.replaceJsonLdContext,
     }),
     server: new Server({
       taskRunner,
