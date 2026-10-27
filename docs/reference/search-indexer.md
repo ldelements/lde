@@ -290,6 +290,29 @@ candidates rather than repairing them, attach it to **every type that references
 the keyed one** as well, or supply them upstream (in the import, or in a reader
 of your own) so both queries see them.
 
+## Replace JSON-LD contexts
+
+The QLever import path converts JSON-LD distributions to N-Quads, fetching
+every remote `@context` as it goes. To answer some contexts yourself – for
+example Schema.org’s, whose live context no longer types `license` or dates –
+pass `replaceJsonLdContext`. It is called with each context URL and returns the
+document to use instead, or `undefined` to fetch it:
+
+```ts
+import ndeContext from './nde-context.json' with { type: 'json' };
+
+const pipeline = await createSearchIndexer(configFromEnvironment(process.env), {
+  replaceJsonLdContext: (url) =>
+    new URL(url).host === 'schema.org' ? ndeContext : undefined,
+});
+```
+
+It has no effect without a configured QLever. When composing the pipeline
+yourself, pass the same function as the second argument of
+`distributionResolverFrom`. See
+[JSON-LD contexts](./sparql-qlever#json-ld-contexts) for the details, including
+which cached conversions it does not reach.
+
 ## Compose it yourself
 
 Reach for this only when the deployment needs something `createSearchIndexer`
@@ -301,9 +324,9 @@ The three pieces `createSearchIndexer` composes are exported, so this route
 costs the bespoke part rather than a copy of the wiring:
 
 - `datasetSelectorFrom(config)` – the registry-backed dataset selection;
-- `distributionResolverFrom(config)` – the QLever import path when
-  `QLEVER_MODE` or `QLEVER_IMAGE` is set, `undefined` otherwise (the
-  pipeline’s endpoint-only default);
+- `distributionResolverFrom(config, replaceJsonLdContext?)` – the QLever
+  import path when `QLEVER_MODE` or `QLEVER_IMAGE` is set, `undefined`
+  otherwise (the pipeline’s endpoint-only default);
 - `writerFactoryFrom(client, config)` – the rebuild writer per root type, its
   collection named and prefixed as configured and its untagged text stemmed in
   `DEFAULT_LOCALE`.

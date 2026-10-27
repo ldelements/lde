@@ -21,7 +21,7 @@ import {
   deriveCollectionName,
   InPlaceRebuild,
 } from '@lde/search-typesense';
-import { createQlever } from '@lde/sparql-qlever';
+import { createQlever, type QleverOptions } from '@lde/sparql-qlever';
 import type { Client } from 'typesense';
 import type { IndexerConfig } from './config.js';
 
@@ -75,17 +75,24 @@ export function writerFactoryFrom(
  * pipeline-controlled QLever – a sibling container over the mounted Docker
  * socket, or a sidecar in the indexer’s pod; without one, `undefined`,
  * leaving the pipeline its endpoint-only default (a bare
- * {@link SparqlDistributionResolver}).
+ * {@link SparqlDistributionResolver}). `replaceJsonLdContext` answers remote
+ * JSON-LD contexts when the import converts a JSON-LD distribution, as
+ * `SearchIndexerExtensions.replaceJsonLdContext` describes.
  */
 export function distributionResolverFrom(
   config: IndexerConfig,
+  replaceJsonLdContext?: QleverOptions['replaceJsonLdContext'],
 ): DistributionResolver | undefined {
   if (!config.qlever) {
     return undefined;
   }
   const { importer, server } =
     config.qlever.mode === 'remote'
-      ? createQlever({ mode: 'remote', dataDir: config.qlever.dataDir })
+      ? createQlever({
+          mode: 'remote',
+          dataDir: config.qlever.dataDir,
+          replaceJsonLdContext,
+        })
       : config.qlever.network
         ? createQlever({
             mode: 'docker',
@@ -97,11 +104,13 @@ export function distributionResolverFrom(
             // indexers sharing one network would still collide, so run at most
             // one indexer per network.
             containerName: `qlever-${config.qlever.network}`,
+            replaceJsonLdContext,
           })
         : createQlever({
             mode: 'docker',
             image: config.qlever.image,
             dataDir: config.qlever.dataDir,
+            replaceJsonLdContext,
           });
   return new ImportResolver(new SparqlDistributionResolver(), {
     importer,

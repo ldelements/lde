@@ -10,6 +10,7 @@ import {
   searchIndexerPipeline,
   type TypedSearchDocument,
 } from '@lde/search-pipeline';
+import type { QleverOptions } from '@lde/sparql-qlever';
 import { Client } from 'typesense';
 import {
   datasetSelectorFrom,
@@ -40,6 +41,14 @@ export interface SearchIndexerExtensions {
       QuadTransform<ReaderContext> | QuadTransform<ReaderContext>[]
     >
   >;
+  /**
+   * Replace remote JSON-LD contexts when the QLever import path converts a
+   * JSON-LD distribution. Called with the URL of each remote `@context`;
+   * return the document to use instead (`{ '@context': { … } }`), or
+   * `undefined` to fetch it as usual. Has no effect without a configured
+   * QLever.
+   */
+  readonly replaceJsonLdContext?: QleverOptions['replaceJsonLdContext'];
 }
 
 /**
@@ -73,7 +82,10 @@ export async function createSearchIndexer(
   return searchIndexerPipeline({
     schema,
     datasets: datasetSelectorFrom(config),
-    distributionResolver: distributionResolverFrom(config),
+    distributionResolver: distributionResolverFrom(
+      config,
+      extensions.replaceJsonLdContext,
+    ),
     writerFor: writerFactoryFrom(client, config),
     registryTypes:
       config.registryRootTypes.length > 0
