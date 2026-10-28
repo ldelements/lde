@@ -113,7 +113,7 @@ GraphQL field names are the field model `name` verbatim (declare camelCase).
 
 - **Output type** – one field per `output` field: `text`+`localized` → `[LanguageString!]!` (best-first; `[0].language` = served language, the per-field `Content-Language`);
   `keyword` array → `[String!]!`, scalar → `String`; `integer` → `Int` (signed 32-bit);
-  `number` → `Float` (exact integers to 2^53); `date` → `String` (ISO 8601); `boolean` →
+  `number` → `Float` (exact integers to 2^53); `date` → `String` (ISO 8601, or an `xsd:gYear` for a deep-time year beyond what `Date` can represent); `boolean` →
   `Boolean!` (absent = false); `reference` → see below. Nullability from `array` / required /
   optional; `id` is `String!`. A magnitude that can exceed 32 bits (a 64-bit count or byte size
   – e.g. DR’s `size`) is `number` → `Float`, since `Int` would overflow; a `Long`/`BigInt`
