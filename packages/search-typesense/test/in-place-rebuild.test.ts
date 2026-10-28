@@ -3,7 +3,7 @@ import type { Client } from 'typesense';
 import type { SearchType } from '@lde/search';
 import { Dataset } from '@lde/dataset';
 import { InPlaceRebuild } from '../src/in-place-rebuild.js';
-import { RebuildAlreadyRunning } from '../src/lock.js';
+import { RebuildAlreadyRunning } from '@lde/search';
 import { TypesenseContainer } from './typesense-container.js';
 import { currentRunId, makeRunContext, seedLock, stream } from './helpers.js';
 

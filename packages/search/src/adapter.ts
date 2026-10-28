@@ -75,3 +75,4 @@ export type {
   ResolvedPath,
   PathFailure,
 } from './query.js';
+export type { RebuildRequests } from './rebuild.js';

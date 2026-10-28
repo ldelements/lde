@@ -506,8 +506,8 @@ Rebuilds are **single-flight per index**: `openRun` takes a lock (a marker
 document in a `rebuild_locks` collection, created on demand) via Typesense’s
 atomic create, so concurrent runs across pods never rebuild the same index at
 once – a run opened while another holds the lock throws
-`RebuildAlreadyRunning` (catch it to treat a concurrent rebuild as a graceful
-skip). This keeps blue/green safe under replication: without it, two
+`RebuildAlreadyRunning` from `@lde/search` (catch it to treat a concurrent
+rebuild as a graceful skip). This keeps blue/green safe under replication: without it, two
 same-millisecond rebuilds would collide on the versioned collection name and
 one would delete the other’s in-flight build.
 
@@ -519,13 +519,60 @@ Limitations to design around:
   work and a transient orphaned collection) and in-place upserts are
   idempotent.
 - **Single-flight, not coalescing.** A run refused with `RebuildAlreadyRunning`
-  is _not_ queued. If you must capture state that changed mid-build,
-  re-trigger after the running rebuild finishes.
-- **Lock TTL.** A rebuild running longer than `lockTtlMs` (default 10 minutes)
-  can be reclaimed by another caller and run concurrently; size the TTL above
-  your longest rebuild.
+  is _not_ queued. To capture a change made mid-build, request the rebuild
+  through [`requestRebuild`](#requesting-a-rebuild) instead of running it
+  directly.
+- **Lock TTL.** Nothing refreshes a held lock, so a rebuild running longer
+  than `lockTtlMs` (default 10 minutes) can be reclaimed by another caller and
+  run concurrently; size the TTL above your longest rebuild.
 - **Membership-sweep cap.** The in-place membership sweep enumerates distinct
   sources via a single facet, capped at `maxSweepableSources` (default
   10 000); beyond that the commit throws rather than sweeping blind. Raise the
   option (up to the engine’s `max_facet_values` limit) before an index nears
   the cap so it stays a tunable guard rather than a hard wall.
+
+### Requesting a rebuild
+
+`requestRebuild` from `@lde/search` hands a request to the run holding the
+lock instead of dropping it. `TypesenseRebuildRequests` records the requests it
+needs: one document per index in a `rebuild_requests` collection, created on
+demand. Name it after the index the writer locks on, its `collectionName`:
+
+```ts
+import { requestRebuild } from '@lde/search';
+import {
+  BlueGreenRebuild,
+  TypesenseRebuildRequests,
+} from '@lde/search-typesense';
+
+const writer = new BlueGreenRebuild(client, DATASET_TYPE);
+const requests = new TypesenseRebuildRequests(client, writer.collectionName);
+
+// One full run: open (refused while another run holds the lock), write, commit.
+// `source` is the Dataset the documents come from.
+async function rebuild(): Promise<void> {
+  const startedAt = new Date().toISOString();
+  const run = await writer.openRun({
+    runId: startedAt,
+    startedAt,
+    selectedSources: () => [],
+  });
+  try {
+    await run.write(source, readDocuments());
+    await run.commit();
+  } catch (error) {
+    await run.abort(error);
+    throw error;
+  }
+}
+
+// After every write to the source. Resolves once the rebuild ran, or once the
+// run holding the lock has the request.
+await requestRebuild(rebuild, requests);
+```
+
+Every rebuild of the index has to go through `requestRebuild`: a run started
+directly never reads the requests, so a request handed to it is lost.
+
+The requests live apart from `rebuild_locks`, because releasing a lock deletes
+its document and a request must outlive the release.

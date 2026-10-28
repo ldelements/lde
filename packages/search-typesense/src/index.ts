@@ -2,7 +2,7 @@ export { BlueGreenRebuild } from './blue-green-rebuild.js';
 export type { BlueGreenRebuildOptions } from './blue-green-rebuild.js';
 export { InPlaceRebuild } from './in-place-rebuild.js';
 export type { InPlaceRebuildOptions } from './in-place-rebuild.js';
-export { RebuildAlreadyRunning } from './lock.js';
+export { TypesenseRebuildRequests } from './rebuild-requests.js';
 export { buildCollectionDefinition } from './collection-definition.js';
 export type { CollectionDefinitionOptions } from './collection-definition.js';
 export { deriveCollectionName } from './collection-name.js';

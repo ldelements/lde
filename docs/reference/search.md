@@ -66,8 +66,9 @@ Exports are stratified by audience:
 
 - **`@lde/search`** – the authoring surface: `defineSearchType`,
   `searchSchema`, `projectRoots`, validation, every model/query/result type,
-  and `isoToUnixSeconds` / `unixSecondsToIso` (the `date` storage codec, for a
-  value the projection does not convert itself).
+  `isoToUnixSeconds` / `unixSecondsToIso` (the `date` storage codec, for a
+  value the projection does not convert itself), and
+  [`requestRebuild`](#rebuild-requests) / `RebuildAlreadyRunning`.
 - **`@lde/search/adapter`** – plumbing for engine adapters and API surfaces:
   - `assertTypeInSchema` – the port membership guard (the exact declaration
     object must be in the schema);
@@ -105,7 +106,9 @@ Exports are stratified by audience:
     (the port’s always-on guard);
   - `pageForOffset` – the 1-based page an offset falls on (`limit: 0` pins
     to 1);
-  - `isoToUnixSeconds`, `unixSecondsToIso` – the `date` storage codec.
+  - `isoToUnixSeconds`, `unixSecondsToIso` – the `date` storage codec;
+  - `RebuildRequests` – the store an engine port records
+    [rebuild requests](#rebuild-requests) in.
 - **`@lde/search/module`** – `loadSchemaModule`, the Node-only loader for a
   mounted schema-declaration module (an `.mjs` default-exporting declarations
   as plain data). The one loader both the indexer image and the served-API
@@ -1491,6 +1494,37 @@ captured `as const satisfies SearchType`) and composed with `searchSchema()`;
 a plain `: SearchSchema` annotation widens gracefully to string keys.
 `FacetFieldsOf`/`OutputFieldsOf` are exported for annotating your own
 signatures, and `engine.schema` exposes the bound declaration for routing.
+
+## Rebuild requests
+
+An engine port’s rebuild writers are single-flight per index across pods: a
+run opened while another holds the index’s lock throws `RebuildAlreadyRunning`.
+A rebuild started for a change that landed mid-run would then be dropped, and
+the change stay out of the index until something rebuilds again.
+
+`requestRebuild(rebuild, requests)` hands the request to the run holding the
+lock instead. It records the request, then runs `rebuild`:
+
+- When the lock is held, it resolves at once. The holder reads the requests
+  after its run and runs again.
+- When a request was recorded during its own run, it runs again.
+- When `rebuild` fails, it rejects without running again. Requests recorded
+  during the failed run wait for the next `requestRebuild`.
+
+A requester records before it tries the lock, and the holder reads after its
+run released it, so either the requester takes the lock or the holder sees
+the request. A burst of requests during one run costs a single rerun; requests
+that keep arriving keep the holder running until one run sees none.
+
+Every rebuild of the index must go through `requestRebuild` with the same
+`rebuild`, because the holder runs its own on another caller’s behalf, and a
+run started any other way never reads the requests. Name `requests` after the
+one lock `rebuild` can be refused by.
+
+The engine port provides `requests`, a `RebuildRequests` stored next to its
+lock: `TypesenseRebuildRequests` in
+[`@lde/search-typesense`](./search-typesense#requesting-a-rebuild). See
+[ADR 30](../decisions/0030-hand-a-rebuild-request-to-the-run-that-holds-the-lock).
 
 ## Why a declarative model
 

@@ -1,21 +1,10 @@
 import type { Client, CollectionCreateSchema } from 'typesense';
+import { RebuildAlreadyRunning } from '@lde/search';
 
 const LOCK_COLLECTION = 'rebuild_locks';
 
 /** A held lock older than this (ms) is reclaimed. */
 export const DEFAULT_LOCK_TTL_MS = 10 * 60 * 1000;
-
-/**
- * Another run already holds the index’s rebuild lock, so this run refuses to
- * open. Rebuilds are single-flight per index across pods; catch this to treat
- * a concurrent rebuild as a graceful skip rather than a failure.
- */
-export class RebuildAlreadyRunning extends Error {
-  constructor(name: string) {
-    super(`Another rebuild of “${name}” is already running`);
-    this.name = 'RebuildAlreadyRunning';
-  }
-}
 
 /**
  * Open a run under the index’s single-flight lock: acquire it (throwing
@@ -128,7 +117,8 @@ export async function ensureCollectionExists(
   }
 }
 
-/** Take over the lock if its holder has not refreshed it within `ttlMs`. */
+/** Take over the lock if it was acquired more than `ttlMs` ago. Nothing
+ *  refreshes a held lock, so a run outliving the TTL can lose it. */
 async function reclaimIfStale(
   client: Client,
   name: string,

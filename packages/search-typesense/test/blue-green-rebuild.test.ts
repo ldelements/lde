@@ -3,7 +3,7 @@ import type { Client } from 'typesense';
 import type { SearchType } from '@lde/search';
 import { Dataset } from '@lde/dataset';
 import { BlueGreenRebuild } from '../src/blue-green-rebuild.js';
-import { RebuildAlreadyRunning } from '../src/lock.js';
+import { RebuildAlreadyRunning } from '@lde/search';
 import { TypesenseContainer } from './typesense-container.js';
 import { makeRunContext, seedLock, stream } from './helpers.js';
 

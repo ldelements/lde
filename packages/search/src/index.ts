@@ -100,3 +100,8 @@ export type {
 } from './engine.js';
 
 export type { FramedNode } from './frame-by-type.js';
+
+// Rebuild requests: hand a request to the run holding an index’s rebuild lock
+// instead of dropping it. The store a port records requests in
+// (`RebuildRequests`) is on the adapter surface.
+export { RebuildAlreadyRunning, requestRebuild } from './rebuild.js';
