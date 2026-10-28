@@ -1757,6 +1757,12 @@ describe('date storage codec', () => {
     );
   });
 
+  it('ignores the timezone of a deep-time xsd:gYear', () => {
+    const seconds = isoToUnixSeconds('-318000000');
+    expect(isoToUnixSeconds('-318000000Z')).toBe(seconds);
+    expect(isoToUnixSeconds('-318000000+01:00')).toBe(seconds);
+  });
+
   it('throws on seconds that are not a number', () => {
     expect(() => unixSecondsToIso(Number.NaN)).toThrow(RangeError);
   });

@@ -2486,9 +2486,11 @@ export function isoToUnixSeconds(iso: string): number | undefined {
  * an `xsd:gYear` for seconds beyond what `Date` can represent.
  */
 export function unixSecondsToIso(seconds: number): string {
+  if (!Number.isFinite(seconds)) {
+    throw new RangeError(`Not a number of Unix seconds: ${seconds}`);
+  }
   const date = new Date(seconds * 1000);
-  // A non-number still reaches `toISOString`, which throws on it.
-  return Number.isNaN(date.getTime()) && Number.isFinite(seconds)
+  return Number.isNaN(date.getTime())
     ? String(Math.round(seconds / GREGORIAN_YEAR_SECONDS) + 1970)
     : date.toISOString();
 }
@@ -2527,15 +2529,17 @@ function expandYear(iso: string): string {
 const GREGORIAN_YEAR_SECONDS = (146_097 * 86_400) / 400;
 
 /** Unix seconds of a deep-time `xsd:gYear` – a bare year `Date` could not
- *  hold – or `undefined` for anything else. An average year is at most two
+ *  hold, its timezone ignored as meaningless at that scale – or `undefined`
+ *  for anything else. An average year is at most two
  *  days off the calendar’s 1 January, far less than the year between
  *  neighbours, so deep time still sorts before (or after) the dates `Date`
  *  holds; and it lands beyond `Date`’s range, so {@link unixSecondsToIso}
  *  gives the year back. */
 function deepTimeSeconds(iso: string): number | undefined {
-  return /^-?[1-9]\d*$/.test(iso)
-    ? storableUnixSeconds((Number(iso) - 1970) * GREGORIAN_YEAR_SECONDS)
-    : undefined;
+  const year = /^(-?[1-9]\d*)(?:Z|[+-]\d{2}:\d{2})?$/.exec(iso);
+  return year === null
+    ? undefined
+    : storableUnixSeconds((Number(year[1]) - 1970) * GREGORIAN_YEAR_SECONDS);
 }
 
 /**
