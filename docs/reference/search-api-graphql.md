@@ -111,26 +111,34 @@ fails this – accepts. The endpoint path defaults to `/graphql`
 - **SDL**: `GET /graphql?sdl` returns the schema contract as SDL – publish it
   or generate static docs in CI without a running introspection query.
 - **CORS** for cross-origin browser clients (configurable via `cors`).
-- **Depth and cost limits** ([graphql-armor](https://escape.tech/graphql-armor/);
-  `maxDepth`, default 15, and `maxCost`, default 5000) guard the public
-  endpoint against arbitrarily expensive queries; introspection stays exempt.
-  Fragments are flattened, so a fragment adds no depth and, nested in a
-  field, no longer multiplies the cost of what it contains: it adds a fixed
-  cost instead – 2 for an inline fragment, 3 for a named spread – scaled like
-  any field by the levels above it. Two cases still cost more than the inlined
-  form. A named spread directly at the operation root (`{ ...Q }`) costs its
-  contents 1.5×. And every repeat of a named fragment costs 1 plus 1.5× what
-  its first spread scored, even in another operation of the same document.
-  The cost limit bounds a query’s shape, not how much searching it causes:
-  `perPage` does not enter the cost, so a page of 100 scores like a page of 1,
-  and every alias of a search field runs its own search for a few points.
-  Two other limits bound that work. `maxPerPage` (a `buildGraphQLSchema`
-  option, default 100) rejects any larger `perPage`, and `maxSearches`
-  (default 10) rejects an operation that selects more root fields – each
-  alias counts, as does a custom field merged in; fragments are flattened,
-  and introspection is exempt. Together they cap the generated search fields
-  at `maxSearches` searches of `maxPerPage` results per request, each plus
-  one facet round-trip when facets are selected.
+- **Depth limit** ([graphql-armor](https://escape.tech/graphql-armor/);
+  `maxDepth`, default 15) rejects deeply nested queries. Fragments are
+  flattened, so a fragment adds no depth; introspection is exempt.
+- **Cost limit** (`maxCost`, default 100) counts the engine operations a query
+  asks for, measured with
+  [graphql-query-complexity](https://github.com/slicknode/graphql-query-complexity):
+
+  | Selection                                   | Cost              |
+  | ------------------------------------------- | ----------------- |
+  | A search field (each alias counts)          | 1                 |
+  | A joined reference (`lookup`), at any depth | 1 per target type |
+  | A facet key                                 | 1                 |
+  | A range facet’s `all` extent                | 1 more            |
+  | A plain stored field or an inline reference | 0, at any depth   |
+
+  A lookup fetches the referents of a whole page in one request, and the facet
+  keys of a search share one request, so `perPage` does not enter the cost.
+  Fragments cost what their contents cost, `@skip` and `@include` are applied
+  with the request’s variables, and introspection and custom fields merged in
+  cost nothing. Below a reference with several target types, only the costliest
+  target’s nested lookups count, although the engine runs those of every
+  target. A query over the limit is rejected before any search runs, with an
+  error such as `Query costs 112; at most 100 is allowed.`
+
+- **Result limits**: `maxPerPage` (a `buildGraphQLSchema` option, default 100)
+  rejects a larger `perPage`, and `maxSearches` (default 10) rejects an
+  operation that selects more root fields – each alias counts, as does a custom
+  field merged in; fragments are flattened, and introspection is exempt.
 
 To serve **custom fields next to the generated search API**, merge your own
 schema with `buildGraphQLSchema()`’s output (e.g. `@graphql-tools/schema`’s

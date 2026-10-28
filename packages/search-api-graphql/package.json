@@ -34,13 +34,13 @@
     "!**/*.tsbuildinfo"
   ],
   "dependencies": {
-    "@escape.tech/graphql-armor-cost-limit": "^2.4.3",
     "@escape.tech/graphql-armor-max-depth": "^2.4.2",
     "@graphql-yoga/render-graphiql": "^5.24.6",
     "@lde/search": "^0.32.3",
     "commander": "^15.0.0",
     "dataloader": "^2.2.3",
     "graphql": "^16.9.0",
+    "graphql-query-complexity": "^2.0.0",
     "graphql-yoga": "^5.24.1",
     "negotiator": "^1.1.0",
     "tslib": "^2.3.0"
