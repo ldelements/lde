@@ -42,7 +42,10 @@ from costs that `buildGraphQLSchema` puts on the fields as extensions:
 
 The cost does not scale with `perPage`. A lookup fetches the referents of the
 whole page in one request, and `maxPerPage` with `maxSearches` already bounds
-the results. The default `maxCost` is 100.
+the results. The default `maxCost` is 100: the costliest `creativeWorks`
+query Linked Open Limburg’s schema allows – every field and facet, each
+reference expanded until it would revisit a type – costs 48, and the Dataset
+Register browser’s listing query costs 9.
 
 The cost is measured when the operation executes, not as a validation rule.
 Yoga caches validation results per document, while the cost depends on each
