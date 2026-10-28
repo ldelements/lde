@@ -1740,15 +1740,42 @@ describe('date storage codec', () => {
     expect(isoToUnixSeconds('  1999  ')).toBe(isoToUnixSeconds('1999'));
   });
 
-  it('returns undefined for a year beyond what Date can represent', () => {
-    // ±271,821 years is the edge of the Date range; past it there is no value
-    // to store, so the field is left absent as an unparseable string is.
-    expect(isoToUnixSeconds('-500000')).toBeUndefined();
-    expect(isoToUnixSeconds('-271821')).toBeUndefined();
+  it('reads a deep-time year beyond what Date can represent as an xsd:gYear', () => {
+    // A Carboniferous fossil: −318 million years is far past Date’s ±271,821.
+    const seconds = isoToUnixSeconds('-318000000');
+    expect(seconds).toBe((-318_000_000 - 1970) * 31_556_952);
+    expect(unixSecondsToIso(seconds ?? 0)).toBe('-318000000');
+    expect(unixSecondsToIso(isoToUnixSeconds('1000000') ?? 0)).toBe('1000000');
+  });
+
+  it('orders deep time against the dates Date holds at its edges', () => {
+    expect(isoToUnixSeconds('-271821') ?? 0).toBeLessThan(
+      isoToUnixSeconds('-271820') ?? 0,
+    );
+    expect(isoToUnixSeconds('275760') ?? 0).toBeLessThan(
+      isoToUnixSeconds('275761') ?? 0,
+    );
+  });
+
+  it('throws on seconds that are not a number', () => {
+    expect(() => unixSecondsToIso(Number.NaN)).toThrow(RangeError);
+  });
+
+  it('returns undefined for deep time finer than a year', () => {
+    // Deep time has no months or days.
+    expect(isoToUnixSeconds('-318000000-05-03')).toBeUndefined();
+    expect(isoToUnixSeconds('-500000-03-01T12:30:00Z')).toBeUndefined();
+  });
+
+  it('returns undefined for a year beyond the int64 of seconds', () => {
+    expect(isoToUnixSeconds('-300000000000')).toBeUndefined();
+    expect(isoToUnixSeconds('1700000000000')).toBeUndefined();
   });
 
   it('orders BCE before CE, and earlier BCE before later', () => {
+    const deeperTime = isoToUnixSeconds('-318000000') ?? 0;
     const deepTime = isoToUnixSeconds('-250000') ?? 0;
+    expect(deeperTime).toBeLessThan(deepTime);
     const bce = isoToUnixSeconds('-1100') ?? 0;
     const ce = isoToUnixSeconds('1100') ?? 0;
     expect(deepTime).toBeLessThan(bce);

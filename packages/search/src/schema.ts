@@ -2461,6 +2461,12 @@ const ABSOLUTE_IRI = /^[A-Za-z][A-Za-z0-9+.-]*:\S*$/;
  * the projection (writes), the query compiler (filter bounds) and the surface
  * (output), so the three cannot disagree. Returns `undefined` for an
  * unparseable value.
+ *
+ * A year beyond what `Date` can represent (±271,821 years around 1970) is
+ * deep time, and deep time has no months or days: there the value is read as
+ * an `xsd:gYear` – a bare year, such as a Carboniferous fossil’s `-318000000` –
+ * and stored as that many average Gregorian years from 1970. Anything finer at
+ * that depth is unparseable.
  */
 export function isoToUnixSeconds(iso: string): number | undefined {
   // Trim first: XSD collapses whitespace around a date literal before parsing,
@@ -2468,8 +2474,30 @@ export function isoToUnixSeconds(iso: string): number | undefined {
   // it defeats the year expansion below in both directions – a leading space
   // stops the match, a trailing one survives it into the legacy parser – and
   // each lands the value in a different year than it reads.
-  const millis = new Date(expandYear(iso.trim())).getTime();
-  return Number.isNaN(millis) ? undefined : Math.trunc(millis / 1000);
+  const trimmed = iso.trim();
+  const millis = new Date(expandYear(trimmed)).getTime();
+  return Number.isNaN(millis)
+    ? deepTimeSeconds(trimmed)
+    : Math.trunc(millis / 1000);
+}
+
+/**
+ * The inverse of {@link isoToUnixSeconds}: stored Unix seconds → ISO 8601, or
+ * an `xsd:gYear` for seconds beyond what `Date` can represent.
+ */
+export function unixSecondsToIso(seconds: number): string {
+  const date = new Date(seconds * 1000);
+  // A non-number still reaches `toISOString`, which throws on it.
+  return Number.isNaN(date.getTime()) && Number.isFinite(seconds)
+    ? String(Math.round(seconds / GREGORIAN_YEAR_SECONDS) + 1970)
+    : date.toISOString();
+}
+
+/** `seconds` if a `date` field can store it – the int64 the engine keeps
+ *  Unix seconds in – or `undefined`, the same answer {@link isoToUnixSeconds}
+ *  gives a string it cannot parse. */
+export function storableUnixSeconds(seconds: number): number | undefined {
+  return Math.abs(seconds) < 2 ** 63 ? seconds : undefined;
 }
 
 /**
@@ -2495,9 +2523,19 @@ function expandYear(iso: string): string {
   return `${year[1] || '+'}${year[2].padStart(6, '0')}${year[3]}`;
 }
 
-/** The inverse of {@link isoToUnixSeconds}: stored Unix seconds → ISO 8601. */
-export function unixSecondsToIso(seconds: number): string {
-  return new Date(seconds * 1000).toISOString();
+/** The average Gregorian year: 146 097 days per 400 years. */
+const GREGORIAN_YEAR_SECONDS = (146_097 * 86_400) / 400;
+
+/** Unix seconds of a deep-time `xsd:gYear` – a bare year `Date` could not
+ *  hold – or `undefined` for anything else. An average year is at most two
+ *  days off the calendar’s 1 January, far less than the year between
+ *  neighbours, so deep time still sorts before (or after) the dates `Date`
+ *  holds; and it lands beyond `Date`’s range, so {@link unixSecondsToIso}
+ *  gives the year back. */
+function deepTimeSeconds(iso: string): number | undefined {
+  return /^-?[1-9]\d*$/.test(iso)
+    ? storableUnixSeconds((Number(iso) - 1970) * GREGORIAN_YEAR_SECONDS)
+    : undefined;
 }
 
 /**

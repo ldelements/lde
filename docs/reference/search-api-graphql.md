@@ -196,7 +196,7 @@ editor.
   IRI no collection holds – dangling, or its lookup failed – has no kind to
   report and is served as `PersonOrOrganizationUnresolvedReference`, carrying
   only its `id`; scalars/booleans
-  per kind; `date` → ISO 8601 string; nullability from `required` / `array` /
+  per kind; `date` → ISO 8601 string, or an `xsd:gYear` in deep time; nullability from `required` / `array` /
   `kind`.
 - **`where`** one input per `filterable` field, typed by what the field keys on:
   a `keyword` holds literals (`KeywordFilter`), a `reference` holds identity

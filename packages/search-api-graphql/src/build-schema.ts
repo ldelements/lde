@@ -352,7 +352,7 @@ export function buildGraphQLSchema(
   // A range facet’s extent, in the type its field’s `range` filter takes
   // (IntRange, FloatRange, DateRange), so a slider’s bounds feed straight back
   // into the filter that selects them. A date is stored as Unix seconds and
-  // served as ISO 8601, like the field itself.
+  // served as ISO 8601 (an `xsd:gYear` in deep time), like the field itself.
   const extentTypes = {
     integer: extentType('IntExtent', GraphQLInt),
     number: extentType('FloatExtent', GraphQLFloat),
@@ -402,7 +402,7 @@ export function buildGraphQLSchema(
           resolve: async (source: Source) => {
             const { buckets } = await load(source, 'matching');
             // A date’s distinct value is stored as Unix seconds and served as
-            // ISO 8601, like its extent.
+            // ISO 8601 (an `xsd:gYear` in deep time), like its extent.
             return field.kind === 'date' && !binned
               ? buckets.map((bucket) => ({
                   ...bucket,
@@ -996,7 +996,8 @@ export function buildGraphQLSchema(
       case 'number':
         return { type: scalarOutput(GraphQLFloat, field) };
       case 'date':
-        // Stored as Unix seconds (int64); the surface serves ISO 8601 (ADR 4).
+        // Stored as Unix seconds (int64); the surface serves ISO 8601 (ADR 4), or
+        // an `xsd:gYear` in deep time.
         return {
           type: scalarOutput(GraphQLString, field),
           resolve: (source) => {

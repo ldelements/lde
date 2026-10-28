@@ -429,6 +429,7 @@ describe('validateQuery', () => {
       // An expanded and an unexpanded deep-time year, a plain one, a full
       // timestamp – and a number, which is already the stored Unix seconds.
       expect(dateRange({ min: '-250000', max: '25000-06-01' })).toEqual([]);
+      expect(dateRange({ min: '-318000000', max: '-316000000' })).toEqual([]);
       expect(
         dateRange({ min: '1999', max: '2024-01-01T00:00:00.000Z' }),
       ).toEqual([]);
@@ -436,12 +437,12 @@ describe('validateQuery', () => {
     });
 
     it('reports a bound the codec cannot read, naming the bound', () => {
-      // Past the ±271,821-year window `Date` covers…
-      expect(dateRange({ min: '-500000' })).toEqual([
+      // Past the int64 of seconds the engine stores…
+      expect(dateRange({ min: '-300000000000' })).toEqual([
         {
           part: 'where',
           field: 'datePosted',
-          value: '-500000',
+          value: '-300000000000',
           reason: 'unparseable-bound',
         },
       ]);
@@ -459,17 +460,17 @@ describe('validateQuery', () => {
     });
 
     it('reports both bounds, so one fix does not uncover the next', () => {
-      expect(dateRange({ min: '-500000', max: '-400000' })).toEqual([
+      expect(dateRange({ min: 'long ago', max: 'yesterday' })).toEqual([
         {
           part: 'where',
           field: 'datePosted',
-          value: '-500000',
+          value: 'long ago',
           reason: 'unparseable-bound',
         },
         {
           part: 'where',
           field: 'datePosted',
-          value: '-400000',
+          value: 'yesterday',
           reason: 'unparseable-bound',
         },
       ]);

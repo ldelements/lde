@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import type { SearchQuery, SearchType } from '@lde/search';
+import {
+  isoToUnixSeconds,
+  type SearchQuery,
+  type SearchType,
+} from '@lde/search';
 import { buildSearchParams } from '../src/query-compiler.js';
 
 const schema: SearchType = {
@@ -428,6 +432,29 @@ describe('buildSearchParams', () => {
                     min: '2024-01-01T00:00:00Z',
                     max: '2025-01-01T00:00:00Z',
                   },
+                },
+              ],
+            },
+          ],
+        },
+        schema,
+      ).filter_by,
+    ).toBe(`datePosted:[${min}..${max}]`);
+  });
+
+  it('converts a deep-time xsd:gYear bound to the stored Unix seconds', () => {
+    const min = isoToUnixSeconds('-318000000');
+    const max = isoToUnixSeconds('-316000000');
+    expect(
+      buildSearchParams(
+        {
+          ...base,
+          where: [
+            {
+              or: [
+                {
+                  field: 'datePosted',
+                  range: { min: '-318000000', max: '-316000000' },
                 },
               ],
             },

@@ -647,13 +647,13 @@ describe('projectDocument', () => {
             kind: 'date',
             derive: () => Date.parse('not-a-date') / 1000,
           },
-          // Seconds past what `Date` can represent are dropped too: stored,
-          // they read back as an error at the surface rather than as a value,
-          // where an unparseable string simply leaves the field absent.
+          // Seconds past the int64 a `date` is stored in are dropped too: the
+          // engine would refuse them, where an unparseable string simply
+          // leaves the field absent.
           {
             name: 'temporal',
             kind: 'date',
-            derive: () => -8_640_000_000_001,
+            derive: () => -(2 ** 63),
           },
         ],
       },

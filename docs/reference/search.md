@@ -289,7 +289,7 @@ directly.
 | `keyword`            | `in` (membership)    | yes   | –                | string / `string[]`                                                                   |
 | `reference`          | `in` (membership)    | yes   | –                | labelled reference (id + label), or a nested document for a surfaced inline reference |
 | `integer` / `number` | `range { min, max }` | yes   | yes              | number                                                                                |
-| `date`               | `range` (inclusive)  | yes   | yes              | ISO 8601 string (surface)                                                             |
+| `date`               | `range` (inclusive)  | yes   | yes              | ISO 8601 string (surface), an `xsd:gYear` in deep time                                |
 | `boolean`            | `is`                 | yes   | –                | boolean (absent = false)                                                              |
 
 A **`date`** is stored as Unix seconds – a sortable, range-filterable integer –
@@ -303,8 +303,13 @@ blesses years beyond four digits for `schema:dateCreated` – and an unpadded ye
 would otherwise parse as something else entirely (a BCE year as a UTC offset,
 landing in the wrong era; a five-digit CE year as a legacy local-time date,
 landing a year early and differently per host timezone), without ever failing.
-The window is the one `Date` can represent, ±271,821 years around 1970; a year
-outside it leaves the field absent, as any unparseable value does.
+`Date` reaches ±271,821 years around 1970. Beyond that is deep time, which has
+no months or days: there a value is read as an `xsd:gYear` – a bare year, such
+as a Carboniferous fossil’s `-318000000` – stored as that many average Gregorian
+years from 1970, and emitted by the surface as the same bare year rather than
+an ISO 8601 timestamp. A deep-time value finer than a year, or a year beyond the
+engine’s int64 of seconds (around ±292 billion years), leaves the field absent,
+as any unparseable value does.
 
 **`array` decides a field’s shape**, whatever the graph carries: a declared
 `array` field stores a list, and a single-valued one stores the first value –
@@ -960,7 +965,7 @@ A facetable numeric field (`integer`/`number`/`date`) is a **range facet**. Its
 documents the query matches, which is what a UI needs to draw a slider or a
 pair of inputs. Like every value at the port, the extent is in stored terms –
 a `date` in Unix seconds – and a surface serves it the way it serves the field
-(the GraphQL surface as ISO 8601). The extent is absent when no matching
+(the GraphQL surface as ISO 8601, or an `xsd:gYear` in deep time). The extent is absent when no matching
 document holds a value. Its `buckets` count each distinct value, like any
 other facet’s.
 
@@ -1170,8 +1175,8 @@ unrepresentable; the port enforces them for everyone else (deployment
 `queryDefaults`, in-process callers, weaker-typed surfaces).
 
 One rule is about a **value** rather than a field: a `date` range bound the
-storage codec cannot read (`'yesterday'`, or a year past the ±271,821 window
-`Date` covers) is an `unparseable-bound` issue naming the rejected bound. No
+storage codec cannot read (`'yesterday'`, or a year past the int64 of seconds
+the engine stores) is an `unparseable-bound` issue naming the rejected bound. No
 surface’s type system catches this – `String` is `String` – and it has to be
 caught here because a compiler cannot recover what the caller meant: a rejected
 bound is indistinguishable from a bound never set, and inside an `or` the two
