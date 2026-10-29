@@ -202,6 +202,66 @@ describe('ConsoleReporter', () => {
     });
   });
 
+  describe('stageSkipped', () => {
+    it('fails the running stage spinner with the reason', () => {
+      const reporter = new ConsoleReporter();
+      const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+
+      reporter.onEvent(
+        event({ type: 'stageStart', dataset, stage: 'transform' }),
+      );
+      reporter.onEvent(
+        event({
+          type: 'stageSkipped',
+          dataset,
+          stage: 'transform',
+          reason: { code: 'notSupported', message: 'No SPARQL endpoint' },
+        }),
+      );
+
+      const output = spy.mock.calls.map((c) => String(c[0])).join('');
+      expect(output).toContain('transform');
+      expect(output).toContain('skipped');
+      expect(output).toContain('No SPARQL endpoint');
+    });
+  });
+
+  describe('stageProgress', () => {
+    it('shows counts and memory on the running stage spinner', () => {
+      const reporter = new ConsoleReporter();
+      const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+
+      reporter.onEvent(
+        event({ type: 'stageStart', dataset, stage: 'transform' }),
+      );
+      reporter.onEvent(
+        event({
+          type: 'stageProgress',
+          dataset,
+          stage: 'transform',
+          itemsProcessed: 1_500,
+          quadsGenerated: 12_000,
+          memoryUsageBytes: 200 * 1024 * 1024,
+          heapUsedBytes: 100 * 1024 * 1024,
+        }),
+      );
+      reporter.onEvent(
+        event({
+          type: 'stageComplete',
+          dataset,
+          stage: 'transform',
+          itemsProcessed: 1_500,
+          quadsGenerated: 12_000,
+          durationMs: 1000,
+        }),
+      );
+
+      const output = spy.mock.calls.map((c) => String(c[0])).join('');
+      expect(output).toContain('1.5K items');
+      expect(output).toContain('12K quads');
+    });
+  });
+
   describe('stageFailed', () => {
     it('fails the running stage spinner with the error', () => {
       const reporter = new ConsoleReporter();
@@ -258,6 +318,39 @@ describe('ConsoleReporter', () => {
 
       const output = spy.mock.calls.map((c) => String(c[0])).join('');
       expect(output).toContain('Stage');
+    });
+  });
+
+  describe('datasetStart', () => {
+    it('prints a header with a counter when several datasets were selected', () => {
+      const reporter = new ConsoleReporter();
+      const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+
+      reporter.onEvent(event({ type: 'pipelineStart', name: 'testPipeline' }));
+      reporter.onEvent(
+        event({ type: 'datasetsSelected', count: 2, durationMs: 100 }),
+      );
+      reporter.onEvent(event({ type: 'datasetStart', dataset }));
+      reporter.onEvent(event({ type: 'datasetStart', dataset }));
+
+      const output = spy.mock.calls.map((c) => String(c[0])).join('');
+      expect(output).toContain('http://example.org/dataset');
+      expect(output).toContain('[1/2]');
+      expect(output).toContain('[2/2]');
+    });
+
+    it('omits the counter for a single dataset', () => {
+      const reporter = new ConsoleReporter();
+      const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+
+      reporter.onEvent(
+        event({ type: 'datasetsSelected', count: 1, durationMs: 100 }),
+      );
+      reporter.onEvent(event({ type: 'datasetStart', dataset }));
+
+      const output = spy.mock.calls.map((c) => String(c[0])).join('');
+      expect(output).toContain('http://example.org/dataset');
+      expect(output).not.toContain('[1/1]');
     });
   });
 
@@ -457,58 +550,6 @@ describe('ConsoleReporter', () => {
       const output = spy.mock.calls.map((c) => String(c[0])).join('');
       expect(output).toContain('Relaxed');
       expect(output).toContain('https://data.razu.nl/sparql');
-    });
-  });
-
-  describe('minLevel', () => {
-    it('ignores events below the threshold', () => {
-      const reporter = new ConsoleReporter({ minLevel: 'warn' });
-      const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
-
-      reporter.onEvent(event({ type: 'datasetStart', dataset }));
-
-      expect(spy).not.toHaveBeenCalled();
-    });
-
-    it('prints a completed stage without its (filtered) start spinner', () => {
-      const reporter = new ConsoleReporter({ minLevel: 'info' });
-      const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
-
-      reporter.onEvent(
-        event({ type: 'stageStart', dataset, stage: 'transform' }),
-      );
-      reporter.onEvent(
-        event({
-          type: 'stageComplete',
-          dataset,
-          stage: 'transform',
-          itemsProcessed: 0,
-          quadsGenerated: 0,
-          durationMs: 1000,
-        }),
-      );
-
-      const output = spy.mock.calls.map((c) => String(c[0])).join('');
-      expect(output).toContain('transform');
-      expect(output).toContain('took');
-    });
-
-    it('prints a skipped stage without its (filtered) start spinner', () => {
-      const reporter = new ConsoleReporter({ minLevel: 'info' });
-      const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
-
-      reporter.onEvent(
-        event({
-          type: 'stageSkipped',
-          dataset,
-          stage: 'transform',
-          reason: { code: 'notSupported', message: 'No SPARQL endpoint' },
-        }),
-      );
-
-      const output = spy.mock.calls.map((c) => String(c[0])).join('');
-      expect(output).toContain('transform');
-      expect(output).toContain('No SPARQL endpoint');
     });
   });
 

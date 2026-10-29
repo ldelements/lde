@@ -112,16 +112,13 @@ interface Reporter {
 
 new Pipeline({
   // …
-  reporter: [
-    new ConsoleReporter({ minLevel: 'info' }),
-    new LoggerReporter(logger),
-  ],
+  reporter: [new ConsoleReporter(), new LoggerReporter(logger)],
 });
 ```
 
 An object rather than a bare callback matches the pipeline’s other extension points (writers, validators, provenance stores), lets a reporter be a class that holds rendering state, and leaves room for optional lifecycle methods later – a `flush()` for a buffered log file, say – without another option. The pipeline calls `reporter.onEvent(event)` as a method, so `this` is bound without care from the implementer.
 
-Reporters run synchronously in array order; a throwing reporter propagates into the run. Each reporter filters its own level – `LoggerReporter` defers to the logger’s configured level, `ConsoleReporter` takes `minLevel` – so a terminal can show `info` while a log file records `debug`.
+Reporters run synchronously in array order; a throwing reporter propagates into the run. Each reporter decides what to do with the level. `LoggerReporter` defers to the logger’s configured level, so a log file can record `debug` or only `warn`. `ConsoleReporter` renders every event and uses the level only to choose how a line looks: its spinners, dataset headers and probe lines build on earlier events, so filtering some out would leave the rest without their context.
 
 The array is the only way to combine reporters; no combining utility is exported alongside it, so there is one way to do it.
 

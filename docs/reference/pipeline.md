@@ -429,13 +429,13 @@ import { LoggerReporter } from '@lde/pipeline-logger-reporter';
 new Pipeline({
   // …
   reporter: [
-    new ConsoleReporter({ minLevel: 'info' }),
+    new ConsoleReporter(),
     new LoggerReporter(logger), // your application’s structured logger
   ],
 });
 ```
 
-Each reporter receives every event, synchronously and in array order, and filters by `defaultLevel` itself; a reporter that throws propagates into the run. See the how-to guide [Observe a run with a reporter](../guide/observe-a-run-with-a-reporter).
+Each reporter receives every event, synchronously and in array order, and decides itself what to do with `defaultLevel`; a reporter that throws propagates into the run. See the how-to guide [Observe a run with a reporter](../guide/observe-a-run-with-a-reporter).
 
 Two reporters ship as their own packages: [@lde/pipeline-console-reporter](./pipeline-console-reporter) for a terminal and [@lde/pipeline-logger-reporter](./pipeline-logger-reporter) for a structured logger of your choice.
 

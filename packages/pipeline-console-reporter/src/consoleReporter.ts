@@ -8,7 +8,6 @@ import type {
   DistributionSelectedEvent,
   ImportFailedEvent,
   ItemsRejectedEvent,
-  Level,
   PipelineCompleteEvent,
   PipelineEvent,
   Reporter,
@@ -31,21 +30,19 @@ const compactNumber = new Intl.NumberFormat('en', {
   maximumFractionDigits: 1,
 });
 
-const levels: readonly Level[] = ['debug', 'info', 'warn', 'error'];
-
 function formatBytes(bytes: number): string {
   const megabytes = bytes / 1024 / 1024;
   return `${megabytes.toFixed(0)} MB`;
 }
 
-export interface ConsoleReporterOptions {
-  /** Least severe level to render. Defaults to `debug`: everything. */
-  minLevel?: Level;
-}
-
-/** {@link Reporter} that renders a run on stderr for a human at a terminal. */
+/**
+ * {@link Reporter} that renders a run on stderr for a human at a terminal.
+ *
+ * It renders every event: spinners, the dataset header and the probe lines
+ * depend on earlier events, so it does not filter by level. For level-filtered
+ * output, use a structured logger instead.
+ */
 export class ConsoleReporter implements Reporter {
-  private readonly minLevel: Level;
   private activeSpinner?: Ora;
   private stageStartTime = 0;
   private datasetTotal = 0;
@@ -53,13 +50,7 @@ export class ConsoleReporter implements Reporter {
   private importTimer?: ReturnType<typeof setInterval>;
   private probeLines: { url: string; text: string }[] = [];
 
-  constructor(options: ConsoleReporterOptions = {}) {
-    this.minLevel = options.minLevel ?? 'debug';
-  }
-
   onEvent(event: PipelineEvent): void {
-    if (levels.indexOf(event.defaultLevel) < levels.indexOf(this.minLevel))
-      return;
     switch (event.type) {
       case 'pipelineStart':
         return this.pipelineStart();
@@ -287,23 +278,17 @@ export class ConsoleReporter implements Reporter {
   }
 
   private stageComplete(result: StageCompleteEvent): void {
-    const counts =
-      result.itemsProcessed > 0
-        ? ` ${compactNumber.format(result.itemsProcessed)} items, ${compactNumber.format(result.quadsGenerated)} quads,`
-        : '';
-    const took = `${counts} took ${chalk.bold(prettyMilliseconds(result.durationMs))}`;
     if (this.activeSpinner) {
+      const counts =
+        result.itemsProcessed > 0
+          ? ` ${compactNumber.format(result.itemsProcessed)} items, ${compactNumber.format(result.quadsGenerated)} quads,`
+          : '';
       this.activeSpinner.suffixText = '';
-      this.activeSpinner.text = `${this.activeSpinner.text}${took}`;
+      this.activeSpinner.text = `${this.activeSpinner.text}${counts} took ${chalk.bold(
+        prettyMilliseconds(result.durationMs),
+      )}`;
       this.activeSpinner.succeed();
       this.activeSpinner = undefined;
-    } else {
-      // No spinner when `stageStart` was filtered out by `minLevel`.
-      this.printLine(
-        logSymbols.success,
-        `Stage ${chalk.bold(result.stage)}${took}`,
-        1,
-      );
     }
   }
 
@@ -341,17 +326,11 @@ export class ConsoleReporter implements Reporter {
     }
   }
 
-  private stageSkipped({ stage, reason }: StageSkippedEvent): void {
+  private stageSkipped({ reason }: StageSkippedEvent): void {
     if (this.activeSpinner) {
       this.activeSpinner.suffixText = `skipped: ${chalk.red(reason.message)}`;
       this.activeSpinner.fail();
       this.activeSpinner = undefined;
-    } else {
-      this.printLine(
-        logSymbols.warning,
-        `Stage ${chalk.bold(stage)} skipped: ${chalk.red(reason.message)}`,
-        1,
-      );
     }
   }
 
