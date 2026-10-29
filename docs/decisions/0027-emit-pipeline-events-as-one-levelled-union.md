@@ -139,7 +139,7 @@ Once the pipeline reports through `onEvent`, none of `ProgressReporter`’s twen
 - The `search-indexer` image keeps its `ConsoleReporter`. Structured logs there would mean choosing a logger, which belongs to the deployment rather than to the library, so that is left open.
 - Every consumer of `ProgressReporter` migrates: `ConsoleReporter`, `searchIndexerPipeline`’s `reporter` option, the reporters in tests, and the ‘Observe a run with a reporter’ guide plus the `pipeline` and `pipeline-console-reporter` reference pages. Pre-release this is accepted.
 - A reporter interested in three events now implements one `onEvent` that ignores the rest, instead of three optional methods. For generic reporters (loggers, forwarders, test collectors) this is simpler; for narrow ones it is a `switch` with a default branch.
-- Adding an event type is a compile-time change for exhaustive reporters, which is the point: a reporter that switches exhaustively on `type` is told when it misses a new event.
+- Reporters do not switch exhaustively on `type`: an event a reporter does not handle is ignored. Adding an event type is therefore not a breaking change – existing reporters keep working and simply skip the new event until they choose to handle it.
 - Severity is now a library contract. Changing an event’s default level is a behaviour change for anyone filtering on it, and is called out in the changelog like any other.
 - Memory and heap figures stay on `stageProgress` and `datasetComplete` for now. They are metrics rather than logs; a metrics and tracing route is left to a later decision.
 - `distribution-downloader`’s own `Logger` interface is unaffected by this record. Aligning the library-wide logger shape with the one `LoggerReporter` accepts is a natural follow-up.
