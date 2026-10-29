@@ -19,8 +19,8 @@ export interface Logger {
  *
  * A dataset is logged as its IRI, a distribution as its access URL, and an
  * `error` under `err`, the key structured loggers conventionally serialise
- * errors from. `pipelineStart`’s `name` is left out, as it would clash with the
- * logger’s own `name`.
+ * errors from. Every other value is passed through as is, leaving its
+ * serialisation, cycles included, to the logger.
  *
  * @example
  * ```ts
@@ -41,33 +41,13 @@ const omittedKeys = new Set(['defaultLevel', 'name']);
 
 function toLogObject(event: PipelineEvent): Record<string, unknown> {
   const fields = Object.entries(event)
-    .filter(([key]) => !omittedKeys.has(key) && key !== 'dataset')
-    .map(([key, value]) => [key === 'error' ? 'err' : key, loggable(value)]);
+    .filter(([key]) => !omittedKeys.has(key))
+    .map(([key, value]) => [key === 'error' ? 'err' : key, value]);
   return {
-    ...('dataset' in event && { dataset: event.dataset.iri.toString() }),
     ...Object.fromEntries(fields),
+    ...('dataset' in event && { dataset: event.dataset.iri.toString() }),
+    ...('distribution' in event && {
+      distribution: event.distribution.accessUrl.toString(),
+    }),
   };
 }
-
-function loggable(value: unknown): unknown {
-  if (value instanceof URL) return value.toString();
-  if (value instanceof Error || value instanceof Date) return value;
-  if (Array.isArray(value)) return value.map(loggable);
-  if (hasAccessUrl(value)) return value.accessUrl.toString();
-
-  if (typeof value === 'object' && value !== null) {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, nested]) => [key, loggable(nested)]),
-    );
-  }
-  return value;
-}
-
-const hasAccessUrl = (value: unknown): value is { accessUrl: URL } => {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    'accessUrl' in value &&
-    value.accessUrl instanceof URL
-  );
-};

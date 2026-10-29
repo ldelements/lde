@@ -157,8 +157,11 @@ export class ConsoleReporter implements Reporter {
     );
   }
 
-  private distributionProbed({ result }: DistributionProbedEvent): void {
-    const url = result.distribution.accessUrl.toString();
+  private distributionProbed({
+    distribution,
+    result,
+  }: DistributionProbedEvent): void {
+    const url = distribution.accessUrl.toString();
     const typeLabel =
       result.type === 'sparql'
         ? 'SPARQL endpoint'

@@ -1322,8 +1322,8 @@ describe('Pipeline', () => {
       expect(reporter.distributionProbed).toHaveBeenCalledTimes(3);
       expect(reporter.distributionProbed).toHaveBeenCalledWith(
         expect.objectContaining({
+          distribution: sparqlDist,
           result: {
-            distribution: sparqlDist,
             type: 'sparql',
             available: true,
             statusCode: 200,
@@ -1334,8 +1334,8 @@ describe('Pipeline', () => {
       );
       expect(reporter.distributionProbed).toHaveBeenCalledWith(
         expect.objectContaining({
+          distribution: dataDumpDist,
           result: {
-            distribution: dataDumpDist,
             type: 'data-dump',
             available: false,
             statusCode: 404,
@@ -1346,8 +1346,8 @@ describe('Pipeline', () => {
       );
       expect(reporter.distributionProbed).toHaveBeenCalledWith(
         expect.objectContaining({
+          distribution: downDist,
           result: {
-            distribution: downDist,
             type: 'network-error',
             available: false,
             error: 'Connection refused',
@@ -1466,8 +1466,8 @@ describe('Pipeline', () => {
       expect(reporter.distributionProbed).toHaveBeenCalledTimes(1);
       expect(reporter.distributionProbed).toHaveBeenCalledWith(
         expect.objectContaining({
+          distribution: downDist,
           result: {
-            distribution: downDist,
             type: 'network-error',
             available: false,
             error: 'Connection refused',
@@ -3072,8 +3072,8 @@ describe('Pipeline', () => {
 
       expect(reporter.distributionProbed).toHaveBeenCalledWith(
         expect.objectContaining({
+          distribution: dumpDistribution,
           result: expect.objectContaining({
-            distribution: dumpDistribution,
             fingerprint: currentFingerprint,
           }),
         }),

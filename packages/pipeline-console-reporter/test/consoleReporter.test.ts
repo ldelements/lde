@@ -27,11 +27,9 @@ function makeDataset(): Dataset {
 }
 
 function makeProbeResult(
-  url: string,
   overrides: Partial<DistributionAnalysisResult> = {},
 ): DistributionAnalysisResult {
   return {
-    distribution: Distribution.sparql(new URL(url)),
     type: 'sparql',
     available: true,
     statusCode: 200,
@@ -464,7 +462,8 @@ describe('ConsoleReporter', () => {
         event({
           type: 'distributionProbed',
           dataset,
-          result: makeProbeResult(sparqlUrl),
+          distribution: Distribution.sparql(new URL(sparqlUrl)),
+          result: makeProbeResult(),
         }),
       );
       reporter.onEvent(

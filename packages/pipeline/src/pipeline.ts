@@ -590,6 +590,7 @@ export class Pipeline<Out = Quad> {
           this.report(runId, {
             type: 'distributionProbed',
             dataset,
+            distribution,
             result: mapProbeResult(distribution, result),
           });
           // Shallow validity: the probe parse-validates small RDF bodies as a
@@ -1202,7 +1203,6 @@ function mapProbeResult(
   const fingerprint = sourceFingerprint(distribution, result);
   if (result instanceof NetworkError) {
     return {
-      distribution,
       type: 'network-error' as const,
       available: false,
       error: result.message,
@@ -1211,7 +1211,6 @@ function mapProbeResult(
     };
   }
   return {
-    distribution,
     type:
       result instanceof SparqlProbeResult
         ? ('sparql' as const)

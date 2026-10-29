@@ -2,6 +2,7 @@ import { describe, it, expect, vi, type Mock } from 'vitest';
 import { Dataset, Distribution } from '@lde/dataset';
 import {
   levelOf,
+  type DistributionAnalysisResult,
   type PipelineEvent,
   type PipelineEventPayload,
 } from '@lde/pipeline';
@@ -106,52 +107,20 @@ describe('LoggerReporter', () => {
     );
   });
 
-  it('makes nested values log-friendly', () => {
+  it('leaves serialising other values to the logger', () => {
     const logger = makeLogger();
+    const result: DistributionAnalysisResult = {
+      type: 'sparql',
+      available: true,
+      warnings: ['slow'],
+    };
 
     new LoggerReporter(logger).onEvent(
-      envelope({
-        type: 'distributionProbed',
-        dataset,
-        result: {
-          distribution,
-          type: 'sparql',
-          available: true,
-          warnings: ['slow'],
-        },
-      }),
+      envelope({ type: 'distributionProbed', dataset, distribution, result }),
     );
 
-    expect(logger.debug).toHaveBeenCalledWith(
-      expect.objectContaining({
-        result: {
-          distribution: 'http://example.org/sparql',
-          type: 'sparql',
-          available: true,
-          warnings: ['slow'],
-        },
-      }),
-      'distributionProbed',
-    );
-  });
-
-  it('logs URLs as strings', () => {
-    const logger = makeLogger();
-
-    new LoggerReporter(logger).onEvent(
-      envelope({
-        type: 'timeoutTightened',
-        dataset,
-        endpoint: new URL('http://example.org/sparql'),
-        fromTimeoutMs: 300_000,
-        toTimeoutMs: 10_000,
-        consecutiveTimeouts: 2,
-      }),
-    );
-
-    expect(logger.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ endpoint: 'http://example.org/sparql' }),
-      'timeoutTightened',
-    );
+    const [logObject] = logger.debug.mock.calls[0];
+    expect(logObject).toHaveProperty('result');
+    expect((logObject as { result: unknown }).result).toBe(result);
   });
 });

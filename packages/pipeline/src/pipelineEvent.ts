@@ -41,7 +41,6 @@ export type DatasetSkipReason = Reason<
 export type StageSkipReason = Reason<'notSupported'>;
 
 export interface DistributionAnalysisResult {
-  distribution: Distribution;
   type: 'sparql' | 'data-dump' | 'network-error';
   available: boolean;
   statusCode?: number;
@@ -114,6 +113,7 @@ export interface PipelineCompleteEvent
 export type DatasetStartEvent = DatasetEventEnvelope<'datasetStart'>;
 
 export interface DistributionProbedEvent extends DatasetEventEnvelope<'distributionProbed'> {
+  distribution: Distribution;
   result: DistributionAnalysisResult;
 }
 
