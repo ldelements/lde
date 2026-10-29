@@ -86,6 +86,26 @@ describe('LoggerReporter', () => {
     );
   });
 
+  it('logs a distribution from another @lde/dataset copy by its URL', () => {
+    const logger = makeLogger();
+    const foreignDistribution = {
+      accessUrl: new URL('http://example.org/sparql'),
+    } as Distribution;
+
+    new LoggerReporter(logger).onEvent(
+      envelope({
+        type: 'distributionSelected',
+        dataset,
+        distribution: foreignDistribution,
+      }),
+    );
+
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ distribution: 'http://example.org/sparql' }),
+      'distributionSelected',
+    );
+  });
+
   it('makes nested values log-friendly', () => {
     const logger = makeLogger();
 

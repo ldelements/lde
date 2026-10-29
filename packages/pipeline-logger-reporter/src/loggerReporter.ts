@@ -1,4 +1,3 @@
-import { Distribution } from '@lde/dataset';
 import type { PipelineEvent, Reporter } from '@lde/pipeline';
 
 /**
@@ -51,10 +50,11 @@ function toLogObject(event: PipelineEvent): Record<string, unknown> {
 }
 
 function loggable(value: unknown): unknown {
-  if (value instanceof Distribution) return value.accessUrl.toString();
   if (value instanceof URL) return value.toString();
   if (value instanceof Error || value instanceof Date) return value;
   if (Array.isArray(value)) return value.map(loggable);
+  if (hasAccessUrl(value)) return value.accessUrl.toString();
+
   if (typeof value === 'object' && value !== null) {
     return Object.fromEntries(
       Object.entries(value).map(([key, nested]) => [key, loggable(nested)]),
@@ -62,3 +62,12 @@ function loggable(value: unknown): unknown {
   }
   return value;
 }
+
+const hasAccessUrl = (value: unknown): value is { accessUrl: URL } => {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'accessUrl' in value &&
+    value.accessUrl instanceof URL
+  );
+};
