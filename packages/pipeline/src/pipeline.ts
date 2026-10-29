@@ -469,13 +469,7 @@ export class Pipeline<Out = Quad> {
     this.distributionResolver =
       options.distributionResolver ?? new SparqlDistributionResolver();
     this.chaining = options.chaining;
-    // `Array.isArray` narrows the array branch but not the readonly-array out of
-    // the else branch, so cast the single-reporter case explicitly.
-    this.reporters = Array.isArray(options.reporter)
-      ? options.reporter
-      : options.reporter
-        ? [options.reporter as Reporter]
-        : [];
+    this.reporters = [options.reporter ?? []].flat();
     this.timeoutFactory =
       options.timeout ?? (() => new ConstantTimeoutPolicy(300_000));
     this.provenanceStore = options.provenanceStore;
