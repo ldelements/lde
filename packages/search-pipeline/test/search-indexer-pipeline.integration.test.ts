@@ -5,7 +5,7 @@ import {
   ProbedDistributions,
   ResolvedDistribution,
   type DistributionResolver,
-  type ProgressReporter,
+  type Reporter,
   type Writer,
 } from '@lde/pipeline';
 import {
@@ -106,9 +106,9 @@ describe('searchIndexerPipeline end to end', () => {
     // The pipeline isolates a stage failure per dataset instead of throwing
     // (e.g. framing crashing on a blank-node root), so capture it explicitly.
     const stageFailures: Error[] = [];
-    const reporter: ProgressReporter = {
-      stageFailed: (_stage, error) => {
-        stageFailures.push(error);
+    const reporter: Reporter = {
+      onEvent: (event) => {
+        if (event.type === 'stageFailed') stageFailures.push(event.error);
       },
     };
 

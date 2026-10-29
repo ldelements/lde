@@ -1,7 +1,7 @@
 import { Dataset } from '@lde/dataset';
 import type { Quad } from '@rdfjs/types';
 import type { ProvenanceStore } from '../provenance/store.js';
-import type { ItemsRejected } from '../progressReporter.js';
+import type { ItemsRejected } from '../pipelineEvent.js';
 
 /**
  * Context for one pipeline run, handed to {@link Writer.openRun}.

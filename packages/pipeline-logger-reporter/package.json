@@ -1,0 +1,36 @@
+{
+  "name": "@lde/pipeline-logger-reporter",
+  "version": "0.0.0",
+  "description": "Structured-logger reporter for @lde/pipeline: logs every pipeline event to a logger of your choice, such as Pino",
+  "repository": {
+    "url": "git+https://github.com/ldelements/lde.git",
+    "directory": "packages/pipeline-logger-reporter"
+  },
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "!**/*.tsbuildinfo"
+  ],
+  "dependencies": {
+    "tslib": "^2.3.0"
+  },
+  "devDependencies": {
+    "@lde/dataset": "^0.8.0"
+  },
+  "peerDependencies": {
+    "@lde/pipeline": "^0.39.3"
+  }
+}

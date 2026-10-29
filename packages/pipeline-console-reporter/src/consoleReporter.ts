@@ -1,11 +1,24 @@
-import type { Dataset, Distribution } from '@lde/dataset';
 import type {
-  DistributionAnalysisResult,
-  ImportDetails,
-  ItemsRejected,
-  ProgressReporter,
-  TimeoutTransitionEvent,
-  ValidationReport,
+  DatasetCompleteEvent,
+  DatasetSkippedEvent,
+  DatasetStartEvent,
+  DatasetValidatedEvent,
+  DatasetsSelectedEvent,
+  DistributionProbedEvent,
+  DistributionSelectedEvent,
+  ImportFailedEvent,
+  ItemsRejectedEvent,
+  PipelineCompleteEvent,
+  PipelineEvent,
+  Reporter,
+  SelectionEmptyEvent,
+  StageCompleteEvent,
+  StageFailedEvent,
+  StageProgressEvent,
+  StageSkippedEvent,
+  StageStartEvent,
+  TimeoutRelaxedEvent,
+  TimeoutTightenedEvent,
 } from '@lde/pipeline';
 import chalk from 'chalk';
 import logSymbols from 'log-symbols';
@@ -22,14 +35,68 @@ function formatBytes(bytes: number): string {
   return `${megabytes.toFixed(0)} MB`;
 }
 
-export class ConsoleReporter implements ProgressReporter {
+/**
+ * {@link Reporter} that renders a run on stderr for a human at a terminal.
+ *
+ * It renders every event: spinners, the dataset header and the probe lines
+ * depend on earlier events, so it does not filter by level. For level-filtered
+ * output, use a structured logger instead.
+ */
+export class ConsoleReporter implements Reporter {
   private activeSpinner?: Ora;
   private stageStartTime = 0;
-  private datasetStartTime = 0;
   private datasetTotal = 0;
   private datasetIndex = 0;
   private importTimer?: ReturnType<typeof setInterval>;
   private probeLines: { url: string; text: string }[] = [];
+
+  onEvent(event: PipelineEvent): void {
+    switch (event.type) {
+      case 'pipelineStart':
+        return this.pipelineStart();
+      case 'datasetsSelected':
+        return this.datasetsSelected(event);
+      case 'selectionEmpty':
+        return this.selectionEmpty(event);
+      case 'datasetStart':
+        return this.datasetStart(event);
+      case 'distributionProbed':
+        return this.distributionProbed(event);
+      case 'importStarted':
+        return this.importStarted();
+      case 'importFailed':
+        return this.importFailed(event);
+      case 'distributionSelected':
+        return this.distributionSelected(event);
+      case 'stageStart':
+        return this.stageStart(event);
+      case 'stageProgress':
+        return this.stageProgress(event);
+      case 'stageComplete':
+        return this.stageComplete(event);
+      case 'stageFailed':
+        return this.stageFailed(event);
+      case 'stageSkipped':
+        return this.stageSkipped(event);
+      case 'datasetValidated':
+        return this.datasetValidated(event);
+      case 'datasetComplete':
+        return this.datasetComplete(event);
+      case 'datasetSkipped':
+        return this.datasetSkipped(event);
+      case 'itemsRejected':
+        return this.itemsRejected(event);
+      case 'pipelineComplete':
+        return this.pipelineComplete(event);
+      case 'timeoutTightened':
+        return this.timeoutTightened(event);
+      case 'timeoutRelaxed':
+        return this.timeoutRelaxed(event);
+      case 'distributionValidated':
+        // The probe and import lines already show the operator the outcome.
+        return;
+    }
+  }
 
   /** Print a static line with a symbol prefix. */
   private printLine(symbol: string, text: string, indent = 0): void {
@@ -48,20 +115,20 @@ export class ConsoleReporter implements ProgressReporter {
     return this.activeSpinner;
   }
 
-  pipelineStart(_name: string): void {
+  private pipelineStart(): void {
     this.startSpinner('Selecting datasets');
   }
 
-  datasetsSelected(count: number, duration: number): void {
+  private datasetsSelected({ count, durationMs }: DatasetsSelectedEvent): void {
     this.datasetTotal = count;
     if (this.activeSpinner) {
       this.activeSpinner.text = `Selected datasets: found ${chalk.bold(count)} ${
         count === 1 ? 'dataset' : 'datasets'
-      } in ${chalk.bold(prettyMilliseconds(duration))}`;
+      } in ${chalk.bold(prettyMilliseconds(durationMs))}`;
     }
   }
 
-  selectionEmpty(reason: string): void {
+  private selectionEmpty({ message: reason }: SelectionEmptyEvent): void {
     // A run that changed nothing on purpose – loud enough to notice on a cron,
     // because the usual cause is an outage or a criteria typo rather than a
     // genuinely empty registry. Printed either way: a spinner is only running
@@ -75,11 +142,10 @@ export class ConsoleReporter implements ProgressReporter {
     this.printLine(logSymbols.warning, chalk.yellow(reason));
   }
 
-  datasetStart(dataset: Dataset): void {
+  private datasetStart({ dataset }: DatasetStartEvent): void {
     this.activeSpinner?.succeed();
     this.activeSpinner = undefined;
     this.clearImportTimer();
-    this.datasetStartTime = Date.now();
     this.probeLines = [];
     this.datasetIndex++;
     const counter =
@@ -91,8 +157,11 @@ export class ConsoleReporter implements ProgressReporter {
     );
   }
 
-  distributionProbed(result: DistributionAnalysisResult): void {
-    const url = result.distribution.accessUrl.toString();
+  private distributionProbed({
+    distribution,
+    result,
+  }: DistributionProbedEvent): void {
+    const url = distribution.accessUrl.toString();
     const typeLabel =
       result.type === 'sparql'
         ? 'SPARQL endpoint'
@@ -120,7 +189,7 @@ export class ConsoleReporter implements ProgressReporter {
     }
   }
 
-  importStarted(): void {
+  private importStarted(): void {
     const importStart = Date.now();
     const spinner = this.startSpinner('Importing\u2026', 1);
     this.importTimer = setInterval(() => {
@@ -130,23 +199,23 @@ export class ConsoleReporter implements ProgressReporter {
     }, 1_000);
   }
 
-  importFailed(_distribution: Distribution, error: string): void {
+  private importFailed({ error }: ImportFailedEvent): void {
+    const text = `Import failed: ${error.message}`;
     if (this.activeSpinner) {
-      this.activeSpinner.text = `Import failed: ${error}`;
+      this.activeSpinner.text = text;
       this.activeSpinner.suffixText = '';
       this.activeSpinner.fail();
     } else {
-      this.printLine(logSymbols.error, `Import failed: ${error}`, 1);
+      this.printLine(logSymbols.error, text, 1);
     }
     this.clearImportTimer();
     this.activeSpinner = undefined;
   }
 
-  distributionSelected(
-    _dataset: Dataset,
-    distribution: Distribution,
-    imported?: ImportDetails,
-  ): void {
+  private distributionSelected({
+    distribution,
+    imported,
+  }: DistributionSelectedEvent): void {
     if (imported) {
       const engine = imported.engine
         ? ` into ${imported.engine.name} ${imported.engine.version}`
@@ -195,17 +264,12 @@ export class ConsoleReporter implements ProgressReporter {
     }
   }
 
-  stageStart(stage: string): void {
+  private stageStart({ stage }: StageStartEvent): void {
     this.stageStartTime = Date.now();
     this.startSpinner(`Stage ${chalk.bold(stage)}`, 1);
   }
 
-  stageProgress(update: {
-    itemsProcessed: number;
-    quadsGenerated: number;
-    memoryUsageBytes: number;
-    heapUsedBytes: number;
-  }): void {
+  private stageProgress(update: StageProgressEvent): void {
     if (this.activeSpinner) {
       const elapsed = prettyMilliseconds(Date.now() - this.stageStartTime);
       this.activeSpinner.suffixText = `${compactNumber.format(
@@ -216,14 +280,7 @@ export class ConsoleReporter implements ProgressReporter {
     }
   }
 
-  stageComplete(
-    _stage: string,
-    result: {
-      itemsProcessed: number;
-      quadsGenerated: number;
-      duration: number;
-    },
-  ): void {
+  private stageComplete(result: StageCompleteEvent): void {
     if (this.activeSpinner) {
       const counts =
         result.itemsProcessed > 0
@@ -231,14 +288,14 @@ export class ConsoleReporter implements ProgressReporter {
           : '';
       this.activeSpinner.suffixText = '';
       this.activeSpinner.text = `${this.activeSpinner.text}${counts} took ${chalk.bold(
-        prettyMilliseconds(result.duration),
+        prettyMilliseconds(result.durationMs),
       )}`;
       this.activeSpinner.succeed();
       this.activeSpinner = undefined;
     }
   }
 
-  stageFailed(stage: string, error: Error): void {
+  private stageFailed({ stage, error }: StageFailedEvent): void {
     if (this.activeSpinner) {
       this.activeSpinner.suffixText = chalk.red(error.message);
       this.activeSpinner.fail();
@@ -256,7 +313,7 @@ export class ConsoleReporter implements ProgressReporter {
     }
   }
 
-  datasetValidated(_dataset: Dataset, report: ValidationReport): void {
+  private datasetValidated({ report }: DatasetValidatedEvent): void {
     if (report.conforms) {
       this.printLine(
         logSymbols.success,
@@ -272,32 +329,35 @@ export class ConsoleReporter implements ProgressReporter {
     }
   }
 
-  stageSkipped(_stage: string, reason: string): void {
+  private stageSkipped({ reason }: StageSkippedEvent): void {
     if (this.activeSpinner) {
-      this.activeSpinner.suffixText = `skipped: ${chalk.red(reason)}`;
+      this.activeSpinner.suffixText = `skipped: ${chalk.red(reason.message)}`;
       this.activeSpinner.fail();
       this.activeSpinner = undefined;
     }
   }
 
-  datasetComplete(
-    _dataset: Dataset,
-    result: { memoryUsageBytes: number; heapUsedBytes: number },
-  ): void {
+  private datasetComplete(result: DatasetCompleteEvent): void {
     this.printLine(
       logSymbols.success,
-      `Completed in ${chalk.bold(
-        prettyMilliseconds(Date.now() - this.datasetStartTime),
-      )} ${chalk.dim(`(memory: ${formatBytes(result.memoryUsageBytes)} RSS, ${formatBytes(result.heapUsedBytes)} heap)`)}`,
+      `Completed in ${chalk.bold(prettyMilliseconds(result.durationMs))} ${chalk.dim(`(memory: ${formatBytes(result.memoryUsageBytes)} RSS, ${formatBytes(result.heapUsedBytes)} heap)`)}`,
       1,
     );
   }
 
-  datasetSkipped(_dataset: Dataset, reason: string): void {
-    this.printLine(logSymbols.error, `Skipped: ${chalk.red(reason)}`, 1);
+  private datasetSkipped({ defaultLevel, reason }: DatasetSkippedEvent): void {
+    if (defaultLevel === 'info') {
+      this.printLine(logSymbols.info, `Skipped: ${reason.message}`, 1);
+      return;
+    }
+    this.printLine(
+      logSymbols.error,
+      `Skipped: ${chalk.red(reason.message)}`,
+      1,
+    );
   }
 
-  itemsRejected(_dataset: Dataset, rejection: ItemsRejected): void {
+  private itemsRejected({ rejection }: ItemsRejectedEvent): void {
     const { target, written, rejected, reasons } = rejection;
     this.printLine(
       logSymbols.warning,
@@ -313,19 +373,15 @@ export class ConsoleReporter implements ProgressReporter {
     }
   }
 
-  pipelineComplete(result: {
-    duration: number;
-    memoryUsageBytes: number;
-    heapUsedBytes: number;
-  }): void {
+  private pipelineComplete(result: PipelineCompleteEvent): void {
     process.stderr.write(
       `\nPipeline completed in ${chalk.bold(
-        prettyMilliseconds(result.duration),
+        prettyMilliseconds(result.durationMs),
       )} ${chalk.dim(`(memory: ${formatBytes(result.memoryUsageBytes)} RSS, ${formatBytes(result.heapUsedBytes)} heap)`)}\n`,
     );
   }
 
-  timeoutTightened(event: TimeoutTransitionEvent): void {
+  private timeoutTightened(event: TimeoutTightenedEvent): void {
     this.printLine(
       chalk.yellow('↘'),
       `Tightened timeout for ${event.endpoint.toString()} to ${chalk.bold(
@@ -335,7 +391,7 @@ export class ConsoleReporter implements ProgressReporter {
     );
   }
 
-  timeoutRelaxed(event: TimeoutTransitionEvent): void {
+  private timeoutRelaxed(event: TimeoutRelaxedEvent): void {
     this.printLine(
       chalk.green('↗'),
       `Relaxed timeout for ${event.endpoint.toString()} back to ${chalk.bold(

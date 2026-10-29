@@ -32,7 +32,6 @@
     "tslib": "^2.3.0"
   },
   "peerDependencies": {
-    "@lde/dataset": "^0.8.0",
     "@lde/pipeline": "^0.39.3"
   }
 }

@@ -67,7 +67,7 @@ export interface ResolveCallbacks {
   /** Called when a data-dump import begins (resolve phase). */
   onImportStart?: () => void;
   /** Called when importing a distribution fails (resolve phase). */
-  onImportFailed?: (distribution: Distribution, error: string) => void;
+  onImportFailed?: (distribution: Distribution, error: Error) => void;
 }
 
 /**

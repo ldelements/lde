@@ -47,7 +47,7 @@ Use `'write'` to collect validation reports without interrupting a run, `'skip'`
 
 ## Read the per-dataset report
 
-After all stages for a dataset have run, the pipeline calls the validator’s `report(dataset)` and emits a `datasetValidated` event on the reporter. The report is produced even when no quads were validated – in that case SHACL reports `quadsValidated: 0` and `conforms: true` (the vacuous-truth default). Read `quadsValidated` when you need to distinguish ‘not tested’ from ‘tested and passed’.
+After all stages for a dataset have run, the pipeline calls the validator’s `report(dataset)` and reports a `datasetValidated` event to the run’s reporters, at level `info` when the report conforms and `warn` when it does not. The report is produced even when no quads were validated – in that case SHACL reports `quadsValidated: 0` and `conforms: true` (the vacuous-truth default). Read `quadsValidated` when you need to distinguish ‘not tested’ from ‘tested and passed’.
 
 ## Implement your own validator
 
