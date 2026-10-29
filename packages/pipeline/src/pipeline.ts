@@ -705,12 +705,12 @@ export class Pipeline<Out = Quad> {
     const unsubscribe = timeout.subscribe?.({
       onTighten: (transition) =>
         this.report(runId, {
+          ...transition,
           type: 'timeoutTightened',
           dataset,
-          ...transition,
         }),
       onRelax: (transition) =>
-        this.report(runId, { type: 'timeoutRelaxed', dataset, ...transition }),
+        this.report(runId, { ...transition, type: 'timeoutRelaxed', dataset }),
     });
 
     let stageFailed = false;

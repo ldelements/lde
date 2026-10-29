@@ -2664,16 +2664,16 @@ describe('Pipeline', () => {
 
       expect(reporter.timeoutTightened).toHaveBeenCalledWith(
         expect.objectContaining({
+          ...tightenEvent,
           dataset,
           defaultLevel: 'warn',
-          ...tightenEvent,
         }),
       );
       expect(reporter.timeoutRelaxed).toHaveBeenCalledWith(
         expect.objectContaining({
+          ...relaxEvent,
           dataset,
           defaultLevel: 'info',
-          ...relaxEvent,
         }),
       );
     });
