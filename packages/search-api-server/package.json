@@ -31,7 +31,7 @@
     "@lde/search": "^0.33.0",
     "@lde/search-api-graphql": "^0.37.0",
     "@lde/search-typesense": "^0.39.0",
-    "@whatwg-node/server": "^0.11.0",
+    "@whatwg-node/server": "^0.13.2",
     "tslib": "^2.3.0",
     "typesense": "^3.1.1"
   },
