@@ -211,13 +211,15 @@ describe('the cost of a query', () => {
     ).toBe(1 + 2);
   });
 
-  it('leaves out a selection skipped by a variable', async () => {
+  it('counts a skipped selection, which the engine fetches anyway', async () => {
     const query = `query ($withAuthor: Boolean!) {
-      creativeWorks { items { author @include(if: $withAuthor) { name { value } } } }
+      creativeWorks { items {
+        author @include(if: $withAuthor) { name { value } }
+        writer: author @skip(if: $withAuthor) { name { value } }
+      } }
     }`;
-    expect(await costOf(query, { withAuthor: true })).toBe(2);
-    // The validation of the same document is cached; the cost is not.
-    expect(await costOf(query, { withAuthor: false })).toBe(1);
+    expect(await costOf(query, { withAuthor: true })).toBe(3);
+    expect(await costOf(query, { withAuthor: false })).toBe(3);
   });
 
   it('answers a query within maxCost', async () => {

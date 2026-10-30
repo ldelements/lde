@@ -47,9 +47,11 @@ query Linked Open Limburg’s schema allows – every field and facet, each
 reference expanded until it would revisit a type – costs 48, and the Dataset
 Register browser’s listing query costs 9.
 
-The cost is measured when the operation executes, not as a validation rule.
-Yoga caches validation results per document, while the cost depends on each
-request’s variables through `@skip` and `@include`.
+A selection under `@skip` or `@include` counts whatever its condition, because
+the engine fetches the lookups it selects either way: the projection leaves
+those directives unevaluated, so a skipped field is never missing. The cost is
+measured when the operation executes, not as a validation rule, because
+measuring coerces the request’s variables.
 
 ## Consequences
 

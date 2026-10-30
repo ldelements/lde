@@ -1,6 +1,9 @@
 import {
   GraphQLError,
+  Kind,
   locatedError,
+  visit,
+  type DocumentNode,
   type GraphQLFieldExtensions,
 } from 'graphql';
 import type { Plugin } from 'graphql-yoga';
@@ -18,9 +21,12 @@ import {
  * because it is served from the hit. `buildGraphQLSchema` puts these
  * costs on the fields; a custom field merged in costs nothing.
  *
- * Measured at execution, not validation: yoga caches validation results per
- * document, while the cost depends on the variables of each request
- * (`@skip`/`@include`).
+ * A selection under `@skip` or `@include` counts whatever its condition: the
+ * engine fetches skipped lookups too, because the projection does not evaluate
+ * those directives.
+ *
+ * Measured at execution, not validation, because measuring coerces the
+ * request’s variables, which a validation rule does not see.
  */
 export function queryCostPlugin(maxCost: number): Plugin {
   if (!Number.isInteger(maxCost) || maxCost < 0) {
@@ -32,7 +38,7 @@ export function queryCostPlugin(maxCost: number): Plugin {
       try {
         cost = getComplexity({
           schema: args.schema,
-          query: args.document,
+          query: withoutConditions(args.document),
           variables: args.variableValues ?? undefined,
           // Yoga has already rejected a name that picks no operation.
           operationName: args.operationName ?? undefined,
@@ -43,7 +49,8 @@ export function queryCostPlugin(maxCost: number): Plugin {
         });
       } catch (error) {
         // Invalid variables, or a query too large to measure: either way, it
-        // does not run. Yoga masks anything that is not a GraphQLError.
+        // does not run. Yoga passes a GraphQLError on and masks anything else
+        // as an unexpected error.
         setResultAndStopExecution({ errors: [locatedError(error, undefined)] });
         return;
       }
@@ -51,7 +58,7 @@ export function queryCostPlugin(maxCost: number): Plugin {
         setResultAndStopExecution({
           errors: [
             new GraphQLError(
-              `Query costs ${cost}; at most ${maxCost} is allowed. Each search, joined reference lookup and facet costs ${operationCost}.`,
+              `Query costs ${cost}; at most ${maxCost} is allowed. Each search, facet calculation and joined reference lookup per target type costs ${operationCost}.`,
             ),
           ],
         });
@@ -71,4 +78,12 @@ export function costExtensions(
   cost: number,
 ): GraphQLFieldExtensions<unknown, unknown> {
   return { complexity: cost };
+}
+
+/**
+ * `document` without its directives, which validation has limited to `@skip`
+ * and `@include`: the only executable directives the schema has.
+ */
+function withoutConditions(document: DocumentNode): DocumentNode {
+  return visit(document, { [Kind.DIRECTIVE]: () => null });
 }

@@ -128,9 +128,9 @@ fails this – accepts. The endpoint path defaults to `/graphql`
 
   A lookup fetches the referents of a whole page in one request, and the facet
   keys of a search share one request, so `perPage` does not enter the cost.
-  Fragments cost what their contents cost, `@skip` and `@include` are applied
-  with the request’s variables, and introspection and custom fields merged in
-  cost nothing. Below a reference with several target types, only the costliest
+  Fragments cost what their contents cost, a selection under `@skip` or
+  `@include` counts whatever its condition, because the engine fetches skipped
+  lookups too, and introspection and custom fields merged in cost nothing. Below a reference with several target types, only the costliest
   target’s nested lookups count, although the engine runs those of every
   target. A query over the limit is rejected before any search runs, with an
   error such as `Query costs 112; at most 100 is allowed.`
