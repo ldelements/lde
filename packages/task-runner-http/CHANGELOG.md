@@ -1,3 +1,10 @@
+## 0.2.0 (2026-10-30)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/task-runner-native to 0.4.0
+- Updated @lde/task-runner to 0.4.0
+
 ## 0.1.0 (2026-10-15)
 
 ### 🚀 Features

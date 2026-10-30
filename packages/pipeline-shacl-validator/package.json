@@ -1,6 +1,6 @@
 {
   "name": "@lde/pipeline-shacl-validator",
-  "version": "0.22.3",
+  "version": "0.23.0",
   "description": "SHACL validation for @lde/pipeline",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
@@ -35,7 +35,7 @@
     "n3": "^2.13.12"
   },
   "peerDependencies": {
-    "@lde/dataset": "^0.8.0",
-    "@lde/pipeline": "^0.39.3"
+    "@lde/dataset": "^0.9.0",
+    "@lde/pipeline": "^0.40.0"
   }
 }

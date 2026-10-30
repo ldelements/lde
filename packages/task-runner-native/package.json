@@ -1,6 +1,6 @@
 {
   "name": "@lde/task-runner-native",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
     "directory": "packages/task-runner-native"
@@ -24,7 +24,7 @@
     "!**/*.tsbuildinfo"
   ],
   "dependencies": {
-    "@lde/task-runner": "^0.3.0",
+    "@lde/task-runner": "^0.4.0",
     "tslib": "^2.3.0"
   }
 }

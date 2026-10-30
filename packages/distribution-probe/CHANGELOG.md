@@ -1,3 +1,10 @@
+## 0.4.0 (2026-10-30)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/host-limiter to 0.2.0
+- Updated @lde/dataset to 0.9.0
+
 ## 0.3.2 (2026-10-28)
 
 This was a version bump only for @lde/distribution-probe to align it with other projects, there were no code changes.

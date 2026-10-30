@@ -1,3 +1,42 @@
+## 0.38.0 (2026-10-30)
+
+### 🚀 Features
+
+- ⚠️  **search-api-graphql:** count a query’s cost in engine operations ([#971](https://github.com/ldelements/lde/pull/971))
+
+### ⚠️  Breaking Changes
+
+- **search-api-graphql:** count a query’s cost in engine operations  ([#971](https://github.com/ldelements/lde/pull/971))
+  maxCost and MAX_COST now count engine operations instead of
+  graphql-armor shape points, and the default drops from 5000 to 100. Re-tune any
+  configured value: 5000 no longer limits anything. A query over the limit now fails
+  with an execution error (HTTP 200) instead of a validation error (HTTP 400).
+  * docs: ground the maxCost default in measured query costs
+  - Record that LOL’s costliest creativeWorks query costs 48 and the Dataset Register
+    browser’s listing query 9, against the default of 100
+  * fix(search-api-graphql): count skipped selections in the query cost
+  - Charge a selection under @skip or @include whatever its condition: the projection does not
+    evaluate those directives, so the engine fetches skipped lookups too
+  - Name the per-target lookup cost in the rejection message
+  - Correct the comment on how yoga masks a failed measurement"
+  M	docs/decisions/0014-serve-the-search-graphql-api-with-graphql-yoga.md
+  A	docs/decisions/0031-count-a-querys-cost-in-engine-operations.md
+  M	docs/reference/search-api-graphql.md
+  M	docs/reference/search-api-server.md
+  M	package-lock.json
+  M	packages/search-api-graphql/package.json
+  M	packages/search-api-graphql/src/build-schema.ts
+  M	packages/search-api-graphql/src/handler.ts
+  M	packages/search-api-graphql/src/max-searches.ts
+  A	packages/search-api-graphql/src/query-cost.ts
+  M	packages/search-api-graphql/test/handler.test.ts
+  A	packages/search-api-graphql/test/query-cost.test.ts
+  M	packages/search-api-graphql/vite.config.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.34.0
+
 ## 0.37.0 (2026-10-28)
 
 ### 🧱 Updated Dependencies

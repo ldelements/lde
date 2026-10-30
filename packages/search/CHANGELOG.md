@@ -1,3 +1,9 @@
+## 0.34.0 (2026-10-30)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/text-normalization to 0.3.0
+
 ## 0.33.0 (2026-10-28)
 
 ### 🚀 Features

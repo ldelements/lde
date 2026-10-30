@@ -1,3 +1,7 @@
+## 0.9.0 (2026-10-30)
+
+This was a version bump only for @lde/dataset to align it with other projects, there were no code changes.
+
 ## 0.8.0 (2026-10-15)
 
 This was a version bump only for @lde/dataset to align it with other projects, there were no code changes.
