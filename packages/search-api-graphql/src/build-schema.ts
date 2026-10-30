@@ -73,6 +73,7 @@ import {
   type FacetScope,
 } from './facet-batch.js';
 import { projectionFor } from './projection.js';
+import { costExtensions, operationCost } from './query-cost.js';
 
 /** Populated per request by the transport; no framework type appears here. */
 export interface SearchContext {
@@ -382,6 +383,9 @@ export function buildGraphQLSchema(
       fields: {
         all: {
           type: extent,
+          // The whole collection is a facet query of its own, next to the
+          // `matching` one the facet key already pays for.
+          extensions: costExtensions(operationCost),
           description:
             'The lowest and highest value in the whole collection, ignoring every filter and the text of the query; null when no document holds one.',
           resolve: async (source: Source) =>
@@ -972,23 +976,30 @@ export function buildGraphQLSchema(
               };
         }
         const typeName = referencedTypeName(field) ?? '';
+        const isLookup = field.ref?.strategy === 'lookup';
         // A lookup naming several targets is served as their interface.
         const referenceType = (
-          field.ref?.strategy === 'lookup' &&
-          labelSourceNamesOf(field).length > 1
+          isLookup && labelSourceNamesOf(field).length > 1
             ? interfaceTypes.get(typeName)
             : referenceTypes.get(typeName)
         )!;
+        // A lookup fetches from each target’s collection per page of hits; an
+        // inline reference is carried by the hit itself.
+        const extensions = isLookup
+          ? costExtensions(operationCost * labelSourceNamesOf(field).length)
+          : undefined;
         return field.array === true
           ? {
               type: nonNullListOf(referenceType),
               resolve: (s) => s[field.name] ?? [],
+              extensions,
             }
           : {
               type:
                 field.required === true
                   ? new GraphQLNonNull(referenceType)
                   : referenceType,
+              extensions,
             };
       }
       case 'integer':
@@ -1336,6 +1347,8 @@ export function buildGraphQLSchema(
 
     return {
       type: new GraphQLNonNull(resultType),
+      // One search; the lookups and facets selected below add their own.
+      extensions: costExtensions(operationCost),
       args: {
         query: {
           type: GraphQLString,
@@ -1443,12 +1456,16 @@ export function buildGraphQLSchema(
           string,
           GraphQLFieldConfig<Source, SearchContext>
         > = {};
+        // The keys share one engine round-trip, but each is its own facet
+        // calculation in it.
+        const facetCost = costExtensions(operationCost);
         for (const field of facetable) {
           // The batching into one engine dispatch and the degrade-to-empty
           // error handling live in the loader (facet-batch.ts).
           if (isRangeFacet(field)) {
             fields[field.name] = {
               type: new GraphQLNonNull(rangeFacetTypeFor(field)),
+              extensions: facetCost,
               // Resolved synchronously, so the scopes its fields load land in
               // the same batch as the sibling facets.
               resolve: (source: Source) => ({
@@ -1461,6 +1478,7 @@ export function buildGraphQLSchema(
           const bucketType = bucketTypeFor(field);
           fields[field.name] = {
             type: nonNullListOf(bucketType),
+            extensions: facetCost,
             resolve: async (source: Source) => {
               const { buckets } = await (source.loadFacet as FacetLoader)(
                 field.name,

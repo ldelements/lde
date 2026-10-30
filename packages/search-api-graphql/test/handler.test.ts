@@ -406,23 +406,26 @@ describe('createSearchGraphQLHandler', () => {
 
     const response = await post(
       handler,
-      '{ datasets { pagination { total } items { id keyword } } }',
+      '{ datasets { items { id } facets { keyword { value } } } }',
     );
     const { data, errors } = await response.json();
 
+    // Measured at execution, so not a 400 like a validation error.
+    expect(response.status).toBe(200);
     expect(data).toBeUndefined();
-    expect(JSON.stringify(errors)).toContain('Cost');
+    expect(errors[0].message).toBe(
+      'Query costs 2; at most 1 is allowed. Each search, facet calculation and joined reference lookup per target type costs 1.',
+    );
   });
 
   it('does not count fragment spreads as extra levels', async () => {
     const { engine } = fakeEngine();
-    // Inlined, this query has depth 3 and costs 14.75. With flattened
-    // fragments it costs 22.25; unflattened, depth 7 and cost 69.6.
+    // Inlined, this query has depth 3; unflattened, depth 7.
     const handler = createSearchGraphQLHandler({
       searchSchema: searchSchema(schema),
       engine,
       maxDepth: 3,
-      maxCost: 30,
+      maxCost: 1,
     });
 
     const response = await post(
@@ -459,17 +462,17 @@ describe('createSearchGraphQLHandler', () => {
 
     it('rejects a fragment query costlier than maxCost', async () => {
       const { engine } = fakeEngine();
-      // The query above costs 22.25 once flattened.
+      // The query above runs one search.
       const handler = createSearchGraphQLHandler({
         searchSchema: searchSchema(schema),
         engine,
-        maxCost: 22,
+        maxCost: 0,
       });
 
       const { data, errors } = await (await post(handler, nested)).json();
 
       expect(data).toBeUndefined();
-      expect(JSON.stringify(errors)).toContain('Cost');
+      expect(errors[0].message).toContain('Query costs 1;');
     });
   });
 
@@ -547,55 +550,6 @@ describe('createSearchGraphQLHandler', () => {
 
       expect(errors).toBeUndefined();
       expect(data.datasets.items).toBeDefined();
-    });
-  });
-
-  describe('the cost of a fragment', () => {
-    const page = '{ pagination { total } items { id keyword } }';
-    const inlined = `{ datasets ${page} }`;
-
-    /** The cost graphql-armor scores a query at, read off its rejection. */
-    async function costOf(query: string): Promise<number> {
-      const { engine } = fakeEngine();
-      const handler = createSearchGraphQLHandler({
-        searchSchema: searchSchema(schema),
-        engine,
-        maxCost: 0,
-      });
-      const { errors } = await (await post(handler, query)).json();
-      return Number(/found ([\d.]+)/.exec(errors[0].message)?.[1]);
-    }
-
-    it('adds 2 for an inline fragment', async () => {
-      expect(
-        await costOf(`{ datasets { ... on DatasetSearchResult ${page} } }`),
-      ).toBe((await costOf(inlined)) + 2);
-    });
-
-    it('adds 3 for a named spread', async () => {
-      expect(
-        await costOf(
-          `{ datasets { ...Page } } fragment Page on DatasetSearchResult ${page}`,
-        ),
-      ).toBe((await costOf(inlined)) + 3);
-    });
-
-    it('multiplies the contents of a spread at the operation root by 1.5', async () => {
-      expect(
-        await costOf(`{ ...Query } fragment Query on Query ${inlined}`),
-      ).toBe(3 + 1.5 * (await costOf(inlined)));
-    });
-
-    it('charges a repeated spread 1 plus 1.5× what its first spread scored', async () => {
-      const fragment = `fragment Page on DatasetSearchResult ${page}`;
-      const once = await costOf(`{ datasets { ...Page } } ${fragment}`);
-      // `once` is the `datasets` field (2) plus the first spread (1 + F).
-      const fragmentCost = once - 3;
-      expect(
-        await costOf(
-          `{ a: datasets { ...Page } b: datasets { ...Page } } ${fragment}`,
-        ),
-      ).toBe(once + 2 + 1 + 1.5 * fragmentCost);
     });
   });
 

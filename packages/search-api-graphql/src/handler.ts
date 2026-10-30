@@ -7,9 +7,9 @@ import {
 } from 'graphql-yoga';
 import { renderGraphiQL } from '@graphql-yoga/render-graphiql';
 import { maxDepthPlugin } from '@escape.tech/graphql-armor-max-depth';
-import { costLimitPlugin } from '@escape.tech/graphql-armor-cost-limit';
 import Negotiator from 'negotiator';
 import { maxSearchesPlugin } from './max-searches.js';
+import { queryCostPlugin } from './query-cost.js';
 import type { SearchEngine, SearchSchema } from '@lde/search';
 import {
   buildGraphQLSchema,
@@ -77,19 +77,19 @@ export interface SearchGraphQLHandlerOptions {
    */
   readonly maxDepth?: number;
   /**
-   * Reject queries costlier than this (graphql-armor cost limit; introspection
-   * is exempt). Fragments are flattened: a nested fragment adds a fixed cost
-   * (2 inline, 3 for a named spread) rather than multiplying its contents,
-   * while a spread at the operation root costs its contents 1.5×, and a
-   * repeated named fragment 1 plus 1.5× its first scoring. The cost does not
-   * scale with `perPage` or count searches; {@link maxSearches} bounds those.
-   * @default 5000
+   * Reject queries that ask for more engine operations than this. Each search,
+   * each lookup a selected joined reference triggers (one per target it may
+   * point to) and each selected facet key costs 1; a plain stored field costs
+   * nothing, at any depth, and so does introspection. A lookup fetches the
+   * referents of a whole page at once, so the cost does not scale with
+   * `perPage`; `maxPerPage` bounds that. Must be a non-negative integer.
+   * @default 100
    */
   readonly maxCost?: number;
   /**
    * Reject operations that select more root fields than this. Each alias of a
-   * search field runs its own search, which {@link maxCost} does not count;
-   * with `maxPerPage`, this bounds the results those searches fetch. Every
+   * search field runs its own search; {@link maxCost} counts the operations,
+   * while this, with `maxPerPage`, bounds the results they fetch. Every
    * root field counts, including a custom field merged in. Must be a positive
    * integer. @default 10
    */
@@ -136,13 +136,9 @@ export function createSearchGraphQLHandler(
     renderGraphiQL: options.renderPlayground ?? renderGraphiQL,
     cors: options.cors,
     plugins: [
-      // Flatten fragments so a fragment spread doesn’t count as an extra level,
-      // which multiplies the cost per fragment. A small cost per spread remains.
+      // Flatten fragments so a fragment spread doesn’t count as an extra level.
       maxDepthPlugin({ n: options.maxDepth ?? 15, flattenFragments: true }),
-      costLimitPlugin({
-        maxCost: options.maxCost ?? 5000,
-        flattenFragments: true,
-      }),
+      queryCostPlugin(options.maxCost ?? 100),
       maxSearchesPlugin(options.maxSearches ?? 10),
       dropNulledLanguages,
     ],
