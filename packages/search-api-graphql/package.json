@@ -41,7 +41,7 @@
     "dataloader": "^2.2.3",
     "graphql": "^16.9.0",
     "graphql-query-complexity": "^2.0.0",
-    "graphql-yoga": "^5.24.1",
+    "graphql-yoga": "^6.0.1",
     "negotiator": "^1.1.0",
     "tslib": "^2.3.0"
   },
