@@ -782,6 +782,60 @@ describe('batching and bounding', () => {
     expect(peak).toBe(1);
   });
 
+  it('holds the per-host cap across concurrent resolveAll calls', async () => {
+    // A stage runs batches in parallel, each transform calling resolveAll on
+    // one resolver, so the cap has to span the calls to mean anything.
+    let inFlight = 0;
+    let peak = 0;
+    const { resolver } = resolverOver(
+      async (iris) => {
+        inFlight++;
+        peak = Math.max(peak, inFlight);
+        await new Promise((resolve) => setImmediate(resolve));
+        inFlight--;
+        return iris.map((iri) => [iri, { name: 'a place' }]);
+      },
+      { limits: { perHostConcurrency: 2, concurrency: 10 } },
+    );
+
+    await Promise.all(
+      [0, 1, 2, 3].map((call) =>
+        resolver.resolveAll([
+          `https://example.org/${call}/a`,
+          `https://example.org/${call}/b`,
+        ]),
+      ),
+    );
+
+    expect(peak).toBe(2);
+  });
+
+  it('holds the global cap across concurrent resolveAll calls', async () => {
+    let inFlight = 0;
+    let peak = 0;
+    const { resolver } = resolverOver(
+      async (iris) => {
+        inFlight++;
+        peak = Math.max(peak, inFlight);
+        await new Promise((resolve) => setImmediate(resolve));
+        inFlight--;
+        return iris.map((iri) => [iri, { name: 'a place' }]);
+      },
+      { limits: { perHostConcurrency: 2, concurrency: 3 } },
+    );
+
+    await Promise.all(
+      [0, 1, 2, 3].map((call) =>
+        resolver.resolveAll([
+          `https://host-${call}.example.org/a`,
+          `https://host-${call}.example.org/b`,
+        ]),
+      ),
+    );
+
+    expect(peak).toBe(3);
+  });
+
   it('gives an opaque key a contention budget of its own', async () => {
     // Not a URL, so there is no host to share; bucketing every such key under
     // one name would serialize unrelated work.

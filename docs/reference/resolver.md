@@ -155,8 +155,10 @@ Concurrency is bounded globally and per host through
 delegates: HTTP clients get this wrong often enough that it cannot be assumed
 (see [IIIF-Commons/iiif-helpers#39](https://github.com/IIIF-Commons/iiif-helpers/issues/39),
 where a client throttles on a single global counter borrowed from an unrelated
-config key). A batch never mixes hosts, so the per-host cap keeps meaning what
-it says even at `batchSize` above 1.
+config key). The caps belong to the resolver, not to one `resolveAll` call, so
+batches resolving in parallel – a `Stage` running a transform per batch, say –
+share them. A batch never mixes hosts, so the per-host cap keeps meaning what it
+says even at `batchSize` above 1.
 
 `host` is **required**, and is either a constant – for a source reached through
 one endpoint – or a function of the reference. It is deliberately not defaulted

@@ -1,6 +1,6 @@
 import {
+  createHostLimiter,
   hostKeyOf,
-  mapHostLimited,
   positiveIntOrDefault,
 } from '@lde/host-limiter';
 import { memoryFactStore } from './memoryFactStore.js';
@@ -72,11 +72,15 @@ export interface ResolutionFailure {
 
 /** The bounds a run resolves within. Every one is optional and defaulted. */
 export interface ResolverLimits {
-  /** Resolutions in flight across all hosts. Default 4. */
+  /**
+   * Resolutions in flight across all hosts, counted over every
+   * {@link Resolver.resolveAll} call on this resolver. Default 4.
+   */
   concurrency?: number;
   /**
-   * Resolutions in flight against any one host, so a batch never arrives as
-   * the burst that trips a rate limiter. Default 2.
+   * Resolutions in flight against any one host, counted over every
+   * {@link Resolver.resolveAll} call on this resolver, so a batch never arrives
+   * as the burst that trips a rate limiter. Default 2.
    */
   perHostConcurrency?: number;
   /**
@@ -190,6 +194,10 @@ export interface ResolverOptions<Reference, Fact> {
    * `signal` aborts when the attempt outruns
    * {@link ResolverLimits.timeoutMs}; pass it to `fetch()` or your client so
    * the request is cancelled rather than left running.
+   *
+   * Do not await `resolveAll` on the same resolver from here: an attempt holds
+   * its concurrency slot while it runs, so the nested call can wait on a slot
+   * only the attempt can free, and the attempt then fails on its timeout.
    */
   fetch: (
     references: readonly Reference[],
@@ -321,13 +329,14 @@ export function createResolver<Reference, Fact>(
   const now = options.now ?? (() => new Date());
   const version = options.version ?? DEFAULT_VERSION;
   const limits = options.limits ?? {};
-  const concurrency = positiveIntOrDefault(
-    limits.concurrency,
-    DEFAULT_CONCURRENCY,
-  );
-  const perHostConcurrency = positiveIntOrDefault(
-    limits.perHostConcurrency,
-    DEFAULT_PER_HOST_CONCURRENCY,
+  // One limiter per resolver, for the reason the budget below is: a stage calls
+  // resolveAll from batches running in parallel, and the caps bound them together.
+  const limiter = createHostLimiter(
+    positiveIntOrDefault(limits.concurrency, DEFAULT_CONCURRENCY),
+    positiveIntOrDefault(
+      limits.perHostConcurrency,
+      DEFAULT_PER_HOST_CONCURRENCY,
+    ),
   );
   const batchSize = positiveIntOrDefault(limits.batchSize, DEFAULT_BATCH_SIZE);
   const retries = nonNegativeIntOrDefault(limits.retries, DEFAULT_RETRIES);
@@ -542,35 +551,33 @@ export function createResolver<Reference, Fact>(
     }
 
     let skipped = 0;
-    const results = await mapHostLimited(
-      batches,
-      batches.map((batch) => batch.host),
-      concurrency,
-      perHostConcurrency,
-      async (batch) => {
-        if (writtenOff.has(batch.host)) {
-          // The host has already failed its way out of this run. Answering
-          // without a request is the whole point: retrying every reference
-          // against a host that is down is the stampede, not the remedy.
-          skipped += batch.entries.length;
-          return batch.entries.map(
-            ({ key }) =>
-              [
-                key,
-                {
-                  kind: 'failed',
-                  reason: `host ${batch.host} was written off after ${hostFailureThreshold} consecutive failures; not contacted again this run`,
-                },
-              ] as const,
+    const results = await Promise.all(
+      batches.map((batch) =>
+        limiter.run(batch.host, async () => {
+          if (writtenOff.has(batch.host)) {
+            // The host has already failed its way out of this run. Answering
+            // without a request is the whole point: retrying every reference
+            // against a host that is down is the stampede, not the remedy.
+            skipped += batch.entries.length;
+            return batch.entries.map(
+              ({ key }) =>
+                [
+                  key,
+                  {
+                    kind: 'failed',
+                    reason: `host ${batch.host} was written off after ${hostFailureThreshold} consecutive failures; not contacted again this run`,
+                  },
+                ] as const,
+            );
+          }
+          const answered = await attempt(batch.entries);
+          noteHostOutcome(
+            batch.host,
+            answered.some(([, outcome]) => outcome.kind !== 'failed'),
           );
-        }
-        const answered = await attempt(batch.entries);
-        noteHostOutcome(
-          batch.host,
-          answered.some(([, outcome]) => outcome.kind !== 'failed'),
-        );
-        return answered;
-      },
+          return answered;
+        }),
+      ),
     );
     for (const result of results) {
       for (const [key, outcome] of result) {

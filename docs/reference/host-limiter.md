@@ -37,6 +37,25 @@ whose completion re-runs the scheduler, so the queue always drains.
 **Results come back in input order** however the tasks complete, so a caller can
 pair results with inputs positionally.
 
+## Sharing caps between callers
+
+Each `mapHostLimited` call counts only its own items, so two calls running at the
+same time each get the full caps. When tasks arrive from several places at once
+and the caps should bound them together, create one limiter and share it:
+
+```ts
+import { createHostLimiter, hostKeyOf } from '@lde/host-limiter';
+
+const limiter = createHostLimiter(8, 2);
+
+const response = await limiter.run(hostKeyOf(url), () => fetch(url));
+```
+
+A task does not start until it has a slot, so a timeout it sets on itself does
+not count the time spent queueing. It holds the slot until it settles, so it must
+not wait on another `run` of the same limiter: once the caps are full of such
+tasks, none of them can finish.
+
 ## Contract
 
 - `task` **should not reject.** Callers wrap failures into a result value – the
@@ -44,6 +63,9 @@ pair results with inputs positionally.
   slot – because a rejection abandons the results of every task that had already
   settled. A task that rejects anyway rejects the returned promise with that
   reason; it does not hang, and it does not surface as an unhandled rejection.
+  Work in flight or still queued carries on, unobserved.
+- `limiter.run` settles as its task does, so handling a rejection is up to the
+  caller. A task that rejects frees its slot.
 - `hostKeyOf(url)` is the host, falling back to the full href when the URL has no
   authority, so a `urn:` or `file:` URL gets its own budget rather than sharing a
   single empty-string bucket.
@@ -54,4 +76,5 @@ pair results with inputs positionally.
 ## Users
 
 [@lde/distribution-probe](./distribution-probe) bounds a batch of probes with it,
-and [@lde/resolver](./resolver) bounds its outbound resolutions.
+and [@lde/resolver](./resolver) shares one limiter across all the `resolveAll`
+calls on a resolver.
