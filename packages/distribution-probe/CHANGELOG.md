@@ -1,3 +1,9 @@
+## 0.4.1 (2026-10-31)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/host-limiter to 0.2.1
+
 ## 0.4.0 (2026-10-30)
 
 ### 🧱 Updated Dependencies

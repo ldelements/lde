@@ -1,3 +1,12 @@
+## 0.27.1 (2026-10-31)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline-console-reporter to 0.31.1
+- Updated @lde/search-typesense to 0.40.1
+- Updated @lde/search-pipeline to 0.37.1
+- Updated @lde/pipeline to 0.40.1
+
 ## 0.27.0 (2026-10-30)
 
 ### 🧱 Updated Dependencies

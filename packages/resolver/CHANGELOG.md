@@ -1,3 +1,13 @@
+## 0.2.1 (2026-10-31)
+
+### 🩹 Fixes
+
+- **resolver:** hold concurrency limits across resolveAll calls ([#982](https://github.com/ldelements/lde/pull/982))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/host-limiter to 0.2.1
+
 ## 0.2.0 (2026-10-30)
 
 ### 🧱 Updated Dependencies
