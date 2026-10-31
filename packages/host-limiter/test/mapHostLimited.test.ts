@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
+  createHostLimiter,
   hostKeyOf,
   mapHostLimited,
   positiveIntOrDefault,
@@ -174,6 +175,136 @@ describe('mapHostLimited', () => {
         },
       ),
     ).rejects.toThrow('task broke its contract');
+  });
+});
+
+describe('mapHostLimited after a rejection', () => {
+  it('still runs the work that was queued', async () => {
+    const started: string[] = [];
+    const running = mapHostLimited(
+      ['a', 'b'],
+      ['example.org', 'example.org'],
+      2,
+      1,
+      async (item) => {
+        started.push(item);
+        if (item === 'a') {
+          throw new Error('task broke its contract');
+        }
+        return item;
+      },
+    );
+
+    await expect(running).rejects.toThrow('task broke its contract');
+    await settle();
+
+    expect(started).toEqual(['a', 'b']);
+  });
+});
+
+describe('createHostLimiter', () => {
+  /** A task that stays in flight until the test calls its `release`. */
+  function heldTask() {
+    let release = (): void => undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const task = vi.fn(() => held);
+    return { task, release };
+  }
+
+  it('holds the per-host cap across separate callers', async () => {
+    const limiter = createHostLimiter(10, 1);
+    const first = heldTask();
+    const second = heldTask();
+
+    const running = [
+      limiter.run('a', first.task),
+      limiter.run('a', second.task),
+    ];
+    await settle();
+
+    expect(first.task).toHaveBeenCalled();
+    expect(second.task).not.toHaveBeenCalled();
+
+    first.release();
+    await settle();
+    expect(second.task).toHaveBeenCalled();
+
+    second.release();
+    await Promise.all(running);
+  });
+
+  it('holds the global cap across separate callers', async () => {
+    const limiter = createHostLimiter(1, 1);
+    const first = heldTask();
+    const second = heldTask();
+
+    const running = [
+      limiter.run('a', first.task),
+      limiter.run('b', second.task),
+    ];
+    await settle();
+
+    expect(second.task).not.toHaveBeenCalled();
+
+    first.release();
+    await settle();
+    expect(second.task).toHaveBeenCalled();
+
+    second.release();
+    await Promise.all(running);
+  });
+
+  it('lets a later task on a free host past a saturated one', async () => {
+    const limiter = createHostLimiter(10, 1);
+    const holding = heldTask();
+    const queued = heldTask();
+    const elsewhere = heldTask();
+
+    const running = [
+      limiter.run('a', holding.task),
+      limiter.run('a', queued.task),
+      limiter.run('b', elsewhere.task),
+    ];
+    await settle();
+
+    expect(queued.task).not.toHaveBeenCalled();
+    expect(elsewhere.task).toHaveBeenCalled();
+
+    holding.release();
+    queued.release();
+    elsewhere.release();
+    await Promise.all(running);
+  });
+
+  it('answers with what the task answered', async () => {
+    const limiter = createHostLimiter(1, 1);
+    expect(await limiter.run('a', async () => 'an answer')).toBe('an answer');
+  });
+
+  it('frees the slot of a task that rejects', async () => {
+    const limiter = createHostLimiter(1, 1);
+
+    await expect(
+      limiter.run('a', async () => {
+        throw new Error('rejected');
+      }),
+    ).rejects.toThrow('rejected');
+
+    expect(await limiter.run('a', async () => 'next')).toBe('next');
+  });
+
+  it('frees the slot of a task that throws synchronously', async () => {
+    const limiter = createHostLimiter(1, 1);
+
+    await expect(
+      limiter.run('a', () => {
+        throw new Error('thrown');
+      }),
+    ).rejects.toThrow('thrown');
+
+    expect(await limiter.run('a', async () => 'next')).toBe('next');
   });
 });
 

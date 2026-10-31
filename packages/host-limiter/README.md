@@ -3,7 +3,8 @@
 Zero-dependency scheduling primitive for outbound work: a concurrent map bounded
 by a global cap and a per-host cap, with results in input order and no
 head-of-line blocking – a saturated host yields to items on other hosts rather
-than stalling the queue.
+than stalling the queue. Use `createHostLimiter` when tasks arrive from several
+callers that must share one set of caps.
 
 ## Installation
 
