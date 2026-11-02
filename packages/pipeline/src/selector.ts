@@ -62,28 +62,8 @@ export class CombinedSelector implements DatasetSelector {
   constructor(private readonly selectors: readonly DatasetSelector[]) {}
 
   async select(): Promise<Paginator<Dataset>> {
-    const paginators = await Promise.all(
-      this.selectors.map((selector) => selector.select()),
-    );
-    let datasets = concatenate(paginators);
-
-    return new Paginator(
-      async (offset, limit) => {
-        // An iteration starts at offset 0, so each one reads afresh.
-        if (offset === 0) {
-          datasets = concatenate(paginators);
-        }
-        const page: Dataset[] = [];
-        while (page.length < limit) {
-          const { done, value } = await datasets.next();
-          if (done) {
-            break;
-          }
-          page.push(value);
-        }
-        return page;
-      },
-      paginators.reduce((total, paginator) => total + paginator.total, 0),
+    return new ConcatenatedPaginator(
+      await Promise.all(this.selectors.map((selector) => selector.select())),
     );
   }
 }
@@ -131,10 +111,21 @@ export class RegistrySelector implements DatasetSelector {
   }
 }
 
-async function* concatenate(
-  paginators: readonly Paginator<Dataset>[],
-): AsyncGenerator<Dataset, void, void> {
-  for (const paginator of paginators) {
-    yield* paginator;
+/**
+ * Several paginators read as one. Each iteration reads them afresh, so loops
+ * over it never share state, and each paginator still reads one page at a time.
+ */
+class ConcatenatedPaginator extends Paginator<Dataset> {
+  constructor(private readonly paginators: readonly Paginator<Dataset>[]) {
+    super(
+      async () => [],
+      paginators.reduce((total, paginator) => total + paginator.total, 0),
+    );
+  }
+
+  override async *[Symbol.asyncIterator](): AsyncIterator<Dataset> {
+    for (const paginator of this.paginators) {
+      yield* paginator;
+    }
   }
 }

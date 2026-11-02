@@ -74,4 +74,6 @@ const dataset = new Dataset({
 });
 ```
 
+An IRI other than a `file:` URL counts as registered: a stage sourced with `registrySource` reads that dataset’s description from the register, not from the file. Only use your own IRI with registry-sourced types when the register has the dataset.
+
 The importer copies the file into `dataDir` and keeps that copy while the file is unchanged. Only `Distribution.localFile()`, which `Dataset.localFile()` calls, grants access to the filesystem: a `file:` URL from a registry stays unreachable, as [ADR 31](../decisions/0031-import-local-files-through-the-data-dump-path) explains.

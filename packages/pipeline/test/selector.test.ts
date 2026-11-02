@@ -1,9 +1,10 @@
 import { Dataset } from '@lde/dataset';
-import { Paginator } from '@lde/dataset-registry-client';
+import { type Client, Paginator } from '@lde/dataset-registry-client';
 import { describe, expect, it, vi } from 'vitest';
 import {
   CombinedSelector,
   ManualDatasetSelection,
+  RegistrySelector,
   type DatasetSelector,
 } from '../src/selector.js';
 
@@ -24,6 +25,39 @@ async function selectedIris(selector: DatasetSelector): Promise<string[]> {
   }
   return iris;
 }
+
+describe('RegistrySelector', () => {
+  function registry() {
+    const query = vi.fn(async () => new Paginator(async () => [], 0));
+    return { client: { query } as unknown as Client, query };
+  }
+
+  it('selects by criteria, or every dataset without any', async () => {
+    const { client, query } = registry();
+
+    await new RegistrySelector({ registry: client }).select();
+    await new RegistrySelector({
+      registry: client,
+      criteria: { $id: ['https://example.org/a'] },
+    }).select();
+
+    expect(query).toHaveBeenNthCalledWith(1, {});
+    expect(query).toHaveBeenNthCalledWith(2, {
+      $id: ['https://example.org/a'],
+    });
+  });
+
+  it('selects by a custom query when given one', async () => {
+    const { client, query } = registry();
+
+    await new RegistrySelector({
+      registry: client,
+      query: 'CONSTRUCT {} WHERE {}',
+    }).select();
+
+    expect(query).toHaveBeenCalledWith('CONSTRUCT {} WHERE {}');
+  });
+});
 
 describe('CombinedSelector', () => {
   it('selects from every selector, in the order given', async () => {
@@ -56,6 +90,28 @@ describe('CombinedSelector', () => {
 
     expect(await read()).toEqual(await read());
     expect(await read()).toHaveLength(2);
+  });
+
+  it('keeps interleaved iterations apart', async () => {
+    const paginator = await new CombinedSelector([
+      new ManualDatasetSelection(datasets('a', 'b')),
+      new ManualDatasetSelection(datasets('c')),
+    ]).select();
+
+    const first = paginator[Symbol.asyncIterator]();
+    const second = paginator[Symbol.asyncIterator]();
+    const read = async (iterator: AsyncIterator<Dataset>) => {
+      const iris = [];
+      for (let next = await iterator.next(); !next.done;) {
+        iris.push(next.value.iri.toString());
+        next = await iterator.next();
+      }
+      return iris;
+    };
+    await first.next();
+
+    expect(await read(second)).toHaveLength(3);
+    expect(await read(first)).toHaveLength(2);
   });
 
   it('selects nothing from nothing', async () => {

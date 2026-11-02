@@ -115,6 +115,34 @@ describe('LastModifiedDownloader with a local file', () => {
     expect((await stat(path)).mtimeMs).toBeGreaterThanOrEqual(copied.mtimeMs);
   });
 
+  it('copies a same-size replacement restored with an older time', async () => {
+    const distribution = Distribution.localFile(source);
+    const { path } = await downloader.download(distribution);
+    const copied = await stat(path);
+
+    await writeFile(source, 'other');
+    const earlier = new Date('2001-01-01');
+    await utimes(source, earlier, earlier);
+    await downloader.download(distribution);
+
+    expect(await readFile(path, 'utf8')).toBe('other');
+    // A store indexing by modification time must see the copy as new.
+    expect((await stat(path)).mtimeMs).toBeGreaterThanOrEqual(copied.mtimeMs);
+  });
+
+  it('cancels the copy when the signal aborts, leaving no copy', async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      downloader.download(Distribution.localFile(source), undefined, {
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow('Failed to copy');
+
+    expect(await readdir(dataDirectory)).toEqual([]);
+  });
+
   it('leaves no partial copy when copying fails', async () => {
     const distribution = Distribution.localFile(source);
     await chmod(source, 0o000);

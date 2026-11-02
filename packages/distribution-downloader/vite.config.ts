@@ -11,10 +11,10 @@ export default mergeConfig(
       coverage: {
         thresholds: {
           autoUpdate: true,
-          lines: 98.41,
+          lines: 98.57,
           functions: 100,
           branches: 100,
-          statements: 98.43,
+          statements: 98.57,
         },
       },
     },

@@ -58,7 +58,8 @@ export class Dataset {
     const distribution = Distribution.localFile(path);
 
     return new this({
-      iri: distribution.accessUrl,
+      // A copy, so changing one URL in place never changes the other.
+      iri: new URL(distribution.accessUrl),
       distributions: [distribution],
     });
   }

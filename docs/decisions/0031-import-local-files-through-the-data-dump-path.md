@@ -65,8 +65,18 @@ source fingerprint and provenance therefore need no second path.
 only directory a containerized QLever has mounted. The copy is named after a hash
 of the source path, so two files never share one, and is streamed rather than
 copied with the source’s mode, so a read-only or private source still leaves a
-copy that can be replaced and read. It keeps a copy with the same size that is at
-least as new as the source, which keeps QLever’s index of it valid.
+copy that can be replaced and read. Beside the copy it records the source’s size
+and modification time, and copies again whenever either differs, so a
+replacement restored with an older time is copied too. The copy keeps the time of
+copying, which is what tells QLever its index is stale. An unchanged copy is kept,
+which keeps QLever’s index of it valid.
+
+**A directory is listed in full before its first dataset is processed.** That
+breaks the letter of
+[ADR 12](./0012-bound-memory-by-the-unit-of-work-not-the-input.md), and is argued
+here as that ADR asks: the listing is operator configuration, one path per file
+the operator put there, like the selection the pipeline already keeps for its
+sweep. A lazy listing would bound it, but at the cost of a stable order.
 
 We rejected:
 
@@ -101,9 +111,6 @@ We rejected:
 - A change is detected from size and modification time, and the fingerprint has
   one-second precision, as `Last-Modified` does. An edit that keeps the size
   within the same second goes unnoticed.
-- A same-size replacement with an older modification time also goes unnoticed by
-  the downloader. A replacement with a different size is copied, whatever its
-  date.
 - A dataset split over several files must be merged or zipped first. Importers
   treat a dataset’s distributions as alternatives, and changing that is a separate
   decision.

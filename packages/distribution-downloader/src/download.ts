@@ -5,7 +5,7 @@ import { basename, dirname, join, resolve, sep } from 'node:path';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { access, mkdir, rm, stat } from 'node:fs/promises';
+import { access, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 export interface Logger {
   fatal(msg: string, ...args: unknown[]): void;
   error(msg: string, ...args: unknown[]): void;
@@ -78,7 +78,11 @@ export class LastModifiedDownloader implements Downloader {
     }
 
     if (distribution.localPath !== undefined) {
-      await this.copyLocalFile(distribution.localPath, filePath);
+      await this.copyLocalFile(
+        distribution.localPath,
+        filePath,
+        options?.signal,
+      );
       return { path: filePath, headers: new Headers() };
     }
 
@@ -149,17 +153,35 @@ export class LastModifiedDownloader implements Downloader {
    * Copy a local file into the base directory, because that is the only
    * directory a containerized store has mounted. An unchanged copy is kept: it
    * is what keeps a store’s index of it valid.
+   *
+   * The copy is unchanged when the source still has the size and modification
+   * time it had when copied, as recorded beside the copy. Comparing with the
+   * copy’s own time would miss a replacement restored with an older time. The
+   * copy keeps the time of copying, so a store indexing by modification time
+   * sees it as new.
    */
-  private async copyLocalFile(source: string, filePath: string): Promise<void> {
+  private async copyLocalFile(
+    source: string,
+    filePath: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
     const sourceStats = await stat(source);
     if (sourceStats.size <= 1) {
       throw new Error(`Local file ${source} is empty`);
     }
-    const copyStats = await stat(filePath).catch(() => undefined);
-    if (
-      copyStats?.size === sourceStats.size &&
-      copyStats.mtime >= sourceStats.mtime
-    ) {
+    const recordPath = `${filePath}.source.json`;
+    const record = JSON.stringify({
+      size: sourceStats.size,
+      mtimeMs: sourceStats.mtimeMs,
+    });
+    const [copied, previousRecord] = await Promise.all([
+      access(filePath).then(
+        () => true,
+        () => false,
+      ),
+      readFile(recordPath, 'utf8').catch(() => undefined),
+    ]);
+    if (copied && previousRecord === record) {
       return;
     }
     await mkdir(dirname(filePath), { recursive: true });
@@ -167,11 +189,15 @@ export class LastModifiedDownloader implements Downloader {
       // Streamed rather than copyFile, which would carry the source’s mode over:
       // a read-only source would block the next copy, and a private one leave a
       // copy a store running as another user cannot read.
-      await pipeline(createReadStream(source), createWriteStream(filePath));
+      await pipeline(createReadStream(source), createWriteStream(filePath), {
+        signal,
+      });
     } catch (error) {
       await rm(filePath, { force: true });
+      await rm(recordPath, { force: true });
       throw new Error(`Failed to copy ${source} to ${filePath}: ${error}`);
     }
+    await writeFile(recordPath, record);
   }
 
   private async localFileIsUpToDate(

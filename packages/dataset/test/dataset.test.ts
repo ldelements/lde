@@ -12,6 +12,14 @@ describe('Dataset.localFile', () => {
     expect(dataset.getDownloadDistributions()).toEqual(dataset.distributions);
   });
 
+  it('does not share its IRI object with the distribution’s URL', () => {
+    const dataset = Dataset.localFile('/rdf/catalog.ttl');
+
+    dataset.iri.hash = 'changed';
+
+    expect(dataset.distributions[0]!.accessUrl.hash).toBe('');
+  });
+
   it('rejects a file whose format it cannot tell', () => {
     expect(() => Dataset.localFile('/rdf/notes.txt')).toThrow(
       'Cannot tell the RDF format of “/rdf/notes.txt”',
