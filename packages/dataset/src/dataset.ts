@@ -42,6 +42,27 @@ export class Dataset {
     this.publisher = options.publisher;
   }
 
+  /**
+   * A dataset read from one file on this machine, identified by the file’s URL.
+   * Moving the file therefore makes it a different dataset; for an identity that
+   * survives a move, pass a {@link Distribution.localFile} to the constructor
+   * with your own IRI.
+   *
+   * Only call this for paths you trust: see {@link Distribution.localPath}.
+   *
+   * @param path Path of the file, relative to the working directory or absolute.
+   * @throws When the extension names no RDF format; see
+   *   {@link Distribution.localFile}.
+   */
+  public static localFile(path: string) {
+    const distribution = Distribution.localFile(path);
+
+    return new this({
+      iri: distribution.accessUrl,
+      distributions: [distribution],
+    });
+  }
+
   public getDownloadDistributions(): Distribution[] {
     const downloadable = this.distributions.filter(
       (distribution) => !distribution.isSparql(),

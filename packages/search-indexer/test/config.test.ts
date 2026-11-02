@@ -15,6 +15,7 @@ describe('configFromEnvironment', () => {
       registryEndpoint: new URL('https://registry.example.org/sparql'),
       registryRootTypes: [],
       datasetCriteria: {},
+      localSources: [],
       typesense: {
         host: 'typesense.internal',
         port: 8108,
@@ -48,6 +49,7 @@ describe('configFromEnvironment', () => {
       registryEndpoint: new URL('https://registry.example.org/sparql'),
       registryRootTypes: ['Dataset', 'Publisher'],
       datasetCriteria: {},
+      localSources: [],
       typesense: {
         host: 'typesense.internal',
         port: 443,
@@ -146,6 +148,123 @@ describe('configFromEnvironment', () => {
           DATASET_CRITERIA: '{}',
         }),
       ).toThrowError(/mutually exclusive/);
+    });
+  });
+
+  describe('local data in DATASETS', () => {
+    const local = { ...minimal, QLEVER_IMAGE: 'adfreiburg/qlever:latest' };
+    const typesenseOnly = {
+      TYPESENSE_HOST: 'typesense.internal',
+      TYPESENSE_API_KEY: 'admin-key',
+      QLEVER_IMAGE: 'adfreiburg/qlever:latest',
+    };
+
+    it('splits registered datasets from local data', () => {
+      const config = configFromEnvironment({
+        ...local,
+        DATASETS:
+          'https://example.org/dataset/1 file:///rdf/extra.ttl file:///rdf/more/',
+      });
+      expect(config.datasetCriteria).toEqual({
+        $id: ['https://example.org/dataset/1'],
+      });
+      expect(config.localSources).toEqual(['/rdf/extra.ttl', '/rdf/more/']);
+      expect(config.registryEndpoint).toEqual(
+        new URL('https://registry.example.org/sparql'),
+      );
+    });
+
+    it('decodes a path, so it may hold what separates the list', () => {
+      const config = configFromEnvironment({
+        ...local,
+        DATASETS: 'file:///rdf/with%20space.ttl',
+      });
+      expect(config.localSources).toEqual(['/rdf/with space.ttl']);
+    });
+
+    it('needs no registry for local data alone', () => {
+      const config = configFromEnvironment({
+        ...typesenseOnly,
+        DATASETS: 'file:///rdf/extra.ttl',
+      });
+      expect(config.registryEndpoint).toBeUndefined();
+    });
+
+    it('ignores a configured registry for local data alone', () => {
+      const config = configFromEnvironment({
+        ...local,
+        DATASETS: 'file:///rdf/extra.ttl',
+      });
+      expect(config.registryEndpoint).toBeUndefined();
+    });
+
+    it('still requires a registry beside local data', () => {
+      expect(() =>
+        configFromEnvironment({
+          ...typesenseOnly,
+          DATASETS: 'https://example.org/dataset/1 file:///rdf/extra.ttl',
+        }),
+      ).toThrowError(/REGISTRY_ENDPOINT is required/);
+    });
+
+    it('requires QLever', () => {
+      expect(() =>
+        configFromEnvironment({ ...minimal, DATASETS: 'file:///rdf/a.ttl' }),
+      ).toThrowError(/requires QLEVER_IMAGE or QLEVER_MODE=remote/);
+    });
+
+    it('rejects a file whose format it cannot tell', () => {
+      expect(() =>
+        configFromEnvironment({ ...local, DATASETS: 'file:///rdf/notes.txt' }),
+      ).toThrowError(/DATASETS contains “file:\/\/\/rdf\/notes\.txt”/);
+    });
+
+    it('rejects a URL with a host, the usual typo for a path', () => {
+      expect(() =>
+        configFromEnvironment({ ...local, DATASETS: 'file://rdf/a.ttl' }),
+      ).toThrowError(/DATASETS contains “file:\/\/rdf\/a\.ttl”/);
+    });
+
+    it('reads a file: URL whatever the case of its scheme', () => {
+      const config = configFromEnvironment({
+        ...local,
+        DATASETS: 'FILE:///rdf/a.ttl',
+      });
+      expect(config.localSources).toEqual(['/rdf/a.ttl']);
+      expect(config.registryEndpoint).toBeUndefined();
+    });
+
+    it('rejects a file listed twice, or beside its directory', () => {
+      let message = '';
+      try {
+        configFromEnvironment({
+          ...local,
+          DATASETS:
+            'file:///rdf/a.ttl file:///rdf/a.ttl file:///rdf/more/b.ttl file:///rdf/more/',
+        });
+      } catch (error) {
+        message = (error as Error).message;
+      }
+      expect(message).toContain('DATASETS lists “/rdf/a.ttl” twice');
+      expect(message).toContain(
+        'DATASETS lists “/rdf/more/b.ttl” and its directory',
+      );
+    });
+
+    it('rejects local data with DATASET_CRITERIA', () => {
+      expect(() =>
+        configFromEnvironment({
+          ...local,
+          DATASETS: 'file:///rdf/a.ttl',
+          DATASET_CRITERIA: '{}',
+        }),
+      ).toThrowError(/mutually exclusive/);
+    });
+
+    it('rejects a file: registry, which has no SPARQL to query', () => {
+      expect(() =>
+        configFromEnvironment({ ...local, REGISTRY_ENDPOINT: 'file:///rdf/' }),
+      ).toThrowError(/REGISTRY_ENDPOINT must be a SPARQL endpoint/);
     });
   });
 

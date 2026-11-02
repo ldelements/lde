@@ -337,6 +337,23 @@ describe('registrySource', () => {
     expect(source.isSparql()).toBe(true);
   });
 
+  it('leaves a local file reading its own data, having no registration', () => {
+    const local = Dataset.localFile('/rdf/extra.ttl');
+
+    expect(registrySource(REGISTRY)(local, distribution)).toBe(distribution);
+  });
+
+  it('reads the register for a registered dataset whose data is a local file', () => {
+    const registered = new Dataset({
+      iri: new URL('http://example.org/dataset/1'),
+      distributions: [Distribution.localFile('/rdf/extra.ttl')],
+    });
+
+    expect(registrySource(REGISTRY)(registered, distribution).namedGraph).toBe(
+      'http://example.org/dataset/1',
+    );
+  });
+
   it('scopes per dataset, not per pipeline', () => {
     const sourceFor = registrySource(REGISTRY);
     const other = new Dataset({

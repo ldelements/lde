@@ -50,3 +50,28 @@ The pipeline calls the resolver’s `cleanup()` after each dataset – not once 
 - `'import'` – always import the dump, even when a working endpoint is advertised.
 
 Pick `'sparqlWithImportFallback'` when endpoints exist but are unreliable for heavy queries, and `'import'` when you trust dumps more than endpoints outright. See the [distribution resolver reference](../reference/pipeline#distribution-resolver) for the full semantics.
+
+## Import a local file
+
+A dump can also come from a file on this machine, with no registration. `DirectorySelector` selects one dataset per RDF file in a directory, and `Dataset.localFile()` creates one for a single file. Both derive the format from the extension and use the file’s URL as the dataset’s IRI; the rest of the setup above stays the same:
+
+```typescript
+import { Dataset } from '@lde/dataset';
+import { DirectorySelector } from '@lde/pipeline';
+
+const selector = new DirectorySelector('./rdf');
+const dataset = Dataset.localFile('./rdf/catalog.ttl');
+```
+
+Moving the file makes it a different dataset. For an IRI that survives a move, pass your own:
+
+```typescript
+import { Dataset, Distribution } from '@lde/dataset';
+
+const dataset = new Dataset({
+  iri: new URL('https://example.org/dataset/catalog'),
+  distributions: [Distribution.localFile('./rdf/catalog.ttl')],
+});
+```
+
+The importer copies the file into `dataDir` and keeps that copy while the file is unchanged. Only `Distribution.localFile()`, which `Dataset.localFile()` calls, grants access to the filesystem: a `file:` URL from a registry stays unreachable, as [ADR 31](../decisions/0031-import-local-files-through-the-data-dump-path) explains.

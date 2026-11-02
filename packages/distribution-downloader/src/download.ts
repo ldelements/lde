@@ -1,9 +1,10 @@
 import { Distribution } from '@lde/dataset';
 import filenamifyUrl from 'filenamify-url';
-import { dirname, join, resolve, sep } from 'node:path';
+import { createHash } from 'node:crypto';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { createWriteStream } from 'node:fs';
+import { createReadStream, createWriteStream } from 'node:fs';
 import { access, mkdir, rm, stat } from 'node:fs/promises';
 export interface Logger {
   fatal(msg: string, ...args: unknown[]): void;
@@ -58,7 +59,12 @@ export class LastModifiedDownloader implements Downloader {
 
   public async download(
     distribution: Distribution,
-    target = join(this.path, filenamifyUrl(distribution.accessUrl)),
+    target = join(
+      this.path,
+      distribution.localPath === undefined
+        ? filenamifyUrl(distribution.accessUrl)
+        : localCopyName(distribution.localPath),
+    ),
     options?: DownloadOptions,
   ): Promise<DownloadResult> {
     const logger = options?.logger ?? noopLogger;
@@ -69,6 +75,11 @@ export class LastModifiedDownloader implements Downloader {
       throw new Error(
         `Download target escapes the base directory: ${filePath}`,
       );
+    }
+
+    if (distribution.localPath !== undefined) {
+      await this.copyLocalFile(distribution.localPath, filePath);
+      return { path: filePath, headers: new Headers() };
     }
 
     if (await this.localFileIsUpToDate(filePath, distribution)) {
@@ -134,6 +145,35 @@ export class LastModifiedDownloader implements Downloader {
     }
   }
 
+  /**
+   * Copy a local file into the base directory, because that is the only
+   * directory a containerized store has mounted. An unchanged copy is kept: it
+   * is what keeps a store’s index of it valid.
+   */
+  private async copyLocalFile(source: string, filePath: string): Promise<void> {
+    const sourceStats = await stat(source);
+    if (sourceStats.size <= 1) {
+      throw new Error(`Local file ${source} is empty`);
+    }
+    const copyStats = await stat(filePath).catch(() => undefined);
+    if (
+      copyStats?.size === sourceStats.size &&
+      copyStats.mtime >= sourceStats.mtime
+    ) {
+      return;
+    }
+    await mkdir(dirname(filePath), { recursive: true });
+    try {
+      // Streamed rather than copyFile, which would carry the source’s mode over:
+      // a read-only source would block the next copy, and a private one leave a
+      // copy a store running as another user cannot read.
+      await pipeline(createReadStream(source), createWriteStream(filePath));
+    } catch (error) {
+      await rm(filePath, { force: true });
+      throw new Error(`Failed to copy ${source} to ${filePath}: ${error}`);
+    }
+  }
+
   private async localFileIsUpToDate(
     filePath: string,
     distribution: Distribution,
@@ -159,4 +199,17 @@ export class LastModifiedDownloader implements Downloader {
 
     return stats.mtime >= distribution.lastModified;
   }
+}
+
+/**
+ * A copy’s name, unique per source path: a filename derived from the path would
+ * be lossy, so `/rdf/a/b.ttl` and `/rdf/a!b.ttl` would share one copy and one
+ * could be indexed as the other. The extensions are kept for the store, which
+ * reads the format and compression from them.
+ */
+function localCopyName(path: string): string {
+  const hash = createHash('sha256').update(path).digest('hex').slice(0, 16);
+  // Always matches, if only the empty string at the end.
+  const extensions = /(\.[a-z0-9]+){0,2}$/i.exec(basename(path))![0];
+  return `local-${hash}${extensions}`;
 }

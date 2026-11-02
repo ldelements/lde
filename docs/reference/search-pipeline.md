@@ -263,7 +263,9 @@ dataset a pipeline can select – while nothing obliges a publisher to describe
 its own dataset inside its dump.
 
 `registrySource` points a stage at the register instead, scoped to the graph the
-dataset in hand names:
+dataset in hand names. A dataset identified by a `file:` URL, as
+`Dataset.localFile()` makes it, has no registration, so it keeps reading its own
+data:
 
 ```typescript
 import {

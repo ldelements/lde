@@ -242,6 +242,11 @@ export function selectByClass(
  * IRI, which is how a DCAT register that crawls per registration stores it (the
  * NDE Dataset Register does so for every registration it holds).
  *
+ * A dataset identified by a `file:` URL, as `Dataset.localFile` makes it,
+ * has no registration, so it keeps reading its own data: whatever the file says
+ * about itself is all there is to index. A registered dataset whose data happens
+ * to be a local file still reads its description from the register.
+ *
  * Routing is deployment topology, deliberately kept out of the
  * {@link SearchType}: a type is defined by its `class`, not by where its
  * triples come from, so the same declaration serves a deployment that sources
@@ -264,5 +269,8 @@ export function selectByClass(
 export function registrySource(
   endpoint: URL,
 ): NonNullable<SearchStageType['sourceFor']> {
-  return (dataset) => Distribution.sparql(endpoint, dataset.iri.toString());
+  return (dataset, distribution) =>
+    dataset.iri.protocol === 'file:'
+      ? distribution
+      : Distribution.sparql(endpoint, dataset.iri.toString());
 }

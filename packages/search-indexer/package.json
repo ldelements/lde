@@ -28,6 +28,7 @@
     "!**/*.tsbuildinfo"
   ],
   "dependencies": {
+    "@lde/dataset": "^0.9.0",
     "@lde/dataset-registry-client": "^0.11.0",
     "@lde/pipeline": "^0.40.1",
     "@lde/pipeline-console-reporter": "^0.31.1",
