@@ -1,0 +1,369 @@
+{
+  "@context": [
+    "https://iiif.io/api/presentation/3/context.json",
+    "https://schema.org/"
+  ],
+  "id": "https://n2t.net/ark:/11978/519a1270ffdd465caee2de9c205973eb/iiif.json",
+  "type": "Manifest",
+  "label": {
+    "nl": [
+      "Gasmotor, N.V. Machine- en motorenfabriek v.h. Thomassen & Co., 1911"
+    ]
+  },
+  "items": [
+    {
+      "id": "https://n2t.net/ark:/11978/519a1270ffdd465caee2de9c205973eb/iiif.json#/canvas/1",
+      "type": "Canvas",
+      "label": {
+        "none": ["p. 1"]
+      },
+      "width": 1623,
+      "height": 1080,
+      "items": [
+        {
+          "id": "https://n2t.net/ark:/11978/519a1270ffdd465caee2de9c205973eb/iiif.json#/canvas/1/page/1",
+          "type": "AnnotationPage",
+          "items": [
+            {
+              "id": "https://n2t.net/ark:/11978/519a1270ffdd465caee2de9c205973eb/iiif.json#/canvas/1/annotation/1",
+              "type": "Annotation",
+              "motivation": "painting",
+              "target": "https://n2t.net/ark:/11978/519a1270ffdd465caee2de9c205973eb/iiif.json#/canvas/1",
+              "body": {
+                "id": "https://n2t.net/ark:/11978/519a1270ffdd465caee2de9c205973eb/iiif.json#/canvas/1/body/1",
+                "type": "Image",
+                "format": "image/jpeg",
+                "service": [
+                  {
+                    "id": "https://ndeiiif.adlibhosting.com/iiif/3/Q110996022.43856",
+                    "type": "ImageService3",
+                    "profile": "level2"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "https://n2t.net/ark:/11978/519a1270ffdd465caee2de9c205973eb/iiif.json#/canvas/2",
+      "type": "Canvas",
+      "label": {
+        "none": ["p. 2"]
+      },
+      "width": 1417,
+      "height": 949,
+      "items": [
+        {
+          "id": "https://n2t.net/ark:/11978/519a1270ffdd465caee2de9c205973eb/iiif.json#/canvas/2/page/1",
+          "type": "AnnotationPage",
+          "items": [
+            {
+              "id": "https://n2t.net/ark:/11978/519a1270ffdd465caee2de9c205973eb/iiif.json#/canvas/2/annotation/1",
+              "type": "Annotation",
+              "motivation": "painting",
+              "target": "https://n2t.net/ark:/11978/519a1270ffdd465caee2de9c205973eb/iiif.json#/canvas/2",
+              "body": {
+                "id": "https://n2t.net/ark:/11978/519a1270ffdd465caee2de9c205973eb/iiif.json#/canvas/2/body/1",
+                "type": "Image",
+                "format": "image/jpeg",
+                "service": [
+                  {
+                    "id": "https://ndeiiif.adlibhosting.com/iiif/3/Q110996022.40827",
+                    "type": "ImageService3",
+                    "profile": "level2"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "https://n2t.net/ark:/11978/519a1270ffdd465caee2de9c205973eb/iiif.json#/canvas/3",
+      "type": "Canvas",
+      "label": {
+        "none": ["p. 3"]
+      },
+      "width": 943,
+      "height": 1417,
+      "items": [
+        {
+          "id": "https://n2t.net/ark:/11978/519a1270ffdd465caee2de9c205973eb/iiif.json#/canvas/3/page/1",
+          "type": "AnnotationPage",
+          "items": [
+            {
+              "id": "https://n2t.net/ark:/11978/519a1270ffdd465caee2de9c205973eb/iiif.json#/canvas/3/annotation/1",
+              "type": "Annotation",
+              "motivation": "painting",
+              "target": "https://n2t.net/ark:/11978/519a1270ffdd465caee2de9c205973eb/iiif.json#/canvas/3",
+              "body": {
+                "id": "https://n2t.net/ark:/11978/519a1270ffdd465caee2de9c205973eb/iiif.json#/canvas/3/body/1",
+                "type": "Image",
+                "format": "image/jpeg",
+                "service": [
+                  {
+                    "id": "https://ndeiiif.adlibhosting.com/iiif/3/Q110996022.40826",
+                    "type": "ImageService3",
+                    "profile": "level2"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "https://n2t.net/ark:/11978/519a1270ffdd465caee2de9c205973eb/iiif.json#/canvas/4",
+      "type": "Canvas",
+      "label": {
+        "none": ["p. 4"]
+      },
+      "width": 1417,
+      "height": 944,
+      "items": [
+        {
+          "id": "https://n2t.net/ark:/11978/519a1270ffdd465caee2de9c205973eb/iiif.json#/canvas/4/page/1",
+          "type": "AnnotationPage",
+          "items": [
+            {
+              "id": "https://n2t.net/ark:/11978/519a1270ffdd465caee2de9c205973eb/iiif.json#/canvas/4/annotation/1",
+              "type": "Annotation",
+              "motivation": "painting",
+              "target": "https://n2t.net/ark:/11978/519a1270ffdd465caee2de9c205973eb/iiif.json#/canvas/4",
+              "body": {
+                "id": "https://n2t.net/ark:/11978/519a1270ffdd465caee2de9c205973eb/iiif.json#/canvas/4/body/1",
+                "type": "Image",
+                "format": "image/jpeg",
+                "service": [
+                  {
+                    "id": "https://ndeiiif.adlibhosting.com/iiif/3/Q110996022.14635",
+                    "type": "ImageService3",
+                    "profile": "level2"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "https://n2t.net/ark:/11978/519a1270ffdd465caee2de9c205973eb/iiif.json#/canvas/5",
+      "type": "Canvas",
+      "label": {
+        "none": ["p. 5"]
+      },
+      "width": 1417,
+      "height": 950,
+      "items": [
+        {
+          "id": "https://n2t.net/ark:/11978/519a1270ffdd465caee2de9c205973eb/iiif.json#/canvas/5/page/1",
+          "type": "AnnotationPage",
+          "items": [
+            {
+              "id": "https://n2t.net/ark:/11978/519a1270ffdd465caee2de9c205973eb/iiif.json#/canvas/5/annotation/1",
+              "type": "Annotation",
+              "motivation": "painting",
+              "target": "https://n2t.net/ark:/11978/519a1270ffdd465caee2de9c205973eb/iiif.json#/canvas/5",
+              "body": {
+                "id": "https://n2t.net/ark:/11978/519a1270ffdd465caee2de9c205973eb/iiif.json#/canvas/5/body/1",
+                "type": "Image",
+                "format": "image/jpeg",
+                "service": [
+                  {
+                    "id": "https://ndeiiif.adlibhosting.com/iiif/3/Q110996022.40824",
+                    "type": "ImageService3",
+                    "profile": "level2"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "https://n2t.net/ark:/11978/519a1270ffdd465caee2de9c205973eb/iiif.json#/canvas/6",
+      "type": "Canvas",
+      "label": {
+        "none": ["p. 6"]
+      },
+      "width": 1417,
+      "height": 943,
+      "items": [
+        {
+          "id": "https://n2t.net/ark:/11978/519a1270ffdd465caee2de9c205973eb/iiif.json#/canvas/6/page/1",
+          "type": "AnnotationPage",
+          "items": [
+            {
+              "id": "https://n2t.net/ark:/11978/519a1270ffdd465caee2de9c205973eb/iiif.json#/canvas/6/annotation/1",
+              "type": "Annotation",
+              "motivation": "painting",
+              "target": "https://n2t.net/ark:/11978/519a1270ffdd465caee2de9c205973eb/iiif.json#/canvas/6",
+              "body": {
+                "id": "https://n2t.net/ark:/11978/519a1270ffdd465caee2de9c205973eb/iiif.json#/canvas/6/body/1",
+                "type": "Image",
+                "format": "image/jpeg",
+                "service": [
+                  {
+                    "id": "https://ndeiiif.adlibhosting.com/iiif/3/Q110996022.40825",
+                    "type": "ImageService3",
+                    "profile": "level2"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "https://n2t.net/ark:/11978/519a1270ffdd465caee2de9c205973eb/iiif.json#/canvas/7",
+      "type": "Canvas",
+      "label": {
+        "none": ["p. 7"]
+      },
+      "width": 3072,
+      "height": 2048,
+      "items": [
+        {
+          "id": "https://n2t.net/ark:/11978/519a1270ffdd465caee2de9c205973eb/iiif.json#/canvas/7/page/1",
+          "type": "AnnotationPage",
+          "items": [
+            {
+              "id": "https://n2t.net/ark:/11978/519a1270ffdd465caee2de9c205973eb/iiif.json#/canvas/7/annotation/1",
+              "type": "Annotation",
+              "motivation": "painting",
+              "target": "https://n2t.net/ark:/11978/519a1270ffdd465caee2de9c205973eb/iiif.json#/canvas/7",
+              "body": {
+                "id": "https://n2t.net/ark:/11978/519a1270ffdd465caee2de9c205973eb/iiif.json#/canvas/7/body/1",
+                "type": "Image",
+                "format": "image/jpeg",
+                "service": [
+                  {
+                    "id": "https://ndeiiif.adlibhosting.com/iiif/3/Q110996022.8075",
+                    "type": "ImageService3",
+                    "profile": "level2"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "provider": [
+    {
+      "id": "https://www.discoverymuseum.nl",
+      "type": "Agent",
+      "label": {
+        "en": ["Discovery Museum"],
+        "nl": ["Discovery Museum"]
+      },
+      "seeAlso": [
+        {
+          "id": "https://www.ldmax.nl/organisaties/Q110996022.jsonld",
+          "type": "Dataset",
+          "format": "application/ld+json",
+          "profile": "https://schema.org/"
+        },
+        {
+          "id": "https://www.ldmax.nl/organisaties/Q110996022.ttl",
+          "type": "Dataset",
+          "format": "text/turtle",
+          "profile": "https://schema.org/"
+        },
+        {
+          "id": "https://www.ldmax.nl/organisaties/Q110996022.nt",
+          "type": "Dataset",
+          "format": "application/n-triples",
+          "profile": "https://schema.org/"
+        }
+      ]
+    }
+  ],
+  "homepage": [
+    {
+      "id": "https://www.ldmax.nl/organisaties/Q110996022/subject?term=%3Chttps%3A%2F%2Fn2t.net%2Fark%3A%2F11978%2F519a1270ffdd465caee2de9c205973eb%3E",
+      "type": "Text",
+      "label": {
+        "nl": ["Detailpagina"]
+      },
+      "format": "text/html"
+    }
+  ],
+  "summary": {
+    "nl": [
+      "Gasmotor, N.V. Machine- en motorenfabriek v.h. Thomassen & Co., 1911.\n\nGasmotor vervaardigd door N.V. Machine- en motorenfabriek v.h. Thomassen & Co. te Arnhem. De motor is vervaardigd in 1911 en heeft een vermogen van 25 pk.\nNB. beschrijving aanvullen m.b.v. informatie TU Eindhoven e.a.",
+      "Object is opgenomen in het boek ‘Thea, Kaspar en 48 andere stukken – De wondere wereld van Columbus, Cube en Continium’, uitgegeven door Stichting Museumplein Limburg, 2018’, pagina 64-65. \nStoommachines hebben een enorme verandering teweeggebracht. Maar ze waren groot, duur en pasten dus moeilijk in alledaagse apparaten. Dat deed de door de Belg Etienne Lenoir  (1822-1900) uitgevonden gasmotor wel. Deze kleine, goedkope betrouwbare en makkelijk te verdienen motor gebruikte uit steenkool gewonnen gas. Dat werd vermengd met lucht in de cilinder van de motor gezogen, daar samengeperst en via een vonkje toto explosie gebracht. Door de kracht van de explosie kwam de zuiger in de cilinder in beweging en ging de motor draaien. Omdat de brandstof in de motor zelf werd verbrand en in energie omgezet, noemen we dit type een interne verbrandingsmotor. \nGasmotoren vervingen in de decennia tot circa 1900 veel stoommachines en bleken een uitkomst voor kleinere bedrijven. Het grootste voordeel was puur gemak; de motor kon gemakkelijk en zonder extra kosten aan en uit worden gezet. Een nadeel was de aansluiting op een gasleiding, waardoor de gasmotor op een vaste plek moest staan. Met de komst van de op aardolie werkende viertakt en tweetaktmotoren was dat ook verleden tijd. Deze gasmotor uit de collectie van Museumplein Limburg heeft een vermogen van 25 pk. Hij was tot in de jaren 1960 in gebruik als aandrijving van een kolenbreker in de Rotterdamse gasfabriek Keilehaven."
+    ]
+  },
+  "metadata": [
+    {
+      "label": {
+        "nl": ["modified"]
+      },
+      "value": {
+        "none": ["2026-05-11T13:49:46"]
+      }
+    },
+    {
+      "label": {
+        "nl": ["created"]
+      },
+      "value": {
+        "none": ["2022-12-12T09:35:25"]
+      }
+    },
+    {
+      "label": {
+        "nl": ["sdDatePublished"]
+      },
+      "value": {
+        "none": ["2026-05-11T13:49:46"]
+      }
+    },
+    {
+      "label": {
+        "nl": ["name"]
+      },
+      "value": {
+        "nl": [
+          "Gasmotor, N.V. Machine- en motorenfabriek v.h. Thomassen & Co., 1911"
+        ]
+      }
+    },
+    {
+      "label": {
+        "nl": ["identifier"]
+      },
+      "value": {
+        "none": ["056339.01"]
+      }
+    },
+    {
+      "label": {
+        "nl": ["description"]
+      },
+      "value": {
+        "nl": [
+          "Object is opgenomen in het boek ‘Thea, Kaspar en 48 andere stukken – De wondere wereld van Columbus, Cube en Continium’, uitgegeven door Stichting Museumplein Limburg, 2018’, pagina 64-65. \nStoommachines hebben een enorme verandering teweeggebracht. Maar ze waren groot, duur en pasten dus moeilijk in alledaagse apparaten. Dat deed de door de Belg Etienne Lenoir  (1822-1900) uitgevonden gasmotor wel. Deze kleine, goedkope betrouwbare en makkelijk te verdienen motor gebruikte uit steenkool gewonnen gas. Dat werd vermengd met lucht in de cilinder van de motor gezogen, daar samengeperst en via een vonkje toto explosie gebracht. Door de kracht van de explosie kwam de zuiger in de cilinder in beweging en ging de motor draaien. Omdat de brandstof in de motor zelf werd verbrand en in energie omgezet, noemen we dit type een interne verbrandingsmotor. \nGasmotoren vervingen in de decennia tot circa 1900 veel stoommachines en bleken een uitkomst voor kleinere bedrijven. Het grootste voordeel was puur gemak; de motor kon gemakkelijk en zonder extra kosten aan en uit worden gezet. Een nadeel was de aansluiting op een gasleiding, waardoor de gasmotor op een vaste plek moest staan. Met de komst van de op aardolie werkende viertakt en tweetaktmotoren was dat ook verleden tijd. Deze gasmotor uit de collectie van Museumplein Limburg heeft een vermogen van 25 pk. Hij was tot in de jaren 1960 in gebruik als aandrijving van een kolenbreker in de Rotterdamse gasfabriek Keilehaven.",
+          "Gasmotor, N.V. Machine- en motorenfabriek v.h. Thomassen & Co., 1911.\n\nGasmotor vervaardigd door N.V. Machine- en motorenfabriek v.h. Thomassen & Co. te Arnhem. De motor is vervaardigd in 1911 en heeft een vermogen van 25 pk.\nNB. beschrijving aanvullen m.b.v. informatie TU Eindhoven e.a."
+        ]
+      }
+    },
+    {
+      "label": {
+        "nl": ["dateCreated"]
+      },
+      "value": {
+        "none": ["1911"]
+      }
+    }
+  ]
+}

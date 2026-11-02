@@ -1,0 +1,255 @@
+import { describe, expect, it, vi } from 'vitest';
+import {
+  fetchPublic,
+  isPublicWebUrl,
+  readJson,
+  RefusedUrlError,
+  ResponseTooLargeError,
+} from '../src/index.js';
+
+describe('isPublicWebUrl', () => {
+  it.each([
+    'https://example.org/iiif/manifest.json',
+    'http://example.org/iiif/manifest.json',
+    'https://n2t.net/ark:/50282/CBB6/iiif.json',
+    'https://images.example.org/i/?IIIF=/7b/image.tif',
+    'https://8.8.8.8/manifest',
+    'https://[2606:4700:4700::1111]/manifest',
+  ])('allows %s', (url) => {
+    expect(isPublicWebUrl(url)).toBe(true);
+  });
+
+  it.each([
+    'file:///etc/passwd',
+    'ftp://example.org/manifest',
+    'not a url',
+    'http://127.0.0.1/manifest',
+    'http://2130706433/manifest',
+    'http://10.0.0.5/manifest',
+    'http://172.16.0.1/manifest',
+    'http://192.168.1.1/manifest',
+    'http://169.254.169.254/latest/meta-data',
+    'http://100.64.0.1/manifest',
+    'http://[::1]/manifest',
+    'http://[::ffff:127.0.0.1]/manifest',
+    'http://[fe80::1]/manifest',
+    'http://[fd00::1]/manifest',
+    'http://[::7f00:1]/manifest',
+    'http://[64:ff9b::a9fe:a9fe]/latest',
+    'http://[2002:7f00:1::]/manifest',
+    'http://[ff02::1]/manifest',
+    'http://224.0.0.1/manifest',
+    'http://255.255.255.255/manifest',
+    'http://198.18.0.1/manifest',
+    'http://192.0.0.8/manifest',
+    'http://localhost/manifest',
+    'http://localhost./manifest',
+    'http://typesense:8108/collections',
+    'http://search-api.default.svc/graphql',
+    'http://kubernetes.default.svc./api',
+    'http://search-api.default.svc.cluster.local/graphql',
+    'http://metadata.google.internal./computeMetadata',
+  ])('rejects %s', (url) => {
+    expect(isPublicWebUrl(url)).toBe(false);
+  });
+});
+
+function answering(answers: Record<string, Response>) {
+  return vi.fn(async (input: string | URL | Request) => {
+    const answer = answers[String(input)];
+    if (answer === undefined) {
+      throw new Error(`unexpected request for ${String(input)}`);
+    }
+    return answer;
+  });
+}
+
+function redirect(location: string, status = 302) {
+  return new Response(null, { status, headers: { location } });
+}
+
+describe('fetchPublic', () => {
+  it('fetches a public URL', async () => {
+    const fetch = answering({
+      'https://example.org/a': Response.json({ ok: true }),
+    });
+
+    const response = await fetchPublic('https://example.org/a', { fetch });
+
+    expect(await response.json()).toEqual({ ok: true });
+  });
+
+  it('refuses an internal URL without fetching it', async () => {
+    const fetch = answering({});
+
+    await expect(
+      fetchPublic('http://169.254.169.254/latest', { fetch }),
+    ).rejects.toBeInstanceOf(RefusedUrlError);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('follows public redirects, resolving relative locations', async () => {
+    const fetch = answering({
+      'https://n2t.net/ark:/1/x': redirect('https://example.org/ark:/1/x', 301),
+      'https://example.org/ark:/1/x': redirect('/manifests/x.json', 307),
+      'https://example.org/manifests/x.json': Response.json({ id: 'x' }),
+    });
+
+    const response = await fetchPublic('https://n2t.net/ark:/1/x', { fetch });
+
+    expect(await response.json()).toEqual({ id: 'x' });
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it('refuses a redirect to an internal URL without following it', async () => {
+    const fetch = answering({
+      'https://example.org/a': redirect('http://10.0.0.5/secret'),
+    });
+
+    await expect(
+      fetchPublic('https://example.org/a', { fetch }),
+    ).rejects.toMatchObject({ url: 'http://10.0.0.5/secret' });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('gives up after the redirect limit', async () => {
+    const fetch = answering({
+      'https://example.org/a': redirect('https://example.org/b'),
+      'https://example.org/b': redirect('https://example.org/a'),
+    });
+
+    await expect(
+      fetchPublic('https://example.org/a', { fetch, maxRedirects: 3 }),
+    ).rejects.toThrow('redirected more than 3 times');
+    expect(fetch).toHaveBeenCalledTimes(4);
+  });
+
+  it('drops credentials on a cross-origin redirect, and keeps them on the same origin', async () => {
+    const fetch = answering({
+      'https://example.org/a': redirect('https://example.org/b'),
+      'https://example.org/b': redirect('https://elsewhere.example/c'),
+      'https://elsewhere.example/c': Response.json({}),
+    });
+
+    await fetchPublic('https://example.org/a', {
+      fetch,
+      headers: { Authorization: 'Bearer secret', Accept: '*/*' },
+    });
+
+    const sent = (fetch.mock.calls as unknown as [string, RequestInit][]).map(
+      ([, init]) => new Headers(init.headers),
+    );
+    expect(sent.map((headers) => headers.get('authorization'))).toEqual([
+      'Bearer secret',
+      'Bearer secret',
+      null,
+    ]);
+    expect(sent[2].get('accept')).toBe('*/*');
+  });
+
+  it('returns a redirect with a malformed location as it is', async () => {
+    const fetch = answering({
+      'https://example.org/a': redirect('http://[bad'),
+    });
+
+    const response = await fetchPublic('https://example.org/a', { fetch });
+
+    expect(response.status).toBe(302);
+  });
+
+  it('returns a redirect status without a location as it is', async () => {
+    const fetch = answering({
+      'https://example.org/a': new Response(null, { status: 302 }),
+    });
+
+    const response = await fetchPublic('https://example.org/a', { fetch });
+
+    expect(response.status).toBe(302);
+  });
+
+  it('passes headers and signal on every hop, and handles redirects itself', async () => {
+    const fetch = answering({
+      'https://example.org/a': redirect('https://example.org/b'),
+      'https://example.org/b': Response.json({}),
+    });
+    const signal = new AbortController().signal;
+
+    await fetchPublic('https://example.org/a', {
+      fetch,
+      signal,
+      headers: { Accept: '*/*' },
+    });
+
+    for (const [, init] of fetch.mock.calls as unknown as [
+      string,
+      RequestInit,
+    ][]) {
+      expect(init).toEqual({
+        signal,
+        headers: { Accept: '*/*' },
+        redirect: 'manual',
+      });
+    }
+  });
+
+  it('uses the global fetch by default', async () => {
+    const fetch = answering({ 'https://example.org/a': Response.json({}) });
+    vi.stubGlobal('fetch', fetch);
+    try {
+      await fetchPublic('https://example.org/a');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+});
+
+describe('readJson', () => {
+  it('parses a body within the limit', async () => {
+    expect(await readJson(Response.json({ width: 1335 }))).toEqual({
+      width: 1335,
+    });
+  });
+
+  it('rejects a body that declares a length above the limit, without reading it', async () => {
+    const response = new Response('{}', {
+      headers: { 'content-length': '2000' },
+    });
+
+    await expect(readJson(response, 1000)).rejects.toBeInstanceOf(
+      ResponseTooLargeError,
+    );
+  });
+
+  it('stops reading a body that grows past the limit', async () => {
+    const chunk = new TextEncoder().encode('x'.repeat(600));
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(chunk);
+      },
+    });
+
+    await expect(readJson(new Response(body), 1000)).rejects.toBeInstanceOf(
+      ResponseTooLargeError,
+    );
+  });
+
+  it('parses a body that starts with a byte order mark', async () => {
+    expect(await readJson(new Response('﻿{"width":1}'))).toEqual({
+      width: 1,
+    });
+  });
+
+  it('throws on a body that is not JSON', async () => {
+    await expect(readJson(new Response('<html>'))).rejects.toBeInstanceOf(
+      SyntaxError,
+    );
+  });
+
+  it('throws on a response without a body', async () => {
+    await expect(
+      readJson(new Response(null, { status: 204 })),
+    ).rejects.toBeInstanceOf(SyntaxError);
+  });
+});

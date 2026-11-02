@@ -1,0 +1,86 @@
+{
+  "rendering": [],
+  "@context": "http://iiif.io/api/presentation/3/context.json",
+  "id": "https://fehac.hosting.deventit.net/IIIF/presentation/3.0/1064346/manifest.json",
+  "type": "Manifest",
+  "label": { "none": ["&nbsp;"] },
+  "items": [
+    {
+      "id": "https://fehac.hosting.deventit.net/IIIF/presentation/158/canvas",
+      "type": "Canvas",
+      "height": 132,
+      "width": 200,
+      "items": [
+        {
+          "type": "AnnotationPage",
+          "id": "https://fehac.hosting.deventit.net/IIIF/presentation/158/canvas/annotation",
+          "items": [
+            {
+              "id": "https://fehac.hosting.deventit.net/IIIF/presentation/158/canvas/annotation/image",
+              "type": "Annotation",
+              "motivation": "painting",
+              "target": "https://fehac.hosting.deventit.net/IIIF/presentation/158/canvas",
+              "body": {
+                "id": "https://fehac.hosting.deventit.net/IIIF/image/3.0/ic:158/full/max/0/default.jpg",
+                "type": "Image",
+                "format": "image/jpg",
+                "service": [
+                  {
+                    "id": "https://fehac.hosting.deventit.net/IIIF/image/3.0/ic:158",
+                    "type": "ImageService3",
+                    "profile": "level1"
+                  }
+                ],
+                "height": 132,
+                "width": 200
+              }
+            }
+          ]
+        }
+      ],
+      "annotations": [null]
+    }
+  ],
+  "thumbnail": [
+    {
+      "id": "https://fehac.hosting.deventit.net/IIIF/image/3.0/ic:158/full/200,/0/default.png",
+      "type": "Image"
+    }
+  ],
+  "summary": { "none": ["Personenvervoer [van/met eigenaar]"] },
+  "provider": [
+    {
+      "id": "https://FEHAC.hosting.deventit.net",
+      "type": "Agent",
+      "homepage": [
+        {
+          "id": "https://FEHAC.hosting.deventit.net",
+          "type": "Text",
+          "format": "text/html"
+        }
+      ]
+    }
+  ],
+  "homepage": [
+    {
+      "id": "https://FEHAC.hosting.deventit.net/detail.php?id=1064346",
+      "type": "Text",
+      "format": "text/html"
+    }
+  ],
+  "metadata": [
+    { "label": { "nl": ["CMDetail"] }, "value": { "nl": ["&nbsp;"] } }
+  ],
+  "service": [
+    {
+      "id": "https://fehac.hosting.deventit.net/IIIF/contentsearch/2.0/1064346/search",
+      "type": "SearchService2",
+      "service": [
+        {
+          "id": "https://fehac.hosting.deventit.net/IIIF/contentsearch/2.0/1064346/autocomplete",
+          "type": "AutoCompleteService2"
+        }
+      ]
+    }
+  ]
+}

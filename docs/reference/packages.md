@@ -15,19 +15,20 @@ Find and retrieve dataset descriptions from registries.
 
 Transform, enrich and analyse datasets with SPARQL pipelines.
 
-| Package                                                     | Description                                                           |
-| ----------------------------------------------------------- | --------------------------------------------------------------------- |
-| [@lde/pipeline](./pipeline)                                 | Build pipelines that query, transform and enrich Linked Data          |
-| [@lde/pipeline-shacl-sampler](./pipeline-shacl-sampler)     | Per-class sampling stages derived from SHACL shapes                   |
-| [@lde/pipeline-shacl-validator](./pipeline-shacl-validator) | SHACL validation for pipeline stages                                  |
-| [@lde/pipeline-void](./pipeline-void)                       | VoID statistical analysis for RDF datasets                            |
-| [@lde/distribution-downloader](./distribution-downloader)   | Download distributions for local processing                           |
-| [@lde/distribution-health](./distribution-health)           | Derive distribution usability from reachability and RDF validity      |
-| [@lde/distribution-probe](./distribution-probe)             | Probe distributions for availability and metadata                     |
-| [@lde/iiif-validator](./iiif-validator)                     | Validate that a URL resolves to a valid IIIF Presentation Manifest    |
-| [@lde/resolver](./resolver)                                 | Resolve external references with a durable store, bounds and retry    |
-| [@lde/sparql-importer](./sparql-importer)                   | Import data dumps to a local SPARQL endpoint for querying             |
-| [@lde/sparql-anything](./sparql-anything)                   | Convert tabular and other non-RDF sources to RDF with SPARQL Anything |
+| Package                                                     | Description                                                                    |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| [@lde/pipeline](./pipeline)                                 | Build pipelines that query, transform and enrich Linked Data                   |
+| [@lde/pipeline-shacl-sampler](./pipeline-shacl-sampler)     | Per-class sampling stages derived from SHACL shapes                            |
+| [@lde/pipeline-shacl-validator](./pipeline-shacl-validator) | SHACL validation for pipeline stages                                           |
+| [@lde/pipeline-void](./pipeline-void)                       | VoID statistical analysis for RDF datasets                                     |
+| [@lde/distribution-downloader](./distribution-downloader)   | Download distributions for local processing                                    |
+| [@lde/distribution-health](./distribution-health)           | Derive distribution usability from reachability and RDF validity               |
+| [@lde/distribution-probe](./distribution-probe)             | Probe distributions for availability and metadata                              |
+| [@lde/iiif-image](./iiif-image)                             | Find a IIIF manifest’s image service and read its dimensions, limits and sizes |
+| [@lde/iiif-validator](./iiif-validator)                     | Validate that a URL resolves to a valid IIIF Presentation Manifest             |
+| [@lde/resolver](./resolver)                                 | Resolve external references with a durable store, bounds and retry             |
+| [@lde/sparql-importer](./sparql-importer)                   | Import data dumps to a local SPARQL endpoint for querying                      |
+| [@lde/sparql-anything](./sparql-anything)                   | Convert tabular and other non-RDF sources to RDF with SPARQL Anything          |
 
 ## Publication
 
@@ -58,14 +59,15 @@ Observe pipeline runs and endpoint health.
 
 Manage SPARQL servers and run tasks.
 
-| Package                                               | Description                                                       |
-| ----------------------------------------------------- | ----------------------------------------------------------------- |
-| [@lde/host-limiter](./host-limiter)                   | Concurrent map bounded by a global and a per-host cap             |
-| [@lde/local-sparql-endpoint](./local-sparql-endpoint) | Quickly start a local SPARQL endpoint for testing and development |
-| [@lde/sparql-server](./sparql-server)                 | Start, stop and control SPARQL servers                            |
-| [@lde/sparql-qlever](./sparql-qlever)                 | QLever SPARQL adapter for importing and serving data              |
-| [@lde/wait-for-sparql](./wait-for-sparql)             | Wait for a SPARQL endpoint to become available                    |
-| [@lde/task-runner](./task-runner)                     | Task runner core classes and interfaces                           |
-| [@lde/task-runner-docker](./task-runner-docker)       | Run tasks in Docker containers                                    |
-| [@lde/task-runner-native](./task-runner-native)       | Run tasks natively on the host system                             |
-| [@lde/task-runner-http](./task-runner-http)           | Run tasks in another container of the pod, such as a sidecar      |
+| Package                                               | Description                                                             |
+| ----------------------------------------------------- | ----------------------------------------------------------------------- |
+| [@lde/host-limiter](./host-limiter)                   | Concurrent map bounded by a global and a per-host cap                   |
+| [@lde/public-fetch](./public-fetch)                   | Fetch URLs from other people’s data without reaching internal addresses |
+| [@lde/local-sparql-endpoint](./local-sparql-endpoint) | Quickly start a local SPARQL endpoint for testing and development       |
+| [@lde/sparql-server](./sparql-server)                 | Start, stop and control SPARQL servers                                  |
+| [@lde/sparql-qlever](./sparql-qlever)                 | QLever SPARQL adapter for importing and serving data                    |
+| [@lde/wait-for-sparql](./wait-for-sparql)             | Wait for a SPARQL endpoint to become available                          |
+| [@lde/task-runner](./task-runner)                     | Task runner core classes and interfaces                                 |
+| [@lde/task-runner-docker](./task-runner-docker)       | Run tasks in Docker containers                                          |
+| [@lde/task-runner-native](./task-runner-native)       | Run tasks natively on the host system                                   |
+| [@lde/task-runner-http](./task-runner-http)           | Run tasks in another container of the pod, such as a sidecar            |

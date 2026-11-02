@@ -100,6 +100,12 @@
     },
     {
       "path": "./packages/task-runner-http"
+    },
+    {
+      "path": "./packages/public-fetch"
+    },
+    {
+      "path": "./packages/iiif-image"
     }
   ],
   "compilerOptions": {
