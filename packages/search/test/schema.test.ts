@@ -13,6 +13,7 @@ import {
   inlineFramingDepth,
   irAlias,
   isAbsoluteIri,
+  isDatePrecision,
   isoToUnixSeconds,
   isInternalField,
   isRangeFacet,
@@ -562,6 +563,19 @@ describe('validateSearchType', () => {
     expect(
       validateSearchType(typeWith({ name: 'or', kind: 'keyword' })),
     ).toEqual([{ field: 'or', reason: 'reserved-field-name' }]);
+  });
+
+  it('rejects a field named after a date’s precision companion', () => {
+    expect(
+      validateSearchType({
+        name: 'Dataset',
+        class: 'https://example.org/Dataset',
+        fields: [
+          { name: 'created', kind: 'date', output: true },
+          { name: 'created_precision', kind: 'keyword', output: true },
+        ],
+      }),
+    ).toEqual([{ field: 'created_precision', reason: 'reserved-field-name' }]);
   });
 
   it('rejects a declared locale containing an underscore', () => {
@@ -1681,52 +1695,129 @@ describe('searchSchema validation', () => {
 });
 
 describe('date storage codec', () => {
-  it('round-trips ISO 8601 through the stored Unix seconds', () => {
-    const seconds = isoToUnixSeconds('2024-01-01T00:00:00.000Z');
-    expect(seconds).toBe(Date.parse('2024-01-01T00:00:00.000Z') / 1000);
-    expect(unixSecondsToIso(seconds ?? 0)).toBe('2024-01-01T00:00:00.000Z');
+  /** Parse, then serve at the precision the parse found. */
+  const served = (iso: string): string | undefined => {
+    const stored = isoToUnixSeconds(iso);
+    return stored === undefined
+      ? undefined
+      : unixSecondsToIso(stored.seconds, stored.precision);
+  };
+
+  it.each([
+    ['1999', '1999', 'year'],
+    ['1999-05', '1999-05', 'month'],
+    ['1999-05-03', '1999-05-03', 'day'],
+    ['1999-05-03+02:00', '1999-05-03', 'day'],
+    ['1999-05+02:00', '1999-05', 'month'],
+    ['1999+02:00', '1999', 'year'],
+    ['1999Z', '1999', 'year'],
+    ['1999-05-03T14:30:00+02:00', '1999-05-03T12:30:00Z', 'dateTime'],
+    ['1999-05-03T12:30:00.000Z', '1999-05-03T12:30:00Z', 'dateTime'],
+    ['1999-05-03T12:30:00.789Z', '1999-05-03T12:30:00Z', 'dateTime'],
+    ['1999-05-03T12:30Z', '1999-05-03T12:30:00Z', 'dateTime'],
+    ['-1100', '-1100', 'year'],
+    ['-001100', '-1100', 'year'],
+    ['-0044', '-0044', 'year'],
+    ['800', '0800', 'year'],
+    ['25000', '25000', 'year'],
+    ['+025000', '25000', 'year'],
+    ['-250000', '-250000', 'year'],
+    ['-318000000', '-318000000', 'year'],
+    ['-318000000+01:00', '-318000000', 'year'],
+    ['-1100-05-03', '-1100-05-03', 'day'],
+    ['+025000-06-01T00:00:00.000Z', '25000-06-01T00:00:00Z', 'dateTime'],
+  ] as const)('serves %s as %s (%s)', (source, canonical, precision) => {
+    expect(isoToUnixSeconds(source)?.precision).toBe(precision);
+    expect(served(source)).toBe(canonical);
+  });
+
+  it('stores a year, month or day at its first second in UTC', () => {
+    expect(isoToUnixSeconds('1999')?.seconds).toBe(
+      Date.parse('1999-01-01T00:00:00Z') / 1000,
+    );
+    expect(isoToUnixSeconds('1999-05')?.seconds).toBe(
+      Date.parse('1999-05-01T00:00:00Z') / 1000,
+    );
+    expect(isoToUnixSeconds('1999-05-03+02:00')?.seconds).toBe(
+      Date.parse('1999-05-03T00:00:00Z') / 1000,
+    );
+    expect(isoToUnixSeconds('1999+02:00')?.seconds).toBe(
+      isoToUnixSeconds('1999')?.seconds,
+    );
+  });
+
+  it('reads 24:00:00 as the next day’s midnight, as XSD does', () => {
+    expect(served('1999-12-31T24:00:00Z')).toBe('2000-01-01T00:00:00Z');
+    expect(isoToUnixSeconds('1999-12-31T24:00:01Z')).toBeUndefined();
+  });
+
+  it('returns undefined for an offset beyond what XSD allows', () => {
+    expect(served('1999-05-03T00:00:00+14:00')).toBe('1999-05-02T10:00:00Z');
+    for (const impossible of ['+14:01', '+15:00', '+99:99', '-23:75']) {
+      expect(isoToUnixSeconds(`1999-05-03T00:00:00${impossible}`)).toBe(
+        undefined,
+      );
+      expect(isoToUnixSeconds(`1999${impossible}`)).toBeUndefined();
+    }
+  });
+
+  it('normalises a date-time to UTC', () => {
+    expect(isoToUnixSeconds('1999-05-03T14:30:00+02:00')?.seconds).toBe(
+      Date.parse('1999-05-03T12:30:00Z') / 1000,
+    );
+    expect(served('1999-05-03T22:30:00-02:00')).toBe('1999-05-04T00:30:00Z');
+  });
+
+  it('returns undefined for a date-time its offset carries beyond Date’s range', () => {
+    // Date’s last moment, then an hour later in UTC.
+    expect(served('275760-09-13T00:00:00Z')).toBe('275760-09-13T00:00:00Z');
+    expect(isoToUnixSeconds('275760-09-13T00:00:00-01:00')).toBeUndefined();
+  });
+
+  it('recognises the stored precisions, and nothing else', () => {
+    for (const precision of ['year', 'month', 'day', 'dateTime']) {
+      expect(isDatePrecision(precision)).toBe(true);
+    }
+    for (const other of [undefined, 'datetime', 3]) {
+      expect(isDatePrecision(other)).toBe(false);
+    }
+  });
+
+  it('reads a date-time without a timezone as UTC, whatever the host’s', () => {
+    const original = process.env.TZ;
+    process.env.TZ = 'Europe/Amsterdam';
+    try {
+      expect(served('1999-05-03T14:30:00')).toBe('1999-05-03T14:30:00Z');
+    } finally {
+      process.env.TZ = original;
+    }
+  });
+
+  it('serves the stored seconds at the precision it is given', () => {
+    const { seconds } = isoToUnixSeconds('1999-05-03T00:00:00Z') ?? {
+      seconds: 0,
+    };
+    expect(unixSecondsToIso(seconds, 'year')).toBe('1999');
+    expect(unixSecondsToIso(seconds, 'month')).toBe('1999-05');
+    expect(unixSecondsToIso(seconds, 'day')).toBe('1999-05-03');
+    expect(unixSecondsToIso(seconds, 'dateTime')).toBe('1999-05-03T00:00:00Z');
   });
 
   it('returns undefined for an unparseable date', () => {
     expect(isoToUnixSeconds('not-a-date')).toBeUndefined();
+    expect(isoToUnixSeconds('1999-13')).toBeUndefined();
+    expect(isoToUnixSeconds('1999-02-29')).toBeUndefined();
+    expect(isoToUnixSeconds('1999-05-03T25:00:00Z')).toBeUndefined();
+  });
+
+  it('reads 29 February in a leap year', () => {
+    expect(served('2000-02-29')).toBe('2000-02-29');
+    expect(served('-0004-02-29')).toBe('-0004-02-29');
   });
 
   it('reads an unpadded BCE year as a year, not as a UTC offset', () => {
-    const seconds = isoToUnixSeconds('-1100');
-    expect(unixSecondsToIso(seconds ?? 0)).toBe('-001100-01-01T00:00:00.000Z');
-    expect(seconds).toBe(isoToUnixSeconds('-001100-01-01T00:00:00.000Z'));
-  });
-
-  it('reads a CE year beyond four digits, independent of the host timezone', () => {
-    expect(unixSecondsToIso(isoToUnixSeconds('25000') ?? 0)).toBe(
-      '+025000-01-01T00:00:00.000Z',
-    );
-    expect(unixSecondsToIso(isoToUnixSeconds('25000-06-01') ?? 0)).toBe(
-      '+025000-06-01T00:00:00.000Z',
-    );
-  });
-
-  it('leaves a plain four-digit year and an expanded one alone', () => {
-    expect(unixSecondsToIso(isoToUnixSeconds('1999') ?? 0)).toBe(
-      '1999-01-01T00:00:00.000Z',
-    );
-    expect(
-      unixSecondsToIso(isoToUnixSeconds('+025000-01-01T00:00:00.000Z') ?? 0),
-    ).toBe('+025000-01-01T00:00:00.000Z');
-  });
-
-  it('reads a deep-time BCE year beyond four digits', () => {
-    expect(unixSecondsToIso(isoToUnixSeconds('-250000') ?? 0)).toBe(
-      '-250000-01-01T00:00:00.000Z',
-    );
-    expect(unixSecondsToIso(isoToUnixSeconds('-38000') ?? 0)).toBe(
-      '-038000-01-01T00:00:00.000Z',
-    );
-  });
-
-  it('expands the year of a fuller BCE date, leaving the rest alone', () => {
-    expect(unixSecondsToIso(isoToUnixSeconds('-1100-05-03') ?? 0)).toBe(
-      '-001100-05-03T00:00:00.000Z',
+    expect(isoToUnixSeconds('-1100')?.seconds).toBe(
+      isoToUnixSeconds('-001100-01-01T00:00:00.000Z')?.seconds,
     );
   });
 
@@ -1734,37 +1825,43 @@ describe('date storage codec', () => {
     // XSD collapses whitespace around a date literal, so a padded form is legal
     // and reaches the codec verbatim.
     for (const padded of [' -1100', '\t-1100', '-1100 ', '  -1100  ']) {
-      expect(isoToUnixSeconds(padded)).toBe(isoToUnixSeconds('-1100'));
+      expect(isoToUnixSeconds(padded)).toEqual(isoToUnixSeconds('-1100'));
     }
-    expect(isoToUnixSeconds(' 25000 ')).toBe(isoToUnixSeconds('25000'));
-    expect(isoToUnixSeconds('  1999  ')).toBe(isoToUnixSeconds('1999'));
+    expect(isoToUnixSeconds(' 25000 ')).toEqual(isoToUnixSeconds('25000'));
+    expect(isoToUnixSeconds('  1999  ')).toEqual(isoToUnixSeconds('1999'));
   });
 
   it('reads a deep-time year beyond what Date can represent as an xsd:gYear', () => {
     // A Carboniferous fossil: −318 million years is far past Date’s ±271,821.
-    const seconds = isoToUnixSeconds('-318000000');
-    expect(seconds).toBe((-318_000_000 - 1970) * 31_556_952);
-    expect(unixSecondsToIso(seconds ?? 0)).toBe('-318000000');
-    expect(unixSecondsToIso(isoToUnixSeconds('1000000') ?? 0)).toBe('1000000');
+    expect(isoToUnixSeconds('-318000000')).toEqual({
+      seconds: (-318_000_000 - 1970) * 31_556_952,
+      precision: 'year',
+    });
+    expect(served('1000000')).toBe('1000000');
+  });
+
+  it('serves deep time as a year whatever precision it is asked for', () => {
+    const { seconds } = isoToUnixSeconds('-318000000') ?? { seconds: 0 };
+    expect(unixSecondsToIso(seconds, 'dateTime')).toBe('-318000000');
   });
 
   it('orders deep time against the dates Date holds at its edges', () => {
-    expect(isoToUnixSeconds('-271821') ?? 0).toBeLessThan(
-      isoToUnixSeconds('-271820') ?? 0,
+    expect(isoToUnixSeconds('-271821')?.seconds ?? 0).toBeLessThan(
+      isoToUnixSeconds('-271820')?.seconds ?? 0,
     );
-    expect(isoToUnixSeconds('275760') ?? 0).toBeLessThan(
-      isoToUnixSeconds('275761') ?? 0,
+    expect(isoToUnixSeconds('275760')?.seconds ?? 0).toBeLessThan(
+      isoToUnixSeconds('275761')?.seconds ?? 0,
     );
   });
 
   it('ignores the timezone of a deep-time xsd:gYear', () => {
-    const seconds = isoToUnixSeconds('-318000000');
-    expect(isoToUnixSeconds('-318000000Z')).toBe(seconds);
-    expect(isoToUnixSeconds('-318000000+01:00')).toBe(seconds);
+    const stored = isoToUnixSeconds('-318000000');
+    expect(isoToUnixSeconds('-318000000Z')).toEqual(stored);
+    expect(isoToUnixSeconds('-318000000+01:00')).toEqual(stored);
   });
 
   it('throws on seconds that are not a number', () => {
-    expect(() => unixSecondsToIso(Number.NaN)).toThrow(RangeError);
+    expect(() => unixSecondsToIso(Number.NaN, 'dateTime')).toThrow(RangeError);
   });
 
   it('returns undefined for deep time finer than a year', () => {
@@ -1779,13 +1876,10 @@ describe('date storage codec', () => {
   });
 
   it('orders BCE before CE, and earlier BCE before later', () => {
-    const deeperTime = isoToUnixSeconds('-318000000') ?? 0;
-    const deepTime = isoToUnixSeconds('-250000') ?? 0;
-    expect(deeperTime).toBeLessThan(deepTime);
-    const bce = isoToUnixSeconds('-1100') ?? 0;
-    const ce = isoToUnixSeconds('1100') ?? 0;
-    expect(deepTime).toBeLessThan(bce);
-    expect(bce).toBeLessThan(ce);
+    const seconds = (iso: string) => isoToUnixSeconds(iso)?.seconds ?? 0;
+    expect(seconds('-318000000')).toBeLessThan(seconds('-250000'));
+    expect(seconds('-250000')).toBeLessThan(seconds('-1100'));
+    expect(seconds('-1100')).toBeLessThan(seconds('1100'));
   });
 });
 

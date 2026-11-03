@@ -204,8 +204,10 @@ editor.
   IRI no collection holds – dangling, or its lookup failed – has no kind to
   report and is served as `PersonOrOrganizationUnresolvedReference`, carrying
   only its `id`; scalars/booleans
-  per kind; `date` → ISO 8601 string, or an `xsd:gYear` in deep time; nullability from `required` / `array` /
-  `kind`.
+  per kind; `date` → an ISO 8601 string at the precision its record gave
+  (`1999`, `1999-05`, `1999-05-03` or `1999-05-03T12:30:00Z`, always UTC –
+  see [the canonical forms](./search#field-model)), or an `xsd:gYear` in deep
+  time; nullability from `required` / `array` / `kind`.
 - **`where`** one input per `filterable` field, typed by what the field keys on:
   a `keyword` holds literals (`KeywordFilter`), a `reference` holds identity
   (`‹Target›Filter`, or `IRIFilter` when it names no target, or a filter named
@@ -280,10 +282,12 @@ role: { in: ["etser"] } } }` asks for _this person in this role_, where the
     every filter applied except the field’s own range, so a user can always
     widen a selection again. Both are `{ min max }` in the type the field’s
     range filter takes (`IntExtent`, `FloatExtent`, `DateExtent` with ISO 8601
-    strings, BCE years included), so a bound feeds straight back into
-    `where`, and either is `null` when no document holds a value. Its
+    date-times, BCE years included), so a bound feeds straight back into
+    `where`, and either is `null` when no document holds a value. A date
+    facet spans records of mixed precision, so it is always served as
+    date-times and the client picks the grain it draws at. Its
     `buckets: [ValueBucket!]!` count each distinct value over the same
-    documents as `matching` (a date’s in ISO 8601). A field with
+    documents as `matching` (a date’s as a date-time). A field with
     [`facetRanges`](./search#range-facets) returns the
     `‹Kind›BinnedRangeFacet` variant instead, whose `buckets:
 [RangeBucket!]!` hold one bucket per declared half-open `[min, max)` bin,

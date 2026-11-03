@@ -638,7 +638,7 @@ function storedBound(
   bound: number | string | undefined,
 ): number | string | undefined {
   return field.kind === 'date' && typeof bound === 'string'
-    ? isoToUnixSeconds(bound)
+    ? isoToUnixSeconds(bound)?.seconds
     : bound;
 }
 

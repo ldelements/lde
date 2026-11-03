@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { graphql, printSchema } from 'graphql';
 import {
+  isoToUnixSeconds,
   searchSchema,
   unixSecondsToIso,
   type FacetsOutcome,
@@ -9,6 +10,7 @@ import {
   type SearchResult,
   type RootType,
   type SearchType,
+  type StoredDate,
 } from '@lde/search';
 import { buildGraphQLSchema, type SearchContext } from '../src/build-schema.js';
 
@@ -156,7 +158,7 @@ const canned: SearchResult = {
           label: { nl: ['Het Utrechts Archief'] },
         },
         size: 1234,
-        datePosted: 1_700_000_000,
+        datePosted: { seconds: 1_700_000_000, precision: 'dateTime' },
         score: 4.5,
         terminologySource: [
           { id: 'https://term/1', label: { nl: ['Kaarten'] } },
@@ -231,7 +233,7 @@ describe('buildGraphQLSchema', () => {
       label: [{ language: 'nl', value: 'Het Utrechts Archief' }],
     });
     expect(item.size).toBe(1234);
-    expect(item.datePosted).toBe('2023-11-14T22:13:20.000Z');
+    expect(item.datePosted).toBe('2023-11-14T22:13:20Z');
     expect(item.score).toBe(4.5);
     expect(item.terminologySource).toEqual([
       { id: 'https://term/1', label: [{ language: 'nl', value: 'Kaarten' }] },
@@ -284,6 +286,34 @@ describe('buildGraphQLSchema', () => {
     ]);
   });
 
+  it('serves each date at the precision its own record gave', async () => {
+    const stored = (iso: string) => isoToUnixSeconds(iso) as StoredDate;
+    const { engine } = fakeEngine({
+      total: 4,
+      facets: {},
+      hits: ['1999', '1999-05', '1999-05-03+02:00', '1999-05-03T14:30:00+02:00']
+        .map((iso, index) => ({
+          id: `https://d/${index}`,
+          document: { datePosted: stored(iso) },
+        }))
+        // An engine may also report an absent value as null.
+        .concat({ id: 'https://d/4', document: { datePosted: null as never } }),
+    });
+    const result = await run(`{ datasets { items { datePosted } } }`, {
+      engine,
+      acceptLanguage: ['nl'],
+    });
+    expect(result.errors).toBeUndefined();
+    expect(
+      (
+        (result.data?.datasets as Record<string, unknown>).items as Record<
+          string,
+          unknown
+        >[]
+      ).map((item) => item.datePosted),
+    ).toEqual(['1999', '1999-05', '1999-05-03', '1999-05-03T12:30:00Z', null]);
+  });
+
   it('places untagged (und) values last with a null language', async () => {
     const { engine } = fakeEngine({
       total: 1,
@@ -296,7 +326,7 @@ describe('buildGraphQLSchema', () => {
       ],
     });
     const result = await run(
-      `{ datasets { items { title { language value } datePosted } } }`,
+      `{ datasets { items { title { language value } datePosted keyword } } }`,
       { engine, acceptLanguage: ['en'] },
     );
     const item = (
@@ -309,8 +339,9 @@ describe('buildGraphQLSchema', () => {
       { language: 'nl', value: 'Titel' },
       { language: null, value: 'Naamloos' },
     ]);
-    // An absent date resolves to null (the non-numeric branch).
+    // An absent date resolves to null, an absent list to an empty one.
     expect(item.datePosted).toBeNull();
+    expect(item.keyword).toEqual([]);
   });
 
   it('labels reference-facet buckets, leaving plain-facet buckets null', async () => {
@@ -478,10 +509,10 @@ describe('buildGraphQLSchema', () => {
     // A date is served as ISO 8601, a BCE year included – the terms the
     // DateRange filter takes.
     const isoExtent = {
-      min: unixSecondsToIso(bce),
-      max: unixSecondsToIso(modern),
+      min: unixSecondsToIso(bce, 'dateTime'),
+      max: unixSecondsToIso(modern, 'dateTime'),
     };
-    expect(isoExtent.min).toMatch(/^-001101-/);
+    expect(isoExtent.min).toMatch(/^-1101-/);
     // An unbinned range facet keeps one bucket per distinct value, a date’s
     // in ISO 8601 too.
     expect(facets.datePosted).toEqual({

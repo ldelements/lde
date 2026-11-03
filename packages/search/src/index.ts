@@ -32,6 +32,7 @@ export {
   // one.
   isoToUnixSeconds,
   unixSecondsToIso,
+  isDatePrecision,
 } from './schema.js';
 export type {
   FieldKind,
@@ -54,6 +55,8 @@ export type {
   SearchSchema,
   FacetRange,
   ProjectionValue,
+  DatePrecision,
+  StoredDate,
 } from './schema.js';
 
 // The declared join edges between root types: which types a query can filter

@@ -1686,7 +1686,9 @@ const LOCALE_PATTERN = /^[A-Za-z0-9]+(-[A-Za-z0-9]+)*$/;
  * - field names are unique (a duplicate would silently shadow in every
  *   consumer, each picking a different winner) and a metacharacter-free
  *   identifier (the name is interpolated into physical field names and the
- *   display RE2 pattern), and is not the reserved {@link ID_FIELD};
+ *   display RE2 pattern), and is not the reserved {@link ID_FIELD}, nor the
+ *   precision companion a `date` field stores beside itself
+ *   ({@link PhysicalFields.precision});
  * - a `text` field’s declared locales are BCP-47-shaped (no `_`, which is the
  *   reserved name↔locale separator);
  * - a `reference` field that is `output` declares `ref` (the API surfaces
@@ -1735,6 +1737,13 @@ export function validateSearchType(
   const issues: SearchTypeIssue[] = [];
   const seen = new Set<string>();
   const seenProjectionValues = new Set<string>();
+  // A `date` field stores its precision under `${name}_precision`, so a
+  // declared field of that name would overwrite it, and be overwritten.
+  const precisionCompanions = new Set(
+    searchType.fields
+      .filter((field) => field.kind === 'date')
+      .map((field) => physicalFields(field).precision),
+  );
   for (const declared of searchType.fields) {
     // Validation guards declarations built OUTSIDE TypeScript (a SHACL
     // generator, plain JS), so it inspects the uniform flat shape rather
@@ -1755,7 +1764,10 @@ export function validateSearchType(
     // `and`/`or` are the `where` combinators; a declared field of any of those
     // names would shadow it in the API output or in `where`, silently
     // answering a different question.
-    if (RESERVED_FIELD_NAMES.includes(field.name)) {
+    if (
+      RESERVED_FIELD_NAMES.includes(field.name) ||
+      precisionCompanions.has(field.name)
+    ) {
       issue('reserved-field-name');
     }
     // Every kind-dependent rule below would silently pass for a kind outside
@@ -2063,6 +2075,16 @@ export interface PhysicalFields {
    * name at the surface; only the physical fanout knows there are two.
    */
   readonly identity: string | undefined;
+  /**
+   * The **precision companion** of a `date` field: `${name}_precision`,
+   * holding the {@link DatePrecision} its source gave beside the Unix seconds
+   * the field itself stores. Stored, never indexed: sorting and filtering read
+   * the seconds alone, and only output reads this, to serve the value in the
+   * canonical form of its precision ({@link unixSecondsToIso}). Not part of the
+   * field model, so it never reaches a client’s schema. `undefined` for every
+   * other kind.
+   */
+  readonly precision: string | undefined;
 }
 
 /** The physical name of an inline reference’s
@@ -2456,43 +2478,143 @@ export function isAbsoluteIri(value: string): boolean {
 const ABSOLUTE_IRI = /^[A-Za-z][A-Za-z0-9+.-]*:\S*$/;
 
 /**
- * The engine storage codec for `date` fields: stored as Unix seconds (a
- * sortable, range-filterable int64), ISO 8601 at the API edges. One pair for
- * the projection (writes), the query compiler (filter bounds) and the surface
- * (output), so the three cannot disagree. Returns `undefined` for an
- * unparseable value.
- *
- * A year beyond what `Date` can represent (±271,821 years around 1970) is
- * deep time, and deep time has no months or days: there the value is read as
- * an `xsd:gYear` – a bare year, such as a Carboniferous fossil’s `-318000000` –
- * and stored as that many average Gregorian years from 1970. Anything finer at
- * that depth is unparseable.
+ * How finely a `date` value’s source stated it: a year (`xsd:gYear`), a month
+ * (`xsd:gYearMonth`), a day (`xsd:date`) or a point in time (`xsd:dateTime`).
+ * Stored beside the Unix seconds ({@link PhysicalFields.precision}), because
+ * the seconds alone cannot tell a year from the first second of it.
  */
-export function isoToUnixSeconds(iso: string): number | undefined {
-  // Trim first: XSD collapses whitespace around a date literal before parsing,
-  // so a padded lexical form is legal and reaches here verbatim. Left in place
-  // it defeats the year expansion below in both directions – a leading space
-  // stops the match, a trailing one survives it into the legacy parser – and
-  // each lands the value in a different year than it reads.
-  const trimmed = iso.trim();
-  const millis = new Date(expandYear(trimmed)).getTime();
-  return Number.isNaN(millis)
-    ? deepTimeSeconds(trimmed)
-    : Math.trunc(millis / 1000);
+export type DatePrecision = 'year' | 'month' | 'day' | 'dateTime';
+
+/** A `date` value as it is stored: Unix seconds, and the precision its source
+ *  gave ({@link isoToUnixSeconds}). */
+export interface StoredDate {
+  readonly seconds: number;
+  readonly precision: DatePrecision;
+}
+
+/** Whether a stored value is a {@link DatePrecision} – what an adapter checks
+ *  before trusting the precision companion it reads back. */
+export function isDatePrecision(value: unknown): value is DatePrecision {
+  return (
+    value === 'year' ||
+    value === 'month' ||
+    value === 'day' ||
+    value === 'dateTime'
+  );
 }
 
 /**
- * The inverse of {@link isoToUnixSeconds}: stored Unix seconds → ISO 8601, or
- * an `xsd:gYear` for seconds beyond what `Date` can represent.
+ * The engine storage codec for `date` fields: stored as Unix seconds (a
+ * sortable, range-filterable int64) plus the precision the source gave, ISO
+ * 8601 at the API edges. One pair for the projection (writes), the query
+ * compiler and `validateQuery` (filter bounds) and the surface (output), so
+ * they cannot disagree. Returns `undefined` for an unparseable value.
+ *
+ * - A **year, month or day** names a calendar period, so its timezone is
+ *   ignored and it is stored at that period’s first second in UTC.
+ * - A **date-time** is normalised to UTC; one without a timezone is read as
+ *   UTC, so what the index holds never depends on the host that built it.
+ *   Fractional seconds are truncated.
+ * - A year beyond what `Date` can represent (±271,821 years around 1970) is
+ *   **deep time**, and deep time has no months or days: there the value is
+ *   read as an `xsd:gYear` – a bare year, such as a Carboniferous fossil’s
+ *   `-318000000` – and stored as that many average Gregorian years from 1970.
+ *   Anything finer at that depth is unparseable.
+ *
+ * A year may carry a sign and any number of digits, so the expanded form
+ * `Date` itself emits (`+025000`, `-001100`) reads the same as `25000` and
+ * `-1100`.
  */
-export function unixSecondsToIso(seconds: number): string {
+export function isoToUnixSeconds(iso: string): StoredDate | undefined {
+  // Trim first: XSD collapses whitespace around a date literal before parsing,
+  // so a padded lexical form is legal and reaches here verbatim.
+  const trimmed = iso.trim();
+  const calendar = CALENDAR_DATE.exec(trimmed);
+  if (calendar !== null) {
+    const [, year, month, day] = calendar;
+    const precision =
+      day !== undefined ? 'day' : month !== undefined ? 'month' : 'year';
+    const millis = utcMillis(
+      Number(year),
+      Number(month ?? 1),
+      Number(day ?? 1),
+    );
+    if (millis === 'invalid') {
+      return undefined;
+    }
+    if (millis === 'out of range') {
+      // Only a year takes the deep-time route: deep time has no months or days.
+      return precision === 'year' ? deepTimeDate(Number(year)) : undefined;
+    }
+    return { seconds: millis / 1000, precision };
+  }
+  const dateTime = DATE_TIME.exec(trimmed);
+  if (dateTime === null) {
+    return undefined;
+  }
+  const [, year, month, day, hour, minute, second, offset] = dateTime;
+  const millis = utcMillis(
+    Number(year),
+    Number(month),
+    Number(day),
+    Number(hour),
+    Number(minute),
+    Number(second ?? 0),
+  );
+  if (typeof millis !== 'number') {
+    return undefined;
+  }
+  const seconds = millis / 1000 - offsetSeconds(offset);
+  // The offset can carry a date-time at `Date`’s edge out of its range, where
+  // the surface could no longer give it back as one.
+  return Number.isNaN(new Date(seconds * 1000).getTime())
+    ? undefined
+    : { seconds, precision: 'dateTime' };
+}
+
+/**
+ * The inverse of {@link isoToUnixSeconds}: stored Unix seconds → the canonical
+ * ISO 8601 form of `precision`, so a client parses one shape per precision
+ * whatever lexical variant the source used:
+ *
+ * | Precision  | Canonical form                         |
+ * | ---------- | -------------------------------------- |
+ * | `year`     | `1999`, `-0044`, `-250000`             |
+ * | `month`    | `1999-05`                              |
+ * | `day`      | `1999-05-03`                           |
+ * | `dateTime` | `1999-05-03T12:30:00Z` (always UTC)    |
+ *
+ * A year has at least four digits and no `+`. Seconds beyond what `Date` can
+ * represent are deep time, served as an `xsd:gYear` whatever `precision` says.
+ */
+export function unixSecondsToIso(
+  seconds: number,
+  precision: DatePrecision,
+): string {
   if (!Number.isFinite(seconds)) {
     throw new RangeError(`Not a number of Unix seconds: ${seconds}`);
   }
-  const date = new Date(seconds * 1000);
-  return Number.isNaN(date.getTime())
-    ? String(Math.round(seconds / GREGORIAN_YEAR_SECONDS) + 1970)
-    : date.toISOString();
+  const date = new Date(Math.trunc(seconds) * 1000);
+  if (Number.isNaN(date.getTime())) {
+    return String(Math.round(seconds / GREGORIAN_YEAR_SECONDS) + 1970);
+  }
+  const year = formatYear(date.getUTCFullYear());
+  const month = twoDigits(date.getUTCMonth() + 1);
+  const day = twoDigits(date.getUTCDate());
+  switch (precision) {
+    case 'year':
+      return year;
+    case 'month':
+      return `${year}-${month}`;
+    case 'day':
+      return `${year}-${month}-${day}`;
+    case 'dateTime':
+      return `${year}-${month}-${day}T${twoDigits(
+        date.getUTCHours(),
+      )}:${twoDigits(date.getUTCMinutes())}:${twoDigits(
+        date.getUTCSeconds(),
+      )}Z`;
+  }
 }
 
 /** `seconds` if a `date` field can store it – the int64 the engine keeps
@@ -2502,44 +2624,104 @@ export function storableUnixSeconds(seconds: number): number | undefined {
   return Math.abs(seconds) < 2 ** 63 ? seconds : undefined;
 }
 
+/** A timezone: `Z` or a `±hh:mm` offset no further from UTC than XSD allows
+ *  (±14:00), so an impossible one such as `+99:99` leaves the value
+ *  unparseable rather than shifting it by days. */
+const TIMEZONE = '(Z|[+-](?:(?:0\\d|1[0-3]):[0-5]\\d|14:00))?';
+
+/** A year, month or day (`xsd:gYear`, `xsd:gYearMonth`, `xsd:date`), with an
+ *  optional timezone the codec ignores. The year is signed and of any length,
+ *  so deep time and the expanded `±YYYYYY` form `Date` emits both read as the
+ *  year they spell. Deep time is real data, not a corner case: SCHEMA-AP-NDE
+ *  blesses years beyond four digits for `schema:dateCreated`. */
+const CALENDAR_DATE = new RegExp(
+  `^([+-]?\\d+)(?:-(\\d{2})(?:-(\\d{2}))?)?${TIMEZONE}$`,
+);
+
+/** An `xsd:dateTime`, its seconds optional and fraction ignored. */
+const DATE_TIME = new RegExp(
+  `^([+-]?\\d+)-(\\d{2})-(\\d{2})T(\\d{2}):(\\d{2})(?::(\\d{2})(?:\\.\\d+)?)?${TIMEZONE}$`,
+);
+
 /**
- * Pad a year outside the plain four-digit form to the signed six digits ISO
- * 8601 expects, so `Date` reads it as a year at all. Deep time is real data,
- * not a corner case: SCHEMA-AP-NDE blesses years beyond four digits for
- * `schema:dateCreated`. Left unexpanded, neither era parses as written and
- * neither fails loudly – `-1100` is read as a bare UTC offset and lands
- * around 1100 **CE** (shifted by the host’s offset), `25000` is read as a
- * legacy local-time date and lands a year early, on a boundary that moves
- * with the host’s timezone. Either way nothing throws, no field is left
- * absent, and the value sorts and filters as if it were another date
- * entirely. A plain four-digit year and an already-expanded one pass through
- * unchanged, so the form the API itself emits round-trips.
+ * Milliseconds since the epoch of a UTC calendar moment, read without `Date`’s
+ * string parser – which reads an untimezoned date-time in the host’s local
+ * time and a short or long year as something else entirely. `'invalid'` for a
+ * moment the calendar does not have (month 13, 30 February, 25:00), and
+ * `'out of range'` for a valid one beyond what `Date` can represent.
+ * `24:00:00` is the end of the day, which XSD allows: the next day’s midnight.
  */
-function expandYear(iso: string): string {
-  // The year, then the rest: a non-digit stops the run, so a longer digit
-  // string (epoch millis, say) is left alone rather than cut into a year.
-  const year = /^([+-]?)(\d{1,6})(\D.*|)$/.exec(iso);
-  if (year === null || (year[1] === '' && year[2].length === 4)) {
-    return iso;
+function utcMillis(
+  year: number,
+  month: number,
+  day: number,
+  hour = 0,
+  minute = 0,
+  second = 0,
+): number | 'invalid' | 'out of range' {
+  if (
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > daysInMonth(year, month) ||
+    hour > 24 ||
+    minute > 59 ||
+    second > 59 ||
+    (hour === 24 && (minute !== 0 || second !== 0))
+  ) {
+    return 'invalid';
   }
-  return `${year[1] || '+'}${year[2].padStart(6, '0')}${year[3]}`;
+  const date = new Date(0);
+  // `setUTCFullYear` rather than `Date.UTC`, which maps years 0–99 to 1900–1999.
+  date.setUTCFullYear(year, month - 1, day);
+  date.setUTCHours(hour, minute, second, 0);
+  const millis = date.getTime();
+  return Number.isNaN(millis) ? 'out of range' : millis;
+}
+
+/** Days in a month of the proleptic Gregorian calendar, for any year. */
+function daysInMonth(year: number, month: number): number {
+  if (month === 2) {
+    const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+    return leap ? 29 : 28;
+  }
+  return [4, 6, 9, 11].includes(month) ? 30 : 31;
+}
+
+/** Seconds east of UTC a timezone states; `0` for `Z` or none, which is what
+ *  makes an untimezoned date-time read as UTC. */
+function offsetSeconds(timezone: string | undefined): number {
+  if (timezone === undefined || timezone === 'Z') {
+    return 0;
+  }
+  const sign = timezone.startsWith('-') ? -1 : 1;
+  const [hours, minutes] = timezone.slice(1).split(':').map(Number);
+  return sign * (hours * 3600 + minutes * 60);
+}
+
+/** A year in its canonical form: at least four digits, signed only when
+ *  negative (`1999`, `0800`, `-0044`, `-250000`). */
+function formatYear(year: number): string {
+  const digits = String(Math.abs(year)).padStart(4, '0');
+  return year < 0 ? `-${digits}` : digits;
+}
+
+function twoDigits(value: number): string {
+  return String(value).padStart(2, '0');
 }
 
 /** The average Gregorian year: 146 097 days per 400 years. */
 const GREGORIAN_YEAR_SECONDS = (146_097 * 86_400) / 400;
 
-/** Unix seconds of a deep-time `xsd:gYear` – a bare year `Date` could not
- *  hold, its timezone ignored as meaningless at that scale – or `undefined`
- *  for anything else. An average year is at most two
+/** The stored form of a deep-time `xsd:gYear` – a year `Date` could not hold –
+ *  or `undefined` beyond the int64 of seconds. An average year is at most two
  *  days off the calendar’s 1 January, far less than the year between
  *  neighbours, so deep time still sorts before (or after) the dates `Date`
  *  holds; and it lands beyond `Date`’s range, so {@link unixSecondsToIso}
  *  gives the year back. */
-function deepTimeSeconds(iso: string): number | undefined {
-  const year = /^(-?[1-9]\d*)(?:Z|[+-]\d{2}:\d{2})?$/.exec(iso);
-  return year === null
-    ? undefined
-    : storableUnixSeconds((Number(year[1]) - 1970) * GREGORIAN_YEAR_SECONDS);
+function deepTimeDate(year: number): StoredDate | undefined {
+  const seconds = storableUnixSeconds((year - 1970) * GREGORIAN_YEAR_SECONDS);
+  return seconds === undefined ? undefined : { seconds, precision: 'year' };
 }
 
 /**
@@ -2571,6 +2753,7 @@ export function physicalFields(
       // Text is never facetable (`validateSearchType`).
       facet: undefined,
       identity: undefined,
+      precision: undefined,
     };
   }
   // A field storing a nested OBJECT cannot be filtered or faceted as itself, so
@@ -2595,6 +2778,7 @@ export function physicalFields(
           ? filtered
           : `${filtered}_facet`,
     identity,
+    precision: field.kind === 'date' ? `${field.name}_precision` : undefined,
   };
 }
 
