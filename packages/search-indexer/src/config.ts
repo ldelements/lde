@@ -1,4 +1,7 @@
+import { Dataset } from '@lde/dataset';
 import type { SearchCriteria } from '@lde/dataset-registry-client';
+import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /**
  * The indexer’s complete runtime configuration, read from environment
@@ -10,8 +13,9 @@ export interface IndexerConfig {
   /** Path of the mounted schema-declaration module (`SCHEMA_MODULE`). */
   readonly schemaModulePath: string;
   /** SPARQL endpoint of the DCAT dataset registry the selection queries
-   *  (`REGISTRY_ENDPOINT`). */
-  readonly registryEndpoint: URL;
+   *  (`REGISTRY_ENDPOINT`). Undefined when `DATASETS` names only local data, so
+   *  the run has no registry to read. */
+  readonly registryEndpoint?: URL;
   /**
    * Root types extracted from {@link registryEndpoint} instead of from each
    * dataset’s own distribution (`REGISTRY_ROOT_TYPES`, whitespace- or
@@ -25,6 +29,10 @@ export interface IndexerConfig {
    *  search criteria (`DATASET_CRITERIA`), or every dataset when neither is
    *  set. */
   readonly datasetCriteria: SearchCriteria;
+  /** Local data to index besides what the registry selects, from the `file:`
+   *  URLs in `DATASETS`: paths of files, each one dataset, and of directories,
+   *  which end in `/`, with one dataset per RDF file. */
+  readonly localSources: readonly string[];
   /** Where the Typesense engine writes (`TYPESENSE_*`). */
   readonly typesense: TypesenseConnection;
   /** How each type’s collection is rebuilt (`REBUILD_MODE`): update the live
@@ -146,10 +154,16 @@ export function configFromEnvironment(
     }
   };
 
-  const registryEndpoint = url(
-    'REGISTRY_ENDPOINT',
-    required('REGISTRY_ENDPOINT'),
-  );
+  const datasets = names(environment['DATASETS']);
+  const registryEndpoint =
+    datasets.length > 0 && datasets.every(isLocal)
+      ? undefined
+      : url('REGISTRY_ENDPOINT', required('REGISTRY_ENDPOINT'));
+  if (registryEndpoint?.protocol === 'file:') {
+    problems.push(
+      'REGISTRY_ENDPOINT must be a SPARQL endpoint: name local files and directories in DATASETS',
+    );
+  }
 
   const protocol = environment['TYPESENSE_PROTOCOL'] ?? 'http';
   if (protocol !== 'http' && protocol !== 'https') {
@@ -165,13 +179,18 @@ export function configFromEnvironment(
     );
   }
 
-  const datasetCriteria = criteriaFromEnvironment(environment, problems);
+  const datasetCriteria = criteriaFromEnvironment(
+    environment,
+    datasets,
+    problems,
+  );
   const provenance = provenanceFromEnvironment(
     environment,
     rebuildMode,
     problems,
   );
   const qlever = qleverFromEnvironment(environment, problems);
+  const localSources = localSourcesFrom(datasets, qlever, problems);
 
   const config: IndexerConfig = {
     schemaModulePath:
@@ -179,6 +198,7 @@ export function configFromEnvironment(
     registryEndpoint,
     registryRootTypes: names(environment['REGISTRY_ROOT_TYPES']),
     datasetCriteria,
+    localSources,
     typesense: {
       host: required('TYPESENSE_HOST'),
       port: integer('TYPESENSE_PORT', 8108),
@@ -210,22 +230,69 @@ function names(value: string | undefined): readonly string[] {
     : value.split(/[\s,]+/).filter((name) => name.length > 0);
 }
 
-/** `DATASETS` (whitespace-separated IRIs) or `DATASET_CRITERIA` (a JSON
- *  object) – never both; neither selects the whole registry. */
+/** Whether a `DATASETS` entry names local data rather than a registered dataset.
+ *  Parsed, because a URL scheme is case-insensitive. */
+function isLocal(entry: string): boolean {
+  return URL.parse(entry)?.protocol === 'file:';
+}
+
+/** The paths of the `file:` URLs in `DATASETS`. Only QLever can read a file, so
+ *  they require the import path. */
+function localSourcesFrom(
+  datasets: readonly string[],
+  qlever: QleverConfig | undefined,
+  problems: string[],
+): readonly string[] {
+  const entries = datasets.filter(isLocal);
+  if (entries.length > 0 && !qlever) {
+    problems.push(
+      'A file: URL in DATASETS requires QLEVER_IMAGE or QLEVER_MODE=remote: a file must be imported before it can be queried',
+    );
+  }
+  const paths = entries.flatMap((entry) => {
+    try {
+      const path = fileURLToPath(entry);
+      if (!path.endsWith('/')) {
+        Dataset.localFile(path);
+      }
+      return [path];
+    } catch (error) {
+      problems.push(
+        `DATASETS contains “${entry}”, which is not a local RDF file or a directory ending in /: ${(error as Error).message}`,
+      );
+      return [];
+    }
+  });
+  const directories = new Set(paths.filter((path) => path.endsWith('/')));
+  paths.forEach((path, index) => {
+    if (paths.indexOf(path) !== index) {
+      problems.push(`DATASETS lists “${path}” twice`);
+    } else if (!path.endsWith('/') && directories.has(`${dirname(path)}/`)) {
+      problems.push(
+        `DATASETS lists “${path}” and its directory, which already selects it`,
+      );
+    }
+  });
+  return paths;
+}
+
+/** `DATASETS` (whitespace-separated IRIs, of which `file:` URLs are local data
+ *  rather than registered datasets) or `DATASET_CRITERIA` (a JSON object) –
+ *  never both; neither selects the whole registry. */
 function criteriaFromEnvironment(
   environment: Readonly<Record<string, string | undefined>>,
+  datasets: readonly string[],
   problems: string[],
 ): SearchCriteria {
-  const datasets = environment['DATASETS'];
   const criteriaJson = environment['DATASET_CRITERIA'];
-  if (datasets && criteriaJson) {
+  if (environment['DATASETS'] && criteriaJson) {
     problems.push(
       'DATASETS and DATASET_CRITERIA are mutually exclusive; set at most one',
     );
     return {};
   }
-  if (datasets) {
-    const iris = datasets.split(/[\s,]+/).filter((iri) => iri.length > 0);
+  if (environment['DATASETS']) {
+    const iris = datasets.filter((iri) => !isLocal(iri));
     for (const iri of iris) {
       try {
         new URL(iri);

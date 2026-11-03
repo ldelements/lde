@@ -9,6 +9,64 @@ import {
 const iana = (type: string) => IANA_MEDIA_TYPE_PREFIX + type;
 const SPARQL_URI = 'https://www.w3.org/TR/sparql11-protocol/';
 
+describe('Distribution.localFile', () => {
+  it.each([
+    ['data.nt', 'application/n-triples'],
+    ['data.nq', 'application/n-quads'],
+    ['data.ttl', 'text/turtle'],
+    ['DATA.TTL', 'text/turtle'],
+    ['data.trig', 'application/trig'],
+    ['data.jsonld', 'application/ld+json'],
+    ['data.rdf', 'application/rdf+xml'],
+  ])('derives the format of %s', (path, mimeType) => {
+    const distribution = Distribution.localFile(path);
+    expect(distribution.mimeType).toBe(mimeType);
+    expect(distribution.compressFormat).toBeUndefined();
+    expect(distribution.isSparql()).toBe(false);
+  });
+
+  it.each([
+    ['data.nt.gz', 'application/n-triples', 'application/gzip'],
+    ['data.ttl.zip', 'text/turtle', 'application/zip'],
+  ])('derives the format and compression of %s', (path, mimeType, compress) => {
+    const distribution = Distribution.localFile(path);
+    expect(distribution.mimeType).toBe(mimeType);
+    expect(distribution.compressMimeType).toBe(compress);
+  });
+
+  it('resolves the path and its URL', () => {
+    const distribution = Distribution.localFile('/rdf/with space.ttl');
+    expect(distribution.localPath).toBe('/rdf/with space.ttl');
+    expect(distribution.accessUrl.toString()).toBe(
+      'file:///rdf/with%20space.ttl',
+    );
+  });
+
+  it.each(['notes.txt', 'data', 'data.gz', '.ttl'])(
+    'rejects %s, whose format it cannot tell',
+    (path) => {
+      expect(() => Distribution.localFile(path)).toThrow(
+        `Cannot tell the RDF format of “${path}”`,
+      );
+    },
+  );
+
+  it('leaves a file: URL from the constructor without a local path', () => {
+    const distribution = new Distribution(
+      new URL('file:///etc/passwd'),
+      'text/turtle',
+    );
+    expect(distribution.localPath).toBeUndefined();
+  });
+
+  it('does not let a local path be assigned', () => {
+    const distribution = new Distribution(new URL('file:///etc/passwd'));
+    expect(() => {
+      (distribution as { localPath?: string }).localPath = '/etc/passwd';
+    }).toThrow(TypeError);
+  });
+});
+
 describe('Distribution.mimeType', () => {
   it('strips the IANA prefix from an IANA media type URI', () => {
     const distribution = new Distribution(

@@ -12,6 +12,8 @@ Ready to try it? Head to [Build a pipeline](./build-a-pipeline).
 
 **Composable.** Each package does one thing; the interfaces between them (selectors, resolvers, readers, writers, validators, reporters) are small and pluggable, so you can swap any part for your own implementation.
 
+**Registry first.** Datasets are described in a DCAT-AP registry, and that is where pipelines select them by default. A run can add local RDF files that have no registration, named one by one, but they supply dumps rather than descriptions – see [ADR 31](../decisions/0031-import-local-files-through-the-data-dump-path).
+
 **Bounded memory.** LDE processes data it cannot hold. Memory is always bounded by a configured unit of work (`batchSize`, `capacity`, …), never by the size of the input – see [ADR 12](../decisions/0012-bound-memory-by-the-unit-of-work-not-the-input).
 
 **Standards-based.** DCAT-AP 3.0 for discovery, SPARQL 1.1 for transformation, SHACL for validation, VoID for statistics, RDF/JS as the internal data model – see the [standards reference](../reference/#standards).

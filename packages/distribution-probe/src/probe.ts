@@ -9,6 +9,8 @@ import {
   FetchDocumentLoader,
   type IJsonLdContext,
 } from 'jsonld-context-parser';
+import { constants, createReadStream } from 'node:fs';
+import { access, stat } from 'node:fs/promises';
 import { Readable } from 'node:stream';
 import { createGunzip } from 'node:zlib';
 
@@ -273,7 +275,9 @@ type SparqlQueryType = 'ASK' | 'SELECT' | 'CONSTRUCT' | 'DESCRIBE';
  * For SPARQL endpoints, issues the configured SPARQL query (default: a
  * minimal `SELECT`). For data dumps, issues `HEAD` (with a `GET` fallback
  * for small or unknown-size bodies, reading only a bounded prefix so a large
- * streamed dump is never downloaded in full).
+ * streamed dump is never downloaded in full). A
+ * {@link Distribution.localFile | local file} is probed the same way, answered
+ * from the filesystem; a missing one is a {@link NetworkError}.
  *
  * Returns a pure result object; never throws.
  */
@@ -666,7 +670,8 @@ async function probeDataDump(
     headers,
   };
 
-  const headResponse = await fetch(url, {
+  const fetchDump = dumpFetcher(distribution);
+  const headResponse = await fetchDump(url, {
     method: 'HEAD',
     ...requestOptions,
   });
@@ -685,6 +690,7 @@ async function probeDataDump(
       headers,
       options,
       headResponse,
+      fetchDump,
     );
     return finalizeDataDump(url, distribution, response, start, failureReason);
   }
@@ -694,9 +700,53 @@ async function probeDataDump(
   if (isHttpSuccess(headResponse)) {
     return finalizeDataDump(url, distribution, headResponse, start, null);
   }
-  const getResponse = await fetch(url, { method: 'GET', ...requestOptions });
+  const getResponse = await fetchDump(url, {
+    method: 'GET',
+    ...requestOptions,
+  });
   await getResponse.body?.cancel();
   return finalizeDataDump(url, distribution, getResponse, start, null);
+}
+
+type DumpFetch = (url: string, init: RequestInit) => Promise<Response>;
+
+/**
+ * How to request a data dump: over HTTP, or for a local file from the filesystem
+ * in the shape of the HTTP response a static file server would give, so that
+ * reachability, content validation and the change fingerprint need no second
+ * path.
+ */
+function dumpFetcher(distribution: Distribution): DumpFetch {
+  const { localPath } = distribution;
+  if (localPath === undefined) {
+    return fetch;
+  }
+  return async (_url, init) => {
+    const stats = await stat(localPath);
+    if (!stats.isFile()) {
+      throw new Error(`${localPath} is not a file`);
+    }
+    // An unreadable file would otherwise pass here and fail only at import,
+    // recorded against a fingerprint that a later chmod does not change.
+    await access(localPath, constants.R_OK);
+    return new Response(
+      init.method === 'HEAD'
+        ? null
+        : (Readable.toWeb(createReadStream(localPath)) as ReadableStream),
+      {
+        headers: {
+          'Content-Length': stats.size.toString(),
+          'Last-Modified': stats.mtime.toUTCString(),
+          // The RDF type for gzip too: the body is inflated by its magic bytes
+          // before validation. A zip keeps its own type, as it holds entries.
+          // Distribution.localFile always derives a media type.
+          'Content-Type': (distribution.compressMimeType === 'application/zip'
+            ? distribution.compressMimeType
+            : distribution.mimeType) as string,
+        },
+      },
+    );
+  };
 }
 
 /** Whether an HTTP response carries a success (2xx/3xx) status. */
@@ -742,6 +792,7 @@ async function validateDumpBody(
   headers: Headers,
   options: ResolvedProbeOptions,
   headResponse: Response,
+  fetchDump: DumpFetch,
 ): Promise<{ response: Response; failureReason: string | null }> {
   const budgetMs = Math.min(options.rdfValidationBudgetMs, options.timeoutMs);
   // Aborting on budget expiry stops a slow endpoint from streaming on in the
@@ -749,7 +800,7 @@ async function validateDumpBody(
   const budgetController = new AbortController();
   let getResponse: Response;
   try {
-    getResponse = await fetch(url, {
+    getResponse = await fetchDump(url, {
       method: 'GET',
       headers,
       signal: AbortSignal.any([

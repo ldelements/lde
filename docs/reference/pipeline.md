@@ -58,7 +58,7 @@ A **Pipeline** consists of:
 
 ### Dataset Selector
 
-Selects datasets, either manually or by querying a DCAT Dataset Registry:
+Selects datasets. A DCAT Dataset Registry is the primary way in; a local directory or a manual list serves data that has no registration:
 
 ```typescript
 // From a registry
@@ -66,8 +66,14 @@ const selector = new RegistrySelector({
   registry: new Client(new URL('https://example.com/sparql')),
 });
 
+// One dataset per RDF file in a local directory
+const selector = new DirectorySelector('./rdf');
+
 // Manual
 const selector = new ManualDatasetSelection([dataset]);
+
+// Several of these in one run, in the order given
+const selector = new CombinedSelector([registrySelector, directorySelector]);
 ```
 
 ### Distribution Resolver

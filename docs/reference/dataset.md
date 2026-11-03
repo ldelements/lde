@@ -12,10 +12,11 @@ npm install @lde/dataset
 
 The package exports:
 
-- `Dataset` – a DCAT dataset with `iri`, `title`, `description`, `language`, `license`, `creator`, `publisher` and its `distributions`. `getDownloadDistributions()` returns the downloadable (non-SPARQL) distributions, preferring compressed ones.
+- `Dataset` – a DCAT dataset with `iri`, `title`, `description`, `language`, `license`, `creator`, `publisher` and its `distributions`. `getDownloadDistributions()` returns the downloadable (non-SPARQL) distributions, preferring compressed ones. The static `Dataset.localFile(path)` creates a dataset of one local file, identified by the file’s URL.
 - `DatasetArguments` – the options object the `Dataset` constructor takes; only `iri` and `distributions` are required.
 - `Creator` and `Publisher` – an agent’s `iri` plus its language-mapped `name`.
-- `Distribution` – a DCAT distribution with `accessUrl`, `mediaType` (an IANA media type URI per DCAT-AP 3.0, or a plain content type for convenience), `mimeType`, `compressFormat`, `byteSize`, `lastModified` and more. The static `Distribution.sparql(endpoint, namedGraph?)` creates a SPARQL distribution.
+- `Distribution` – a DCAT distribution with `accessUrl`, `mediaType` (an IANA media type URI per DCAT-AP 3.0, or a plain content type for convenience), `mimeType`, `compressFormat`, `byteSize`, `lastModified` and more. The static `Distribution.sparql(endpoint, namedGraph?)` creates a SPARQL distribution, and `Distribution.localFile(path)` one read from a file on this machine.
+  - `localPath` – the read-only absolute path of the file, set only by `Distribution.localFile(path)`, which derives the format from the extension: `.nt`, `.nq`, `.ttl`, `.trig`, `.jsonld` or `.rdf`, optionally followed by `.gz` or `.zip`. A `file:` `accessUrl` alone grants no filesystem access, so a distribution described by a registry cannot make the process read its files.
   - `isSparql()` – `true` when the distribution’s `conformsTo` is the SPARQL 1.1 Protocol URI (`https://www.w3.org/TR/sparql11-protocol/`) or its `mimeType` is `application/sparql-query` or `application/sparql-results+json`.
   - `compressMimeType` – plain content type derived from `compressFormat` (e.g. `application/gzip`), or `undefined` when no compression format is declared.
   - `compressedMimeType` – the full content type a server is expected to send for the compressed download: `mimeType` with the compression suffix appended (e.g. `application/n-quads+gzip`), or `undefined` when no media type or no recognised compression format is declared.

@@ -88,7 +88,7 @@ export async function createSearchIndexer(
     ),
     writerFor: writerFactoryFrom(client, config),
     registryTypes:
-      config.registryRootTypes.length > 0
+      config.registryEndpoint && config.registryRootTypes.length > 0
         ? {
             endpoint: config.registryEndpoint,
             names: config.registryRootTypes,

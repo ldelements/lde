@@ -30,6 +30,9 @@
     },
     {
       "path": "../dataset-registry-client/tsconfig.lib.json"
+    },
+    {
+      "path": "../dataset/tsconfig.lib.json"
     }
   ],
   "exclude": [

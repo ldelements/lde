@@ -1,4 +1,10 @@
-import { ImportResolver, Pipeline, RegistrySelector } from '@lde/pipeline';
+import {
+  CombinedSelector,
+  DirectorySelector,
+  ImportResolver,
+  Pipeline,
+  RegistrySelector,
+} from '@lde/pipeline';
 import { searchSchema } from '@lde/search';
 import {
   searchIndexWriter,
@@ -108,6 +114,48 @@ describe('datasetSelectorFrom', () => {
   it('selects from the configured registry', () => {
     const selector = datasetSelectorFrom(configFromEnvironment(minimal));
     expect(selector).toBeInstanceOf(RegistrySelector);
+  });
+
+  it('selects a directory alone when it is all the run names', () => {
+    const selector = datasetSelectorFrom(
+      configFromEnvironment({
+        ...minimal,
+        DATASETS: 'file:///rdf/',
+        QLEVER_IMAGE: 'adfreiburg/qlever:latest',
+      }),
+    );
+    expect(selector).toBeInstanceOf(DirectorySelector);
+  });
+
+  it('selects one dataset for a local file, with no registry to ask', async () => {
+    const selector = datasetSelectorFrom(
+      configFromEnvironment({
+        ...minimal,
+        DATASETS: 'file:///rdf/extra.ttl',
+        QLEVER_IMAGE: 'adfreiburg/qlever:latest',
+      }),
+    );
+
+    const datasets = [];
+    for await (const dataset of await selector.select()) {
+      datasets.push(dataset);
+    }
+
+    expect(datasets.map((dataset) => dataset.iri.toString())).toEqual([
+      'file:///rdf/extra.ttl',
+    ]);
+    expect(datasets[0]!.distributions[0]!.localPath).toBe('/rdf/extra.ttl');
+  });
+
+  it('combines the registry with local data', () => {
+    const selector = datasetSelectorFrom(
+      configFromEnvironment({
+        ...minimal,
+        DATASETS: 'https://example.org/dataset/1 file:///rdf/extra.ttl',
+        QLEVER_IMAGE: 'adfreiburg/qlever:latest',
+      }),
+    );
+    expect(selector).toBeInstanceOf(CombinedSelector);
   });
 });
 

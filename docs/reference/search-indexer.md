@@ -41,7 +41,8 @@ Or without Docker (the same environment variables apply):
 npx @lde/search-indexer
 ```
 
-Dataset IRIs can also be passed as arguments, which override `DATASETS`:
+Dataset IRIs and `file:` URLs can also be passed as arguments, which override
+`DATASETS`:
 
 ```sh
 npx @lde/search-indexer https://example.org/id/dataset/1
@@ -67,9 +68,9 @@ images.
 | Variable              | Default                      | Meaning                                                                                                                                               |
 | --------------------- | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `SCHEMA_MODULE`       | `/config/search-schema.mjs`  | Path of the mounted schema-declaration module                                                                                                         |
-| `REGISTRY_ENDPOINT`   | **required**                 | SPARQL endpoint of the DCAT dataset registry                                                                                                          |
+| `REGISTRY_ENDPOINT`   | **required**                 | SPARQL endpoint of the DCAT dataset registry; not needed when `DATASETS` holds only `file:` URLs                                                      |
 | `REGISTRY_ROOT_TYPES` | none                         | Root types extracted from the registry instead of the dataset’s distribution (see below), by schema type name                                         |
-| `DATASETS`            | all registry datasets        | Dataset IRIs to index (whitespace- or comma-separated)                                                                                                |
+| `DATASETS`            | all registry datasets        | Dataset IRIs and `file:` URLs of local data to index (whitespace- or comma-separated; see below)                                                      |
 | `DATASET_CRITERIA`    | all registry datasets        | Search criteria as a JSON object, in [`@lde/dataset-registry-client`](./dataset-registry-client)’s criteria format (mutually exclusive w/ `DATASETS`) |
 | `TYPESENSE_HOST`      | **required**                 | Typesense host                                                                                                                                        |
 | `TYPESENSE_PORT`      | `8108`                       | Typesense port                                                                                                                                        |
@@ -94,6 +95,64 @@ image’s runtime user (uid 1000) – the image pre-creates `/provenance` with
 that ownership, so a named volume mounted there just works, while a bind
 mount must be `chown`ed on the host. A run fails at start when the file is
 not writable, instead of silently never skipping.
+
+## Local RDF files
+
+A registry is the primary way to select datasets. To add data that has no
+registration, name it in `DATASETS` by its `file:` URL, beside any registered
+datasets. Mount it into the indexer, read-only is enough, and enable the
+[QLever import path](#the-qlever-import-path):
+
+```sh
+docker run --rm \
+  --volume ./search-schema.mjs:/config/search-schema.mjs:ro \
+  --volume ./rdf:/rdf:ro \
+  --volume /srv/lde-data:/srv/lde-data \
+  --volume /var/run/docker.sock:/var/run/docker.sock \
+  --group-add "$(stat -c %g /var/run/docker.sock)" \
+  --network myproject_default \
+  --env REGISTRY_ENDPOINT=https://registry.example.org/sparql \
+  --env DATASETS="https://example.org/dataset/1 https://example.org/dataset/2 file:///rdf/extra.ttl file:///rdf/more/" \
+  --env QLEVER_IMAGE=adfreiburg/qlever:latest \
+  --env QLEVER_NETWORK=myproject_default \
+  --env DATA_DIR=/srv/lde-data \
+  --env TYPESENSE_HOST=typesense \
+  --env TYPESENSE_API_KEY=admin-key \
+  ghcr.io/ldelements/search-indexer
+```
+
+Registered and local datasets land in the same collections, so one search covers
+them all. A registry is only needed when `DATASETS` names a registered dataset:
+`DATASETS=file:///rdf/` on its own works without one. `DATASET_CRITERIA` cannot be
+combined with local data.
+
+A `file:` URL names one file, which is one dataset, or a directory if it ends in
+`/`, with one dataset per file directly inside it. Other files in a directory are
+skipped with a warning, and subdirectories are ignored. Listing a file twice, or
+beside its directory, fails at boot. The dataset’s IRI is the
+file’s URL inside the container (`file:///rdf/extra.ttl`), so moving the mount
+makes it a different dataset, and so does registering it later. The format follows
+from the extension: `.nt`, `.nq`, `.ttl`, `.trig`, `.jsonld` or `.rdf`, optionally
+followed by `.gz` or `.zip`. A dataset split over several files must be merged or
+zipped first.
+
+A local file holds data, not a registration, so a field reaches the index only if
+the file states it. A type in `REGISTRY_ROOT_TYPES` reads a local dataset’s own
+file: to appear as a `Dataset`, the file must describe itself as a `dcat:Dataset`.
+Register a dataset that needs a curated description or a stable identity.
+
+The indexer copies each file into `DATA_DIR`, and QLever reads that copy, so only
+the indexer needs the mount, in remote mode too. Budget disk space for the copy.
+An unchanged file keeps its copy and its index, and `PROVENANCE_FILE` skips it.
+
+**Each run replaces the collections it writes to.** It removes every dataset it
+did not select, so list everything a collection should hold in one `DATASETS`.
+Dropping a file from the list, or from a listed directory, removes its documents
+on the next run. A separate run that selects only local data deletes what a
+registry run wrote to the same collections, and the other way round, unless it has
+its own `COLLECTION_PREFIX`.
+[ADR 31](../decisions/0031-import-local-files-through-the-data-dump-path) explains
+the design.
 
 ## Registry-sourced root types
 
@@ -323,7 +382,7 @@ directly. Adding a transform is **not** such a case; that is `transforms` above.
 The three pieces `createSearchIndexer` composes are exported, so this route
 costs the bespoke part rather than a copy of the wiring:
 
-- `datasetSelectorFrom(config)` – the registry-backed dataset selection;
+- `datasetSelectorFrom(config)` – the dataset selection, from a registry or a local directory;
 - `distributionResolverFrom(config, replaceJsonLdContext?)` – the QLever
   import path when `QLEVER_MODE` or `QLEVER_IMAGE` is set, `undefined`
   otherwise (the pipeline’s endpoint-only default);
