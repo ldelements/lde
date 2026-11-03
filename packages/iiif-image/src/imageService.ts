@@ -7,35 +7,21 @@ import { serviceBase } from './serviceBase.js';
 export interface ImageService {
   /** The service’s base URL, which `info.json` and image requests extend. */
   readonly url: string;
-  /** The Image API version the service speaks. */
-  readonly version: 1 | 2 | 3;
-  /** The compliance level, or `undefined` where the profile states none. */
-  readonly level: 0 | 1 | 2 | undefined;
   /** The full image’s width in pixels. */
   readonly width: number;
   /** The full image’s height in pixels. */
   readonly height: number;
-  /** The widest image the server returns, where it declares a limit. */
-  readonly maxWidth?: number;
-  /** The tallest image the server returns, where it declares a limit. */
-  readonly maxHeight?: number;
-  /** The most pixels the server returns, where it declares a limit. */
-  readonly maxArea?: number;
-  /** Sizes worth requesting, smallest first. */
-  readonly sizes: readonly ImageServiceSize[];
-}
-
-/** A whole-image size to request from an {@link ImageService}. */
-export interface ImageServiceSize {
-  readonly width: number;
-  readonly height: number;
   /**
-   * Where the size comes from, which says how likely the server is to have it
-   * ready: `listed` sizes are the ones the server names in `sizes`, `tiles`
-   * sizes follow its tile scale factors, and `halving` sizes are derived from the
-   * full image where the server states neither.
+   * Whole-image JPEG renditions worth requesting, smallest first. Each `url` is
+   * in the canonical form of the service’s API version, so that a server which
+   * prepared the size finds it; JPEG is the one format every compliance level
+   * must support.
    */
-  readonly source: 'listed' | 'tiles' | 'halving';
+  readonly sizes: readonly {
+    readonly width: number;
+    readonly height: number;
+    readonly url: string;
+  }[];
 }
 
 /**
@@ -58,42 +44,39 @@ export function readImageService(
     return undefined;
   }
   const document = info as Record<string, unknown>;
-  const { width, height, maxWidth, maxHeight, maxArea } = document;
+  const { width, height } = document;
   if (!isPositiveInteger(width) || !isPositiveInteger(height)) {
     return undefined;
   }
   const profile = profileOf(document);
-  const level = levelOf(profile);
+  const base = serviceBase(url);
+  const version = versionOf(document, profile);
   return {
-    url: serviceBase(url),
-    version: versionOf(document, profile),
-    level,
+    url: base,
     width,
     height,
-    ...(isPositiveInteger(maxWidth) ? { maxWidth } : {}),
-    ...(isPositiveInteger(maxHeight) ? { maxHeight } : {}),
-    ...(isPositiveInteger(maxArea) ? { maxArea } : {}),
-    sizes: sizesOf(document, width, height, level).sort(
-      (left, right) => left.width - right.width,
-    ),
+    sizes: sizesOf(document, width, height, levelOf(profile))
+      .sort((left, right) => left.width - right.width)
+      .map((size) => ({ ...size, url: imageUrl(base, version, size) })),
   };
 }
 
-/**
- * The URL of a whole-image rendition at `size`, in the canonical form of the
- * service’s API version, so that a server which prepared the size finds it.
- */
-export function imageUrl(
-  service: Pick<ImageService, 'url' | 'version'>,
-  size: Pick<ImageServiceSize, 'width' | 'height'>,
-  format = 'jpg',
-): string {
-  if (service.version === 3) {
-    return `${service.url}/full/${size.width},${size.height}/0/default.${format}`;
+/** The canonical URL of a whole-image JPEG rendition at `size`. */
+function imageUrl(base: string, version: Version, size: Size): string {
+  if (version === 3) {
+    return `${base}/full/${size.width},${size.height}/0/default.jpg`;
   }
   // Image API 1 names the default quality `native`.
-  const quality = service.version === 1 ? 'native' : 'default';
-  return `${service.url}/full/${size.width},/0/${quality}.${format}`;
+  const quality = version === 1 ? 'native' : 'default';
+  return `${base}/full/${size.width},/0/${quality}.jpg`;
+}
+
+/** The Image API version a service speaks. */
+type Version = 1 | 2 | 3;
+
+interface Size {
+  readonly width: number;
+  readonly height: number;
 }
 
 /** Derived sizes narrower than this are not worth a request. */
@@ -103,14 +86,14 @@ function sizesOf(
   document: Record<string, unknown>,
   width: number,
   height: number,
-  level: ImageService['level'],
-): ImageServiceSize[] {
+  level: Level,
+): Size[] {
   const listed = (Array.isArray(document.sizes) ? document.sizes : [])
     .filter(
       (size): size is { width: number; height: number } =>
         isPositiveInteger(size?.width) && isPositiveInteger(size?.height),
     )
-    .map(({ width, height }) => ({ width, height, source: 'listed' as const }));
+    .map(({ width, height }) => ({ width, height }));
   if (listed.length > 0 || level === 0) {
     return listed;
   }
@@ -119,17 +102,15 @@ function sizesOf(
       Array.isArray(tile?.scaleFactors) ? tile.scaleFactors : [],
     )
     .filter(isPositiveInteger);
-  const source = tileFactors.length > 0 ? 'tiles' : 'halving';
   const factors = tileFactors.length > 0 ? tileFactors : halvings(width);
-  const sizes = new Map<number, ImageServiceSize>();
+  const sizes = new Map<number, Size>();
   for (const factor of factors) {
     // Rounded to the nearest pixel, as servers list them: Cantaloupe lists a
     // 1335 pixel wide image’s halves as 668, where rounding down would give 667.
     const size = {
       width: Math.round(width / factor),
       height: Math.round(height / factor),
-      source,
-    } as const;
+    };
     if (
       size.width >= MINIMUM_DERIVED_WIDTH &&
       size.height >= 1 &&
@@ -174,7 +155,7 @@ function isWithinLimits(
 function versionOf(
   document: Record<string, unknown>,
   profile: string,
-): ImageService['version'] {
+): Version {
   const type = document.type ?? document['@type'];
   if (type === 'ImageService3') {
     return 3;
@@ -193,10 +174,13 @@ function versionOf(
 }
 
 /** The compliance level, as `level2` in version 3 and as a URL before it. */
-function levelOf(profile: string): ImageService['level'] {
+function levelOf(profile: string): Level {
   const level = /level([012])/.exec(profile)?.[1];
   return level === undefined ? undefined : (Number(level) as 0 | 1 | 2);
 }
+
+/** The compliance level, or `undefined` where the profile states none. */
+type Level = 0 | 1 | 2 | undefined;
 
 /** The profile naming the compliance level, which Image API 2 states first in an array. */
 function profileOf(document: Record<string, unknown>): string {

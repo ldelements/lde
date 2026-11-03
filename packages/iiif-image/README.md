@@ -1,7 +1,7 @@
 # @lde/iiif-image
 
 Find the image service in a IIIF Presentation manifest, and read that service’s
-`info.json` into dimensions, server limits and a ladder of sizes, in either API
+`info.json` into dimensions and a ladder of sizes, in either API
 version, without the consumer having to know which.
 
 ## Installation
@@ -11,11 +11,13 @@ npm install @lde/iiif-image
 ```
 
 ```ts
-import { firstImageService, imageUrl, readImageService } from '@lde/iiif-image';
+import { imageServices, readImageService } from '@lde/iiif-image';
 
-const serviceUrl = firstImageService(manifest);
-const service = readImageService(serviceUrl, info);
-const thumbnail = imageUrl(service, service.sizes[0]);
+const [serviceUrl] = imageServices(manifest);
+if (serviceUrl !== undefined) {
+  // `info` is the document at `${serviceUrl}/info.json`.
+  const thumbnail = readImageService(serviceUrl, info)?.sizes[0]?.url;
+}
 ```
 
 ## Documentation

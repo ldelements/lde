@@ -5,13 +5,13 @@ entry – from a process that runs inside a private network, without letting tha
 data point the process at internal addresses.
 
 ```ts
-import { fetchPublic, readJson } from '@lde/public-fetch';
+import { fetchPublic } from '@lde/public-fetch';
 
 const response = await fetchPublic(urlFromSomeonesData, {
   signal,
   headers: { Accept: '*/*' },
 });
-const document = await readJson(response);
+const document = await response.json();
 ```
 
 ## Installation
@@ -30,7 +30,7 @@ reveal what exists.
 
 ## What it refuses
 
-`isPublicWebUrl(url)` is `false` for:
+`fetchPublic(url, options)` throws a `RefusedUrlError`, without fetching, for:
 
 - anything other than `http` and `https`;
 - anything other than public unicast addresses: loopback, private, shared,
@@ -40,18 +40,18 @@ reveal what exists.
 - a single-label host, such as a Kubernetes service name, and names ending in
   `.localhost`, `.local`, `.internal` or `.svc`, with or without a trailing dot.
 
-`fetchPublic(url, options)` follows redirects itself, one hop at a time, and
-checks every target, so a public URL redirecting to an internal one is refused
-with a `RefusedUrlError` rather than followed. It gives up after `maxRedirects`
-hops, 10 by default. Like `fetch`, it drops `Authorization`, `Cookie` and
+It follows redirects itself, one hop at a time, and checks every target, so a
+public URL redirecting to an internal one is refused rather than followed. It
+gives up after 10 hops. Like `fetch`, it drops `Authorization`, `Cookie` and
 `Proxy-Authorization` on a redirect to another origin, and returns a redirect
 whose `Location` cannot be parsed as it is. It is meant for `GET`: it repeats the
 request on every hop.
 
-`readJson(response, maxBytes)` reads at most `maxBytes` of the body, 20 MiB by
-default, so a large or endless response cannot exhaust memory. It throws a
-`ResponseTooLargeError` when the body is larger, and a `SyntaxError` when it is
-not JSON.
+It returns an ordinary `Response`, with the `url` it was finally served from,
+whose body can be read at most 20 MiB deep, so a large or endless response
+cannot exhaust memory: `json()`, `text()` or any other read rejects with a
+`ResponseTooLargeError` past that. Nothing is read until the caller reads, so a
+body the caller does not want can still be cancelled unread.
 
 ## Limits
 

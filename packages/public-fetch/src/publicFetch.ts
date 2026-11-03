@@ -6,36 +6,142 @@ export interface FetchPublicOptions {
   signal?: AbortSignal;
   /** Request headers, sent on every hop. */
   headers?: RequestInit['headers'];
-  /** Redirects followed before giving up. Defaults to 10. */
-  maxRedirects?: number;
   /** `fetch` implementation to use. Injectable for testing; defaults to the global `fetch`. */
   fetch?: typeof globalThis.fetch;
 }
 
 /** Thrown by {@link fetchPublic} for a URL, or a redirect target, that is not public. */
 export class RefusedUrlError extends Error {
-  constructor(
-    /** The URL that was refused, which may be a redirect target. */
-    readonly url: string,
-  ) {
+  constructor(url: string) {
     super(`${url} is not a public web address`);
     this.name = 'RefusedUrlError';
   }
 }
 
-/** Thrown by {@link readJson} for a body larger than its limit. */
+/** Thrown while reading the body of a {@link fetchPublic} response larger than 20 MiB. */
 export class ResponseTooLargeError extends Error {
-  constructor(
-    /** The limit the body exceeded, in bytes. */
-    readonly maxBytes: number,
-  ) {
-    super(`response body exceeds ${maxBytes} bytes`);
+  constructor() {
+    super(`response body exceeds ${MAX_BYTES} bytes`);
     this.name = 'ResponseTooLargeError';
   }
 }
 
-/** The default limit for {@link readJson}: 20 MiB. */
-export const DEFAULT_MAX_BYTES = 20 * 1024 * 1024;
+/**
+ * `fetch` a URL that came from someone else’s data, refusing to reach anything
+ * but a public web address: not a private, loopback or link-local address, nor a
+ * host that only resolves internally. Redirects are followed one hop at a time
+ * so that each target is checked too: a public URL redirecting to an internal
+ * one is refused, not followed.
+ *
+ * The response body is bounded: reading it – with `json()`, `text()` or
+ * otherwise – fails with a {@link ResponseTooLargeError} past 20 MiB, so a large
+ * or endless body cannot exhaust memory.
+ *
+ * Meant for `GET`: like `fetch`, it repeats the request on every hop.
+ *
+ * @throws {RefusedUrlError} when the URL or a redirect target is not public.
+ */
+export async function fetchPublic(
+  url: string,
+  options: FetchPublicOptions = {},
+): Promise<Response> {
+  const doFetch = options.fetch ?? globalThis.fetch;
+  let current = url;
+  let headers = options.headers;
+  for (let hop = 0; ; hop++) {
+    if (!isPublicWebUrl(current)) {
+      throw new RefusedUrlError(current);
+    }
+    const response = await doFetch(current, {
+      signal: options.signal,
+      headers,
+      redirect: 'manual',
+    });
+    const target = redirectTarget(response, current);
+    if (target === undefined) {
+      return bounded(response, current, hop > 0);
+    }
+    // An unread body keeps its connection until garbage collection.
+    await response.body?.cancel();
+    if (hop >= MAX_REDIRECTS) {
+      throw new Error(`${url} redirected more than ${MAX_REDIRECTS} times`);
+    }
+    // As `fetch` does on a cross-origin redirect: credentials meant for one
+    // origin must not reach another.
+    if (new URL(target).origin !== new URL(current).origin) {
+      headers = withoutCredentials(headers);
+    }
+    current = target;
+  }
+}
+
+const MAX_REDIRECTS = 10;
+
+const MAX_BYTES = 20 * 1024 * 1024;
+
+/**
+ * The response with a body that errors past {@link MAX_BYTES}, whatever
+ * `Content-Length` says, and with the `url` and `redirected` that `fetch` would
+ * have reported had it followed the redirects itself.
+ */
+async function bounded(
+  response: Response,
+  url: string,
+  redirected: boolean,
+): Promise<Response> {
+  // `fetch` passes on any three-digit status a server sends, but a `Response`
+  // can only be made with one from 200 to 599.
+  if (response.status < 200 || response.status > 599) {
+    await response.body?.cancel();
+    throw new Error(`${url} answered with status ${response.status}`);
+  }
+  const result = new Response(
+    response.body && boundedStream(response.body, response.headers),
+    response,
+  );
+  Object.defineProperties(result, {
+    url: { value: url },
+    redirected: { value: redirected },
+  });
+  return result;
+}
+
+function boundedStream(
+  body: ReadableStream<Uint8Array>,
+  headers: Headers,
+): ReadableStream<Uint8Array> {
+  const reader = body.getReader();
+  const declared = Number(headers.get('content-length'));
+  let received = 0;
+  return new ReadableStream(
+    {
+      async pull(controller) {
+        // A declared length above the limit fails before anything is read.
+        if (declared > MAX_BYTES) {
+          await reader.cancel();
+          controller.error(new ResponseTooLargeError());
+          return;
+        }
+        const { done, value } = await reader.read();
+        if (done) {
+          controller.close();
+          return;
+        }
+        received += value.byteLength;
+        if (received > MAX_BYTES) {
+          await reader.cancel();
+          controller.error(new ResponseTooLargeError());
+          return;
+        }
+        controller.enqueue(value);
+      },
+      cancel: (reason) => reader.cancel(reason),
+    },
+    // Read only when the caller does: a stream otherwise pulls a chunk as soon
+    // as it is made, downloading part of a body the caller may only cancel.
+    { highWaterMark: 0 },
+  );
+}
 
 /**
  * Whether a URL may be fetched by a process inside a private network: an `http` or
@@ -46,7 +152,7 @@ export const DEFAULT_MAX_BYTES = 20 * 1024 * 1024;
  * It looks only at the URL, so it cannot see a public name that resolves to a
  * private address. Pair it with an egress policy where that matters.
  */
-export function isPublicWebUrl(url: string): boolean {
+function isPublicWebUrl(url: string): boolean {
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -67,92 +173,6 @@ export function isPublicWebUrl(url: string): boolean {
   }
   return host.includes('.') && !INTERNAL_SUFFIX.test(host);
 }
-
-/**
- * `fetch` a URL that came from someone else’s data, refusing to reach anything
- * {@link isPublicWebUrl} rejects. Redirects are followed one hop at a time so
- * that each target is checked too: a public URL redirecting to an internal one
- * is refused, not followed.
- *
- * Meant for `GET`: like `fetch`, it repeats the request on every hop.
- *
- * @throws {RefusedUrlError} when the URL or a redirect target is not public.
- */
-export async function fetchPublic(
-  url: string,
-  options: FetchPublicOptions = {},
-): Promise<Response> {
-  const doFetch = options.fetch ?? globalThis.fetch;
-  const maxRedirects = options.maxRedirects ?? DEFAULT_MAX_REDIRECTS;
-  let current = url;
-  let headers = options.headers;
-  for (let hop = 0; ; hop++) {
-    if (!isPublicWebUrl(current)) {
-      throw new RefusedUrlError(current);
-    }
-    const response = await doFetch(current, {
-      signal: options.signal,
-      headers,
-      redirect: 'manual',
-    });
-    const target = redirectTarget(response, current);
-    if (target === undefined) {
-      return response;
-    }
-    // An unread body keeps its connection until garbage collection.
-    await response.body?.cancel();
-    if (hop >= maxRedirects) {
-      throw new Error(`${url} redirected more than ${maxRedirects} times`);
-    }
-    // As `fetch` does on a cross-origin redirect: credentials meant for one
-    // origin must not reach another.
-    if (new URL(target).origin !== new URL(current).origin) {
-      headers = withoutCredentials(headers);
-    }
-    current = target;
-  }
-}
-
-/**
- * Parse a response body as JSON, reading at most `maxBytes` of it, so a large or
- * endless body cannot exhaust memory.
- *
- * @throws {ResponseTooLargeError} when the body exceeds `maxBytes`.
- * @throws {SyntaxError} when the body is not JSON.
- */
-export async function readJson(
-  response: Response,
-  maxBytes = DEFAULT_MAX_BYTES,
-): Promise<unknown> {
-  const declared = Number(response.headers.get('content-length'));
-  if (declared > maxBytes) {
-    await response.body?.cancel();
-    throw new ResponseTooLargeError(maxBytes);
-  }
-  if (response.body === null) {
-    return JSON.parse('');
-  }
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let received = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) {
-      break;
-    }
-    received += value.byteLength;
-    if (received > maxBytes) {
-      await reader.cancel();
-      throw new ResponseTooLargeError(maxBytes);
-    }
-    chunks.push(value);
-  }
-  // `TextDecoder` drops a leading byte order mark, as `response.json()` does;
-  // some IIS servers send one.
-  return JSON.parse(new TextDecoder().decode(Buffer.concat(chunks)));
-}
-
-const DEFAULT_MAX_REDIRECTS = 10;
 
 /** The absolute URL a redirect points to, or `undefined` for a response that is
  *  not a redirect, or whose `Location` cannot be followed. */

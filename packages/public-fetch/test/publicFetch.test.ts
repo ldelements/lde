@@ -1,13 +1,25 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   fetchPublic,
-  isPublicWebUrl,
-  readJson,
   RefusedUrlError,
   ResponseTooLargeError,
 } from '../src/index.js';
 
-describe('isPublicWebUrl', () => {
+function answering(answers: Record<string, Response>) {
+  return vi.fn(async (input: string | URL | Request) => {
+    const answer = answers[String(input)];
+    if (answer === undefined) {
+      throw new Error(`unexpected request for ${String(input)}`);
+    }
+    return answer;
+  });
+}
+
+function redirect(location: string, status = 302) {
+  return new Response(null, { status, headers: { location } });
+}
+
+describe('fetchPublic', () => {
   it.each([
     'https://example.org/iiif/manifest.json',
     'http://example.org/iiif/manifest.json',
@@ -15,8 +27,12 @@ describe('isPublicWebUrl', () => {
     'https://images.example.org/i/?IIIF=/7b/image.tif',
     'https://8.8.8.8/manifest',
     'https://[2606:4700:4700::1111]/manifest',
-  ])('allows %s', (url) => {
-    expect(isPublicWebUrl(url)).toBe(true);
+  ])('fetches %s', async (url) => {
+    const fetch = answering({ [url]: Response.json({}) });
+
+    await fetchPublic(url, { fetch });
+
+    expect(fetch).toHaveBeenCalledOnce();
   });
 
   it.each([
@@ -49,26 +65,15 @@ describe('isPublicWebUrl', () => {
     'http://kubernetes.default.svc./api',
     'http://search-api.default.svc.cluster.local/graphql',
     'http://metadata.google.internal./computeMetadata',
-  ])('rejects %s', (url) => {
-    expect(isPublicWebUrl(url)).toBe(false);
+  ])('refuses %s without fetching it', async (url) => {
+    const fetch = answering({});
+
+    await expect(fetchPublic(url, { fetch })).rejects.toBeInstanceOf(
+      RefusedUrlError,
+    );
+    expect(fetch).not.toHaveBeenCalled();
   });
-});
 
-function answering(answers: Record<string, Response>) {
-  return vi.fn(async (input: string | URL | Request) => {
-    const answer = answers[String(input)];
-    if (answer === undefined) {
-      throw new Error(`unexpected request for ${String(input)}`);
-    }
-    return answer;
-  });
-}
-
-function redirect(location: string, status = 302) {
-  return new Response(null, { status, headers: { location } });
-}
-
-describe('fetchPublic', () => {
   it('fetches a public URL', async () => {
     const fetch = answering({
       'https://example.org/a': Response.json({ ok: true }),
@@ -108,20 +113,24 @@ describe('fetchPublic', () => {
 
     await expect(
       fetchPublic('https://example.org/a', { fetch }),
-    ).rejects.toMatchObject({ url: 'http://10.0.0.5/secret' });
+    ).rejects.toThrow('http://10.0.0.5/secret is not a public web address');
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
-  it('gives up after the redirect limit', async () => {
-    const fetch = answering({
-      'https://example.org/a': redirect('https://example.org/b'),
-      'https://example.org/b': redirect('https://example.org/a'),
-    });
+  it('gives up after ten redirects', async () => {
+    // A fresh redirect on every call, back and forth between two URLs.
+    const fetch = vi.fn(async (input: string | URL | Request) =>
+      redirect(
+        String(input).endsWith('/a')
+          ? 'https://example.org/b'
+          : 'https://example.org/a',
+      ),
+    );
 
     await expect(
-      fetchPublic('https://example.org/a', { fetch, maxRedirects: 3 }),
-    ).rejects.toThrow('redirected more than 3 times');
-    expect(fetch).toHaveBeenCalledTimes(4);
+      fetchPublic('https://example.org/a', { fetch }),
+    ).rejects.toThrow('redirected more than 10 times');
+    expect(fetch).toHaveBeenCalledTimes(11);
   });
 
   it('drops credentials on a cross-origin redirect, and keeps them on the same origin', async () => {
@@ -205,51 +214,90 @@ describe('fetchPublic', () => {
   });
 });
 
-describe('readJson', () => {
-  it('parses a body within the limit', async () => {
-    expect(await readJson(Response.json({ width: 1335 }))).toEqual({
-      width: 1335,
+describe('the response body', () => {
+  function served(response: Response) {
+    return fetchPublic('https://example.org/a', {
+      fetch: answering({ 'https://example.org/a': response }),
     });
-  });
+  }
 
-  it('rejects a body that declares a length above the limit, without reading it', async () => {
-    const response = new Response('{}', {
-      headers: { 'content-length': '2000' },
-    });
-
-    await expect(readJson(response, 1000)).rejects.toBeInstanceOf(
-      ResponseTooLargeError,
+  it('reads as JSON within the limit, with status and headers kept', async () => {
+    const response = await served(
+      Response.json({ width: 1335 }, { status: 201 }),
     );
+
+    expect(response.status).toBe(201);
+    expect(response.headers.get('content-type')).toBe('application/json');
+    expect(await response.json()).toEqual({ width: 1335 });
   });
 
-  it('stops reading a body that grows past the limit', async () => {
-    const chunk = new TextEncoder().encode('x'.repeat(600));
+  it('reports the URL it was finally served from', async () => {
+    const response = await fetchPublic('https://example.org/a', {
+      fetch: answering({
+        'https://example.org/a': redirect('https://example.org/b'),
+        'https://example.org/b': Response.json({}),
+      }),
+    });
+
+    expect(response.url).toBe('https://example.org/b');
+    expect(response.redirected).toBe(true);
+  });
+
+  it('fails when it declares a length above 20 MiB, without reading it', async () => {
+    const response = await served(
+      new Response('{}', {
+        headers: { 'content-length': String(21 * 1024 * 1024) },
+      }),
+    );
+
+    await expect(response.json()).rejects.toBeInstanceOf(ResponseTooLargeError);
+  });
+
+  it('stops reading when it grows past 20 MiB', async () => {
+    const chunk = new Uint8Array(1024 * 1024);
     const body = new ReadableStream<Uint8Array>({
       pull(controller) {
         controller.enqueue(chunk);
       },
     });
+    const response = await served(new Response(body));
 
-    await expect(readJson(new Response(body), 1000)).rejects.toBeInstanceOf(
-      ResponseTooLargeError,
+    await expect(response.text()).rejects.toBeInstanceOf(ResponseTooLargeError);
+  });
+
+  it('cannot come with a status outside 200–599, which a Response cannot carry', async () => {
+    const odd = new Response(null);
+    Object.defineProperty(odd, 'status', { value: 999 });
+
+    await expect(served(odd)).rejects.toThrow(
+      'https://example.org/a answered with status 999',
     );
   });
 
-  it('parses a body that starts with a byte order mark', async () => {
-    expect(await readJson(new Response('﻿{"width":1}'))).toEqual({
-      width: 1,
-    });
-  });
-
-  it('throws on a body that is not JSON', async () => {
-    await expect(readJson(new Response('<html>'))).rejects.toBeInstanceOf(
-      SyntaxError,
+  it('is not read until the caller reads it', async () => {
+    const pull = vi.fn();
+    await served(
+      new Response(new ReadableStream({ pull }, { highWaterMark: 0 })),
     );
+
+    expect(pull).not.toHaveBeenCalled();
   });
 
-  it('throws on a response without a body', async () => {
-    await expect(
-      readJson(new Response(null, { status: 204 })),
-    ).rejects.toBeInstanceOf(SyntaxError);
+  it('can be cancelled unread', async () => {
+    const response = await served(Response.json({}));
+
+    await expect(response.body?.cancel()).resolves.toBeUndefined();
+  });
+
+  it('parses JSON that starts with a byte order mark', async () => {
+    const response = await served(new Response('\uFEFF{"width":1}'));
+
+    expect(await response.json()).toEqual({ width: 1 });
+  });
+
+  it('is absent where the server sent none', async () => {
+    const response = await served(new Response(null, { status: 204 }));
+
+    expect(response.body).toBeNull();
   });
 });

@@ -3,51 +3,54 @@ import { convertPresentation2 } from '@iiif/parser/presentation-2';
 import { serviceBase } from './serviceBase.js';
 
 /**
- * The URL of the image service of a manifest’s first painted image that has one,
- * in Presentation 2 or 3, or `undefined` where no painted image has one.
+ * The URLs of the image services of a manifest’s painted images, in Presentation
+ * 2 or 3, in the order the manifest paints them. Take the first for a cover
+ * image: the canvases after it are not walked. A Presentation 2 manifest is
+ * upgraded whole first, so it costs the same either way.
  *
  * Tolerant by design: it walks the plain JSON rather than normalising it, so a
  * manifest with a structural defect elsewhere – `"annotations": [null]`, which
- * viewers built on `@iiif/parser` reject outright – still yields its service. A
- * Presentation 2 manifest the upgrade cannot read yields `undefined`.
+ * viewers built on `@iiif/parser` reject outright – still yields its services.
  *
- * The URL is the service’s base, without a trailing slash or `/info.json`.
+ * Each URL is the service’s base, without a trailing slash or `/info.json`.
+ *
+ * @throws {TypeError} when the document is not a manifest that can be read: one
+ *   without canvases, such as an error page served as JSON, or a Presentation 2
+ *   manifest the upgrade rejects. Unlike a manifest without image services, that
+ *   is not a fact about the manifest’s images worth keeping.
  */
-export function firstImageService(manifest: unknown): string | undefined {
-  for (const canvas of arrayOf(fieldOf(upgraded(manifest), 'items'))) {
+export function imageServices(manifest: unknown): IterableIterator<string> {
+  const document = upgraded(manifest);
+  const canvases = arrayOf(fieldOf(document, 'items')).filter(
+    (item) => fieldOf(item, 'type') === 'Canvas',
+  );
+  if (canvases.length === 0) {
+    throw new TypeError('not a IIIF manifest: it has no canvases');
+  }
+  return servicesOf(canvases);
+}
+
+function* servicesOf(canvases: unknown[]): Generator<string> {
+  for (const canvas of canvases) {
     for (const page of arrayOf(fieldOf(canvas, 'items'))) {
       for (const annotation of arrayOf(fieldOf(page, 'items'))) {
         for (const body of paintedResources(fieldOf(annotation, 'body'))) {
           const service = imageServiceOf(body);
           if (service !== undefined) {
-            return service;
+            yield service;
           }
         }
       }
     }
   }
-  return undefined;
 }
 
 /**
- * Whether a document has the canvases every manifest must have, in either
- * version. Tells a manifest without an image service apart from a document that
- * is not a usable manifest at all, such as an error page served as JSON.
- */
-export function hasCanvases(document: unknown): boolean {
-  const canvases3 = arrayOf(fieldOf(document, 'items')).filter(
-    (item) => fieldOf(item, 'type') === 'Canvas',
-  );
-  const canvases2 = arrayOf(fieldOf(document, 'sequences')).flatMap(
-    (sequence) => arrayOf(fieldOf(sequence, 'canvases')),
-  );
-  return canvases3.length > 0 || canvases2.length > 0;
-}
-
-/**
- * The manifest in Presentation 3 terms, or `undefined` where the upgrade fails.
- * The upgrade rewrites its input in place, so it gets a copy: the caller’s
- * manifest stays as it was, and a second call reads it the same way.
+ * The manifest in Presentation 3 terms. The upgrade rewrites its input in place,
+ * so it gets a copy: the caller’s manifest stays as it was, and a second call
+ * reads it the same way.
+ *
+ * @throws {TypeError} when the upgrade rejects the manifest.
  */
 function upgraded(manifest: unknown): unknown {
   if (fieldOf(manifest, 'sequences') === undefined) {
@@ -55,8 +58,10 @@ function upgraded(manifest: unknown): unknown {
   }
   try {
     return convertPresentation2(structuredClone(manifest) as object);
-  } catch {
-    return undefined;
+  } catch (error) {
+    throw new TypeError('not a readable IIIF Presentation 2 manifest', {
+      cause: error,
+    });
   }
 }
 

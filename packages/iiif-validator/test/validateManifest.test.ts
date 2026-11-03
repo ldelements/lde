@@ -222,23 +222,28 @@ describe('validateManifest', () => {
   });
 
   it('reports binary-content without reading the body when the server announces an image', async () => {
-    // The body’s `json()` throws, so reaching it would surface as invalid-json;
+    // Reading the body errors, so reaching it would surface as invalid-json;
     // getting binary-content proves the content-type gate short-circuited before
-    // the body was buffered. `body.cancel()` frees the connection.
+    // the body was buffered. Cancelling the body frees the connection.
     let bodyCancelled = false;
+    const body = new ReadableStream(
+      {
+        pull(controller) {
+          controller.error(
+            new Error('the body must not be read for binary media'),
+          );
+        },
+        cancel() {
+          bodyCancelled = true;
+        },
+      },
+      // As a network body: nothing is read until someone reads it.
+      { highWaterMark: 0 },
+    );
     const fetch = (async () =>
-      ({
-        ok: true,
-        headers: new Headers({ 'Content-Type': 'image/jpeg' }),
-        body: {
-          cancel: async () => {
-            bodyCancelled = true;
-          },
-        },
-        json: async () => {
-          throw new Error('the body must not be read for binary media');
-        },
-      }) as unknown as Response) as typeof globalThis.fetch;
+      new Response(body, {
+        headers: { 'Content-Type': 'image/jpeg' },
+      })) as typeof globalThis.fetch;
 
     const verdict = await validateManifest(URL, { fetch });
 

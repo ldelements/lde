@@ -10,10 +10,10 @@ npm install @lde/public-fetch
 ```
 
 ```ts
-import { fetchPublic, readJson } from '@lde/public-fetch';
+import { fetchPublic } from '@lde/public-fetch';
 
 const response = await fetchPublic(urlFromSomeonesData);
-const document = await readJson(response);
+const document = await response.json();
 ```
 
 ## Documentation

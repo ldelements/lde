@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { firstImageService, hasCanvases } from '../src/index.js';
+import { imageServices } from '../src/index.js';
 
 function fixture(name: string): unknown {
   return JSON.parse(
@@ -19,7 +19,12 @@ function manifestPainting(body: unknown): unknown {
   return { type: 'Manifest', items: [canvasPainting(body)] };
 }
 
-describe('firstImageService', () => {
+function firstImageService(manifest: unknown): string | undefined {
+  const [first] = imageServices(manifest);
+  return first;
+}
+
+describe('imageServices', () => {
   it.each([
     // Presentation 2, with a static manifest thumbnail that has no service.
     ['gouda', 'https://www.goudatijdmachine.nl/omeka/iiif/2/98634'],
@@ -100,21 +105,27 @@ describe('firstImageService', () => {
     ).toBe('https://example.org/iiif/a');
   });
 
-  it('skips a painted image without a service', () => {
-    expect(
-      firstImageService({
+  it('yields every painted image’s service in order, skipping images without one', () => {
+    expect([
+      ...imageServices({
         type: 'Manifest',
         items: [
-          canvasPainting({ type: 'Image', id: 'https://example.org/a.jpg' }),
           canvasPainting({
             type: 'Image',
             service: [
-              { id: 'https://example.org/iiif/b', type: 'ImageService2' },
+              { id: 'https://example.org/iiif/a', type: 'ImageService3' },
+            ],
+          }),
+          canvasPainting({ type: 'Image', id: 'https://example.org/b.jpg' }),
+          canvasPainting({
+            type: 'Image',
+            service: [
+              { id: 'https://example.org/iiif/c', type: 'ImageService2' },
             ],
           }),
         ],
       }),
-    ).toBe('https://example.org/iiif/b');
+    ]).toEqual(['https://example.org/iiif/a', 'https://example.org/iiif/c']);
   });
 
   it('ignores a service that is not an image service', () => {
@@ -130,9 +141,9 @@ describe('firstImageService', () => {
     ).toBeUndefined();
   });
 
-  it('finds nothing in a Presentation 2 manifest the upgrade rejects', () => {
-    expect(
-      firstImageService({
+  it('throws for a Presentation 2 manifest the upgrade rejects', () => {
+    expect(() =>
+      imageServices({
         '@context': 'http://iiif.io/api/presentation/2/context.json',
         '@id': 'https://example.org/manifest',
         '@type': 'sc:Manifest',
@@ -149,7 +160,7 @@ describe('firstImageService', () => {
           },
         ],
       }),
-    ).toBeUndefined();
+    ).toThrow('not a readable IIIF Presentation 2 manifest');
   });
 
   it('finds nothing in a manifest with no image service', () => {
@@ -170,20 +181,6 @@ describe('firstImageService', () => {
     expect(firstImageService(manifest)).toBe(first);
   });
 
-  it('finds nothing in what is not a manifest', () => {
-    expect(firstImageService({ hello: 'world' })).toBeUndefined();
-    expect(firstImageService(null)).toBeUndefined();
-  });
-});
-
-describe('hasCanvases', () => {
-  it.each(['gouda', 'limb', 'ark11978', 'fehac'])(
-    'is true of the %s manifest',
-    (name) => {
-      expect(hasCanvases(fixture(name))).toBe(true);
-    },
-  );
-
   it.each([
     ['an error object', { error: 'down for maintenance' }],
     ['a manifest without canvases', { type: 'Manifest', items: [] }],
@@ -199,7 +196,7 @@ describe('hasCanvases', () => {
       { sequences: [{ canvases: [] }] },
     ],
     ['null', null],
-  ])('is false of %s', (_name, document) => {
-    expect(hasCanvases(document)).toBe(false);
+  ])('throws for %s, which is not a usable manifest', (_name, document) => {
+    expect(() => imageServices(document)).toThrow(TypeError);
   });
 });

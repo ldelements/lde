@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { imageUrl, readImageService } from '../src/index.js';
+import { readImageService } from '../src/index.js';
 
 const URL = 'https://example.org/iiif/image';
 
 describe('readImageService', () => {
-  it('reads the live level-2 service’s dimensions, limits and listed sizes', () => {
+  it('reads the live level-2 service’s dimensions and listed sizes', () => {
     expect(
       readImageService(URL, {
         '@context': 'http://iiif.io/api/image/3/context.json',
@@ -21,14 +21,15 @@ describe('readImageService', () => {
       }),
     ).toEqual({
       url: URL,
-      version: 3,
-      level: 2,
       width: 1335,
       height: 2750,
-      maxArea: 3671250,
       sizes: [
-        { width: 83, height: 172, source: 'listed' },
-        { width: 668, height: 1375, source: 'listed' },
+        { width: 83, height: 172, url: `${URL}/full/83,172/0/default.jpg` },
+        {
+          width: 668,
+          height: 1375,
+          url: `${URL}/full/668,1375/0/default.jpg`,
+        },
       ],
     });
   });
@@ -45,7 +46,9 @@ describe('readImageService', () => {
       sizes: [{ width: 200, height: 150 }],
     });
 
-    expect(service).toMatchObject({ version: 2, level: 1, maxWidth: 300 });
+    expect(service?.sizes).toEqual([
+      { width: 200, height: 150, url: `${URL}/full/200,/0/default.jpg` },
+    ]);
   });
 
   it('derives sizes from the tile scale factors, rounded as servers list them', () => {
@@ -57,32 +60,34 @@ describe('readImageService', () => {
       tiles: [{ width: 512, scaleFactors: [1, 2, 4, 8, 16] }],
     });
 
-    expect(service?.sizes).toEqual(
-      [
-        [83, 172],
-        [167, 344],
-        [334, 688],
-        [668, 1375],
-        [1335, 2750],
-      ].map(([width, height]) => ({ width, height, source: 'tiles' })),
-    );
-  });
-
-  it('halves the full image where the server states neither sizes nor tiles', () => {
-    const service = readImageService(URL, {
-      type: 'ImageService3',
-      profile: 'level2',
-      width: 800,
-      height: 600,
-    });
-
-    expect(service?.sizes.map(({ width, source }) => [width, source])).toEqual([
-      [100, 'halving'],
-      [200, 'halving'],
-      [400, 'halving'],
-      [800, 'halving'],
+    expect(service?.sizes.map(({ width, height }) => [width, height])).toEqual([
+      [83, 172],
+      [167, 344],
+      [334, 688],
+      [668, 1375],
+      [1335, 2750],
     ]);
   });
+
+  it.each([
+    ['no tiles', {}],
+    ['tiles without scale factors', { tiles: [{ width: 512 }] }],
+  ])(
+    'halves the full image where the server lists no sizes and states %s',
+    (_shape, tiles) => {
+      const service = readImageService(URL, {
+        type: 'ImageService3',
+        profile: 'level2',
+        width: 800,
+        height: 600,
+        ...tiles,
+      });
+
+      expect(service?.sizes.map(({ width }) => width)).toEqual([
+        100, 200, 400, 800,
+      ]);
+    },
+  );
 
   it.each([
     ['maxWidth', { maxWidth: 400 }, [100, 200, 400]],
@@ -141,34 +146,48 @@ describe('readImageService', () => {
           'http://library.stanford.edu/iiif/image-api/compliance.html#level1',
       },
     ],
-  ])('recognises Image API 1 by %s', (_how, shape) => {
-    expect(
-      readImageService(URL, { width: 800, height: 600, ...shape })?.version,
-    ).toBe(1);
-  });
+  ])(
+    'recognises Image API 1 by %s, and asks for its `native` quality',
+    (_how, shape) => {
+      expect(
+        readImageService(URL, { width: 800, height: 600, ...shape })?.sizes[0]
+          .url,
+      ).toBe(`${URL}/full/100,/0/native.jpg`);
+    },
+  );
 
   it.each([
-    ['an ImageService2 type', { type: 'ImageService2' }, 2],
     [
-      'an Image API 3 context without a type',
-      { '@context': 'http://iiif.io/api/image/3/context.json' },
-      3,
+      'version 2 from an ImageService2 type',
+      { type: 'ImageService2' },
+      `${URL}/full/100,/0/default.jpg`,
     ],
-  ] as const)('reads the version from %s', (_how, shape, version) => {
+    [
+      'version 3 from its context, without a type',
+      { '@context': 'http://iiif.io/api/image/3/context.json' },
+      `${URL}/full/100,75/0/default.jpg`,
+    ],
+    [
+      'version 2, the most common, from nothing at all',
+      {},
+      `${URL}/full/100,/0/default.jpg`,
+    ],
+  ])('builds image URLs for %s', (_how, shape, url) => {
     expect(
-      readImageService(URL, { width: 800, height: 600, ...shape })?.version,
-    ).toBe(version);
+      readImageService(URL, { width: 800, height: 600, ...shape })?.sizes[0]
+        .url,
+    ).toBe(url);
   });
 
-  it('leaves the level undefined where the profile states none', () => {
+  it('derives sizes where the profile states no level', () => {
     expect(
       readImageService(URL, {
         type: 'ImageService3',
         profile: { supports: [] },
         width: 800,
         height: 600,
-      })?.level,
-    ).toBeUndefined();
+      })?.sizes,
+    ).toHaveLength(4);
   });
 
   it.each([
@@ -191,22 +210,4 @@ describe('readImageService’s URL', () => {
       ).toBe(URL);
     },
   );
-});
-
-describe('imageUrl', () => {
-  const size = { width: 83, height: 172 };
-
-  it.each([
-    [3, `${URL}/full/83,172/0/default.jpg`],
-    [2, `${URL}/full/83,/0/default.jpg`],
-    [1, `${URL}/full/83,/0/native.jpg`],
-  ] as const)('builds the canonical form for version %i', (version, url) => {
-    expect(imageUrl({ url: URL, version }, size)).toBe(url);
-  });
-
-  it('takes another format', () => {
-    expect(imageUrl({ url: URL, version: 3 }, size, 'webp')).toBe(
-      `${URL}/full/83,172/0/default.webp`,
-    );
-  });
 });

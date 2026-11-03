@@ -2,7 +2,6 @@ import { normalize } from '@iiif/parser/presentation-3';
 import { upgrade } from '@iiif/parser/upgrader';
 import {
   fetchPublic,
-  readJson,
   RefusedUrlError,
   ResponseTooLargeError,
 } from '@lde/public-fetch';
@@ -97,7 +96,7 @@ export async function validateManifest(
 
   let body: unknown;
   try {
-    body = await readJson(response);
+    body = await response.json();
   } catch (error) {
     return {
       valid: false,
