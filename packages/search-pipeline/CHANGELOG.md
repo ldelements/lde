@@ -1,3 +1,69 @@
+## 0.38.0 (2026-11-03)
+
+### 🚀 Features
+
+- ⚠️  **search-indexer:** index local RDF files beside registered datasets ([#985](https://github.com/ldelements/lde/pull/985))
+
+### ⚠️  Breaking Changes
+
+- **search-indexer:** index local RDF files beside registered datasets  ([#985](https://github.com/ldelements/lde/pull/985))
+  IndexerConfig.registryEndpoint is optional, undefined
+  when DATASETS names only local data. Code reading it must handle
+  undefined.
+  * fix: re-copy restored local files and isolate combined selections
+  - Record a local file’s size and modification time beside its copy and
+    copy again whenever either changes, so a same-size replacement restored
+    with an older time reaches the index
+  - Cancel a local copy when the download signal aborts
+  - Give each iteration of a CombinedSelector selection its own stream, so
+    overlapping or restarted loops never skip or repeat datasets
+  - Stop Dataset.localFile sharing one URL object between the IRI and the
+    access URL
+  - Test RegistrySelector
+  - Argue the full directory listing against ADR 12 in ADR 31, and note
+    that an own IRI counts as registered for registry-sourced types"
+  A	docs/decisions/0031-import-local-files-through-the-data-dump-path.md
+  M	docs/guide/import-data-dumps.md
+  M	docs/guide/what-is-lde.md
+  M	docs/reference/dataset.md
+  M	docs/reference/distribution-downloader.md
+  M	docs/reference/distribution-probe.md
+  M	docs/reference/pipeline.md
+  M	docs/reference/search-indexer.md
+  M	docs/reference/search-pipeline.md
+  M	package-lock.json
+  M	packages/dataset/src/dataset.ts
+  M	packages/dataset/src/distribution.ts
+  A	packages/dataset/test/dataset.test.ts
+  M	packages/dataset/test/distribution.test.ts
+  M	packages/distribution-downloader/src/download.ts
+  A	packages/distribution-downloader/test/localFile.test.ts
+  M	packages/distribution-downloader/vite.config.ts
+  M	packages/distribution-probe/src/probe.ts
+  A	packages/distribution-probe/test/localFile.test.ts
+  M	packages/distribution-probe/vite.config.ts
+  M	packages/pipeline/src/selector.ts
+  A	packages/pipeline/test/directorySelector.test.ts
+  A	packages/pipeline/test/distribution/localFile.test.ts
+  A	packages/pipeline/test/selector.test.ts
+  M	packages/pipeline/vite.config.ts
+  M	packages/search-indexer/package.json
+  M	packages/search-indexer/src/cli.ts
+  M	packages/search-indexer/src/composition.ts
+  M	packages/search-indexer/src/config.ts
+  M	packages/search-indexer/src/indexer.ts
+  M	packages/search-indexer/test/composition.test.ts
+  M	packages/search-indexer/test/config.test.ts
+  M	packages/search-indexer/tsconfig.lib.json
+  M	packages/search-pipeline/src/search-stages.ts
+  M	packages/search-pipeline/test/search-stages.test.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.41.0
+- Updated @lde/pipeline to 0.41.0
+- Updated @lde/dataset to 0.10.0
+
 ## 0.37.1 (2026-10-31)
 
 ### 🧱 Updated Dependencies
