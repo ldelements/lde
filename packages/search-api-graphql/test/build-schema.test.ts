@@ -314,6 +314,56 @@ describe('buildGraphQLSchema', () => {
     ).toEqual(['1999', '1999-05', '1999-05-03', '1999-05-03T12:30:00Z', null]);
   });
 
+  it('types every date as an ISO8601Date specified by the docs', async () => {
+    const { engine } = fakeEngine(canned);
+    const result = await run(
+      `{ __type(name: "ISO8601Date") { kind specifiedByURL } }`,
+      { engine, acceptLanguage: ['nl'] },
+    );
+    expect(result.data?.__type).toEqual({
+      kind: 'SCALAR',
+      specifiedByURL:
+        'https://ldelements.org/reference/search-api-graphql#dates',
+    });
+    const sdl = printSchema(
+      buildGraphQLSchema(
+        searchSchema(schema, organization, term),
+        datasetOptions,
+      ),
+    );
+    expect(sdl).toMatch(/datePosted: ISO8601Date\n/);
+    expect(sdl).toMatch(
+      /input DateRange \{\s+min: ISO8601Date\s+max: ISO8601Date\s+\}/,
+    );
+  });
+
+  it('rejects a date bound it cannot read, inline or as a variable', async () => {
+    const { engine } = fakeEngine(canned);
+    const context = { engine, acceptLanguage: ['nl'] };
+    const inline = await run(
+      `{ datasets(where: { datePosted: { min: "spring 1999" } }) { pagination { total } } }`,
+      context,
+    );
+    expect(inline.errors?.[0]?.message).toMatch(
+      /ISO8601Date cannot represent “spring 1999”/,
+    );
+    const variable = await run(
+      `query ($min: ISO8601Date) { datasets(where: { datePosted: { min: $min } }) { pagination { total } } }`,
+      context,
+      { min: '1999-13' },
+    );
+    expect(variable.errors?.[0]?.message).toMatch(
+      /ISO8601Date cannot represent “1999-13”/,
+    );
+    expect(variable.errors?.[0]?.extensions.code).toBe('BAD_USER_INPUT');
+    // A readable bound of any precision coerces.
+    const ok = await run(
+      `{ datasets(where: { datePosted: { min: "1999", max: "1999-05-03T12:30:00Z" } }) { pagination { total } } }`,
+      context,
+    );
+    expect(ok.errors).toBeUndefined();
+  });
+
   it('places untagged (und) values last with a null language', async () => {
     const { engine } = fakeEngine({
       total: 1,
@@ -1046,8 +1096,11 @@ describe('buildGraphQLSchema', () => {
       /type IntBinnedRangeFacet {[^}]*all: IntExtent\n[^}]*matching: IntExtent\n[^}]*buckets: \[RangeBucket!\]!/,
     );
     expect(sdl).toMatch(/datePosted: DateRangeFacet!/);
-    expect(sdl).toMatch(/type DateRangeFacet {[^}]*buckets: \[ValueBucket!\]!/);
-    expect(sdl).toMatch(/type DateExtent {\s*min: String!\s*max: String!/);
+    expect(sdl).toMatch(/type DateRangeFacet {[^}]*buckets: \[DateBucket!\]!/);
+    expect(sdl).toMatch(/type DateBucket \{\s+value: ISO8601Date!/);
+    expect(sdl).toMatch(
+      /type DateExtent {\s*min: ISO8601Date!\s*max: ISO8601Date!/,
+    );
     expect(sdl).toMatch(/iiif: \[BooleanBucket!\]!/);
     expect(sdl).toMatch(/input DatasetWhere/);
     expect(sdl).toMatch(/status: KeywordFilter/);
