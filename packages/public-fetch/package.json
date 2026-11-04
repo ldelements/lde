@@ -1,6 +1,6 @@
 {
   "name": "@lde/public-fetch",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Fetch URLs taken from other people’s data without reaching internal addresses: checks every redirect and bounds the body read",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",

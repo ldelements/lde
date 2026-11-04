@@ -1,6 +1,6 @@
 {
   "name": "@lde/iiif-image",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Find the image service in a IIIF Presentation manifest and read its info.json into dimensions, server limits and a ladder of sizes",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
