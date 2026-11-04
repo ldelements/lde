@@ -56,7 +56,10 @@ crashed at startup (dataset-register#2128/#2130). We adopt its end state.
   (same-commit builds of the `@lde/*` dependencies), `@nx/js:prune-lockfile`
   plus a `npm install --package-lock-only` repair step (`docker:lockfile`,
   needed because Nx’s lockfile pruning cannot map this workspace’s graph and
-  falls back to the root lockfile) – and the Dockerfile is a plain
+  falls back to the root lockfile; it first drops the staged manifests’ dev
+  dependencies, because npm still resolves those for a `file:` dependency and
+  would look up a same-release bump on npm before it is published) – and the
+  Dockerfile is a plain
   `npm ci --omit=dev` + `COPY`. No bundling: the image keeps real modules, so
   a missing dependency fails loudly instead of being silently inlined away.
 - **`docker:smoke` gates CI**: the built image is booted with a fixture
@@ -91,4 +94,5 @@ crashed at startup (dataset-register#2128/#2130). We adopt its end state.
   for catching pruned-image runtime failures before merge.
 - The `docker:lockfile` repair step is a workaround for the Nx pruning
   fallback; when Nx learns to prune this workspace’s lockfile it can be
-  dropped.
+  dropped, as long as the staged dev dependencies are still dropped
+  somewhere.
