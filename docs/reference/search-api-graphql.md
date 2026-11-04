@@ -287,10 +287,11 @@ role: { in: ["etser"] } } }` asks for _this person in this role_, where the
     and buckets are always [date-times](#dates) and the client picks the grain
     it draws at. A field with
     [`facetRanges`](./search#range-facets) returns the
-    `‹Kind›BinnedRangeFacet` variant instead, whose `buckets:
-[RangeBucket!]!` hold one bucket per declared half-open `[min, max)` bin,
-    carrying `min`/`max` (null on an open end) and `count`, with no `value`
-    or `label`;
+    `‹Kind›BinnedRangeFacet` variant instead, whose buckets hold one bucket
+    per declared half-open `[min, max)` bin, carrying `min`/`max` (null on an
+    open end) and `count`, with no `value` or `label`: `[RangeBucket!]!` for a
+    number, `[DateRangeBucket!]!` for a date, whose bounds are served at the
+    precision they were declared in (`1900`, not `1900-01-01T00:00:00Z`);
   - a `boolean` field returns `[BooleanBucket!]!` – `value: Boolean!` +
     `count`, and **no `label` field at all**. The value is a real boolean, so
     the bucket a client selects is exactly the term the `where` filter takes
@@ -415,7 +416,7 @@ reports a source location instead.
 ## Dates
 
 Every date in the API – a `date` field, a `DateExtent` bound, a `DateBucket`
-value and a `DateRange` bound – is an `ISO8601Date`: an ISO 8601 date written as
+value, a `DateRangeBucket` bound and a `DateRange` bound – is an `ISO8601Date`: an ISO 8601 date written as
 a string, in one of four forms.
 
 | Precision | Form                   | Example                |

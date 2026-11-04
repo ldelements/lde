@@ -18,6 +18,7 @@ import {
   isInternalField,
   isRangeFacet,
   isBinnedRangeFacet,
+  storedFacetRanges,
   labelSourceNamesOf,
   nestedFieldName,
   nestedReferenceType,
@@ -462,6 +463,43 @@ describe('isBinnedRangeFacet', () => {
   });
 });
 
+describe('storedFacetRanges', () => {
+  it('passes a number’s bins through and reads a date’s as Unix seconds', () => {
+    const numberBins = [{ key: '0', min: 1, max: 10 }];
+    expect(
+      storedFacetRanges({
+        name: 'size',
+        kind: 'integer',
+        facetable: true,
+        facetRanges: numberBins,
+      }),
+    ).toBe(numberBins);
+    expect(
+      storedFacetRanges({
+        name: 'created',
+        kind: 'date',
+        facetable: true,
+        facetRanges: [
+          { key: 'older', max: '1970' },
+          { key: 'seventies', min: '1970', max: '1980-01-01T01:00:00+01:00' },
+          { key: 'unreadable', min: 'spring' },
+        ],
+      }),
+    ).toEqual([
+      { key: 'older', max: 0 },
+      { key: 'seventies', min: 0, max: 315_532_800 },
+      // Left open – validateSearchType refuses such a declaration first.
+      { key: 'unreadable' },
+    ]);
+  });
+
+  it('is empty for a field without bins', () => {
+    expect(
+      storedFacetRanges({ name: 'created', kind: 'date', facetable: true }),
+    ).toEqual([]);
+  });
+});
+
 describe('isAbsoluteIri', () => {
   it('accepts any scheme, not only http(s)', () => {
     // Restricting to http(s) would reject conformant Linked Data: URNs, DOIs,
@@ -741,6 +779,26 @@ describe('validateSearchType', () => {
         }),
       ),
     ).toEqual([{ field: 'format', reason: 'facet-ranges-not-allowed' }]);
+  });
+
+  it('requires a date bin’s bounds to be ISO 8601 the codec reads', () => {
+    const created = (facetRanges: readonly unknown[]) =>
+      validateSearchType(
+        typeWith({
+          name: 'created',
+          kind: 'date',
+          facetable: true,
+          facetRanges,
+        }),
+      );
+    expect(created([{ key: 'twentieth', min: '1900', max: '2000' }])).toEqual(
+      [],
+    );
+    for (const bound of ['spring 1900', 1_000_000]) {
+      expect(created([{ key: 'bad', min: bound }])).toEqual([
+        { field: 'created', reason: 'unparseable-facet-range' },
+      ]);
+    }
   });
 
   it('allows searchable on text/keyword/reference only', () => {

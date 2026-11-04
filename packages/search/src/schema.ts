@@ -382,18 +382,31 @@ export interface ReferenceField extends SearchFieldBase, Searchable {
  * engine-neutral: the Typesense adapter emits a `facet_by` range, an
  * OpenSearch adapter a `range` aggregation. See {@link FacetRange}.
  */
-export interface RangeFacetable {
-  readonly facetRanges?: readonly FacetRange[];
+export interface RangeFacetable<Range = FacetRange> {
+  readonly facetRanges?: readonly Range[];
 }
 
 /**
- * A numeric value: range-filtered, range-faceted, sortable.
- * `integer` is a whole number, `number` a float, `date` a point in time
- * (ISO 8601 at the edges, Unix seconds in the index) – identical capabilities,
- * so one interface serves all three kinds; `field.kind` still narrows.
+ * A field the `range` operator applies to: range-filtered, range-faceted,
+ * sortable. The kinds share every capability and differ only in how a bound is
+ * written, so `field.kind` narrows to the one that tells.
  */
-export interface NumericField extends SearchFieldBase, RangeFacetable {
-  readonly kind: 'integer' | 'number' | 'date';
+export type NumericField = NumberField | DateField;
+
+/** A number: `integer` a whole number, `number` a float. */
+export interface NumberField extends SearchFieldBase, RangeFacetable {
+  readonly kind: 'integer' | 'number';
+  readonly searchable?: never;
+}
+
+/**
+ * A point in time: ISO 8601 at the edges, Unix seconds in the index. Its bins
+ * are ISO 8601 too ({@link DateFacetRange}), like every other date a caller
+ * writes.
+ */
+export interface DateField
+  extends SearchFieldBase, RangeFacetable<DateFacetRange> {
+  readonly kind: 'date';
   readonly searchable?: never;
 }
 
@@ -414,6 +427,19 @@ export interface FacetRange {
   readonly key: string;
   readonly min?: number;
   readonly max?: number;
+}
+
+/**
+ * A {@link FacetRange} on a `date` field, its bounds ISO 8601 as the codec
+ * reads them ({@link isoToUnixSeconds}). A bound is the first second of the
+ * period it names, so with `max` exclusive, `{ min: '1900', max: '2000' }` is
+ * exactly the years 1900 to 1999. A bound the codec cannot read fails
+ * {@link validateSearchType}.
+ */
+export interface DateFacetRange {
+  readonly key: string;
+  readonly min?: string;
+  readonly max?: string;
 }
 
 /** The declaration members every {@link SearchType} shares. */
@@ -1560,6 +1586,7 @@ export interface SearchTypeIssue {
     | 'text-requires-locales'
     | 'locales-not-allowed'
     | 'facet-ranges-not-allowed'
+    | 'unparseable-facet-range'
     | 'searchable-not-allowed'
     | 'transform-not-allowed'
     | 'derive-with-path'
@@ -1708,7 +1735,8 @@ const LOCALE_PATTERN = /^[A-Za-z0-9]+(-[A-Za-z0-9]+)*$/;
  *   meaningless;
  * - a kind without a `where` operator (`text` – it feeds the free-text query)
  *   is neither `filterable` nor `facetable`;
- * - `facetRanges` only on the `range`-operator kinds (`integer`/`number`/`date`);
+ * - `facetRanges` only on the `range`-operator kinds (`integer`/`number`/`date`),
+ *   and a `date` bin’s bounds ISO 8601 the codec can read;
  * - `searchable` only on `text`/`keyword`/`reference` (projection emits no
  *   folded search field for the other kinds);
  * - `transform` only on `keyword`/`reference` (the only kinds whose
@@ -1875,6 +1903,21 @@ export function validateSearchType(
       filterOperatorFor(field.kind) !== 'range'
     ) {
       issue('facet-ranges-not-allowed');
+    }
+    if (
+      field.kind === 'date' &&
+      field.facetRanges?.some((range) =>
+        // A number here is a bound written in stored seconds, which a date
+        // bin does not take – so it is as unreadable as a malformed string.
+        [range.min, range.max].some(
+          (bound: unknown) =>
+            bound !== undefined &&
+            (typeof bound !== 'string' ||
+              isoToUnixSeconds(bound) === undefined),
+        ),
+      )
+    ) {
+      issue('unparseable-facet-range');
     }
     if (
       field.searchable !== undefined &&
@@ -2447,8 +2490,41 @@ export function isRangeFacet(field: SearchField): field is NumericField {
  */
 export function isBinnedRangeFacet(
   field: SearchField,
-): field is NumericField & { readonly facetRanges: readonly FacetRange[] } {
+): field is
+  | (NumberField & { readonly facetRanges: readonly FacetRange[] })
+  | (DateField & { readonly facetRanges: readonly DateFacetRange[] }) {
   return field.facetRanges !== undefined && field.facetRanges.length > 0;
+}
+
+/**
+ * A binned field’s bins in stored terms, for an adapter to compile and echo: a
+ * number’s as declared, a date’s with each ISO 8601 bound read as the Unix
+ * seconds it is stored as. The one place a date bin is parsed, so the facet
+ * clause and the bounds a bucket echoes cannot disagree. Empty for a field
+ * that declares no bins; a bound the codec cannot read is left open, which
+ * {@link validateSearchType} rules out before a query is ever compiled.
+ */
+export function storedFacetRanges(field: SearchField): readonly FacetRange[] {
+  if (!isBinnedRangeFacet(field)) {
+    return [];
+  }
+  if (field.kind !== 'date') {
+    return field.facetRanges;
+  }
+  return field.facetRanges.map(({ key, min, max }) => ({
+    key,
+    ...storedBound('min', min),
+    ...storedBound('max', max),
+  }));
+}
+
+function storedBound(
+  name: 'min' | 'max',
+  bound: string | undefined,
+): Partial<Record<'min' | 'max', number>> {
+  const seconds =
+    bound === undefined ? undefined : isoToUnixSeconds(bound)?.seconds;
+  return seconds === undefined ? {} : { [name]: seconds };
 }
 
 /**

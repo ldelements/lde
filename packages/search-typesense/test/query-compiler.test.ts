@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   isoToUnixSeconds,
   type SearchQuery,
+  type SearchField,
   type SearchType,
 } from '@lde/search';
 import { buildSearchParams } from '../src/query-compiler.js';
@@ -599,6 +600,28 @@ describe('buildSearchParams', () => {
     expect(
       buildSearchParams({ ...base, facets: ['size'] }, schema).facet_by,
     ).toBe('size(0:[1, 10], 1:[10, 100], 2:[100, ])');
+  });
+
+  it('facets a date field into its ISO 8601 bins as Unix seconds', () => {
+    const binned: SearchType = {
+      ...schema,
+      fields: schema.fields.map((field): SearchField =>
+        field.name === 'datePosted'
+          ? {
+              name: 'datePosted',
+              kind: 'date',
+              facetable: true,
+              facetRanges: [
+                { key: 'older', max: '1970' },
+                { key: 'seventies', min: '1970', max: '1980' },
+              ],
+            }
+          : field,
+      ),
+    };
+    expect(
+      buildSearchParams({ ...base, facets: ['datePosted'] }, binned).facet_by,
+    ).toBe('datePosted(older:[, 0], seventies:[0, 315532800])');
   });
 
   it('mixes range and plain facets in one facet_by clause', () => {

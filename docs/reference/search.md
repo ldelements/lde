@@ -1017,7 +1017,13 @@ double-counting; omit `min` (or `max`) for an open-ended bin (`< max`, resp.
 `≥ min`). Each bin’s `key` is its stable label, echoed back as the
 `FacetBucket` `value`, and the bucket also carries the bin’s declared
 `min`/`max` bounds, so it is self-describing – a consumer never hardcodes the
-bin formula. Bins are **query-time**: they shape the facet clause the adapter
+bin formula. A `date` field’s bins are ISO 8601, like any date a caller writes
+(a `DateFacetRange` each): a bound is the first second of the period it names,
+so `{ key: '20th century', min: '1900', max: '2000' }` holds exactly the years
+1900 to 1999. `validateSearchType` rejects a bound the codec cannot read. At
+the port the bucket echoes its bounds in stored terms, Unix seconds
+(`storedFacetRanges` gives an adapter the bins in those terms); the GraphQL
+surface serves the declared ones. Bins are **query-time**: they shape the facet clause the adapter
 compiles per query, so changing them needs no reindex. Giving a field its
 first bins may: the Typesense adapter indexes a binned field for sorting.
 Engine-neutral by design – the Typesense adapter emits a `facet_by`

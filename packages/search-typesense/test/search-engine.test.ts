@@ -105,6 +105,16 @@ const datasetSchema: SearchType = {
       output: true,
     },
     {
+      name: 'datePublished',
+      kind: 'date',
+      facetable: true,
+      // Bins across eras, so a negative bound reaches Typesense intact.
+      facetRanges: [
+        { key: 'before', max: '0001' },
+        { key: 'since', min: '0001' },
+      ],
+    },
+    {
       name: 'triples',
       kind: 'integer',
       facetable: true,
@@ -158,6 +168,7 @@ const documents = [
     iiif: true,
     dateCreated: bce,
     dateCreated_precision: 'year',
+    datePublished: bce,
     triples: 12,
   },
   {
@@ -186,6 +197,7 @@ const documents = [
     statusRank: 3,
     iiif: true,
     dateCreated: modern,
+    datePublished: modern,
     triples: 2500000,
   },
 ];
@@ -527,6 +539,24 @@ describe('createTypesenseSearchEngine (integration)', () => {
     // Only d1 (valid) and d2 (valid, no date) remain.
     expect(valid.facets.dateCreated?.extent).toEqual({ min: bce, max: bce });
     expect(none.facets.dateCreated).toEqual({ buckets: [] });
+  });
+
+  it('buckets a date into its ISO 8601 bins', async () => {
+    const [outcome] = await engine.searchFacets(datasetSchema, [
+      { ...baseQuery, limit: 0, facets: ['datePublished'] },
+    ]);
+    if ('error' in outcome) {
+      throw new Error('Expected a facets outcome.');
+    }
+    const yearOne = isoToUnixSeconds('0001')?.seconds as number;
+    expect(
+      [...(outcome.facets.datePublished?.buckets ?? [])].sort((first, second) =>
+        first.value.localeCompare(second.value),
+      ),
+    ).toEqual([
+      { value: 'before', count: 1, max: yearOne },
+      { value: 'since', count: 1, min: yearOne },
+    ]);
   });
 
   it('reports a binned range facet’s extent beside its bins, beyond them included', async () => {

@@ -43,6 +43,7 @@ import {
   physicalFields,
   referencedTargetsOf,
   referenceFields,
+  storedFacetRanges,
   storedTargetOf,
   type FacetSearch,
 } from '@lde/search/adapter';
@@ -1189,12 +1190,12 @@ export function parseSearchResponse(
   for (const facet of response.facet_counts ?? []) {
     const labelled = referenceFacets.has(facet.field_name);
     // A binned facet echoes the declared range key as the bucket value; look
-    // the bin’s half-open bounds back up by key so the bucket is
-    // self-describing.
+    // the bin’s half-open bounds back up by key, in stored terms, so the
+    // bucket is self-describing.
     const field = fieldNamed(searchType, facet.field_name);
     const rangesByKey =
       field !== undefined && isBinnedRangeFacet(field)
-        ? new Map(field.facetRanges.map((range) => [range.key, range]))
+        ? new Map(storedFacetRanges(field).map((range) => [range.key, range]))
         : undefined;
     // A boolean facet is reported with the values stringified; recover the
     // boolean so the bucket carries the term the `is` filter expects.

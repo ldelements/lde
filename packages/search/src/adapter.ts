@@ -46,6 +46,7 @@ export {
   DEFAULT_LABEL_FIELD,
   isRangeFacet,
   isBinnedRangeFacet,
+  storedFacetRanges,
   isAbsoluteIri,
   isoToUnixSeconds,
   unixSecondsToIso,

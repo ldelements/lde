@@ -19,6 +19,7 @@ import {
   filterOperatorFor,
   ID_FIELD,
   isoToUnixSeconds,
+  storedFacetRanges,
   isInternalField,
   isBinnedRangeFacet,
   isWelded,
@@ -174,7 +175,7 @@ function compileFacetBy(
         return name;
       }
       return isBinnedRangeFacet(field)
-        ? compileRangeFacet(field.name, field.facetRanges)
+        ? compileRangeFacet(field.name, storedFacetRanges(field))
         : (physicalFields(field, schema).facet ?? name);
     })
     .join(',');
