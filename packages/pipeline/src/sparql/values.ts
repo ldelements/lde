@@ -15,15 +15,28 @@ import type { NamedNode, Literal } from '@rdfjs/types';
 import { termToString } from 'rdf-string';
 import type { DatasetBindings } from './datasetBindings.js';
 import type { VariableBindings } from './reader.js';
+import { assertSafeIri } from '@lde/dataset';
 
 const F = new AstFactory();
+const XSD_STRING = 'http://www.w3.org/2001/XMLSchema#string';
 
 function termToAstTerm(node: NamedNode | Literal): TermIri | TermLiteral {
   if (node.termType === 'Literal') {
-    return node.language
-      ? F.termLiteral(F.gen(), node.value, node.language)
-      : F.termLiteral(F.gen(), node.value);
+    if (node.language) return F.termLiteral(F.gen(), node.value, node.language);
+    if (node.datatype.value === XSD_STRING) {
+      return F.termLiteral(F.gen(), node.value);
+    }
+
+    assertSafeIri(node.datatype.value);
+    return F.termLiteral(
+      F.gen(),
+      node.value,
+      F.termNamed(F.gen(), node.datatype.value),
+    );
   }
+
+  // The generator writes IRIs into the query unescaped.
+  assertSafeIri(node.value);
   return F.termNamed(F.gen(), node.value);
 }
 
