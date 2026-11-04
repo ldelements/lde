@@ -1,4 +1,4 @@
-import { Dataset, Distribution, assertSafeIri } from '@lde/dataset';
+import { Dataset, Distribution } from '@lde/dataset';
 import { DataFactory } from 'n3';
 import type { VariableBindings } from './reader.js';
 
@@ -28,15 +28,12 @@ export type DatasetBindings = VariableBindings[][];
  * because a language and a publisher name say nothing about each other.
  */
 export function predefinedDatasetBindings(dataset: Dataset): DatasetBindings {
-  assertSafeIri(dataset.iri.toString());
   const base: VariableBindings = { dataset: namedNode(dataset.iri.toString()) };
 
   if (dataset.publisher) {
-    assertSafeIri(dataset.publisher.iri.toString());
     base.datasetPublisher = namedNode(dataset.publisher.iri.toString());
   }
   if (dataset.license) {
-    assertSafeIri(dataset.license.toString());
     base.datasetLicense = namedNode(dataset.license.toString());
   }
 

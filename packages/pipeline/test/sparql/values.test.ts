@@ -328,7 +328,18 @@ describe('injectValues', () => {
   });
 
   it.each([
-    ['plain', literal('nl'), { value: 'nl' }],
+    ['plain', literal('nl'), { value: 'nl', langOrIri: undefined }],
+    [
+      'typed',
+      literal('1900', namedNode('http://www.w3.org/2001/XMLSchema#integer')),
+      {
+        value: '1900',
+        langOrIri: {
+          subType: 'namedNode',
+          value: 'http://www.w3.org/2001/XMLSchema#integer',
+        },
+      },
+    ],
     [
       'language-tagged',
       literal('Naam', 'nl'),
@@ -345,6 +356,35 @@ describe('injectValues', () => {
       subType: 'literal',
       ...expected,
     });
+  });
+});
+
+describe('unsafe IRIs', () => {
+  const unsafe = namedNode('urn:x> } ?s ?p ?o . VALUES ?z { <urn:y');
+  const query = 'CONSTRUCT { ?s <urn:p> ?o } WHERE { ?s a ?c }';
+
+  it('rejects an unsafe IRI in an item binding', () => {
+    expect(() => injectValues(parseConstruct(query), [{ s: unsafe }])).toThrow(
+      'unsafe characters',
+    );
+  });
+
+  it('rejects an unsafe IRI in a dataset binding the query references', () => {
+    expect(() =>
+      injectDatasetBindings(parseConstruct(query), [[{ o: unsafe }]]),
+    ).toThrow('unsafe characters');
+  });
+
+  it('rejects an unsafe datatype IRI', () => {
+    expect(() =>
+      injectValues(parseConstruct(query), [{ s: literal('1900', unsafe) }]),
+    ).toThrow('unsafe characters');
+  });
+
+  it('ignores an unsafe IRI in a dataset binding the query does not reference', () => {
+    const parsed = parseConstruct(query);
+
+    expect(injectDatasetBindings(parsed, [[{ unused: unsafe }]])).toBe(parsed);
   });
 });
 
