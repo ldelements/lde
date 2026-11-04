@@ -1,3 +1,55 @@
+## 0.35.0 (2026-11-04)
+
+### 🚀 Features
+
+- ⚠️  **search:** serve dates at their source precision, typed as ISO8601Date ([#987](https://github.com/ldelements/lde/pull/987))
+
+### ⚠️  Breaking Changes
+
+- **search:** serve dates at their source precision, typed as ISO8601Date  ([#987](https://github.com/ldelements/lde/pull/987))
+  GraphQL date fields come back at their source’s precision
+  rather than as a millisecond timestamp: 1999 instead of
+  1999-01-01T00:00:00.000Z, and date-times as 1999-05-03T12:30:00Z.
+  isoToUnixSeconds returns { seconds, precision } instead of a number,
+  unixSecondsToIso takes a required precision, and a date’s SearchValue is a
+  StoredDate instead of a number. Reindex to fill the companion; until then
+  dates are served as date-times.
+  * feat(search-api-graphql)!: type dates with an ISO8601Date scalar
+  - Type date fields, DateExtent bounds and DateRange bounds as
+    ISO8601Date, specified by the dates section of the docs
+  - Serve an unbinned date facet's buckets as DateBucket, so a bucket
+    value feeds straight into DateRange
+  - Reject an unreadable date bound at coercion with BAD_USER_INPUT
+  - Document the ISO 8601 agreement the scalar follows
+  BREAKING CHANGE: date fields, DateExtent, DateRange bounds and date
+  facet buckets are typed ISO8601Date instead of String, and date
+  buckets are DateBucket instead of ValueBucket. Declare variables as
+  ISO8601Date and select DateBucket where you selected ValueBucket."
+  M	docs/reference/search-api-graphql.md
+  M	docs/reference/search.md
+  M	packages/search-api-graphql/src/build-schema.ts
+  M	packages/search-api-graphql/test/__snapshots__/generator-stability.test.ts.snap
+  M	packages/search-api-graphql/test/build-schema.test.ts
+  M	packages/search-api-graphql/vite.config.ts
+  M	packages/search-typesense/src/collection-definition.ts
+  M	packages/search-typesense/src/lookup.ts
+  M	packages/search-typesense/src/query-compiler.ts
+  M	packages/search-typesense/src/search.ts
+  M	packages/search-typesense/test/__snapshots__/generator-stability.test.ts.snap
+  M	packages/search-typesense/test/parse-response.test.ts
+  M	packages/search-typesense/test/projected-lookup.test.ts
+  M	packages/search-typesense/test/query-compiler.test.ts
+  M	packages/search-typesense/test/search-engine.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/src/adapter.ts
+  M	packages/search/src/engine.ts
+  M	packages/search/src/index.ts
+  M	packages/search/src/project.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/test/project.test.ts
+  M	packages/search/test/schema.test.ts
+  M	packages/search/vite.config.ts
+
 ## 0.34.0 (2026-10-30)
 
 ### 🧱 Updated Dependencies
