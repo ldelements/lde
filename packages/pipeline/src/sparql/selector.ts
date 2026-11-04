@@ -11,7 +11,7 @@ import {
 import type { ItemSelector, SelectOptions } from '../stage.js';
 import { classifyOutcome } from './failure.js';
 import { withDefaultGraph } from './graph.js';
-import { injectValuesOuter } from './values.js';
+import { injectDatasetBindings } from './values.js';
 import type { VariableBindings } from './reader.js';
 import { ConstantTimeoutPolicy, type TimeoutPolicy } from './timeoutPolicy.js';
 
@@ -136,8 +136,8 @@ export class SparqlItemSelector implements ItemSelector {
     if (distribution.namedGraph) {
       withDefaultGraph(query, distribution.namedGraph);
     }
-    if (options?.datasetBindings && options.datasetBindings.length > 0) {
-      query = injectValuesOuter(query, options.datasetBindings);
+    if (options?.datasetBindings) {
+      query = injectDatasetBindings(query, options.datasetBindings);
     }
     const policy = options?.timeout ?? defaultTimeoutPolicy;
     let offset = 0;

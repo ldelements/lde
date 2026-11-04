@@ -227,7 +227,7 @@ interface ItemSelector {
 }
 ```
 
-The distribution is received at run time, so selectors don't need the endpoint URL at construction time. The `batchSize` parameter is set by the stage; `options` carries the per-dataset [timeout policy](#timeout-policies) and, when the stage has one configured, the same [dataset bindings](#dataset-bindings) a reader would get. Use `SparqlItemSelector` for SPARQL-based selection with automatic pagination:
+The distribution is received at run time, so selectors don't need the endpoint URL at construction time. The `batchSize` parameter is set by the stage; `options` carries the per-dataset [timeout policy](#timeout-policies) and the same [dataset bindings](#dataset-bindings) a reader gets. Use `SparqlItemSelector` for SPARQL-based selection with automatic pagination:
 
 ```typescript
 new SparqlItemSelector({
@@ -286,7 +286,7 @@ The query is templated per dataset and distribution, in order:
 1. `#subjectFilter#` is replaced with `distribution.subjectFilter` (the empty string when unset).
 2. When the distribution has a `namedGraph`, a `FROM <graph>` clause is injected for it.
 3. Per-item (selector) bindings, if any, are injected as a `VALUES` clause into the innermost sub-SELECT.
-4. [Dataset bindings](#dataset-bindings) are injected as a `VALUES` clause at the outermost scope.
+4. [Dataset bindings](#dataset-bindings) the query references are injected as a `VALUES` clause at the outermost scope. A `Stage` passes these. When calling `read()` yourself, pass them as `datasetBindings`, for example `predefinedDatasetBindings(dataset)`, or nothing is bound.
 
 `SparqlConstructReaderOptions.fetcher` injects a custom `SparqlEndpointFetcher`, intended for tests; the reader then uses it as-is, so the per-request budget from the [timeout policy](#timeout-policies) is not enforced (the policy’s hooks still fire, but its own `timeout` governs), and a `Retry-After` header goes unread.
 
@@ -314,7 +314,7 @@ const reader = new SparqlConstructReader({
 });
 ```
 
-SPARQL CONSTRUCT queries can produce duplicate triples – for example, constant triples (like `?dataset a edm:ProvidedCHO`) are emitted for every solution row. Enable `deduplicate` to remove duplicates inline on the stream using a string-based identity set (inspired by [Comunica's `distinctConstruct`](https://comunica.dev/docs/query/advanced/context/#14--distinct-construct)):
+SPARQL CONSTRUCT queries can produce duplicate triples – for example, constant triples (like `$this a edm:ProvidedCHO`) are emitted for every solution row. Enable `deduplicate` to remove duplicates inline on the stream using a string-based identity set (inspired by [Comunica's `distinctConstruct`](https://comunica.dev/docs/query/advanced/context/#14--distinct-construct)):
 
 ```typescript
 const reader = new SparqlConstructReader({
@@ -323,7 +323,7 @@ const reader = new SparqlConstructReader({
 });
 ```
 
-The dedup set is scoped to each `read()` call, so memory stays bounded to the number of unique quads per batch. A standalone `deduplicateQuads()` function is also exported for use outside the reader.
+This happens in the client: the endpoint still computes and sends every duplicate, and they still count towards a `LIMIT` in the query. The dedup set is scoped to each `read()` call, so memory stays bounded to the number of unique quads per batch, and duplicates across batches or readers remain. A standalone `deduplicateQuads()` function is also exported for use outside the reader.
 
 Logic that is hard to express in pure SPARQL – cleaning up messy date notations, converting locale-specific dates to ISO 8601 – can be attached to a reader as a **quad transform**, a plain function that post-processes the reader’s output. See the how-to guide [Extend a stage with a quad transform](../guide/extend-a-stage-with-a-quad-transform).
 
@@ -339,7 +339,16 @@ Beyond `?dataset`, a reader or `SparqlItemSelector` can reach a handful of DCAT 
 | `?datasetLicense`       | `dataset.license`                            | No                           |
 | `?datasetLanguage`      | `dataset.language`                           | Yes, one row per language    |
 
-A property absent for a given dataset (no `publisher`, no `license`) leaves its variable unbound rather than `UNDEF`. A multi-valued property expands into one row per value, cross-producted with the rest. Enable [`deduplicate`](#reader) to collapse those duplicates that arise from this.
+A property absent for a given dataset (no `publisher`, no `license`) leaves its variable unbound rather than `UNDEF`.
+
+Use these like any other variable: the pipeline binds the ones your query references, and a query that references none runs unchanged. Bindings don't reach inside a sub-SELECT, so a variable used only there stays unbound.
+
+A multi-valued variable takes each of its values:
+
+- Used only in the `CONSTRUCT` template, each value produces its own triple, independently of other multi-valued variables. To get every combination of two of them, use both in one template triple.
+- Used anywhere else, such as in a pattern, `FILTER` or `BIND`, the query runs for every combination of its values with those of other multi-valued variables it references.
+
+Either way, the query's other triples repeat once per value. Enable [`deduplicate`](#reader) if that matters. In a selector, a multi-valued variable repeats the selected items, so use `SELECT DISTINCT`.
 
 For a value this library can't know implement `DatasetBindingsProvider` and pass it to `Stage`:
 
@@ -357,7 +366,7 @@ new Stage({
 });
 ```
 
-A provider's rows merge with the predefined DCAT bindings and go to every reader and, when configured, the item selector. It may return a `Promise`.
+A provider's rows go to every reader and, when configured, the item selector. They follow the same rules, with several rows acting as one multi-valued variable. Values that must appear in one solution together, such as a language and a name in that language, belong in the same row. A variable the rows bind replaces the predefined binding of that name. It may return a `Promise`.
 
 ### Timeout policies
 

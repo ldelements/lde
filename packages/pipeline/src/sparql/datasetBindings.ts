@@ -14,34 +14,20 @@ export const DATASET_BINDING_VARIABLES = [
 ] as const;
 
 /**
- * Cross-products rows with one more multi-valued dimension. Empty `values`
- * passes rows through unchanged, so `key` is never set – the variable stays
- * unbound rather than becoming `UNDEF`.
+ * Dataset-level bindings as groups of rows. Rows in one group are alternatives
+ * for the same variables; different groups say nothing about each other, so a
+ * query only pays for a combination of them if it needs one – see
+ * {@link injectDatasetBindings}. A group may be empty.
  */
-function expandMultiValued(
-  rows: VariableBindings[],
-  key: string,
-  values: readonly VariableBindings[string][],
-): VariableBindings[] {
-  if (values.length === 0) return rows;
-  return rows.flatMap((row) =>
-    values.map((value) => ({ ...row, [key]: value })),
-  );
-}
+export type DatasetBindings = VariableBindings[][];
 
 /**
  * Always-on bindings derived from a {@link Dataset} – see
- * {@link DATASET_BINDING_VARIABLES}.
- *
- * `datasetLanguage` and `datasetPublisherName` are independent multi-valued
- * dimensions, expanded as a cross product (2 languages × 2 name translations
- * = 4 rows), so a `CONSTRUCT` emits one triple per combination – this also
- * repeats any other, non-varying triple in the query once per combination;
- * enable {@link SparqlConstructReaderOptions.deduplicate} for that.
+ * {@link DATASET_BINDING_VARIABLES}. The single-valued properties share one
+ * group; `datasetLanguage` and `datasetPublisherName` each form their own,
+ * because a language and a publisher name say nothing about each other.
  */
-export function predefinedDatasetBindings(
-  dataset: Dataset,
-): VariableBindings[] {
+export function predefinedDatasetBindings(dataset: Dataset): DatasetBindings {
   assertSafeIri(dataset.iri.toString());
   const base: VariableBindings = { dataset: namedNode(dataset.iri.toString()) };
 
@@ -54,29 +40,41 @@ export function predefinedDatasetBindings(
     base.datasetLicense = namedNode(dataset.license.toString());
   }
 
-  let rows: VariableBindings[] = [base];
-  rows = expandMultiValued(
-    rows,
-    'datasetLanguage',
-    dataset.language.map((lang) => literal(lang)),
-  );
-  rows = expandMultiValued(
-    rows,
-    'datasetPublisherName',
-    dataset.publisher
-      ? Object.entries(dataset.publisher.name).map(([lang, name]) =>
-          literal(name, lang),
-        )
-      : [],
+  const languages = dataset.language.map((language) => ({
+    datasetLanguage: literal(language),
+  }));
+  const publisherNames = Object.entries(dataset.publisher?.name ?? {}).map(
+    ([language, name]) => ({ datasetPublisherName: literal(name, language) }),
   );
 
-  return rows;
+  return [[base], languages, publisherNames];
+}
+
+/**
+ * The {@link predefinedDatasetBindings} plus a provider's rows as one more
+ * group. A variable the rows bind replaces the predefined binding of that name.
+ */
+export function datasetBindingsFor(
+  dataset: Dataset,
+  customRows: VariableBindings[],
+): DatasetBindings {
+  const customVariables = new Set(customRows.flatMap(Object.keys));
+  const predefined = predefinedDatasetBindings(dataset).map((rows) =>
+    rows.map((row) =>
+      Object.fromEntries(
+        Object.entries(row).filter(([name]) => !customVariables.has(name)),
+      ),
+    ),
+  );
+
+  return [...predefined, customRows];
 }
 
 /**
  * Extension point for per-dataset bindings this library can't know about
  * (e.g. a caller-local `rdf:type` read from a side file). Mirrors
- * {@link Reader} and {@link ItemSelector}.
+ * {@link Reader} and {@link ItemSelector}. The returned rows form one group:
+ * return values that must appear in one solution together in the same row.
  */
 export interface DatasetBindingsProvider {
   bindings(

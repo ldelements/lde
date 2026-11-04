@@ -7,15 +7,15 @@ import type {
   PatternGroup,
   PatternUnion,
   QueryConstruct,
+  QuerySelect,
   PatternValues,
 } from '@traqula/rules-sparql-1-1';
+import type { DatasetBindings } from '../../src/sparql/datasetBindings.js';
 import {
   findSubSelect,
   injectValues,
-  injectValuesOuter,
-  mergeBindings,
+  injectDatasetBindings,
 } from '../../src/sparql/values.js';
-import type { VariableBindings } from '../../src/sparql/reader.js';
 
 const { namedNode, literal } = DataFactory;
 const parser = new Parser();
@@ -348,18 +348,254 @@ describe('injectValues', () => {
   });
 });
 
-describe('injectValuesOuter', () => {
-  const datasetBindings = [
-    { dataset: namedNode('http://example.org/dataset') },
+describe('injectDatasetBindings', () => {
+  const dataset = { dataset: namedNode('http://example.org/dataset') };
+  const languages = [
+    { datasetLanguage: literal('nl') },
+    { datasetLanguage: literal('en') },
   ];
+  const publisherNames = [
+    { datasetPublisherName: literal('Naam', 'nl') },
+    { datasetPublisherName: literal('Name', 'en') },
+  ];
+  const bindings = [[dataset], languages, publisherNames];
 
-  it('generates valid SPARQL when the WHERE clause is a bare sub-SELECT', () => {
-    const query = parseConstruct(
-      'CONSTRUCT { ?dataset <http://example.org/count> ?count } WHERE { SELECT (COUNT(*) AS ?count) { ?s ?p ?o } }',
+  function inject(sparql: string): string {
+    return generator.generate(
+      injectDatasetBindings(parseConstruct(sparql), bindings),
+    );
+  }
+
+  it('leaves a query that references no binding unchanged', () => {
+    const query = parseConstruct('CONSTRUCT { ?s a ?c } WHERE { ?s a ?c }');
+
+    expect(injectDatasetBindings(query, bindings)).toBe(query);
+  });
+
+  it('binds a variable referenced only in the template', () => {
+    const generated = inject(
+      'CONSTRUCT { ?s <urn:in> ?dataset } WHERE { ?s a ?c }',
     );
 
-    const generated = generator.generate(
-      injectValuesOuter(query, datasetBindings),
+    expect(generated).toContain('VALUES');
+    expect(generated).toContain('<http://example.org/dataset>');
+    expect(generated).not.toContain('datasetLanguage');
+  });
+
+  it('binds a variable referenced only in the WHERE clause', () => {
+    const generated = inject(
+      'CONSTRUCT { ?s a ?c } WHERE { ?s a ?c ; <urn:lang> ?l FILTER(?l = ?datasetLanguage) }',
+    );
+
+    expect(generated).toContain('"nl"');
+    expect(generated).not.toContain('UNION');
+    expect(generated).not.toContain('<http://example.org/dataset>');
+  });
+
+  it('does not bind a variable that merely starts with a binding name', () => {
+    const query = parseConstruct(
+      'CONSTRUCT { ?s <urn:t> ?datasetType } WHERE { ?s a ?datasetType }',
+    );
+
+    expect(injectDatasetBindings(query, bindings)).toBe(query);
+  });
+
+  it('leaves a referenced variable without a binding unbound rather than UNDEF', () => {
+    const result = injectDatasetBindings(
+      parseConstruct(
+        'CONSTRUCT { ?dataset <urn:license> ?datasetLicense } WHERE { }',
+      ),
+      bindings,
+    );
+
+    expect(result.where.patterns[0]).toMatchObject({
+      subType: 'values',
+      variables: [{ value: 'dataset' }],
+    });
+    expect(generator.generate(result)).not.toContain('UNDEF');
+  });
+
+  it('does not bind a variable that is out of scope inside a sub-SELECT', () => {
+    const query = parseConstruct(
+      'CONSTRUCT { ?s a ?c } WHERE { { SELECT ?s ?c { ?s a ?c ; <urn:lang> ?datasetLanguage } } }',
+    );
+
+    expect(injectDatasetBindings(query, bindings)).toBe(query);
+  });
+
+  it('binds a variable a sub-SELECT * exposes', () => {
+    const generated = inject(
+      'CONSTRUCT { ?s a ?c } WHERE { { SELECT * { ?s a ?c ; <urn:lang> ?datasetLanguage } } }',
+    );
+
+    expect(generated).toContain('"nl"');
+  });
+
+  it('does not bind a variable a sub-SELECT only aggregates', () => {
+    const query = parseConstruct(
+      'CONSTRUCT { ?s <urn:n> ?n } WHERE { { SELECT ?s (COUNT(?datasetLanguage) AS ?n) { ?s <urn:lang> ?datasetLanguage } GROUP BY ?s } }',
+    );
+
+    expect(injectDatasetBindings(query, bindings)).toBe(query);
+  });
+
+  it('puts independent multi-valued groups in UNION branches, with single-valued ones outside', () => {
+    const result = injectDatasetBindings(
+      parseConstruct(
+        'CONSTRUCT { ?dataset <urn:l> ?datasetLanguage ; <urn:n> ?datasetPublisherName } WHERE { }',
+      ),
+      bindings,
+    );
+
+    const [single, union] = result.where.patterns;
+    expect(single).toMatchObject({
+      subType: 'values',
+      values: [{ dataset: { value: 'http://example.org/dataset' } }],
+    });
+    expect(union.subType).toBe('union');
+    const branches = (union as unknown as { patterns: PatternGroup[] })
+      .patterns;
+    expect(branches.map((branch) => branch.patterns[0])).toMatchObject([
+      { subType: 'values', values: [{}, {}] },
+      { subType: 'values', values: [{}, {}] },
+    ]);
+    expect(() => parser.parse(generator.generate(result))).not.toThrow();
+  });
+
+  describe('multi-valued groups the query depends on', () => {
+    const types = [{ type: literal('A') }, { type: literal('B') }];
+
+    function patternsOf(sparql: string, groups: DatasetBindings = bindings) {
+      return injectDatasetBindings(parseConstruct(sparql), groups).where
+        .patterns;
+    }
+
+    it('joins groups used in the WHERE clause', () => {
+      const generated = inject(
+        'CONSTRUCT { ?s a ?c } WHERE { ?s <urn:l> ?datasetLanguage ; <urn:n> ?datasetPublisherName }',
+      );
+
+      expect(generated).not.toContain('UNION');
+      expect(generated).toContain('"nl"');
+      expect(generated).toContain('"Naam"@nl');
+    });
+
+    it('joins a group used in a FILTER with one used only in the template', () => {
+      const generated = inject(
+        'CONSTRUCT { ?s <urn:n> ?datasetPublisherName } WHERE { ?s <urn:l> ?l FILTER(?l = ?datasetLanguage) }',
+      );
+
+      expect(generated).not.toContain('UNION');
+      expect(generated).toContain('"nl"');
+      expect(generated).toContain('"Naam"@nl');
+    });
+
+    it('counts a variable in a sub-SELECT projection as used in the WHERE clause', () => {
+      const generated = inject(
+        'CONSTRUCT { ?s <urn:n> ?datasetPublisherName } WHERE { { SELECT ?s ?datasetLanguage { ?s <urn:l> ?datasetLanguage } } }',
+      );
+
+      expect(generated).not.toContain('UNION');
+      expect(generated).toContain('"nl"');
+      expect(generated).toContain('"Naam"@nl');
+    });
+
+    it('joins groups a SELECT references, as it has no template', () => {
+      const select = parser.parse(
+        'SELECT ?s WHERE { ?s <urn:l> ?datasetLanguage ; <urn:n> ?datasetPublisherName }',
+      ) as QuerySelect;
+
+      const generated = generator.generate(
+        injectDatasetBindings(select, bindings),
+      );
+
+      expect(generated).not.toContain('UNION');
+      expect(generated).toContain('"nl"');
+      expect(generated).toContain('"Naam"@nl');
+    });
+
+    it('keeps the other groups in UNION branches when one must be joined', () => {
+      const [language, union] = patternsOf(
+        'CONSTRUCT { ?s <urn:n> ?datasetPublisherName . ?s <urn:t> ?type } WHERE { ?s <urn:l> ?datasetLanguage }',
+        [[dataset], languages, publisherNames, types],
+      );
+
+      expect(language).toMatchObject({
+        subType: 'values',
+        variables: [{ value: 'datasetLanguage' }],
+      });
+      expect(union.subType).toBe('union');
+    });
+
+    it('joins only the groups that share a template triple', () => {
+      const [names, nameTypes, languageValues] = patternsOf(
+        'CONSTRUCT { ?s <urn:l> ?datasetLanguage . ?datasetPublisherName <urn:t> ?type } WHERE { ?s a ?c }',
+        [[dataset], languages, publisherNames, types],
+      );
+
+      expect(names).toMatchObject({
+        variables: [{ value: 'datasetPublisherName' }],
+      });
+      expect(nameTypes).toMatchObject({ variables: [{ value: 'type' }] });
+      expect(languageValues).toMatchObject({
+        subType: 'values',
+        variables: [{ value: 'datasetLanguage' }],
+      });
+    });
+  });
+
+  it('uses plain VALUES when only one multi-valued group is referenced', () => {
+    const generated = inject(
+      'CONSTRUCT { ?s <urn:n> ?datasetPublisherName } WHERE { ?s a ?c }',
+    );
+
+    expect(generated).not.toContain('UNION');
+    expect(generated).toContain('"Naam"@nl');
+    expect(generated).toContain('"Name"@en');
+  });
+
+  it.each([
+    [
+      'are equal for the referenced variables',
+      'CONSTRUCT { ?s <urn:a> ?a } WHERE { ?s a ?c }',
+      [
+        { a: literal('1'), b: literal('x') },
+        { a: literal('1'), b: literal('y') },
+      ],
+    ],
+    [
+      'bind the same terms in a different order',
+      'CONSTRUCT { ?s <urn:a> ?a ; <urn:b> ?b } WHERE { ?s a ?c }',
+      [
+        { a: literal('1'), b: literal('2') },
+        { b: literal('2'), a: literal('1') },
+      ],
+    ],
+  ])('collapses rows that %s', (_description, sparql, rows) => {
+    const result = injectDatasetBindings(parseConstruct(sparql), [rows]);
+
+    expect((result.where.patterns[0] as PatternValues).values).toHaveLength(1);
+  });
+
+  it('keeps every variable of rows that bind different variables', () => {
+    const result = injectDatasetBindings(
+      parseConstruct(
+        'CONSTRUCT { ?s <urn:a> ?a ; <urn:b> ?b } WHERE { ?s a ?c }',
+      ),
+      [[{ a: literal('1') }, { b: literal('2') }]],
+    );
+
+    expect(
+      (result.where.patterns[0] as PatternValues).variables.map(
+        (variable) => variable.value,
+      ),
+    ).toEqual(['a', 'b']);
+    expect(() => parser.parse(generator.generate(result))).not.toThrow();
+  });
+
+  it('generates valid SPARQL when the WHERE clause is a bare sub-SELECT', () => {
+    const generated = inject(
+      'CONSTRUCT { ?dataset <http://example.org/count> ?count } WHERE { SELECT (COUNT(*) AS ?count) { ?s ?p ?o } }',
     );
 
     expect(() => parser.parse(generated)).not.toThrow();
@@ -370,42 +606,11 @@ describe('injectValuesOuter', () => {
       'CONSTRUCT { ?dataset <http://example.org/p> ?partition } WHERE { { SELECT ?class { ?s a ?class } } BIND(IRI(CONCAT(STR(?dataset), STR(?class))) AS ?partition) }',
     );
 
-    const result = injectValuesOuter(query, datasetBindings);
+    const result = injectDatasetBindings(query, bindings);
 
     expect(hasValues(result.where.patterns)).toBe(true);
     expect(
       hasValues(findSubSelect(result.where.patterns)!.where.patterns),
     ).toBe(false);
-  });
-});
-
-describe('mergeBindings', () => {
-  it('returns b unchanged when a is empty', () => {
-    const b = [{ s: namedNode('http://example.org/1') }];
-    expect(mergeBindings([], b)).toBe(b);
-  });
-
-  it('returns a unchanged when b is empty', () => {
-    const a = [{ dataset: namedNode('http://example.org/dataset') }];
-    expect(mergeBindings(a, [])).toBe(a);
-  });
-
-  it('cross-products the rows of a and b', () => {
-    const a: VariableBindings[] = [
-      { dataset: namedNode('http://example.org/dataset') },
-      { dataset: namedNode('http://example.org/dataset'), lang: literal('en') },
-    ];
-    const b: VariableBindings[] = [
-      { s: namedNode('http://example.org/1') },
-      { s: namedNode('http://example.org/2') },
-    ];
-
-    const result = mergeBindings(a, b);
-
-    expect(result).toHaveLength(4);
-    for (const row of result) {
-      expect(row['dataset']).toBeDefined();
-      expect(row['s']).toBeDefined();
-    }
   });
 });

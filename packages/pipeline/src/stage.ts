@@ -3,9 +3,9 @@ import type { Quad } from '@rdfjs/types';
 import type { ReadOptions, Reader, VariableBindings } from './sparql/reader.js';
 import { NoItemsSelected, NotSupported } from './sparql/reader.js';
 import type { TimeoutPolicy } from './sparql/timeoutPolicy.js';
-import { mergeBindings } from './sparql/values.js';
 import {
-  predefinedDatasetBindings,
+  datasetBindingsFor,
+  type DatasetBindings,
   type DatasetBindingsProvider,
 } from './sparql/datasetBindings.js';
 import { batch } from './batch.js';
@@ -203,7 +203,7 @@ export interface StageOptions<Out = Quad> {
   };
   /**
    * Supplies additional per-dataset bindings beyond the built-in DCAT ones
-   * (see {@link predefinedDatasetBindings}), for values this library can't
+   * (see {@link DATASET_BINDING_VARIABLES}), for values this library can't
    * know about (e.g. a caller-local `edm:type`). Handed to both the item
    * selector and every reader.
    */
@@ -236,10 +236,10 @@ export interface SelectOptions {
   timeout?: TimeoutPolicy;
   /**
    * Dataset-level bindings so an {@link ItemSelector} can inject the same
-   * `VALUES` a reader would, e.g. to filter selected items by
-   * `?datasetLicense`.
+   * bindings a reader would, e.g. to filter selected items by
+   * `?datasetLicense` – see {@link injectDatasetBindings}.
    */
-  datasetBindings?: VariableBindings[];
+  datasetBindings?: DatasetBindings;
 }
 
 export class Stage<Out = Quad> {
@@ -313,23 +313,21 @@ export class Stage<Out = Quad> {
     const distribution = this.sourceFor
       ? this.sourceFor(dataset, resolved)
       : resolved;
-    const customBindings = this.bindingsProvider
-      ? await this.bindingsProvider.bindings(dataset, distribution)
-      : [];
+    const datasetBindings = datasetBindingsFor(
+      dataset,
+      this.bindingsProvider
+        ? await this.bindingsProvider.bindings(dataset, distribution)
+        : [],
+    );
     const readOptions: ReadOptions = {
       timeout,
       limiter: options?.limiter,
       onRootSkipped: options?.onRootSkipped,
-      customBindings,
+      datasetBindings,
     };
 
     const tally = new StageTally(this.transformNames);
     if (this.itemSelector) {
-      // Readers compute predefined bindings themselves; the selector can't, so it gets the full set.
-      const datasetBindings = mergeBindings(
-        predefinedDatasetBindings(dataset),
-        customBindings,
-      );
       const result = await this.runWithSelector(
         tally.selected(
           this.itemSelector.select(distribution, this.batchSize, {
