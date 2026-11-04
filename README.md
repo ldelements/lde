@@ -111,6 +111,10 @@ await pipeline.run();
   <td>Probe distributions for availability and metadata</td>
 </tr>
 <tr>
+  <td><a href="packages/iiif-image">@lde/iiif-image</a><br><a href="https://www.npmjs.com/package/@lde/iiif-image"><img src="https://img.shields.io/npm/v/@lde/iiif-image" alt="npm"></a></td>
+  <td>Find a IIIF manifest’s image service and read its dimensions, limits and sizes</td>
+</tr>
+<tr>
   <td><a href="packages/iiif-validator">@lde/iiif-validator</a><br><a href="https://www.npmjs.com/package/@lde/iiif-validator"><img src="https://img.shields.io/npm/v/@lde/iiif-validator" alt="npm"></a></td>
   <td>Validate that a URL resolves to a valid IIIF Presentation Manifest</td>
 </tr>
@@ -176,6 +180,10 @@ await pipeline.run();
 <tr>
   <td><a href="packages/host-limiter">@lde/host-limiter</a><br><a href="https://www.npmjs.com/package/@lde/host-limiter"><img src="https://img.shields.io/npm/v/@lde/host-limiter" alt="npm"></a></td>
   <td>Concurrent map bounded by a global and a per-host cap</td>
+</tr>
+<tr>
+  <td><a href="packages/public-fetch">@lde/public-fetch</a><br><a href="https://www.npmjs.com/package/@lde/public-fetch"><img src="https://img.shields.io/npm/v/@lde/public-fetch" alt="npm"></a></td>
+  <td>Fetch URLs from other people’s data without reaching internal addresses</td>
 </tr>
 <tr>
   <td><a href="packages/local-sparql-endpoint">@lde/local-sparql-endpoint</a><br><a href="https://www.npmjs.com/package/@lde/local-sparql-endpoint"><img src="https://img.shields.io/npm/v/@lde/local-sparql-endpoint" alt="npm"></a></td>

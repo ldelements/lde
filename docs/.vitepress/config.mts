@@ -42,6 +42,7 @@ const packageGroups: Record<string, string[]> = {
     'distribution-downloader',
     'distribution-health',
     'distribution-probe',
+    'iiif-image',
     'iiif-validator',
     'resolver',
     'sparql-importer',
@@ -61,6 +62,7 @@ const packageGroups: Record<string, string[]> = {
   Monitoring: ['distribution-monitor', 'pipeline-console-reporter'],
   Infrastructure: [
     'host-limiter',
+    'public-fetch',
     'local-sparql-endpoint',
     'sparql-server',
     'sparql-qlever',

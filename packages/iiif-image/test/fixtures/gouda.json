@@ -1,0 +1,161 @@
+{
+  "@context": "http://iiif.io/api/presentation/2/context.json",
+  "@id": "https://www.goudatijdmachine.nl/omeka/iiif/2/98632/manifest",
+  "@type": "sc:Manifest",
+  "label": "Foto's Hofstedegeld, 1661-1681 (0074.611)",
+  "metadata": [
+    {
+      "label": "Naam",
+      "value": "Foto&#039;s Hofstedegeld, 1661-1681 (0074.611)"
+    },
+    {
+      "label": "Omschrijving",
+      "value": "Vanuit Google Drive:<br />\n- 0074.611 hofstedegeld 1661-1681, overzicht<br />\n- 0074.611 volledig gefotografeerd aangevuld fol 80"
+    },
+    {
+      "label": "Bron",
+      "value": "<a class=\"resource-link\" href=\"https://www.goudatijdmachine.nl/omeka/s/data/item/274799\"><span class=\"resource-name\">SAMH 0074.611 St. Catharinagasthuis en St. Elizabethgasthuis, Beheer van Goederen en Inkomsten, Hofstedegeld, Leggers tevens kohieren van het hofstedegeld, 1661-1681, met achterin een inhoudsopgave</span></a>"
+    },
+    {
+      "label": "Permalink",
+      "value": "<a href=\"https://n2t.net/ark:/60537/bQDDDL\" class=\"uri-value-link\" target=\"_blank\">https://n2t.net/ark:/60537/bQDDDL</a>"
+    }
+  ],
+  "thumbnail": {
+    "@id": "https://www.goudatijdmachine.nl/omeka/files/medium/5abd2732cae3f454c4f76cad0ef803941e36c4af.jpg",
+    "@type": "dctypes:Image",
+    "format": "image/jpeg",
+    "width": 200,
+    "height": 150
+  },
+  "viewingDirection": "left-to-right",
+  "license": "https://rightsstatements.org/vocab/CNE/1.0/",
+  "related": {
+    "@id": "https://www.goudatijdmachine.nl/omeka/s/data/item/98632",
+    "format": "text/html"
+  },
+  "seeAlso": {
+    "@id": "https://www.goudatijdmachine.nl/omeka/api/items/98632",
+    "format": "application/ld+json"
+  },
+  "sequences": [
+    {
+      "@id": "https://www.goudatijdmachine.nl/omeka/iiif/2/98632/sequence/normal",
+      "@type": "sc:Sequence",
+      "label": "Current Page Order",
+      "viewingDirection": "left-to-right",
+      "canvases": [
+        {
+          "@id": "https://www.goudatijdmachine.nl/omeka/iiif/2/98632/canvas/p1",
+          "@type": "sc:Canvas",
+          "label": "1",
+          "thumbnail": {
+            "@id": "https://www.goudatijdmachine.nl/omeka/files/medium/5abd2732cae3f454c4f76cad0ef803941e36c4af.jpg",
+            "@type": "dctypes:Image",
+            "format": "image/jpeg",
+            "width": 200,
+            "height": 150
+          },
+          "width": 5184,
+          "height": 3888,
+          "seeAlso": {
+            "@id": "https://www.goudatijdmachine.nl/omeka/iiif/search/98632/alto/1.xml",
+            "profile": "http://www.loc.gov/standards/alto/v4/alto.xsd",
+            "format": "application/alto+xml",
+            "label": "ALTO XML"
+          },
+          "otherContent": [
+            {
+              "@id": "https://www.goudatijdmachine.nl/omeka/iiif/search/98632/list/p1",
+              "@type": "sc:AnnotationList",
+              "label": "Text of current page"
+            }
+          ],
+          "images": [
+            {
+              "@id": "https://www.goudatijdmachine.nl/omeka/iiif/2/98632/annotation/p0001-image",
+              "@type": "oa:Annotation",
+              "motivation": "sc:painting",
+              "resource": {
+                "@id": "https://www.goudatijdmachine.nl/omeka/iiif/2/98634/full/800,600/0/default.jpg",
+                "@type": "dctypes:Image",
+                "format": "image/jpeg",
+                "width": 5184,
+                "height": 3888,
+                "service": {
+                  "@context": "http://iiif.io/api/image/2/context.json",
+                  "@id": "https://www.goudatijdmachine.nl/omeka/iiif/2/98634",
+                  "profile": "http://iiif.io/api/image/2/level2.json",
+                  "tiles": [
+                    {
+                      "width": 256,
+                      "scaleFactors": [1, 2, 4, 8, 16, 32]
+                    }
+                  ],
+                  "width": 5184,
+                  "height": 3888
+                }
+              },
+              "on": "https://www.goudatijdmachine.nl/omeka/iiif/2/98632/canvas/p1"
+            }
+          ]
+        },
+        {
+          "@id": "https://www.goudatijdmachine.nl/omeka/iiif/2/98632/canvas/p2",
+          "@type": "sc:Canvas",
+          "label": "2",
+          "thumbnail": {
+            "@id": "https://www.goudatijdmachine.nl/omeka/files/medium/d78647d7debfd5924dca0c767736894bd0114266.jpg",
+            "@type": "dctypes:Image",
+            "format": "image/jpeg",
+            "width": 150,
+            "height": 200
+          },
+          "width": 3888,
+          "height": 5184,
+          "seeAlso": {
+            "@id": "https://www.goudatijdmachine.nl/omeka/iiif/search/98632/alto/2.xml",
+            "profile": "http://www.loc.gov/standards/alto/v4/alto.xsd",
+            "format": "application/alto+xml",
+            "label": "ALTO XML"
+          },
+          "otherContent": [
+            {
+              "@id": "https://www.goudatijdmachine.nl/omeka/iiif/search/98632/list/p2",
+              "@type": "sc:AnnotationList",
+              "label": "Text of current page"
+            }
+          ],
+          "images": [
+            {
+              "@id": "https://www.goudatijdmachine.nl/omeka/iiif/2/98632/annotation/p0002-image",
+              "@type": "oa:Annotation",
+              "motivation": "sc:painting",
+              "resource": {
+                "@id": "https://www.goudatijdmachine.nl/omeka/iiif/2/98635/full/600,800/0/default.jpg",
+                "@type": "dctypes:Image",
+                "format": "image/jpeg",
+                "width": 3888,
+                "height": 5184,
+                "service": {
+                  "@context": "http://iiif.io/api/image/2/context.json",
+                  "@id": "https://www.goudatijdmachine.nl/omeka/iiif/2/98635",
+                  "profile": "http://iiif.io/api/image/2/level2.json",
+                  "tiles": [
+                    {
+                      "width": 256,
+                      "scaleFactors": [1, 2, 4, 8, 16, 32]
+                    }
+                  ],
+                  "width": 3888,
+                  "height": 5184
+                }
+              },
+              "on": "https://www.goudatijdmachine.nl/omeka/iiif/2/98632/canvas/p2"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

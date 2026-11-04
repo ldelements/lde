@@ -9,6 +9,10 @@
     "ignoreDeprecations": "6.0"
   },
   "include": ["src/**/*.ts"],
-  "references": [],
+  "references": [
+    {
+      "path": "../public-fetch/tsconfig.lib.json"
+    }
+  ],
   "exclude": ["src/**/*.spec.ts", "src/**/*.test.ts"]
 }

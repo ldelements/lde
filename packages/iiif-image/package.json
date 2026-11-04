@@ -1,0 +1,34 @@
+{
+  "name": "@lde/iiif-image",
+  "version": "0.0.0",
+  "description": "Find the image service in a IIIF Presentation manifest and read its info.json into dimensions, server limits and a ladder of sizes",
+  "repository": {
+    "url": "git+https://github.com/ldelements/lde.git",
+    "directory": "packages/iiif-image"
+  },
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "!**/*.tsbuildinfo"
+  ],
+  "dependencies": {
+    "@iiif/parser": "^4.0.5",
+    "tslib": "^2.3.0"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}
