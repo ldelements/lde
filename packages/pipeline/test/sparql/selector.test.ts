@@ -755,41 +755,43 @@ describe('SparqlItemSelector', () => {
   });
 
   describe('datasetBindings', () => {
-    it('injects a VALUES clause when datasetBindings are provided', async () => {
+    it('injects dataset bindings on every page', async () => {
       const { fetcher, queries } = pagedFetcher([
-        [{ uri: namedNode('http://example.com/1') }],
+        [
+          { uri: namedNode('http://example.com/1') },
+          { uri: namedNode('http://example.com/2') },
+        ],
+        [{ uri: namedNode('http://example.com/3') }],
       ]);
       const selector = new SparqlItemSelector({
-        query,
+        query:
+          'SELECT ?uri WHERE { ?uri <http://example.com/in> ?dataset } ORDER BY ?uri',
         fetcher: fetcher as never,
       });
 
-      for await (const _row of selector.select(distribution, 10, {
-        datasetBindings: [{ dataset: namedNode('http://example.com/dataset') }],
+      for await (const _row of selector.select(distribution, 2, {
+        datasetBindings: [
+          [{ dataset: namedNode('http://example.com/dataset') }],
+        ],
       })) {
         // consume
       }
 
-      expect(queries[0]).toContain('VALUES');
+      expect(queries).toHaveLength(2);
       expect(queries[0]).toContain('<http://example.com/dataset>');
+      expect(queries[1]).toContain('<http://example.com/dataset>');
     });
 
-    it('leaves the query unchanged when datasetBindings is omitted or empty', async () => {
-      const { fetcher, queries } = pagedFetcher([[], []]);
+    it('injects nothing when datasetBindings is omitted', async () => {
+      const { fetcher, queries } = pagedFetcher([[]]);
       const selector = new SparqlItemSelector({
         query,
         fetcher: fetcher as never,
       });
 
       await selectAll(selector, 10);
-      for await (const _row of selector.select(distribution, 10, {
-        datasetBindings: [],
-      })) {
-        // consume
-      }
 
       expect(queries[0]).not.toContain('VALUES');
-      expect(queries[1]).not.toContain('VALUES');
     });
   });
 });

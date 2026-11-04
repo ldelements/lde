@@ -8,9 +8,12 @@ import {
   type QuerySelect,
   type TermIri,
   type TermLiteral,
+  type TermVariable,
   type ValuePatternRow,
 } from '@traqula/rules-sparql-1-1';
 import type { NamedNode, Literal } from '@rdfjs/types';
+import { termToString } from 'rdf-string';
+import type { DatasetBindings } from './datasetBindings.js';
 import type { VariableBindings } from './reader.js';
 
 const F = new AstFactory();
@@ -146,7 +149,7 @@ function bindsAllVariables(
 }
 
 function buildValuesPattern(bindings: VariableBindings[]): PatternValues {
-  const variableNames = bindings.length > 0 ? Object.keys(bindings[0]) : [];
+  const variableNames = [...new Set(bindings.flatMap(Object.keys))];
 
   const variables = variableNames.map((name) => F.termVariable(name, F.gen()));
 
@@ -167,7 +170,7 @@ function buildValuesPattern(bindings: VariableBindings[]): PatternValues {
  * engines such as QLever plan and evaluate each branch without the outer
  * VALUES otherwise.
  *
- * Dataset-level bindings must use {@link injectValuesOuter} instead – a
+ * Dataset-level bindings must use {@link injectDatasetBindings} instead – a
  * sub-SELECT doesn't inherit outer bindings, so injecting them here would
  * leave an outer `BIND`/`FILTER` referencing them unbound.
  */
@@ -182,43 +185,148 @@ export function injectValues<Q extends QueryConstruct | QuerySelect>(
 }
 
 /**
- * Injects at the outermost WHERE scope, for dataset-level bindings (the
- * dataset IRI, DCAT bindings, custom {@link DatasetBindingsProvider} rows).
- * Not visible inside a nested sub-SELECT – see {@link injectValues}.
+ * The variables in an AST node that a binding at the outermost scope can reach.
+ * Of a sub-SELECT only the projection counts, because the rest is out of scope.
  */
-export function injectValuesOuter<Q extends QueryConstruct | QuerySelect>(
+function visibleVariables(node: unknown): string[] {
+  if (Array.isArray(node)) return node.flatMap(visibleVariables);
+  if (typeof node !== 'object' || node === null) return [];
+  if (F.isTermVariable(node)) return [(node as TermVariable).value];
+  if (F.isQuerySelect(node)) return projectedVariables(node as QuerySelect);
+
+  return visibleVariables(Object.values(node));
+}
+
+function projectedVariables(subSelect: QuerySelect): string[] {
+  return subSelect.variables.flatMap((projected) => {
+    if (F.isWildcard(projected)) return visibleVariables(subSelect.where);
+    if (F.isTermVariable(projected)) return [projected.value];
+
+    return [projected.variable.value];
+  });
+}
+
+/** A key that is equal for rows binding the same variables to the same terms. */
+function rowKey(row: VariableBindings): string {
+  return JSON.stringify(
+    Object.entries(row)
+      .map(([name, term]) => [name, termToString(term)])
+      .sort(([a], [b]) => a.localeCompare(b)),
+  );
+}
+
+/** Narrows rows to the given variables, dropping rows that become equal or empty. */
+function narrowRows(
+  rows: VariableBindings[],
+  variables: Set<string>,
+): VariableBindings[] {
+  const narrowed = rows
+    .map((row) =>
+      Object.fromEntries(
+        Object.entries(row).filter(([name]) => variables.has(name)),
+      ),
+    )
+    .filter((row) => Object.keys(row).length > 0);
+  return [...new Map(narrowed.map((row) => [rowKey(row), row])).values()];
+}
+
+function overlaps(a: Set<string>, b: Set<string>): boolean {
+  return [...a].some((variable) => b.has(variable));
+}
+
+/**
+ * Whether a multi-row group can get its own `UNION` branch: the query only
+ * outputs its variables, in template triples without another group's variables.
+ */
+function canBranch(
+  rows: VariableBindings[],
+  multiRowGroups: VariableBindings[][],
+  usedOutsideTemplate: Set<string>,
+  templateTriples: Set<string>[],
+): boolean {
+  const own = new Set(rows.flatMap(Object.keys));
+  const others = new Set(
+    multiRowGroups
+      .filter((group) => group !== rows)
+      .flat()
+      .flatMap(Object.keys),
+  );
+
+  return (
+    !overlaps(own, usedOutsideTemplate) &&
+    !templateTriples.some(
+      (variables) => overlaps(variables, own) && overlaps(variables, others),
+    )
+  );
+}
+
+/** One group needs no `UNION`; several each get their own branch. */
+function buildBranchPatterns(branches: VariableBindings[][]): Pattern[] {
+  if (branches.length === 0) return [];
+  if (branches.length === 1) return [buildValuesPattern(branches[0])];
+
+  return [
+    F.patternUnion(
+      branches.map((rows) =>
+        F.patternGroup([buildValuesPattern(rows)], F.gen()),
+      ),
+      F.gen(),
+    ),
+  ];
+}
+
+/**
+ * Injects dataset-level bindings at the outermost WHERE scope, for the variables
+ * the query references. A query that references none is returned unchanged.
+ *
+ * Multi-row groups the query only outputs go in separate `UNION` branches, so
+ * L languages and N names make L + N rows instead of L × N. Other multi-row
+ * groups are joined: in another group's branch their variables would be unbound,
+ * making patterns on them match too much and filters on them remove solutions.
+ */
+export function injectDatasetBindings<Q extends QueryConstruct | QuerySelect>(
   query: Q,
-  bindings: VariableBindings[],
+  bindings: DatasetBindings,
 ): Q {
+  const { template, ...clauses } = query as Q & Partial<QueryConstruct>;
+  const templateTriples = (template?.triples ?? []).map(
+    (triple) => new Set(visibleVariables(triple)),
+  );
+  const usedOutsideTemplate = new Set(visibleVariables(Object.values(clauses)));
+  const referenced = new Set([
+    ...usedOutsideTemplate,
+    ...templateTriples.flatMap((variables) => [...variables]),
+  ]);
+
+  const groups = bindings
+    .map((rows) => narrowRows(rows, referenced))
+    .filter((rows) => rows.length > 0);
+  if (groups.length === 0) return query;
+
+  const singleRows = groups.filter((rows) => rows.length === 1).flat();
+  const multiRowGroups = groups.filter((rows) => rows.length > 1);
+
+  const branches = multiRowGroups.filter((rows) =>
+    canBranch(rows, multiRowGroups, usedOutsideTemplate, templateTriples),
+  );
+  const joined = multiRowGroups.filter((rows) => !branches.includes(rows));
+
+  const injected = [
+    ...(singleRows.length > 0
+      ? [buildValuesPattern([Object.assign({}, ...singleRows)])]
+      : []),
+    ...joined.map((rows) => buildValuesPattern(rows)),
+    ...buildBranchPatterns(branches),
+  ];
+
   // A bare sub-SELECT (`WHERE { SELECT … }`) is only valid as a group's sole
   // content, so it needs its own braces once VALUES sits beside it.
   const patterns = query.where.patterns.map((pattern) =>
     F.isQuerySelect(pattern) ? F.patternGroup([pattern], F.gen()) : pattern,
   );
+
   return {
     ...query,
-    where: F.patternGroup([buildValuesPattern(bindings), ...patterns], F.gen()),
+    where: F.patternGroup([...injected, ...patterns], F.gen()),
   };
-}
-
-/**
- * Cross-products two sets of dataset-level binding rows (predefined DCAT
- * bindings and a custom {@link DatasetBindingsProvider}'s rows), for
- * {@link injectValuesOuter}. An empty side is the identity. This is also how
- * a multi-valued binding like `datasetLanguage` ends up as one row per value.
- */
-export function mergeBindings(
-  a: VariableBindings[],
-  b: VariableBindings[],
-): VariableBindings[] {
-  if (a.length === 0) return b;
-  if (b.length === 0) return a;
-
-  const merged: VariableBindings[] = [];
-  for (const rowA of a) {
-    for (const rowB of b) {
-      merged.push({ ...rowA, ...rowB });
-    }
-  }
-  return merged;
 }

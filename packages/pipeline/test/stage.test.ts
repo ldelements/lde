@@ -7,6 +7,7 @@ import type {
   ItemSelector,
   QuadTransform,
   RunOptions,
+  SelectOptions,
 } from '../src/stage.js';
 import type { Reader, ReadOptions } from '../src/sparql/reader.js';
 import { NotSupported } from '../src/sparql/reader.js';
@@ -1340,63 +1341,17 @@ describe('Stage', () => {
   });
 
   describe('bindingsProvider', () => {
-    it('passes custom bindings to the reader separately from selector bindings', async () => {
-      const reader = capturingExecutor([q1]);
-      const stage = new Stage({
-        name: 'withProvider',
-        readers: reader,
-        itemSelector: mockItemSelector([
-          { s: namedNode('http://example.org/s1') },
-        ]),
-        bindingsProvider: {
-          bindings: () => [
-            { type: namedNode('http://example.org/CustomType') },
-          ],
-        },
-      });
+    const datasetRow = { dataset: namedNode('http://example.org/dataset') };
+    const customRow = { type: namedNode('http://example.org/CustomType') };
+    const bindingsProvider = { bindings: async () => [customRow] };
 
-      await stage.run(dataset, distribution, collectingWriter());
-
-      const options = reader.read.mock.calls[0][2] as {
-        bindings: unknown[];
-        customBindings: unknown[];
-      };
-      expect(options.bindings).toEqual([
-        { s: namedNode('http://example.org/s1') },
-      ]);
-      expect(options.customBindings).toEqual([
-        { type: namedNode('http://example.org/CustomType') },
-      ]);
-    });
-
-    it('passes custom bindings to the reader when there is no item selector', async () => {
-      const reader = capturingExecutor([q1]);
-      const stage = new Stage({
-        name: 'withProvider',
-        readers: reader,
-        bindingsProvider: {
-          bindings: () => [
-            { type: namedNode('http://example.org/CustomType') },
-          ],
-        },
-      });
-
-      await stage.run(dataset, distribution, collectingWriter());
-
-      const options = reader.read.mock.calls[0][2] as {
-        customBindings: unknown[];
-      };
-      expect(options.customBindings).toEqual([
-        { type: namedNode('http://example.org/CustomType') },
-      ]);
-    });
-
-    it('passes the full predefined + custom bindings to the item selector', async () => {
-      const seenOptions: { datasetBindings?: unknown[] }[] = [];
+    it('hands the selector and readers the same dataset bindings, separate from item bindings', async () => {
+      const seenOptions: SelectOptions[] = [];
+      const item = { s: namedNode('http://example.org/s1') };
       const selector: ItemSelector = {
         async *select(_distribution, _batchSize, options) {
           seenOptions.push(options ?? {});
-          yield { s: namedNode('http://example.org/s1') };
+          yield item;
         },
       };
       const reader = capturingExecutor([q1]);
@@ -1404,43 +1359,39 @@ describe('Stage', () => {
         name: 'withProvider',
         readers: reader,
         itemSelector: selector,
-        bindingsProvider: {
-          bindings: () => [
-            { type: namedNode('http://example.org/CustomType') },
-          ],
-        },
+        bindingsProvider,
       });
 
       await stage.run(dataset, distribution, collectingWriter());
 
-      expect(seenOptions[0].datasetBindings).toEqual([
-        {
-          dataset: namedNode('http://example.org/dataset'),
-          type: namedNode('http://example.org/CustomType'),
-        },
-      ]);
+      const options = reader.read.mock.calls[0][2] as ReadOptions;
+      expect(options.bindings).toEqual([item]);
+      expect(options.datasetBindings).toContainEqual([customRow]);
+      expect(seenOptions[0].datasetBindings).toBe(options.datasetBindings);
     });
 
-    it('awaits an async provider', async () => {
+    it('passes dataset bindings to the reader when there is no item selector', async () => {
       const reader = capturingExecutor([q1]);
       const stage = new Stage({
-        name: 'withAsyncProvider',
+        name: 'withProvider',
         readers: reader,
-        bindingsProvider: {
-          bindings: async () => [
-            { type: namedNode('http://example.org/CustomType') },
-          ],
-        },
+        bindingsProvider,
       });
 
       await stage.run(dataset, distribution, collectingWriter());
 
-      const options = reader.read.mock.calls[0][2] as {
-        customBindings: unknown[];
-      };
-      expect(options.customBindings).toEqual([
-        { type: namedNode('http://example.org/CustomType') },
-      ]);
+      const options = reader.read.mock.calls[0][2] as ReadOptions;
+      expect(options.datasetBindings).toContainEqual([customRow]);
+    });
+
+    it('passes the predefined bindings without a provider', async () => {
+      const reader = capturingExecutor([q1]);
+      const stage = new Stage({ name: 'withoutProvider', readers: reader });
+
+      await stage.run(dataset, distribution, collectingWriter());
+
+      const options = reader.read.mock.calls[0][2] as ReadOptions;
+      expect(options.datasetBindings).toContainEqual([datasetRow]);
     });
   });
 });

@@ -1,7 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { Dataset, Distribution } from '@lde/dataset';
 import { DataFactory } from 'n3';
-import { predefinedDatasetBindings } from '../../src/sparql/datasetBindings.js';
+import {
+  datasetBindingsFor,
+  predefinedDatasetBindings,
+} from '../../src/sparql/datasetBindings.js';
 
 const { namedNode, literal } = DataFactory;
 
@@ -25,73 +28,72 @@ function makeDataset(
 }
 
 describe('predefinedDatasetBindings', () => {
+  const datasetPublisher = namedNode('http://example.org/publisher');
+
   it('binds only the dataset IRI when no optional properties are present', () => {
     expect(predefinedDatasetBindings(makeDataset({ language: [] }))).toEqual([
-      { dataset },
+      [{ dataset }],
+      [],
+      [],
     ]);
   });
 
-  it('includes datasetPublisher and datasetLicense when present', () => {
-    const rows = predefinedDatasetBindings(
+  it('groups datasetPublisher and datasetLicense with the dataset IRI', () => {
+    const groups = predefinedDatasetBindings(
       makeDataset({
         publisher: { ...publisher, name: {} },
         license: new URL('http://example.org/license'),
       }),
     );
 
-    expect(rows).toEqual([
-      {
-        dataset,
-        datasetPublisher: namedNode('http://example.org/publisher'),
-        datasetLicense: namedNode('http://example.org/license'),
-      },
+    expect(groups).toEqual([
+      [
+        {
+          dataset,
+          datasetPublisher,
+          datasetLicense: namedNode('http://example.org/license'),
+        },
+      ],
+      [],
+      [],
     ]);
   });
 
-  it('expands one row per language', () => {
-    const rows = predefinedDatasetBindings(
-      makeDataset({ language: ['nl', 'en'] }),
-    );
-
-    expect(rows).toEqual([
-      { dataset, datasetLanguage: literal('nl') },
-      { dataset, datasetLanguage: literal('en') },
-    ]);
-  });
-
-  it('expands one row per publisher name translation, tagged with its language', () => {
-    const rows = predefinedDatasetBindings(makeDataset({ publisher }));
-
-    const datasetPublisher = namedNode('http://example.org/publisher');
-    expect(rows).toEqual([
-      {
-        dataset,
-        datasetPublisher,
-        datasetPublisherName: literal('Naam', 'nl'),
-      },
-      {
-        dataset,
-        datasetPublisher,
-        datasetPublisherName: literal('Name', 'en'),
-      },
-    ]);
-  });
-
-  it('cross-products datasetLanguage and datasetPublisherName independently', () => {
-    const rows = predefinedDatasetBindings(
+  it('keeps languages and publisher names in independent groups', () => {
+    const groups = predefinedDatasetBindings(
       makeDataset({ language: ['nl', 'en'], publisher }),
     );
 
-    expect(
-      rows.map((row) => [
-        row['datasetLanguage'].value,
-        row['datasetPublisherName'].value,
-      ]),
-    ).toEqual([
-      ['nl', 'Naam'],
-      ['nl', 'Name'],
-      ['en', 'Naam'],
-      ['en', 'Name'],
+    expect(groups).toEqual([
+      [{ dataset, datasetPublisher }],
+      [{ datasetLanguage: literal('nl') }, { datasetLanguage: literal('en') }],
+      [
+        { datasetPublisherName: literal('Naam', 'nl') },
+        { datasetPublisherName: literal('Name', 'en') },
+      ],
     ]);
+  });
+});
+
+describe('datasetBindingsFor', () => {
+  const type = namedNode('urn:Type');
+
+  it('adds custom rows as one more group', () => {
+    expect(datasetBindingsFor(makeDataset(), [{ type }])).toEqual([
+      [{ dataset }],
+      [],
+      [],
+      [{ type }],
+    ]);
+  });
+
+  it('lets a custom row replace a predefined binding of the same name', () => {
+    const other = namedNode('urn:other');
+
+    expect(
+      datasetBindingsFor(makeDataset({ language: ['nl'] }), [
+        { datasetLanguage: other },
+      ]),
+    ).toEqual([[{ dataset }], [{}], [], [{ datasetLanguage: other }]]);
   });
 });
