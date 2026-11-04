@@ -4,6 +4,7 @@ import type {
   RootTypeOf,
   SearchSchema,
   SearchType,
+  StoredDate,
 } from './schema.js';
 
 /**
@@ -185,10 +186,17 @@ export type ResultDocument<OutputField extends string = string> = Readonly<
   Partial<Record<OutputField, SearchValue>>
 >;
 
-/** A logical field value. */
+/**
+ * A logical field value. A `date` is a {@link StoredDate} – stored terms like
+ * every other value at this seam: the Unix seconds the index sorts and filters
+ * on, plus the precision its source gave, which a surface needs to serve it in
+ * that precision’s canonical form. An index built before precision was stored
+ * reports `dateTime`, the one form the seconds alone can always be read as.
+ */
 export type SearchValue =
   | string
   | number
+  | StoredDate
   | boolean
   | readonly string[]
   | LocalizedValue

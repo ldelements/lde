@@ -204,8 +204,8 @@ editor.
   IRI no collection holds – dangling, or its lookup failed – has no kind to
   report and is served as `PersonOrOrganizationUnresolvedReference`, carrying
   only its `id`; scalars/booleans
-  per kind; `date` → ISO 8601 string, or an `xsd:gYear` in deep time; nullability from `required` / `array` /
-  `kind`.
+  per kind; `date` → an [`ISO8601Date`](#dates) at the precision its record
+  gave; nullability from `required` / `array` / `kind`.
 - **`where`** one input per `filterable` field, typed by what the field keys on:
   a `keyword` holds literals (`KeywordFilter`), a `reference` holds identity
   (`‹Target›Filter`, or `IRIFilter` when it names no target, or a filter named
@@ -279,11 +279,13 @@ role: { in: ["etser"] } } }` asks for _this person in this role_, where the
     so it never reaches documents no query can return; its `matching` is the extent with
     every filter applied except the field’s own range, so a user can always
     widen a selection again. Both are `{ min max }` in the type the field’s
-    range filter takes (`IntExtent`, `FloatExtent`, `DateExtent` with ISO 8601
-    strings, BCE years included), so a bound feeds straight back into
-    `where`, and either is `null` when no document holds a value. Its
-    `buckets: [ValueBucket!]!` count each distinct value over the same
-    documents as `matching` (a date’s in ISO 8601). A field with
+    range filter takes (`IntExtent`, `FloatExtent`, `DateExtent`), so a bound
+    feeds straight back into `where`, and either is `null` when no document
+    holds a value. Its `buckets` count each distinct value over the same
+    documents as `matching`: `[ValueBucket!]!` for a number, `[DateBucket!]!`
+    for a date. A date facet spans records of mixed precision, so its extent
+    and buckets are always [date-times](#dates) and the client picks the grain
+    it draws at. A field with
     [`facetRanges`](./search#range-facets) returns the
     `‹Kind›BinnedRangeFacet` variant instead, whose `buckets:
 [RangeBucket!]!` hold one bucket per declared half-open `[min, max)` bin,
@@ -409,6 +411,45 @@ the value is not an IRI, instead of a silently empty result, while the same valu
 is perfectly valid on a `KeywordFilter` beside it. Passed through a variable it
 also carries the offending path (`where.material.in[0]`); written inline, GraphQL
 reports a source location instead.
+
+## Dates
+
+Every date in the API – a `date` field, a `DateExtent` bound, a `DateBucket`
+value and a `DateRange` bound – is an `ISO8601Date`: an ISO 8601 date written as
+a string, in one of four forms.
+
+| Precision | Form                   | Example                |
+| --------- | ---------------------- | ---------------------- |
+| year      | `YYYY`                 | `1999`                 |
+| month     | `YYYY-MM`              | `1999-05`              |
+| day       | `YYYY-MM-DD`           | `1999-05-03`           |
+| date-time | `YYYY-MM-DDThh:mm:ssZ` | `1999-05-03T12:30:00Z` |
+
+ISO 8601 leaves years beyond four digits and dates at reduced precision to an
+agreement between the parties exchanging them. This is ours, and it is the
+lexical space of `xsd:gYear`, `xsd:gYearMonth`, `xsd:date` and `xsd:dateTime`
+in [XML Schema 1.1 Part 2](https://www.w3.org/TR/xmlschema11-2/#dateTime):
+
+- A **year** has at least four digits, more where the year needs them, and a
+  `-` sign before the common era. Year `0000` is 1 BCE, so `-1100` is 1101 BCE.
+  There is no `+` sign.
+- A value is served at **the precision its record gave**: a source that said
+  `1999` is served `1999`, not 1 January. A list of dates can therefore mix
+  precisions.
+- A **date-time** is in UTC, written with `Z`, and has whole seconds.
+- Beyond ±271,821 years around 1970 lies **deep time**, where only a year is
+  served (`-318000000`). Neither a JavaScript `Date` nor Temporal can hold such
+  a value, so the scalar is not called `Date`: a client that maps `Date` to its
+  language’s date type would get `Invalid Date` back.
+- A range facet’s extent and buckets span records of mixed precision, so they
+  are always date-times (a bare year in deep time).
+
+As input, a `DateRange` bound may take any of the four forms, and also accepts
+an offset (`+02:00`) and fractional seconds. A bound that is none of these is
+rejected when the query is coerced, with `BAD_USER_INPUT`. A bound is the first
+second of the period it names, so `max: "1999"` stops at 1 January 1999; write
+`max: "1999-12-31T23:59:59Z"` to include the whole year. How each source literal
+is read is in [the field model](./search#field-model).
 
 ## Pagination
 

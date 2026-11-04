@@ -66,8 +66,8 @@ Exports are stratified by audience:
 
 - **`@lde/search`** – the authoring surface: `defineSearchType`,
   `searchSchema`, `projectRoots`, validation, every model/query/result type,
-  `isoToUnixSeconds` / `unixSecondsToIso` (the `date` storage codec, for a
-  value the projection does not convert itself), and
+  `isoToUnixSeconds` / `unixSecondsToIso` / `isDatePrecision` (the `date`
+  storage codec, for a value the projection does not convert itself), and
   [`requestRebuild`](#rebuild-requests) / `RebuildAlreadyRunning`.
 - **`@lde/search/adapter`** – plumbing for engine adapters and API surfaces:
   - `assertTypeInSchema` – the port membership guard (the exact declaration
@@ -106,7 +106,8 @@ Exports are stratified by audience:
     (the port’s always-on guard);
   - `pageForOffset` – the 1-based page an offset falls on (`limit: 0` pins
     to 1);
-  - `isoToUnixSeconds`, `unixSecondsToIso` – the `date` storage codec;
+  - `isoToUnixSeconds`, `unixSecondsToIso`, `isDatePrecision` – the `date`
+    storage codec;
   - `RebuildRequests` – the store an engine port records
     [rebuild requests](#rebuild-requests) in.
 - **`@lde/search/module`** – `loadSchemaModule`, the Node-only loader for a
@@ -292,27 +293,60 @@ directly.
 | `keyword`            | `in` (membership)    | yes   | –                | string / `string[]`                                                                   |
 | `reference`          | `in` (membership)    | yes   | –                | labelled reference (id + label), or a nested document for a surfaced inline reference |
 | `integer` / `number` | `range { min, max }` | yes   | yes              | number                                                                                |
-| `date`               | `range` (inclusive)  | yes   | yes              | ISO 8601 string (surface), an `xsd:gYear` in deep time                                |
+| `date`               | `range` (inclusive)  | yes   | yes              | ISO 8601 string at the source’s precision (surface), an `xsd:gYear` in deep time      |
 | `boolean`            | `is`                 | yes   | –                | boolean (absent = false)                                                              |
 
 A **`date`** is stored as Unix seconds – a sortable, range-filterable integer –
-and is ISO 8601 at every edge: the projection converts a value on the way in,
-the query compiler converts a filter bound on the way out, and the surface emits
-a string. A year outside the plain four-digit form is accepted however it is written –
-expanded (`-001100-01-01T00:00:00.000Z`) or not (`-1100`, `-250000`, `25000`):
-the codec pads it to the signed six digits `Date` needs before parsing, so the
-same value indexes and filters alike. Deep time is real data – SCHEMA-AP-NDE
-blesses years beyond four digits for `schema:dateCreated` – and an unpadded year
-would otherwise parse as something else entirely (a BCE year as a UTC offset,
-landing in the wrong era; a five-digit CE year as a legacy local-time date,
-landing a year early and differently per host timezone), without ever failing.
-`Date` reaches ±271,821 years around 1970. Beyond that is deep time, which has
-no months or days: there a value is read as an `xsd:gYear` – a bare year, such
-as a Carboniferous fossil’s `-318000000` – stored as that many average Gregorian
-years from 1970, and emitted by the surface as the same bare year rather than
-an ISO 8601 timestamp. A deep-time value finer than a year, or a year beyond the
-engine’s int64 of seconds (around ±292 billion years), leaves the field absent,
-as any unparseable value does.
+plus the precision its source gave, and is ISO 8601 at every edge: the
+projection converts a value on the way in, the query compiler converts a filter
+bound on the way out, and the surface emits a string. One codec
+(`isoToUnixSeconds` / `unixSecondsToIso`) does all three, so they cannot
+disagree.
+
+The precision is one of `year`, `month`, `day` or `dateTime`, read from the
+literal’s shape. The surface serves each value in one canonical form per
+precision, whatever lexical variant the source used:
+
+| Source literal                   | Precision  | Served as              |
+| -------------------------------- | ---------- | ---------------------- |
+| `1999`, `1999+02:00`             | `year`     | `1999`                 |
+| `1999-05`, `1999-05+02:00`       | `month`    | `1999-05`              |
+| `1999-05-03`, `1999-05-03+02:00` | `day`      | `1999-05-03`           |
+| `1999-05-03T14:30:00+02:00`      | `dateTime` | `1999-05-03T12:30:00Z` |
+| `-1100`, `-001100`               | `year`     | `-1100`                |
+| `-318000000`                     | `year`     | `-318000000`           |
+
+- A **year, month or day** names a calendar period, so its timezone is ignored
+  and it is stored at the period’s first second in UTC.
+- A **date-time** is normalised to UTC with `Z`. One without a timezone is read
+  as UTC, so what the index holds never depends on the host that built it.
+  Storage keeps whole seconds, so fractional seconds are dropped and the
+  output carries none.
+- A **year** is served with at least four digits and no `+` sign. On the way
+  in, any number of digits and an optional sign are accepted, so the expanded
+  form `Date` emits (`+025000`, `-001100`) reads as the year it spells. Deep
+  time is real data: SCHEMA-AP-NDE blesses years beyond four digits for
+  `schema:dateCreated`.
+- `Date` reaches ±271821 years around 1970. Beyond that is **deep time**,
+  which has no months or days: there only a year is read – a bare year, such
+  as a Carboniferous fossil’s `-318000000` – stored as that many average
+  Gregorian years from 1970, and served as the same bare year. A deep-time
+  value finer than a year, or a year beyond the engine’s int64 of seconds
+  (around ±292 billion years), leaves the field absent, as any unparseable
+  value does.
+
+The precision lives in a hidden physical field beside the seconds
+(`PhysicalFields.precision`, `${name}_precision`). It is stored but not
+indexed, is not part of the field model, and never reaches a client’s schema.
+Sorting and filtering read the seconds alone. A `derive` that returns a string
+is parsed like any literal; one that returns seconds states no precision and is
+stored as a date-time. An index built before precision was stored has no such
+field, and its dates are served as date-times until a reindex fills it in.
+
+A filter bound is read by the same codec, so `max: "1999"` means the first
+second of 1999, and a document dated `1999-05` falls outside it. The range is
+inclusive, so a filter covering the whole of 1999 takes
+`max: "1999-12-31T23:59:59Z"`.
 
 **`array` decides a field’s shape**, whatever the graph carries: a declared
 `array` field stores a list, and a single-valued one stores the first value –
@@ -967,10 +1001,13 @@ A facetable numeric field (`integer`/`number`/`date`) is a **range facet**. Its
 `Facet` carries an **`extent`**: the lowest and highest value among the
 documents the query matches, which is what a UI needs to draw a slider or a
 pair of inputs. Like every value at the port, the extent is in stored terms –
-a `date` in Unix seconds – and a surface serves it the way it serves the field
-(the GraphQL surface as ISO 8601, or an `xsd:gYear` in deep time). The extent is absent when no matching
-document holds a value. Its `buckets` count each distinct value, like any
-other facet’s.
+a `date` in Unix seconds. A facet spans documents whose dates may each have a
+different precision, so it states none of its own: the GraphQL surface serves a
+date’s extent and buckets as ISO 8601 date-times (an `xsd:gYear` in deep time),
+and a UI draws its slider at whatever grain it chooses. The extent is absent
+when no matching document holds a value. Its `buckets` count each distinct
+value, like any other facet’s, so a document dated `1999` and one dated
+`1999-01-01T00:00:00Z` fall in one bucket: they store the same second.
 
 It may instead declare **`facetRanges`**: fixed half-open `[min, max)` bins (a
 `FacetRange` each), which make it a **binned range facet** that buckets into

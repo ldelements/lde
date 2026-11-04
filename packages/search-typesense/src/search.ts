@@ -29,6 +29,7 @@ import {
   fieldNamed,
   filterOn,
   inheritedFacetPolicies,
+  isDatePrecision,
   isInlineReference,
   isBinnedRangeFacet,
   isUnsatisfiable,
@@ -1306,10 +1307,22 @@ function logicalValue(
         : undefined;
     }
     case 'integer':
-    case 'number':
-    case 'date': {
+    case 'number': {
       const value = flat[field.name];
       return typeof value === 'number' ? value : undefined;
+    }
+    case 'date': {
+      const seconds = flat[field.name];
+      if (typeof seconds !== 'number') {
+        return undefined;
+      }
+      // An index built before the precision companion existed has none; the
+      // seconds alone can always be read as a date-time.
+      const precision = flat[physicalFields(field).precision as string];
+      return {
+        seconds,
+        precision: isDatePrecision(precision) ? precision : 'dateTime',
+      };
     }
     case 'boolean':
       // A boolean is always present; an absent value means false.

@@ -443,8 +443,8 @@ describe('buildSearchParams', () => {
   });
 
   it('converts a deep-time xsd:gYear bound to the stored Unix seconds', () => {
-    const min = isoToUnixSeconds('-318000000');
-    const max = isoToUnixSeconds('-316000000');
+    const min = isoToUnixSeconds('-318000000')?.seconds;
+    const max = isoToUnixSeconds('-316000000')?.seconds;
     expect(
       buildSearchParams(
         {

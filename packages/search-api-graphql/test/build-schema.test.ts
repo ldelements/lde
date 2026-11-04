@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { graphql, printSchema } from 'graphql';
 import {
+  isoToUnixSeconds,
   searchSchema,
   unixSecondsToIso,
   type FacetsOutcome,
@@ -9,6 +10,7 @@ import {
   type SearchResult,
   type RootType,
   type SearchType,
+  type StoredDate,
 } from '@lde/search';
 import { buildGraphQLSchema, type SearchContext } from '../src/build-schema.js';
 
@@ -156,7 +158,7 @@ const canned: SearchResult = {
           label: { nl: ['Het Utrechts Archief'] },
         },
         size: 1234,
-        datePosted: 1_700_000_000,
+        datePosted: { seconds: 1_700_000_000, precision: 'dateTime' },
         score: 4.5,
         terminologySource: [
           { id: 'https://term/1', label: { nl: ['Kaarten'] } },
@@ -231,7 +233,7 @@ describe('buildGraphQLSchema', () => {
       label: [{ language: 'nl', value: 'Het Utrechts Archief' }],
     });
     expect(item.size).toBe(1234);
-    expect(item.datePosted).toBe('2023-11-14T22:13:20.000Z');
+    expect(item.datePosted).toBe('2023-11-14T22:13:20Z');
     expect(item.score).toBe(4.5);
     expect(item.terminologySource).toEqual([
       { id: 'https://term/1', label: [{ language: 'nl', value: 'Kaarten' }] },
@@ -284,6 +286,84 @@ describe('buildGraphQLSchema', () => {
     ]);
   });
 
+  it('serves each date at the precision its own record gave', async () => {
+    const stored = (iso: string) => isoToUnixSeconds(iso) as StoredDate;
+    const { engine } = fakeEngine({
+      total: 4,
+      facets: {},
+      hits: ['1999', '1999-05', '1999-05-03+02:00', '1999-05-03T14:30:00+02:00']
+        .map((iso, index) => ({
+          id: `https://d/${index}`,
+          document: { datePosted: stored(iso) },
+        }))
+        // An engine may also report an absent value as null.
+        .concat({ id: 'https://d/4', document: { datePosted: null as never } }),
+    });
+    const result = await run(`{ datasets { items { datePosted } } }`, {
+      engine,
+      acceptLanguage: ['nl'],
+    });
+    expect(result.errors).toBeUndefined();
+    expect(
+      (
+        (result.data?.datasets as Record<string, unknown>).items as Record<
+          string,
+          unknown
+        >[]
+      ).map((item) => item.datePosted),
+    ).toEqual(['1999', '1999-05', '1999-05-03', '1999-05-03T12:30:00Z', null]);
+  });
+
+  it('types every date as an ISO8601Date specified by the docs', async () => {
+    const { engine } = fakeEngine(canned);
+    const result = await run(
+      `{ __type(name: "ISO8601Date") { kind specifiedByURL } }`,
+      { engine, acceptLanguage: ['nl'] },
+    );
+    expect(result.data?.__type).toEqual({
+      kind: 'SCALAR',
+      specifiedByURL:
+        'https://ldelements.org/reference/search-api-graphql#dates',
+    });
+    const sdl = printSchema(
+      buildGraphQLSchema(
+        searchSchema(schema, organization, term),
+        datasetOptions,
+      ),
+    );
+    expect(sdl).toMatch(/datePosted: ISO8601Date\n/);
+    expect(sdl).toMatch(
+      /input DateRange \{\s+min: ISO8601Date\s+max: ISO8601Date\s+\}/,
+    );
+  });
+
+  it('rejects a date bound it cannot read, inline or as a variable', async () => {
+    const { engine } = fakeEngine(canned);
+    const context = { engine, acceptLanguage: ['nl'] };
+    const inline = await run(
+      `{ datasets(where: { datePosted: { min: "spring 1999" } }) { pagination { total } } }`,
+      context,
+    );
+    expect(inline.errors?.[0]?.message).toMatch(
+      /ISO8601Date cannot represent “spring 1999”/,
+    );
+    const variable = await run(
+      `query ($min: ISO8601Date) { datasets(where: { datePosted: { min: $min } }) { pagination { total } } }`,
+      context,
+      { min: '1999-13' },
+    );
+    expect(variable.errors?.[0]?.message).toMatch(
+      /ISO8601Date cannot represent “1999-13”/,
+    );
+    expect(variable.errors?.[0]?.extensions.code).toBe('BAD_USER_INPUT');
+    // A readable bound of any precision coerces.
+    const ok = await run(
+      `{ datasets(where: { datePosted: { min: "1999", max: "1999-05-03T12:30:00Z" } }) { pagination { total } } }`,
+      context,
+    );
+    expect(ok.errors).toBeUndefined();
+  });
+
   it('places untagged (und) values last with a null language', async () => {
     const { engine } = fakeEngine({
       total: 1,
@@ -296,7 +376,7 @@ describe('buildGraphQLSchema', () => {
       ],
     });
     const result = await run(
-      `{ datasets { items { title { language value } datePosted } } }`,
+      `{ datasets { items { title { language value } datePosted keyword } } }`,
       { engine, acceptLanguage: ['en'] },
     );
     const item = (
@@ -309,8 +389,9 @@ describe('buildGraphQLSchema', () => {
       { language: 'nl', value: 'Titel' },
       { language: null, value: 'Naamloos' },
     ]);
-    // An absent date resolves to null (the non-numeric branch).
+    // An absent date resolves to null, an absent list to an empty one.
     expect(item.datePosted).toBeNull();
+    expect(item.keyword).toEqual([]);
   });
 
   it('labels reference-facet buckets, leaving plain-facet buckets null', async () => {
@@ -478,10 +559,10 @@ describe('buildGraphQLSchema', () => {
     // A date is served as ISO 8601, a BCE year included – the terms the
     // DateRange filter takes.
     const isoExtent = {
-      min: unixSecondsToIso(bce),
-      max: unixSecondsToIso(modern),
+      min: unixSecondsToIso(bce, 'dateTime'),
+      max: unixSecondsToIso(modern, 'dateTime'),
     };
-    expect(isoExtent.min).toMatch(/^-001101-/);
+    expect(isoExtent.min).toMatch(/^-1101-/);
     // An unbinned range facet keeps one bucket per distinct value, a date’s
     // in ISO 8601 too.
     expect(facets.datePosted).toEqual({
@@ -1015,8 +1096,11 @@ describe('buildGraphQLSchema', () => {
       /type IntBinnedRangeFacet {[^}]*all: IntExtent\n[^}]*matching: IntExtent\n[^}]*buckets: \[RangeBucket!\]!/,
     );
     expect(sdl).toMatch(/datePosted: DateRangeFacet!/);
-    expect(sdl).toMatch(/type DateRangeFacet {[^}]*buckets: \[ValueBucket!\]!/);
-    expect(sdl).toMatch(/type DateExtent {\s*min: String!\s*max: String!/);
+    expect(sdl).toMatch(/type DateRangeFacet {[^}]*buckets: \[DateBucket!\]!/);
+    expect(sdl).toMatch(/type DateBucket \{\s+value: ISO8601Date!/);
+    expect(sdl).toMatch(
+      /type DateExtent {\s*min: ISO8601Date!\s*max: ISO8601Date!/,
+    );
     expect(sdl).toMatch(/iiif: \[BooleanBucket!\]!/);
     expect(sdl).toMatch(/input DatasetWhere/);
     expect(sdl).toMatch(/status: KeywordFilter/);

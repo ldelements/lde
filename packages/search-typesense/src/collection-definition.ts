@@ -356,7 +356,17 @@ function typesenseFields(
       optional: true,
     });
   }
+  if (names.precision !== undefined) {
+    fields.push(precisionField(names.precision));
+  }
   return fields;
+}
+
+/** A `date` field’s precision companion ({@link physicalFields}): read back
+ *  with the hit to format the value, never queried, so stored but not
+ *  indexed – it costs disk, not RAM. */
+function precisionField(name: string): CollectionFieldSchema {
+  return { name, type: 'string', index: false, optional: true };
 }
 
 /**
@@ -740,6 +750,9 @@ function nestedLeafFields(
       type: searchString,
       optional: true,
     });
+  }
+  if (names.precision !== undefined) {
+    fields.push(precisionField(nestedFieldName(prefix, names.precision)));
   }
   return fields;
 }

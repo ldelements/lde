@@ -47,6 +47,12 @@ const mediaObjectSchema: SearchType = {
       output: true,
       path: 'https://schema.org/width',
     },
+    {
+      name: 'uploadDate',
+      kind: 'date',
+      output: true,
+      path: 'https://schema.org/uploadDate',
+    },
   ],
 };
 
@@ -91,7 +97,13 @@ const datasetSchema: SearchType = {
     { name: 'status', kind: 'keyword', facetable: true, filterable: true },
     { name: 'statusRank', kind: 'integer', sortable: true },
     { name: 'iiif', kind: 'boolean', facetable: true, filterable: true },
-    { name: 'dateCreated', kind: 'date', facetable: true, filterable: true },
+    {
+      name: 'dateCreated',
+      kind: 'date',
+      facetable: true,
+      filterable: true,
+      output: true,
+    },
     {
       name: 'triples',
       kind: 'integer',
@@ -107,8 +119,9 @@ const datasetSchema: SearchType = {
 };
 
 // A BCE year, so the extent is read in stored seconds across eras.
-const bce = isoToUnixSeconds('-001100-01-01') as number;
-const modern = isoToUnixSeconds('2001-05-01') as number;
+const bce = isoToUnixSeconds('-001100-01-01')?.seconds as number;
+const modern = isoToUnixSeconds('2001-05-01')?.seconds as number;
+const uploaded = isoToUnixSeconds('1999-05')?.seconds as number;
 
 // Flat documents, as the projection would emit them (physical field names).
 const documents = [
@@ -131,13 +144,20 @@ const documents = [
         id: 'https://ex/m/1',
         contentUrl: ['https://ex/1/full/max/0/default.jpg'],
         width: 4096,
+        uploadDate: uploaded,
+        uploadDate_precision: 'month',
       },
-      { contentUrl: ['https://ex/2/full/max/0/default.jpg'] },
+      // Stored before precision was: no companion beside the date.
+      {
+        contentUrl: ['https://ex/2/full/max/0/default.jpg'],
+        uploadDate: uploaded,
+      },
     ],
     status: 'valid',
     statusRank: 0,
     iiif: true,
     dateCreated: bce,
+    dateCreated_precision: 'year',
     triples: 12,
   },
   {
@@ -293,9 +313,18 @@ describe('createTypesenseSearchEngine (integration)', () => {
         id: 'https://ex/m/1',
         contentUrl: ['https://ex/1/full/max/0/default.jpg'],
         width: 4096,
+        uploadDate: { seconds: uploaded, precision: 'month' },
       },
-      { contentUrl: ['https://ex/2/full/max/0/default.jpg'] },
+      {
+        contentUrl: ['https://ex/2/full/max/0/default.jpg'],
+        uploadDate: { seconds: uploaded, precision: 'dateTime' },
+      },
     ]);
+    // A date round-trips with the precision stored beside it.
+    expect(result.hits[0].document.dateCreated).toEqual({
+      seconds: bce,
+      precision: 'year',
+    });
     // A document without referents nests nothing rather than an empty list.
     const others = await engine.search(datasetSchema, {
       ...baseQuery,

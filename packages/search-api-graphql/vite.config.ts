@@ -31,7 +31,7 @@ export default mergeConfig(
           // from a direct caller, since GraphQL validates the query first.
           // Re-anchored when facet grouping moved to `@lde/search`, taking its
           // covered branches with it.
-          branches: 98.23,
+          branches: 98.5,
           statements: 100,
         },
       },
