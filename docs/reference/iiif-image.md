@@ -1,17 +1,18 @@
 # @lde/iiif-image
 
-Find the image service in a [IIIF Presentation](https://iiif.io/api/presentation/)
-manifest, and read that service’s [Image API](https://iiif.io/api/image/)
-`info.json` into dimensions and a ladder of sizes. Works across
-Presentation 2 and 3 and Image API 1, 2 and 3, so the consumer does not need to
-know which version a publisher speaks.
+Find the images a [IIIF Presentation](https://iiif.io/api/presentation/)
+manifest paints, with their stated size and image service, and read that
+service’s [Image API](https://iiif.io/api/image/) `info.json` into dimensions
+and a ladder of sizes. Works across Presentation 2 and 3 and Image API 1, 2
+and 3, so the consumer does not need to know which version a publisher speaks.
 
 ```ts
 import { fetchPublic } from '@lde/public-fetch';
-import { imageServices, readImageService } from '@lde/iiif-image';
+import { images, readImageService } from '@lde/iiif-image';
 
 const manifest = await (await fetchPublic(manifestUrl)).json();
-const [serviceUrl] = imageServices(manifest);
+const [cover] = images(manifest);
+const serviceUrl = cover?.service;
 if (serviceUrl !== undefined) {
   const info = await (await fetchPublic(`${serviceUrl}/info.json`)).json();
   const thumbnail = readImageService(serviceUrl, info)?.sizes[0]?.url;
@@ -24,17 +25,27 @@ if (serviceUrl !== undefined) {
 npm install @lde/iiif-image
 ```
 
-## Finding the image service
+## Finding the painted images
 
-`imageServices(manifest)` yields the base URL of the image service of each
-painted image, in the order the manifest paints them; destructure the first for a
-cover image, and the canvases after it are not walked. A Presentation 2 manifest
-is upgraded whole first, so there it costs the same either way. It opens `Choice`
-and `SpecificResource` bodies, and normalises a service stated with a trailing
-slash or as its `info.json`. Like any iterator, its result can be read once.
+`images(manifest)` yields each image the manifest paints, in the order it paints
+them; destructure the first for a cover image, and the canvases after it are not
+walked. A Presentation 2 manifest is upgraded whole first, so there it costs the
+same either way. It opens `Choice` and `SpecificResource` bodies. Like any
+iterator, its result can be read once.
+
+| Field             | Meaning                                                                                                                            |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `url`             | The image resource’s `id`                                                                                                          |
+| `width`, `height` | The size the manifest states, each left out where it is missing or not a positive integer                                          |
+| `service`         | The base of the image service, without a trailing slash or `/info.json`; left out for a static image file, which cannot be resized |
+
+An image with a service still has its own `id` and stated size, so the service is
+an optional field rather than an alternative shape. A caller that wants only
+services filters on it. Painted resources that are not images, such as video, are
+skipped, as are images without an `id`.
 
 It walks the plain JSON rather than normalising the manifest, so a defect
-elsewhere in a manifest does not hide its services: Deventit Atlantis writes
+elsewhere in a manifest does not hide its images: Deventit Atlantis writes
 `"annotations": [null]`, which the normalising parsers that viewers use reject.
 That makes it deliberately more tolerant than
 [@lde/iiif-validator](./iiif-validator), which reports such a manifest as one
@@ -43,8 +54,8 @@ that does not load.
 It throws a `TypeError` for a document that is not a manifest it can read: one
 without canvases, such as an error page served as JSON or a collection, or a
 Presentation 2 manifest the upgrade rejects. A caller that stores results needs
-that difference: a manifest without image services is a fact about its images,
-the other is not, and the caller decides whether to retry it or remember it.
+that difference: a manifest without images is a fact about its images, the
+other is not, and the caller decides whether to retry it or remember it.
 
 ## Reading `info.json`
 

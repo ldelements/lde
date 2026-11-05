@@ -112,7 +112,7 @@ await pipeline.run();
 </tr>
 <tr>
   <td><a href="packages/iiif-image">@lde/iiif-image</a><br><a href="https://www.npmjs.com/package/@lde/iiif-image"><img src="https://img.shields.io/npm/v/@lde/iiif-image" alt="npm"></a></td>
-  <td>Find a IIIF manifest’s image service and read its dimensions, limits and sizes</td>
+  <td>Find a IIIF manifest’s painted images and read their image services’ dimensions, limits and sizes</td>
 </tr>
 <tr>
   <td><a href="packages/iiif-validator">@lde/iiif-validator</a><br><a href="https://www.npmjs.com/package/@lde/iiif-validator"><img src="https://img.shields.io/npm/v/@lde/iiif-validator" alt="npm"></a></td>

@@ -1,3 +1,4 @@
+import { isPositiveInteger } from './isPositiveInteger.js';
 import { serviceBase } from './serviceBase.js';
 
 /**
@@ -188,8 +189,4 @@ function profileOf(document: Record<string, unknown>): string {
     ? document.profile[0]
     : document.profile;
   return typeof profile === 'string' ? profile : '';
-}
-
-function isPositiveInteger(value: unknown): value is number {
-  return Number.isInteger(value) && (value as number) > 0;
 }
