@@ -1,3 +1,9 @@
+## 0.25.0 (2026-11-05)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.42.0
+
 ## 0.24.1 (2026-11-05)
 
 This was a version bump only for @lde/pipeline-shacl-validator to align it with other projects, there were no code changes.
