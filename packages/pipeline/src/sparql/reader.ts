@@ -1,6 +1,6 @@
-import { Dataset, Distribution, assertSafeIri } from '@lde/dataset';
+import { Dataset, Distribution } from '@lde/dataset';
 import { SparqlEndpointFetcher } from 'fetch-sparql-endpoint';
-import type { NamedNode, Quad } from '@rdfjs/types';
+import type { NamedNode, Literal, Quad } from '@rdfjs/types';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { Transform } from 'node:stream';
@@ -12,7 +12,8 @@ import isNetworkError from 'is-network-error';
 import pRetry from 'p-retry';
 import { quadToStringQuad } from 'rdf-string';
 import { withDefaultGraph } from './graph.js';
-import { injectValues } from './values.js';
+import { injectDatasetBindings, injectValues } from './values.js';
+import type { DatasetBindings } from './datasetBindings.js';
 import {
   ConstantTimeoutPolicy,
   type TimeoutOutcome,
@@ -33,15 +34,23 @@ export class NotSupported {
   constructor(public readonly message: string) {}
 }
 
-/** A single row of variable bindings (variable name → NamedNode). */
-export type VariableBindings = Record<string, NamedNode>;
+/** A single row of variable bindings (variable name → NamedNode or Literal). */
+export type VariableBindings = Record<string, NamedNode | Literal>;
 
 export interface ReadOptions {
   /**
-   * Variable bindings to inject as a VALUES clause into the query.
-   * When non-empty, a VALUES block is prepended to the WHERE clause.
+   * Per-item variable bindings (typically an {@link ItemSelector}'s rows).
+   * Injected at the innermost sub-SELECT – see {@link injectValues}.
    */
   bindings?: VariableBindings[];
+
+  /**
+   * Dataset-level bindings, injected at the outermost scope for the variables
+   * the query references – see {@link injectDatasetBindings}. A {@link Stage}
+   * passes these. Without them nothing is bound, not even `?dataset`: outside a
+   * stage, pass {@link predefinedDatasetBindings} to bind the DCAT variables.
+   */
+  datasetBindings?: DatasetBindings;
 
   /**
    * Per-call {@link TimeoutPolicy}. When supplied, the reader calls
@@ -113,12 +122,18 @@ export interface SparqlConstructReaderOptions {
    * Deduplicate triples in the CONSTRUCT output stream.
    *
    * SPARQL CONSTRUCT queries can produce duplicate triples — for example,
-   * constant triples (like `?dataset a edm:ProvidedCHO`) are emitted for
-   * every solution row. When enabled, a streaming identity filter removes
-   * duplicates inline without buffering.
+   * constant triples (like `$this a edm:ProvidedCHO`) are emitted for every
+   * solution row; a multi-valued dataset binding (`?datasetLanguage`,
+   * `?datasetPublisherName`) that the query references does the same. When
+   * enabled, a streaming identity filter removes duplicates inline without
+   * buffering.
+   *
+   * This happens in the client: the endpoint still computes and sends every
+   * duplicate, and they still count towards a `LIMIT` in the query.
    *
    * The dedup set is scoped to each {@link read} call, so memory stays
-   * bounded to the number of unique quads per call (typically one batch).
+   * bounded to the number of unique quads per call (typically one batch), and
+   * duplicates across batches or readers remain.
    *
    * Inspired by Comunica's `distinctConstruct` context option.
    *
@@ -137,14 +152,20 @@ export interface SparqlConstructReaderOptions {
  * Template substitution (applied in order):
  * 1. `#subjectFilter#` — replaced with `distribution.subjectFilter` (deferred to read)
  * 2. `FROM <graph>` — set via `withDefaultGraph` if the distribution has a named graph
- * 3. `?dataset` — replaced with the dataset IRI (string substitution on the serialised query)
+ * 3. Per-item (selector) bindings — injected at the innermost sub-SELECT
+ *    (see {@link injectValues}).
+ * 4. Dataset-level bindings passed in {@link ReadOptions.datasetBindings} —
+ *    injected at the outermost scope for the variables the query references
+ *    (see {@link injectDatasetBindings}).
  *
  * @example
  * ```typescript
  * const reader = new SparqlConstructReader({
  *   query: 'CONSTRUCT { ?dataset ?p ?o } WHERE { ?s ?p ?o }',
  * });
- * const result = await reader.read(dataset, distribution);
+ * const result = await reader.read(dataset, distribution, {
+ *   datasetBindings: predefinedDatasetBindings(dataset),
+ * });
  * if (result instanceof NotSupported) {
  *   console.log(result.message);
  * } else {
@@ -184,13 +205,13 @@ export class SparqlConstructReader implements Reader {
    * Read quads by executing the SPARQL CONSTRUCT query against the
    * distribution's endpoint.
    *
-   * @param dataset The dataset to read from.
+   * @param _dataset The dataset to read from.
    * @param distribution The distribution providing the SPARQL endpoint.
-   * @param options Optional read options (bindings).
+   * @param options Optional read options (bindings, dataset bindings).
    * @returns AsyncIterable<Quad> stream of results.
    */
   async read(
-    dataset: Dataset,
+    _dataset: Dataset,
     distribution: Distribution,
     options?: ReadOptions,
   ): Promise<AsyncIterable<Quad>> {
@@ -215,14 +236,16 @@ export class SparqlConstructReader implements Reader {
       withDefaultGraph(ast, distribution.namedGraph);
     }
 
-    const bindings = options?.bindings;
-    if (bindings !== undefined && bindings.length > 0) {
-      ast = injectValues(ast, bindings);
+    const itemBindings = options?.bindings ?? [];
+    if (itemBindings.length > 0) {
+      ast = injectValues(ast, itemBindings);
     }
 
-    let query = this.generator.generate(ast);
-    assertSafeIri(dataset.iri.toString());
-    query = query.replaceAll('?dataset', `<${dataset.iri}>`);
+    if (options?.datasetBindings) {
+      ast = injectDatasetBindings(ast, options.datasetBindings);
+    }
+
+    const query = this.generator.generate(ast);
 
     const policy = options?.timeout ?? defaultTimeoutPolicy;
 

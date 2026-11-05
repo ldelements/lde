@@ -4,6 +4,11 @@ import {
   LineBufferTransform,
   readQueryFile,
 } from '../../src/sparql/index.js';
+import {
+  datasetBindingsFor,
+  predefinedDatasetBindings,
+} from '../../src/sparql/datasetBindings.js';
+import type { ReadOptions } from '../../src/sparql/reader.js';
 import { Dataset, Distribution } from '@lde/dataset';
 import {
   startSparqlEndpoint,
@@ -53,7 +58,7 @@ describe('SparqlConstructReader', () => {
 
       const reader = new SparqlConstructReader({
         query: `CONSTRUCT {
-          ?dataset ?p ?o .
+          <${datasetIri}> ?p ?o .
         }
         WHERE {
           <${datasetIri}> ?p ?o .
@@ -112,7 +117,7 @@ describe('SparqlConstructReader', () => {
       );
     });
 
-    it('substitutes ?dataset with dataset IRI', async () => {
+    it('binds ?dataset to the dataset IRI via a VALUES clause', async () => {
       const fetcher = new SparqlEndpointFetcher();
       const querySpy = vi.spyOn(fetcher, 'fetchTriples');
 
@@ -131,15 +136,21 @@ describe('SparqlConstructReader', () => {
         distributions: [distribution],
       });
 
-      await reader.read(dataset, distribution);
+      await reader.read(dataset, distribution, {
+        datasetBindings: predefinedDatasetBindings(dataset),
+      });
 
+      expect(querySpy).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.stringContaining('VALUES'),
+      );
       expect(querySpy).toHaveBeenCalledWith(
         expect.any(String),
         expect.stringContaining(`<${datasetIri}>`),
       );
       expect(querySpy).toHaveBeenCalledWith(
         expect.any(String),
-        expect.not.stringContaining('?dataset'),
+        expect.stringContaining('?dataset'),
       );
     });
 
@@ -285,7 +296,7 @@ describe('SparqlConstructReader', () => {
       );
     });
 
-    it('does not inject a VALUES clause without bindings', async () => {
+    it('injects no VALUES clause without selector bindings', async () => {
       const fetcher = new SparqlEndpointFetcher();
       const querySpy = vi.spyOn(fetcher, 'fetchTriples');
 
@@ -311,7 +322,7 @@ describe('SparqlConstructReader', () => {
       );
     });
 
-    it('does not inject a VALUES clause when bindings array is empty', async () => {
+    it('injects no VALUES clause when the selector bindings array is empty', async () => {
       const fetcher = new SparqlEndpointFetcher();
       const querySpy = vi.spyOn(fetcher, 'fetchTriples');
 
@@ -335,6 +346,62 @@ describe('SparqlConstructReader', () => {
         expect.any(String),
         expect.not.stringContaining('VALUES'),
       );
+    });
+  });
+
+  describe('datasetBindings', () => {
+    const datasetIri = 'http://foo.org/id/dataset/foo';
+    const distribution = () =>
+      Distribution.sparql(
+        new URL(`http://localhost:${port}/sparql`),
+        'http://foo.org/id/graph/foo',
+      );
+    const dataset = () =>
+      new Dataset({
+        iri: new URL(datasetIri),
+        distributions: [distribution()],
+        language: ['nl', 'en'],
+      });
+
+    async function read(query: string, options: ReadOptions) {
+      const reader = new SparqlConstructReader({ query });
+      const result = await reader.read(dataset(), distribution(), options);
+      const triples: string[] = [];
+      for await (const quad of result) {
+        triples.push(`${quad.subject.value} ${quad.object.value}`);
+      }
+      return triples;
+    }
+
+    it('joins a single custom row with a multi-valued binding, visible outside a sub-SELECT', async () => {
+      const triples = await read(
+        `CONSTRUCT {
+          ?s a ?type .
+          ?type <urn:language> ?datasetLanguage .
+        }
+        WHERE {
+          { SELECT ?s WHERE { ?s ?p ?o } }
+        }`,
+        {
+          bindings: [{ s: namedNode(datasetIri) }],
+          datasetBindings: datasetBindingsFor(dataset(), [
+            { type: namedNode('urn:A') },
+          ]),
+        },
+      );
+
+      expect(new Set(triples)).toEqual(
+        new Set([`${datasetIri} urn:A`, 'urn:A nl', 'urn:A en']),
+      );
+    });
+
+    it('binds nothing when no dataset bindings are passed', async () => {
+      const triples = await read(
+        'CONSTRUCT { <urn:1> <urn:publisher> ?datasetPublisher ; <urn:p> <urn:2> } WHERE {}',
+        {},
+      );
+
+      expect(triples).toEqual(['urn:1 urn:2']);
     });
   });
 
@@ -488,7 +555,7 @@ describe('SparqlConstructReader', () => {
 
       const reader = new SparqlConstructReader({
         query: `CONSTRUCT {
-          ?dataset ?p ?o .
+          <${datasetIri}> ?p ?o .
         }
         WHERE {
           <${datasetIri}> ?p ?o .
