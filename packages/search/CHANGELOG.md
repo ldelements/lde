@@ -1,3 +1,9 @@
+## 0.36.3 (2026-11-05)
+
+### 🚀 Features
+
+- **search:** read an edge the graph may leave out ([#996](https://github.com/ldelements/lde/pull/996))
+
 ## 0.36.2 (2026-11-05)
 
 ### 🩹 Fixes

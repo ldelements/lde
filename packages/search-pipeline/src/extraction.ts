@@ -11,6 +11,7 @@ import {
 import { Parser } from '@traqula/parser-sparql-1-1';
 import { Generator } from '@traqula/generator-sparql-1-1';
 import {
+  endpointFieldOf,
   fieldNamed,
   irAlias,
   isInlineReference,
@@ -181,6 +182,28 @@ function buildFor(
       template.push(factory.triple(subject, alias, referent));
       const nested = buildFor(referenceType, referent, schema, counter, onPath);
       template.push(...nested.template);
+      const nestedBranches = [...nested.branches];
+      // A graph that may leave the edge out: the node the work points at may be
+      // the endpoint itself, so its type – which tells the two apart – and the
+      // endpoint’s own selection are read right here, beside the edge’s fields.
+      const endpointField = endpointFieldOf(referenceType, field.ref.identity);
+      if (endpointField !== undefined) {
+        // An empty branch: an endpoint the graph says nothing else about keeps
+        // its row, and so its id, as it would inside an edge.
+        nestedBranches.push(factory.patternGroup([], factory.gen()));
+        const typeHop = buildTypeHop(referent, counter);
+        template.push(typeHop.triple);
+        nestedBranches.push(typeHop.pattern);
+        const hops = buildReferentHops(
+          endpointField,
+          referent,
+          schema,
+          counter,
+          onPath,
+        );
+        template.push(...hops.template);
+        nestedBranches.push(...hops.expansions);
+      }
       const patterns: Pattern[] = [
         factory.patternBgp(
           [factory.triple(subject, sourcePath, referent)],
@@ -189,8 +212,8 @@ function buildFor(
       ];
       // A single-branch union serialises to just its group, so only add the
       // nested union when the reference type has fields of its own.
-      if (nested.branches.length > 0) {
-        patterns.push(factory.patternUnion(nested.branches, factory.gen()));
+      if (nestedBranches.length > 0) {
+        patterns.push(factory.patternUnion(nestedBranches, factory.gen()));
       }
       branches.push(factory.patternGroup(patterns, factory.gen()));
     } else {
@@ -202,34 +225,16 @@ function buildFor(
           factory.gen(),
         ),
       ];
-      const targets = referencedTargetsOf(field, schema);
-      // Every hop off the referent – its type, each key, each expansion – is
-      // its own branch of ONE optional union: each binds only its own
-      // variables, so a multi-valued type or key multiplies against nothing.
+      // The type tells several targets apart; one target needs none.
       const expansions: PatternGroup[] = [];
-      if (targets.length > 1) {
-        const built = buildTypeHop(value, counter);
-        template.push(built.triple);
-        expansions.push(built.pattern);
+      if (referencedTargetsOf(field, schema).length > 1) {
+        const typeHop = buildTypeHop(value, counter);
+        template.push(typeHop.triple);
+        expansions.push(typeHop.pattern);
       }
-      const local = localTargetsOf(field, schema, onPath);
-      for (const target of targets) {
-        if (!local.includes(target)) {
-          // Only where no local expansion follows: a `local` lookup reads the
-          // target’s every path-bearing field, and a keyed target’s key field
-          // is one of them, so emitting the hop as well would state it twice.
-          const keyed = keyedFieldOf(target);
-          if (keyed !== undefined) {
-            const built = buildKeyHop(target, keyed, value, counter);
-            template.push(built.triple);
-            expansions.push(built.pattern);
-          }
-          continue;
-        }
-        const nested = buildFor(target, value, schema, counter, onPath);
-        template.push(...nested.template);
-        expansions.push(...nested.branches);
-      }
+      const hops = buildReferentHops(field, value, schema, counter, onPath);
+      template.push(...hops.template);
+      expansions.push(...hops.expansions);
       // `OPTIONAL`, unlike an inline reference’s conjoined nesting: this
       // referent is stored by id whether or not the referring document says
       // anything about it, and conjoining would drop both together. Several
@@ -248,6 +253,43 @@ function buildFor(
     }
   }
   return { template, branches };
+}
+
+/**
+ * The hops a reference reads off its referent besides its type: each keyed
+ * target’s key and each `local` target’s own fields. Each is its own branch,
+ * so the caller binds them in ONE union where each binds only its own
+ * variables, and a multi-valued key multiplies against nothing.
+ */
+function buildReferentHops(
+  field: SearchField,
+  referent: TermVariable,
+  schema: SearchSchema,
+  counter: VariableCounter,
+  onPath: ReadonlySet<string>,
+): { readonly template: TripleNesting[]; readonly expansions: PatternGroup[] } {
+  const template: TripleNesting[] = [];
+  const expansions: PatternGroup[] = [];
+  const targets = referencedTargetsOf(field, schema);
+  const local = localTargetsOf(field, schema, onPath);
+  for (const target of targets) {
+    if (!local.includes(target)) {
+      // Only where no local expansion follows: a `local` lookup reads the
+      // target’s every path-bearing field, and a keyed target’s key field
+      // is one of them, so emitting the hop as well would state it twice.
+      const keyed = keyedFieldOf(target);
+      if (keyed !== undefined) {
+        const built = buildKeyHop(target, keyed, referent, counter);
+        template.push(built.triple);
+        expansions.push(built.pattern);
+      }
+      continue;
+    }
+    const nested = buildFor(target, referent, schema, counter, onPath);
+    template.push(...nested.template);
+    expansions.push(...nested.branches);
+  }
+  return { template, expansions };
 }
 
 /**

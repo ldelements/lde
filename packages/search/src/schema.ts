@@ -569,6 +569,9 @@ export interface RootType extends SearchTypeBase {
    *  reference that names this type ({@link FacetKeys}). Unset, every
    *  document does. */
   readonly facetKeys?: FacetKeys;
+  /** Only a Reference Type is an edge a graph may leave out
+   *  ({@link ReferenceType.edgeClass}). */
+  readonly edgeClass?: never;
 }
 
 /**
@@ -594,6 +597,25 @@ export interface ReferenceType extends SearchTypeBase {
   /** Nothing references a Reference Type by id, so there is no facet for a
    *  policy to narrow. `never` for the same reason `key` is. */
   readonly facetKeys?: never;
+  /**
+   * The RDF class of this edge’s **own nodes**, for a graph that may leave
+   * the edge out and point at the endpoint directly – `schema:contributor`
+   * stated flat on one work and through a `schema:Role` on the next.
+   *
+   * Declaring it is the opt-in. A node an inline reference reaches is then
+   * read as this edge where its `rdf:type` is this class, and as the
+   * **endpoint itself** otherwise: an entry carrying that node in the
+   * reference’s {@link ReferenceStrategy.identity identity} field and none of
+   * the edge’s own fields. So every reference nesting this type must declare
+   * an `identity` ({@link searchSchema} enforces it) – and with it
+   * `filterable` or `facetable`, on a Root Type’s field – and an edge node the
+   * graph left untyped, or typed with a subclass (nothing here reasons over
+   * subclasses), is read as an endpoint.
+   *
+   * Not a `class`: that would make this a {@link RootType}, with a collection
+   * of its own.
+   */
+  readonly edgeClass?: string;
 }
 
 /**
@@ -766,6 +788,24 @@ export function referenceTypeNamed(
   name: string,
 ): ReferenceType | undefined {
   return referenceTypesBySchema.get(schema)?.get(name);
+}
+
+/**
+ * The nested reference an endpoint the graph stated without its edge goes into
+ * – the inline reference’s {@link ReferenceStrategy.identity identity} – where
+ * the Reference Type declares an {@link ReferenceType.edgeClass edge class},
+ * and `undefined` where every node the reference reaches is an edge. The one
+ * reading the extraction (which then also reads the endpoint at the first hop)
+ * and the projection (which wraps a flat endpoint into an edge) share.
+ */
+export function endpointFieldOf(
+  referenceType: ReferenceType,
+  identity: string | undefined,
+): SearchField | undefined {
+  if (referenceType.edgeClass === undefined || identity === undefined) {
+    return undefined;
+  }
+  return fieldNamed(referenceType, identity);
 }
 
 /**
@@ -1024,7 +1064,8 @@ function assertResolvableInlineReferences(
       if (!isInlineReference(field)) {
         continue;
       }
-      if (!referenceTypes.has(field.ref.typeName)) {
+      const referenceType = referenceTypes.get(field.ref.typeName);
+      if (referenceType === undefined) {
         throw new Error(
           `Inline reference “${searchType.name}.${field.name}” names “${field.ref.typeName}”, which is not a declared reference type; declare a reference type (a SearchType with no class) with that name.`,
         );
@@ -1043,7 +1084,7 @@ function assertResolvableInlineReferences(
             )}, which it cannot serve: its value is a nested object, not a token an engine can search, sort or join on.`,
         );
       }
-      assertIdentityCompanion(searchType, field, referenceTypes);
+      assertIdentityCompanion(searchType, field, referenceType);
     }
   }
   for (const searchType of types) {
@@ -1073,11 +1114,17 @@ function assertResolvableInlineReferences(
 function assertIdentityCompanion(
   searchType: SearchType,
   field: ReferenceField & { readonly ref: { readonly typeName: string } },
-  referenceTypes: ReadonlyMap<string, ReferenceType>,
+  referenceType: ReferenceType,
 ): void {
   const where = `Inline reference “${searchType.name}.${field.name}”`;
   const identity = field.ref.identity;
   const filters = field.filterable === true || field.facetable === true;
+  const { edgeClass } = referenceType;
+  if (identity === undefined && edgeClass !== undefined) {
+    throw new Error(
+      `${where} nests “${field.ref.typeName}”, which declares an “edgeClass”, but names no “identity”: a node that is not of the edge class is the endpoint itself, and the identity field is where it goes. Nest it from a Root Type’s field that names the nested reference identifying the endpoint as “identity” and declares “filterable” or “facetable”.`,
+    );
+  }
   if (identity === undefined) {
     if (filters) {
       throw new Error(
@@ -1101,9 +1148,7 @@ function assertIdentityCompanion(
       `${where} declares an “identity”, but “${searchType.name}” is a reference type: an identity companion is a flat field beside the reference, and a nested one has nowhere to live. Declare the companion on the reference that carries this type.`,
     );
   }
-  // Resolvable by construction: the typeName was checked just above.
-  const referenceType = referenceTypes.get(field.ref.typeName);
-  const identityField = referenceType && fieldNamed(referenceType, identity);
+  const identityField = fieldNamed(referenceType, identity);
   if (identityField === undefined) {
     throw new Error(
       `${where} names identity “${identity}”, which “${field.ref.typeName}” does not declare.`,
@@ -1115,6 +1160,20 @@ function assertIdentityCompanion(
   ) {
     throw new Error(
       `${where} names identity “${identity}”, which names no target: an identity companion holds ids of documents in a collection, so the field it harvests must be a reference declaring a “lookup” target or a label source.`,
+    );
+  }
+  // An endpoint stated without its edge carries the identity field alone, so
+  // any other required field would be missing from it, dropping the document.
+  const requiredOnEdge =
+    edgeClass === undefined
+      ? undefined
+      : referenceType.fields.find(
+          (edgeField) =>
+            edgeField.required === true && edgeField.name !== identity,
+        );
+  if (requiredOnEdge !== undefined) {
+    throw new Error(
+      `${where} nests “${field.ref.typeName}”, which declares an “edgeClass” and requires “${requiredOnEdge.name}”: an endpoint the graph states without its edge carries only “${identity}”, so it would never have “${requiredOnEdge.name}”. Drop “required” from “${requiredOnEdge.name}”.`,
     );
   }
 }

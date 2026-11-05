@@ -33,3 +33,20 @@ _:anonymousWork a schema:CreativeWork ;
                  [ a schema:Role ;
                    schema:roleName "uitgever" ;
                    schema:creator [ schema:name "Onbekende drukker"@nl ] ] .
+
+# The same relation where the publisher may leave the Role out: one agent in a
+# Role, one stated flat, aligned to an authority record it must be keyed on, and
+# one Role naming no agent at all.
+<https://ex/ph/1> a schema:Photograph ;
+  schema:name "Maasgezicht"@nl ;
+  schema:contributor [ a schema:Role ;
+                       schema:roleName "drukker" ;
+                       schema:contributor <https://ex/p/1> ] ,
+                     <https://ex/o/1> ,
+                     <https://ex/o/2> ,
+                     [ a schema:Role ;
+                       schema:roleName "fabrikant" ] .
+
+<https://ex/o/1> a schema:Organization ;
+  schema:name "Société Céramique" ;
+  schema:sameAs <https://rkd.example/104628> .
