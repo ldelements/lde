@@ -1,3 +1,9 @@
+## 0.30.4 (2026-11-05)
+
+### 🚀 Features
+
+- **search-indexer:** make QLever’s memory cap for queries configurable ([#998](https://github.com/ldelements/lde/pull/998))
+
 ## 0.30.3 (2026-11-05)
 
 ### 🧱 Updated Dependencies
