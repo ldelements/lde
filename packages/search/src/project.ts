@@ -11,7 +11,6 @@ import {
   displayFieldName,
   displayLangOf,
   documentKeyOf,
-  edgeClassesOf,
   fieldNamed,
   identityFieldOf,
   inheritedFacetPolicies,
@@ -965,7 +964,7 @@ function applyInlineReference(
 /**
  * Read each framed node an inline reference reached as an **edge**: unchanged
  * where the Reference Type declares no {@link ReferenceType.edgeClass edge
- * class} or the node is of one, and otherwise the endpoint the graph pointed at
+ * class} or the node is of it, and otherwise the endpoint the graph pointed at
  * directly, wrapped in an edge carrying it under the identity field alone – so
  * a flat statement and a qualified one project through one path.
  *
@@ -977,9 +976,9 @@ function edgeReader(
   referenceType: ReferenceType,
   identity: string | undefined,
 ): (value: unknown) => unknown {
-  const edgeClasses = edgeClassesOf(referenceType);
+  const { edgeClass } = referenceType;
   // `searchSchema` requires an identity wherever an edge class is declared.
-  if (edgeClasses.length === 0 || identity === undefined) {
+  if (edgeClass === undefined || identity === undefined) {
     return (value) => value;
   }
   const endpointAlias = irAlias(
@@ -988,8 +987,7 @@ function edgeReader(
   );
   return (value) => {
     // A framed reference value is always a node object.
-    const classes = classesOf(value as Record<string, unknown>);
-    return edgeClasses.some((edgeClass) => classes.has(edgeClass))
+    return classesOf(value as Record<string, unknown>).has(edgeClass)
       ? value
       : { [endpointAlias]: [value] };
   };

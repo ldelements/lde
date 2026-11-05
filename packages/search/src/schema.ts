@@ -595,25 +595,24 @@ export interface ReferenceType extends SearchTypeBase {
    *  policy to narrow. `never` for the same reason `key` is. */
   readonly facetKeys?: never;
   /**
-   * The RDF class(es) of this edge’s **own nodes**, for a graph that may leave
+   * The RDF class of this edge’s **own nodes**, for a graph that may leave
    * the edge out and point at the endpoint directly – `schema:contributor`
    * stated flat on one work and through a `schema:Role` on the next.
    *
    * Declaring it is the opt-in. A node an inline reference reaches is then
-   * read as this edge where its `rdf:type` is one of these classes, and as the
+   * read as this edge where its `rdf:type` is this class, and as the
    * **endpoint itself** otherwise: an entry carrying that node in the
    * reference’s {@link ReferenceStrategy.identity identity} field and none of
    * the edge’s own fields. So every reference nesting this type must declare
    * an `identity` ({@link searchSchema} enforces it) – and with it
    * `filterable` or `facetable`, on a Root Type’s field – and an edge node the
-   * graph left untyped is read as an endpoint.
+   * graph left untyped, or typed with a subclass (nothing here reasons over
+   * subclasses), is read as an endpoint.
    *
-   * Several, where publishers type one edge differently – `schema:Role` and
-   * its subclass `schema:PerformanceRole` – since no store here reasons over
-   * subclasses. Not a `class`: that would make this a {@link RootType}, with
-   * a collection of its own.
+   * Not a `class`: that would make this a {@link RootType}, with a collection
+   * of its own.
    */
-  readonly edgeClass?: string | readonly string[];
+  readonly edgeClass?: string;
 }
 
 /**
@@ -773,22 +772,6 @@ export function searchSchema<const Types extends readonly SearchType[]>(
   // query or – worse – halfway through the first rebuild.
   joinGraph(schema);
   return schema;
-}
-
-/**
- * The {@link ReferenceType.edgeClass edge classes} a Reference Type declares,
- * as a list – empty for one that declares none, whose every node is an edge.
- * The one reading the extraction (which then also reads the endpoint off the
- * first hop) and the projection (which tells the two apart) share.
- */
-export function edgeClassesOf(
-  referenceType: ReferenceType | undefined,
-): readonly string[] {
-  const declared = referenceType?.edgeClass;
-  if (declared === undefined) {
-    return [];
-  }
-  return typeof declared === 'string' ? [declared] : declared;
 }
 
 /**
@@ -1116,7 +1099,7 @@ function assertIdentityCompanion(
   const filters = field.filterable === true || field.facetable === true;
   if (
     identity === undefined &&
-    edgeClassesOf(referenceTypes.get(field.ref.typeName)).length > 0
+    referenceTypes.get(field.ref.typeName)?.edgeClass !== undefined
   ) {
     throw new Error(
       `${where} nests “${field.ref.typeName}”, which declares an “edgeClass”, but names no “identity”: a node that is not of the edge class is the endpoint itself, and the identity field is where it goes. Name the nested reference identifying the endpoint as “identity”, which also needs “filterable” or “facetable” on this reference.`,

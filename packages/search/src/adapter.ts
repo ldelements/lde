@@ -28,7 +28,6 @@ export {
   TARGET_FIELD,
   identityFieldOf,
   identityFieldName,
-  edgeClassesOf,
   inheritedFacetPolicies,
   referenceFields,
   referenceTypeNamed,

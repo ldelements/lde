@@ -1726,30 +1726,6 @@ describe('an edge the graph may leave out', () => {
     expect(document.creator_id).toEqual([RKD, RKD_OTHER]);
   });
 
-  it('reads a node of any declared edge class as the edge', () => {
-    // Publishers type one edge differently, and no store here reasons over
-    // subclasses: `schema:PerformanceRole` is a `schema:Role` only if declared.
-    const listedEdge = defineSearchType({
-      ...optionalEdge,
-      edgeClass: [ROLE, `${SCHEMA_ORG}PerformanceRole`],
-    });
-    const listed = projectDocument(
-      {
-        '@id': 'https://ex/work/31',
-        [alias('OptionalWork', 'creator')]: [
-          {
-            '@type': `${SCHEMA_ORG}PerformanceRole`,
-            [optionalKey('role')]: [{ '@value': 'uitvoerder' }],
-          },
-        ],
-      },
-      optionalWork,
-      searchSchema(optionalWork, person, listedEdge),
-    );
-
-    expect(entriesOf(listed)).toEqual([{ role: 'uitvoerder' }]);
-  });
-
   it('requires an identity on every reference nesting the type', () => {
     // A bare endpoint goes into the entry’s identity field; a reference that
     // names none would have nowhere to put it.

@@ -11,7 +11,6 @@ import {
 import { Parser } from '@traqula/parser-sparql-1-1';
 import { Generator } from '@traqula/generator-sparql-1-1';
 import {
-  edgeClassesOf,
   fieldNamed,
   irAlias,
   isInlineReference,
@@ -201,7 +200,6 @@ function buildFor(
           schema,
           counter,
           onPath,
-          false,
         );
         template.push(...hops.template);
         nestedBranches.push(...hops.expansions);
@@ -227,16 +225,16 @@ function buildFor(
           factory.gen(),
         ),
       ];
-      const hops = buildReferentHops(
-        field,
-        value,
-        schema,
-        counter,
-        onPath,
-        true,
-      );
+      // The type tells several targets apart; one target needs none.
+      const expansions: PatternGroup[] = [];
+      if (referencedTargetsOf(field, schema).length > 1) {
+        const typeHop = buildTypeHop(value, counter);
+        template.push(typeHop.triple);
+        expansions.push(typeHop.pattern);
+      }
+      const hops = buildReferentHops(field, value, schema, counter, onPath);
       template.push(...hops.template);
-      const expansions = hops.expansions;
+      expansions.push(...hops.expansions);
       // `OPTIONAL`, unlike an inline reference’s conjoined nesting: this
       // referent is stored by id whether or not the referring document says
       // anything about it, and conjoining would drop both together. Several
@@ -258,11 +256,10 @@ function buildFor(
 }
 
 /**
- * Every hop a reference reads off its referent: its `rdf:type` where the
- * reference names several targets (and `readType` asks for it), each keyed
- * target’s key, and each `local` target’s own fields. Each is its own branch,
+ * The hops a reference reads off its referent besides its type: each keyed
+ * target’s key and each `local` target’s own fields. Each is its own branch,
  * so the caller binds them in ONE union where each binds only its own
- * variables, and a multi-valued type or key multiplies against nothing.
+ * variables, and a multi-valued key multiplies against nothing.
  */
 function buildReferentHops(
   field: SearchField,
@@ -270,16 +267,10 @@ function buildReferentHops(
   schema: SearchSchema,
   counter: VariableCounter,
   onPath: ReadonlySet<string>,
-  readType: boolean,
 ): { readonly template: TripleNesting[]; readonly expansions: PatternGroup[] } {
   const template: TripleNesting[] = [];
   const expansions: PatternGroup[] = [];
   const targets = referencedTargetsOf(field, schema);
-  if (readType && targets.length > 1) {
-    const built = buildTypeHop(referent, counter);
-    template.push(built.triple);
-    expansions.push(built.pattern);
-  }
   const local = localTargetsOf(field, schema, onPath);
   for (const target of targets) {
     if (!local.includes(target)) {
@@ -311,7 +302,7 @@ function endpointFieldOf(
   referenceType: ReferenceType,
   identity: string | undefined,
 ): SearchField | undefined {
-  if (edgeClassesOf(referenceType).length === 0 || identity === undefined) {
+  if (referenceType.edgeClass === undefined || identity === undefined) {
     return undefined;
   }
   return fieldNamed(referenceType, identity);
