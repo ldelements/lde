@@ -1,0 +1,2203 @@
+import { describe, expect, it } from 'vitest';
+import {
+  assertTypeInSchema,
+  assertValidSearchType,
+  datasetField,
+  displayFieldName,
+  documentKeyOf,
+  displayFieldPattern,
+  displayLangOf,
+  facetableFields,
+  fieldNamed,
+  filterableFields,
+  inlineFramingDepth,
+  irAlias,
+  isAbsoluteIri,
+  isDatePrecision,
+  isoToUnixSeconds,
+  lastSecondOf,
+  isInternalField,
+  isRangeFacet,
+  isBinnedRangeFacet,
+  storedFacetRanges,
+  labelSourceNamesOf,
+  nestedFieldName,
+  nestedReferenceType,
+  outputFields,
+  physicalFields,
+  referenceFields,
+  referenceTypeNamed,
+  rootTypeNamed,
+  searchableFields,
+  searchSchema,
+  sortableFields,
+  unixSecondsToIso,
+  validateSearchType,
+  type KeyField,
+  type ReferenceStrategy,
+  type RootType,
+  type SearchField,
+  type StoredDate,
+  type SearchType,
+  type TextField,
+} from '../src/schema.js';
+
+const DATASET = 'http://www.w3.org/ns/dcat#Dataset';
+
+const schema: SearchType = {
+  name: 'Dataset',
+  class: DATASET,
+  fields: [
+    {
+      name: 'title',
+      kind: 'text',
+      locales: ['nl', 'en'],
+      output: true,
+      searchable: { weight: 5 },
+      sortable: true,
+    },
+    {
+      name: 'description',
+      kind: 'text',
+      locales: ['nl', 'en'],
+      output: true,
+      searchable: { weight: 2 },
+    },
+    {
+      name: 'keyword',
+      kind: 'keyword',
+      array: true,
+      facetable: true,
+      filterable: true,
+      searchable: { weight: 1 },
+    },
+    {
+      name: 'format',
+      kind: 'keyword',
+      array: true,
+      facetable: true,
+      filterable: true,
+    },
+    {
+      name: 'datePosted',
+      kind: 'date',
+      output: true,
+      filterable: true,
+      sortable: true,
+    },
+    {
+      name: 'status',
+      kind: 'keyword',
+      facetable: true,
+      filterable: true,
+      output: true,
+    },
+  ],
+};
+
+describe('physicalFields', () => {
+  it('fans a localized text field out into per-locale search and sort keys', () => {
+    const title: SearchField = {
+      name: 'title',
+      kind: 'text',
+      locales: ['nl', 'en'],
+      output: true,
+      searchable: { weight: 5 },
+      sortable: true,
+    };
+
+    // Display is pattern-based, not enumerated here (see displayFieldPattern).
+    expect(physicalFields(title)).toEqual({
+      search: ['title_search_nl', 'title_search_en'],
+      sort: ['title_sort_nl', 'title_sort_en'],
+    });
+  });
+
+  it('gives a searchable keyword facet one value field and one folded search field', () => {
+    const keyword: SearchField = {
+      name: 'keyword',
+      kind: 'keyword',
+      array: true,
+      facetable: true,
+      filterable: true,
+      searchable: { weight: 1 },
+    };
+
+    expect(physicalFields(keyword)).toEqual({
+      search: ['keyword_search'],
+      sort: [],
+      facet: 'keyword',
+    });
+  });
+
+  it('emits only the search keys for a search-only localized field (no sort)', () => {
+    const creator: SearchField = {
+      name: 'creator',
+      kind: 'text',
+      locales: ['nl', 'en'],
+      searchable: { weight: 2 },
+    };
+
+    expect(physicalFields(creator)).toEqual({
+      search: ['creator_search_nl', 'creator_search_en'],
+      sort: [],
+    });
+  });
+
+  it('emits no per-locale fields when a localized field declares no locales', () => {
+    const title: SearchField = {
+      name: 'title',
+      kind: 'text',
+      locales: [],
+      output: true,
+      searchable: { weight: 5 },
+      sortable: true,
+    };
+
+    expect(physicalFields(title)).toEqual({
+      search: [],
+      sort: [],
+    });
+  });
+
+  it('fans a non-localized reference field out into no companion fields', () => {
+    const publisher: SearchField = {
+      name: 'publisher',
+      kind: 'reference',
+      facetable: true,
+      filterable: true,
+      output: true,
+      ref: { strategy: 'lookup', target: 'Agent' },
+    };
+
+    expect(physicalFields(publisher)).toEqual({
+      search: [],
+      sort: [],
+      facet: 'publisher',
+    });
+  });
+
+  it('facets a reference on its `_facet` companion only when the type it names declares a policy', () => {
+    const agent: SearchType = {
+      name: 'Agent',
+      class: 'urn:x:Agent',
+      labelField: 'label',
+      facetKeys: { only: (id) => id.startsWith('https://viaf.org/') },
+      fields: [
+        {
+          name: 'label',
+          kind: 'text',
+          locales: ['und'],
+          output: true,
+          searchable: { weight: 1 },
+        },
+      ],
+    };
+    const publisher: SearchField = {
+      name: 'publisher',
+      kind: 'reference',
+      facetable: true,
+      ref: { strategy: 'lookup', target: 'Agent' },
+    };
+    const creator: SearchField = {
+      name: 'creator',
+      kind: 'reference',
+      facetable: true,
+      labelSource: 'Agent',
+    };
+    const mentions: SearchField = {
+      // Names no type, so it inherits nothing – whatever its values point at.
+      name: 'mentions',
+      kind: 'reference',
+      facetable: true,
+    };
+    const derived: SearchField = {
+      // Produces its own values rather than reading a referent: re-keyed by
+      // nothing, narrowed by nothing.
+      name: 'derived',
+      kind: 'reference',
+      facetable: true,
+      labelSource: 'Agent',
+      derive: () => 'https://viaf.org/1',
+    };
+    const schema = searchSchema(agent, {
+      name: 'Dataset',
+      class: 'urn:x:Dataset',
+      fields: [publisher, creator, mentions, derived],
+    });
+
+    expect(physicalFields(publisher, schema).facet).toBe('publisher_facet');
+    expect(physicalFields(creator, schema).facet).toBe('creator_facet');
+    expect(physicalFields(mentions, schema).facet).toBe('mentions');
+    expect(physicalFields(derived, schema).facet).toBe('derived');
+    // Without the schema the target cannot be resolved – the same reading the
+    // projection makes without one.
+    expect(physicalFields(publisher).facet).toBe('publisher');
+    // A facet companion is a role’s fanout, like a search companion: none
+    // without the role.
+    expect(
+      physicalFields({ ...publisher, facetable: undefined }, schema).facet,
+    ).toBeUndefined();
+  });
+});
+
+describe('facet policy', () => {
+  const place = (facetKeys: unknown) =>
+    ({
+      name: 'Place',
+      class: 'urn:x:Place',
+      facetKeys,
+      fields: [],
+    }) as unknown as SearchType;
+
+  it('accepts a policy whose `only` is a function', () => {
+    expect(validateSearchType(place({ only: () => true }))).toEqual([]);
+  });
+
+  it('rejects an `only` that is not a function', () => {
+    // A declaration built outside TypeScript (a generator, plain JS) is what
+    // this guards; a typed one cannot express it.
+    expect(validateSearchType(place({ only: 'covered' }))).toEqual([
+      { field: 'facetKeys', reason: 'facet-keys-only-not-a-function' },
+    ]);
+  });
+
+  it('rejects a policy on a Reference Type, which nothing references by id', () => {
+    const nested = {
+      name: 'Marker',
+      facetKeys: { only: () => true },
+      fields: [],
+    } as unknown as SearchType;
+    expect(validateSearchType(nested)).toEqual([
+      { field: 'facetKeys', reason: 'facet-keys-not-allowed' },
+    ]);
+  });
+});
+
+describe('irAlias', () => {
+  const dataset: SearchType = {
+    name: 'Dataset',
+    class: DATASET,
+    fields: [{ name: 'publisherName', kind: 'text', locales: ['nl'] }],
+  };
+  const person: SearchType = {
+    name: 'Person',
+    fields: [{ name: 'label', kind: 'text', locales: ['nl'] }],
+  };
+
+  it('mints urn:lde:‹Type›/‹field› from the type and field names', () => {
+    expect(irAlias(dataset, dataset.fields[0])).toBe(
+      'urn:lde:Dataset/publisherName',
+    );
+  });
+
+  it('qualifies by type name, so one subject can be a root of two types', () => {
+    // Same field name, different declaring type → distinct aliases.
+    const datasetLabel = { name: 'label', kind: 'text', locales: ['nl'] };
+    expect(irAlias(dataset, datasetLabel as SearchField)).not.toBe(
+      irAlias(person, person.fields[0]),
+    );
+    expect(irAlias(person, person.fields[0])).toBe('urn:lde:Person/label');
+  });
+});
+
+describe('display field helpers', () => {
+  const label: TextField = {
+    name: 'label',
+    kind: 'text',
+    locales: ['nl', 'en'],
+    output: true,
+    searchable: { weight: 1 },
+  };
+
+  it('names a display field per language, tag preserved (untagged under und)', () => {
+    expect(displayFieldName(label, 'nl')).toBe('label_nl');
+    expect(displayFieldName(label, 'fr')).toBe('label_fr');
+    expect(displayFieldName(label, 'zh-hant')).toBe('label_zh-hant');
+    expect(displayFieldName(label, 'und')).toBe('label_und');
+  });
+
+  it('declares one regex display field for an output text field, none otherwise', () => {
+    expect(displayFieldPattern(label)).toBe('label_[^_]+');
+    const searchOnly: TextField = {
+      name: 'creator',
+      kind: 'text',
+      locales: ['nl'],
+      searchable: { weight: 1 },
+    };
+    expect(displayFieldPattern(searchOnly)).toBeUndefined();
+  });
+
+  it('recovers the language of a display key, rejecting search/sort companions', () => {
+    expect(displayLangOf(label, 'label_nl')).toBe('nl');
+    expect(displayLangOf(label, 'label_fr')).toBe('fr');
+    expect(displayLangOf(label, 'label_zh-hant')).toBe('zh-hant');
+    expect(displayLangOf(label, 'label_und')).toBe('und');
+    // The underscore-free rule excludes the indexed companions and the bare name.
+    expect(displayLangOf(label, 'label_search_nl')).toBeUndefined();
+    expect(displayLangOf(label, 'label_sort_nl')).toBeUndefined();
+    expect(displayLangOf(label, 'label')).toBeUndefined();
+    // A different field’s display key is not misattributed.
+    expect(displayLangOf(label, 'other_nl')).toBeUndefined();
+  });
+
+  it('round-trips displayFieldName through displayLangOf, and the pattern matches', () => {
+    // Binds the three builders to one convention so they cannot silently drift.
+    const pattern = new RegExp(`^${displayFieldPattern(label)}$`);
+    for (const lang of ['nl', 'en', 'fr', 'zh-hant', 'und']) {
+      const key = displayFieldName(label, lang);
+      expect(displayLangOf(label, key)).toBe(lang);
+      expect(pattern.test(key)).toBe(true);
+    }
+    // The search/sort companions fall outside the display pattern.
+    expect(pattern.test('label_search_nl')).toBe(false);
+    expect(pattern.test('label_sort_nl')).toBe(false);
+  });
+});
+
+describe('schema selectors', () => {
+  it('orders searchable fields by descending weight', () => {
+    expect(searchableFields(schema).map((field) => field.name)).toEqual([
+      'title',
+      'description',
+      'keyword',
+    ]);
+  });
+
+  it('selects facetable, filterable, sortable and output fields by capability', () => {
+    expect(facetableFields(schema).map((field) => field.name)).toEqual([
+      'keyword',
+      'format',
+      'status',
+    ]);
+    expect(filterableFields(schema).map((field) => field.name)).toEqual([
+      'keyword',
+      'format',
+      'datePosted',
+      'status',
+    ]);
+    expect(sortableFields(schema).map((field) => field.name)).toEqual([
+      'title',
+      'datePosted',
+    ]);
+    expect(outputFields(schema).map((field) => field.name)).toEqual([
+      'title',
+      'description',
+      'datePosted',
+      'status',
+    ]);
+  });
+
+  it('selects reference fields and looks a field up by name', () => {
+    const publisher: SearchField = {
+      name: 'publisher',
+      kind: 'reference',
+      facetable: true,
+      ref: { strategy: 'lookup', target: 'Agent' },
+    };
+    const withReference: SearchType = {
+      name: 'Dataset',
+      class: DATASET,
+      fields: [...schema.fields, publisher],
+    };
+    expect(referenceFields(withReference)).toEqual([publisher]);
+    expect(fieldNamed(withReference, 'publisher')).toBe(publisher);
+    expect(fieldNamed(withReference, 'nonexistent')).toBeUndefined();
+  });
+
+  it('finds the field declared over the indexed dataset, and none where there is none', () => {
+    const declared: SearchField = {
+      name: 'dataset',
+      kind: 'reference',
+      from: 'dataset',
+      facetable: true,
+      ref: { strategy: 'lookup', target: 'Dataset' },
+    };
+    const withDataset: SearchType = {
+      name: 'Dataset',
+      class: DATASET,
+      fields: [...schema.fields, declared],
+    };
+
+    expect(datasetField(withDataset)).toBe(declared);
+    // `schema` declares text/keyword/numeric fields but nothing over a
+    // projection value.
+    expect(datasetField(schema)).toBeUndefined();
+  });
+});
+
+describe('isRangeFacet', () => {
+  it('holds for every numeric kind, bins or not', () => {
+    for (const kind of ['integer', 'number', 'date'] as const) {
+      expect(isRangeFacet({ name: 'size', kind, facetable: true })).toBe(true);
+    }
+    expect(
+      isRangeFacet({
+        name: 'size',
+        kind: 'integer',
+        facetable: true,
+        facetRanges: [{ key: '0', min: 1, max: 10 }],
+      }),
+    ).toBe(true);
+  });
+
+  it('holds for no other kind', () => {
+    expect(
+      isRangeFacet({ name: 'kind', kind: 'keyword', facetable: true }),
+    ).toBe(false);
+    expect(
+      isRangeFacet({ name: 'open', kind: 'boolean', facetable: true }),
+    ).toBe(false);
+  });
+});
+
+describe('isBinnedRangeFacet', () => {
+  it('requires a non-empty facetRanges declaration', () => {
+    const size: SearchField = {
+      name: 'size',
+      kind: 'integer',
+      facetable: true,
+      facetRanges: [{ key: '0', min: 1, max: 10 }],
+    };
+    expect(isBinnedRangeFacet(size)).toBe(true);
+    expect(isBinnedRangeFacet({ ...size, facetRanges: [] })).toBe(false);
+    expect(isBinnedRangeFacet({ ...size, facetRanges: undefined })).toBe(false);
+  });
+});
+
+describe('lastSecondOf', () => {
+  const last = (iso: string) =>
+    lastSecondOf(isoToUnixSeconds(iso) as StoredDate);
+  const secondBefore = (iso: string) => Date.parse(iso) / 1000 - 1;
+
+  it.each([
+    ['1999', '2000-01-01T00:00:00Z'],
+    ['2000-02', '2000-03-01T00:00:00Z'],
+    ['1900-02', '1900-03-01T00:00:00Z'],
+    ['1999-12', '2000-01-01T00:00:00Z'],
+    ['1999-05-03', '1999-05-04T00:00:00Z'],
+    ['-0044', '-000043-01-01T00:00:00Z'],
+  ])('ends %s the second before %s', (iso, next) => {
+    expect(last(iso)).toBe(secondBefore(next));
+  });
+
+  it('is a date-time’s own second', () => {
+    expect(last('1999-05-03T12:30:00Z')).toBe(
+      Date.parse('1999-05-03T12:30:00Z') / 1000,
+    );
+  });
+
+  it('ends the last month `Date` holds an average month on', () => {
+    const lastMonth = isoToUnixSeconds('275760-09') as StoredDate;
+    expect(lastSecondOf(lastMonth)).toBe(
+      lastMonth.seconds + (146_097 * 86_400) / 400 / 12 - 1,
+    );
+  });
+
+  it('ends a deep-time year an average Gregorian year on', () => {
+    const start = isoToUnixSeconds('-318000000') as StoredDate;
+    const next = isoToUnixSeconds('-317999999') as StoredDate;
+    // Beyond 2^53, so compare at the precision the seconds hold.
+    expect(lastSecondOf(start)).toBeCloseTo(next.seconds - 1, -1);
+    expect(lastSecondOf(start)).toBeGreaterThan(start.seconds);
+  });
+});
+
+describe('storedFacetRanges', () => {
+  it('passes a number’s bins through and reads a date’s as Unix seconds', () => {
+    const numberBins = [{ key: '0', min: 1, max: 10 }];
+    expect(
+      storedFacetRanges({
+        name: 'size',
+        kind: 'integer',
+        facetable: true,
+        facetRanges: numberBins,
+      }),
+    ).toBe(numberBins);
+    expect(
+      storedFacetRanges({
+        name: 'created',
+        kind: 'date',
+        facetable: true,
+        facetRanges: [
+          { key: 'older', max: '1969' },
+          { key: 'seventies', min: '1970', max: '1979' },
+          // A date-time bound reaches only through its own second.
+          { key: 'eighties', min: '1980', max: '1989-12-31T23:59:59Z' },
+          { key: 'unreadable', min: 'spring' },
+        ],
+      }),
+    ).toEqual([
+      // Half-open in stored terms: each `max` is the first second after the
+      // period it names.
+      { key: 'older', max: 0 },
+      { key: 'seventies', min: 0, max: 315_532_800 },
+      { key: 'eighties', min: 315_532_800, max: 631_152_000 },
+      // Left open – validateSearchType refuses such a declaration first.
+      { key: 'unreadable' },
+    ]);
+  });
+
+  it('is empty for a field without bins', () => {
+    expect(
+      storedFacetRanges({ name: 'created', kind: 'date', facetable: true }),
+    ).toEqual([]);
+  });
+});
+
+describe('isAbsoluteIri', () => {
+  it('accepts any scheme, not only http(s)', () => {
+    // Restricting to http(s) would reject conformant Linked Data: URNs, DOIs,
+    // ARKs and a deployment’s own minted scheme are all ordinary here.
+    for (const iri of [
+      'https://sws.geonames.org/2756308/',
+      'http://example.org/x',
+      'urn:uuid:0b7a1e1e-0000-4000-8000-000000000000',
+      'urn:nbn:nl:ui:13-abcdef',
+      'urn:lde:Dataset/publisherName',
+      'doi:10.1234/5678',
+      'ark:/61567/dataset',
+      'tag:example.org,2026:x',
+      'mailto:someone@example.org',
+      'thing:abc123',
+      'https://example.org/café', // an IRI is not restricted to ASCII
+    ]) {
+      expect(isAbsoluteIri(iri)).toBe(true);
+    }
+  });
+
+  it('rejects what a reference must never hold', () => {
+    for (const value of [
+      '_:b0', // a blank node label – a scheme must start with a letter
+      'boerenbont', // a bare token: the mistake this check exists to catch
+      '/relative/path',
+      '//example.org/x',
+      'http://example.org/a b', // unencoded space
+      'http://example.org/a\nb',
+      '1nvalid:scheme',
+      '',
+    ]) {
+      expect(isAbsoluteIri(value)).toBe(false);
+    }
+  });
+});
+
+describe('validateSearchType', () => {
+  // Deliberately untyped: these tests exercise the RUNTIME guard for
+  // declarations built outside TypeScript (a SHACL generator, plain JS),
+  // which the discriminated SearchField union would reject at compile time.
+  const typeWith = (...fields: object[]): SearchType => ({
+    name: 'Dataset',
+    class: DATASET,
+    fields: fields as SearchField[],
+  });
+
+  it('accepts a well-formed declaration', () => {
+    expect(validateSearchType(schema)).toEqual([]);
+    expect(() => assertValidSearchType(schema)).not.toThrow();
+  });
+
+  it('rejects duplicate field names', () => {
+    const type = typeWith(
+      { name: 'status', kind: 'keyword' },
+      { name: 'status', kind: 'boolean' },
+    );
+    expect(validateSearchType(type)).toEqual([
+      { field: 'status', reason: 'duplicate-field-name' },
+    ]);
+  });
+
+  it('rejects an unknown field kind', () => {
+    // A typo’d kind in a plain-JS declaration must fail at declaration time –
+    // every kind-dependent rule would silently pass for it otherwise.
+    expect(
+      validateSearchType(typeWith({ name: 'broken', kind: 'no-such-kind' })),
+    ).toEqual([{ field: 'broken', reason: 'unknown-kind' }]);
+  });
+
+  it('rejects a field name carrying a regex metacharacter', () => {
+    // The name is interpolated raw into the display RE2 pattern, so a
+    // metacharacter would over-match or break the collection schema.
+    expect(
+      validateSearchType(typeWith({ name: 'v1.2', kind: 'keyword' })),
+    ).toEqual([{ field: 'v1.2', reason: 'invalid-field-name' }]);
+  });
+
+  it('rejects a field named `id`, which every document already carries', () => {
+    // The IRI is surfaced and filtered under that name for every type; a
+    // declared `id` would shadow it and answer a different question. A domain
+    // identifier belongs under its own name (e.g. `identifier`).
+    expect(
+      validateSearchType(typeWith({ name: 'id', kind: 'keyword' })),
+    ).toEqual([{ field: 'id', reason: 'reserved-field-name' }]);
+    expect(
+      validateSearchType(typeWith({ name: 'identifier', kind: 'keyword' })),
+    ).toEqual([]);
+  });
+
+  it('rejects a field named `and` or `or`, the reserved `where` combinators', () => {
+    // Sibling keys in `where` already AND, so `or` is what makes a disjunction
+    // expressible and `and` what carries a second one. A declared field of
+    // either name would shadow the combinator and silently answer a different
+    // question, exactly as a declared `id` would.
+    expect(
+      validateSearchType(typeWith({ name: 'and', kind: 'keyword' })),
+    ).toEqual([{ field: 'and', reason: 'reserved-field-name' }]);
+    expect(
+      validateSearchType(typeWith({ name: 'or', kind: 'keyword' })),
+    ).toEqual([{ field: 'or', reason: 'reserved-field-name' }]);
+  });
+
+  it('rejects a field named after a date’s precision companion', () => {
+    expect(
+      validateSearchType({
+        name: 'Dataset',
+        class: 'https://example.org/Dataset',
+        fields: [
+          { name: 'created', kind: 'date', output: true },
+          { name: 'created_precision', kind: 'keyword', output: true },
+        ],
+      }),
+    ).toEqual([{ field: 'created_precision', reason: 'reserved-field-name' }]);
+  });
+
+  it('rejects a declared locale containing an underscore', () => {
+    // `_` is the reserved name↔locale separator; a locale carrying one would
+    // collide with the physical/display field naming.
+    expect(
+      validateSearchType(
+        typeWith({ name: 'title', kind: 'text', locales: ['pt_BR'] }),
+      ),
+    ).toEqual([{ field: 'title', reason: 'invalid-locale' }]);
+    // A BCP-47 hyphenated subtag is accepted.
+    expect(
+      validateSearchType(
+        typeWith({
+          name: 'title',
+          kind: 'text',
+          locales: ['pt-BR', 'zh-Hant', 'und'],
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  it('requires ref on an output reference field, but not on a facet-only one', () => {
+    expect(
+      validateSearchType(
+        typeWith({ name: 'publisher', kind: 'reference', output: true }),
+      ),
+    ).toEqual([{ field: 'publisher', reason: 'missing-ref' }]);
+    expect(
+      validateSearchType(
+        typeWith({ name: 'class', kind: 'reference', facetable: true }),
+      ),
+    ).toEqual([]);
+  });
+
+  it('requires a ref typeName on an inline reference alone', () => {
+    // An `idOnly` reference emits no type of its own, so it needs no name to
+    // emit one under – `sameAs` points at a vocabulary nobody indexes – and a
+    // `lookup` derives its name from the `target` it already names. Only an
+    // `inline` reference IS served as a separately named type, and without a
+    // name the GraphQL surface prints `undefined` as the field's type: a
+    // published contract that is not a schema. TypeScript's union already
+    // forbids it, so this guards a declaration built outside it (plain JS, a
+    // generator).
+    expect(
+      validateSearchType(
+        typeWith({
+          name: 'media',
+          kind: 'reference',
+          output: true,
+          ref: { strategy: 'inline' },
+        } as never),
+      ),
+    ).toEqual([{ field: 'media', reason: 'missing-ref-type-name' }]);
+
+    // A lookup names its referent too – as `target`, the collection it reads
+    // from. Without one it has nothing to read and nothing to emit.
+    expect(
+      validateSearchType(
+        typeWith({
+          name: 'creator',
+          kind: 'reference',
+          output: true,
+          ref: { strategy: 'lookup' },
+        } as never),
+      ),
+    ).toEqual([{ field: 'creator', reason: 'missing-ref-type-name' }]);
+
+    expect(
+      validateSearchType(
+        typeWith({
+          name: 'sameAs',
+          kind: 'reference',
+          output: true,
+          ref: { strategy: 'idOnly' },
+        }),
+      ),
+    ).toEqual([]);
+
+    // Not surfaced, so nothing has to be emitted for it: a filter-only
+    // reference falls back to the target-less IRI filter.
+    expect(
+      validateSearchType(
+        typeWith({
+          name: 'seeAlso',
+          kind: 'reference',
+          filterable: true,
+          ref: { strategy: 'labelOnly' },
+        } as never),
+      ),
+    ).toEqual([]);
+  });
+
+  it('rejects ref on a non-reference kind', () => {
+    const type = typeWith({
+      name: 'format',
+      kind: 'keyword',
+      ref: { strategy: 'lookup', target: 'Format' },
+    });
+    expect(validateSearchType(type)).toEqual([
+      { field: 'format', reason: 'ref-not-allowed' },
+    ]);
+  });
+
+  it('requires text to declare at least one locale (und counts)', () => {
+    expect(
+      validateSearchType(typeWith({ name: 'title', kind: 'text' })),
+    ).toEqual([{ field: 'title', reason: 'text-requires-locales' }]);
+    expect(
+      validateSearchType(
+        typeWith({ name: 'title', kind: 'text', locales: [] }),
+      ),
+    ).toEqual([{ field: 'title', reason: 'text-requires-locales' }]);
+    // An untagged corpus declares the reserved `und` locale.
+    expect(
+      validateSearchType(
+        typeWith({ name: 'title', kind: 'text', locales: ['und'] }),
+      ),
+    ).toEqual([]);
+  });
+
+  it('rejects locales on a non-text kind', () => {
+    expect(
+      validateSearchType(
+        typeWith({ name: 'format', kind: 'keyword', locales: ['nl'] }),
+      ),
+    ).toEqual([{ field: 'format', reason: 'locales-not-allowed' }]);
+  });
+
+  it('rejects filterable and facetable on text (it feeds the free-text query)', () => {
+    const type = typeWith({
+      name: 'title',
+      kind: 'text',
+      locales: ['nl'],
+      filterable: true,
+      facetable: true,
+    });
+    expect(validateSearchType(type)).toEqual([
+      { field: 'title', reason: 'text-not-filterable' },
+      { field: 'title', reason: 'text-not-facetable' },
+    ]);
+  });
+
+  it('allows facetRanges on numeric kinds only', () => {
+    const ranges = [{ key: 'small', max: 10 }];
+    expect(
+      validateSearchType(
+        typeWith({
+          name: 'size',
+          kind: 'integer',
+          facetable: true,
+          facetRanges: ranges,
+        }),
+      ),
+    ).toEqual([]);
+    expect(
+      validateSearchType(
+        typeWith({
+          name: 'format',
+          kind: 'keyword',
+          facetable: true,
+          facetRanges: ranges,
+        }),
+      ),
+    ).toEqual([{ field: 'format', reason: 'facet-ranges-not-allowed' }]);
+  });
+
+  it('requires a date bin’s bounds to be ISO 8601 the codec reads', () => {
+    const created = (facetRanges: readonly unknown[]) =>
+      validateSearchType(
+        typeWith({
+          name: 'created',
+          kind: 'date',
+          facetable: true,
+          facetRanges,
+        }),
+      );
+    expect(created([{ key: 'twentieth', min: '1900', max: '1999' }])).toEqual(
+      [],
+    );
+    for (const bound of ['spring 1900', 1_000_000]) {
+      expect(created([{ key: 'bad', min: bound }])).toEqual([
+        { field: 'created', reason: 'unparseable-facet-range' },
+      ]);
+    }
+  });
+
+  it('allows searchable on text/keyword/reference only', () => {
+    expect(
+      validateSearchType(
+        typeWith({ name: 'size', kind: 'integer', searchable: { weight: 1 } }),
+      ),
+    ).toEqual([{ field: 'size', reason: 'searchable-not-allowed' }]);
+  });
+
+  it('rejects a field declaring both path and derive', () => {
+    expect(
+      validateSearchType(
+        typeWith({
+          name: 'status',
+          kind: 'keyword',
+          path: 'urn:dr:status',
+          derive: () => 'valid',
+        }),
+      ),
+    ).toEqual([{ field: 'status', reason: 'derive-with-path' }]);
+  });
+
+  it('accepts a reference declared over the indexed dataset', () => {
+    expect(
+      validateSearchType(
+        typeWith({
+          name: 'dataset',
+          kind: 'reference',
+          from: 'dataset',
+          output: true,
+          filterable: true,
+          facetable: true,
+          ref: { strategy: 'lookup', target: 'Dataset' },
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  it('rejects a projection value the projection cannot supply', () => {
+    expect(
+      validateSearchType(
+        typeWith({ name: 'run', kind: 'keyword', from: 'no-such-value' }),
+      ),
+    ).toEqual([{ field: 'run', reason: 'unknown-projection-value' }]);
+  });
+
+  it('allows from on keyword/reference only: the other kinds cannot hold an IRI', () => {
+    expect(
+      validateSearchType(
+        typeWith({ name: 'dataset', kind: 'integer', from: 'dataset' }),
+      ),
+    ).toEqual([{ field: 'dataset', reason: 'from-not-allowed' }]);
+  });
+
+  it('rejects a field declaring from beside another value source', () => {
+    expect(
+      validateSearchType(
+        typeWith(
+          {
+            name: 'fromPath',
+            kind: 'reference',
+            from: 'dataset',
+            path: 'urn:dr:dataset',
+          },
+          {
+            name: 'fromDerive',
+            kind: 'keyword',
+            from: 'dataset',
+            derive: () => 'x',
+          },
+        ),
+      ),
+    ).toEqual([
+      { field: 'fromPath', reason: 'from-with-path' },
+      // The second field re-declares `dataset`, which no consumer could then
+      // resolve to one declaration.
+      { field: 'fromDerive', reason: 'duplicate-projection-value' },
+      { field: 'fromDerive', reason: 'from-with-derive' },
+    ]);
+  });
+
+  it('rejects a projection value carried by an inline reference', () => {
+    // An inline reference is stored as a nested object; a projection value is a
+    // bare IRI. Declared together, every document import would fail.
+    expect(
+      validateSearchType(
+        typeWith({
+          name: 'dataset',
+          kind: 'reference',
+          from: 'dataset',
+          output: true,
+          ref: { typeName: 'Dataset', strategy: 'inline' },
+        }),
+      ),
+    ).toEqual([{ field: 'dataset', reason: 'from-with-inline-ref' }]);
+  });
+
+  it('rejects two fields over the same projection value', () => {
+    expect(
+      validateSearchType(
+        typeWith(
+          { name: 'dataset', kind: 'reference', from: 'dataset' },
+          { name: 'sourceDataset', kind: 'keyword', from: 'dataset' },
+        ),
+      ),
+    ).toEqual([
+      { field: 'sourceDataset', reason: 'duplicate-projection-value' },
+    ]);
+  });
+
+  it('allows transform on keyword/reference only', () => {
+    expect(
+      validateSearchType(
+        typeWith({
+          name: 'size',
+          kind: 'integer',
+          transform: (value: string) => value,
+        }),
+      ),
+    ).toEqual([{ field: 'size', reason: 'transform-not-allowed' }]);
+  });
+
+  it('allows joinable on a reference field that declares a label source', () => {
+    expect(
+      validateSearchType(
+        typeWith({
+          name: 'publisher',
+          kind: 'reference',
+          filterable: true,
+          labelSource: 'Organization',
+          joinable: true,
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  it('rejects joinable without a label source, and on a non-reference', () => {
+    // A join addresses the referent’s COLLECTION, which is the one the label
+    // source names; without one the flag states an edge to nowhere.
+    expect(
+      validateSearchType(
+        typeWith({ name: 'publisher', kind: 'reference', joinable: true }),
+      ),
+    ).toEqual([
+      { field: 'publisher', reason: 'joinable-without-label-source' },
+    ]);
+    expect(
+      validateSearchType(
+        typeWith({
+          name: 'format',
+          kind: 'keyword',
+          joinable: true,
+        } as never),
+      ),
+    ).toEqual([{ field: 'format', reason: 'joinable-not-allowed' }]);
+  });
+
+  it('counts joinable as a role, so such a field is never internal', () => {
+    // An engine can only join through a value it stores, so a joinable
+    // reference must survive the Internal Field pruning even when it declares
+    // nothing else – otherwise the edge resolves and the query compiles
+    // against a column the collection never had.
+    const joinable: SearchField = {
+      name: 'publisher',
+      kind: 'reference',
+      labelSource: 'Publisher',
+      joinable: true,
+    };
+    expect(isInternalField(joinable)).toBe(false);
+    // Without it, the same declaration is the reading device it looks like.
+    expect(isInternalField({ ...joinable, joinable: false })).toBe(true);
+  });
+
+  it('rejects joinable on an inline reference', () => {
+    // An inline reference is stored as a nested object, not as an id a
+    // reference field can point at: the collection definition would emit the
+    // nesting and silently drop the reference, so the join would validate,
+    // compile, and only then fail at the engine.
+    expect(
+      validateSearchType(
+        typeWith({
+          name: 'media',
+          kind: 'reference',
+          output: true,
+          labelSource: 'MediaObject',
+          joinable: true,
+          ref: { typeName: 'MediaObject', strategy: 'inline' },
+        }),
+      ),
+    ).toEqual([{ field: 'media', reason: 'joinable-with-inline-ref' }]);
+  });
+});
+
+describe('assertTypeInSchema', () => {
+  it('accepts a member and rejects a foreign or lookalike type', () => {
+    const withSchema = searchSchema(schema);
+    expect(() => assertTypeInSchema(withSchema, schema)).not.toThrow();
+    // A structural copy is not the declared member: identity-based.
+    expect(() => assertTypeInSchema(withSchema, { ...schema })).toThrow(
+      /not in this engine’s schema; it serves “Dataset”/,
+    );
+  });
+});
+
+describe('searchSchema validation', () => {
+  it('throws on an invalid declaration, naming type, field and reason', () => {
+    expect(() =>
+      searchSchema({
+        name: 'Dataset',
+        class: DATASET,
+        fields: [
+          {
+            name: 'title',
+            kind: 'text',
+            locales: [],
+          } as unknown as SearchField,
+        ],
+      }),
+    ).toThrow(
+      /Invalid search type “Dataset”: “title” \(text-requires-locales\)/,
+    );
+  });
+
+  it('rejects two types sharing a type IRI (the map key)', () => {
+    expect(() =>
+      searchSchema(
+        { name: 'Dataset', class: DATASET, fields: [] },
+        { name: 'Other', class: DATASET, fields: [] },
+      ),
+    ).toThrow(/Duplicate search type IRI/);
+  });
+
+  it('rejects two types sharing a name (the API key)', () => {
+    expect(() =>
+      searchSchema(
+        { name: 'Dataset', class: DATASET, fields: [] },
+        { name: 'Dataset', class: 'urn:other', fields: [] },
+      ),
+    ).toThrow(/Duplicate search type name/);
+  });
+
+  describe('reference types and inline references', () => {
+    const registration = {
+      name: 'Registration',
+      fields: [
+        { name: 'dateRead', kind: 'date', path: 'https://schema.org/dateRead' },
+        {
+          name: 'datePosted',
+          kind: 'date',
+          path: 'https://schema.org/datePosted',
+        },
+      ],
+    } as const;
+
+    const datasetWithInline = {
+      name: 'Dataset',
+      class: DATASET,
+      fields: [
+        {
+          name: 'registration',
+          kind: 'reference',
+          array: true,
+          path: 'urn:lde:Dataset/registration',
+          ref: { typeName: 'Registration', strategy: 'inline' },
+        },
+      ],
+    } as const;
+
+    it('accepts a reference type (no class) and keeps it out of the indexed map', () => {
+      const schema = searchSchema(datasetWithInline, registration);
+      // The class-keyed map – and so every writer’s collections – holds only
+      // the Root Type. The Reference Type is reachable only through the
+      // reference.
+      expect([...schema.values()].map((type) => type.name)).toEqual([
+        'Dataset',
+      ]);
+      expect(referenceTypeNamed(schema, 'Registration')).toEqual(registration);
+      expect(referenceTypeNamed(schema, 'Dataset')).toBeUndefined();
+    });
+
+    it('resolves an inline ref.typeName against the declared reference types', () => {
+      expect(() => searchSchema(datasetWithInline, registration)).not.toThrow();
+    });
+
+    it('rejects an inline reference whose typeName names no declared type', () => {
+      expect(() => searchSchema(datasetWithInline)).toThrow(
+        /inline reference .*Registration.*declare a reference type/i,
+      );
+    });
+
+    it('rejects an inline reference resolving to a root type, not a reference type', () => {
+      expect(() =>
+        searchSchema(datasetWithInline, {
+          name: 'Registration',
+          class: 'urn:other',
+          fields: [],
+        }),
+      ).toThrow(/inline reference .*Registration.*reference type/i);
+    });
+
+    it('rejects an inline cycle', () => {
+      const a = {
+        name: 'A',
+        fields: [
+          {
+            name: 'toB',
+            kind: 'reference',
+            path: 'urn:lde:A/toB',
+            ref: { typeName: 'B', strategy: 'inline' },
+          },
+        ],
+      } as const;
+      const b = {
+        name: 'B',
+        fields: [
+          {
+            name: 'toA',
+            kind: 'reference',
+            path: 'urn:lde:B/toA',
+            ref: { typeName: 'A', strategy: 'inline' },
+          },
+        ],
+      } as const;
+      expect(() =>
+        searchSchema(
+          {
+            name: 'Dataset',
+            class: DATASET,
+            fields: [
+              {
+                name: 'a',
+                kind: 'reference',
+                path: 'urn:lde:Dataset/a',
+                ref: { typeName: 'A', strategy: 'inline' },
+              },
+            ],
+          },
+          a,
+          b,
+        ),
+      ).toThrow(/inline (reference )?cycle/i);
+    });
+
+    it('computes the framing depth from the inline reference chain', () => {
+      const measurement = {
+        name: 'Measurement',
+        fields: [
+          {
+            name: 'value',
+            kind: 'number',
+            path: 'http://www.w3.org/ns/dqv#value',
+          },
+        ],
+      } as const;
+      const subset = {
+        name: 'Subset',
+        fields: [
+          {
+            name: 'measurement',
+            kind: 'reference',
+            array: true,
+            path: 'http://www.w3.org/ns/dqv#hasQualityMeasurement',
+            ref: { typeName: 'Measurement', strategy: 'inline' },
+          },
+        ],
+      } as const;
+      const dataset = {
+        name: 'Dataset',
+        class: DATASET,
+        fields: [
+          {
+            name: 'subset',
+            kind: 'reference',
+            array: true,
+            path: 'http://rdfs.org/ns/void#subset',
+            ref: { typeName: 'Subset', strategy: 'inline' },
+          },
+        ],
+      } as const;
+      const chainSchema = searchSchema(dataset, subset, measurement);
+      // Dataset → Subset → Measurement is two hops.
+      expect(inlineFramingDepth(chainSchema, dataset)).toBe(2);
+      // A root type with no inline reference frames its own one hop.
+      const flatDataset = {
+        name: 'Flat',
+        class: 'urn:flat',
+        fields: [],
+      } as const;
+      expect(inlineFramingDepth(searchSchema(flatDataset), flatDataset)).toBe(
+        1,
+      );
+      // Against a schema that does not declare the referent, an inline reference
+      // contributes no depth (the type is being framed through a foreign schema).
+      expect(inlineFramingDepth(searchSchema(flatDataset), dataset)).toBe(1);
+    });
+  });
+
+  describe('nested fields', () => {
+    const datasetNesting = (ref: ReferenceStrategy) =>
+      ({
+        name: 'Dataset',
+        class: DATASET,
+        fields: [
+          {
+            name: 'media',
+            kind: 'reference',
+            array: true,
+            output: true,
+            path: 'https://schema.org/associatedMedia',
+            ref,
+          },
+        ],
+      }) as const;
+
+    // A Root Type a nested lookup can name: it has a collection, and a label
+    // field to resolve from it.
+    const organizationWithLabel = {
+      name: 'Organization',
+      class: 'https://example.org/Organization',
+      fields: [
+        {
+          name: 'label',
+          kind: 'text',
+          locales: ['und'],
+          output: true,
+          searchable: { weight: 1 },
+        },
+      ],
+    } as const;
+
+    // The declaration under test is deliberately malformed in some cases, so
+    // the overriding members are applied untyped and the whole cast back.
+    const mediaObjectWith = (field: Record<string, unknown>): SearchType =>
+      ({
+        name: 'MediaObject',
+        fields: [
+          {
+            name: 'contentUrl',
+            kind: 'keyword',
+            output: true,
+            path: 'https://schema.org/contentUrl',
+            ...field,
+          },
+        ],
+      }) as SearchType;
+
+    it('resolves the reference type a surfaced inline reference nests', () => {
+      const dataset = datasetNesting({
+        strategy: 'inline',
+        typeName: 'MediaObject',
+      });
+      const mediaObject = mediaObjectWith({});
+      const schema = searchSchema(dataset, mediaObject);
+      expect(nestedReferenceType(schema, dataset.fields[0])).toEqual(
+        mediaObject,
+      );
+    });
+
+    it('nests nothing for a reading device or a non-inline reference', () => {
+      // No Role: the reading device an inline reference is the other half of,
+      // pruned before the writer rather than surfaced.
+      const readingDevice = {
+        name: 'Dataset',
+        class: DATASET,
+        fields: [
+          {
+            name: 'media',
+            kind: 'reference',
+            path: 'https://schema.org/associatedMedia',
+            ref: { typeName: 'MediaObject', strategy: 'inline' },
+          },
+        ],
+      } as const;
+      const schema = searchSchema(readingDevice, mediaObjectWith({}));
+      expect(
+        nestedReferenceType(schema, readingDevice.fields[0]),
+      ).toBeUndefined();
+      // An idOnly reference carries the bare IRI, never the referent’s fields.
+      const idOnly = datasetNesting({
+        strategy: 'idOnly',
+        typeName: 'MediaObject',
+      });
+      expect(
+        nestedReferenceType(
+          searchSchema(idOnly, mediaObjectWith({})),
+          idOnly.fields[0],
+        ),
+      ).toBeUndefined();
+    });
+
+    it.each([
+      ['facetable', { facetable: true }],
+      ['sortable', { sortable: true }],
+    ])(
+      'rejects a nested field declaring %s, naming the field',
+      (role, declaration) => {
+        // The two Roles nesting cannot serve, for measured reasons (ADR 24):
+        // an engine's facet counts over a nested field are document-level, so
+        // a bucket counts entries that did not satisfy the filter; and there
+        // is no sorting *into* an element of an array.
+        expect(() =>
+          searchSchema(
+            datasetNesting({ strategy: 'inline', typeName: 'MediaObject' }),
+            mediaObjectWith(declaration),
+          ),
+        ).toThrow(
+          new RegExp(
+            `Nested field “MediaObject.contentUrl” declares “${role}”`,
+          ),
+        );
+      },
+    );
+
+    it.each([
+      ['searchable', { searchable: { weight: 1 } }],
+      ['filterable', { filterable: true }],
+    ])('accepts a nested field declaring %s', (_role, declaration) => {
+      // Both are served exactly on a nested field: free text reaches it, and
+      // exact membership constrains it. This is what lets one field carry an
+      // edge's own values rather than needing a flat twin beside it.
+      expect(() =>
+        searchSchema(
+          datasetNesting({ strategy: 'inline', typeName: 'MediaObject' }),
+          mediaObjectWith(declaration),
+        ),
+      ).not.toThrow();
+    });
+
+    it('rejects a nested field declaring both filterable and array', () => {
+      // A weld asks whether ONE entry satisfies every condition, so a leaf a
+      // weld can name holds one value. A leaf holding a list stands for every
+      // combination at once and answers the weld with none of them – the
+      // projection fans the entry out instead (ADR 26).
+      expect(() =>
+        searchSchema(
+          datasetNesting({ strategy: 'inline', typeName: 'MediaObject' }),
+          mediaObjectWith({ filterable: true, array: true }),
+        ),
+      ).toThrow(/declares both “filterable” and “array”/u);
+    });
+
+    it('accepts an output-only nested field declaring array', () => {
+      // Nothing welds it, so an entry may carry a list for display.
+      expect(() =>
+        searchSchema(
+          datasetNesting({ strategy: 'inline', typeName: 'MediaObject' }),
+          mediaObjectWith({ array: true }),
+        ),
+      ).not.toThrow();
+    });
+
+    it.each([
+      ['searchable', { searchable: { weight: 1 } }],
+      ['sortable', { sortable: true }],
+    ])(
+      'rejects an inline reference declaring %s alongside its nesting',
+      (role, declaration) => {
+        // An inline reference's stored value is a nested object: not a token an
+        // engine tokenizes for free text, orders by, or points a reference at.
+        // `filterable`/`facetable` it CAN serve, through an identity companion.
+        expect(() =>
+          searchSchema(
+            {
+              ...datasetNesting({
+                strategy: 'inline',
+                typeName: 'MediaObject',
+              }),
+              fields: [
+                {
+                  ...datasetNesting({
+                    strategy: 'inline',
+                    typeName: 'MediaObject',
+                  }).fields[0],
+                  ...declaration,
+                },
+              ],
+            },
+            mediaObjectWith({}),
+          ),
+        ).toThrow(
+          new RegExp(`Inline reference “Dataset.media” declares “${role}”`),
+        );
+      },
+    );
+
+    it('names every unserviceable role a nested field declares', () => {
+      expect(() =>
+        searchSchema(
+          datasetNesting({ strategy: 'inline', typeName: 'MediaObject' }),
+          mediaObjectWith({ facetable: true, sortable: true }),
+        ),
+      ).toThrow(/“facetable”, “sortable”/);
+    });
+
+    it('rejects a label source on a nested field', () => {
+      // Reconstruction runs no label lookup for a nested field, so a label
+      // source there resolves nothing.
+      expect(() =>
+        searchSchema(
+          datasetNesting({ strategy: 'inline', typeName: 'MediaObject' }),
+          mediaObjectWith({
+            kind: 'reference',
+            labelSource: 'Organization',
+            ref: { strategy: 'lookup', target: 'Organization' },
+          }),
+        ),
+      ).toThrow(
+        /Nested field “MediaObject.contentUrl” declares a label source/,
+      );
+    });
+
+    it('accepts a lookup on a nested field, resolving its target', () => {
+      // What makes a qualified relation expressible: the entry holds the edge's
+      // own values AND points into another collection. Resolution descends the
+      // inline level for free and batches the lookup below it (ADR 24).
+      expect(() =>
+        searchSchema(
+          datasetNesting({ strategy: 'inline', typeName: 'MediaObject' }),
+          mediaObjectWith({
+            kind: 'reference',
+            ref: { strategy: 'lookup', target: 'Organization' },
+          }),
+          organizationWithLabel,
+        ),
+      ).not.toThrow();
+    });
+
+    it('rejects a nested lookup whose target is not a declared Root Type', () => {
+      // Resolved by the same pass a top-level lookup's target is, so a nested
+      // one cannot name a collection that does not exist either.
+      expect(() =>
+        searchSchema(
+          datasetNesting({ strategy: 'inline', typeName: 'MediaObject' }),
+          mediaObjectWith({
+            kind: 'reference',
+            ref: { strategy: 'lookup', target: 'Nowhere' },
+          }),
+        ),
+      ).toThrow(/“Nowhere”/);
+    });
+
+    it('names the nested Physical Field of a referent’s field', () => {
+      // The engine addresses a stored nested document by qualifying the
+      // referent’s own field name with the reference that carries it.
+      expect(nestedFieldName('media', 'contentUrl')).toBe('media.contentUrl');
+      expect(nestedFieldName('media.thumbnail', 'label_nl')).toBe(
+        'media.thumbnail.label_nl',
+      );
+    });
+  });
+
+  describe('reference label sources', () => {
+    const organization = {
+      name: 'Organization',
+      class: 'https://example.org/Organization',
+      fields: [
+        {
+          name: 'label',
+          kind: 'text',
+          locales: ['und', 'nl'],
+          output: true,
+          searchable: { weight: 1 },
+        },
+      ],
+    } as const;
+
+    it('accepts a reference whose labelSource names a type with a resolvable label', () => {
+      expect(() =>
+        searchSchema(organization, {
+          name: 'Dataset',
+          class: DATASET,
+          fields: [
+            {
+              name: 'publisher',
+              kind: 'reference',
+              facetable: true,
+              labelSource: 'Organization',
+            },
+          ],
+        }),
+      ).not.toThrow();
+    });
+
+    it('rejects a labelSource that names no declared type', () => {
+      expect(() =>
+        searchSchema({
+          name: 'Dataset',
+          class: DATASET,
+          fields: [
+            {
+              name: 'publisher',
+              kind: 'reference',
+              labelSource: 'Organization',
+            },
+          ],
+        }),
+      ).toThrow(/label source “Organization”/);
+    });
+
+    it('rejects a label source without an output, searchable text “label” field', () => {
+      const withLabelField = (label: Record<string, unknown>) => () =>
+        searchSchema(
+          {
+            name: 'Organization',
+            class: 'https://example.org/Organization',
+            fields: [{ name: 'label', kind: 'text', ...label } as never],
+          },
+          {
+            name: 'Dataset',
+            class: DATASET,
+            fields: [
+              {
+                name: 'publisher',
+                kind: 'reference',
+                labelSource: 'Organization',
+              },
+            ],
+          },
+        );
+
+      // Not output: nothing to reconstruct a label from.
+      expect(
+        withLabelField({ locales: ['und'], searchable: { weight: 1 } }),
+      ).toThrow(/label source/);
+      // Not searchable: nothing to type ahead against, and no query_by.
+      expect(withLabelField({ locales: ['und'], output: true })).toThrow(
+        /label source/,
+      );
+      // No `label` field at all.
+      expect(() =>
+        searchSchema(
+          {
+            name: 'Organization',
+            class: 'https://example.org/Organization',
+            fields: [],
+          },
+          {
+            name: 'Dataset',
+            class: DATASET,
+            fields: [
+              {
+                name: 'publisher',
+                kind: 'reference',
+                labelSource: 'Organization',
+              },
+            ],
+          },
+        ),
+      ).toThrow(/label source/);
+    });
+
+    it('accepts a label source that names its own label field', () => {
+      expect(() =>
+        searchSchema(
+          {
+            name: 'Term',
+            class: 'https://example.org/DefinedTerm',
+            labelField: 'name',
+            fields: [
+              {
+                name: 'name',
+                kind: 'text',
+                locales: ['und', 'nl'],
+                output: true,
+                searchable: { weight: 1 },
+              },
+            ],
+          },
+          {
+            name: 'Dataset',
+            class: DATASET,
+            fields: [{ name: 'theme', kind: 'reference', labelSource: 'Term' }],
+          },
+        ),
+      ).not.toThrow();
+    });
+
+    it('rejects a label source whose declared label field is missing, naming it', () => {
+      expect(() =>
+        searchSchema(
+          { ...organization, labelField: 'name' },
+          {
+            name: 'Dataset',
+            class: DATASET,
+            fields: [
+              {
+                name: 'publisher',
+                kind: 'reference',
+                labelSource: 'Organization',
+              },
+            ],
+          },
+        ),
+      ).toThrow(/must declare an output, searchable text field “name”/);
+    });
+
+    it('names a Reference Type label source for what it is, not as unknown', () => {
+      // The name IS declared, just not as a Root Type – so “declare a
+      // SearchType with that name” would send an author looking in the wrong
+      // place. Reachable only through a lookup: `labelSource` on a nested field
+      // is rejected earlier, and a Reference Type carrying a label field is
+      // rejected for being searchable.
+      expect(() =>
+        searchSchema(
+          {
+            name: 'AddressRef',
+            fields: [{ name: 'street', kind: 'keyword', output: true }],
+          },
+          {
+            name: 'Organization',
+            class: 'https://example.org/Organization',
+            fields: [
+              {
+                name: 'address',
+                kind: 'reference',
+                output: true,
+                ref: { strategy: 'lookup', target: 'AddressRef' },
+              },
+            ],
+          },
+        ),
+      ).toThrow(
+        /names label source “AddressRef”, which is a Reference Type; a label source must be a Root Type/,
+      );
+    });
+
+    it('rejects a Reference Type as a label source even when it could serve one', () => {
+      // A Reference Type MAY declare a searchable label field (ADR 24), so
+      // “it cannot be searchable” is no longer why this is refused. The reason
+      // that survives is the one that always did the work: a label is read
+      // from the source’s own collection, and only a Root Type has one.
+      expect(() =>
+        searchSchema(
+          {
+            name: 'Agent',
+            fields: [
+              {
+                name: 'label',
+                kind: 'text',
+                locales: ['und'],
+                output: true,
+                searchable: { weight: 1 },
+              },
+            ],
+          },
+          {
+            name: 'Dataset',
+            class: DATASET,
+            fields: [
+              {
+                name: 'publisher',
+                kind: 'reference',
+                labelSource: 'Agent',
+              },
+            ],
+          },
+        ),
+      ).toThrow(
+        /names label source “Agent”, which is a Reference Type; a label source must be a Root Type/,
+      );
+    });
+
+    it('reads the label source names off a lookup’s target and an idOnly’s labelSource', () => {
+      expect(
+        labelSourceNamesOf({
+          name: 'publisher',
+          kind: 'reference',
+          ref: { strategy: 'lookup', target: 'Organization' },
+        }),
+      ).toEqual(['Organization']);
+      expect(
+        labelSourceNamesOf({
+          name: 'license',
+          kind: 'reference',
+          labelSource: 'Term',
+          ref: { strategy: 'idOnly' },
+        }),
+      ).toEqual(['Term']);
+      // Several targets, in the order declared: the one shape for one and
+      // for many, so no reader branches on which it was given.
+      expect(
+        labelSourceNamesOf({
+          name: 'creator',
+          kind: 'reference',
+          ref: { strategy: 'lookup', target: ['Person', 'Organization'] },
+        }),
+      ).toEqual(['Person', 'Organization']);
+      expect(
+        labelSourceNamesOf({
+          name: 'creator',
+          kind: 'reference',
+          labelSource: ['Person', 'Organization'],
+          ref: { strategy: 'idOnly' },
+        }),
+      ).toEqual(['Person', 'Organization']);
+      // Resolves nothing: no target, no label source.
+      expect(
+        labelSourceNamesOf({ name: 'license', kind: 'reference' }),
+      ).toEqual([]);
+    });
+
+    it('rejects a labelSource on anything but an idOnly reference', () => {
+      expect(() =>
+        searchSchema(organization, {
+          name: 'Dataset',
+          class: DATASET,
+          fields: [
+            {
+              name: 'publisher',
+              kind: 'reference',
+              labelSource: 'Organization',
+              ref: { strategy: 'lookup', target: 'Organization' },
+            },
+          ],
+        }),
+      ).toThrow(/declares a label source on a lookup reference/);
+    });
+
+    it('rejects a lookup whose target cannot serve labels', () => {
+      expect(() =>
+        searchSchema({
+          name: 'Dataset',
+          class: DATASET,
+          fields: [
+            {
+              name: 'publisher',
+              kind: 'reference',
+              ref: { strategy: 'lookup', target: 'Organization' },
+            },
+          ],
+        }),
+      ).toThrow(/names unknown label source “Organization”/);
+    });
+
+    it('rejects a labelSource on a non-reference field', () => {
+      expect(() =>
+        searchSchema(organization, {
+          name: 'Dataset',
+          class: DATASET,
+          fields: [
+            {
+              name: 'theme',
+              kind: 'keyword',
+              labelSource: 'Organization',
+            } as never,
+          ],
+        }),
+      ).toThrow(/declares a label source but is a keyword field/);
+    });
+  });
+});
+
+describe('date storage codec', () => {
+  /** Parse, then serve at the precision the parse found. */
+  const served = (iso: string): string | undefined => {
+    const stored = isoToUnixSeconds(iso);
+    return stored === undefined
+      ? undefined
+      : unixSecondsToIso(stored.seconds, stored.precision);
+  };
+
+  it.each([
+    ['1999', '1999', 'year'],
+    ['1999-05', '1999-05', 'month'],
+    ['1999-05-03', '1999-05-03', 'day'],
+    ['1999-05-03+02:00', '1999-05-03', 'day'],
+    ['1999-05+02:00', '1999-05', 'month'],
+    ['1999+02:00', '1999', 'year'],
+    ['1999Z', '1999', 'year'],
+    ['1999-05-03T14:30:00+02:00', '1999-05-03T12:30:00Z', 'dateTime'],
+    ['1999-05-03T12:30:00.000Z', '1999-05-03T12:30:00Z', 'dateTime'],
+    ['1999-05-03T12:30:00.789Z', '1999-05-03T12:30:00Z', 'dateTime'],
+    ['1999-05-03T12:30Z', '1999-05-03T12:30:00Z', 'dateTime'],
+    ['-1100', '-1100', 'year'],
+    ['-001100', '-1100', 'year'],
+    ['-0044', '-0044', 'year'],
+    ['800', '0800', 'year'],
+    ['25000', '25000', 'year'],
+    ['+025000', '25000', 'year'],
+    ['-250000', '-250000', 'year'],
+    ['-318000000', '-318000000', 'year'],
+    ['-318000000+01:00', '-318000000', 'year'],
+    ['-1100-05-03', '-1100-05-03', 'day'],
+    ['+025000-06-01T00:00:00.000Z', '25000-06-01T00:00:00Z', 'dateTime'],
+  ] as const)('serves %s as %s (%s)', (source, canonical, precision) => {
+    expect(isoToUnixSeconds(source)?.precision).toBe(precision);
+    expect(served(source)).toBe(canonical);
+  });
+
+  it('stores a year, month or day at its first second in UTC', () => {
+    expect(isoToUnixSeconds('1999')?.seconds).toBe(
+      Date.parse('1999-01-01T00:00:00Z') / 1000,
+    );
+    expect(isoToUnixSeconds('1999-05')?.seconds).toBe(
+      Date.parse('1999-05-01T00:00:00Z') / 1000,
+    );
+    expect(isoToUnixSeconds('1999-05-03+02:00')?.seconds).toBe(
+      Date.parse('1999-05-03T00:00:00Z') / 1000,
+    );
+    expect(isoToUnixSeconds('1999+02:00')?.seconds).toBe(
+      isoToUnixSeconds('1999')?.seconds,
+    );
+  });
+
+  it('reads 24:00:00 as the next day’s midnight, as XSD does', () => {
+    expect(served('1999-12-31T24:00:00Z')).toBe('2000-01-01T00:00:00Z');
+    expect(isoToUnixSeconds('1999-12-31T24:00:01Z')).toBeUndefined();
+  });
+
+  it('returns undefined for an offset beyond what XSD allows', () => {
+    expect(served('1999-05-03T00:00:00+14:00')).toBe('1999-05-02T10:00:00Z');
+    for (const impossible of ['+14:01', '+15:00', '+99:99', '-23:75']) {
+      expect(isoToUnixSeconds(`1999-05-03T00:00:00${impossible}`)).toBe(
+        undefined,
+      );
+      expect(isoToUnixSeconds(`1999${impossible}`)).toBeUndefined();
+    }
+  });
+
+  it('normalises a date-time to UTC', () => {
+    expect(isoToUnixSeconds('1999-05-03T14:30:00+02:00')?.seconds).toBe(
+      Date.parse('1999-05-03T12:30:00Z') / 1000,
+    );
+    expect(served('1999-05-03T22:30:00-02:00')).toBe('1999-05-04T00:30:00Z');
+  });
+
+  it('returns undefined for a date-time its offset carries beyond Date’s range', () => {
+    // Date’s last moment, then an hour later in UTC.
+    expect(served('275760-09-13T00:00:00Z')).toBe('275760-09-13T00:00:00Z');
+    expect(isoToUnixSeconds('275760-09-13T00:00:00-01:00')).toBeUndefined();
+  });
+
+  it('recognises the stored precisions, and nothing else', () => {
+    for (const precision of ['year', 'month', 'day', 'dateTime']) {
+      expect(isDatePrecision(precision)).toBe(true);
+    }
+    for (const other of [undefined, 'datetime', 3]) {
+      expect(isDatePrecision(other)).toBe(false);
+    }
+  });
+
+  it('reads a date-time without a timezone as UTC, whatever the host’s', () => {
+    const original = process.env.TZ;
+    process.env.TZ = 'Europe/Amsterdam';
+    try {
+      expect(served('1999-05-03T14:30:00')).toBe('1999-05-03T14:30:00Z');
+    } finally {
+      process.env.TZ = original;
+    }
+  });
+
+  it('serves the stored seconds at the precision it is given', () => {
+    const { seconds } = isoToUnixSeconds('1999-05-03T00:00:00Z') ?? {
+      seconds: 0,
+    };
+    expect(unixSecondsToIso(seconds, 'year')).toBe('1999');
+    expect(unixSecondsToIso(seconds, 'month')).toBe('1999-05');
+    expect(unixSecondsToIso(seconds, 'day')).toBe('1999-05-03');
+    expect(unixSecondsToIso(seconds, 'dateTime')).toBe('1999-05-03T00:00:00Z');
+  });
+
+  it('returns undefined for an unparseable date', () => {
+    expect(isoToUnixSeconds('not-a-date')).toBeUndefined();
+    expect(isoToUnixSeconds('1999-13')).toBeUndefined();
+    expect(isoToUnixSeconds('1999-02-29')).toBeUndefined();
+    expect(isoToUnixSeconds('1999-05-03T25:00:00Z')).toBeUndefined();
+  });
+
+  it('reads 29 February in a leap year', () => {
+    expect(served('2000-02-29')).toBe('2000-02-29');
+    expect(served('-0004-02-29')).toBe('-0004-02-29');
+  });
+
+  it('reads an unpadded BCE year as a year, not as a UTC offset', () => {
+    expect(isoToUnixSeconds('-1100')?.seconds).toBe(
+      isoToUnixSeconds('-001100-01-01T00:00:00.000Z')?.seconds,
+    );
+  });
+
+  it('reads a whitespace-padded year as the year it spells', () => {
+    // XSD collapses whitespace around a date literal, so a padded form is legal
+    // and reaches the codec verbatim.
+    for (const padded of [' -1100', '\t-1100', '-1100 ', '  -1100  ']) {
+      expect(isoToUnixSeconds(padded)).toEqual(isoToUnixSeconds('-1100'));
+    }
+    expect(isoToUnixSeconds(' 25000 ')).toEqual(isoToUnixSeconds('25000'));
+    expect(isoToUnixSeconds('  1999  ')).toEqual(isoToUnixSeconds('1999'));
+  });
+
+  it('reads a deep-time year beyond what Date can represent as an xsd:gYear', () => {
+    // A Carboniferous fossil: −318 million years is far past Date’s ±271,821.
+    expect(isoToUnixSeconds('-318000000')).toEqual({
+      seconds: (-318_000_000 - 1970) * 31_556_952,
+      precision: 'year',
+    });
+    expect(served('1000000')).toBe('1000000');
+  });
+
+  it('serves deep time as a year whatever precision it is asked for', () => {
+    const { seconds } = isoToUnixSeconds('-318000000') ?? { seconds: 0 };
+    expect(unixSecondsToIso(seconds, 'dateTime')).toBe('-318000000');
+  });
+
+  it('orders deep time against the dates Date holds at its edges', () => {
+    expect(isoToUnixSeconds('-271821')?.seconds ?? 0).toBeLessThan(
+      isoToUnixSeconds('-271820')?.seconds ?? 0,
+    );
+    expect(isoToUnixSeconds('275760')?.seconds ?? 0).toBeLessThan(
+      isoToUnixSeconds('275761')?.seconds ?? 0,
+    );
+  });
+
+  it('ignores the timezone of a deep-time xsd:gYear', () => {
+    const stored = isoToUnixSeconds('-318000000');
+    expect(isoToUnixSeconds('-318000000Z')).toEqual(stored);
+    expect(isoToUnixSeconds('-318000000+01:00')).toEqual(stored);
+  });
+
+  it('throws on seconds that are not a number', () => {
+    expect(() => unixSecondsToIso(Number.NaN, 'dateTime')).toThrow(RangeError);
+  });
+
+  it('returns undefined for deep time finer than a year', () => {
+    // Deep time has no months or days.
+    expect(isoToUnixSeconds('-318000000-05-03')).toBeUndefined();
+    expect(isoToUnixSeconds('-500000-03-01T12:30:00Z')).toBeUndefined();
+  });
+
+  it('returns undefined for a year beyond the int64 of seconds', () => {
+    expect(isoToUnixSeconds('-300000000000')).toBeUndefined();
+    expect(isoToUnixSeconds('1700000000000')).toBeUndefined();
+  });
+
+  it('orders BCE before CE, and earlier BCE before later', () => {
+    const seconds = (iso: string) => isoToUnixSeconds(iso)?.seconds ?? 0;
+    expect(seconds('-318000000')).toBeLessThan(seconds('-250000'));
+    expect(seconds('-250000')).toBeLessThan(seconds('-1100'));
+    expect(seconds('-1100')).toBeLessThan(seconds('1100'));
+  });
+});
+
+describe('key fields', () => {
+  const SCHEMA_ORG = 'https://schema.org/';
+  const GEONAMES = 'https://sws.geonames.org/';
+
+  const sameAsField: SearchField = {
+    name: '_sameAs',
+    kind: 'reference',
+    array: true,
+    path: `<${SCHEMA_ORG}sameAs>`,
+  };
+  const nameField: SearchField = {
+    name: 'name',
+    kind: 'text',
+    path: `<${SCHEMA_ORG}name>`,
+    locales: ['und'],
+    output: true,
+    searchable: { weight: 1 },
+  };
+  /** A `Place` keyed on its alignment target, with an overridable key. */
+  const keyedPlace = (key: RootType['key'] = { field: '_sameAs' }) =>
+    ({
+      name: 'Place',
+      class: `${SCHEMA_ORG}Place`,
+      labelField: 'name',
+      key,
+      fields: [nameField, sameAsField],
+    }) as const satisfies SearchType;
+
+  describe('declaration', () => {
+    it('accepts a key naming a path-bearing, array, non-inline reference field', () => {
+      expect(() => searchSchema(keyedPlace())).not.toThrow();
+      expect(validateSearchType(keyedPlace())).toEqual([]);
+    });
+
+    it('rejects a key naming a field the type does not declare', () => {
+      expect(validateSearchType(keyedPlace({ field: 'absent' }))).toEqual([
+        { field: 'absent', reason: 'key-field-unknown' },
+      ]);
+    });
+
+    it('rejects a key on a field that is not a reference', () => {
+      // Candidates are IRIs, and the projection reads them as such.
+      expect(validateSearchType(keyedPlace({ field: 'name' }))).toEqual([
+        { field: 'name', reason: 'key-field-not-reference' },
+      ]);
+    });
+
+    it('rejects a key field with no path: a key is read from the graph', () => {
+      expect(
+        validateSearchType({
+          ...keyedPlace(),
+          fields: [
+            nameField,
+            {
+              name: '_sameAs',
+              kind: 'reference',
+              array: true,
+              derive: () => [],
+            },
+          ],
+        }),
+      ).toEqual([{ field: '_sameAs', reason: 'key-field-without-path' }]);
+    });
+
+    it('rejects a single-valued key field: it would drop candidates unseen', () => {
+      // A node may offer several; a single-valued field keeps the first,
+      // whatever the CONSTRUCT’s order, so `pick` would never see the rest.
+      expect(
+        validateSearchType({
+          ...keyedPlace(),
+          fields: [nameField, { ...sameAsField, array: undefined }],
+        }),
+      ).toEqual([{ field: '_sameAs', reason: 'key-field-not-array' }]);
+    });
+
+    it('rejects an inline key field: it carries fields, not an IRI', () => {
+      const marker: SearchType = {
+        name: 'Marker',
+        fields: [nameField],
+      };
+      const inlineKeyed: SearchType = {
+        ...keyedPlace(),
+        fields: [
+          nameField,
+          { ...sameAsField, ref: { strategy: 'inline', typeName: 'Marker' } },
+        ],
+      };
+      expect(validateSearchType(inlineKeyed)).toEqual([
+        { field: '_sameAs', reason: 'key-field-inline' },
+      ]);
+      expect(() => searchSchema(inlineKeyed, marker)).toThrow(
+        /“_sameAs” \(key-field-inline\)/,
+      );
+    });
+
+    it('rejects a pick that is not a function', () => {
+      // A declaration built outside TypeScript (a generator, plain JS) is what
+      // this guards; a typed one cannot express it.
+      const key = { field: '_sameAs', pick: 'first' } as unknown as KeyField;
+      expect(validateSearchType(keyedPlace(key))).toEqual([
+        { field: '_sameAs', reason: 'key-pick-not-a-function' },
+      ]);
+    });
+
+    it('rejects a key on a Reference Type, which is never keyed at all', () => {
+      // Nested inside its referrer rather than keyed in a collection of its own.
+      const nested = {
+        name: 'Marker',
+        key: { field: '_sameAs' },
+        fields: [sameAsField],
+      } as unknown as SearchType;
+      expect(validateSearchType(nested)).toEqual([
+        { field: '_sameAs', reason: 'key-not-allowed' },
+      ]);
+    });
+  });
+
+  describe('documentKeyOf', () => {
+    it('keys on the node’s own IRI for a type that declares no key', () => {
+      const unkeyed: RootType = {
+        name: 'Place',
+        class: `${SCHEMA_ORG}Place`,
+        fields: [sameAsField],
+      };
+      expect(
+        documentKeyOf(unkeyed, 'https://ex/place/1', [`${GEONAMES}1`]),
+      ).toBe('https://ex/place/1');
+    });
+
+    it('defaults to the first candidate, sorted and deduplicated', () => {
+      // Sorting is what makes the default deterministic whatever order the
+      // CONSTRUCT returned the values in.
+      const place = keyedPlace();
+      expect(
+        documentKeyOf(place, 'https://ex/place/1', [
+          `${GEONAMES}2`,
+          `${GEONAMES}1`,
+          `${GEONAMES}1`,
+        ]),
+      ).toBe(`${GEONAMES}1`);
+    });
+
+    it('applies the key field’s transform, then filters non-IRIs', () => {
+      const place = {
+        ...keyedPlace(),
+        fields: [
+          nameField,
+          {
+            ...sameAsField,
+            transform: (iri: string) => iri.replace(/\/$/, ''),
+          },
+        ],
+      } as const satisfies SearchType;
+      expect(
+        documentKeyOf(place, 'https://ex/place/1', [
+          'boerenbont',
+          `${GEONAMES}1/`,
+        ]),
+      ).toBe(`${GEONAMES}1`);
+    });
+
+    it('keeps the node’s IRI when nothing survives, without consulting pick', () => {
+      let consulted = false;
+      const place = keyedPlace({
+        field: '_sameAs',
+        pick: (candidates) => {
+          consulted = true;
+          return candidates[0];
+        },
+      });
+
+      expect(documentKeyOf(place, 'https://ex/place/1', ['_:b0'])).toBe(
+        'https://ex/place/1',
+      );
+      expect(consulted).toBe(false);
+    });
+
+    it('keeps the node’s IRI when pick declines', () => {
+      const place = keyedPlace({ field: '_sameAs', pick: () => undefined });
+      expect(documentKeyOf(place, 'https://ex/place/1', [`${GEONAMES}1`])).toBe(
+        'https://ex/place/1',
+      );
+    });
+
+    it('throws when pick returns something no candidate offered', () => {
+      const place = keyedPlace({
+        field: '_sameAs',
+        pick: () => 'https://elsewhere/1',
+      });
+      expect(() =>
+        documentKeyOf(place, 'https://ex/place/1', [`${GEONAMES}1`]),
+      ).toThrow(/is not among its candidates/);
+    });
+  });
+});
+
+describe('rootTypeNamed', () => {
+  const place: SearchType = {
+    name: 'Place',
+    class: 'https://schema.org/Place',
+    fields: [],
+  };
+  const marker: SearchType = { name: 'Marker', fields: [] };
+
+  it('resolves a Root Type by the name a declaration points at', () => {
+    expect(rootTypeNamed(searchSchema(place, marker), 'Place')).toBe(place);
+  });
+
+  it('resolves neither a Reference Type nor an undeclared name', () => {
+    // The two name indexes are disjoint: `searchSchema` rejects a name twice.
+    const schema = searchSchema(place, marker);
+    expect(rootTypeNamed(schema, 'Marker')).toBeUndefined();
+    expect(rootTypeNamed(schema, 'Absent')).toBeUndefined();
+  });
+});

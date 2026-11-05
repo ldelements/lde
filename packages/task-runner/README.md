@@ -1,11 +1,12 @@
-# Task Runner
+# @lde/task-runner
 
-Interfaces for running shell commands as tasks. Implementations run commands:
+Interfaces for running shell commands as tasks.
 
-- [in Docker containers](../task-runner-docker) — isolated environment
-- [natively on the host](../task-runner-native) — direct execution
+## Installation
 
-## TaskRunner Interface
+```sh
+npm install @lde/task-runner
+```
 
 ```typescript
 interface TaskRunner<Task> {
@@ -15,6 +16,6 @@ interface TaskRunner<Task> {
 }
 ```
 
-- `run(command)` — Start a shell command, returns a task handle
-- `wait(task)` — Wait for completion, returns stdout/stderr output
-- `stop(task)` — Stop the task, returns output collected so far
+## Documentation
+
+See the [full documentation](https://ldelements.org/reference/task-runner).

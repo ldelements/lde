@@ -1,4 +1,4 @@
-import { dcterms, foaf, xsd } from 'ldkit/namespaces';
+import { dcterms, foaf, ldkit, xsd } from 'ldkit/namespaces';
 import { dcat } from './dcat.js';
 
 export const DatasetSchema = {
@@ -19,6 +19,7 @@ export const DatasetSchema = {
   },
   license: {
     '@id': dcterms.license,
+    '@type': ldkit.IRI,
     '@optional': true,
   },
   creator: {
@@ -47,9 +48,13 @@ export const DatasetSchema = {
     '@array': true,
     '@schema': {
       '@type': dcat.Distribution,
-      accessURL: dcat.accessURL,
+      accessURL: {
+        '@id': dcat.accessURL,
+        '@type': ldkit.IRI,
+      },
       mediaType: {
         '@id': dcat.mediaType,
+        '@type': ldkit.IRI,
         '@optional': true,
       },
       byteSize: {
@@ -59,10 +64,12 @@ export const DatasetSchema = {
       },
       compressFormat: {
         '@id': dcat.compressFormat,
+        '@type': ldkit.IRI,
         '@optional': true,
       },
       conformsTo: {
         '@id': dcterms.conformsTo,
+        '@type': ldkit.IRI,
         '@optional': true,
       },
       modified: {

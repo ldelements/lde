@@ -42,7 +42,7 @@
       "path": "./packages/docgen"
     },
     {
-      "path": "./packages/sparql-monitor"
+      "path": "./packages/distribution-monitor"
     },
     {
       "path": "./packages/fastify-rdf"
@@ -52,6 +52,63 @@
     },
     {
       "path": "./packages/pipeline-void"
+    },
+    {
+      "path": "./packages/pipeline-shacl-validator"
+    },
+    {
+      "path": "./packages/pipeline-shacl-sampler"
+    },
+    {
+      "path": "./packages/distribution-probe"
+    },
+    {
+      "path": "./packages/iiif-validator"
+    },
+    {
+      "path": "./packages/distribution-health"
+    },
+    {
+      "path": "./packages/text-normalization"
+    },
+    {
+      "path": "./packages/search-typesense"
+    },
+    {
+      "path": "./packages/search"
+    },
+    {
+      "path": "./packages/search-api-graphql"
+    },
+    {
+      "path": "./packages/search-pipeline"
+    },
+    {
+      "path": "./packages/search-api-server"
+    },
+    {
+      "path": "./packages/search-indexer"
+    },
+    {
+      "path": "./packages/host-limiter"
+    },
+    {
+      "path": "./packages/resolver"
+    },
+    {
+      "path": "./packages/sparql-anything"
+    },
+    {
+      "path": "./packages/task-runner-http"
+    },
+    {
+      "path": "./packages/public-fetch"
+    },
+    {
+      "path": "./packages/iiif-image"
     }
-  ]
+  ],
+  "compilerOptions": {
+    "ignoreDeprecations": "6.0"
+  }
 }

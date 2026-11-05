@@ -10,6 +10,9 @@ Uses TypeScript with ESNext modules and Vite for building/testing.
 
 ## Documentation
 
+- The VitePress docs site in `docs/` is the source of truth for all documentation – see [ADR 17](docs/decisions/0017-make-the-docs-site-the-source-of-truth-for-documentation.md). Substantive documentation for a package goes to `docs/reference/<package>.md`, NOT its README.
+- Package READMEs stay slim (they are the npm pages): a one-to-three-sentence description, an Installation section, at most one minimal usage example, and a link to the package’s docs page. Do not grow them beyond that shape.
+- Validate docs changes with `npm run docs:build` – it fails on dead links. Serve locally with `npm run docs:dev`.
 - Record architecture decisions in @docs/decisions following the ADR format.
   ADR titles start with a verb (e.g. ‘Merge pipeline approaches’).
 
@@ -18,6 +21,8 @@ Uses TypeScript with ESNext modules and Vite for building/testing.
 - We’re pre-release, so be aggressive about removing dead code. Do not yet care about backward compatibility.
 - All exported/public APIs must have JSDoc comments for a good developer experience.
 - With all code changes, ensure all README.md files (including diagrams) are still accurate.
+- Memory must be bounded by a configured unit of work (`batchSize`, `capacity`, …), never by the size of the input – LDE processes data it cannot hold. A bound stated in the data’s own units (“one dataset”, “one graph”) is not a bound. See [ADR 12](docs/decisions/0012-bound-memory-by-the-unit-of-work-not-the-input.md).
+- Packages must stay domain-agnostic, because reuse across unrelated users is the point of the library. A package may commit to an open standard it names in its own contract – DCAT-AP in `dataset-registry-client`, SHACL in `pipeline-shacl-validator` – but never to one caller’s data: no option, type or method may carry a concept that only makes sense for a single dataset, deployment or organisation. The test: would the name tell someone in another sector, who has never seen your data, what the thing is for? The domain belongs in the values a caller passes, not in the names it passes them under.
 
 ## Development Commands
 
@@ -41,6 +46,7 @@ Uses TypeScript with ESNext modules and Vite for building/testing.
 ### Affected Commands
 
 - `npx nx affected -t lint test typecheck build` - Run tasks only on changed packages (used in CI)
+- **Always run this before pushing** to catch CI failures locally.
 
 ## Architecture
 
@@ -80,22 +86,36 @@ Each package uses conditional exports with a `development` condition for local d
 - Test files use `.test.ts` suffix in `test/` directory
 - Fixtures in `test/fixtures/`
 - HTTP mocking with Nock
-- Tests that start a local SPARQL endpoint (`@lde/local-sparql-endpoint`) must use unique ports across packages to avoid conflicts when Nx runs tests in parallel. Current port allocations: `dataset-registry-client` (3002), `pipeline` sparqlQuery (3001), `pipeline` executor (3003)
+- Tests that start a local SPARQL endpoint (`@lde/local-sparql-endpoint`) must use unique ports across packages to avoid conflicts when Nx runs tests in parallel. Current port allocations: `dataset-registry-client` (3002), `pipeline` sparqlQuery (3001), `pipeline` executor (3003), `pipeline` provenance store (3004), `pipeline-void` namespace-normalization (3005), `search-pipeline` extraction round-trip (3007), `search-pipeline` searchIndexerPipeline end-to-end (3008), `search-pipeline` registry-sourced extraction (3009), `search-pipeline` joins end-to-end (3010), `search-pipeline` keyed roots (3011), `search-pipeline` nested fan-out (3012), `pipeline-void` per-property partitions (3013), `pipeline-void` subject URI spaces (3014), `pipeline-void` distinct counts (3016), `sparql-qlever` remote mode (3015 for QLever, 7070 for the task agent)
 
 ### Key Dependencies
 
-- RDF: `n3`, `sparqljs`, `jsonld`
+- RDF: `n3`, `jsonld`
 - Query engines: `@comunica/query-sparql-file`, `ldkit`
 - CLI packages use Commander
 
 ## Creating New Packages
 
-- Use Nx generators: packages are TypeScript libraries with ESLint and Vitest
-- Configure Nx in `package.json` (not `project.json`)
-- Add `development` condition in exports for local dev
-- Add README.md similar to other packages
-- Add the package to root README.md
-- For CLIs, use Commander and expose version from `package.json`
+The `@nx/js:library` generator’s output diverges from the conventions in this monorepo (different test directory layout, standalone instead of base-extending vitest config, missing per-package metadata and peerDependencies). Rather than maintain a custom generator, **copy a sibling package** and adjust:
+
+1. **Pick a sibling that matches the new package’s shape.** For a library that depends on `@lde/pipeline`, copy from e.g. `packages/pipeline-shacl-validator`. For an executable/CLI, copy from one that already uses Commander.
+2. **Copy the package directory.** `cp -R packages/<sibling> packages/<new-name>`.
+3. **Update `package.json`:**
+   - `name` → `@lde/<new-name>`
+   - `description` – write something useful
+   - `repository.directory` → `packages/<new-name>`
+   - `version` → `0.0.0` (do NOT keep the sibling’s version). The first CI release bumps from the manifest over the package’s full history under the zero-major scheme (minor = breaking, patch = feature/fix), so `0.0.0` lands at `0.0.1` for plain `feat` commits (`search-api-server`, `search-indexer`) and at `0.1.0` only when the history carries a breaking-marked commit (`search-typesense`, `text-normalization`); a manifest pre-set to `0.1.0` overshoots (`pipeline-shacl-sampler` shipped `0.2.0`). This must be in place before the PR merges – see [Releasing a new package](#releasing-a-new-package).
+   - `dependencies` and `peerDependencies` – replace with what the new package actually needs
+   - Check the public API for domain-specific names before you write the first option, not at review time
+4. **Replace the source.** Empty out `src/` and `test/`, write the new code.
+5. **Update `tsconfig.lib.json` `references`** to match the new package’s actual `@lde/*` peers.
+6. **Reset coverage thresholds.** In `vite.config.ts`, drop the explicit numbers to `0`; the first test run with `autoUpdate: true` will set the real baseline.
+7. **Update the root README.md** packages table with a row for the new package.
+8. **Run `npx nx sync`** to add the new package’s path to the workspace root `tsconfig.json` references array.
+9. **Configure Nx in `package.json`** (not `project.json`) – already enforced by copying a sibling.
+10. **For CLIs**, expose the version from `package.json` (the existing CLI packages do this via Commander).
+
+For releasing the new package’s first version, see [Releasing a new package](#releasing-a-new-package) below.
 
 ## CI/CD
 
@@ -110,6 +130,19 @@ Each package uses conditional exports with a `development` condition for local d
 - Uses conventional commits for version determination
 - Independent versioning per package
 - Uses NPM OIDC Trusted Publishing
+
+#### Releasing a new package
+
+`.github/workflows/release.yml` publishes existing packages on every push to main, but cannot bring up a brand-new `@lde/<name>` package: npm’s Trusted Publisher configuration can only be added to a package that already exists on the registry. The first version has to be published manually by a maintainer; CI takes over from the second version onwards. Until then, the release run’s publish step for the new package fails, while existing packages continue to publish normally. Check `npm view @lde/<name>` before merging a PR that introduces a package, and bootstrap right after the merge.
+
+In short: `npx nx build <name>` first (manifests publish only `dist/`, so an unbuilt publish ships an empty package), then from `packages/<name>` run `npm publish --access public --otp=<code>` WITHOUT `--provenance` (it fails outside CI), then attach the Trusted Publisher and lock the package down:
+
+```sh
+npm trust github --repo ldelements/lde --file release.yml --allow-publish
+npm access set mfa=publish
+```
+
+Do not re-run the failed release action afterwards – the next push to main releases normally (nx skips already-published versions).
 
 <!-- nx configuration start-->
 <!-- Leave the start & end comments to automatically receive updates. -->

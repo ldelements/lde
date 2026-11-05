@@ -2,114 +2,16 @@
 
 Generate human-readable documentation from [SHACL](https://www.w3.org/TR/shacl/) shapes using [Liquid](https://liquidjs.com) templates.
 
-- **Template-driven:** you control the output format (Markdown, HTML, plain text) with Liquid templates.
-- **Standards-based:** reads any RDF serialization (Turtle, JSON-LD, N-Triples, etc.) via [rdf-dereference](https://github.com/rubensworks/rdf-dereference.js).
-- **Structured output:** SHACL shapes are framed into a clean JSON-LD tree before rendering, so templates work with predictable, nested objects.
+## Installation
 
-## How it works
-
-```mermaid
-graph LR
-    A[SHACL file] --> B[Parse to JSON-LD] --> C[Frame by NodeShape] --> D[Render with Liquid template] --> E[Output]
+```sh
+npm install @lde/docgen
 ```
-
-1. **Parse** — the SHACL file is dereferenced and converted to JSON-LD.
-2. **Frame** — the JSON-LD is [framed](https://www.w3.org/TR/json-ld11-framing/) using a JSON-LD Frame that selects `sh:NodeShape` resources and nests their property shapes. A default frame is included; you can supply your own.
-3. **Render** — the framed data is passed to a Liquid template as `nodeShapes`, an array of node shape objects.
-
-## CLI usage
 
 ```sh
 npx @lde/docgen@latest from-shacl <shacl-file> <template-file> [options]
 ```
 
-### Arguments
+## Documentation
 
-| Argument          | Description                                         |
-| ----------------- | --------------------------------------------------- |
-| `<shacl-file>`    | Path to a SHACL shapes file (any RDF serialization) |
-| `<template-file>` | Path to a Liquid template file                      |
-
-### Options
-
-| Option               | Description                  | Default                              |
-| -------------------- | ---------------------------- | ------------------------------------ |
-| `-f, --frame <file>` | Path to a JSON-LD Frame file | Built-in `frames/shacl.frame.jsonld` |
-
-### Example
-
-Given a SHACL file `shapes.ttl`:
-
-```turtle
-@prefix dcat: <http://www.w3.org/ns/dcat#> .
-@prefix dct:  <http://purl.org/dc/terms/> .
-@prefix sh:   <http://www.w3.org/ns/shacl#> .
-@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
-
-[] a sh:NodeShape ;
-    sh:targetClass dcat:Dataset ;
-    sh:property [
-        sh:path dct:title ;
-        sh:minCount 1 ;
-    ] ,
-    [
-        sh:path dct:description ;
-        sh:minCount 1 ;
-        sh:datatype xsd:string ;
-        sh:description "A description of the dataset"@en ;
-    ] .
-```
-
-And a template `spec.md.liquid`:
-
-```liquid
-{% for nodeShape in nodeShapes -%}
-## {{ nodeShape.targetClass }}
-
-| Property | Required | Type | Description |
-|---|---|---|---|
-{% assign mergedProperties = nodeShape.property | mergePropertiesByPath -%}
-{% for property in mergedProperties -%}
-| `{{ property.path }}` | {{ property.minCount | default: "no" }} | {{ property.datatype }} | {{ property.description | lang: "en" }} |
-{% endfor %}
-{% endfor %}
-```
-
-Run:
-
-```sh
-npx @lde/docgen@latest from-shacl shapes.ttl spec.md.liquid > spec.md
-```
-
-## Programmatic usage
-
-```typescript
-import { generateDocumentation } from '@lde/docgen';
-
-const output = await generateDocumentation(
-  'shapes.ttl',
-  'spec.md.liquid',
-  'frames/shacl.frame.jsonld', // optional: path to custom frame
-);
-```
-
-## Template data
-
-The Liquid template receives a `nodeShapes` array. Each node shape object has the structure produced by the JSON-LD Frame — keys are SHACL term names (`targetClass`, `property`, `name`, etc.) with IRIs as values.
-
-Property shapes with the same `sh:path` are common in SHACL (e.g. one for cardinality, another for datatype). The `mergePropertiesByPath` filter combines them into a single object per path.
-
-### Custom filters
-
-| Filter                  | Description                                         | Example                                                             |
-| ----------------------- | --------------------------------------------------- | ------------------------------------------------------------------- |
-| `lang`                  | Select a value by language tag                      | `{{ property.description \| lang: "en" }}`                          |
-| `mergePropertiesByPath` | Merge property shapes that share the same `sh:path` | `{% assign merged = nodeShape.property \| mergePropertiesByPath %}` |
-
-## Custom frames
-
-The default frame selects all `sh:NodeShape` resources. To customise which shapes are selected or how they are nested, pass a custom [JSON-LD Frame](https://www.w3.org/TR/json-ld11-framing/):
-
-```sh
-npx @lde/docgen@latest from-shacl shapes.ttl template.liquid -f my-frame.jsonld
-```
+See the [full documentation](https://ldelements.org/reference/docgen).

@@ -1,6 +1,15 @@
-# SPARQL Importer
+# @lde/sparql-importer
 
-Import RDF data dumps to a local SPARQL endpoint. This is useful when:
+Import RDF data dumps to a local SPARQL endpoint. This package is **interface-only**: it defines the `Importer` contract and its
+result types (`ImportSuccessful`, `ImportFailed`, `NotSupported`) that pipeline
+components program against. It ships no importer of its own.
 
-- the dataset does not offer a SPARQL endpoint itself
-- or when it does but the endpoint is too slow or unreliable, particularly for more complex SPARQL queries.
+## Installation
+
+```sh
+npm install @lde/sparql-importer
+```
+
+## Documentation
+
+See the [full documentation](https://ldelements.org/reference/sparql-importer).

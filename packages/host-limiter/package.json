@@ -1,0 +1,33 @@
+{
+  "name": "@lde/host-limiter",
+  "version": "0.2.1",
+  "description": "Zero-dependency concurrent map bounded by a global and a per-host cap, without head-of-line blocking",
+  "repository": {
+    "url": "git+https://github.com/ldelements/lde.git",
+    "directory": "packages/host-limiter"
+  },
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "!**/*.tsbuildinfo"
+  ],
+  "dependencies": {
+    "tslib": "^2.3.0"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

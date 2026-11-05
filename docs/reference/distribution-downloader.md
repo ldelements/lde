@@ -1,0 +1,59 @@
+# @lde/distribution-downloader
+
+Downloads Distribution files from a given URL and saves them to the local filesystem.
+
+## Installation
+
+```sh
+npm install @lde/distribution-downloader
+```
+
+## Usage
+
+`LastModifiedDownloader` downloads a distribution to a local file and skips the download when the local file is already up to date, judged by the distribution’s `lastModified` (and, when available, `byteSize`) metadata. The target directory defaults to `imports`; the filename is derived from the distribution’s access URL.
+
+```ts
+import { Distribution } from '@lde/dataset';
+import { LastModifiedDownloader } from '@lde/distribution-downloader';
+
+const distribution = new Distribution(
+  new URL('https://example.com/file.nt'),
+  'application/n-triples',
+);
+
+const downloader = new LastModifiedDownloader('downloads');
+const { path, headers } = await downloader.download(distribution);
+```
+
+## Behaviour
+
+- **Target path.** `download()` takes an optional second parameter, `target` – the file path to save to, defaulting to `<baseDir>/<filename derived from the access URL>`. The resolved target must stay inside the base directory; a target that escapes it (e.g. via `../`) throws `Download target escapes the base directory`.
+- **Up-to-date skip.** When the local file is already up to date – judged by the distribution’s `lastModified` (and, when available, `byteSize`) against the file’s mtime and size – no HTTP request is made at all, and the result carries an **empty** `Headers` object. Only an actual download returns the response headers.
+- **Timeout.** The download is aborted when no bytes have arrived for `timeout` milliseconds (default 300 000 ms, 5 minutes), whether while waiting for the response headers or midway through the body. This is an idle timeout, not a budget for the whole transfer: a large file that keeps flowing is never cut off, however long it takes, while a stalled server is. Pass `signal` in `DownloadOptions` to cancel a download yourself. Either way the partial file is removed before the error propagates.
+- **Empty downloads are rejected.** A downloaded file of 1 byte or less throws `Distribution download is empty` – a body that small is a faulty distribution, not data. A download that fails midway is cleaned up before the error propagates.
+- **Local files.** A distribution from `Distribution.localFile()` is copied into the base directory instead of fetched, because a containerized store has only that directory mounted. The copy is named after a hash of the source path, keeping its extensions, so two files never share a copy, and it gets a default mode, whatever the source’s mode is. The source’s size and modification time are recorded beside the copy (`<copy>.source.json`); while both are unchanged the copy is kept, and otherwise it is copied again, even when the replacement has an older modification time. A copy honours `signal` like a download. A `file:` URL from any other distribution fails like any unfetchable URL.
+- **Logging.** Pass a `logger` via the third parameter, `DownloadOptions`; it defaults to a no-op logger, so the downloader is silent unless you provide one.
+
+## `DownloadOptions`
+
+| Option    | Type          | Default      | Description                                                              |
+| --------- | ------------- | ------------ | ------------------------------------------------------------------------ |
+| `logger`  | `Logger`      | no-op logger | Receives debug messages.                                                 |
+| `timeout` | `number`      | `300_000`    | Idle timeout in milliseconds – abort when no bytes arrive for this long. |
+| `signal`  | `AbortSignal` | –            | Cancels the download when aborted.                                       |
+
+## The `Downloader` interface
+
+The package also exports the `Downloader` interface that `LastModifiedDownloader` implements:
+
+```ts
+interface Downloader {
+  download(
+    distribution: Distribution,
+    target?: string,
+    options?: DownloadOptions,
+  ): Promise<DownloadResult>;
+}
+```
+
+This is the type that [`@lde/sparql-importer`](./sparql-importer)’s `ImporterOptions.downloader` accepts, so you can plug in a custom download strategy (different caching, authentication, mirrors) anywhere an importer takes one.

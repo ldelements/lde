@@ -14,10 +14,6 @@ updates:
         patterns:
           - '@fastify/*'
           - 'fastify'
-      vitest:
-        patterns:
-          - '@vitest/*'
-          - 'vitest'
     ignore:
       # Upgrade Nx manually with `nx migrate latest`
       - dependency-name: '@nx/*'
@@ -30,3 +26,7 @@ updates:
       - dependency-name: '@typescript-eslint/*'
       - dependency-name: 'eslint'
       - dependency-name: 'eslint-plugin-svelte'
+      # Vite/Vitest versions are managed through @nx/vite; upgrade together with Nx
+      - dependency-name: 'vite'
+      - dependency-name: 'vitest'
+      - dependency-name: '@vitest/*'

@@ -6,12 +6,16 @@ CONSTRUCT {
 WHERE {
     # Object counts only. Subject counts in class-properties-subjects.rq.
     {
-        SELECT ?type ?p (COUNT(DISTINCT ?o) AS ?objects) {
-            #subjectFilter#
-            ?s a ?type ; ?p ?o .
+        SELECT ?class ?p (COUNT(DISTINCT ?o) AS ?objects) {
+            {
+                SELECT ?class ?p ?o {
+                    #subjectFilter#
+                    ?s a ?class ; ?p ?o .
+                }
+            }
         }
-        GROUP BY ?type ?p
+        GROUP BY ?class ?p
     }
-    BIND(URI(CONCAT(STR(?dataset), "/.well-known/void#class-property-", MD5(CONCAT(STR(?type), STR(?p))))) AS ?propertyPartition)
+    BIND(#mint:class-property# AS ?propertyPartition)
 }
 LIMIT 100000

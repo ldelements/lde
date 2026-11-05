@@ -1,11 +1,13 @@
-# local-sparql-endpoint
+# @lde/local-sparql-endpoint
 
-This library was generated with [Nx](https://nx.dev).
+Start a local SPARQL endpoint that serves an RDF fixture file, for use in tests.
 
-## Building
+## Installation
 
-Run `nx build local-sparql-endpoint` to build the library.
+```sh
+npm install @lde/local-sparql-endpoint
+```
 
-## Running unit tests
+## Documentation
 
-Run `nx test local-sparql-endpoint` to execute the unit tests via [Vitest](https://vitest.dev/).
+See the [full documentation](https://ldelements.org/reference/local-sparql-endpoint).

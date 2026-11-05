@@ -3,10 +3,6 @@
 import { Command } from 'commander';
 import { generateDocumentation } from './index.js';
 import packageJson from '../package.json' with { type: 'json' };
-import { dirname } from 'path';
-import { fileURLToPath } from 'url';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const program = new Command();
 
@@ -27,9 +23,8 @@ program
     'Path to Liquid template file'
   )
   .option(
-'-f --frame <json-ld-frame-file>',
-    'Path to a JSON-LD Frame file',
-    __dirname + '/../frames/shacl.frame.jsonld'
+    '-f --frame <json-ld-frame-file>',
+    'Path to a JSON-LD Frame file. Deep-merged on top of the built-in default frame, so it only needs to contain your additions.'
   )
   .addHelpText(
     'after',
@@ -49,4 +44,3 @@ Example:
   });
 
 program.parse();
-

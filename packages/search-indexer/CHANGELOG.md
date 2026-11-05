@@ -1,0 +1,846 @@
+## 0.30.2 (2026-11-05)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.43.2
+- Updated @lde/search-pipeline to 0.40.2
+- Updated @lde/search to 0.36.2
+
+## 0.30.1 (2026-11-05)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.43.1
+- Updated @lde/search-pipeline to 0.40.1
+- Updated @lde/search to 0.36.1
+
+## 0.30.0 (2026-11-05)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.43.0
+- Updated @lde/search-pipeline to 0.40.0
+- Updated @lde/search to 0.36.0
+
+## 0.29.0 (2026-11-04)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.42.0
+- Updated @lde/search-pipeline to 0.39.0
+- Updated @lde/search to 0.35.0
+
+## 0.28.0 (2026-11-03)
+
+### 🚀 Features
+
+- ⚠️  **search-indexer:** index local RDF files beside registered datasets ([#985](https://github.com/ldelements/lde/pull/985))
+
+### ⚠️  Breaking Changes
+
+- **search-indexer:** index local RDF files beside registered datasets  ([#985](https://github.com/ldelements/lde/pull/985))
+  IndexerConfig.registryEndpoint is optional, undefined
+  when DATASETS names only local data. Code reading it must handle
+  undefined.
+  * fix: re-copy restored local files and isolate combined selections
+  - Record a local file’s size and modification time beside its copy and
+    copy again whenever either changes, so a same-size replacement restored
+    with an older time reaches the index
+  - Cancel a local copy when the download signal aborts
+  - Give each iteration of a CombinedSelector selection its own stream, so
+    overlapping or restarted loops never skip or repeat datasets
+  - Stop Dataset.localFile sharing one URL object between the IRI and the
+    access URL
+  - Test RegistrySelector
+  - Argue the full directory listing against ADR 12 in ADR 31, and note
+    that an own IRI counts as registered for registry-sourced types"
+  A	docs/decisions/0031-import-local-files-through-the-data-dump-path.md
+  M	docs/guide/import-data-dumps.md
+  M	docs/guide/what-is-lde.md
+  M	docs/reference/dataset.md
+  M	docs/reference/distribution-downloader.md
+  M	docs/reference/distribution-probe.md
+  M	docs/reference/pipeline.md
+  M	docs/reference/search-indexer.md
+  M	docs/reference/search-pipeline.md
+  M	package-lock.json
+  M	packages/dataset/src/dataset.ts
+  M	packages/dataset/src/distribution.ts
+  A	packages/dataset/test/dataset.test.ts
+  M	packages/dataset/test/distribution.test.ts
+  M	packages/distribution-downloader/src/download.ts
+  A	packages/distribution-downloader/test/localFile.test.ts
+  M	packages/distribution-downloader/vite.config.ts
+  M	packages/distribution-probe/src/probe.ts
+  A	packages/distribution-probe/test/localFile.test.ts
+  M	packages/distribution-probe/vite.config.ts
+  M	packages/pipeline/src/selector.ts
+  A	packages/pipeline/test/directorySelector.test.ts
+  A	packages/pipeline/test/distribution/localFile.test.ts
+  A	packages/pipeline/test/selector.test.ts
+  M	packages/pipeline/vite.config.ts
+  M	packages/search-indexer/package.json
+  M	packages/search-indexer/src/cli.ts
+  M	packages/search-indexer/src/composition.ts
+  M	packages/search-indexer/src/config.ts
+  M	packages/search-indexer/src/indexer.ts
+  M	packages/search-indexer/test/composition.test.ts
+  M	packages/search-indexer/test/config.test.ts
+  M	packages/search-indexer/tsconfig.lib.json
+  M	packages/search-pipeline/src/search-stages.ts
+  M	packages/search-pipeline/test/search-stages.test.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline-console-reporter to 0.32.0
+- Updated @lde/dataset-registry-client to 0.12.0
+- Updated @lde/search-typesense to 0.41.0
+- Updated @lde/search-pipeline to 0.38.0
+- Updated @lde/sparql-qlever to 0.20.0
+- Updated @lde/pipeline to 0.41.0
+- Updated @lde/dataset to 0.10.0
+
+## 0.27.1 (2026-10-31)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline-console-reporter to 0.31.1
+- Updated @lde/search-typesense to 0.40.1
+- Updated @lde/search-pipeline to 0.37.1
+- Updated @lde/pipeline to 0.40.1
+
+## 0.27.0 (2026-10-30)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline-console-reporter to 0.31.0
+- Updated @lde/dataset-registry-client to 0.11.0
+- Updated @lde/search-typesense to 0.40.0
+- Updated @lde/search-pipeline to 0.37.0
+- Updated @lde/sparql-qlever to 0.19.0
+- Updated @lde/pipeline to 0.40.0
+- Updated @lde/search to 0.34.0
+
+## 0.26.0 (2026-10-28)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.39.0
+- Updated @lde/search-pipeline to 0.36.0
+- Updated @lde/search to 0.33.0
+
+## 0.25.6 (2026-10-28)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.38.5
+- Updated @lde/search-pipeline to 0.35.5
+- Updated @lde/search to 0.32.3
+
+## 0.25.5 (2026-10-28)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline-console-reporter to 0.30.3
+- Updated @lde/dataset-registry-client to 0.10.1
+- Updated @lde/search-typesense to 0.38.4
+- Updated @lde/search-pipeline to 0.35.4
+- Updated @lde/sparql-qlever to 0.18.3
+- Updated @lde/pipeline to 0.39.3
+- Updated @lde/search to 0.32.2
+
+## 0.25.4 (2026-10-27)
+
+### 🚀 Features
+
+- **search-indexer:** pass replaceJsonLdContext to the QLever import ([#963](https://github.com/ldelements/lde/pull/963))
+
+## 0.25.3 (2026-10-27)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline-console-reporter to 0.30.2
+- Updated @lde/search-typesense to 0.38.3
+- Updated @lde/search-pipeline to 0.35.3
+- Updated @lde/sparql-qlever to 0.18.2
+- Updated @lde/pipeline to 0.39.2
+
+## 0.25.2 (2026-10-27)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline-console-reporter to 0.30.1
+- Updated @lde/search-typesense to 0.38.2
+- Updated @lde/search-pipeline to 0.35.2
+- Updated @lde/pipeline to 0.39.1
+
+## 0.25.1 (2026-10-26)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.38.1
+- Updated @lde/search-pipeline to 0.35.1
+- Updated @lde/search to 0.32.1
+
+## 0.25.0 (2026-10-26)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline-console-reporter to 0.30.0
+- Updated @lde/search-typesense to 0.38.0
+- Updated @lde/search-pipeline to 0.35.0
+- Updated @lde/pipeline to 0.39.0
+- Updated @lde/search to 0.32.0
+
+## 0.24.0 (2026-10-25)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.37.0
+- Updated @lde/search-pipeline to 0.34.0
+- Updated @lde/search to 0.31.0
+
+## 0.23.1 (2026-10-25)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline-console-reporter to 0.29.1
+- Updated @lde/search-typesense to 0.36.1
+- Updated @lde/search-pipeline to 0.33.1
+- Updated @lde/pipeline to 0.38.1
+
+## 0.23.0 (2026-10-23)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.36.0
+- Updated @lde/search-pipeline to 0.33.0
+- Updated @lde/search to 0.30.0
+
+## 0.22.1 (2026-10-23)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/sparql-qlever to 0.18.1
+
+## 0.22.0 (2026-10-16)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline-console-reporter to 0.29.0
+- Updated @lde/search-typesense to 0.35.0
+- Updated @lde/search-pipeline to 0.32.0
+- Updated @lde/sparql-qlever to 0.18.0
+- Updated @lde/pipeline to 0.38.0
+
+## 0.21.0 (2026-10-16)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.34.0
+- Updated @lde/search-pipeline to 0.31.0
+- Updated @lde/search to 0.29.0
+
+## 0.20.1 (2026-10-16)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.33.1
+- Updated @lde/search-pipeline to 0.30.1
+- Updated @lde/search to 0.28.1
+
+## 0.20.0 (2026-10-15)
+
+### 🚀 Features
+
+- ⚠️  run QLever in a sidecar through a localhost task agent ([#906](https://github.com/ldelements/lde/pull/906))
+
+### ⚠️  Breaking Changes
+
+- run QLever in a sidecar through a localhost task agent  ([#906](https://github.com/ldelements/lde/pull/906))
+  QleverConfig is now discriminated by a required mode. A config built in code
+  rather than with configFromEnvironment() must add mode: 'docker' to keep its Docker setup, or
+  use mode: 'remote' (without image and network) for a sidecar.
+  * docs(task-runner-http): explain the exec probe against listening on the pod IP
+  - Explain why kubelet’s httpGet and tcpSocket probes cannot reach the agent on 127.0.0.1
+  - Set the exec probe against letting the agent listen on the pod’s IP address, which would
+    open it to the cluster network
+  * fix(task-runner-native): report the signal that killed a process
+  - Reject wait() with 'Process was killed by SIGKILL' instead of 'Process failed with code null'
+    when a signal ends the process
+  * feat(task-runner-http): say when a task ran out of memory
+  - Have the agent compare its cgroup’s oom_kill count before and after a task, and put the
+    container’s memory limit first in the failure when the kernel killed a process meanwhile
+  - Say in the lost-agent error that its container most likely ran out of memory, and where
+    Kubernetes records why, without needing permission to read pods
+  - Test a real out-of-memory kill in a memory-limited QLever sidecar
+  * docs(task-runner-http): document out-of-memory reporting and thin the text
+  - Explain what wait() reports when the kernel kills one process or the whole container
+  - State that the package needs no Kubernetes permissions
+  - Explain both restartPolicy settings in the example and the Job apiVersion
+  - Name the precedents exactly: the OpenTelemetry Operator copies its agents into an emptyDir,
+    Istio runs its proxy as a native sidecar
+  - Shorten the probe explanation and point the search-indexer remote section to the reasons
+  * refactor(task-runner-http): rename sea to agent
+  - Name the directory of the task agent’s executable after what it holds, not after Node’s
+    single executable packaging, and its bundle output dist-agent to match
+  * docs(sparql-anything): run the JVMs in a sidecar on Kubernetes
+  - Describe running the converter’s JVMs through HttpTaskRunner in a JRE sidecar with its own
+    memory limit, sized at concurrency × heap plus JVM overhead"
+  M	.github/workflows/docker.yml
+  M	.gitignore
+  M	AGENTS.md
+  M	README.md
+  M	docs/.vitepress/config.mts
+  A	docs/decisions/0027-run-qlever-in-a-sidecar-controlled-through-a-localhost-task-agent.md
+  M	docs/reference/packages.md
+  M	docs/reference/search-indexer.md
+  M	docs/reference/sparql-anything.md
+  M	docs/reference/sparql-qlever.md
+  A	docs/reference/task-runner-http.md
+  M	docs/reference/task-runner-native.md
+  M	docs/reference/task-runner.md
+  M	eslint.config.mjs
+  M	package-lock.json
+  M	package.json
+  M	packages/search-indexer/src/composition.ts
+  M	packages/search-indexer/src/config.ts
+  M	packages/search-indexer/test/composition.test.ts
+  M	packages/search-indexer/test/config.test.ts
+  M	packages/sparql-qlever/package.json
+  M	packages/sparql-qlever/src/createQlever.ts
+  A	packages/sparql-qlever/test/remote.test.ts
+  M	packages/sparql-qlever/tsconfig.lib.json
+  M	packages/sparql-qlever/vite.config.ts
+  A	packages/task-runner-http/Dockerfile
+  A	packages/task-runner-http/README.md
+  A	packages/task-runner-http/agent/agent.ts
+  A	packages/task-runner-http/agent/main.ts
+  A	packages/task-runner-http/agent/rolldown.config.mjs
+  A	packages/task-runner-http/agent/sea-config.json
+  A	packages/task-runner-http/eslint.config.mjs
+  A	packages/task-runner-http/package.json
+  A	packages/task-runner-http/src/http-task-runner.ts
+  A	packages/task-runner-http/src/index.ts
+  A	packages/task-runner-http/src/protocol.ts
+  A	packages/task-runner-http/test/index.test.ts
+  A	packages/task-runner-http/test/out-of-memory.test.ts
+  A	packages/task-runner-http/tsconfig.json
+  A	packages/task-runner-http/tsconfig.lib.json
+  A	packages/task-runner-http/tsconfig.spec.json
+  A	packages/task-runner-http/vite.config.ts
+  M	packages/task-runner-native/src/index.ts
+  M	packages/task-runner-native/test/index.test.ts
+  A	tools/docker-smoke-task-agent.sh
+  M	tsconfig.json
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline-console-reporter to 0.28.0
+- Updated @lde/dataset-registry-client to 0.10.0
+- Updated @lde/search-typesense to 0.33.0
+- Updated @lde/search-pipeline to 0.30.0
+- Updated @lde/sparql-qlever to 0.17.0
+- Updated @lde/pipeline to 0.37.0
+- Updated @lde/search to 0.28.0
+
+## 0.19.4 (2026-10-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline-console-reporter to 0.27.9
+- Updated @lde/dataset-registry-client to 0.9.5
+- Updated @lde/search-typesense to 0.32.4
+- Updated @lde/search-pipeline to 0.29.4
+- Updated @lde/sparql-qlever to 0.16.3
+- Updated @lde/pipeline to 0.36.9
+- Updated @lde/search to 0.27.2
+
+## 0.19.3 (2026-10-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline-console-reporter to 0.27.8
+- Updated @lde/dataset-registry-client to 0.9.4
+- Updated @lde/search-typesense to 0.32.3
+- Updated @lde/search-pipeline to 0.29.3
+- Updated @lde/pipeline to 0.36.8
+
+## 0.19.2 (2026-10-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.32.2
+- Updated @lde/search-pipeline to 0.29.2
+- Updated @lde/search to 0.27.1
+
+## 0.19.1 (2026-09-21)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline-console-reporter to 0.27.7
+- Updated @lde/search-typesense to 0.32.1
+- Updated @lde/search-pipeline to 0.29.1
+- Updated @lde/sparql-qlever to 0.16.2
+- Updated @lde/pipeline to 0.36.7
+
+## 0.19.0 (2026-09-09)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.32.0
+- Updated @lde/search-pipeline to 0.29.0
+- Updated @lde/search to 0.27.0
+
+## 0.18.2 (2026-09-09)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline-console-reporter to 0.27.6
+- Updated @lde/search-typesense to 0.31.2
+- Updated @lde/search-pipeline to 0.28.2
+- Updated @lde/sparql-qlever to 0.16.1
+- Updated @lde/pipeline to 0.36.6
+
+## 0.18.1 (2026-09-09)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline-console-reporter to 0.27.5
+- Updated @lde/search-typesense to 0.31.1
+- Updated @lde/search-pipeline to 0.28.1
+- Updated @lde/pipeline to 0.36.5
+
+## 0.18.0 (2026-09-09)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.31.0
+- Updated @lde/search-pipeline to 0.28.0
+- Updated @lde/search to 0.26.0
+
+## 0.17.0 (2026-09-04)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.30.0
+- Updated @lde/search-pipeline to 0.27.0
+- Updated @lde/search to 0.25.0
+
+## 0.16.2 (2026-09-04)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.29.4
+- Updated @lde/search-pipeline to 0.26.4
+- Updated @lde/search to 0.24.4
+
+## 0.16.1 (2026-09-04)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.29.3
+- Updated @lde/search-pipeline to 0.26.3
+- Updated @lde/search to 0.24.3
+
+## 0.16.0 (2026-08-31)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/sparql-qlever to 0.16.0
+
+## 0.15.2 (2026-08-31)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.29.2
+- Updated @lde/search-pipeline to 0.26.2
+- Updated @lde/search to 0.24.2
+
+## 0.15.1 (2026-08-31)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.29.1
+- Updated @lde/search-pipeline to 0.26.1
+- Updated @lde/search to 0.24.1
+
+## 0.15.0 (2026-08-31)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.29.0
+- Updated @lde/search-pipeline to 0.26.0
+- Updated @lde/sparql-qlever to 0.15.7
+
+## 0.14.0 (2026-08-31)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline-console-reporter to 0.27.4
+- Updated @lde/search-typesense to 0.28.0
+- Updated @lde/search-pipeline to 0.25.0
+- Updated @lde/sparql-qlever to 0.15.6
+- Updated @lde/pipeline to 0.36.4
+- Updated @lde/search to 0.24.0
+
+## 0.13.5 (2026-08-24)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/sparql-qlever to 0.15.5
+
+## 0.13.4 (2026-08-24)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline-console-reporter to 0.27.3
+- Updated @lde/search-typesense to 0.27.4
+- Updated @lde/search-pipeline to 0.24.4
+- Updated @lde/pipeline to 0.36.3
+
+## 0.13.3 (2026-08-24)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline-console-reporter to 0.27.2
+- Updated @lde/dataset-registry-client to 0.9.3
+- Updated @lde/search-typesense to 0.27.3
+- Updated @lde/search-pipeline to 0.24.3
+- Updated @lde/sparql-qlever to 0.15.4
+- Updated @lde/pipeline to 0.36.2
+- Updated @lde/search to 0.23.2
+
+## 0.13.2 (2026-08-22)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.27.2
+- Updated @lde/search-pipeline to 0.24.2
+- Updated @lde/search to 0.23.1
+
+## 0.13.1 (2026-08-21)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline-console-reporter to 0.27.1
+- Updated @lde/dataset-registry-client to 0.9.2
+- Updated @lde/search-typesense to 0.27.1
+- Updated @lde/search-pipeline to 0.24.1
+- Updated @lde/pipeline to 0.36.1
+
+## 0.13.0 (2026-08-20)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.27.0
+- Updated @lde/search-pipeline to 0.24.0
+
+## 0.12.0 (2026-08-20)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.26.0
+- Updated @lde/search-pipeline to 0.23.0
+- Updated @lde/search to 0.23.0
+
+## 0.11.0 (2026-08-20)
+
+This was a version bump only for @lde/search-indexer to align it with other projects, there were no code changes.
+
+## 0.10.1 (2026-08-20)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.25.1
+- Updated @lde/search-pipeline to 0.22.1
+- Updated @lde/search to 0.22.1
+
+## 0.10.0 (2026-08-17)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.25.0
+- Updated @lde/search-pipeline to 0.22.0
+- Updated @lde/search to 0.22.0
+
+## 0.9.1 (2026-08-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.24.1
+- Updated @lde/search-pipeline to 0.21.1
+- Updated @lde/search to 0.21.1
+
+## 0.9.0 (2026-08-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.24.0
+- Updated @lde/search-pipeline to 0.21.0
+- Updated @lde/search to 0.21.0
+
+## 0.8.0 (2026-08-14)
+
+### 🚀 Features
+
+- ⚠️  **search:** filter across collections through declared joins ([#719](https://github.com/ldelements/lde/pull/719))
+
+### ⚠️  Breaking Changes
+
+- **search:** filter across collections through declared joins  ([#719](https://github.com/ldelements/lde/pull/719))
+  the Typesense rebuild and collection-definition options
+  take `collectionNameFor: (searchType) => string` instead of `name: string`.
+  Pass `collectionNameFor: () => 'x'` where a single name was passed before.
+  * fix(search): close four gaps the review found in the join implementation
+  - never abort a member of a partly-committed join component: the half-built
+    collection it would drop is what the member that DID commit references by
+    concrete name, so dropping it broke every join through the live index
+    permanently. An orphaned collection is the lesser evil
+  - reject `joinable` on an inline reference: the collection definition emitted
+    the nesting and silently dropped the reference, so the join validated,
+    compiled and only then failed at the engine
+  - reject a `collectionNameFor` that gives a join target this type's own
+    collection – the trap in migrating a constant from the old `name` option,
+    which made the reference point the collection at itself
+  - name the empty joined `where` inside an `or` on its own terms; it crashed on
+    the missing clause instead of reporting anything
+  * fix(pipeline): let a coordinating caller end a run without discarding its output
+  - add the optional `RunWriter.abandon(error)`: finalize and release run-level
+    resources, keep what was built. It falls back to `abort`, which is already
+    right for a writer whose abort discards nothing
+  - implement it on the Typesense blue/green rebuild as a lock release without
+    the collection drop, and use it for the uncommitted peers of a committed
+    member. Skipping them instead held the rebuild lock for its whole TTL and
+    failed the next run outright
+  - count `joinable` as a Role, so a join-only reference is stored rather than
+    pruned as an Internal Field and then joined against a column that is not there
+  - tell a lookalike search type apart from a missing schema when a joinable
+    reference cannot be resolved
+  * fix(search-api-graphql): key a join's `in` arm on IRI like every other identity filter
+  - the arm asks what `‹Target›Filter` asks – which of the target's ids the
+    field holds – so it must accept the same `[IRI!]` variable a consumer
+    declares. Typing it `String` left the join the one place identity was not
+    IRI-keyed"
+  M	AGENTS.md
+  A	docs/decisions/0019-filter-across-collections-through-declared-joins.md
+  M	docs/reference/pipeline.md
+  M	docs/reference/search-api-graphql.md
+  M	docs/reference/search-pipeline.md
+  M	docs/reference/search-typesense.md
+  M	docs/reference/search.md
+  M	packages/pipeline/src/writer/writer.ts
+  M	packages/search-api-graphql/src/build-schema.ts
+  M	packages/search-api-graphql/src/facet-batch.ts
+  M	packages/search-api-graphql/test/facet-batch.test.ts
+  A	packages/search-api-graphql/test/joins.test.ts
+  M	packages/search-api-graphql/vite.config.ts
+  M	packages/search-indexer/src/composition.ts
+  M	packages/search-pipeline/src/search-index-writer.ts
+  A	packages/search-pipeline/test/fixtures/joins-sample.ttl
+  A	packages/search-pipeline/test/joins.integration.test.ts
+  M	packages/search-pipeline/test/multi-collection.integration.test.ts
+  M	packages/search-pipeline/test/search-index-writer.test.ts
+  M	packages/search-typesense/src/blue-green-rebuild.ts
+  M	packages/search-typesense/src/collection-definition.ts
+  M	packages/search-typesense/src/in-place-rebuild.ts
+  M	packages/search-typesense/src/index.ts
+  M	packages/search-typesense/src/lock.ts
+  M	packages/search-typesense/src/query-compiler.ts
+  M	packages/search-typesense/src/rebuild-support.ts
+  M	packages/search-typesense/src/search.ts
+  M	packages/search-typesense/test/blue-green-rebuild.test.ts
+  M	packages/search-typesense/test/collection-definition.test.ts
+  M	packages/search-typesense/test/collection-name.test.ts
+  M	packages/search-typesense/test/generator-stability.test.ts
+  M	packages/search-typesense/test/in-place-rebuild.test.ts
+  A	packages/search-typesense/test/joins.test.ts
+  M	packages/search-typesense/test/rebuild-error-paths.test.ts
+  M	packages/search-typesense/test/rebuild-support.test.ts
+  A	packages/search-typesense/test/reference-backfill.integration.test.ts
+  M	packages/search-typesense/test/search-engine.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/src/adapter.ts
+  M	packages/search/src/index.ts
+  A	packages/search/src/join-graph.ts
+  M	packages/search/src/query.ts
+  M	packages/search/src/schema.ts
+  A	packages/search/test/join-graph.test.ts
+  M	packages/search/test/query.test.ts
+  M	packages/search/test/schema.test.ts
+  M	packages/search/vite.config.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline-console-reporter to 0.27.0
+- Updated @lde/search-typesense to 0.23.0
+- Updated @lde/search-pipeline to 0.20.0
+- Updated @lde/pipeline to 0.36.0
+- Updated @lde/search to 0.20.0
+
+## 0.7.0 (2026-08-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.22.0
+- Updated @lde/search-pipeline to 0.19.0
+- Updated @lde/search to 0.19.0
+
+## 0.6.4 (2026-08-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.21.3
+- Updated @lde/search-pipeline to 0.18.4
+- Updated @lde/search to 0.18.3
+
+## 0.6.3 (2026-08-12)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.21.2
+- Updated @lde/search-pipeline to 0.18.3
+- Updated @lde/search to 0.18.2
+
+## 0.6.2 (2026-08-12)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.21.1
+- Updated @lde/search-pipeline to 0.18.2
+- Updated @lde/search to 0.18.1
+
+## 0.6.1 (2026-08-12)
+
+### 🚀 Features
+
+- **search-indexer:** add a transform without forking the composition ([#720](https://github.com/ldelements/lde/pull/720))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-pipeline to 0.18.1
+
+## 0.6.0 (2026-08-07)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.21.0
+- Updated @lde/search-pipeline to 0.18.0
+- Updated @lde/search to 0.18.0
+
+## 0.5.0 (2026-08-07)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.20.0
+- Updated @lde/search-pipeline to 0.17.0
+- Updated @lde/search to 0.17.0
+
+## 0.4.0 (2026-08-07)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.19.0
+- Updated @lde/search-pipeline to 0.16.0
+- Updated @lde/search to 0.16.0
+
+## 0.3.2 (2026-08-07)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline-console-reporter to 0.26.6
+- Updated @lde/search-typesense to 0.18.2
+- Updated @lde/search-pipeline to 0.15.2
+- Updated @lde/pipeline to 0.35.6
+
+## 0.3.1 (2026-08-07)
+
+### 🚀 Features
+
+- **search-pipeline:** extract root types from the dataset registry ([#698](https://github.com/ldelements/lde/pull/698))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline-console-reporter to 0.26.5
+- Updated @lde/search-typesense to 0.18.1
+- Updated @lde/search-pipeline to 0.15.1
+- Updated @lde/pipeline to 0.35.5
+
+## 0.3.0 (2026-07-31)
+
+### 🚀 Features
+
+- ⚠️  **search:** serve a surfaced inline reference as a nested document ([#689](https://github.com/ldelements/lde/pull/689))
+
+### ⚠️  Breaking Changes
+
+- **search:** serve a surfaced inline reference as a nested document  ([#689](https://github.com/ldelements/lde/pull/689))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.18.0
+- Updated @lde/search-pipeline to 0.15.0
+- Updated @lde/search to 0.15.0
+
+## 0.2.0 (2026-07-31)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.17.0
+- Updated @lde/search-pipeline to 0.14.0
+- Updated @lde/search to 0.14.0
+
+## 0.1.0 (2026-07-30)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.16.0
+- Updated @lde/search-pipeline to 0.13.0
+- Updated @lde/search to 0.13.0
+
+## 0.0.4 (2026-07-27)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.15.6
+- Updated @lde/search-pipeline to 0.12.6
+- Updated @lde/search to 0.12.3
+
+## 0.0.3 (2026-07-25)
+
+### 🚀 Features
+
+- **sparql-qlever:** reach QLever by container name over a Docker network ([#663](https://github.com/ldelements/lde/pull/663))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/sparql-qlever to 0.15.3
+
+## 0.0.2 (2026-07-25)
+
+### 🩹 Fixes
+
+- **pipeline:** fail fast when the provenance store cannot persist records ([#662](https://github.com/ldelements/lde/pull/662))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline-console-reporter to 0.26.4
+- Updated @lde/search-typesense to 0.15.5
+- Updated @lde/search-pipeline to 0.12.5
+- Updated @lde/pipeline to 0.35.4
+
+## 0.0.1 (2026-07-24)
+
+### 🚀 Features
+
+- **search-api-server:** serve the search API as a bootable process and Docker image ([#646](https://github.com/ldelements/lde/pull/646), [#655](https://github.com/ldelements/lde/issues/655))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline-console-reporter to 0.26.3
+- Updated @lde/dataset-registry-client to 0.9.1
+- Updated @lde/search-typesense to 0.15.4
+- Updated @lde/search-pipeline to 0.12.4
+- Updated @lde/sparql-qlever to 0.15.2
+- Updated @lde/pipeline to 0.35.3
+- Updated @lde/search to 0.12.2

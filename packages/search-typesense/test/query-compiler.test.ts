@@ -1,0 +1,715 @@
+import { describe, expect, it } from 'vitest';
+import {
+  isoToUnixSeconds,
+  type StoredDate,
+  lastSecondOf,
+  type SearchQuery,
+  type SearchField,
+  type SearchType,
+} from '@lde/search';
+import { buildSearchParams } from '../src/query-compiler.js';
+
+const schema: SearchType = {
+  name: 'Dataset',
+  class: 'http://www.w3.org/ns/dcat#Dataset',
+  fields: [
+    {
+      name: 'title',
+      path: 'http://purl.org/dc/terms/title',
+      kind: 'text',
+      locales: ['nl', 'en'],
+      output: true,
+      searchable: { weight: 5 },
+      sortable: true,
+    },
+    {
+      name: 'keyword',
+      path: 'http://www.w3.org/ns/dcat#keyword',
+      kind: 'keyword',
+      array: true,
+      facetable: true,
+      filterable: true,
+      searchable: { weight: 1 },
+    },
+    {
+      name: 'format',
+      kind: 'keyword',
+      array: true,
+      facetable: true,
+      filterable: true,
+    },
+    // Filter-only, non-facet (tokenized) → exact `:=` membership.
+    { name: 'catalog', kind: 'keyword', array: true, filterable: true },
+    { name: 'status', kind: 'keyword', facetable: true, filterable: true },
+    {
+      name: 'size',
+      kind: 'integer',
+      filterable: true,
+      sortable: true,
+      facetable: true,
+      // Half-open `[min, max)` bins; the last is open-ended (no upper bound).
+      facetRanges: [
+        { key: '0', min: 1, max: 10 },
+        { key: '1', min: 10, max: 100 },
+        { key: '2', min: 100 },
+      ],
+    },
+    { name: 'iiif', kind: 'boolean', filterable: true, facetable: true },
+    { name: 'datePosted', kind: 'date', filterable: true, sortable: true },
+  ],
+};
+
+const base: SearchQuery = {
+  where: [],
+  orderBy: [],
+  limit: 20,
+  offset: 0,
+  facets: [],
+  locale: 'nl',
+};
+
+describe('buildSearchParams', () => {
+  it('browses with a match-all q and the weighted query_by fields', () => {
+    const params = buildSearchParams(base, schema);
+    expect(params.q).toBe('*');
+    expect(params.query_by).toBe(
+      'title_search_nl,title_search_en,keyword_search',
+    );
+    expect(params.per_page).toBe(20);
+    expect(params.page).toBe(1);
+    expect(params.filter_by).toBeUndefined();
+    expect(params.sort_by).toBeUndefined();
+  });
+
+  it('folds the query text and boosts the active locale in query_by_weights', () => {
+    expect(
+      buildSearchParams({ ...base, text: 'Kaart', locale: 'nl' }, schema),
+    ).toMatchObject({ q: 'kaart', query_by_weights: '5,4,1' });
+    expect(
+      buildSearchParams({ ...base, text: 'Kaart', locale: 'en' }, schema)
+        .query_by_weights,
+    ).toBe('4,5,1');
+  });
+
+  it('boosts the declared locale a regional tag falls under', () => {
+    expect(
+      buildSearchParams({ ...base, text: 'Kaart', locale: 'en-GB' }, schema)
+        .query_by_weights,
+    ).toBe('4,5,1');
+  });
+
+  it('sorts a regional tag on its declared locale’s key', () => {
+    // locales is ['nl', 'en']: without range matching `en-GB` would fall back
+    // to the first locale and sort English readers by the Dutch title.
+    expect(
+      buildSearchParams(
+        {
+          ...base,
+          locale: 'en-GB',
+          orderBy: [{ field: 'title', direction: 'asc' }],
+        },
+        schema,
+      ).sort_by,
+    ).toBe('title_sort_en:asc');
+  });
+
+  it('maps offset/limit to numbered pages', () => {
+    expect(
+      buildSearchParams({ ...base, offset: 40, limit: 20 }, schema).page,
+    ).toBe(3);
+  });
+
+  it('compiles where clauses, with exact membership for non-facet fields', () => {
+    const params = buildSearchParams(
+      {
+        ...base,
+        where: [
+          { or: [{ field: 'status', in: ['valid'] }] },
+          { or: [{ field: 'keyword', in: ['kaarten', 'atlas'] }] },
+          { or: [{ field: 'catalog', in: ['urn:cat'] }] },
+          { or: [{ field: 'format', in: ['text/turtle', 'group:rdf'] }] },
+          { or: [{ field: 'size', range: { min: 1, max: 10 } }] },
+          { or: [{ field: 'iiif', is: true }] },
+        ],
+      },
+      schema,
+    );
+    expect(params.filter_by).toBe(
+      'status:[`valid`] && ' +
+        'keyword:[`kaarten`,`atlas`] && ' +
+        'catalog:=[`urn:cat`] && ' +
+        'format:[`text/turtle`,`group:rdf`] && ' +
+        'size:[1..10] && ' +
+        'iiif:=true',
+    );
+  });
+
+  it('compiles a disjunction to one parenthesised `||` group', () => {
+    // The whole point: one engine round-trip, not one query per field. Each
+    // criterion keeps its OWN field's membership operator – `catalog` is
+    // non-facet so it stays exact `:=`, while the facet fields use `:` – and
+    // the parentheses keep the `||` binding tighter than the `&&` between
+    // clauses.
+    const params = buildSearchParams(
+      {
+        ...base,
+        where: [
+          {
+            or: [
+              { field: 'id', in: ['urn:vg'] },
+              { field: 'keyword', in: ['urn:vg'] },
+              { field: 'catalog', in: ['urn:vg'] },
+            ],
+          },
+          { or: [{ field: 'status', in: ['valid'] }] },
+        ],
+      },
+      schema,
+    );
+    expect(params.filter_by).toBe(
+      '(id:=[`urn:vg`] || keyword:[`urn:vg`] || catalog:=[`urn:vg`])' +
+        ' && status:[`valid`]',
+    );
+  });
+
+  it('mixes operators inside one disjunction, each on its own field', () => {
+    // A criterion carries its own operator, so a clause may range over a
+    // keyword and a numeric field at once – and over ONE field twice, which is
+    // the only way to say “smaller than 10 or larger than 100”.
+    expect(
+      buildSearchParams(
+        {
+          ...base,
+          where: [
+            {
+              or: [
+                { field: 'size', range: { max: 10 } },
+                { field: 'size', range: { min: 100 } },
+                { field: 'iiif', is: true },
+              ],
+            },
+          ],
+        },
+        schema,
+      ).filter_by,
+    ).toBe('(size:<=10 || size:>=100 || iiif:=true)');
+  });
+
+  it('leaves a one-criterion clause unparenthesised', () => {
+    // The ordinary single-field filter, which must compile exactly as it did
+    // before clauses could hold more than one criterion.
+    expect(
+      buildSearchParams(
+        { ...base, where: [{ or: [{ field: 'status', in: ['valid'] }] }] },
+        schema,
+      ).filter_by,
+    ).toBe('status:[`valid`]');
+  });
+
+  it('drops a non-compiling criterion, keeping the rest of the disjunction', () => {
+    // `nonexistent` contributes no term, but the caller still asked about
+    // `keyword`, so the clause survives on the criteria that do compile.
+    expect(
+      buildSearchParams(
+        {
+          ...base,
+          where: [
+            {
+              or: [
+                { field: 'keyword', in: ['atlas'] },
+                { field: 'nonexistent', in: ['atlas'] },
+              ],
+            },
+          ],
+        },
+        schema,
+      ).filter_by,
+    ).toBe('keyword:[`atlas`]');
+  });
+
+  it('voids the whole clause when an alternative states no constraint', () => {
+    // An empty `in` on a value field means “no constraint” – true – and
+    // `true || X` is true, so the clause constrains nothing. Dropping only that
+    // criterion would NARROW the result to its siblings, turning an unset
+    // filter (a facet UI with nothing selected) into an active one.
+    const ignored: unknown[] = [];
+    const params = buildSearchParams(
+      {
+        ...base,
+        where: [
+          {
+            or: [
+              { field: 'status', in: [] },
+              { field: 'keyword', in: ['atlas'] },
+            ],
+          },
+          { or: [{ field: 'format', in: ['text/turtle'] }] },
+        ],
+      },
+      schema,
+      { onIgnoredFilter: (filter) => ignored.push(filter) },
+    );
+    // Only the untouched sibling clause survives – NOT `keyword:[atlas]`.
+    expect(params.filter_by).toBe('format:[`text/turtle`]');
+    expect(ignored).toHaveLength(1);
+  });
+
+  it('drops an unsatisfiable alternative, keeping its siblings', () => {
+    // An empty `id` membership is the request for NO document – false – and
+    // `false || X` is X, so unlike a vacuous value filter it drops out and the
+    // rest of the disjunction still stands.
+    expect(
+      buildSearchParams(
+        {
+          ...base,
+          where: [
+            {
+              or: [
+                { field: 'id', in: [] },
+                { field: 'keyword', in: ['atlas'] },
+              ],
+            },
+          ],
+        },
+        schema,
+      ).filter_by,
+    ).toBe('keyword:[`atlas`]');
+  });
+
+  it('voids a clause whose alternative range has no usable bound', () => {
+    expect(
+      buildSearchParams(
+        {
+          ...base,
+          where: [
+            {
+              or: [
+                { field: 'size', range: {} },
+                { field: 'keyword', in: ['atlas'] },
+              ],
+            },
+          ],
+        },
+        schema,
+      ).filter_by,
+    ).toBeUndefined();
+  });
+
+  it('compiles a clause no criterion of which compiles to a term matching nothing', () => {
+    // Every criterion is false, so the clause is false and the query can have
+    // no answer. Leaving it out of `filter_by` would say the opposite – an
+    // absent conjunct constrains nothing – and hand back the whole collection.
+    const ignored: unknown[] = [];
+    const clause = {
+      or: [
+        { field: 'nope', in: ['x'] },
+        { field: 'alsoNope', in: ['x'] },
+      ],
+    };
+    const params = buildSearchParams({ ...base, where: [clause] }, schema, {
+      onIgnoredFilter: (filter) => ignored.push(filter),
+    });
+    expect(params.filter_by).toBe('id:=[]');
+    // Still reported: the clause did not compile as written.
+    expect(ignored).toEqual([clause]);
+  });
+
+  it('compiles an `id` clause to exact membership on the document key', () => {
+    // `id` is declared by no type: it is the document's IRI, filtered by the
+    // same exact clause label resolution uses. Backtick-wrapped, so the IRI's
+    // `:` and `/` stay literal.
+    const params = buildSearchParams(
+      {
+        ...base,
+        where: [
+          { or: [{ field: 'id', in: ['https://id.example.org/a', 'urn:b'] }] },
+          { or: [{ field: 'status', in: ['valid'] }] },
+        ],
+      },
+      schema,
+    );
+    expect(params.filter_by).toBe(
+      'id:=[`https://id.example.org/a`,`urn:b`] && status:[`valid`]',
+    );
+  });
+
+  it('reads an empty or non-membership `id` clause as matching no document', () => {
+    // An empty `id` membership enumerates NO document, and a range on an IRI
+    // is malformed – both false, so each clause compiles to the term nothing
+    // satisfies. `search()` never sends this: `isUnsatisfiable` answers the
+    // first shape without a round-trip and `assertValidQuery` rejects the
+    // second.
+    const ignored: unknown[] = [];
+    const params = buildSearchParams(
+      {
+        ...base,
+        where: [
+          { or: [{ field: 'id', in: [] }] },
+          { or: [{ field: 'id', range: { min: 1 } }] },
+        ],
+      },
+      schema,
+      { onIgnoredFilter: (filter) => ignored.push(filter) },
+    );
+    expect(params.filter_by).toBe('id:=[] && id:=[]');
+    expect(ignored).toEqual([
+      { or: [{ field: 'id', in: [] }] },
+      { or: [{ field: 'id', range: { min: 1 } }] },
+    ]);
+  });
+
+  it('separates a clause that says nothing from one that can match nothing', () => {
+    // The two ways a clause fails to compile as written are opposites, and the
+    // `&&` between clauses is what makes the difference visible: an unset
+    // filter must LEAVE the query, while a false one must stay and empty it.
+    // Both are reported, because neither says what the caller wrote.
+    const ignored: unknown[] = [];
+    const params = buildSearchParams(
+      {
+        ...base,
+        where: [
+          { or: [{ field: 'status', in: ['valid'] }] }, // fine – kept
+          { or: [{ field: 'nonexistent', in: ['x'] }] }, // unknown field – false
+          { or: [{ field: 'keyword', range: { min: 1 } }] }, // operator ≠ kind – false
+          { or: [{ field: 'status', in: [] }] }, // empty membership – no constraint
+          { or: [{ field: 'size', range: {} }] }, // no usable bound – no constraint
+        ],
+      },
+      schema,
+      { onIgnoredFilter: (filter) => ignored.push(filter) },
+    );
+    expect(params.filter_by).toBe('status:[`valid`] && id:=[] && id:=[]');
+    expect(ignored).toEqual([
+      { or: [{ field: 'nonexistent', in: ['x'] }] },
+      { or: [{ field: 'keyword', range: { min: 1 } }] },
+      { or: [{ field: 'status', in: [] }] },
+      { or: [{ field: 'size', range: {} }] },
+    ]);
+  });
+
+  it('compiles a false clause the same way when no onIgnoredFilter is given', () => {
+    // The callback is diagnostics, not control flow: what reaches the engine
+    // must not depend on whether anyone is listening.
+    const params = buildSearchParams(
+      { ...base, where: [{ or: [{ field: 'nonexistent', in: ['x'] }] }] },
+      schema,
+    );
+    expect(params.filter_by).toBe('id:=[]');
+  });
+
+  it('skips a clause carrying no criteria at all', () => {
+    // `{ or: [] }` states nothing rather than stating false – there is no
+    // criterion to be false – so it stays the vacuous no-op it reads as.
+    const params = buildSearchParams({ ...base, where: [{ or: [] }] }, schema);
+    expect(params.filter_by).toBeUndefined();
+  });
+
+  it('compiles a one-sided range bound', () => {
+    expect(
+      buildSearchParams(
+        { ...base, where: [{ or: [{ field: 'size', range: { min: 5 } }] }] },
+        schema,
+      ).filter_by,
+    ).toBe('size:>=5');
+    expect(
+      buildSearchParams(
+        { ...base, where: [{ or: [{ field: 'size', range: { max: 9 } }] }] },
+        schema,
+      ).filter_by,
+    ).toBe('size:<=9');
+  });
+
+  it('converts a date field’s ISO bounds to the stored Unix seconds', () => {
+    const min = Date.parse('2024-01-01T00:00:00Z') / 1000;
+    const max = Date.parse('2025-01-01T00:00:00Z') / 1000;
+    expect(
+      buildSearchParams(
+        {
+          ...base,
+          where: [
+            {
+              or: [
+                {
+                  field: 'datePosted',
+                  range: {
+                    min: '2024-01-01T00:00:00Z',
+                    max: '2025-01-01T00:00:00Z',
+                  },
+                },
+              ],
+            },
+          ],
+        },
+        schema,
+      ).filter_by,
+    ).toBe(`datePosted:[${min}..${max}]`);
+  });
+
+  it('converts a deep-time xsd:gYear bound to the stored Unix seconds', () => {
+    const min = isoToUnixSeconds('-318000000')?.seconds;
+    // An upper bound reaches through the year it names.
+    const max = lastSecondOf(isoToUnixSeconds('-316000000') as StoredDate);
+    expect(
+      buildSearchParams(
+        {
+          ...base,
+          where: [
+            {
+              or: [
+                {
+                  field: 'datePosted',
+                  range: { min: '-318000000', max: '-316000000' },
+                },
+              ],
+            },
+          ],
+        },
+        schema,
+      ).filter_by,
+    ).toBe(`datePosted:[${min}..${max}]`);
+  });
+
+  it('reaches an upper bound through the end of the period it names', () => {
+    const compiled = (max: string) =>
+      buildSearchParams(
+        {
+          ...base,
+          where: [{ or: [{ field: 'datePosted', range: { max } }] }],
+        },
+        schema,
+      ).filter_by;
+    const before = (iso: string) => Date.parse(iso) / 1000 - 1;
+    expect(compiled('1999')).toBe(
+      `datePosted:<=${before('2000-01-01T00:00:00Z')}`,
+    );
+    // February of a leap year ends on the 29th.
+    expect(compiled('2000-02')).toBe(
+      `datePosted:<=${before('2000-03-01T00:00:00Z')}`,
+    );
+    expect(compiled('1999-12-31')).toBe(
+      `datePosted:<=${before('2000-01-01T00:00:00Z')}`,
+    );
+    // A date-time is its own last second.
+    expect(compiled('1999-12-31T12:00:00Z')).toBe(
+      `datePosted:<=${Date.parse('1999-12-31T12:00:00Z') / 1000}`,
+    );
+  });
+
+  it('drops a date bound the codec cannot read rather than compiling garbage', () => {
+    // Unreachable through the engine – `assertValidQuery` rejects such a bound
+    // outright, which is the fix for it. What the compiler does when reached
+    // directly is only damage control: it cannot express “matches nothing”, so
+    // whichever bound it keeps, the query it sends is not the one asked for.
+    const max = Date.parse('2025-01-01T00:00:00Z') / 1000;
+    expect(
+      buildSearchParams(
+        {
+          ...base,
+          where: [
+            {
+              or: [
+                {
+                  field: 'datePosted',
+                  range: { min: 'not-a-date', max: '2025-01-01T00:00:00Z' },
+                },
+              ],
+            },
+          ],
+        },
+        schema,
+      ).filter_by,
+    ).toBe(`datePosted:<=${max}`);
+  });
+
+  it('reads a null bound as a bound not set, not as the literal null', () => {
+    // A GraphQL variable left unfilled arrives as `null` and the surface passes
+    // it through. Read literally it compiles to `datePosted:[null..…]`, which
+    // Typesense rejects – so the whole search fails on an unset filter.
+    const max = Date.parse('2025-01-01T00:00:00Z') / 1000;
+    expect(
+      buildSearchParams(
+        {
+          ...base,
+          where: [
+            {
+              or: [
+                {
+                  field: 'datePosted',
+                  range: { min: null, max: '2025-01-01T00:00:00Z' },
+                } as never,
+              ],
+            },
+          ],
+        },
+        schema,
+      ).filter_by,
+    ).toBe(`datePosted:<=${max}`);
+  });
+
+  it('reads an unpadded BCE bound as a year, so the range is not inverted', () => {
+    const min = Date.parse('-001100-01-01T00:00:00.000Z') / 1000;
+    // Through the end of 801 BCE: the last second before -0799 begins.
+    const max = Date.parse('-000799-01-01T00:00:00.000Z') / 1000 - 1;
+    expect(
+      buildSearchParams(
+        {
+          ...base,
+          where: [
+            {
+              or: [
+                {
+                  field: 'datePosted',
+                  range: { min: '-1100', max: '-0800' },
+                },
+              ],
+            },
+          ],
+        },
+        schema,
+      ).filter_by,
+    ).toBe(`datePosted:[${min}..${max}]`);
+    expect(min).toBeLessThan(max);
+  });
+
+  it('compiles orderBy: RELEVANCE → _text_match and a localized field → its sort key', () => {
+    expect(
+      buildSearchParams(
+        {
+          ...base,
+          orderBy: [
+            { field: 'relevance', direction: 'desc' },
+            { field: 'status_rank', direction: 'asc' },
+          ],
+        },
+        schema,
+      ).sort_by,
+    ).toBe('_text_match:desc,status_rank:asc');
+
+    expect(
+      buildSearchParams(
+        {
+          ...base,
+          locale: 'nl',
+          orderBy: [
+            { field: 'title', direction: 'asc' },
+            { field: 'status_rank', direction: 'asc' },
+          ],
+        },
+        schema,
+      ).sort_by,
+    ).toBe('title_sort_nl:asc,status_rank:asc');
+  });
+
+  it('pins page to 1 for a facet-only (limit:0) query instead of dividing by zero', () => {
+    const params = buildSearchParams({ ...base, limit: 0 }, schema);
+    expect(params.per_page).toBe(0);
+    expect(params.page).toBe(1);
+  });
+
+  it('requests facets by their logical field name', () => {
+    expect(
+      buildSearchParams({ ...base, facets: ['keyword', 'format'] }, schema)
+        .facet_by,
+    ).toBe('keyword,format');
+  });
+
+  it('passes a facet it cannot resolve through by name, as it does a where field', () => {
+    // The compiler does not validate: `assertValidQuery` rejects an unknown or
+    // non-facetable facet before a query is dispatched, so here the name
+    // simply travels as written rather than being dropped or re-derived.
+    expect(
+      buildSearchParams({ ...base, facets: ['nope', 'title'] }, schema)
+        .facet_by,
+    ).toBe('nope,title');
+  });
+
+  it('facets a range field into its declared half-open bins, open ends blank', () => {
+    // Typesense range syntax is start-inclusive/end-exclusive, so the declared
+    // `[min, max)` bounds pass straight through; the open-ended bin leaves the
+    // upper bound blank.
+    expect(
+      buildSearchParams({ ...base, facets: ['size'] }, schema).facet_by,
+    ).toBe('size(0:[1, 10], 1:[10, 100], 2:[100, ])');
+  });
+
+  it('facets a date field into its ISO 8601 bins as Unix seconds', () => {
+    const binned: SearchType = {
+      ...schema,
+      fields: schema.fields.map((field): SearchField =>
+        field.name === 'datePosted'
+          ? {
+              name: 'datePosted',
+              kind: 'date',
+              facetable: true,
+              facetRanges: [
+                { key: 'older', max: '1969' },
+                { key: 'seventies', min: '1970', max: '1979' },
+              ],
+            }
+          : field,
+      ),
+    };
+    expect(
+      buildSearchParams({ ...base, facets: ['datePosted'] }, binned).facet_by,
+      // A bin reaches through the period its `max` names, so Typesense’s
+      // exclusive end is the first second after it.
+    ).toBe('datePosted(older:[, 0], seventies:[0, 315532800])');
+  });
+
+  it('mixes range and plain facets in one facet_by clause', () => {
+    expect(
+      buildSearchParams({ ...base, facets: ['keyword', 'size'] }, schema)
+        .facet_by,
+    ).toBe('keyword,size(0:[1, 10], 1:[10, 100], 2:[100, ])');
+  });
+
+  it('omits max_facet_values by default but sets it when configured', () => {
+    expect(
+      buildSearchParams({ ...base, facets: ['keyword'] }, schema)
+        .max_facet_values,
+    ).toBeUndefined();
+    expect(
+      buildSearchParams({ ...base, facets: ['keyword'] }, schema, {
+        maxFacetValues: 250,
+      }).max_facet_values,
+    ).toBe(250);
+  });
+});
+
+describe('und locale', () => {
+  const undSchema: SearchType = {
+    name: 'Doc',
+    class: 'urn:example:Doc',
+    fields: [
+      {
+        name: 'title',
+        kind: 'text',
+        locales: ['nl', 'und'],
+        output: true,
+        sortable: true,
+        searchable: { weight: 5 },
+      },
+    ],
+  };
+
+  it('never demotes the language-neutral und search field', () => {
+    const params = buildSearchParams({ ...base, locale: 'en' }, undSchema);
+    // Neither locale is active: nl is demoted, und keeps full weight.
+    expect(params.query_by).toBe('title_search_nl,title_search_und');
+    expect(params.query_by_weights).toBe('4,5');
+  });
+
+  it('falls back to the first declared locale for sorting', () => {
+    const params = buildSearchParams(
+      {
+        ...base,
+        locale: 'en',
+        orderBy: [{ field: 'title', direction: 'asc' }],
+      },
+      undSchema,
+    );
+    // en is not declared: sort on the first locale's key rather than a
+    // nonexistent physical field.
+    expect(params.sort_by).toBe('title_sort_nl:asc');
+  });
+});

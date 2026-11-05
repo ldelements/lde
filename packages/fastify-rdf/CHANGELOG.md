@@ -1,3 +1,63 @@
+## 0.7.0 (2026-10-30)
+
+This was a version bump only for @lde/fastify-rdf to align it with other projects, there were no code changes.
+
+## 0.6.1 (2026-10-28)
+
+This was a version bump only for @lde/fastify-rdf to align it with other projects, there were no code changes.
+
+## 0.6.0 (2026-10-15)
+
+This was a version bump only for @lde/fastify-rdf to align it with other projects, there were no code changes.
+
+## 0.5.3 (2026-10-14)
+
+### 🚀 Features
+
+- **fastify-rdf:** add a fetch option for loading remote JSON-LD contexts ([#901](https://github.com/ldelements/lde/pull/901))
+
+## 0.5.2 (2026-08-24)
+
+This was a version bump only for @lde/fastify-rdf to align it with other projects, there were no code changes.
+
+## 0.5.1 (2026-07-24)
+
+This was a version bump only for @lde/fastify-rdf to align it with other projects, there were no code changes.
+
+## 0.5.0 (2026-07-23)
+
+This was a version bump only for @lde/fastify-rdf to align it with other projects, there were no code changes.
+
+## 0.4.8 (2026-07-08)
+
+This was a version bump only for @lde/fastify-rdf to align it with other projects, there were no code changes.
+
+## 0.4.7 (2026-06-26)
+
+This was a version bump only for @lde/fastify-rdf to align it with other projects, there were no code changes.
+
+## 0.4.6 (2026-06-19)
+
+This was a version bump only for @lde/fastify-rdf to align it with other projects, there were no code changes.
+
+## 0.4.5 (2026-06-17)
+
+This was a version bump only for @lde/fastify-rdf to align it with other projects, there were no code changes.
+
+## 0.4.4 (2026-04-23)
+
+This was a version bump only for @lde/fastify-rdf to align it with other projects, there were no code changes.
+
+## 0.4.3 (2026-03-12)
+
+### 🩹 Fixes
+
+- **fastify-rdf:** exclude SHACLC types from content negotiation ([#219](https://github.com/ldelements/lde/pull/219))
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
 ## 0.4.2 (2026-03-04)
 
 ### 🩹 Fixes

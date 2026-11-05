@@ -27,7 +27,7 @@ node_modules
 # misc
 /.sass-cache
 /connect.lock
-/coverage
+coverage/
 /libpeerconnection.log
 npm-debug.log
 yarn-error.log
@@ -50,3 +50,14 @@ vitest.config.*.timestamp*
 tsconfig.tsbuildinfo
 vite.base.config.d.ts
 vite.base.config.d.ts.map
+.claude/worktrees
+.claude/settings.local.json
+.nx/polygraph
+.nx/self-healing
+.nx/migrate-runs
+dist-docker
+dist-agent
+
+# VitePress
+docs/.vitepress/cache
+.vitest

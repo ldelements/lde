@@ -1,0 +1,193 @@
+# @lde/sparql-anything
+
+Convert tabular and other non-RDF sources to RDF with the [SPARQL Anything](https://sparql-anything.cc) CLI.
+
+## Installation
+
+```sh
+npm install @lde/sparql-anything
+```
+
+## `SparqlAnythingConverter`
+
+The converter runs the SPARQL Anything jar **once per chunk** to bound memory use, then concatenates the resulting N-Triples into a single file. A **job** is a query and the chunks to run it over, so what those processes share is stated once. Processes are spawned through a [`@lde/task-runner`](./task-runner), so the same converter works on the host, in Docker, or anywhere else a `TaskRunner` is implemented.
+
+```typescript
+import { SparqlAnythingConverter } from '@lde/sparql-anything';
+import { NativeTaskRunner } from '@lde/task-runner-native';
+
+const converter = new SparqlAnythingConverter({
+  jarPath: 'bin/sparql-anything.jar',
+  workDir: 'data', // the task runner's working directory
+  taskRunner: new NativeTaskRunner({ cwd: 'data' }),
+});
+
+await converter.convert(
+  [
+    // One query over many chunks, with reference data loaded alongside it.
+    {
+      queryFile: 'config/places.rq',
+      chunks: ['data/places_aa.csv', 'data/places_ab.csv'],
+      load: 'data/reference.ttl',
+    },
+    // A shorter job of a different shape, in the same call.
+    { queryFile: 'config/names.rq', chunks: ['data/names_aa.csv'] },
+    // A query that names its own input, so it takes no chunks.
+    { queryFile: 'config/ontology.rq', load: 'data/ontology.rdf' },
+  ],
+  'output/places.nt',
+);
+```
+
+### Options
+
+| Option             | Type                 | Description                                                                                                                   |
+| ------------------ | -------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `jarPath`          | `string`             | Path to the SPARQL Anything CLI jar, as the task runner sees it                                                               |
+| `workDir`          | `string`             | The task runner's working directory; see [Where files are written](#where-files-are-written)                                  |
+| `heap`             | `string`             | Maximum JVM heap per chunk process, as `-Xmx` takes it (default `'2g'`); see [Memory](#memory)                                |
+| `cliArgs`          | `string[]`           | Further arguments for the SPARQL Anything CLI; see [Memory](#memory)                                                          |
+| `concurrency`      | `number`             | How many chunks to convert at once (default `1`); see [Converting several chunks at once](#converting-several-chunks-at-once) |
+| `onChunkConverted` | `(progress) => void` | Called as each chunk finishes; see [Following a conversion](#following-a-conversion)                                          |
+| `taskRunner`       | `TaskRunner<Task>`   | Runs the SPARQL Anything process for each chunk                                                                               |
+
+### Jobs
+
+Each entry passed to `convert()` is one query and the chunks to run it over – one process per chunk, so what those processes share is stated once.
+
+| Field       | Type       | Description                                                                                                          |
+| ----------- | ---------- | -------------------------------------------------------------------------------------------------------------------- |
+| `queryFile` | `string`   | Path to the SPARQL CONSTRUCT query to run                                                                            |
+| `chunks`    | `string[]` | Paths substituted for the literal `{SOURCE}` in the query, one process each; omit when the query names its own input |
+| `load`      | `string`   | Optional path passed to `--load`; see [Loading existing RDF](#loading-existing-rdf)                                  |
+
+A query and its chunks have to agree: a query naming `{SOURCE}` without chunks, or chunks whose query never names `{SOURCE}`, is rejected rather than run – SPARQL Anything would report the first as a parse error and the second not at all. An empty `chunks` array is rejected too: a step that produced none has already failed.
+
+**Jobs of different shapes belong in one call.** They are run by one converter, so a long job's chunks and a short one's pack together instead of draining in phases – and their outputs land in one file, in the order given, without the caller stitching anything together afterwards.
+
+### Where files are written
+
+`workDir` is the task runner's working directory – `cwd` for a `NativeTaskRunner`, `mountDir` for a `DockerTaskRunner`. The converter writes its generated query files and per-process outputs into a fresh subdirectory there and removes it when the conversion ends, then refers to them by a path relative to `workDir`, so the identical command works on the host and inside a container.
+
+Per-run directories matter for more than tidiness: an output left over from an earlier run would satisfy the output check below with stale triples.
+
+`jarPath`, and each job's `load` and `chunks` paths, are passed through as given, because only the caller knows how the runner sees them – in a container the jar usually lives in the image, while the chunks have to be under the mount.
+
+### Loading existing RDF
+
+`load` is optional. Pass it to combine the converted data with RDF you already have – a lookup table the query joins against, for instance. SPARQL Anything reads a **file** into the default graph, and a **directory** as one named graph per RDF file it holds, so the two are not interchangeable. Leave `load` unset and no `--load` is passed at all.
+
+A missing `--load` is the one input SPARQL Anything does not fail on: it logs the problem, runs the query without the data and exits 0. The converter therefore checks the file before any process starts. A **relative** path is relative to `workDir` for the runner and the converter alike, so one that is missing or empty fails then, naming the file. An **absolute** path is the runner's, and one the converter cannot find on its own side proves nothing – the job runs, and its outputs are held to the stricter check under [How a conversion runs](#how-a-conversion-runs).
+
+### Memory
+
+One process per chunk bounds how much has to be held at once, but only together with a heap cap: SPARQL Anything materialises a chunk's whole result graph before writing it, and a JVM with no `-Xmx` helps itself to a quarter of host memory. There is therefore always a cap, `2g` unless you raise it:
+
+```typescript
+heap: '4g', // -Xmx4g
+```
+
+Size it with the chunk size. A chunk that outgrows the heap fails loudly – the JVM's `OutOfMemoryError` arrives in the output of a non-zero exit, which aborts the conversion – where an uncapped JVM instead grows until the OOM killer takes the whole container.
+
+### Converting several chunks at once
+
+`concurrency` is how many chunks are converted at the same time. Each one is a JVM of its own, so it multiplies against `heap`: a run needs `concurrency × heap`, on the machine the **task runner** uses – which is not this process's machine when the runner is Docker or remote.
+
+That is why the default is `1` rather than something derived from the CPU count or a memory limit: the converter cannot see the machine its processes run on, so the number is the caller's to choose. `map.sh` sizes its pool from `nproc` capped by the cgroup limit, budgeting ~3 GB a worker; a caller who knows their deployment can do the same arithmetic and pass the result.
+
+Chunks of every job are converted through one pool, in the order the jobs and their chunks were given – a long job and a short one pack together rather than draining in phases. The output is concatenated in that same order, however the processes happened to finish.
+
+The first failure aborts the run: no further chunk is started, and the processes still going are stopped rather than left writing into a directory the converter is about to delete. A process that cannot be stopped – one that has just exited, say – does not change what is reported: the conversion failure is the one worth reading.
+
+An interrupted run – a Ctrl-C, or a cancelled CI job – ends the same way: the [task runner stops the processes it has going](./task-runner#tasks-end-with-the-process) and ends this process, and the converter removes its run directory on the way out.
+
+> [!NOTE]
+> A `DockerTaskRunner` configured with a `containerName` runs one task at a time – the name is how other containers address it – so it rejects a second chunk rather than taking the name from the first. Leave `containerName` unset for a converter that runs chunks in parallel.
+
+`cliArgs` is the escape hatch for CLI flags the converter does not model itself, appended to the arguments it sets. It cannot repeat those: `-q`, `-f`, `-o` and `-l` are rejected, in their long and `--flag=value` forms too, because the converter reads back the `--output` it named, in the `--format` it asked for – overriding either leaves it reporting an empty conversion, or concatenating fragments that are not N-Triples. SPARQL Anything documents repetition only for `-v` and `-c`, so a repeated flag has no defined winner to rely on.
+
+### On Kubernetes
+
+The JVMs can run in a sidecar through [`HttpTaskRunner`](./task-runner-http). The pipeline image then needs no JRE, and a conversion that runs out of memory kills the sidecar, not the pipeline. The pod is set up as in the [Kubernetes example](./task-runner-http#kubernetes), with a JRE image such as `eclipse-temurin:21-jre` in place of the QLever image and the jar on the shared volume. Pass the shared volume’s path, which is the same in both containers, as both `workDir` and the runner’s `cwd`, and give the sidecar a memory limit of `concurrency × heap` plus what each JVM needs beyond its heap.
+
+### Following a conversion
+
+A conversion says nothing for as long as it takes – a quarter of an hour, over eighteen chunks, for the GeoNames dumps. `onChunkConverted` is called as each one finishes:
+
+```typescript
+onChunkConverted: ({ index, total, chunk }) =>
+  console.log(`Converted ${index}/${total}${chunk === undefined ? '' : `: ${chunk}`}`),
+```
+
+It is called once per chunk, in the order they finish rather than the order they were given, and not at all for a chunk that failed – a failure arrives as the rejection instead. A callback that throws aborts the run, like any other failure.
+
+It is wiring rather than configuration: a runtime that already has somewhere to report progress passes a function that forwards to it, which is why this is a plain callback rather than a reporter interface of its own.
+
+## Chunking
+
+`convert()` takes chunks it does not create, because a caller often has work to do first – filtering rows out, say. `chunk()` produces them:
+
+```typescript
+import { chunk } from '@lde/sparql-anything';
+
+const chunks = await chunk('data/allCountries.txt', {
+  rows: 1_000_000,
+  into: 'data/chunks',
+  header: 'geonameid\tname\tlatitude\tlongitude',
+  extension: '.csv',
+});
+// → ['data/chunks/allCountries-0000.csv', 'data/chunks/allCountries-0001.csv', …]
+```
+
+It streams, so the file never has to fit in memory, and returns the chunk paths in order – which is what a job's `chunks` takes.
+
+| Option      | Type     | Description                                                                               |
+| ----------- | -------- | ----------------------------------------------------------------------------------------- |
+| `rows`      | `number` | Data rows per chunk, chosen together with `heap`: a chunk is what one process has to hold |
+| `into`      | `string` | Directory the chunks are written to, created if it does not exist                         |
+| `name`      | `string` | What the chunks are called after (default: the input file's name); required for lines     |
+| `header`    | `string` | Line repeated at the top of every chunk; leave out for a format without a header          |
+| `extension` | `string` | Extension for the chunk files (default: the input file's own); required for lines         |
+
+Set `extension` for a tool that reads the format from the file name – SPARQL Anything does, so a `.txt` export of a CSV has to be chunked as `.csv` to be read as one.
+
+**Splitting is by line**, so every record must be one line. A delimited format that wraps a field in quotes to carry a newline inside it would be cut in two; tab-separated exports, N-Triples and NDJSON are one record per line by definition. Line endings are normalised to `\n`.
+
+Chunks of the same name left by an earlier call are removed first, so a re-run cannot leave a longer run's tail behind for something to pick up. Only those: everything else in the directory is the caller's. Take the paths `chunk()` returns as the list of chunks to convert, rather than rediscovering them by name in the directory – a listing would also pick up whatever else is there.
+
+An input with no rows is an error rather than an empty set of chunks: a step that produced nothing has already failed.
+
+### Chunking lines you produce yourself
+
+A caller with work to do before chunking – filtering rows out, adding a column – can hand `chunk()` the lines instead of a path, and skip writing the table to disk only to have it read back and written again as chunks:
+
+```typescript
+const chunks = await chunk(withCountryColumn(rowsOf('allCountries.txt')), {
+  rows: 1_000_000,
+  into: 'data/chunks',
+  name: 'allCountries',
+  extension: '.csv',
+});
+// → ['data/chunks/allCountries-0000.csv', 'data/chunks/allCountries-0001.csv', …]
+```
+
+Anything that yields lines will do – an async generator, or a `Readable` in string mode. Everything else works as it does for a path, except that `name` and `extension` are both required: a stream has no file name to take either from, and a chunk of no known format is one SPARQL Anything cannot read. Pass `extension: ''` for no extension.
+
+**Each value is one row.** One that holds a line ending of its own is refused, naming the value, rather than written as the several rows it would become – which would put more in a chunk than `rows` says it holds, and that number is what a conversion's memory is sized against. A trailing `\r` is a line ending rather than data, and is dropped, as it is for a file.
+
+That check is also what a byte stream runs into. `createReadStream()` yields buffers that fall wherever the reads did, not lines, so it has to go through `readline` first – and because a `Readable` satisfies the type, the mistake is named at run time instead of splitting records at a 64 KB boundary.
+
+A write that fails stops the lines being pulled, so a producer that is itself a pipeline is not left reading its own input long after there is anywhere to put it.
+
+## How a conversion runs
+
+For each chunk – or once, for a job that has none – the converter:
+
+1. Replaces the literal `{SOURCE}` in the job’s query with the chunk’s path and writes the result to a temporary `.rq` file. The query is read once per job, and interpolated per chunk.
+2. Runs `java -Xmx<heap> -jar <jar> -q <query> [--load <load>] --format NT --output <chunk>.nt [cliArgs]`, with every path quoted, so a space or a shell metacharacter in a filename can neither break the command nor inject into it.
+3. Waits for the process; a non-zero exit **aborts the whole conversion** so a crashed chunk can never be silently dropped from the output.
+4. Checks the output. A missing output **aborts the conversion**. An empty one is **accepted as no triples** – a chunk whose rows the query filtered out entirely – and contributes nothing to the concatenation, unless the job has a `load` the converter could not see: then the empty output could as well be a missing `--load` file, which SPARQL Anything exits 0 on, and it **aborts the conversion** too.
+
+Converting an empty list of jobs is an error rather than an empty output: a step that produced none has already failed.
+
+Finally, the `.nt` files are concatenated, in the order the jobs and their chunks were given, into the output path. The concatenation streams, so multi-gigabyte outputs do not have to fit in memory, and it is byte for byte what `cat` would give: a newline is inserted only after a file that does not end in one, so two triples never share a line and no blank line is added between files. N-Triples has no prefixes or document structure, so concatenating per-chunk files always yields a single valid document.

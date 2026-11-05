@@ -1,24 +1,162 @@
 import { Dataset } from '@lde/dataset';
 import type { Quad } from '@rdfjs/types';
+import type { ProvenanceStore } from '../provenance/store.js';
+import type { ItemsRejected } from '../progressReporter.js';
 
 /**
- * Interface for writing RDF data to a destination.
+ * Context for one pipeline run, handed to {@link Writer.openRun}.
  */
-export interface Writer {
+export interface RunContext {
   /**
-   * Write RDF data for a dataset to the destination.
+   * Unique identifier of this run. An In-place writer stamps written documents
+   * with it so its commit sweep can delete what the run did not touch; a
+   * Blue/green writer may use it to name the fresh collection it builds.
+   */
+  readonly runId: string;
+  /**
+   * ISO 8601 timestamp taken when the run opened. Injected so writers need no
+   * clock of their own.
+   */
+  readonly startedAt: string;
+  /**
+   * IRIs of every dataset the selector produced this run – including datasets
+   * the pipeline skipped as unchanged. Grows while the pipeline iterates the
+   * selection; it is complete by the time {@link RunWriter.commit} runs, which
+   * is when a registry-membership sweep should read it.
+   */
+  selectedSources(): Iterable<string>;
+  /**
+   * Tell the run’s reporters that this writer left some of a dataset’s items
+   * out rather than failing the dataset – documents the destination refused,
+   * or that miss what the destination requires. Call it once per (dataset,
+   * target) when the dataset is finalized ({@link RunWriter.flush}), so the
+   * counts are the dataset’s whole. Always present when a {@link Pipeline}
+   * drives the run.
+   */
+  itemsRejected?(dataset: Dataset, rejection: ItemsRejected): void;
+  /**
+   * The pipeline’s per-dataset processing memory, present when skip-unchanged
+   * is enabled ({@link PipelineOptions.provenanceStore}).
+   */
+  readonly provenance?: ProvenanceStore;
+}
+
+/**
+ * The per-dataset write surface of a {@link RunWriter}: what a stage writes
+ * its output through. Separate from the run lifecycle so stages can write but
+ * never commit or abort the run.
+ */
+export interface DatasetWriter<Item = Quad> {
+  /**
+   * Write a dataset’s items to the destination. Called one or more times per
+   * dataset (once per stage) within an open run.
    *
    * @param dataset The dataset metadata
-   * @param quads The RDF quads to write
+   * @param items The items to write
    */
-  write(dataset: Dataset, quads: AsyncIterable<Quad>): Promise<void>;
+  write(dataset: Dataset, items: AsyncIterable<Item>): Promise<void>;
+}
 
+/**
+ * How a dataset’s processing ended, handed to {@link RunWriter.flush}:
+ * `'success'` when every stage completed, `'failed'` when a stage hard-failed
+ * and the dataset’s output is incomplete.
+ */
+export type DatasetOutcome = 'success' | 'failed';
+
+/**
+ * One open run transaction on a destination: per-dataset writes bracketed by
+ * exactly one {@link commit} or {@link abort}. Obtained from
+ * {@link Writer.openRun}; the pipeline drives
+ * `openRun → write* → commit/abort` uniformly and never branches on the
+ * writer’s update mode – an atomic swap or a deletion sweep is the writer’s
+ * own business, inside {@link commit}.
+ */
+export interface RunWriter<Item = Quad> extends DatasetWriter<Item> {
   /**
-   * Finalize writing for a dataset. Called after all stages complete.
+   * Finalize writing for a dataset. Called after all stages complete for that
+   * dataset – successful or not; `outcome` says which, so a writer can gate
+   * destructive finalization (an In-place writer’s stale-document sweep) on
+   * `'success'`: a failed dataset’s output is incomplete, and sweeping against
+   * it would delete data the run never got to rewrite.
    *
    * Writers that buffer output across multiple {@link write} calls (e.g. to
    * share Turtle prefix declarations) should implement this to flush remaining
-   * data and release resources.
+   * data and release per-dataset resources.
    */
-  flush?(dataset: Dataset): Promise<void>;
+  flush?(dataset: Dataset, outcome: DatasetOutcome): Promise<void>;
+
+  /**
+   * Discard a dataset’s already-written output so a subsequent pass starts
+   * from a clean slate. Called by the pipeline before it re-runs all stages
+   * against a fallback source (an imported data dump), so endpoint-sourced
+   * partial results are not mixed with the dump-sourced re-run.
+   *
+   * Writers that build a complete replacement per dataset should implement
+   * this to reset that per-dataset state. Writers without replaceable output
+   * may omit it; the re-run then appends.
+   */
+  reset?(dataset: Dataset): Promise<void>;
+
+  /**
+   * Finalize the run: the one place a destination goes live. A Blue/green
+   * writer atomically swaps its alias to the freshly built collection; an
+   * In-place writer sweeps documents the run did not touch and releases its
+   * lock. Called exactly once, after every dataset has been processed.
+   *
+   * The driver flushes every written dataset before committing (the Pipeline
+   * does), so unflushed writes only reach `commit` under direct use; a writer
+   * that can encounter them should finalize them non-destructively.
+   */
+  commit(): Promise<void>;
+
+  /**
+   * Abandon the run after a failure: the live destination must be left as it
+   * was before the run. A Blue/green writer drops its half-built collection;
+   * an In-place writer releases its lock and lets the next run reconcile.
+   *
+   * @param error The failure that ended the run
+   */
+  abort(error: unknown): Promise<void>;
+
+  /**
+   * End the run releasing its run-level resources (locks, connections) but
+   * **keeping** whatever it built – the half-way house between
+   * {@link commit} and {@link abort}.
+   *
+   * It exists for the one case where undoing is the more destructive choice: a
+   * caller coordinating several writers whose outputs reference each other,
+   * where one has already gone live pointing at what another built. Dropping
+   * that half-built output would break the live one, so the caller asks for it
+   * to be kept and reconciled by a later run instead
+   * ([ADR 19](https://github.com/ldelements/lde/blob/main/docs/decisions/0019-filter-across-collections-through-declared-joins.md)).
+   *
+   * Optional: it falls back to {@link abort}, which is already correct for
+   * every writer whose `abort` does not discard built state (an In-place
+   * rebuild releasing its lock, a writer with no run-level state at all). A
+   * writer whose `abort` DOES discard – a Blue/green rebuild dropping its
+   * fresh collection – must implement this, or a coordinating caller has to
+   * choose between leaking its lock and breaking a live destination.
+   *
+   * @param error The failure that ended the run
+   */
+  abandon?(error: unknown): Promise<void>;
+}
+
+/**
+ * A destination for pipeline output: a factory of per-run transactions.
+ *
+ * Each pipeline run opens one {@link RunWriter} via {@link openRun} – the
+ * home of run-level lifecycle such as alias swaps, deletion sweeps and
+ * cross-pod locks. A destination without run-level state simply returns its
+ * per-dataset writes with no-op `commit`/`abort` (see
+ * {@link SparqlUpdateWriter} for the pattern).
+ */
+export interface Writer<Item = Quad> {
+  /**
+   * Open a run transaction against this destination.
+   *
+   * @param context The run’s identity and selection scope
+   */
+  openRun(context: RunContext): Promise<RunWriter<Item>>;
 }

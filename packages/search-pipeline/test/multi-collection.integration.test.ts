@@ -1,0 +1,306 @@
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { DataFactory } from 'n3';
+import type { Quad } from '@rdfjs/types';
+import type { Client } from 'typesense';
+import { Dataset } from '@lde/dataset';
+import type { RunContext, Writer } from '@lde/pipeline';
+import {
+  projectRoots,
+  searchSchema,
+  type RootType,
+  type SearchDocument,
+} from '@lde/search';
+import { irAlias } from '@lde/search/adapter';
+import { BlueGreenRebuild } from '@lde/search-typesense';
+import { searchIndexWriter } from '../src/search-index-writer.js';
+import type { TypedSearchDocument } from '../src/typed-search-document.js';
+import { TypesenseContainer } from './typesense-container.js';
+
+const { namedNode, literal, quad } = DataFactory;
+
+const RDF_TYPE = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
+const DATASET = 'https://example.org/Dataset';
+const ORGANIZATION = 'https://example.org/Organization';
+const TITLE = 'https://example.org/title';
+const NAME = 'https://example.org/name';
+
+// The Dataset Register in miniature: a `datasets` catalog collection plus one
+// typed label collection (its Organization label source). Two per-type stages
+// project into documents paired with their type; this terminal routes each to
+// its collection.
+const schema = searchSchema(
+  {
+    name: 'Dataset',
+    class: DATASET,
+    fields: [
+      {
+        name: 'title',
+        kind: 'keyword',
+        path: TITLE,
+        array: true,
+        output: true,
+      },
+    ],
+  },
+  {
+    name: 'Organization',
+    class: ORGANIZATION,
+    fields: [
+      { name: 'name', kind: 'keyword', path: NAME, array: true, output: true },
+    ],
+  },
+);
+
+const datasetType = schema.get(DATASET) as RootType;
+const organizationType = schema.get(ORGANIZATION) as RootType;
+
+// The Extraction CONSTRUCT emits values under the field’s IR Alias; the framed
+// quads fed to the projection are keyed by it, not by the source path.
+const TITLE_ALIAS = irAlias(datasetType, datasetType.fields[0]);
+const NAME_ALIAS = irAlias(organizationType, organizationType.fields[0]);
+
+const COLLECTION: Record<string, string> = {
+  [DATASET]: 'datasets',
+  [ORGANIZATION]: 'organizations',
+};
+
+const dataset = new Dataset({
+  iri: new URL('http://example.org/dataset/1'),
+  distributions: [],
+});
+
+/** A mixed graph: one Dataset node and one Organization node. */
+function mixedQuads(): Quad[] {
+  return [
+    quad(namedNode('https://ex/d/1'), namedNode(RDF_TYPE), namedNode(DATASET)),
+    quad(
+      namedNode('https://ex/d/1'),
+      namedNode(TITLE_ALIAS),
+      literal('Verhaal'),
+    ),
+    quad(
+      namedNode('https://ex/o/1'),
+      namedNode(RDF_TYPE),
+      namedNode(ORGANIZATION),
+    ),
+    quad(
+      namedNode('https://ex/o/1'),
+      namedNode(NAME_ALIAS),
+      literal('Rijksmuseum'),
+    ),
+  ];
+}
+
+/** Project `roots` of one type and pair each document with it, as a stage would. */
+async function paired(
+  quads: readonly Quad[],
+  roots: readonly string[],
+  searchType: RootType,
+): Promise<TypedSearchDocument[]> {
+  const documents: TypedSearchDocument[] = [];
+  for await (const document of projectRoots(quads, roots, schema, searchType)) {
+    documents.push({ searchType, document });
+  }
+  return documents;
+}
+
+/** The documents (paired with their type) the two stages would emit for `mixedQuads`. */
+async function mixedDocuments(): Promise<TypedSearchDocument[]> {
+  const quads = mixedQuads();
+  return [
+    ...(await paired(quads, ['https://ex/d/1'], datasetType)),
+    ...(await paired(quads, ['https://ex/o/1'], organizationType)),
+  ];
+}
+
+async function* stream<Item>(items: readonly Item[]): AsyncIterable<Item> {
+  yield* items;
+}
+
+function makeRunContext(): RunContext {
+  return {
+    runId: 'run-1',
+    startedAt: '2026-07-06T12:00:00.000Z',
+    selectedSources: () => [dataset.iri.toString()],
+  };
+}
+
+function blueGreenFor(
+  client: Client,
+): (searchType: RootType) => Writer<SearchDocument> {
+  return (searchType) =>
+    new BlueGreenRebuild(client, searchType, {
+      collectionNameFor: (type) => COLLECTION[type.class as string],
+    });
+}
+
+async function aliasTarget(
+  client: Client,
+  name: string,
+): Promise<string | undefined> {
+  try {
+    return (await client.aliases(name).retrieve()).collection_name;
+  } catch {
+    return undefined;
+  }
+}
+
+async function liveIds(client: Client, name: string): Promise<string[]> {
+  const field = name === 'datasets' ? 'title' : 'name';
+  const response = await client
+    .collections(name)
+    .documents()
+    .search({ q: '*', query_by: field, per_page: 250 });
+  return (response.hits ?? [])
+    .map((hit) => (hit.document as { id: string }).id)
+    .sort();
+}
+
+async function reset(client: Client): Promise<void> {
+  const { aliases } = await client.aliases().retrieve();
+  for (const alias of aliases) {
+    await client.aliases(alias.name).delete();
+  }
+  for (const collection of await client.collections().retrieve()) {
+    await client.collections(collection.name).delete();
+  }
+}
+
+describe('TypesenseContainer', () => {
+  it('refuses to hand out a client before it is started', () => {
+    expect(() => new TypesenseContainer().client()).toThrow(/not started/);
+  });
+
+  it('stop is a no-op before it is started', async () => {
+    await expect(new TypesenseContainer().stop()).resolves.toBeUndefined();
+  });
+});
+
+describe('searchIndexWriter over multiple Typesense collections', () => {
+  const container = new TypesenseContainer();
+  let client: Client;
+
+  beforeAll(async () => {
+    client = await container.start();
+  }, 120_000);
+
+  afterAll(async () => {
+    await container.stop();
+  });
+
+  beforeEach(async () => {
+    await reset(client);
+  });
+
+  it('swaps each type’s collection independently from one mixed stream', async () => {
+    const run = await searchIndexWriter({
+      schema,
+      writerFor: blueGreenFor(client),
+    }).openRun(makeRunContext());
+
+    await run.write(dataset, stream(await mixedDocuments()));
+    await run.flush?.(dataset, 'success');
+    await run.commit();
+
+    // Each collection went live on its own versioned collection + alias.
+    expect(await aliasTarget(client, 'datasets')).toMatch(/^datasets_\d+$/);
+    expect(await aliasTarget(client, 'organizations')).toMatch(
+      /^organizations_\d+$/,
+    );
+    // Each carries only the documents routed for its type.
+    expect(await liveIds(client, 'datasets')).toEqual(['https://ex/d/1']);
+    expect(await liveIds(client, 'organizations')).toEqual(['https://ex/o/1']);
+  });
+
+  it('lets the datasets index go live even when a label collection fails to commit', async () => {
+    // The Organization rebuild fails at commit, before its alias swaps. The
+    // datasets index must still go live; the failure must surface.
+    const failing: (searchType: RootType) => Writer<SearchDocument> = (
+      searchType,
+    ) => {
+      const real = blueGreenFor(client)(searchType);
+      if (searchType.class !== ORGANIZATION) {
+        return real;
+      }
+      return {
+        openRun: async (context) => {
+          const inner = await real.openRun(context);
+          return {
+            ...inner,
+            commit: async () => {
+              throw new Error('organization collection swap failed');
+            },
+          };
+        },
+      };
+    };
+
+    const run = await searchIndexWriter({ schema, writerFor: failing }).openRun(
+      makeRunContext(),
+    );
+    await run.write(dataset, stream(await mixedDocuments()));
+    await run.flush?.(dataset, 'success');
+
+    const commit = run.commit();
+    await expect(commit).rejects.toThrow(AggregateError);
+    // The pipeline aborts the run after commit throws; the committed datasets
+    // collection must survive that abort, the half-built organizations one must
+    // be dropped.
+    await run.abort(new Error('run failed'));
+
+    expect(await aliasTarget(client, 'datasets')).toMatch(/^datasets_\d+$/);
+    expect(await liveIds(client, 'datasets')).toEqual(['https://ex/d/1']);
+    // Organizations never swapped, and its half-built collection was cleaned up.
+    expect(await aliasTarget(client, 'organizations')).toBeUndefined();
+    const collections = (await client.collections().retrieve()).map(
+      (collection) => collection.name,
+    );
+    expect(collections.some((name) => name.startsWith('organizations_'))).toBe(
+      false,
+    );
+  });
+
+  it('commits an empty collection for a type absent from the projection, leaving the others intact', async () => {
+    // Only Dataset documents: the Organization projection is empty this run.
+    const datasetOnly = await paired(
+      mixedQuads(),
+      ['https://ex/d/1'],
+      datasetType,
+    );
+
+    const run = await searchIndexWriter({
+      schema,
+      writerFor: blueGreenFor(client),
+    }).openRun(makeRunContext());
+    await run.write(dataset, stream(datasetOnly));
+    await run.flush?.(dataset, 'success');
+    await run.commit();
+
+    // Datasets went live with its document; organizations went live empty –
+    // the empty projection wiped only its own collection, never datasets.
+    expect(await liveIds(client, 'datasets')).toEqual(['https://ex/d/1']);
+    expect(await aliasTarget(client, 'organizations')).toMatch(
+      /^organizations_\d+$/,
+    );
+    expect(await liveIds(client, 'organizations')).toEqual([]);
+  });
+
+  it('abort drops every half-built collection and leaves no alias', async () => {
+    const run = await searchIndexWriter({
+      schema,
+      writerFor: blueGreenFor(client),
+    }).openRun(makeRunContext());
+    await run.write(dataset, stream(await mixedDocuments()));
+    await run.flush?.(dataset, 'success');
+
+    await run.abort(new Error('run failed before commit'));
+
+    expect(await aliasTarget(client, 'datasets')).toBeUndefined();
+    expect(await aliasTarget(client, 'organizations')).toBeUndefined();
+    // Only the lock collection may remain; no half-built versioned collections.
+    const versioned = (await client.collections().retrieve())
+      .map((collection) => collection.name)
+      .filter((name) => /_\d+$/.test(name));
+    expect(versioned).toEqual([]);
+  });
+});

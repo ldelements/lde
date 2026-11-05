@@ -1,0 +1,191 @@
+## 0.6.0 (2026-11-03)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-probe to 0.5.0
+- Updated @lde/sparql-importer to 0.10.0
+- Updated @lde/dataset to 0.10.0
+
+## 0.5.1 (2026-10-31)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-probe to 0.4.1
+
+## 0.5.0 (2026-10-30)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-probe to 0.4.0
+- Updated @lde/sparql-importer to 0.9.0
+- Updated @lde/dataset to 0.9.0
+
+## 0.4.2 (2026-10-28)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-probe to 0.3.2
+
+## 0.4.1 (2026-10-27)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-probe to 0.3.1
+
+## 0.4.0 (2026-10-16)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/sparql-importer to 0.8.0
+
+## 0.3.0 (2026-10-15)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-probe to 0.3.0
+- Updated @lde/sparql-importer to 0.7.0
+- Updated @lde/dataset to 0.8.0
+
+## 0.2.15 (2026-10-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-probe to 0.2.10
+- Updated @lde/sparql-importer to 0.6.13
+- Updated @lde/dataset to 0.7.10
+
+## 0.2.14 (2026-09-21)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/sparql-importer to 0.6.12
+
+## 0.2.13 (2026-09-09)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/sparql-importer to 0.6.11
+
+## 0.2.12 (2026-08-31)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/sparql-importer to 0.6.10
+
+## 0.2.11 (2026-08-24)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-probe to 0.2.9
+
+## 0.2.10 (2026-08-24)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-probe to 0.2.8
+
+## 0.2.9 (2026-07-24)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-probe to 0.2.7
+- Updated @lde/sparql-importer to 0.6.9
+- Updated @lde/dataset to 0.7.9
+
+## 0.2.8 (2026-07-24)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/sparql-importer to 0.6.8
+
+## 0.2.7 (2026-07-23)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/sparql-importer to 0.6.7
+
+## 0.2.6 (2026-07-08)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-probe to 0.2.6
+
+## 0.2.5 (2026-07-08)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-probe to 0.2.5
+
+## 0.2.4 (2026-07-08)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-probe to 0.2.4
+
+## 0.2.3 (2026-06-26)
+
+### 🩹 Fixes
+
+- relax workspace dependency pins to caret (versionPrefix) to fix downstream dual-package hazard ([#528](https://github.com/ldelements/lde/pull/528))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-probe to 0.2.3
+- Updated @lde/sparql-importer to 0.6.6
+- Updated @lde/dataset to 0.7.8
+
+## 0.2.2 (2026-06-26)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-probe to 0.2.2
+
+## 0.2.1 (2026-06-25)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-probe to 0.2.1
+
+## 0.2.0 (2026-06-22)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-probe to 0.2.0
+
+## 0.1.5 (2026-06-19)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-probe to 0.1.13
+
+## 0.1.4 (2026-06-18)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-probe to 0.1.12
+
+## 0.1.3 (2026-06-17)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-probe to 0.1.11
+
+## 0.1.2 (2026-06-17)
+
+### 🩹 Fixes
+
+- **distribution-health:** republish to include missing dist build output ([#479](https://github.com/ldelements/lde/pull/479))
+
+## 0.1.1 (2026-06-15)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-probe to 0.1.10
+- Updated @lde/sparql-importer to 0.6.5
+- Updated @lde/dataset to 0.7.7
+
+## 0.1.0 (2026-06-15)
+
+### 🚀 Features
+
+- **distribution-health:** new leaf for validity verdicts and usability rollup ([#472](https://github.com/ldelements/lde/pull/472), [#2103](https://github.com/ldelements/lde/issues/2103), [#468](https://github.com/ldelements/lde/issues/468))

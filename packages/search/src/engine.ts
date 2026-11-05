@@ -1,0 +1,290 @@
+import type { SearchQuery } from './query.js';
+import type {
+  RootType,
+  RootTypeOf,
+  SearchSchema,
+  SearchType,
+  StoredDate,
+} from './schema.js';
+
+/**
+ * The engine port: the boundary a concrete engine adapter (e.g. the engine
+ * `@lde/search-typesense`’s `createTypesenseSearchEngine` returns) implements.
+ * An engine is **bound to the whole {@link SearchSchema} at construction** –
+ * the adapter factory takes the deployment’s declaration together with the
+ * physical location of every type (its collections map), mirroring the other
+ * schema consumers (`projectRoots(quads, roots, schema, type)`,
+ * `buildGraphQLSchema(schema)`): everything is a function of the schema. A
+ * query can never meet the wrong index, deployment-level concerns (label
+ * cache, cross-type search, facet batching) have one home, and a search names
+ * its type per call.
+ * The adapter owns every engine specific (companion-field expansion,
+ * full-text field selection and weights, filter compilation, sorting, result
+ * folding, faceting) and returns only logical documents, so a deployment can
+ * swap engines without any consumer noticing. Nothing engine-specific and
+ * nothing RDF-specific leaks past this port.
+ *
+ * Port contract: an adapter ALWAYS rejects a `searchType` that is not in its
+ * bound schema, and ALWAYS validates the incoming query against it
+ * (`assertValidQuery`) – unknown or non-filterable fields, mismatched
+ * operators, unknown facets – rather than passing garbage to its engine.
+ * Validation is not the caller’s job: it must hold for every surface and for
+ * injected deployment policy.
+ *
+ * Facets mean the same on every engine: a facet counts the documents under
+ * every `where` clause except its own (skip-own-filter), and reports every
+ * value its own clause selects, at count 0 when nothing else leaves it a
+ * document ({@link SearchQuery.facets}). An adapter plans the searches with
+ * `facetSearches` from `@lde/search/adapter`, so ownership cannot drift
+ * between engines.
+ *
+ * `Types` is the literal tuple {@link searchSchema} captured: with a
+ * `defineSearchType` declaration, `search()` only accepts the deployment’s
+ * own types (a foreign type is a compile error) and returns facet/document
+ * keys typed by the type passed. A widened `: SearchSchema` degrades
+ * gracefully to string keys ({@link FacetFieldsOf}).
+ */
+export interface SearchEngine<
+  Types extends readonly SearchType[] = readonly SearchType[],
+> {
+  /** The declaration this engine serves – exposed so a surface can route and
+   *  a caller can enumerate the searchable types. */
+  readonly schema: SearchSchema<Types>;
+  /**
+   * Answer one query: its hits, total and facets. The call fails as a whole:
+   * when any search an engine needs for it fails – including one that counts
+   * a single facet – the returned promise rejects and no hits come back. A
+   * caller that must keep its hits when facets fail asks for no facets here
+   * and gets them from {@link searchFacets}, which reports failures per query.
+   */
+  search<T extends RootTypeOf<Types>>(
+    searchType: T,
+    query: SearchQuery,
+  ): Promise<SearchResult<FacetFieldsOf<T>, OutputFieldsOf<T>>>;
+  /**
+   * The batch entry point: answer several facet-only queries against one type
+   * in a single engine round-trip (where the engine supports one, e.g.
+   * Typesense `multi_search`), returning one {@link FacetsOutcome} per query,
+   * positionally aligned with `queries`. This is what keeps a sidebar that
+   * needs facets over more than one query – over the listing’s filters and
+   * over the whole collection – from fanning out into several engine calls.
+   * Only facets come back: an
+   * engine answers every query in the batch facet-only (as if `limit: 0` and
+   * without ordering, whatever the query carries), so hits are never
+   * transferred. Reference-facet buckets carry resolved labels exactly as in
+   * {@link search}. A failure of one query is reported in place
+   * (`{ error }`) rather than by rejecting, so it never discards its
+   * siblings’ facets; the returned promise rejects only for batch-level
+   * failures (a foreign `searchType`, a structurally invalid query, the
+   * transport itself). The port contract holds for every query in the batch;
+   * an empty `queries` resolves to `[]` without touching the engine.
+   */
+  searchFacets<T extends RootTypeOf<Types>>(
+    searchType: T,
+    queries: readonly SearchQuery[],
+  ): Promise<readonly FacetsOutcome<FacetFieldsOf<T>>[]>;
+}
+
+/**
+ * One query’s outcome in a {@link SearchEngine.searchFacets} batch – its
+ * facets, or the error that failed it. The `allSettled`-style shape
+ * keeps one failed query (e.g. one failed `multi_search` entry) from
+ * discarding its siblings’ results: a caller degrades exactly the facets of
+ * the failed query – all of them, also when the engine needed several
+ * searches to answer it. Discriminate with `'error' in outcome`.
+ */
+export type FacetsOutcome<FacetField extends string = string> =
+  { readonly facets: FacetMap<FacetField> } | { readonly error: unknown };
+
+/** What an engine returns: logical hits, a total, and the requested facets. */
+export interface SearchResult<
+  FacetField extends string = string,
+  OutputField extends string = string,
+> {
+  readonly hits: readonly SearchHit<OutputField>[];
+  readonly total: number;
+  readonly facets: FacetMap<FacetField>;
+}
+
+/**
+ * Facets keyed by facet field name. `Partial` because a result carries a facet
+ * only for the fields the query asked for, not every facetable field.
+ */
+export type FacetMap<FacetField extends string = string> = Readonly<
+  Partial<Record<FacetField, Facet>>
+>;
+
+/**
+ * One facet over the documents a query matches: its buckets and, for a
+ * numeric (`integer`/`number`/`date`) field, the extent of the values those
+ * documents hold – the bounds a range slider needs.
+ *
+ * A facet buckets per distinct value, or – a numeric field declaring
+ * `facetRanges` – into those bins. Only a numeric facet has an extent.
+ */
+export interface Facet {
+  readonly buckets: readonly FacetBucket[];
+  /**
+   * The lowest and highest value among the matching documents, for a numeric
+   * facet. Absent on any other facet, and when no matching document holds a
+   * value.
+   */
+  readonly extent?: FacetExtent;
+}
+
+/**
+ * The lowest and highest value a range facet’s documents hold, stored terms
+ * like every other value at this seam: a `date` in Unix seconds, which a
+ * surface serves as ISO 8601 the way it serves the field itself.
+ */
+export interface FacetExtent {
+  readonly min: number;
+  readonly max: number;
+}
+
+/**
+ * The facet-field-name union of a search type – the keys a {@link SearchResult}’s
+ * `facets` can hold. Narrow for a declaration captured as a literal (via
+ * `defineSearchType` or `as const satisfies SearchType`); a plain
+ * `: SearchType` annotation degrades to `string` (its field names are not
+ * statically known).
+ */
+export type FacetFieldsOf<Type extends SearchType> = RootType extends Type
+  ? string
+  : Extract<Type['fields'][number], { readonly facetable: true }>['name'];
+
+/**
+ * The output-field-name union of a search type – the keys a {@link ResultDocument}
+ * can hold. Like {@link FacetFieldsOf}, degrades to `string` for a widened
+ * declaration.
+ */
+export type OutputFieldsOf<Type extends SearchType> = RootType extends Type
+  ? string
+  : Extract<Type['fields'][number], { readonly output: true }>['name'];
+
+/**
+ * One result row. `id` (the stable document key, an IRI) is kept *out* of
+ * {@link ResultDocument}: it is always present and is the hit’s identity, a
+ * different contract from the optional, typed logical field values – and it maps
+ * straight onto the GraphQL output’s guaranteed `id: String!`. The document
+ * holds only the selectable fields.
+ */
+export interface SearchHit<OutputField extends string = string> {
+  readonly id: string;
+  readonly document: ResultDocument<OutputField>;
+}
+
+/**
+ * The logical result document at the query seam – engine- and RDF-neutral.
+ * Distinct from the flat, fanned-out projection `SearchDocument` that lives
+ * index-side: this carries logical fields with language maps and references,
+ * ready for a surface to shape. Keyed by output field name; `Partial` because a
+ * document omits absent optional fields. `OutputField` defaults to `string`; a
+ * deployment narrows it via {@link OutputFieldsOf} for typo-safe field access.
+ */
+export type ResultDocument<OutputField extends string = string> = Readonly<
+  Partial<Record<OutputField, SearchValue>>
+>;
+
+/**
+ * A logical field value. A `date` is a {@link StoredDate} – stored terms like
+ * every other value at this seam: the Unix seconds the index sorts and filters
+ * on, plus the precision its source gave, which a surface needs to serve it in
+ * that precision’s canonical form. An index built before precision was stored
+ * reports `dateTime`, the one form the seconds alone can always be read as.
+ */
+export type SearchValue =
+  | string
+  | number
+  | StoredDate
+  | boolean
+  | readonly string[]
+  | LocalizedValue
+  | Reference
+  | readonly Reference[]
+  | NestedDocument
+  | readonly NestedDocument[];
+
+/**
+ * A **nested Search Document**: the referent of a surfaced (`output`) inline
+ * reference, carrying its Reference Type’s own output fields – each referent’s
+ * values grouped together, so a multi-valued reference never degrades into
+ * parallel arrays a consumer has to pair by index.
+ *
+ * **No `id`**: nesting carries the referent’s fields, not a document key, and a
+ * Reference Type is kept in no collection for a key to address it in. A named
+ * node and a blank one therefore nest alike. The exception is a
+ * {@link ReferenceStrategy.local local} lookup, which nests a Root Type – there
+ * the `id` is the key its own collection files the referent under, and the
+ * lookup resolves against it. Distinct from {@link Reference}, which is what an
+ * `idOnly`/`labelOnly` reference carries – there the IRI *is* the value.
+ */
+export interface NestedDocument {
+  readonly [field: string]: SearchValue | undefined;
+  /**
+   * The `name` of the Root Type this document is read through, where the
+   * field that carries it is a `lookup` naming **several** targets – the
+   * declaration it was resolved or stored against. Such a lookup serves
+   * referents of any of its targets under one field, and this is what tells a
+   * surface which one each referent is, so it can type the value per referent
+   * instead of claiming one kind for all of them. Absent where there is
+   * nothing to tell apart: a single-target lookup, or an inline reference’s
+   * entry. Keyed by a symbol so it can never collide with a declared field
+   * name.
+   */
+  readonly [NESTED_DOCUMENT_TYPE]?: string;
+}
+
+/** The key under which a {@link NestedDocument} carries the `name` of the
+ *  Root Type it is read through. */
+export const NESTED_DOCUMENT_TYPE: unique symbol = Symbol(
+  'lde.search.nestedDocumentType',
+);
+
+/**
+ * A JSON-LD-style language map (`@container: @language`, `@set` arrays); the key
+ * `und` carries untagged (`@none`) values. The surface flattens it to a
+ * best-first `Accept-Language`-ordered list.
+ */
+export type LocalizedValue = Readonly<Record<string, readonly string[]>>;
+
+/**
+ * The generic internal carrier for a referenced entity. The GraphQL surface maps
+ * it to a named per-shape type (e.g. `Organization`, `Term`) with `label`
+ * exposed as `name`.
+ */
+export interface Reference {
+  readonly id: string;
+  readonly label?: LocalizedValue;
+}
+
+/**
+ * One facet bucket: a value and how many documents carry it. `label` is the
+ * engine-resolved canonical **data** label, present only for reference facets
+ * (IRI-keyed); it is absent for facets whose value is a token or free string
+ * whose display the consumer owns (its own i18n, or the value itself).
+ */
+export interface FacetBucket {
+  readonly value: string;
+  readonly count: number;
+  readonly label?: LocalizedValue;
+  /**
+   * For a range-facet bucket: its half-open bounds (`min` inclusive, `max`
+   * exclusive), echoing the declared {@link FacetRange} so the bucket is
+   * self-describing and a consumer never hardcodes the bin formula. Both absent
+   * for a value facet; either absent for an open-ended bin.
+   */
+  readonly min?: number;
+  readonly max?: number;
+  /**
+   * For a boolean-facet bucket: the value as a real boolean, so it round-trips
+   * straight into the `is` filter that selects it rather than leaving a
+   * consumer to parse `value` back. Absent on every other kind of facet.
+   *
+   * Optional only because one bucket type serves every kind: an adapter MUST
+   * set it on every bucket of a `boolean` facet, and the engine conformance
+   * suite checks that it does. A surface types it non-null, so omitting it
+   * fails the whole response rather than degrading the one facet.
+   */
+  readonly is?: boolean;
+}

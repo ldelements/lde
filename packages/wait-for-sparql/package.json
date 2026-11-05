@@ -1,10 +1,11 @@
 {
   "name": "@lde/wait-for-sparql",
-  "version": "0.2.11",
+  "version": "0.4.0",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
     "directory": "packages/wait-for-sparql"
   },
+  "license": "MIT",
   "type": "module",
   "exports": {
     "./package.json": "./package.json",
@@ -23,8 +24,8 @@
     "!**/*.tsbuildinfo"
   ],
   "dependencies": {
-    "fetch-sparql-endpoint": "^7.1.0",
-    "p-retry": "^7.1.1",
+    "fetch-sparql-endpoint": "^7.2.0",
+    "p-retry": "^8.0.1",
     "tslib": "^2.3.0"
   }
 }

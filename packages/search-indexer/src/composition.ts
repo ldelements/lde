@@ -1,0 +1,139 @@
+// The composition pieces of createSearchIndexer, each usable on its own so a
+// deployment that needs one bespoke stage keeps the rest of the wiring
+// (Pipeline keeps its own wiring private).
+import { Dataset } from '@lde/dataset';
+import { Client as RegistryClient } from '@lde/dataset-registry-client';
+import {
+  CombinedSelector,
+  DirectorySelector,
+  ImportResolver,
+  ManualDatasetSelection,
+  RegistrySelector,
+  SparqlDistributionResolver,
+  type DatasetSelector,
+  type DistributionResolver,
+  type Writer,
+} from '@lde/pipeline';
+import type {
+  RootType,
+  SearchDocument,
+  SearchSchema,
+  SearchType,
+} from '@lde/search';
+import {
+  BlueGreenRebuild,
+  deriveCollectionName,
+  InPlaceRebuild,
+} from '@lde/search-typesense';
+import { createQlever, type QleverOptions } from '@lde/sparql-qlever';
+import type { Client } from 'typesense';
+import type { IndexerConfig } from './config.js';
+
+/**
+ * The dataset selection the configuration describes: what the registry selects,
+ * followed by the local files and directories it names.
+ */
+export function datasetSelectorFrom(config: IndexerConfig): DatasetSelector {
+  const selectors: DatasetSelector[] = config.localSources.map((path) =>
+    path.endsWith('/')
+      ? new DirectorySelector(path)
+      : new ManualDatasetSelection([Dataset.localFile(path)]),
+  );
+  if (config.registryEndpoint) {
+    selectors.unshift(
+      new RegistrySelector({
+        registry: new RegistryClient(config.registryEndpoint),
+        criteria: config.datasetCriteria,
+      }),
+    );
+  }
+  return selectors.length === 1
+    ? selectors[0]!
+    : new CombinedSelector(selectors);
+}
+
+/**
+ * The engine-writer factory the configuration describes: an
+ * {@link InPlaceRebuild} or {@link BlueGreenRebuild} per root type, its
+ * collection name derived from the type – prefixed when the deployment says
+ * so, so the read side must be configured with the same prefix – and its
+ * untagged text stemmed in the configured {@link IndexerConfig.defaultLocale}.
+ *
+ * The mounted schema the pipeline hands each call travels into the writer: a
+ * type that surfaces an inline reference builds its collection from the
+ * Reference Type the schema resolves, so the nested fields are declared rather
+ * than silently dropped.
+ */
+export function writerFactoryFrom(
+  client: Client,
+  config: IndexerConfig,
+): (searchType: RootType, schema: SearchSchema) => Writer<SearchDocument> {
+  return (searchType, schema) => {
+    const writerOptions = {
+      defaultLocale: config.defaultLocale,
+      schema,
+      ...(config.collectionPrefix
+        ? {
+            // The prefix applies to EVERY type the writer names – its own and
+            // the peers its joins reference – so a prefixed deployment’s
+            // reference fields point at prefixed collections.
+            collectionNameFor: (type: SearchType) =>
+              `${config.collectionPrefix}${deriveCollectionName(type)}`,
+          }
+        : {}),
+    };
+    return config.rebuildMode === 'blue-green'
+      ? new BlueGreenRebuild(client, searchType, writerOptions)
+      : new InPlaceRebuild(client, searchType, writerOptions);
+  };
+}
+
+/**
+ * The distribution resolver the configuration describes: with a QLever
+ * configured, an {@link ImportResolver} that imports data dumps into a
+ * pipeline-controlled QLever – a sibling container over the mounted Docker
+ * socket, or a sidecar in the indexer’s pod; without one, `undefined`,
+ * leaving the pipeline its endpoint-only default (a bare
+ * {@link SparqlDistributionResolver}). `replaceJsonLdContext` answers remote
+ * JSON-LD contexts when the import converts a JSON-LD distribution, as
+ * `SearchIndexerExtensions.replaceJsonLdContext` describes.
+ */
+export function distributionResolverFrom(
+  config: IndexerConfig,
+  replaceJsonLdContext?: QleverOptions['replaceJsonLdContext'],
+): DistributionResolver | undefined {
+  if (!config.qlever) {
+    return undefined;
+  }
+  const { importer, server } =
+    config.qlever.mode === 'remote'
+      ? createQlever({
+          mode: 'remote',
+          dataDir: config.qlever.dataDir,
+          replaceJsonLdContext,
+        })
+      : config.qlever.network
+        ? createQlever({
+            mode: 'docker',
+            image: config.qlever.image,
+            dataDir: config.qlever.dataDir,
+            network: config.qlever.network,
+            // The network-scoped name doubles as the endpoint hostname. It keeps
+            // stacks on different networks from removing each other’s QLever;
+            // indexers sharing one network would still collide, so run at most
+            // one indexer per network.
+            containerName: `qlever-${config.qlever.network}`,
+            replaceJsonLdContext,
+          })
+        : createQlever({
+            mode: 'docker',
+            image: config.qlever.image,
+            dataDir: config.qlever.dataDir,
+            replaceJsonLdContext,
+          });
+  return new ImportResolver(new SparqlDistributionResolver(), {
+    importer,
+    server,
+    strategy: config.qlever.strategy,
+  });
+}

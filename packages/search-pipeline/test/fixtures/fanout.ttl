@@ -1,0 +1,14 @@
+@prefix schema: <https://schema.org/> .
+
+# An agent with three independent multi-valued properties, reached through a
+# Role: 3 names × 2 job titles × 2 sameAs is 12 combinations, so the two shapes
+# are far apart.
+<https://ex/va/1> a schema:VisualArtwork ;
+  schema:creator [ schema:roleName "etser" ;
+                   schema:creator <https://ex/p/1> ] .
+
+<https://ex/p/1> a schema:Person ;
+  schema:name "Rembrandt van Rijn"@nl, "Rembrandt"@en, "Rembrandt Harmenszoon" ;
+  schema:jobTitle "etser", "schilder" ;
+  schema:sameAs <https://www.wikidata.org/entity/Q5598>,
+                <https://viaf.org/viaf/64013650> .

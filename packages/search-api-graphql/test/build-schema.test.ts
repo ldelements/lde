@@ -1,0 +1,2094 @@
+import { describe, expect, it } from 'vitest';
+import { graphql, printSchema } from 'graphql';
+import {
+  isoToUnixSeconds,
+  searchSchema,
+  unixSecondsToIso,
+  type FacetsOutcome,
+  type SearchEngine,
+  type SearchQuery,
+  type SearchField,
+  type SearchResult,
+  type RootType,
+  type SearchType,
+  type StoredDate,
+} from '@lde/search';
+import { buildGraphQLSchema, type SearchContext } from '../src/build-schema.js';
+
+/** The lookup targets the Dataset references resolve against. A labelled
+ *  reference reads its fields from a target's own collection, so the target
+ *  has to be an indexed root type – there is no id-plus-label shape for a
+ *  referent nothing indexes. */
+const labelledTarget = (name: string, iri: string): SearchType => ({
+  name,
+  class: iri,
+  fields: [
+    {
+      name: 'label',
+      kind: 'text',
+      locales: ['nl', 'en'],
+      output: true,
+      searchable: { weight: 1 },
+    },
+  ],
+});
+const organization = labelledTarget(
+  'Organization',
+  'https://example.org/Organization',
+);
+const term = labelledTarget('Term', 'https://example.org/Term');
+
+const schema: SearchType = {
+  name: 'Dataset',
+  class: 'http://www.w3.org/ns/dcat#Dataset',
+  fields: [
+    {
+      name: 'title',
+      kind: 'text',
+      locales: ['nl', 'en'],
+      output: true,
+      searchable: { weight: 5 },
+      sortable: true,
+    },
+    {
+      name: 'keyword',
+      kind: 'keyword',
+      array: true,
+      facetable: true,
+      filterable: true,
+      output: true,
+    },
+    {
+      name: 'publisher',
+      kind: 'reference',
+      facetable: true,
+      filterable: true,
+      output: true,
+      ref: { strategy: 'lookup', target: 'Organization' },
+    },
+    {
+      name: 'size',
+      kind: 'integer',
+      filterable: true,
+      sortable: true,
+      facetable: true,
+      output: true,
+      facetRanges: [
+        { key: '0', min: 1, max: 10 },
+        { key: '1', min: 10 },
+      ],
+    },
+    {
+      name: 'datePosted',
+      kind: 'date',
+      filterable: true,
+      sortable: true,
+      facetable: true,
+      output: true,
+    },
+    { name: 'score', kind: 'number', output: true },
+    {
+      name: 'terminologySource',
+      kind: 'reference',
+      array: true,
+      facetable: true,
+      output: true,
+      ref: { strategy: 'lookup', target: 'Term' },
+    },
+    {
+      name: 'status',
+      kind: 'keyword',
+      facetable: true,
+      filterable: true,
+      required: true,
+      output: true,
+    },
+    {
+      name: 'iiif',
+      kind: 'boolean',
+      facetable: true,
+      filterable: true,
+      output: true,
+    },
+  ],
+};
+
+/** A fake engine that records the queries it received and returns a canned
+ *  result; each query in a `searchFacets` batch answers with the canned
+ *  facets. */
+function fakeEngine(result: SearchResult): {
+  engine: SearchEngine;
+  received: () => SearchQuery;
+  facetBatches: () => readonly (readonly SearchQuery[])[];
+} {
+  let captured: SearchQuery;
+  const batches: (readonly SearchQuery[])[] = [];
+  return {
+    engine: {
+      schema: searchSchema(schema, organization, term),
+      async search(_searchType, query) {
+        captured = query;
+        return result;
+      },
+      async searchFacets(_searchType, queries) {
+        batches.push(queries);
+        return queries.map(() => ({ facets: result.facets }));
+      },
+    },
+    received: () => captured,
+    facetBatches: () => batches,
+  };
+}
+
+/** A `searchFacets` stub for bespoke engines whose test selects no facets. */
+const noFacets = async (
+  _searchType: SearchType,
+  queries: readonly SearchQuery[],
+): Promise<readonly FacetsOutcome[]> => queries.map(() => ({ facets: {} }));
+
+const canned: SearchResult = {
+  total: 1,
+  hits: [
+    {
+      id: 'https://d/1',
+      document: {
+        title: { nl: ['Titel'], en: ['Title'] },
+        keyword: ['kaarten'],
+        publisher: {
+          id: 'https://org/1',
+          label: { nl: ['Het Utrechts Archief'] },
+        },
+        size: 1234,
+        datePosted: { seconds: 1_700_000_000, precision: 'dateTime' },
+        score: 4.5,
+        terminologySource: [
+          { id: 'https://term/1', label: { nl: ['Kaarten'] } },
+        ],
+        status: 'valid',
+        iiif: true,
+      },
+    },
+  ],
+  facets: { keyword: { buckets: [{ value: 'kaarten', count: 3 }] } },
+};
+
+const datasetOptions = {};
+
+async function run(
+  source: string,
+  context: SearchContext,
+  variables?: Record<string, unknown>,
+) {
+  return graphql({
+    schema: buildGraphQLSchema(
+      searchSchema(schema, organization, term),
+      datasetOptions,
+    ),
+    source,
+    contextValue: context,
+    variableValues: variables,
+  });
+}
+
+describe('buildGraphQLSchema', () => {
+  it('resolves a query, mapping the result to the typed output', async () => {
+    const { engine, received } = fakeEngine(canned);
+    const result = await run(
+      `{
+        datasets(query: "kaart") {
+          pagination {
+            total
+            page
+            perPage
+          }
+          items {
+            id
+            title { language value }
+            keyword
+            publisher { id label { language value } }
+            terminologySource { id label { language value } }
+            size
+            datePosted
+            score
+            status
+            iiif
+          }
+          facets { keyword { value count } }
+        }
+      }`,
+      { engine, acceptLanguage: ['nl'] },
+    );
+
+    expect(result.errors).toBeUndefined();
+    const data = result.data?.datasets as Record<string, unknown>;
+    expect(data.pagination).toEqual({ total: 1, page: 1, perPage: 20 });
+    const item = (data.items as Record<string, unknown>[])[0];
+    expect(item.id).toBe('https://d/1');
+    expect(item.title).toEqual([
+      { language: 'nl', value: 'Titel' },
+      { language: 'en', value: 'Title' },
+    ]);
+    expect(item.keyword).toEqual(['kaarten']);
+    expect(item.publisher).toEqual({
+      id: 'https://org/1',
+      label: [{ language: 'nl', value: 'Het Utrechts Archief' }],
+    });
+    expect(item.size).toBe(1234);
+    expect(item.datePosted).toBe('2023-11-14T22:13:20Z');
+    expect(item.score).toBe(4.5);
+    expect(item.terminologySource).toEqual([
+      { id: 'https://term/1', label: [{ language: 'nl', value: 'Kaarten' }] },
+    ]);
+    expect(item.iiif).toBe(true);
+    expect(data.facets).toEqual({
+      keyword: [{ value: 'kaarten', count: 3 }],
+    });
+    // The free-text arg became the query text.
+    expect(received().text).toBe('kaart');
+  });
+
+  it('rejects out-of-bounds paging before it reaches the engine', async () => {
+    const { engine } = fakeEngine(canned);
+    const context = { engine, acceptLanguage: ['nl'] };
+    const badPage = await run(
+      `{ datasets(page: 0) { pagination { total } } }`,
+      context,
+    );
+    expect(badPage.errors?.[0]?.message).toMatch(/page must be at least 1/);
+    const badPerPage = await run(
+      `{ datasets(perPage: 101) { pagination { total } } }`,
+      context,
+    );
+    expect(badPerPage.errors?.[0]?.message).toMatch(
+      /perPage must be between 0 and 100/,
+    );
+    // Marked caller-fixable, so a transport keeps the message rather than
+    // masking it as a server fault (see handler.test.ts).
+    for (const error of [badPage.errors?.[0], badPerPage.errors?.[0]]) {
+      expect(error?.extensions.code).toBe('BAD_USER_INPUT');
+    }
+  });
+
+  it('orders the output list best-first for the requested language', async () => {
+    const { engine } = fakeEngine(canned);
+    const result = await run(
+      `{ datasets { items { title { language value } } } }`,
+      { engine, acceptLanguage: ['en'] },
+    );
+    const item = (
+      (result.data?.datasets as Record<string, unknown>).items as Record<
+        string,
+        unknown
+      >[]
+    )[0];
+    expect(item.title).toEqual([
+      { language: 'en', value: 'Title' },
+      { language: 'nl', value: 'Titel' },
+    ]);
+  });
+
+  it('serves each date at the precision its own record gave', async () => {
+    const stored = (iso: string) => isoToUnixSeconds(iso) as StoredDate;
+    const { engine } = fakeEngine({
+      total: 4,
+      facets: {},
+      hits: ['1999', '1999-05', '1999-05-03+02:00', '1999-05-03T14:30:00+02:00']
+        .map((iso, index) => ({
+          id: `https://d/${index}`,
+          document: { datePosted: stored(iso) },
+        }))
+        // An engine may also report an absent value as null.
+        .concat({ id: 'https://d/4', document: { datePosted: null as never } }),
+    });
+    const result = await run(`{ datasets { items { datePosted } } }`, {
+      engine,
+      acceptLanguage: ['nl'],
+    });
+    expect(result.errors).toBeUndefined();
+    expect(
+      (
+        (result.data?.datasets as Record<string, unknown>).items as Record<
+          string,
+          unknown
+        >[]
+      ).map((item) => item.datePosted),
+    ).toEqual(['1999', '1999-05', '1999-05-03', '1999-05-03T12:30:00Z', null]);
+  });
+
+  it('types every date as an ISO8601Date specified by the docs', async () => {
+    const { engine } = fakeEngine(canned);
+    const result = await run(
+      `{ __type(name: "ISO8601Date") { kind specifiedByURL } }`,
+      { engine, acceptLanguage: ['nl'] },
+    );
+    expect(result.data?.__type).toEqual({
+      kind: 'SCALAR',
+      specifiedByURL:
+        'https://ldelements.org/reference/search-api-graphql#dates',
+    });
+    const sdl = printSchema(
+      buildGraphQLSchema(
+        searchSchema(schema, organization, term),
+        datasetOptions,
+      ),
+    );
+    expect(sdl).toMatch(/datePosted: ISO8601Date\n/);
+    expect(sdl).toMatch(
+      /input DateRange \{\s+min: ISO8601Date\s+max: ISO8601Date\s+\}/,
+    );
+  });
+
+  it('rejects a date bound it cannot read, inline or as a variable', async () => {
+    const { engine } = fakeEngine(canned);
+    const context = { engine, acceptLanguage: ['nl'] };
+    const inline = await run(
+      `{ datasets(where: { datePosted: { min: "spring 1999" } }) { pagination { total } } }`,
+      context,
+    );
+    expect(inline.errors?.[0]?.message).toMatch(
+      /ISO8601Date cannot represent “spring 1999”/,
+    );
+    const variable = await run(
+      `query ($min: ISO8601Date) { datasets(where: { datePosted: { min: $min } }) { pagination { total } } }`,
+      context,
+      { min: '1999-13' },
+    );
+    expect(variable.errors?.[0]?.message).toMatch(
+      /ISO8601Date cannot represent “1999-13”/,
+    );
+    expect(variable.errors?.[0]?.extensions.code).toBe('BAD_USER_INPUT');
+    // A readable bound of any precision coerces.
+    const ok = await run(
+      `{ datasets(where: { datePosted: { min: "1999", max: "1999-05-03T12:30:00Z" } }) { pagination { total } } }`,
+      context,
+    );
+    expect(ok.errors).toBeUndefined();
+  });
+
+  it('places untagged (und) values last with a null language', async () => {
+    const { engine } = fakeEngine({
+      total: 1,
+      facets: {},
+      hits: [
+        {
+          id: 'x',
+          document: { title: { nl: ['Titel'], und: ['Naamloos'] } },
+        },
+      ],
+    });
+    const result = await run(
+      `{ datasets { items { title { language value } datePosted keyword } } }`,
+      { engine, acceptLanguage: ['en'] },
+    );
+    const item = (
+      (result.data?.datasets as Record<string, unknown>).items as Record<
+        string,
+        unknown
+      >[]
+    )[0];
+    expect(item.title).toEqual([
+      { language: 'nl', value: 'Titel' },
+      { language: null, value: 'Naamloos' },
+    ]);
+    // An absent date resolves to null, an absent list to an empty one.
+    expect(item.datePosted).toBeNull();
+    expect(item.keyword).toEqual([]);
+  });
+
+  it('labels reference-facet buckets, leaving plain-facet buckets null', async () => {
+    const { engine } = fakeEngine({
+      total: 0,
+      hits: [],
+      facets: {
+        publisher: {
+          buckets: [
+            {
+              value: 'https://org/1',
+              count: 2,
+              label: { nl: ['Het Utrechts Archief'] },
+            },
+          ],
+        },
+        keyword: { buckets: [{ value: 'kaarten', count: 3 }] },
+      },
+    });
+    const servedLanguages = new Map<string, string>();
+    const result = await run(
+      `{ datasets { facets {
+        publisher { value count label { language value } }
+        keyword { value count label { language value } }
+      } } }`,
+      { engine, acceptLanguage: ['nl'], servedLanguages },
+    );
+    const facets = (result.data?.datasets as Record<string, unknown>)
+      .facets as {
+      publisher: unknown[];
+      keyword: unknown[];
+    };
+    expect(facets.publisher).toEqual([
+      {
+        value: 'https://org/1',
+        count: 2,
+        label: [{ language: 'nl', value: 'Het Utrechts Archief' }],
+      },
+    ]);
+    expect(facets.keyword).toEqual([
+      { value: 'kaarten', count: 3, label: null },
+    ]);
+    expect([...servedLanguages.values()]).toEqual(['nl']);
+  });
+
+  it('drops an unselectable bucket rather than nulling the response around it', async () => {
+    // A stale bucket from an index written before the projection guard. Its
+    // `value: IRI!` is non-null all the way up to the root field, so raising
+    // here would take `items` and `pagination` with it – the collateral ADR 5’s
+    // degradation contract exists to prevent. It is dropped instead: a bucket
+    // that cannot be sent back as the filter selecting it is not worth serving.
+    const { engine } = fakeEngine({
+      total: 1,
+      hits: canned.hits,
+      facets: {
+        publisher: {
+          buckets: [
+            { value: '_:b0', count: 1 },
+            { value: 'https://org/1', count: 2 },
+          ],
+        },
+      },
+    });
+    const result = await run(
+      `{ datasets { pagination { total } items { id } facets { publisher { value count } } } }`,
+      { engine, acceptLanguage: ['nl'] },
+    );
+    expect(result.errors).toBeUndefined();
+    const data = result.data?.datasets as Record<string, unknown>;
+    expect(data.pagination).toEqual({ total: 1 });
+    expect(data.items).toEqual([{ id: 'https://d/1' }]);
+    expect((data.facets as Record<string, unknown>).publisher).toEqual([
+      { value: 'https://org/1', count: 2 },
+    ]);
+  });
+
+  it('refuses to serve a non-IRI as a document’s identity, naming the index rather than the query', async () => {
+    // Identity is the case where raising is right: a document keyed on `_:b0`
+    // cannot be selected at all, so serving it hands back something unusable.
+    const { engine } = fakeEngine({
+      total: 1,
+      facets: {},
+      hits: [{ id: '_:b0', document: { status: 'valid' } }],
+    });
+    const result = await run(`{ datasets { items { id } } }`, {
+      engine,
+      acceptLanguage: ['nl'],
+    });
+    expect(result.errors?.[0]?.message).toMatch(
+      /IRI cannot serialize “_:b0”.*reindex/is,
+    );
+  });
+
+  it('exposes range-facet bucket bounds, null for value facets and open ends', async () => {
+    const { engine } = fakeEngine({
+      total: 0,
+      hits: [],
+      facets: {
+        size: {
+          buckets: [
+            { value: '0', count: 2, min: 1, max: 10 },
+            // Open-ended top bin: lower bound only.
+            { value: '1', count: 5, min: 10 },
+          ],
+        },
+        keyword: { buckets: [{ value: 'kaarten', count: 3 }] },
+      },
+    });
+    const result = await run(
+      `{ datasets { facets {
+        size { buckets { min max count } }
+        keyword { value count }
+      } } }`,
+      { engine, acceptLanguage: ['nl'] },
+    );
+    const facets = (result.data?.datasets as Record<string, unknown>)
+      .facets as {
+      size: { buckets: unknown[] };
+      keyword: unknown[];
+    };
+    // RangeBuckets carry their half-open bounds (max null = open-ended top bin).
+    expect(facets.size.buckets).toEqual([
+      { min: 1, max: 10, count: 2 },
+      { min: 10, max: null, count: 5 },
+    ]);
+    // A value facet's ValueBuckets carry no bounds.
+    expect(facets.keyword).toEqual([{ value: 'kaarten', count: 3 }]);
+  });
+
+  it('serves a binned date facet’s bins in the ISO 8601 they were declared in', async () => {
+    const binned: SearchType = {
+      ...schema,
+      fields: schema.fields.map((field): SearchField =>
+        field.name === 'datePosted'
+          ? {
+              name: 'datePosted',
+              kind: 'date',
+              facetable: true,
+              output: true,
+              facetRanges: [
+                { key: 'older', max: '+001899' },
+                { key: 'twentieth', min: '1900', max: '1999-12-31' },
+                { key: 'recent', min: '2000-01-01T00:00:00+01:00' },
+              ],
+            }
+          : field,
+      ),
+    };
+    const searchSchemaWithBins = searchSchema(binned, organization, term);
+    const facets: SearchResult['facets'] = {
+      datePosted: {
+        // The adapter echoes each bin’s bounds in stored seconds; the surface
+        // serves the declared ones instead.
+        buckets: [
+          { value: 'older', count: 1, max: -2_208_988_800 },
+          { value: 'twentieth', count: 4, min: -2_208_988_800 },
+          { value: 'recent', count: 2, min: 946_681_200 },
+        ],
+      },
+    };
+    const engine: SearchEngine = {
+      schema: searchSchemaWithBins,
+      search: async () => ({ total: 0, hits: [], facets }),
+      searchFacets: async (_searchType, queries) =>
+        queries.map(() => ({ facets })),
+    };
+    const built = buildGraphQLSchema(searchSchemaWithBins, datasetOptions);
+    expect(printSchema(built)).toMatch(
+      /type DateBinnedRangeFacet {[^}]*buckets: \[DateRangeBucket!\]!/,
+    );
+    expect(printSchema(built)).toMatch(
+      /type DateRangeBucket \{\s+min: ISO8601Date\s+max: ISO8601Date\s+count: Int!/,
+    );
+    const result = await graphql({
+      schema: built,
+      source: `{ datasets { facets { datePosted { buckets { min max count } } } } }`,
+      contextValue: { engine, acceptLanguage: ['nl'] },
+    });
+    expect(result.errors).toBeUndefined();
+    expect(
+      (
+        (result.data?.datasets as Record<string, unknown>).facets as {
+          datePosted: { buckets: unknown[] };
+        }
+      ).datePosted.buckets,
+    ).toEqual([
+      { min: null, max: '1899', count: 1 },
+      { min: '1900', max: '1999-12-31', count: 4 },
+      { min: '1999-12-31T23:00:00Z', max: null, count: 2 },
+    ]);
+  });
+
+  it('serves a range facet’s extent over the collection and over the other filters, in one dispatch', async () => {
+    const bce = -96_890_000_000;
+    const modern = 1_700_000_000;
+    const { engine, facetBatches } = fakeEngine({
+      total: 0,
+      hits: [],
+      facets: {
+        datePosted: {
+          buckets: [{ value: String(modern), count: 2 }],
+          extent: { min: bce, max: modern },
+        },
+        size: { buckets: [], extent: { min: 3, max: 250 } },
+      },
+    });
+    const result = await run(
+      `{ datasets(
+          query: "kaart",
+          where: {
+            datePosted: { min: "2000-01-01" },
+            status: { in: ["valid"] }
+          }
+        ) { facets {
+        datePosted {
+          all { min max }
+          matching { min max }
+          buckets { value count }
+        }
+        size { matching { min max } }
+        keyword { value }
+      } } }`,
+      { engine, acceptLanguage: ['nl'] },
+    );
+    expect(result.errors).toBeUndefined();
+    const facets = (result.data?.datasets as Record<string, unknown>)
+      .facets as Record<string, unknown>;
+    // A date is served as ISO 8601, a BCE year included – the terms the
+    // DateRange filter takes.
+    const isoExtent = {
+      min: unixSecondsToIso(bce, 'dateTime'),
+      max: unixSecondsToIso(modern, 'dateTime'),
+    };
+    expect(isoExtent.min).toMatch(/^-1101-/);
+    // An unbinned range facet keeps one bucket per distinct value, a date’s
+    // in ISO 8601 too.
+    expect(facets.datePosted).toEqual({
+      all: isoExtent,
+      matching: isoExtent,
+      buckets: [{ value: isoExtent.max, count: 2 }],
+    });
+    expect(facets.size).toEqual({ matching: { min: 3, max: 250 } });
+
+    // ONE dispatch: the listing query for every `matching` facet – the
+    // engine drops datePosted’s own range – and the unfiltered query for
+    // `all`.
+    expect(facetBatches()).toHaveLength(1);
+    const [batch] = facetBatches();
+    expect(batch.map((query) => query.facets)).toEqual([
+      ['datePosted', 'size', 'keyword'],
+      ['datePosted'],
+    ]);
+    const status = { or: [{ field: 'status', in: ['valid'] }] };
+    // The listing query keeps every filter, the date range included.
+    expect(batch[0].where).toHaveLength(2);
+    expect(batch[0].where).toContainEqual(status);
+    expect(batch[0].text).toBe('kaart');
+    // `all` ignores every filter and the text.
+    expect(batch[1]).toEqual({
+      where: [],
+      orderBy: [],
+      limit: 0,
+      offset: 0,
+      facets: ['datePosted'],
+      locale: 'nl',
+    });
+  });
+
+  it('keeps the deployment’s policy on a range facet’s `all` extent', async () => {
+    const { engine, facetBatches } = fakeEngine({
+      total: 0,
+      hits: [],
+      facets: {},
+    });
+    const valid = { or: [{ field: 'status', in: ['valid'] }] };
+    await graphql({
+      schema: buildGraphQLSchema(searchSchema(schema, organization, term), {
+        types: {
+          Dataset: {
+            queryDefaults: (query) => ({
+              ...query,
+              where: [...query.where, valid],
+            }),
+          },
+        },
+      }),
+      source: `{ datasets(where: { keyword: { in: ["kaarten"] } }) {
+        facets { datePosted { all { min } } }
+      } }`,
+      contextValue: { engine, acceptLanguage: ['nl'] },
+    });
+    // The caller’s keyword filter is gone; the valid-only policy is not.
+    expect(facetBatches()[0].at(-1)?.where).toEqual([valid]);
+  });
+
+  it('shares one range facet type between fields of the same kind and binning', () => {
+    const event = {
+      name: 'Event',
+      class: 'https://schema.org/Event',
+      fields: [
+        { name: 'startDate', kind: 'date', facetable: true },
+        { name: 'endDate', kind: 'date', facetable: true },
+      ],
+    } as const satisfies SearchType;
+    const sdl = printSchema(buildGraphQLSchema(searchSchema(event)));
+    expect(sdl).toMatch(/startDate: DateRangeFacet!/);
+    expect(sdl).toMatch(/endDate: DateRangeFacet!/);
+    expect(sdl.match(/type DateRangeFacet\b/g)).toHaveLength(1);
+  });
+
+  it('serves a null extent where no document holds a value', async () => {
+    const { engine } = fakeEngine({
+      total: 0,
+      hits: [],
+      facets: { datePosted: { buckets: [] } },
+    });
+    const result = await run(
+      `{ datasets { facets { datePosted { all { min } matching { min } } } } }`,
+      { engine, acceptLanguage: ['nl'] },
+    );
+    expect(result.errors).toBeUndefined();
+    expect(
+      (
+        (result.data?.datasets as Record<string, unknown>).facets as Record<
+          string,
+          unknown
+        >
+      ).datePosted,
+    ).toEqual({ all: null, matching: null });
+  });
+
+  it('serves boolean-facet buckets as real booleans, ready to send straight back as a filter', async () => {
+    const { engine, received } = fakeEngine({
+      total: 0,
+      hits: [],
+      facets: {
+        iiif: {
+          buckets: [
+            { value: 'true', is: true, count: 1071 },
+            { value: 'false', is: false, count: 342 },
+          ],
+        },
+      },
+    });
+    const result = await run(
+      `{ datasets { facets { iiif { value count } } } }`,
+      { engine, acceptLanguage: ['nl'] },
+    );
+    const facets = (result.data?.datasets as Record<string, unknown>)
+      .facets as { iiif: { value: boolean; count: number }[] };
+    expect(facets.iiif).toEqual([
+      { value: true, count: 1071 },
+      { value: false, count: 342 },
+    ]);
+    // The bucket a client picked is exactly what its filter takes: no reparsing.
+    await run(
+      `query ($iiif: Boolean) { datasets(where: { iiif: $iiif }) { pagination { total } } }`,
+      { engine, acceptLanguage: ['nl'] },
+      { iiif: facets.iiif[0].value },
+    );
+    expect(received().where).toEqual([{ or: [{ field: 'iiif', is: true }] }]);
+  });
+
+  it('resolves every selected facet key through ONE batched engine dispatch, returning [] where the engine has none', async () => {
+    const { engine, facetBatches } = fakeEngine({
+      total: 0,
+      hits: [],
+      facets: { keyword: { buckets: [{ value: 'kaarten', count: 1 }] } },
+    });
+    const result = await run(
+      `{ datasets { facets {
+        keyword { value count }
+        publisher { value count }
+        terminologySource { value count }
+        status { value count }
+        iiif { value count }
+        size { buckets { count } }
+      } } }`,
+      { engine, acceptLanguage: ['nl'] },
+    );
+    const facets = (result.data?.datasets as Record<string, unknown>)
+      .facets as Record<string, unknown>;
+    expect(facets.keyword).toEqual([{ value: 'kaarten', count: 1 }]);
+    // Keys the engine returned nothing for resolve to an empty list.
+    for (const key of ['publisher', 'terminologySource', 'status', 'iiif']) {
+      expect(facets[key]).toEqual([]);
+    }
+    expect(facets.size).toEqual({ buckets: [] });
+    // Unfiltered browse: the whole selection collapses to a single facet-only
+    // query inside a single searchFacets dispatch.
+    expect(facetBatches()).toHaveLength(1);
+    const [batch] = facetBatches();
+    expect(batch).toHaveLength(1);
+    expect(batch[0].facets).toEqual([
+      'keyword',
+      'publisher',
+      'terminologySource',
+      'status',
+      'iiif',
+      'size',
+    ]);
+  });
+
+  it('sends the listing’s filters whole: the engine drops a facet’s own', async () => {
+    const { engine, facetBatches } = fakeEngine({
+      total: 0,
+      hits: [],
+      facets: {},
+    });
+    await run(
+      `{ datasets(where: { status: { in: ["valid"] } }) {
+        facets {
+          keyword { value count }
+          publisher { value count }
+          status { value count }
+        }
+      } }`,
+      { engine, acceptLanguage: ['nl'] },
+    );
+    // One dispatch of one query: skip-own-filter is the engine’s to apply.
+    expect(facetBatches()).toEqual([
+      [
+        expect.objectContaining({
+          facets: ['keyword', 'publisher', 'status'],
+          where: [{ or: [{ field: 'status', in: ['valid'] }] }],
+        }),
+      ],
+    ]);
+  });
+
+  it('degrades a failed facet batch to empty lists without failing the whole query', async () => {
+    // A facet is supplementary: its computation runs through the batched
+    // searchFacets dispatch. Fail only that, leaving the listing search
+    // untouched.
+    const failedFacets: string[] = [];
+    const engine: SearchEngine = {
+      schema: searchSchema(schema, organization, term),
+      async search() {
+        return canned;
+      },
+      async searchFacets() {
+        throw new Error('facet backend unavailable');
+      },
+    };
+    const result = await run(
+      `{ datasets {
+        pagination { total }
+        items { id }
+        facets { keyword { value count } status { value count } }
+      } }`,
+      {
+        engine,
+        acceptLanguage: ['nl'],
+        onFacetError: (field) => failedFacets.push(field),
+      },
+    );
+
+    // No top-level error: the failed facets degraded rather than nulling the
+    // non-null result and discarding the items.
+    expect(result.errors).toBeUndefined();
+    const data = result.data?.datasets as Record<string, unknown>;
+    expect((data.pagination as Record<string, unknown>).total).toBe(1);
+    expect((data.items as Record<string, unknown>[])[0].id).toBe('https://d/1');
+    // Every facet in the failed batch degraded to an empty list, and the
+    // cause was reported once per selected field.
+    expect((data.facets as Record<string, unknown[]>).keyword).toEqual([]);
+    expect((data.facets as Record<string, unknown[]>).status).toEqual([]);
+    expect(failedFacets.sort()).toEqual(['keyword', 'status']);
+  });
+
+  it('guards perPage: 0, resolving page to 1 rather than failing on NaN', async () => {
+    const { engine } = fakeEngine(canned);
+    const result = await run(
+      `{ datasets(perPage: 0) { pagination { page total } } }`,
+      {
+        engine,
+        acceptLanguage: ['nl'],
+      },
+    );
+    expect(result.errors).toBeUndefined();
+    const data = result.data?.datasets as Record<string, unknown>;
+    expect((data.pagination as Record<string, unknown>).page).toBe(1);
+  });
+
+  it('maps where, orderBy and pagination into the SearchQuery', async () => {
+    const { engine, received } = fakeEngine(canned);
+    await run(
+      `{
+        datasets(
+          where: { status: { in: ["valid"] }, keyword: {}, size: { min: 1, max: 9 }, iiif: true }
+          orderBy: { field: SIZE, direction: ASC }
+          page: 3
+          perPage: 10
+        ) { pagination { total } }
+      }`,
+      { engine, acceptLanguage: ['nl'] },
+    );
+
+    const query = received();
+    expect(query.where).toContainEqual({
+      or: [{ field: 'status', in: ['valid'] }],
+    });
+    // An empty filter compiles to an empty membership.
+    expect(query.where).toContainEqual({ or: [{ field: 'keyword', in: [] }] });
+    expect(query.where).toContainEqual({
+      or: [{ field: 'size', range: { min: 1, max: 9 } }],
+    });
+    expect(query.where).toContainEqual({ or: [{ field: 'iiif', is: true }] });
+    expect(query.orderBy).toEqual([{ field: 'size', direction: 'asc' }]);
+    // Facets are requested per key via selection, not an arg; the listing query
+    // carries none.
+    expect(query.facets).toEqual([]);
+    expect(query.limit).toBe(10);
+    expect(query.offset).toBe(20);
+  });
+
+  it('maps a where on the undeclared `id` into an IRI membership filter', async () => {
+    const { engine, received } = fakeEngine(canned);
+    await run(
+      `{
+        datasets(where: { id: { in: ["https://id.example.org/a", "urn:b"] } }) {
+          pagination { total }
+        }
+      }`,
+      { engine, acceptLanguage: ['nl'] },
+    );
+    expect(received().where).toEqual([
+      { or: [{ field: 'id', in: ['https://id.example.org/a', 'urn:b'] }] },
+    ]);
+
+    // An empty filter compiles to an empty membership, as for any field.
+    const empty = fakeEngine(canned);
+    await run(`{ datasets(where: { id: {} }) { pagination { total } } }`, {
+      engine: empty.engine,
+      acceptLanguage: ['nl'],
+    });
+    expect(empty.received().where).toEqual([{ or: [{ field: 'id', in: [] }] }]);
+  });
+
+  it('maps `or` into one clause holding every alternative, ANDed with its siblings', async () => {
+    // The entity-page query: one IRI across the document's own identity and its
+    // reference fields, answered by a single search.
+    const { engine, received } = fakeEngine(canned);
+    await run(
+      `{
+        datasets(where: {
+          or: [{ id: { in: ["urn:vg"] } }, { publisher: { in: ["urn:vg"] } }]
+          status: { in: ["valid"] }
+        }) {
+          pagination { total }
+        }
+      }`,
+      { engine, acceptLanguage: ['nl'] },
+    );
+    // One clause for the disjunction…
+    expect(received().where).toContainEqual({
+      or: [
+        { field: 'id', in: ['urn:vg'] },
+        { field: 'publisher', in: ['urn:vg'] },
+      ],
+    });
+    // …and a separate clause for the sibling key, so the two AND.
+    expect(received().where).toContainEqual({
+      or: [{ field: 'status', in: ['valid'] }],
+    });
+  });
+
+  it('maps `and` into further clauses, so a query can carry two disjunctions', async () => {
+    const { engine, received } = fakeEngine(canned);
+    await run(
+      `{
+        datasets(where: {
+          and: [
+            { or: [{ publisher: { in: ["urn:vg"] } }, { keyword: { in: ["urn:vg"] } }] }
+            { or: [{ status: { in: ["valid"] } }, { size: { min: 100 } }] }
+          ]
+        }) {
+          pagination { total }
+        }
+      }`,
+      { engine, acceptLanguage: ['nl'] },
+    );
+    // Two independent disjunctions, ANDed – the shape a single `or` cannot hold.
+    expect(received().where).toEqual([
+      {
+        or: [
+          { field: 'publisher', in: ['urn:vg'] },
+          { field: 'keyword', in: ['urn:vg'] },
+        ],
+      },
+      {
+        or: [
+          { field: 'status', in: ['valid'] },
+          { field: 'size', range: { min: 100, max: undefined } },
+        ],
+      },
+    ]);
+  });
+
+  it('treats `and` over plain criteria as identical to sibling keys', async () => {
+    // Sibling keys already AND, so `and` is optional for plain criteria – it
+    // earns its keep only when a query needs a SECOND `or` (above). Pinned
+    // because the reference docs state the two forms are the same query.
+    const siblings = fakeEngine(canned);
+    await run(
+      `{
+        datasets(where: { status: { in: ["valid"] }, keyword: { in: ["atlas"] } }) {
+          pagination { total }
+        }
+      }`,
+      { engine: siblings.engine, acceptLanguage: ['nl'] },
+    );
+    const explicit = fakeEngine(canned);
+    await run(
+      `{
+        datasets(where: { and: [
+          { status: { in: ["valid"] } }
+          { keyword: { in: ["atlas"] } }
+        ] }) {
+          pagination { total }
+        }
+      }`,
+      { engine: explicit.engine, acceptLanguage: ['nl'] },
+    );
+    // Same clauses, and `where` is a conjunction – so the order they arrive in
+    // carries no meaning. Sibling keys emit in field-declaration order, `and`
+    // in the order written.
+    const clauses = (query: SearchQuery) =>
+      [...query.where].map((filter) => JSON.stringify(filter)).sort();
+    expect(clauses(explicit.received())).toEqual(clauses(siblings.received()));
+  });
+
+  it('treats an explicit `where: null` as no filter at all', async () => {
+    const { engine, received } = fakeEngine(canned);
+    const result = await run(
+      `{ datasets(where: null) { pagination { total } } }`,
+      { engine, acceptLanguage: ['nl'] },
+    );
+    expect(result.errors).toBeUndefined();
+    expect(received().where).toEqual([]);
+  });
+
+  it('nests `and` to any depth, flattening it into one conjunction', async () => {
+    // `and` carries further `Where`s, so it is recursive – safe, because a
+    // conjunction inside a conjunction collapses, and an `and` can never sit
+    // inside an `or` (which holds only criteria).
+    const { engine, received } = fakeEngine(canned);
+    await run(
+      `{
+        datasets(where: {
+          status: { in: ["valid"] }
+          and: [{ and: [{ keyword: { in: ["atlas"] } }] }]
+        }) {
+          pagination { total }
+        }
+      }`,
+      { engine, acceptLanguage: ['nl'] },
+    );
+    expect(received().where).toEqual([
+      { or: [{ field: 'status', in: ['valid'] }] },
+      { or: [{ field: 'keyword', in: ['atlas'] }] },
+    ]);
+  });
+
+  it('rejects a criterion naming two fields: a criterion is an atom', async () => {
+    // `@oneOf` is what keeps `where` a flat conjunction of disjunctions – a
+    // two-key criterion would be a conjunction nested inside an `or`, which the
+    // IR cannot represent and skip-own-filter could not reason about. Caught by
+    // GraphQL validation, before any resolver runs.
+    const { engine } = fakeEngine(canned);
+    const result = await run(
+      `{
+        datasets(where: {
+          or: [{ status: { in: ["valid"] }, keyword: { in: ["atlas"] } }]
+        }) {
+          pagination { total }
+        }
+      }`,
+      { engine, acceptLanguage: ['nl'] },
+    );
+    expect(result.errors?.[0]?.message).toMatch(/exactly one key/i);
+  });
+
+  it('falls back to the und locale when no Accept-Language is given', async () => {
+    const { engine, received } = fakeEngine(canned);
+    await run(`{ datasets { pagination { total } } }`, {
+      engine,
+      acceptLanguage: [],
+    });
+    expect(received().locale).toBe('und');
+  });
+
+  it('applies queryDefaults before calling the engine', async () => {
+    let captured: SearchQuery | undefined;
+    const engine: SearchEngine = {
+      schema: searchSchema(schema, organization, term),
+      async search(_searchType, query) {
+        captured = query;
+        return canned;
+      },
+      searchFacets: noFacets,
+    };
+    const gqlSchema = buildGraphQLSchema(
+      searchSchema(schema, organization, term),
+      {
+        types: {
+          [schema.name]: {
+            queryDefaults: (query) => ({
+              ...query,
+              where: [
+                ...query.where,
+                { or: [{ field: 'status', in: ['valid'] }] },
+              ],
+              orderBy: [{ field: 'relevance', direction: 'desc' }],
+            }),
+          },
+        },
+      },
+    );
+    await graphql({
+      schema: gqlSchema,
+      source: `{ datasets { pagination { total } } }`,
+      contextValue: { engine, acceptLanguage: ['nl'] },
+    });
+    expect(captured?.where).toEqual([
+      { or: [{ field: 'status', in: ['valid'] }] },
+    ]);
+    expect(captured?.orderBy).toEqual([
+      { field: 'relevance', direction: 'desc' },
+    ]);
+  });
+
+  it('derives nullability: required scalar non-null, optional scalar nullable, arrays/booleans non-null', () => {
+    const sdl = printSchema(
+      buildGraphQLSchema(
+        searchSchema(schema, organization, term),
+        datasetOptions,
+      ),
+    );
+    expect(sdl).toMatch(/status: String!/); // required
+    expect(sdl).toMatch(/size: Int\b(?!!)/); // optional → nullable
+    expect(sdl).toMatch(/title: \[LanguageString!\]!/);
+    expect(sdl).toMatch(/keyword: \[String!\]!/);
+    expect(sdl).toMatch(/iiif: Boolean!/);
+    expect(sdl).toMatch(/publisher: OrganizationReference\b(?!!)/); // optional reference
+  });
+
+  it('builds the where, orderBy enum and keyed facets object from the field model', () => {
+    const sdl = printSchema(
+      buildGraphQLSchema(
+        searchSchema(schema, organization, term),
+        datasetOptions,
+      ),
+    );
+    expect(sdl).toMatch(/enum DatasetSortField/);
+    expect(sdl).toMatch(/RELEVANCE/);
+    expect(sdl).toMatch(/SIZE/);
+    // Facets are a keyed object, one field per facetable field, typed by kind.
+    expect(sdl).toMatch(/type DatasetFacets/);
+    expect(sdl).toMatch(/keyword: \[ValueBucket!\]!/);
+    // A numeric facet is a range facet: its extent, plus a bucket per bin
+    // where the field declares bins and per distinct value where it doesn’t.
+    expect(sdl).toMatch(/size: IntBinnedRangeFacet!/);
+    expect(sdl).toMatch(
+      /type IntBinnedRangeFacet {[^}]*all: IntExtent\n[^}]*matching: IntExtent\n[^}]*buckets: \[RangeBucket!\]!/,
+    );
+    expect(sdl).toMatch(/datePosted: DateRangeFacet!/);
+    expect(sdl).toMatch(/type DateRangeFacet {[^}]*buckets: \[DateBucket!\]!/);
+    expect(sdl).toMatch(/type DateBucket \{\s+value: ISO8601Date!/);
+    expect(sdl).toMatch(
+      /type DateExtent {\s*min: ISO8601Date!\s*max: ISO8601Date!/,
+    );
+    expect(sdl).toMatch(/iiif: \[BooleanBucket!\]!/);
+    expect(sdl).toMatch(/input DatasetWhere/);
+    expect(sdl).toMatch(/status: KeywordFilter/);
+    expect(sdl).toMatch(/size: IntRange/);
+  });
+
+  it('buckets a reference facet on IRI, so a bucket feeds the filter that selects it', () => {
+    const sdl = printSchema(
+      buildGraphQLSchema(
+        searchSchema(schema, organization, term),
+        datasetOptions,
+      ),
+    );
+    // The round trip a consumer actually makes: read `publisher`’s bucket
+    // `value`, send it back as `where: { publisher: { in: [...] } }`. Both sides
+    // are `IRI`, so no `String`-to-`IRI` boundary sits in the middle – the same
+    // contract BooleanBucket keeps for `is`.
+    expect(sdl).toMatch(/publisher: \[IRIBucket!\]!/);
+    expect(sdl).toMatch(/type IRIBucket \{\s+value: IRI!/);
+    expect(sdl).toMatch(/publisher: OrganizationFilter/);
+    // A literal-keyed facet keeps the literal-keyed bucket.
+    expect(sdl).toMatch(/type ValueBucket \{\s+value: String!/);
+  });
+
+  it('gives a boolean facet a real boolean value and no label to interpret', () => {
+    const sdl = printSchema(
+      buildGraphQLSchema(
+        searchSchema(schema, organization, term),
+        datasetOptions,
+      ),
+    );
+    expect(sdl).toContain(
+      ['type BooleanBucket {', '  value: Boolean!', '  count: Int!', '}'].join(
+        '\n',
+      ),
+    );
+  });
+
+  describe('multiple root types in one schema', () => {
+    const PERSON: SearchType = {
+      name: 'Person',
+      class: 'https://schema.org/Person',
+      // Its display field is `name`, which is what makes it a usable lookup
+      // target: a lookup resolves labels from the target's own collection.
+      labelField: 'name',
+      fields: [
+        {
+          name: 'name',
+          kind: 'text',
+          locales: ['nl'],
+          output: true,
+          searchable: { weight: 5 },
+          sortable: true,
+        },
+        {
+          name: 'affiliation',
+          kind: 'reference',
+          facetable: true,
+          output: true,
+          ref: { strategy: 'lookup', target: 'Person' },
+        },
+      ],
+    };
+    const CREATIVE_WORK: SearchType = {
+      name: 'CreativeWork',
+      class: 'https://schema.org/CreativeWork',
+      fields: [
+        {
+          name: 'title',
+          kind: 'text',
+          locales: ['nl'],
+          output: true,
+          searchable: { weight: 5 },
+        },
+        {
+          name: 'publisher',
+          kind: 'reference',
+          facetable: true,
+          output: true,
+          ref: { strategy: 'lookup', target: 'Person' },
+        },
+        { name: 'pageCount', kind: 'integer', filterable: true, output: true },
+      ],
+    };
+    const twoTypeSchema = buildGraphQLSchema(
+      searchSchema(PERSON, CREATIVE_WORK),
+      {
+        types: {
+          [PERSON.name]: { queryField: 'people' },
+        },
+      },
+    );
+
+    it('exposes one root field per type, each with its own derived types', () => {
+      const sdl = printSchema(twoTypeSchema);
+      expect(sdl).toMatch(/people\([\s\S]*?\): PersonSearchResult!/);
+      expect(sdl).toMatch(
+        /creativeWorks\([\s\S]*?\): CreativeWorkSearchResult!/,
+      );
+      expect(sdl).toMatch(/enum PersonSortField/);
+      expect(sdl).toMatch(/input CreativeWorkWhere/);
+      // Person declares no filterable field, yet still gets a `where` input:
+      // `id` is filterable on every type, so no type is unaddressable by IRI.
+      // A type declaring no filterable field is still addressable by IRI –
+      // through the `id` key, and through the `or`/`and` combinators, whose
+      // criteria then offer `id` alone.
+      const personWhere = sdl.slice(sdl.indexOf('input PersonWhere {'));
+      expect(personWhere.slice(0, personWhere.indexOf('\n}'))).toContain(
+        'id: PersonFilter',
+      );
+      expect(sdl).toMatch(/input PersonWhere \{[^}]*or: \[PersonCriterion!\]/);
+      // `and` carries further `Where`s, so there is no second clause type.
+      expect(sdl).toMatch(/input PersonWhere \{[^}]*and: \[PersonWhere!\]/);
+      expect(sdl).not.toContain('PersonClause');
+      // A criterion is an atom, and for a type with no filterable field the
+      // only atom available is the IRI lookup.
+      expect(sdl).toMatch(
+        /input PersonCriterion @oneOf \{\s*id: PersonFilter\s*\}/,
+      );
+      // The shared reference shape is emitted once, reused by both types.
+      expect(sdl.match(/^type PersonReference /gm)).toHaveLength(1);
+      // One shared Pagination type across every ‹Type›SearchResult, so a
+      // client pager fragment on Pagination serves all root types.
+      expect(sdl.match(/^type Pagination /gm)).toHaveLength(1);
+      expect(sdl.match(/pagination: Pagination!/g)).toHaveLength(2);
+    });
+
+    it('routes each root field through the schema-bound engine', async () => {
+      const searchedTypes: string[] = [];
+      const engine: SearchEngine = {
+        schema: searchSchema(PERSON, CREATIVE_WORK),
+        async search(searchType: RootType): Promise<SearchResult> {
+          searchedTypes.push(searchType.class);
+          return { total: 0, hits: [], facets: {} };
+        },
+        searchFacets: noFacets,
+      };
+      const result = await graphql({
+        schema: twoTypeSchema,
+        source: `{ people { pagination { total } } creativeWorks { pagination { total } } }`,
+        contextValue: { engine, acceptLanguage: ['nl'] },
+      });
+      expect(result.errors).toBeUndefined();
+      expect(searchedTypes).toEqual([PERSON.class, CREATIVE_WORK.class]);
+    });
+
+    it('builds without any options: names come from the search types', () => {
+      const sdl = printSchema(
+        buildGraphQLSchema(searchSchema(PERSON, CREATIVE_WORK)),
+      );
+      expect(sdl).toMatch(/persons\([\s\S]*?\): PersonSearchResult!/);
+      expect(sdl).toMatch(
+        /creativeWorks\([\s\S]*?\): CreativeWorkSearchResult!/,
+      );
+    });
+
+    it('serves a lookup to a root type under ‹Name›Reference', () => {
+      const withReferenceToRoot: SearchType = {
+        name: 'CreativeWork',
+        class: 'https://schema.org/CreativeWork',
+        fields: [
+          {
+            name: 'author',
+            kind: 'reference',
+            output: true,
+            // A lookup always targets a root type – that collection is where
+            // the fields are read from.
+            ref: { strategy: 'lookup', target: 'Person' },
+          },
+        ],
+      };
+      const sdl = printSchema(
+        buildGraphQLSchema(searchSchema(PERSON, withReferenceToRoot)),
+      );
+      // The root type keeps its name; the reference is served under a derived
+      // name, since GraphQL type names must be unique.
+      expect(sdl.match(/^type Person /gm)).toHaveLength(1);
+      expect(sdl).toMatch(/author: PersonReference/);
+      // Carrying the target's own output fields, under the target's own names:
+      // Person's display field is `name`, so no `label` appears anywhere.
+      expect(sdl).toMatch(
+        /type PersonReference \{\s+id: IRI!\s+name: \[LanguageString!\]!/,
+      );
+      expect(sdl).not.toMatch(/type PersonReference \{[^}]*\blabel:/);
+    });
+
+    it('registers the reference types a lookup target declares of its own', () => {
+      // The target's output fields become the emitted type's, so ITS references
+      // need types too – and a cycle between two targets must terminate.
+      const organization: SearchType = {
+        name: 'Organization',
+        class: 'https://schema.org/Organization',
+        fields: [
+          {
+            name: 'label',
+            kind: 'text',
+            locales: ['nl'],
+            output: true,
+            searchable: { weight: 1 },
+          },
+          {
+            name: 'members',
+            kind: 'reference',
+            array: true,
+            output: true,
+            ref: { strategy: 'lookup', target: 'Person' },
+          },
+        ],
+      };
+      const person: SearchType = {
+        ...PERSON,
+        // Its label field is `name`, so it can serve as a lookup target.
+        labelField: 'name',
+        fields: [
+          PERSON.fields[0],
+          {
+            name: 'employer',
+            kind: 'reference',
+            output: true,
+            required: true,
+            ref: { strategy: 'lookup', target: 'Organization' },
+          },
+        ],
+      };
+      const sdl = printSchema(
+        buildGraphQLSchema(searchSchema(person, organization)),
+      );
+      // Each target's own lookup is served as a type in turn, and the cycle
+      // Person → Organization → Person terminates.
+      expect(sdl).toMatch(
+        /type PersonReference \{[^}]*employer: OrganizationReference/,
+      );
+      expect(sdl).toMatch(
+        /type OrganizationReference \{[^}]*members: \[PersonReference!\]!/,
+      );
+    });
+
+    it('throws when the derived reference name is itself taken', () => {
+      const takenDerivedName: SearchType = {
+        name: 'PersonReference',
+        class: 'https://example.org/PersonReference',
+        fields: [{ name: 'name', kind: 'keyword', output: true }],
+      };
+      const withReferenceToRoot: SearchType = {
+        name: 'CreativeWork',
+        class: 'https://schema.org/CreativeWork',
+        fields: [
+          {
+            name: 'author',
+            kind: 'reference',
+            output: true,
+            ref: { strategy: 'idOnly', typeName: 'Person' },
+          },
+        ],
+      };
+      expect(() =>
+        buildGraphQLSchema(
+          searchSchema(PERSON, takenDerivedName, withReferenceToRoot),
+        ),
+      ).toThrow(
+        /Reference type “Person”.*would be served as “PersonReference”, which collides/,
+      );
+    });
+
+    it('rejects a surfaced inline reference whose entries show no field', () => {
+      // An entry has no `id`, so without an output field it would be an empty
+      // GraphQL type, which graphql-js refuses with a far vaguer error.
+      const edge: SearchType = {
+        name: 'Edge',
+        fields: [{ name: 'note', kind: 'keyword', filterable: true }],
+      };
+      const withEdge: SearchType = {
+        name: 'Thing',
+        class: 'https://example.org/Thing',
+        fields: [
+          {
+            name: 'edge',
+            kind: 'reference',
+            output: true,
+            ref: { strategy: 'inline', typeName: 'Edge' },
+          },
+        ],
+      };
+      expect(() => buildGraphQLSchema(searchSchema(withEdge, edge))).toThrow(
+        /Inline reference “Thing\.edge”.*“Edge” declares no `output` field/,
+      );
+    });
+
+    it('rejects a duplicate root type name at declaration time', () => {
+      const alsoPerson: SearchType = {
+        name: 'Person',
+        class: 'https://example.org/OtherPerson',
+        fields: [{ name: 'name', kind: 'keyword', output: true }],
+      };
+      // searchSchema() rejects the duplicate; SearchSchema is branded, so a
+      // hand-built Map cannot even be passed to buildGraphQLSchema.
+      expect(() => searchSchema(PERSON, alsoPerson)).toThrow(
+        /Duplicate search type name “Person”/,
+      );
+      // @ts-expect-error – a hand-built map is not a (branded) SearchSchema
+      void (() => buildGraphQLSchema(new Map([[PERSON.class, PERSON]])));
+    });
+
+    it('throws on options for an unknown type and on a root-field clash', () => {
+      expect(() =>
+        buildGraphQLSchema(searchSchema(PERSON), {
+          types: {
+            Unknown: { queryField: 'unknowns' },
+          },
+        }),
+      ).toThrow(/not in the search schema/);
+      expect(() =>
+        buildGraphQLSchema(searchSchema(PERSON, CREATIVE_WORK), {
+          types: {
+            [PERSON.name]: { queryField: 'items' },
+            [CREATIVE_WORK.name]: { queryField: 'items' },
+          },
+        }),
+      ).toThrow(/Duplicate root query field/);
+    });
+  });
+});
+
+describe('und-locale text output', () => {
+  it('serves untagged text as a LanguageString list with a null language', async () => {
+    const doc: SearchType = {
+      name: 'Doc',
+      class: 'urn:example:Doc',
+      fields: [
+        { name: 'summary', kind: 'text', locales: ['und'], output: true },
+      ],
+    };
+    const gqlSchema = buildGraphQLSchema(searchSchema(doc));
+    expect(printSchema(gqlSchema)).toMatch(/summary: \[LanguageString!\]!/);
+    const engine: SearchEngine = {
+      schema: searchSchema(doc),
+      async search(): Promise<SearchResult> {
+        return {
+          total: 1,
+          facets: {},
+          hits: [
+            {
+              id: 'https://d/1',
+              document: { summary: { und: ['Plain prose'] } },
+            },
+          ],
+        };
+      },
+      searchFacets: noFacets,
+    };
+    const result = await graphql({
+      schema: gqlSchema,
+      source: `{ docs { items { summary { language value } } } }`,
+      contextValue: { engine, acceptLanguage: ['nl'] },
+    });
+    expect(result.errors).toBeUndefined();
+    const items = (
+      result.data?.docs as {
+        items: { summary: { language: string | null; value: string }[] }[];
+      }
+    ).items;
+    expect(items[0].summary).toEqual([
+      { language: null, value: 'Plain prose' },
+    ]);
+  });
+});
+
+describe('nested inline references', () => {
+  const MEDIA_OBJECT: SearchType = {
+    name: 'MediaObject',
+    fields: [
+      {
+        name: 'contentUrl',
+        kind: 'keyword',
+        array: true,
+        output: true,
+        path: 'https://schema.org/contentUrl',
+      },
+      {
+        name: 'width',
+        kind: 'integer',
+        output: true,
+        path: 'https://schema.org/width',
+      },
+      {
+        name: 'caption',
+        kind: 'text',
+        locales: ['nl'],
+        output: true,
+        path: 'https://schema.org/caption',
+      },
+      // No Role: pruned before the writer, so it is no part of the API either.
+      { name: 'rawWidth', kind: 'keyword', path: 'https://schema.org/width' },
+    ],
+  };
+  const CREATIVE_WORK_WITH_MEDIA: SearchType = {
+    name: 'CreativeWork',
+    class: 'https://schema.org/CreativeWork',
+    fields: [
+      {
+        name: 'media',
+        kind: 'reference',
+        array: true,
+        output: true,
+        path: 'https://schema.org/associatedMedia',
+        ref: { typeName: 'MediaObject', strategy: 'inline' },
+      },
+    ],
+  };
+  const nestedSchema = searchSchema(CREATIVE_WORK_WITH_MEDIA, MEDIA_OBJECT);
+
+  it('builds the reference type from the Reference Type’s output fields', () => {
+    const sdl = printSchema(buildGraphQLSchema(nestedSchema));
+    expect(sdl).toMatch(/media: \[MediaObject!\]!/);
+    // Each field is typed by exactly the per-kind rules a root type’s fields
+    // get. No `id`: an entry of a Reference Type is read, not addressed, so
+    // the projection never fills one and the type does not offer it.
+    expect(sdl).toMatch(
+      /type MediaObject \{\s+contentUrl: \[String!\]!\s+width: Int\s+caption: \[LanguageString!\]!\s+\}/,
+    );
+    // An Internal Field inside a Reference Type stays out of the API.
+    expect(sdl).not.toMatch(/rawWidth/);
+  });
+
+  it('serves a nested object’s fields directly, one referent at a time', async () => {
+    const { engine } = fakeEngine({
+      total: 1,
+      hits: [
+        {
+          id: 'https://ex/w/1',
+          document: {
+            media: [
+              {
+                contentUrl: ['https://ex/1.jpg'],
+                width: 4096,
+                caption: { nl: ['Voorkant'] },
+              },
+              // A referent that states no width.
+              { contentUrl: ['https://ex/2.jpg'] },
+            ],
+          },
+        },
+      ],
+      facets: {},
+    });
+    const result = await graphql({
+      schema: buildGraphQLSchema(nestedSchema),
+      source: `{
+        creativeWorks {
+          items {
+            id
+            media { contentUrl width caption { language value } }
+          }
+        }
+      }`,
+      contextValue: { engine, acceptLanguage: ['nl'] },
+    });
+
+    expect(result.errors).toBeUndefined();
+    // The response shape matches the data's shape: each referent's values stay
+    // together instead of arriving as parallel arrays to pair by index.
+    expect(result.data).toEqual({
+      creativeWorks: {
+        items: [
+          {
+            id: 'https://ex/w/1',
+            media: [
+              {
+                contentUrl: ['https://ex/1.jpg'],
+                width: 4096,
+                caption: [{ language: 'nl', value: 'Voorkant' }],
+              },
+              {
+                contentUrl: ['https://ex/2.jpg'],
+                width: null,
+                caption: [],
+              },
+            ],
+          },
+        ],
+      },
+    });
+  });
+
+  it('serves a reference type that itself nests one', () => {
+    const thumbnail: SearchType = {
+      name: 'Thumbnail',
+      fields: [
+        {
+          name: 'contentUrl',
+          kind: 'keyword',
+          array: true,
+          output: true,
+          path: 'https://schema.org/contentUrl',
+        },
+      ],
+    };
+    const media: SearchType = {
+      name: 'MediaObject',
+      fields: [
+        {
+          name: 'thumbnail',
+          kind: 'reference',
+          output: true,
+          path: 'https://schema.org/thumbnail',
+          ref: { typeName: 'Thumbnail', strategy: 'inline' },
+        },
+      ],
+    };
+    const sdl = printSchema(
+      buildGraphQLSchema(
+        searchSchema(CREATIVE_WORK_WITH_MEDIA, media, thumbnail),
+      ),
+    );
+    expect(sdl).toMatch(/type MediaObject \{\s+thumbnail: Thumbnail\s+\}/);
+    expect(sdl).toMatch(/type Thumbnail \{\s+contentUrl: \[String!\]!\s+\}/);
+  });
+});
+
+describe('field descriptions', () => {
+  // A declaration is the only place a schema author can speak: the module is
+  // plain data, mounted, with no hook to decorate the built schema afterwards.
+  // So `description` has to reach every surface the field appears on, or it
+  // reaches the reader in some places and not others.
+  const described = {
+    name: 'CreativeWork',
+    class: 'https://schema.org/CreativeWork',
+    fields: [
+      {
+        name: 'creator',
+        kind: 'reference',
+        description:
+          'Creators identified by URI. Absent where the publisher named one inline; see creatorName.',
+        filterable: true,
+        output: true,
+        ref: { strategy: 'lookup', target: 'Person' },
+      },
+      {
+        name: 'creatorName',
+        kind: 'text',
+        description:
+          'Every creator’s name as published, including those with no URI. Free text, not a facet.',
+        locales: ['nl'],
+        output: true,
+        searchable: { weight: 3 },
+      },
+      {
+        name: 'label',
+        kind: 'text',
+        locales: ['nl'],
+        output: true,
+        searchable: { weight: 5 },
+      },
+    ],
+  } satisfies SearchType;
+
+  // A label source must exist and expose an `output`, `searchable` `label`.
+  const person = {
+    name: 'Person',
+    class: 'https://schema.org/Person',
+    fields: [
+      {
+        name: 'label',
+        kind: 'text',
+        locales: ['nl'],
+        output: true,
+        searchable: { weight: 5 },
+      },
+    ],
+  } satisfies SearchType;
+
+  const sdl = () =>
+    printSchema(buildGraphQLSchema(searchSchema(described, person)));
+
+  it('describes an output field', () => {
+    expect(sdl()).toMatch(
+      /"""\s+Every creator’s name as published[^"]*"""\s+creatorName:/,
+    );
+  });
+
+  it('describes the same field where it is filtered on', () => {
+    // The `where` input names the field a second time; a reader filtering by it
+    // is the one most likely to need telling what it covers.
+    expect(sdl()).toMatch(
+      /"""\s+Creators identified by URI[^"]*"""\s+creator: PersonFilter/,
+    );
+  });
+
+  it('leaves a field without one undescribed', () => {
+    // Not merely “the field is there”: assert no description block precedes it,
+    // or this would pass whether or not one had been emitted.
+    expect(sdl()).not.toMatch(/"""[^"]*"""\s+label: \[LanguageString/);
+    expect(sdl()).toMatch(/\n {2}label: \[LanguageString!\]!/);
+  });
+});
+
+describe('discovering which fields accept an IRI', () => {
+  // Two collections, plus the fields a consumer has to be able to tell apart:
+  // references to an indexed target (`about`, `material`, `creator`), a
+  // reference to a target no collection serves (`license`), and a literal field
+  // whose values look nothing like IRIs (`identifier`).
+  const term: RootType = {
+    name: 'Term',
+    class: 'https://schema.org/DefinedTerm',
+    fields: [
+      {
+        name: 'label',
+        kind: 'text',
+        locales: ['nl'],
+        output: true,
+        searchable: { weight: 5 },
+      },
+    ],
+  };
+  const person: RootType = {
+    name: 'Person',
+    class: 'https://schema.org/Person',
+    fields: [
+      {
+        name: 'label',
+        kind: 'text',
+        locales: ['nl'],
+        output: true,
+        searchable: { weight: 5 },
+      },
+    ],
+  };
+  const work: RootType = {
+    name: 'CreativeWork',
+    class: 'https://schema.org/CreativeWork',
+    fields: [
+      { name: 'identifier', kind: 'keyword', filterable: true, output: true },
+      {
+        name: 'about',
+        kind: 'reference',
+        array: true,
+        filterable: true,
+        output: true,
+        ref: { strategy: 'lookup', target: 'Term' },
+      },
+      {
+        name: 'material',
+        kind: 'reference',
+        array: true,
+        filterable: true,
+        output: true,
+        ref: { strategy: 'lookup', target: 'Term' },
+      },
+      {
+        name: 'creator',
+        kind: 'reference',
+        array: true,
+        filterable: true,
+        output: true,
+        ref: { strategy: 'lookup', target: 'Person' },
+      },
+      {
+        name: 'license',
+        kind: 'reference',
+        array: true,
+        filterable: true,
+        output: true,
+        ref: { strategy: 'idOnly' },
+      },
+      // Single-valued, so the flat IRI is the value rather than a list of them.
+      {
+        name: 'iiifManifest',
+        kind: 'reference',
+        output: true,
+        ref: { strategy: 'idOnly' },
+      },
+    ],
+  };
+  const built = buildGraphQLSchema(searchSchema(term, person, work));
+
+  /**
+   * ONE introspection round-trip, of the kind a consumer already sends – no
+   * bespoke endpoint, no metadata query, no directives (applied directives are
+   * absent from standard introspection anyway). Everything below is derived
+   * from this result; not one domain name is written into the traversal.
+   */
+  const INTROSPECTION = `{
+    __schema {
+      queryType { fields { name args { name type { name ofType { name } } } } }
+      types {
+        name
+        inputFields { name type { name ofType { name kind ofType { name ofType { name } } } } }
+      }
+    }
+  }`;
+
+  interface TypeRef {
+    readonly name: string | null;
+    readonly kind?: string;
+    readonly ofType?: TypeRef | null;
+  }
+  interface InputType {
+    readonly name: string;
+    readonly inputFields:
+      readonly { readonly name: string; readonly type: TypeRef }[] | null;
+  }
+
+  /** The innermost named type of a possibly wrapped reference. */
+  const named = (type: TypeRef | null | undefined): string | undefined =>
+    type == null ? undefined : (type.name ?? named(type.ofType));
+
+  async function introspect() {
+    const result = await graphql({ schema: built, source: INTROSPECTION });
+    expect(result.errors).toBeUndefined();
+    const data = result.data as unknown as {
+      __schema: {
+        queryType: {
+          fields: readonly {
+            name: string;
+            args: readonly { name: string; type: TypeRef }[];
+          }[];
+        };
+        types: readonly InputType[];
+      };
+    };
+    const byName = new Map(
+      data.__schema.types.map((type) => [type.name, type]),
+    );
+    /** The `‹Type›Criterion` a root field reaches through its `where` argument:
+     *  `where` → the Where input → its `or` key → the criterion element type.
+     *  Structural throughout; no name is pattern-matched. */
+    const criterionOf = (
+      rootField:
+        { args: readonly { name: string; type: TypeRef }[] } | undefined,
+    ) => {
+      const whereType = byName.get(
+        named(rootField?.args.find((arg) => arg.name === 'where')?.type) ?? '',
+      );
+      const or = whereType?.inputFields?.find((field) => field.name === 'or');
+      return byName.get(named(or?.type) ?? '');
+    };
+    /** The element type of a filter input's `in` key, or undefined when the
+     *  filter has none (a range or a boolean). */
+    const elementOf = (filterName: string | undefined) =>
+      named(
+        byName
+          .get(filterName ?? '')
+          ?.inputFields?.find((field) => field.name === 'in')?.type,
+      );
+    return { data, byName, criterionOf, elementOf };
+  }
+
+  it('answers the coarse strategy: every field that accepts an IRI, with no origin collection', async () => {
+    // What a consumer holding an IRI of unknown provenance needs: select every
+    // criterion field whose filter takes IRIs. No knowledge of the domain, and
+    // no idea which collection the IRI came from.
+    const { data, criterionOf, elementOf } = await introspect();
+    const iriFields = new Map<string, string[]>();
+    for (const rootField of data.__schema.queryType.fields) {
+      const criterion = criterionOf(rootField);
+      iriFields.set(
+        rootField.name,
+        (criterion?.inputFields ?? [])
+          .filter((field) => elementOf(named(field.type)) === 'IRI')
+          .map((field) => field.name),
+      );
+    }
+
+    // Every reference field is found – whether or not its target is a
+    // collection – and `identifier`, which keys on a literal, is not.
+    expect(iriFields.get('creativeWorks')).toEqual([
+      'id',
+      'about',
+      'material',
+      'creator',
+      'license',
+    ]);
+    expect(iriFields.get('terms')).toEqual(['id']);
+  });
+
+  it('answers the refined strategy: the fields that could reference the collection being browsed', async () => {
+    // The consumer knows only which root field it queried – an opaque string to
+    // it. It resolves that collection to its filter type through `‹Type›Where.id`,
+    // then selects the criterion fields of every collection whose filter is the
+    // SAME type. The type name is compared, never parsed.
+    const { data, criterionOf } = await introspect();
+    const browsing = data.__schema.queryType.fields.find(
+      (field) => field.name === 'terms',
+    );
+    const idFilter = named(
+      criterionOf(browsing)?.inputFields?.find((field) => field.name === 'id')
+        ?.type,
+    );
+
+    const referencing = new Map<string, string[]>();
+    for (const rootField of data.__schema.queryType.fields) {
+      referencing.set(
+        rootField.name,
+        (criterionOf(rootField)?.inputFields ?? [])
+          .filter((field) => named(field.type) === idFilter)
+          .map((field) => field.name),
+      );
+    }
+
+    // Only the Term-valued references – `creator` points at Person and
+    // `license` at a target no collection serves, so neither is offered.
+    expect(referencing.get('creativeWorks')).toEqual(['about', 'material']);
+    // The collection's own identity is the other half of the entity-page query:
+    // `or: [{ id: $iri }, { about: $iri }, { material: $iri }]`.
+    expect(referencing.get('terms')).toEqual(['id']);
+  });
+
+  it('rejects a value that is not an IRI, instead of matching nothing', async () => {
+    // The mistake this exists to catch: a readable token pasted into a field
+    // that keys on identity. Previously valid against the schema, and silently
+    // empty.
+    const engine: SearchEngine = {
+      schema: searchSchema(term, person, work),
+      async search() {
+        throw new Error('the engine must never be reached');
+      },
+      searchFacets: noFacets,
+    };
+    const result = await graphql({
+      schema: built,
+      source: `{ creativeWorks(where: { material: { in: ["boerenbont"] } }) { pagination { total } } }`,
+      contextValue: { engine, acceptLanguage: ['nl'] },
+    });
+    expect(result.errors?.[0]?.message).toMatch(
+      /IRI cannot represent “boerenbont”/,
+    );
+    // …while the literal-keyed field beside it takes the very same value.
+    const ok = await graphql({
+      schema: built,
+      source: `{ creativeWorks(where: { identifier: { in: ["boerenbont"] } }) { pagination { total } } }`,
+      contextValue: { engine, acceptLanguage: ['nl'] },
+    });
+    expect(ok.errors?.[0]?.message).not.toMatch(/IRI cannot represent/);
+  });
+
+  it('carries IRIs through variables and back out as a flat list', async () => {
+    // The other half of the round-trip: a consumer declares `[IRI!]` (not
+    // `[String!]` – GraphQL checks variable usage nominally), and an idOnly
+    // reference comes back as the bare IRIs it holds rather than as objects
+    // wrapping them.
+    const engine: SearchEngine = {
+      schema: searchSchema(term, person, work),
+      async search(): Promise<SearchResult> {
+        return {
+          total: 2,
+          hits: [
+            {
+              id: 'https://works/1',
+              document: {
+                license: [
+                  { id: 'https://creativecommons.org/licenses/by/4.0/' },
+                  // A referent carrying no IRI drops out, rather than nulling
+                  // the non-null list and with it the whole hit.
+                  {},
+                ],
+                iiifManifest: { id: 'https://works/1/manifest.json' },
+              },
+            },
+            // A work asserting no licence: the list is empty, never null.
+            { id: 'https://works/2', document: {} },
+          ],
+          facets: {},
+        };
+      },
+      searchFacets: noFacets,
+    };
+    const result = await graphql({
+      schema: built,
+      source: `query ($iris: [IRI!]) {
+        creativeWorks(where: { material: { in: $iris } }) {
+          items { id license iiifManifest }
+        }
+      }`,
+      variableValues: { iris: ['https://id.example.org/term/1'] },
+      contextValue: { engine, acceptLanguage: ['nl'] },
+    });
+    expect(result.errors).toBeUndefined();
+    expect(result.data).toEqual({
+      creativeWorks: {
+        items: [
+          {
+            id: 'https://works/1',
+            license: ['https://creativecommons.org/licenses/by/4.0/'],
+            iiifManifest: 'https://works/1/manifest.json',
+          },
+          // A work asserting neither: an empty list, and a null scalar.
+          { id: 'https://works/2', license: [], iiifManifest: null },
+        ],
+      },
+    });
+  });
+
+  it('refuses a type whose filter name would collide with a built-in one', async () => {
+    // graphql-js would reject the duplicate too, but only once the whole schema
+    // is assembled and without naming the declaration that caused it.
+    const keyword: RootType = {
+      name: 'Keyword',
+      class: 'https://example.org/Keyword',
+      fields: [],
+    };
+    expect(() => buildGraphQLSchema(searchSchema(keyword))).toThrow(
+      /“Keyword” would be filtered through “KeywordFilter”/,
+    );
+
+    // …and equally when the clash is with a type the declaration itself emits:
+    // an inline referent served as `TermFilter` beside a root type `Term`.
+    const referent: SearchType = {
+      name: 'TermFilter',
+      fields: [{ name: 'note', kind: 'keyword', output: true }],
+    };
+    const clashing: RootType = {
+      name: 'Term',
+      class: 'https://example.org/Term',
+      fields: [
+        {
+          name: 'seeAlso',
+          kind: 'reference',
+          output: true,
+          ref: { strategy: 'inline', typeName: 'TermFilter' },
+        },
+      ],
+    };
+    expect(() => buildGraphQLSchema(searchSchema(clashing, referent))).toThrow(
+      /“Term” would be filtered through “TermFilter”/,
+    );
+  });
+});

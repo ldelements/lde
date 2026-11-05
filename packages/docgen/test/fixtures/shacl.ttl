@@ -6,6 +6,7 @@
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
 [] a sh:NodeShape ;
+    sh:name "Dataset" ;
     sh:targetClass dcat:Dataset ;
     sh:property [
         sh:path dct:title ;

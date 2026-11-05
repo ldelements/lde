@@ -1,0 +1,48 @@
+@prefix schema: <https://schema.org/> .
+
+# Two publishers’ places, in the SCHEMA-AP-NDE § 3.4 shape: a publisher’s own
+# node, optionally aligned to a term in a source an authority can resolve.
+
+# Unaligned – nothing to key on, so it keeps the publisher’s own node.
+<https://a/place/kessel> a schema:Place ;
+  schema:name "Kessel" .
+
+# Aligned, spelled with a trailing slash.
+<https://a/place/venlo> a schema:Place ;
+  schema:name "Venlo" ;
+  schema:sameAs <https://sws.geonames.org/2745707/> .
+
+# The same place from another publisher, spelled with http: – one key after the
+# key field’s transform, so the two nodes become one document.
+<https://b/place/venlo> a schema:Place ;
+  schema:name "Venlo (b)" ;
+  schema:sameAs <http://sws.geonames.org/2745707> .
+
+# Two alignments. Sorted, the GND one comes first; `pick` prefers GeoNames, so
+# the key is the SECOND candidate – not whichever the CONSTRUCT happened to
+# return first.
+<https://a/place/roermond> a schema:Place ;
+  schema:name "Roermond" ;
+  schema:sameAs <https://d-nb.info/gnd/4076899-5>, <https://sws.geonames.org/2748812> .
+
+# One alignment, into a source `pick` declines: the publisher keeps its node.
+<https://a/place/buurtschap> a schema:Place ;
+  schema:name "Buurtschap" ;
+  schema:sameAs <https://a/vocab/place/17> .
+
+# A work referencing each of them.
+<https://ex/cw/1> a schema:CreativeWork ;
+  schema:name "Werk 1"@nl ;
+  schema:locationCreated <https://a/place/venlo> .
+
+<https://ex/cw/2> a schema:CreativeWork ;
+  schema:name "Werk 2"@nl ;
+  schema:locationCreated <https://a/place/kessel> .
+
+<https://ex/cw/3> a schema:CreativeWork ;
+  schema:name "Werk 3"@nl ;
+  schema:locationCreated <https://a/place/roermond> .
+
+<https://ex/cw/4> a schema:CreativeWork ;
+  schema:name "Werk 4"@nl ;
+  schema:locationCreated <https://a/place/buurtschap> .

@@ -1,0 +1,320 @@
+import { randomUUID } from 'node:crypto';
+import type { Quad } from '@rdfjs/types';
+import type { Dataset } from '@lde/dataset';
+
+import type {
+  Validator,
+  ValidationResult,
+  ValidationReport,
+  RunWriter,
+  Writer,
+} from '@lde/pipeline';
+// @ts-expect-error -- shacl-engine has no type declarations.
+import ShaclEngine from 'shacl-engine/Validator.js';
+// @ts-expect-error -- rdf-ext has no type declarations.
+import rdf from 'rdf-ext';
+import { rdfDereferencer } from 'rdf-dereference';
+import { skolemizeReport } from './skolemize-report.js';
+
+const shacl = 'http://www.w3.org/ns/shacl#';
+const rdfType = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
+
+/**
+ * The severity level IRIs defined by SHACL Core, for use in
+ * {@link ShaclValidatorOptions.conformanceDisallows}.
+ */
+export const severity = {
+  info: `${shacl}Info`,
+  warning: `${shacl}Warning`,
+  violation: `${shacl}Violation`,
+} as const;
+
+/** Options for {@link ShaclValidator}. */
+export interface ShaclValidatorOptions {
+  /** Path to an RDF file containing SHACL shapes (any format supported by rdf-dereference). */
+  shapesFile: string;
+  /**
+   * Writers that receive the per-dataset SHACL validation report quads. The
+   * validator opens one run per writer (lazily) and streams each batch that
+   * has results to it; a dataset validated with no results of any severity is
+   * still reported – a minimal conforming report is written when its run is
+   * flushed per dataset from {@link ShaclValidator.report}. So every validated
+   * dataset yields a report, and its absence means the dataset was not
+   * validated – which lets a now-conforming run overwrite a prior run's stale
+   * report rather than leave it in place.
+   *
+   * Pass a {@link FileWriter} to land reports on disk, a
+   * {@link SparqlUpdateWriter} to land them in a named graph, or any custom
+   * writer. Validators with no `reportWriters` only produce aggregate counts.
+   */
+  reportWriters?: Writer[];
+  /**
+   * Severity level IRIs that disallow conformance — the SHACL 1.2
+   * conformance-disallow set (`sh:conformanceDisallows`). A result whose
+   * `sh:resultSeverity` is in this set flips `conforms` to `false` and counts
+   * towards `violations`; results outside the set are still streamed to
+   * `reportWriters` but do not fail validation.
+   *
+   * Defaults to the SHACL 1.2 default set — `sh:Violation`, `sh:Warning` and
+   * `sh:Info` — so any result fails validation, matching `shacl-engine`’s own
+   * `report.conforms`. Pass `[severity.violation]` to fail on violations only;
+   * custom severity IRIs are supported.
+   *
+   * When set, the written report carries `sh:conformanceDisallows` triples and
+   * an `sh:conforms` value computed against this set, so stored reports stay
+   * self-describing per SHACL 1.2.
+   */
+  conformanceDisallows?: readonly string[];
+}
+
+interface DatasetAccumulator {
+  quadsValidated: number;
+  violations: number;
+  conforms: boolean;
+  reportWritten: boolean;
+}
+
+/**
+ * SHACL-based {@link Validator} for `@lde/pipeline`.
+ *
+ * Validates quads against shapes loaded from an RDF file (any format
+ * supported by rdf-dereference) and streams the per-dataset SHACL validation
+ * report to any number of configured {@link Writer}s.
+ */
+export class ShaclValidator implements Validator {
+  private readonly shapesFile: string;
+  private readonly reportWriters: Writer[];
+  private reportRuns: RunWriter[] | undefined;
+  private readonly conformanceDisallows: readonly string[] | undefined;
+  private readonly disallowedSeverities: Set<string>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private shapesDataset: any | undefined;
+  private readonly accumulators = new Map<string, DatasetAccumulator>();
+
+  constructor(options: ShaclValidatorOptions) {
+    this.shapesFile = options.shapesFile;
+    this.reportWriters = options.reportWriters ?? [];
+    this.conformanceDisallows = options.conformanceDisallows;
+    this.disallowedSeverities = new Set(
+      options.conformanceDisallows ?? Object.values(severity),
+    );
+  }
+
+  async validate(quads: Quad[], dataset: Dataset): Promise<ValidationResult> {
+    if (quads.length === 0) {
+      return { conforms: true, violations: 0 };
+    }
+
+    const shapes = await this.getShapes();
+    const dataDataset = rdf.dataset(quads);
+
+    const validator = new ShaclEngine(shapes, { factory: rdf });
+    const report = await validator.validate({ dataset: dataDataset });
+
+    // Conformance checking per SHACL 1.2 (§6.6): a result fails validation
+    // only if its severity is in the conformance-disallow set. shacl-engine’s
+    // report.conforms hardcodes the default set, so compute conformance here.
+    // The engine sets a severity on every result (sh:Violation when the shape
+    // declares none).
+    const results = report.results as { severity: { value: string } }[];
+    const violations = results.filter((result) =>
+      this.disallowedSeverities.has(result.severity.value),
+    ).length;
+    const conforms = violations === 0;
+
+    // Accumulate per dataset.
+    const key = dataset.iri.toString();
+    const acc = this.accumulators.get(key) ?? {
+      quadsValidated: 0,
+      violations: 0,
+      conforms: true,
+      reportWritten: false,
+    };
+    acc.quadsValidated += quads.length;
+    acc.violations += violations;
+    if (!conforms) acc.conforms = false;
+    this.accumulators.set(key, acc);
+
+    // Reports are written whenever there are results, conforming or not, so
+    // below-threshold results (e.g. warnings) stay visible to consumers. A
+    // dataset with no results of any severity is reported instead from
+    // {@link report} as a minimal conforming report, so every validated
+    // dataset yields a report.
+    if (results.length > 0 && this.reportWriters.length > 0) {
+      // Skolemise the report's blank nodes to dataset-scoped IRIs before writing.
+      // shacl-engine emits the report and every result as blank nodes, whose
+      // labels are not unique across the per-dataset n-quads files a file-based
+      // store cats into one index — fusing one dataset's violations into
+      // another's (see ldelements/lde#478).
+      const reportQuads = this.amendReport(
+        skolemizeReport(report.dataset, dataset.iri.toString()),
+        conforms,
+      );
+      for (const run of await this.runs()) {
+        await run.write(dataset, asyncIterableOf(reportQuads));
+      }
+      acc.reportWritten = true;
+    }
+
+    // Surface where to look for the report in halt-mode error messages
+    // (read by @lde/pipeline's Stage.validateBuffer when onInvalid:'halt').
+    const message =
+      results.length > 0 && this.reportWriters.length > 0
+        ? `Report sent to ${this.reportWriters.length} writer(s)`
+        : undefined;
+
+    return { conforms, violations, ...(message !== undefined && { message }) };
+  }
+
+  async report(dataset: Dataset): Promise<ValidationReport> {
+    const key = dataset.iri.toString();
+    const acc = this.accumulators.get(key);
+
+    // A dataset that was validated but produced no results of any severity
+    // still gets a report: a minimal conforming report, written here once
+    // before the flush. This makes report presence mean “validated” – its
+    // absence, “not validated” – and lets a now-conforming run overwrite a
+    // prior run's stale violation report rather than leave it in place.
+    // Datasets that already streamed a report (violations or warnings) keep
+    // it; unseen datasets (no accumulator) write nothing. The acc.conforms
+    // guard is belt-and-suspenders: a non-conforming dataset whose report
+    // write failed mid-batch (leaving reportWritten false) must not be
+    // relabelled conforming here.
+    if (
+      acc &&
+      acc.conforms &&
+      !acc.reportWritten &&
+      this.reportWriters.length > 0
+    ) {
+      const reportQuads = this.conformingReportQuads(key);
+      for (const run of await this.runs()) {
+        await run.write(dataset, asyncIterableOf(reportQuads));
+      }
+      acc.reportWritten = true;
+    }
+
+    // Flush is the per-dataset completion hook regardless of whether the
+    // dataset produced violations, so open the runs here if no write did.
+    // The report stream itself completed, whatever the dataset's own data
+    // looked like – hence 'success'.
+    for (const run of await this.runs()) {
+      await run.flush?.(dataset, 'success');
+    }
+
+    if (!acc) {
+      return { conforms: true, violations: 0, quadsValidated: 0 };
+    }
+    return {
+      conforms: acc.conforms,
+      violations: acc.violations,
+      quadsValidated: acc.quadsValidated,
+    };
+  }
+
+  /**
+   * The report writers' runs, opened lazily on first use. The report stream is
+   * the validator's own long-lived run: each dataset's report is finalized by
+   * the per-dataset flush in {@link report}, so the run needs no commit, and
+   * the fabricated context's selection stays empty (report writers do not
+   * sweep by membership).
+   */
+  private async runs(): Promise<RunWriter[]> {
+    this.reportRuns ??= await Promise.all(
+      this.reportWriters.map((writer) =>
+        writer.openRun({
+          runId: randomUUID(),
+          startedAt: new Date().toISOString(),
+          selectedSources: () => [],
+        }),
+      ),
+    );
+    return this.reportRuns;
+  }
+
+  /**
+   * Rewrite the report’s `sh:conforms` to the value computed against the
+   * configured conformance-disallow set and declare that set on the report
+   * as `sh:conformanceDisallows` (SHACL 1.2 §6.7.1.2). Reports are left
+   * untouched when the option is absent: the engine’s own `sh:conforms`
+   * already reflects the default set.
+   */
+  private amendReport(reportQuads: Quad[], conforms: boolean): Quad[] {
+    if (!this.conformanceDisallows) return reportQuads;
+
+    // Anchor on the report's identity: the engine emits exactly one
+    // `a sh:ValidationReport`, on the report node (results are separate nodes
+    // typed sh:ValidationResult).
+    const reportNode = reportQuads.find(
+      (q) =>
+        q.predicate.value === rdfType &&
+        q.object.value === `${shacl}ValidationReport`,
+    )!.subject;
+
+    // Rewrite that node's sh:conforms to the value computed against the
+    // disallow set; the set itself is declared below.
+    const amended = reportQuads.map((q) =>
+      q.subject.equals(reportNode) && q.predicate.value === `${shacl}conforms`
+        ? (rdf.quad(
+            q.subject,
+            q.predicate,
+            rdf.literal(
+              String(conforms),
+              rdf.namedNode('http://www.w3.org/2001/XMLSchema#boolean'),
+            ),
+          ) as Quad)
+        : q,
+    );
+    for (const level of this.conformanceDisallows) {
+      amended.push(
+        rdf.quad(
+          reportNode!,
+          rdf.namedNode(`${shacl}conformanceDisallows`),
+          rdf.namedNode(level),
+        ),
+      );
+    }
+    return amended;
+  }
+
+  /**
+   * The minimal conforming report written for a dataset validated with no
+   * results of any severity: a single `sh:ValidationReport` node with
+   * `sh:conforms true`. Skolemised and amended exactly like the engine's own
+   * reports, so it is self-describing (carrying `sh:conformanceDisallows` when
+   * configured) and dataset-scoped like every other report in the graph.
+   */
+  private conformingReportQuads(datasetIri: string): Quad[] {
+    const reportNode = rdf.blankNode();
+    const quads = [
+      rdf.quad(
+        reportNode,
+        rdf.namedNode(rdfType),
+        rdf.namedNode(`${shacl}ValidationReport`),
+      ),
+      rdf.quad(
+        reportNode,
+        rdf.namedNode(`${shacl}conforms`),
+        rdf.literal(
+          'true',
+          rdf.namedNode('http://www.w3.org/2001/XMLSchema#boolean'),
+        ),
+      ),
+    ] as Quad[];
+    return this.amendReport(skolemizeReport(quads, datasetIri), true);
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private async getShapes(): Promise<any> {
+    if (!this.shapesDataset) {
+      const { data } = await rdfDereferencer.dereference(this.shapesFile, {
+        localFiles: true,
+      });
+      this.shapesDataset = await rdf.dataset().import(data);
+    }
+    return this.shapesDataset;
+  }
+}
+
+async function* asyncIterableOf<T>(items: Iterable<T>): AsyncGenerator<T> {
+  for (const item of items) yield item;
+}

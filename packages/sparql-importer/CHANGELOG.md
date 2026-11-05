@@ -1,3 +1,180 @@
+## 0.10.0 (2026-11-03)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-downloader to 0.9.0
+- Updated @lde/dataset to 0.10.0
+
+## 0.9.0 (2026-10-30)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-downloader to 0.8.0
+- Updated @lde/task-runner to 0.4.0
+- Updated @lde/dataset to 0.9.0
+
+## 0.8.0 (2026-10-16)
+
+This was a version bump only for @lde/sparql-importer to align it with other projects, there were no code changes.
+
+## 0.7.0 (2026-10-15)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-downloader to 0.7.0
+- Updated @lde/task-runner to 0.3.0
+- Updated @lde/dataset to 0.8.0
+
+## 0.6.13 (2026-10-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-downloader to 0.6.10
+- Updated @lde/task-runner to 0.2.16
+- Updated @lde/dataset to 0.7.10
+
+## 0.6.12 (2026-09-21)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/task-runner to 0.2.15
+
+## 0.6.11 (2026-09-09)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-downloader to 0.6.9
+
+## 0.6.10 (2026-08-31)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/task-runner to 0.2.14
+
+## 0.6.9 (2026-07-24)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-downloader to 0.6.8
+- Updated @lde/task-runner to 0.2.13
+- Updated @lde/dataset to 0.7.9
+
+## 0.6.8 (2026-07-24)
+
+### 🚀 Features
+
+- **search-pipeline:** add searchIndexerPipeline convenience ([#647](https://github.com/ldelements/lde/pull/647))
+
+## 0.6.7 (2026-07-23)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-downloader to 0.6.7
+
+## 0.6.6 (2026-06-26)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-downloader to 0.6.6
+- Updated @lde/task-runner to 0.2.12
+- Updated @lde/dataset to 0.7.8
+
+## 0.6.5 (2026-06-15)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-downloader to 0.6.5
+- Updated @lde/dataset to 0.7.7
+
+## 0.6.4 (2026-06-15)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-downloader to 0.6.4
+- Updated @lde/dataset to 0.7.6
+
+## 0.6.3 (2026-06-10)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-downloader to 0.6.3
+- Updated @lde/dataset to 0.7.5
+
+## 0.6.2 (2026-05-21)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-downloader to 0.6.2
+- Updated @lde/dataset to 0.7.4
+
+## 0.6.1 (2026-04-23)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-downloader to 0.6.1
+- Updated @lde/task-runner to 0.2.11
+- Updated @lde/dataset to 0.7.3
+
+## 0.6.0 (2026-03-22)
+
+### 🚀 Features
+
+- ⚠️  detect and correct MIME type mismatches in distribution imports ([#291](https://github.com/ldelements/lde/pull/291))
+
+### ⚠️  Breaking Changes
+
+- detect and correct MIME type mismatches in distribution imports  ([#291](https://github.com/ldelements/lde/pull/291))
+  Downloader.download() returns DownloadResult instead
+  of string; qleverOptions on createQlever() renamed to indexOptions.
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-downloader to 0.6.0
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.5.0 (2026-03-20)
+
+### 🚀 Features
+
+- ⚠️  **sparql-qlever:** tune QLever index build for large datasets ([#263](https://github.com/ldelements/lde/pull/263))
+
+### ⚠️  Breaking Changes
+
+- **sparql-qlever:** tune QLever index build for large datasets  ([#263](https://github.com/ldelements/lde/pull/263))
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.4.2 (2026-03-19)
+
+### 🩹 Fixes
+
+- **pipeline:** handle empty distributions and eliminate duplicate probing ([#257](https://github.com/ldelements/lde/pull/257))
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.4.1 (2026-03-16)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset to 0.7.2
+
+## 0.4.0 (2026-03-08)
+
+### 🚀 Features
+
+- **pipeline:** include triple count in import result reporting ([#217](https://github.com/ldelements/lde/pull/217))
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
 ## 0.3.1 (2026-03-06)
 
 ### 🧱 Updated Dependencies

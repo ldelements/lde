@@ -1,0 +1,3 @@
+# Logs qlever-server writes next to the index while tests run.
+*.metrics-log.jsonl
+*.resource-usage-log.tsv

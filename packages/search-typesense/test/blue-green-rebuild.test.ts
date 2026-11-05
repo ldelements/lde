@@ -1,0 +1,432 @@
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import type { Client } from 'typesense';
+import type { SearchType } from '@lde/search';
+import { Dataset } from '@lde/dataset';
+import { BlueGreenRebuild } from '../src/blue-green-rebuild.js';
+import { RebuildAlreadyRunning } from '@lde/search';
+import { TypesenseContainer } from './typesense-container.js';
+import { makeRunContext, seedLock, stream } from './helpers.js';
+
+const NAME = 'datasets';
+
+const datasetType: SearchType = {
+  name: 'Dataset',
+  class: 'https://example.org/Dataset',
+  fields: [
+    { name: 'title', kind: 'keyword', output: true },
+    { name: 'year', kind: 'integer', facetable: true },
+  ],
+};
+
+const dataset = new Dataset({
+  iri: new URL('http://example.org/dataset/1'),
+  distributions: [],
+});
+
+async function liveIds(client: Client): Promise<string[]> {
+  const response = await client
+    .collections(NAME)
+    .documents()
+    .search({ q: '*', query_by: 'title', per_page: 250 });
+  return (response.hits ?? [])
+    .map((hit) => (hit.document as { id: string }).id)
+    .sort();
+}
+
+async function aliasTarget(client: Client): Promise<string | undefined> {
+  try {
+    return (await client.aliases(NAME).retrieve()).collection_name;
+  } catch {
+    return undefined;
+  }
+}
+
+async function reset(client: Client): Promise<void> {
+  const { aliases } = await client.aliases().retrieve();
+  for (const alias of aliases) {
+    await client.aliases(alias.name).delete();
+  }
+  for (const collection of await client.collections().retrieve()) {
+    await client.collections(collection.name).delete();
+  }
+}
+
+describe('BlueGreenRebuild', () => {
+  const container = new TypesenseContainer();
+  let client: Client;
+
+  beforeAll(async () => {
+    client = await container.start();
+  }, 120_000);
+
+  afterAll(async () => {
+    await container.stop();
+  });
+
+  beforeEach(async () => {
+    await reset(client);
+  });
+
+  it('publishes a versioned collection and points the index alias at it on commit', async () => {
+    const writer = new BlueGreenRebuild(client, datasetType, {
+      collectionNameFor: () => NAME,
+    });
+
+    const run = await writer.openRun(makeRunContext());
+    await run.write(
+      dataset,
+      stream([{ id: 'a', title: 'Verhaal van Utrecht', year: 2024 }]),
+    );
+    await run.commit();
+
+    const live = await aliasTarget(client);
+    expect(live).toMatch(/^datasets_\d+$/);
+    // The alias resolves for queries just like a collection name.
+    const stored = await client.collections(NAME).documents('a').retrieve();
+    expect((stored as Record<string, unknown>).title).toBe(
+      'Verhaal van Utrecht',
+    );
+  });
+
+  it('keeps the live collection unswapped until commit', async () => {
+    const writer = new BlueGreenRebuild(client, datasetType, {
+      collectionNameFor: () => NAME,
+    });
+
+    const run = await writer.openRun(makeRunContext());
+    await run.write(dataset, stream([{ id: 'a', title: 'A', year: 2024 }]));
+
+    expect(await aliasTarget(client)).toBeUndefined();
+
+    await run.commit();
+    expect(await aliasTarget(client)).toBeDefined();
+  });
+
+  it('swaps the alias to the new collection and drops the previous one', async () => {
+    const writer = new BlueGreenRebuild(client, datasetType, {
+      collectionNameFor: () => NAME,
+    });
+
+    const first = await writer.openRun(makeRunContext());
+    await first.write(dataset, stream([{ id: 'a', title: 'Old', year: 2023 }]));
+    await first.commit();
+    const previous = await aliasTarget(client);
+
+    const second = await writer.openRun(makeRunContext());
+    await second.write(
+      dataset,
+      stream([{ id: 'a', title: 'New', year: 2024 }]),
+    );
+    await second.commit();
+
+    const live = await aliasTarget(client);
+    expect(live).not.toBe(previous);
+    expect(await client.collections(previous ?? '').exists()).toBe(false);
+    const stored = await client.collections(NAME).documents('a').retrieve();
+    expect((stored as Record<string, unknown>).title).toBe('New');
+  });
+
+  it('batches documents within and across write calls', async () => {
+    const writer = new BlueGreenRebuild(client, datasetType, {
+      collectionNameFor: () => NAME,
+      batchSize: 2,
+    });
+
+    const run = await writer.openRun(makeRunContext());
+    for (let index = 0; index < 5; index++) {
+      await run.write(
+        dataset,
+        stream([{ id: `d${index}`, title: `Title ${index}`, year: 2024 }]),
+      );
+    }
+    await run.commit();
+
+    expect((await client.collections(NAME).retrieve()).num_documents).toBe(5);
+  });
+
+  it('refuses to open a run while another rebuild holds the index lock', async () => {
+    await seedLock(client, NAME, Date.now());
+    const writer = new BlueGreenRebuild(client, datasetType, {
+      collectionNameFor: () => NAME,
+    });
+
+    await expect(writer.openRun(makeRunContext())).rejects.toThrow(
+      RebuildAlreadyRunning,
+    );
+    expect(await aliasTarget(client)).toBeUndefined();
+  });
+
+  it('reclaims a stale lock and rebuilds', async () => {
+    await seedLock(client, NAME, Date.now() - 10_000);
+    const writer = new BlueGreenRebuild(client, datasetType, {
+      collectionNameFor: () => NAME,
+      lockTtlMs: 1_000,
+    });
+
+    const run = await writer.openRun(makeRunContext());
+    await run.write(dataset, stream([{ id: 'a', title: 'A', year: 2024 }]));
+    await run.commit();
+
+    expect(await aliasTarget(client)).toBeDefined();
+  });
+
+  it('abort drops the half-built collection and leaves the live alias intact', async () => {
+    const writer = new BlueGreenRebuild(client, datasetType, {
+      collectionNameFor: () => NAME,
+    });
+
+    const first = await writer.openRun(makeRunContext());
+    await first.write(
+      dataset,
+      stream([{ id: 'a', title: 'Live', year: 2024 }]),
+    );
+    await first.commit();
+    const live = await aliasTarget(client);
+    const collectionCount = (await client.collections().retrieve()).length;
+
+    const second = await writer.openRun(makeRunContext());
+    await second.write(dataset, stream([{ id: 'b', title: 'B', year: 2025 }]));
+    await second.abort(new Error('run failed elsewhere'));
+
+    // Nothing swapped, no orphaned half-built collection left behind.
+    expect(await aliasTarget(client)).toBe(live);
+    expect((await client.collections().retrieve()).length).toBe(
+      collectionCount,
+    );
+
+    // The lock was released: a subsequent run proceeds.
+    const third = await writer.openRun(makeRunContext());
+    await third.write(dataset, stream([{ id: 'c', title: 'C', year: 2026 }]));
+    await third.commit();
+    expect(await aliasTarget(client)).not.toBe(live);
+  });
+
+  it('abandon keeps the half-built collection but still releases the lock', async () => {
+    // The half-way house between commit and abort, for the one case where
+    // undoing is the more destructive choice: a peer that already went live
+    // references this fresh collection by its concrete name, so dropping it
+    // would break that peer’s joins. The lock must still go, or the next run
+    // cannot rebuild the index at all (ADR 19).
+    const writer = new BlueGreenRebuild(client, datasetType, {
+      collectionNameFor: () => NAME,
+    });
+
+    const first = await writer.openRun(makeRunContext());
+    await first.write(
+      dataset,
+      stream([{ id: 'a', title: 'Live', year: 2024 }]),
+    );
+    await first.commit();
+    const live = await aliasTarget(client);
+    const collectionCount = (await client.collections().retrieve()).length;
+
+    const second = await writer.openRun(makeRunContext());
+    await second.write(dataset, stream([{ id: 'b', title: 'B', year: 2025 }]));
+    await second.abandon?.(new Error('a peer went live already'));
+
+    // The alias never moved, and – unlike abort – the fresh collection stays.
+    expect(await aliasTarget(client)).toBe(live);
+    expect((await client.collections().retrieve()).length).toBe(
+      collectionCount + 1,
+    );
+
+    // And the lock was released, so the next run proceeds rather than
+    // throwing RebuildAlreadyRunning for the whole TTL.
+    const third = await writer.openRun(makeRunContext());
+    await third.write(dataset, stream([{ id: 'c', title: 'C', year: 2026 }]));
+    await third.commit();
+    expect(await aliasTarget(client)).not.toBe(live);
+  });
+
+  it('leaves out a document Typesense refuses, reports it, and ships the rest', async () => {
+    const writer = new BlueGreenRebuild(client, datasetType, {
+      collectionNameFor: () => NAME,
+    });
+    const rejections: unknown[] = [];
+    const run = await writer.openRun({
+      ...makeRunContext(),
+      itemsRejected: (_dataset, rejection) => rejections.push(rejection),
+    });
+
+    // `year` must be an int; a string is a hard validation failure.
+    await run.write(
+      dataset,
+      stream([
+        { id: 'good', title: 'One', year: 2024 },
+        { id: 'bad', title: 't', year: 'nope' },
+      ]),
+    );
+    await run.flush?.(dataset, 'success');
+    await run.commit();
+
+    expect(await liveIds(client)).toEqual(['good']);
+    expect(rejections).toEqual([
+      {
+        target: 'Dataset',
+        written: 2,
+        rejected: 1,
+        reasons: [
+          {
+            reason: expect.stringContaining('year'),
+            count: 1,
+            examples: ['bad'],
+          },
+        ],
+      },
+    ]);
+  });
+
+  it('fails and rolls back a dataset that left out more than its share', async () => {
+    const writer = new BlueGreenRebuild(client, datasetType, {
+      collectionNameFor: () => NAME,
+      maxRejectedShare: 0,
+    });
+
+    const run = await writer.openRun(makeRunContext());
+    await run.write(
+      dataset,
+      stream([
+        { id: 'good', title: 'One', year: 2024 },
+        { id: 'bad', title: 't', year: 'nope' },
+      ]),
+    );
+    await expect(run.flush?.(dataset, 'success')).rejects.toThrow(
+      /left out 1 of 2 documents/,
+    );
+    await run.commit();
+
+    // The accepted document went with the rest of its dataset.
+    expect(await liveIds(client)).toEqual([]);
+  });
+
+  it('publishes an empty collection for an empty run', async () => {
+    const writer = new BlueGreenRebuild(client, datasetType, {
+      collectionNameFor: () => NAME,
+    });
+
+    const run = await writer.openRun(makeRunContext());
+    await run.commit();
+
+    expect((await client.collections(NAME).retrieve()).num_documents).toBe(0);
+  });
+
+  it('rolls a failed dataset out of the collection so the swap never ships it', async () => {
+    const writer = new BlueGreenRebuild(client, datasetType, {
+      collectionNameFor: () => NAME,
+    });
+    const datasetB = new Dataset({
+      iri: new URL('http://example.org/dataset/2'),
+      distributions: [],
+    });
+
+    const run = await writer.openRun(makeRunContext());
+    await run.write(
+      dataset,
+      stream([
+        { id: 'a1', title: 'A one', year: 2024 },
+        { id: 'a2', title: 'A two', year: 2024 },
+      ]),
+    );
+    await run.flush?.(dataset, 'failed');
+    await run.write(
+      datasetB,
+      stream([{ id: 'b1', title: 'B one', year: 2024 }]),
+    );
+    await run.flush?.(datasetB, 'success');
+    await run.commit();
+
+    // The failed dataset contributes nothing to the swapped collection.
+    expect(await liveIds(client)).toEqual(['b1']);
+  });
+
+  it('reset discards a dataset’s documents before a re-run', async () => {
+    const writer = new BlueGreenRebuild(client, datasetType, {
+      collectionNameFor: () => NAME,
+    });
+
+    const run = await writer.openRun(makeRunContext());
+    // First pass (e.g. endpoint-sourced) writes a3 that the re-run will drop.
+    await run.write(
+      dataset,
+      stream([
+        { id: 'a1', title: 'One', year: 2024 },
+        { id: 'a2', title: 'Two', year: 2024 },
+        { id: 'a3', title: 'Gone', year: 2024 },
+      ]),
+    );
+    await run.reset?.(dataset);
+    // Second pass (e.g. dump-sourced) rebuilds the dataset without a3.
+    await run.write(
+      dataset,
+      stream([
+        { id: 'a1', title: 'One', year: 2024 },
+        { id: 'a2', title: 'Two', year: 2024 },
+      ]),
+    );
+    await run.flush?.(dataset, 'success');
+    await run.commit();
+
+    expect(await liveIds(client)).toEqual(['a1', 'a2']);
+  });
+
+  it('rejects a SearchType that declares the reserved source field', () => {
+    expect(
+      () =>
+        new BlueGreenRebuild(
+          client,
+          {
+            name: 'Dataset',
+            class: 'https://example.org/Dataset',
+            fields: [{ name: 'source', kind: 'keyword' }],
+          },
+          { collectionNameFor: () => NAME },
+        ),
+    ).toThrow(/source/);
+  });
+
+  it('stamps and rolls back on a declared dataset field, without a private source', async () => {
+    const withDataset = {
+      name: 'Dataset',
+      class: 'https://example.org/Dataset',
+      fields: [
+        { name: 'title', kind: 'keyword', output: true },
+        // Not facetable: Blue/green rolls back by a known IRI rather than
+        // enumerating the indexed datasets, so it needs no facet.
+        {
+          name: 'dataset',
+          kind: 'reference',
+          from: 'dataset',
+          output: true,
+          ref: { strategy: 'idOnly', typeName: 'Dataset' },
+        },
+      ],
+    } satisfies SearchType;
+    const writer = new BlueGreenRebuild<{ id: string; title: string }>(
+      client,
+      withDataset,
+      { collectionNameFor: () => NAME },
+    );
+
+    const failing = new Dataset({
+      iri: new URL('http://example.org/dataset/2'),
+      distributions: [],
+    });
+    const run = await writer.openRun(makeRunContext([dataset.iri.toString()]));
+    await run.write(dataset, stream([{ id: 'a1', title: 'One' }]));
+    await run.flush?.(dataset, 'success');
+    await run.write(failing, stream([{ id: 'b1', title: 'Bee' }]));
+    // A failed dataset is rolled back by its dataset IRI.
+    await run.flush?.(failing, 'failed');
+    await run.commit();
+
+    const stored = (await client
+      .collections(NAME)
+      .documents('a1')
+      .retrieve()) as Record<string, unknown>;
+    expect(stored.dataset).toBe(dataset.iri.toString());
+    expect(stored).not.toHaveProperty('source');
+    await expect(
+      client.collections(NAME).documents('b1').retrieve(),
+    ).rejects.toThrow();
+  });
+});

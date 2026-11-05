@@ -1,0 +1,56 @@
+{
+  "name": "@lde/search-api-graphql",
+  "version": "0.40.2",
+  "description": "Engine- and domain-agnostic GraphQL surface for @lde/search: builds an executable GraphQLSchema from a whole SearchSchema at runtime (no codegen) – one root query field per SearchType – served by generic resolvers over any SearchEngine – and serves it as a framework-agnostic fetch handler with a self-contained playground, SDL endpoint, CORS and depth/cost limits. You supply the schema and per-type typeNames; it names neither your domain nor your engine.",
+  "repository": {
+    "url": "git+https://github.com/ldelements/lde.git",
+    "directory": "packages/search-api-graphql"
+  },
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./print-sdl": {
+      "types": "./dist/print-sdl.d.ts",
+      "import": "./dist/print-sdl.js",
+      "development": "./src/print-sdl.ts",
+      "default": "./dist/print-sdl.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "search-print-sdl": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "!**/*.tsbuildinfo"
+  ],
+  "dependencies": {
+    "@escape.tech/graphql-armor-max-depth": "^2.4.2",
+    "@graphql-yoga/render-graphiql": "^5.24.6",
+    "@lde/search": "^0.36.2",
+    "commander": "^15.0.0",
+    "dataloader": "^2.2.3",
+    "graphql": "^16.9.0",
+    "graphql-query-complexity": "^2.0.0",
+    "graphql-yoga": "^5.24.1",
+    "negotiator": "^1.1.0",
+    "tslib": "^2.3.0"
+  },
+  "peerDependencies": {
+    "prettier": "^3.0.0"
+  },
+  "peerDependenciesMeta": {
+    "prettier": {
+      "optional": true
+    }
+  }
+}

@@ -1,3 +1,29 @@
+## 0.6.0 (2026-10-30)
+
+This was a version bump only for @lde/sparql-server to align it with other projects, there were no code changes.
+
+## 0.5.0 (2026-10-15)
+
+This was a version bump only for @lde/sparql-server to align it with other projects, there were no code changes.
+
+## 0.4.14 (2026-07-24)
+
+This was a version bump only for @lde/sparql-server to align it with other projects, there were no code changes.
+
+## 0.4.13 (2026-07-24)
+
+### 🚀 Features
+
+- **search-pipeline:** add searchIndexerPipeline convenience ([#647](https://github.com/ldelements/lde/pull/647))
+
+## 0.4.12 (2026-06-26)
+
+This was a version bump only for @lde/sparql-server to align it with other projects, there were no code changes.
+
+## 0.4.11 (2026-04-23)
+
+This was a version bump only for @lde/sparql-server to align it with other projects, there were no code changes.
+
 ## 0.4.10 (2026-02-16)
 
 This was a version bump only for @lde/sparql-server to align it with other projects, there were no code changes.

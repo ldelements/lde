@@ -1,0 +1,224 @@
+import type { Dataset } from '@lde/dataset';
+import {
+  ManualDatasetSelection,
+  Pipeline,
+  type DatasetSelector,
+  type DistributionResolver,
+  type ProgressReporter,
+  type ProvenanceStore,
+  type QuadTransform,
+  type ReaderContext,
+  type Writer,
+} from '@lde/pipeline';
+import type { RootType, SearchDocument, SearchSchema } from '@lde/search';
+import { searchIndexWriter } from './search-index-writer.js';
+import {
+  registrySource,
+  searchStages,
+  selectByClass,
+} from './search-stages.js';
+import type { TypedSearchDocument } from './typed-search-document.js';
+
+/** Options for {@link searchIndexerPipeline}. */
+export interface SearchIndexerPipelineOptions {
+  /**
+   * The declarative schema driving the indexer: one stage and one engine
+   * collection per {@link RootType} in it. Reference Types are absent from
+   * `schema.values()`, so none ever earns a stage or a collection.
+   */
+  schema: SearchSchema;
+  /**
+   * Which datasets to index – the deployment’s domain fact. Pass the
+   * {@link Dataset}s directly, or a {@link DatasetSelector} (e.g. a
+   * `RegistrySelector`) when selection is dynamic.
+   */
+  datasets: Dataset[] | DatasetSelector;
+  /**
+   * How each dataset’s data becomes queryable – the deployment’s engine
+   * choice. Typically an `ImportResolver` wrapping a
+   * `SparqlDistributionResolver` with a `@lde/sparql-qlever` `createQlever`
+   * import path, so data-dump distributions are imported into a local
+   * endpoint. Defaults to the {@link Pipeline} default (a bare
+   * `SparqlDistributionResolver`), which serves only datasets that publish a
+   * live SPARQL endpoint.
+   */
+  distributionResolver?: DistributionResolver;
+  /**
+   * The engine writer that owns a given root type’s collection – e.g. a
+   * `@lde/search-typesense` `InPlaceRebuild` or `BlueGreenRebuild` bound to
+   * that type. Called once per {@link RootType} in the schema, with the schema
+   * itself: an engine that stores a surfaced inline reference as a nested
+   * document needs it to declare the nesting, and it is the pipeline that holds
+   * it.
+   */
+  writerFor: (
+    searchType: RootType,
+    schema: SearchSchema,
+  ) => Writer<SearchDocument>;
+  /**
+   * Root types whose triples come from the **dataset registry** rather than
+   * from each dataset’s own distribution – typically the dataset description
+   * itself and what hangs off it, which live in the register because
+   * registering a dataset is submitting a description
+   * ({@link registrySource}).
+   *
+   * Routing is deployment topology, so it is configured here and not declared
+   * on the {@link SearchType}: a type is defined by its `class`, not by where
+   * its triples come from. Name the types by their `name`; an unknown name
+   * throws here, at wiring time, rather than yielding an empty collection at
+   * run time.
+   */
+  registryTypes?: {
+    /** The registry’s SPARQL endpoint – where these types read. */
+    endpoint: URL;
+    /** {@link SearchType.name}s of the root types to source from it. */
+    names: readonly string[];
+  };
+  /**
+   * {@link QuadTransform}(s) attached to a root type’s reader, keyed by
+   * {@link SearchType.name} – the extension point a deployment reaches for
+   * when the data needs correcting, enriching or pruning before projection.
+   *
+   * This is what keeps a deployment with one bespoke transform on this
+   * convenience instead of hand-composing a {@link Pipeline}: composing by hand
+   * to reach the reader means restating dataset selection, registry sourcing,
+   * provenance and reporting, and silently losing whichever is forgotten.
+   *
+   * Named by `name` rather than by class IRI, like {@link registryTypes}; a
+   * name the schema does not declare throws at wiring time rather than
+   * attaching nothing and shipping an unenriched collection.
+   */
+  transforms?: Readonly<
+    Record<
+      string,
+      QuadTransform<ReaderContext> | QuadTransform<ReaderContext>[]
+    >
+  >;
+  /**
+   * Optional per-dataset processing memory: skip a dataset whose source
+   * fingerprint and {@link pipelineVersion} both match the stored record.
+   * Requires {@link pipelineVersion}.
+   */
+  provenanceStore?: ProvenanceStore;
+  /**
+   * Opaque, consumer-declared version of the indexer’s output-affecting logic
+   * (schema, projection). Required when {@link provenanceStore} is set – a
+   * skip-enabled pipeline with no version would silently freeze.
+   */
+  pipelineVersion?: string;
+  /**
+   * Observer(s) of pipeline lifecycle events, e.g. a
+   * `@lde/pipeline-console-reporter` `ConsoleReporter`.
+   */
+  reporter?: ProgressReporter | readonly ProgressReporter[];
+}
+
+/**
+ * Wire the common **object-grain** search indexer and return the ready-to-run
+ * {@link Pipeline}: one projecting stage per {@link RootType} in the schema,
+ * each selecting the type’s roots by its source class with blank-node subjects
+ * excluded ({@link selectByClass} – a blank node has no stable document key),
+ * extracting with the schema-generated CONSTRUCT, and projecting inside the
+ * batch; plus the single {@link searchIndexWriter} terminal routing each
+ * document to the engine writer for its type’s collection.
+ *
+ * The consumer supplies only the domain and the deployment shell: the schema,
+ * which datasets, the engine writer per type, and (optionally) the
+ * SPARQL/import adapter, provenance and reporting.
+ *
+ * ```ts
+ * const pipeline = searchIndexerPipeline({
+ *   schema,
+ *   datasets,
+ *   distributionResolver: new ImportResolver(new SparqlDistributionResolver(), {
+ *     ...createQlever({ mode: 'docker', image: 'adfreiburg/qlever:latest' }),
+ *     strategy: 'import',
+ *   }),
+ *   writerFor: (searchType, schema) =>
+ *     new InPlaceRebuild(typesenseClient, searchType, { schema }),
+ * });
+ * await pipeline.run();
+ * ```
+ *
+ * Domain behaviour on top of the standard wiring is {@link transforms}, so
+ * adding it costs the behaviour rather than this whole composition.
+ *
+ * A deployment that needs more – a bespoke root selector (the entry point is a
+ * domain fact, not a class), per-stage tuning (`batchSize`, `maxConcurrency`),
+ * non-SPARQL readers, or quad-level plugins – composes {@link searchStages},
+ * {@link searchIndexWriter} and {@link Pipeline} directly, restating the
+ * registry sourcing, provenance and reporting this function wires; beyond
+ * those, this convenience owns no capability of its own.
+ */
+export function searchIndexerPipeline(
+  options: SearchIndexerPipelineOptions,
+): Pipeline<TypedSearchDocument> {
+  const { schema, datasets, registryTypes, transforms } = options;
+  const fromRegistry = registryTypeNames(schema, registryTypes?.names);
+  assertDeclaredTypeNames(schema, Object.keys(transforms ?? {}), 'transform');
+  const sourceFor =
+    registryTypes === undefined
+      ? undefined
+      : registrySource(registryTypes.endpoint);
+  return new Pipeline<TypedSearchDocument>({
+    datasetSelector: Array.isArray(datasets)
+      ? new ManualDatasetSelection(datasets)
+      : datasets,
+    distributionResolver: options.distributionResolver,
+    stages: searchStages({
+      schema,
+      types: [...schema.values()].map((searchType) => ({
+        searchType,
+        rootVariable: 'root',
+        itemSelector: selectByClass(searchType),
+        sourceFor: fromRegistry.has(searchType.name) ? sourceFor : undefined,
+        transform: transforms?.[searchType.name],
+      })),
+    }),
+    writers: searchIndexWriter({ schema, writerFor: options.writerFor }),
+    provenanceStore: options.provenanceStore,
+    pipelineVersion: options.pipelineVersion,
+    reporter: options.reporter,
+  });
+}
+
+/**
+ * The declared registry-sourced type names, validated against the schema. An
+ * unrecognised name is a configuration mistake that would otherwise be silent –
+ * the type would read the dataset’s distribution, find no dataset description
+ * there, and ship an empty collection – so it throws at wiring time.
+ */
+function registryTypeNames(
+  schema: SearchSchema,
+  declaredNames: readonly string[] | undefined,
+): ReadonlySet<string> {
+  const names = new Set(declaredNames ?? []);
+  assertDeclaredTypeNames(schema, [...names], 'registry root');
+  return names;
+}
+
+/**
+ * Every name must be one the schema declares. Shared by the options that key
+ * behaviour by {@link SearchType.name}: naming a type the schema does not have
+ * is a configuration mistake whose only other symptom is an option that
+ * silently does nothing.
+ */
+function assertDeclaredTypeNames(
+  schema: SearchSchema,
+  names: readonly string[],
+  label: string,
+): void {
+  const declared = new Set(
+    [...schema.values()].map((searchType) => searchType.name),
+  );
+  const unknown = names.filter((name) => !declared.has(name));
+  if (unknown.length > 0) {
+    throw new Error(
+      `Unknown ${label} type(s) ${unknown
+        .map((name) => `“${name}”`)
+        .join(', ')}; the schema declares ${[...declared]
+        .map((name) => `“${name}”`)
+        .join(', ')}.`,
+    );
+  }
+}

@@ -4,7 +4,7 @@ export {
   SparqlProbeResult,
   DataDumpProbeResult,
   type ProbeResultType,
-} from './probe.js';
+} from '@lde/distribution-probe';
 
 export { probeResultsToQuads } from './report.js';
 
@@ -16,8 +16,12 @@ export {
 export {
   ResolvedDistribution,
   NoDistributionAvailable,
+  ProbedDistributions,
   SparqlDistributionResolver,
   type DistributionResolver,
+  type ImportDetails,
+  type ProbedSource,
+  type ResolveCallbacks,
   type SparqlDistributionResolverOptions,
 } from './resolver.js';
 

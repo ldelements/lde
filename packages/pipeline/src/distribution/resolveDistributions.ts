@@ -1,6 +1,6 @@
 import { type Distribution, type Dataset } from '@lde/dataset';
 import type { Quad } from 'n3';
-import type { ProbeResultType } from './probe.js';
+import type { ProbeResultType } from '@lde/distribution-probe';
 import { probeResultsToQuads } from './report.js';
 import {
   type DistributionResolver,
@@ -15,9 +15,10 @@ export interface DistributionStageResult {
 
 export async function resolveDistributions(
   dataset: Dataset,
-  resolver: DistributionResolver
+  resolver: DistributionResolver,
 ): Promise<DistributionStageResult> {
-  const result = await resolver.resolve(dataset);
+  const probed = await resolver.probe(dataset);
+  const result = await resolver.resolve(probed);
 
   if (result instanceof NoDistributionAvailable) {
     return {
@@ -26,7 +27,7 @@ export async function resolveDistributions(
       quads: probeResultsToQuads(
         result.probeResults,
         dataset.iri.toString(),
-        result.importFailed
+        result.importFailed,
       ),
     };
   }

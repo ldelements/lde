@@ -1,0 +1,196 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`GraphQL generator stability > emits a stable SDL for a representative schema 1`] = `
+"type Query {
+  things(
+    """Free-text query. Omit it to browse by filter alone."""
+    query: String
+
+    """Conditions every result must satisfy."""
+    where: ThingWhere
+
+    """Sort order. Defaults to relevance for a free-text query."""
+    orderBy: ThingOrderBy
+
+    """1-based page number; at least 1."""
+    page: Int = 1
+
+    """
+    Results per page, between 0 and 100. Use 0 for a facet-only query: no results are fetched, and the facet counts still come back.
+    """
+    perPage: Int = 20
+  ): ThingSearchResult!
+}
+
+type ThingSearchResult {
+  items: [Thing!]!
+  pagination: Pagination!
+  facets: ThingFacets!
+}
+
+type Thing {
+  id: IRI!
+  title: [LanguageString!]!
+  description: [LanguageString!]!
+  keyword: [String!]!
+  creator: [IRI!]!
+  publisher: IRI
+  sameAs: [IRI!]!
+  license: IRI
+  size: Int
+  score: Float
+  created: ISO8601Date
+  status: String!
+  open: Boolean!
+}
+
+"""
+An absolute IRI (RFC 3987), serialized as a string. Any scheme – \`https:\`, \`urn:\`, \`doi:\`, \`ark:\` – not only HTTP. A field or filter typed \`IRI\` keys on identity, never on a literal.
+"""
+scalar IRI @specifiedBy(url: "https://www.rfc-editor.org/rfc/rfc3987")
+
+type LanguageString {
+  language: String
+  value: String!
+}
+
+"""
+An ISO 8601 date at the precision its source gave (\`1999\`, \`1999-05\`, \`1999-05-03\` or \`1999-05-03T12:30:00Z\`, always UTC), serialized as a string. A year has at least four digits and may have more, so a value may lie beyond what a JavaScript \`Date\` can hold.
+"""
+scalar ISO8601Date @specifiedBy(url: "https://ldelements.org/reference/search-api-graphql#dates")
+
+type Pagination {
+  total: Int!
+  page: Int!
+  perPage: Int!
+}
+
+type ThingFacets {
+  keyword: [ValueBucket!]!
+  creator: [IRIBucket!]!
+  publisher: [IRIBucket!]!
+  sameAs: [IRIBucket!]!
+  status: [ValueBucket!]!
+  open: [BooleanBucket!]!
+}
+
+type ValueBucket {
+  value: String!
+  count: Int!
+  label: [LanguageString!]
+}
+
+type IRIBucket {
+  value: IRI!
+  count: Int!
+  label: [LanguageString!]
+}
+
+type BooleanBucket {
+  value: Boolean!
+  count: Int!
+}
+
+"""
+Sibling keys are combined with AND. Use \`or\` for a disjunction, and \`and\` when a query needs more than one of them.
+"""
+input ThingWhere {
+  id: ThingFilter
+  keyword: KeywordFilter
+  creator: AgentFilter
+  publisher: AgentFilter
+  sameAs: IRIFilter
+  license: LicenseFilter
+  size: IntRange
+  score: FloatRange
+  created: DateRange
+  status: KeywordFilter
+  open: Boolean
+
+  """
+  A disjunction: a document matches when ANY of these criteria holds. Combined with the sibling keys by AND, so it widens across fields without widening the query as a whole.
+  """
+  or: [ThingCriterion!]
+
+  """
+  Further groups of conditions, all of which apply. The way to carry a second \`or\` disjunction alongside the first.
+  """
+  and: [ThingWhere!]
+}
+
+"""Matches a field holding IRIs of Thing."""
+input ThingFilter {
+  in: [IRI!]
+}
+
+"""Matches a field holding literal values."""
+input KeywordFilter {
+  in: [String!]
+}
+
+"""Matches a field holding IRIs of Agent."""
+input AgentFilter {
+  in: [IRI!]
+}
+
+"""
+Matches a field holding IRIs that belong to no collection this API serves.
+"""
+input IRIFilter {
+  in: [IRI!]
+}
+
+"""Matches a field holding IRIs of License."""
+input LicenseFilter {
+  in: [IRI!]
+}
+
+input IntRange {
+  min: Int
+  max: Int
+}
+
+input FloatRange {
+  min: Float
+  max: Float
+}
+
+input DateRange {
+  min: ISO8601Date
+  max: ISO8601Date
+}
+
+"""
+A condition on exactly one field. Used inside \`or\`, where the criteria are alternatives.
+"""
+input ThingCriterion @oneOf {
+  id: ThingFilter
+  keyword: KeywordFilter
+  creator: AgentFilter
+  publisher: AgentFilter
+  sameAs: IRIFilter
+  license: LicenseFilter
+  size: IntRange
+  score: FloatRange
+  created: DateRange
+  status: KeywordFilter
+  open: Boolean
+}
+
+input ThingOrderBy {
+  field: ThingSortField!
+  direction: SortDirection! = DESC
+}
+
+enum ThingSortField {
+  RELEVANCE
+  TITLE
+  SIZE
+  CREATED
+}
+
+enum SortDirection {
+  ASC
+  DESC
+}"
+`;

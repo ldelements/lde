@@ -1,0 +1,35 @@
+@prefix schema: <https://schema.org/> .
+
+# A Drapo-shaped SCHEMA-AP-NDE sample: CreativeWork roots typed in the source
+# (so selectByClass selects them), each with localized name/description and a
+# labelOnly creator reference resolving a typed Person. The blank-node
+# CreativeWork mirrors Drapo’s blank-node instances: it has no stable document
+# key, so selectByClass must never select it as a root.
+
+<https://ex/cw/1> a schema:CreativeWork ;
+  schema:name "Het meisje met de parel"@nl, "Girl with a Pearl Earring"@en ;
+  schema:description "Een schilderij van Johannes Vermeer."@nl ;
+  schema:creator <https://ex/p/1> .
+
+<https://ex/cw/2> a schema:CreativeWork ;
+  schema:name "De nachtwacht"@nl .
+
+_:anonymousWork a schema:CreativeWork ;
+  schema:name "Naamloos werk"@nl .
+
+<https://ex/p/1> a schema:Person ;
+  schema:name "Johannes Vermeer" .
+
+# A qualified relation, typed apart from the CreativeWork roots above so it is
+# selected on its own: the work points at a Role carrying a value of its own and
+# the agent behind it. One agent is IRI-identified and described in this graph,
+# the other named inline with no IRI at all – the two populations a `local`
+# lookup exists to serve with one field.
+<https://ex/va/1> a schema:VisualArtwork ;
+  schema:name "Winterlandschap"@nl ;
+  schema:creator [ a schema:Role ;
+                   schema:roleName "etser" ;
+                   schema:creator <https://ex/p/1> ] ,
+                 [ a schema:Role ;
+                   schema:roleName "uitgever" ;
+                   schema:creator [ schema:name "Onbekende drukker"@nl ] ] .

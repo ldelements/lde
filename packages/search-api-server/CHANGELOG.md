@@ -1,0 +1,540 @@
+## 0.33.2 (2026-11-05)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.40.2
+- Updated @lde/search-typesense to 0.43.2
+- Updated @lde/search to 0.36.2
+
+## 0.33.1 (2026-11-05)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.40.1
+- Updated @lde/search-typesense to 0.43.1
+- Updated @lde/search to 0.36.1
+
+## 0.33.0 (2026-11-05)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.40.0
+- Updated @lde/search-typesense to 0.43.0
+- Updated @lde/search to 0.36.0
+
+## 0.32.0 (2026-11-04)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.39.0
+- Updated @lde/search-typesense to 0.42.0
+- Updated @lde/search to 0.35.0
+
+## 0.31.0 (2026-11-03)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.41.0
+
+## 0.30.1 (2026-10-31)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.40.1
+
+## 0.30.0 (2026-10-30)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.38.0
+- Updated @lde/search-typesense to 0.40.0
+- Updated @lde/search to 0.34.0
+
+## 0.29.0 (2026-10-28)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.37.0
+- Updated @lde/search-typesense to 0.39.0
+- Updated @lde/search to 0.33.0
+
+## 0.28.5 (2026-10-28)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.36.3
+- Updated @lde/search-typesense to 0.38.5
+- Updated @lde/search to 0.32.3
+
+## 0.28.4 (2026-10-28)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.36.2
+- Updated @lde/search-typesense to 0.38.4
+- Updated @lde/search to 0.32.2
+
+## 0.28.3 (2026-10-27)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.38.3
+
+## 0.28.2 (2026-10-27)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.38.2
+
+## 0.28.1 (2026-10-26)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.36.1
+- Updated @lde/search-typesense to 0.38.1
+- Updated @lde/search to 0.32.1
+
+## 0.28.0 (2026-10-26)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.36.0
+- Updated @lde/search-typesense to 0.38.0
+- Updated @lde/search to 0.32.0
+
+## 0.27.0 (2026-10-25)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.35.0
+- Updated @lde/search-typesense to 0.37.0
+- Updated @lde/search to 0.31.0
+
+## 0.26.1 (2026-10-25)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.36.1
+
+## 0.26.0 (2026-10-23)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.34.0
+- Updated @lde/search-typesense to 0.36.0
+- Updated @lde/search to 0.30.0
+
+## 0.25.0 (2026-10-22)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.33.0
+
+## 0.24.0 (2026-10-22)
+
+### 🚀 Features
+
+- ⚠️  **search-api-graphql:** cap the root fields one operation may select ([#928](https://github.com/ldelements/lde/pull/928))
+
+### ⚠️  Breaking Changes
+
+- **search-api-graphql:** cap the root fields one operation may select  ([#928](https://github.com/ldelements/lde/pull/928))
+  an operation selecting more than 10 root fields is now rejected.
+  Raise maxSearches (MAX_SEARCHES on the server) if a client needs more."
+  M	docs/reference/search-api-graphql.md
+  M	docs/reference/search-api-server.md
+  M	packages/search-api-graphql/src/handler.ts
+  A	packages/search-api-graphql/src/max-searches.ts
+  M	packages/search-api-graphql/test/handler.test.ts
+  M	packages/search-api-graphql/vite.config.ts
+  M	packages/search-api-server/src/config.ts
+  M	packages/search-api-server/src/server.ts
+  M	packages/search-api-server/test/config.test.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.32.0
+
+## 0.23.1 (2026-10-22)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.31.1
+
+## 0.23.0 (2026-10-16)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.35.0
+
+## 0.22.0 (2026-10-16)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.31.0
+- Updated @lde/search-typesense to 0.34.0
+- Updated @lde/search to 0.29.0
+
+## 0.21.3 (2026-10-16)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.30.3
+
+## 0.21.2 (2026-10-16)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.30.2
+- Updated @lde/search-typesense to 0.33.1
+- Updated @lde/search to 0.28.1
+
+## 0.21.1 (2026-10-16)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.30.1
+
+## 0.21.0 (2026-10-15)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.30.0
+- Updated @lde/search-typesense to 0.33.0
+- Updated @lde/search to 0.28.0
+
+## 0.20.4 (2026-10-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.29.2
+- Updated @lde/search-typesense to 0.32.4
+- Updated @lde/search to 0.27.2
+
+## 0.20.3 (2026-10-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.32.3
+
+## 0.20.2 (2026-10-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.29.1
+- Updated @lde/search-typesense to 0.32.2
+- Updated @lde/search to 0.27.1
+
+## 0.20.1 (2026-09-21)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.32.1
+
+## 0.20.0 (2026-09-09)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.29.0
+- Updated @lde/search-typesense to 0.32.0
+- Updated @lde/search to 0.27.0
+
+## 0.19.2 (2026-09-09)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.31.2
+
+## 0.19.1 (2026-09-09)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.31.1
+
+## 0.19.0 (2026-09-09)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.28.0
+- Updated @lde/search-typesense to 0.31.0
+- Updated @lde/search to 0.26.0
+
+## 0.18.0 (2026-09-04)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.27.0
+- Updated @lde/search-typesense to 0.30.0
+- Updated @lde/search to 0.25.0
+
+## 0.17.4 (2026-09-04)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.26.4
+- Updated @lde/search-typesense to 0.29.4
+- Updated @lde/search to 0.24.4
+
+## 0.17.3 (2026-09-04)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.26.3
+- Updated @lde/search-typesense to 0.29.3
+- Updated @lde/search to 0.24.3
+
+## 0.17.2 (2026-08-31)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.26.2
+- Updated @lde/search-typesense to 0.29.2
+- Updated @lde/search to 0.24.2
+
+## 0.17.1 (2026-08-31)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.26.1
+- Updated @lde/search-typesense to 0.29.1
+- Updated @lde/search to 0.24.1
+
+## 0.17.0 (2026-08-31)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.29.0
+
+## 0.16.0 (2026-08-31)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.26.0
+- Updated @lde/search-typesense to 0.28.0
+- Updated @lde/search to 0.24.0
+
+## 0.15.4 (2026-08-24)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.27.4
+
+## 0.15.3 (2026-08-24)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.25.2
+- Updated @lde/search-typesense to 0.27.3
+- Updated @lde/search to 0.23.2
+
+## 0.15.2 (2026-08-22)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.25.1
+- Updated @lde/search-typesense to 0.27.2
+- Updated @lde/search to 0.23.1
+
+## 0.15.1 (2026-08-21)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.27.1
+
+## 0.15.0 (2026-08-20)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.27.0
+
+## 0.14.0 (2026-08-20)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.25.0
+- Updated @lde/search-typesense to 0.26.0
+- Updated @lde/search to 0.23.0
+
+## 0.13.0 (2026-08-20)
+
+This was a version bump only for @lde/search-api-server to align it with other projects, there were no code changes.
+
+## 0.12.1 (2026-08-20)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.24.1
+- Updated @lde/search-typesense to 0.25.1
+- Updated @lde/search to 0.22.1
+
+## 0.12.0 (2026-08-17)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.24.0
+- Updated @lde/search-typesense to 0.25.0
+- Updated @lde/search to 0.22.0
+
+## 0.11.1 (2026-08-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.23.1
+- Updated @lde/search-typesense to 0.24.1
+- Updated @lde/search to 0.21.1
+
+## 0.11.0 (2026-08-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.23.0
+- Updated @lde/search-typesense to 0.24.0
+- Updated @lde/search to 0.21.0
+
+## 0.10.0 (2026-08-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.22.0
+- Updated @lde/search-typesense to 0.23.0
+- Updated @lde/search to 0.20.0
+
+## 0.9.1 (2026-08-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.21.1
+
+## 0.9.0 (2026-08-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.21.0
+- Updated @lde/search-typesense to 0.22.0
+- Updated @lde/search to 0.19.0
+
+## 0.8.3 (2026-08-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.20.3
+- Updated @lde/search-typesense to 0.21.3
+- Updated @lde/search to 0.18.3
+
+## 0.8.2 (2026-08-12)
+
+### 🚀 Features
+
+- **search-api-graphql:** write the GraphQL contract of a schema module to a file ([#722](https://github.com/ldelements/lde/pull/722))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.20.2
+- Updated @lde/search-typesense to 0.21.2
+- Updated @lde/search to 0.18.2
+
+## 0.8.1 (2026-08-12)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.20.1
+- Updated @lde/search-typesense to 0.21.1
+- Updated @lde/search to 0.18.1
+
+## 0.8.0 (2026-08-10)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.20.0
+
+## 0.7.0 (2026-08-07)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.19.0
+- Updated @lde/search-typesense to 0.21.0
+- Updated @lde/search to 0.18.0
+
+## 0.6.0 (2026-08-07)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.18.0
+- Updated @lde/search-typesense to 0.20.0
+- Updated @lde/search to 0.17.0
+
+## 0.5.0 (2026-08-07)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.17.0
+- Updated @lde/search-typesense to 0.19.0
+- Updated @lde/search to 0.16.0
+
+## 0.4.2 (2026-08-07)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.18.2
+
+## 0.4.1 (2026-08-07)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.18.1
+
+## 0.4.0 (2026-07-31)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.16.0
+- Updated @lde/search-typesense to 0.18.0
+- Updated @lde/search to 0.15.0
+
+## 0.3.0 (2026-07-31)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.15.0
+- Updated @lde/search-typesense to 0.17.0
+- Updated @lde/search to 0.14.0
+
+## 0.2.0 (2026-07-30)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.14.0
+- Updated @lde/search-typesense to 0.16.0
+- Updated @lde/search to 0.13.0
+
+## 0.1.0 (2026-07-28)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.13.0
+
+## 0.0.3 (2026-07-27)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.12.3
+- Updated @lde/search-typesense to 0.15.6
+- Updated @lde/search to 0.12.3
+
+## 0.0.2 (2026-07-25)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.15.5
+
+## 0.0.1 (2026-07-24)
+
+### 🚀 Features
+
+- **search-api-server:** serve the search API as a bootable process and Docker image ([#646](https://github.com/ldelements/lde/pull/646), [#655](https://github.com/ldelements/lde/issues/655))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-api-graphql to 0.12.2
+- Updated @lde/search-typesense to 0.15.4
+- Updated @lde/search to 0.12.2

@@ -1,0 +1,3 @@
+# The Docker staging output contains copies of workspace packages
+# (copy-workspace-modules), which must not be detected as Nx projects.
+packages/*/dist-docker/

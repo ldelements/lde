@@ -1,0 +1,41 @@
+{
+  "name": "@lde/pipeline-shacl-validator",
+  "version": "0.24.0",
+  "description": "SHACL validation for @lde/pipeline",
+  "repository": {
+    "url": "git+https://github.com/ldelements/lde.git",
+    "directory": "packages/pipeline-shacl-validator"
+  },
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "!**/*.tsbuildinfo"
+  ],
+  "dependencies": {
+    "@rdfjs/types": "^2.0.1",
+    "rdf-dereference": "^5.0.0",
+    "rdf-ext": "^2.5.2",
+    "shacl-engine": "^1.1.2",
+    "tslib": "^2.3.0"
+  },
+  "devDependencies": {
+    "n3": "^2.13.12"
+  },
+  "peerDependencies": {
+    "@lde/dataset": "^0.10.0",
+    "@lde/pipeline": "^0.41.0"
+  }
+}

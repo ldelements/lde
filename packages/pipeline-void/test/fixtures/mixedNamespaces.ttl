@@ -1,0 +1,25 @@
+@prefix schema: <https://schema.org/> .
+@prefix schemahttp: <http://schema.org/> .
+
+# Two disjoint subsets of schema:CreativeWork instances — one typed under the
+# http:// namespace, one under https:// — as seen in netwerk-digitaal-erfgoed/
+# dataset-knowledge-graph#334. Subjects are disjoint across the two namespaces
+# (the merge transform’s disjointness assumption).
+
+# http-namespace subset
+<http://example.org/work1> a schemahttp:CreativeWork ;
+  schemahttp:name "A" .
+
+<http://example.org/work2> a schemahttp:CreativeWork ;
+  schemahttp:name "Shared" .
+
+# https-namespace subset
+<http://example.org/work3> a schema:CreativeWork ;
+  schema:name "Shared" ;              # same object value as work2’s http:name
+  schema:description "Werk 3"@nl ;    # exercises the language partition
+  schema:author <http://example.org/person1> .  # exercises the object-class partition
+
+<http://example.org/work4> a schema:CreativeWork ;
+  schema:name "B" .
+
+<http://example.org/person1> a schema:Person .

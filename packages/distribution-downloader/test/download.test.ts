@@ -9,7 +9,7 @@ const localFile = join(os.tmpdir(), 'example.com!file.nt');
 const downloader = new LastModifiedDownloader(os.tmpdir());
 const distribution = new Distribution(
   new URL('https://example.com/file.nt'),
-  'application/n-triples'
+  'application/n-triples',
 );
 
 describe('LastModifiedDownloader', () => {
@@ -33,11 +33,31 @@ describe('LastModifiedDownloader', () => {
     it('downloads file', async () => {
       nock('https://example.com').get('/file.nt').reply(200, 'mock file');
 
-      const filePath = await downloader.download(distribution);
-      expect(filePath).toBe(localFile);
+      const result = await downloader.download(distribution);
+      expect(result.path).toBe(localFile);
 
       const fileContent = await fs.readFile(localFile, 'utf8');
       expect(fileContent).toBe('mock file');
+    });
+
+    it('creates the target directory if it does not exist', async () => {
+      const missingDir = join(os.tmpdir(), 'lde-download-test', 'nested');
+      await fs.rm(join(os.tmpdir(), 'lde-download-test'), {
+        recursive: true,
+        force: true,
+      });
+      nock('https://example.com').get('/file.nt').reply(200, 'mock file');
+
+      const missingDirDownloader = new LastModifiedDownloader(missingDir);
+      const result = await missingDirDownloader.download(distribution);
+
+      const fileContent = await fs.readFile(result.path, 'utf8');
+      expect(fileContent).toBe('mock file');
+
+      await fs.rm(join(os.tmpdir(), 'lde-download-test'), {
+        recursive: true,
+        force: true,
+      });
     });
 
     it('does not download file again if it is up to date', async () => {
@@ -45,7 +65,7 @@ describe('LastModifiedDownloader', () => {
         .get('/file.nt')
         .times(1)
         .reply(200, 'mock file');
-      const filePath = await downloader.download(distribution);
+      const { path: filePath } = await downloader.download(distribution);
       const stat = await fs.stat(filePath);
 
       distribution.lastModified = new Date('2001-01-01');
@@ -56,14 +76,14 @@ describe('LastModifiedDownloader', () => {
     it('throws an error if file is unavailable', async () => {
       nock('https://example.com').get('/file.nt').reply(500);
       await expect(downloader.download(distribution)).rejects.toThrow(
-        'Failed to download https://example.com/file.nt: Internal Server Error'
+        'Failed to download https://example.com/file.nt: Internal Server Error',
       );
     });
 
     it('throws an error if file is empty', async () => {
       nock('https://example.com').get('/file.nt').reply(200, '');
       await expect(downloader.download(distribution)).rejects.toThrow(
-        'Distribution download is empty'
+        'Distribution download is empty',
       );
     });
 
@@ -82,6 +102,12 @@ describe('LastModifiedDownloader', () => {
 
       const fileContent = await fs.readFile(localFile, 'utf8');
       expect(fileContent).toBe('complete file');
+    });
+
+    it('rejects a target that escapes the base directory', async () => {
+      await expect(
+        downloader.download(distribution, '../../etc/passwd'),
+      ).rejects.toThrow(/escapes the base directory/);
     });
 
     it('logs debug messages when logger is provided', async () => {
@@ -103,7 +129,7 @@ describe('LastModifiedDownloader', () => {
 
       await downloader.download(distribution, undefined, { logger });
       expect(debugMessages.some((msg) => msg.includes('is up to date'))).toBe(
-        true
+        true,
       );
     });
   });

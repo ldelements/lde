@@ -1,10 +1,11 @@
 {
   "name": "@lde/dataset",
-  "version": "0.7.1",
+  "version": "0.10.0",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
     "directory": "packages/dataset"
   },
+  "license": "MIT",
   "type": "module",
   "exports": {
     "./package.json": "./package.json",

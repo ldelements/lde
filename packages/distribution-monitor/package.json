@@ -1,0 +1,44 @@
+{
+  "name": "@lde/distribution-monitor",
+  "version": "0.5.0",
+  "description": "Monitor DCAT distributions (SPARQL endpoints and data dumps) with periodic probes",
+  "repository": {
+    "url": "git+https://github.com/ldelements/lde.git",
+    "directory": "packages/distribution-monitor"
+  },
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "distribution-monitor": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "!**/*.tsbuildinfo"
+  ],
+  "dependencies": {
+    "@lde/dataset": "^0.10.0",
+    "@lde/distribution-probe": "^0.5.0",
+    "c12": "^3.3.4",
+    "commander": "^15.0.0",
+    "cron": "^4.1.0",
+    "drizzle-kit": "1.0.0-rc.5-5935859",
+    "drizzle-orm": "1.0.0-rc.5-5935859",
+    "postgres": "^3.4.9",
+    "tslib": "^2.3.0"
+  },
+  "devDependencies": {
+    "@testcontainers/postgresql": "^12.2.0"
+  }
+}

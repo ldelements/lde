@@ -1,0 +1,147 @@
+{
+  "@context": "http://iiif.io/api/presentation/2/context.json",
+  "@id": "https://demo.limb-gallery.com/iiif/25290/manifest",
+  "@type": "sc:Manifest",
+  "attribution": "Limb Gallery Demo",
+  "label": "The Starry Night",
+  "description": "This is a famous painting by Vincent van Gogh titled 'The Starry Night'. It depicts a vibrant, swirling night sky filled with bright stars and a crescent moon, a dark, flame-like cypress tree in the foreground, and a quiet village with a church steeple below.",
+  "metadata": [
+    {
+      "label": "Title",
+      "value": [
+        {
+          "@value": "The Starry Night"
+        },
+        {
+          "@value": "La Nuit \u00e9toil\u00e9e"
+        }
+      ]
+    },
+    {
+      "label": "Categories",
+      "value": [
+        {
+          "@value": "Art"
+        },
+        {
+          "@value": "Art > Painting"
+        }
+      ]
+    },
+    {
+      "label": "Description",
+      "value": "This is a famous painting by Vincent van Gogh titled 'The Starry Night'. It depicts a vibrant, swirling night sky filled with bright stars and a crescent moon, a dark, flame-like cypress tree in the foreground, and a quiet village with a church steeple below."
+    },
+    {
+      "label": "RecordsLevel",
+      "value": "Main"
+    },
+    {
+      "label": "Type",
+      "value": "Oil on canvas"
+    },
+    {
+      "label": "Subject",
+      "value": [
+        {
+          "@value": "Night sky"
+        },
+        {
+          "@value": "Cypress tree"
+        },
+        {
+          "@value": "Village"
+        },
+        {
+          "@value": "Stars"
+        },
+        {
+          "@value": "Moon"
+        }
+      ]
+    },
+    {
+      "label": "Format",
+      "value": "Canvas"
+    },
+    {
+      "label": "Creator",
+      "value": "Vincent van Gogh"
+    },
+    {
+      "label": "Date",
+      "value": "1889-06"
+    },
+    {
+      "label": "location geo point",
+      "value": "43.7885782,4.8317498"
+    },
+    {
+      "label": "location country",
+      "value": "France"
+    },
+    {
+      "label": "location city",
+      "value": "Saint-Remy-de-Provence"
+    },
+    {
+      "label": "Coverage",
+      "value": "Museum of Modern Art, New York"
+    },
+    {
+      "label": "files_list",
+      "value": "Van_Gogh_-_Starry_Night_-_Google_Art_Project.jpg"
+    }
+  ],
+  "rendering": {
+    "@id": "https://demo.limb-gallery.com/idurl/1/25290",
+    "format": "text/html",
+    "label": "Full record view"
+  },
+  "thumbnail": {
+    "@id": "https://demo.limb-gallery.com/i/?IIIF=/7b/2e/bc/4c/7b2ebc4c-1a55-4d5d-a154-8b590764caa6/iiif/Van_Gogh_-_Starry_Night_-_Google_Art_Project.tif/full/^!256,256/0/default.jpg",
+    "@type": "dctypes:Image",
+    "format": "image/jpeg",
+    "height": 256,
+    "width": 256,
+    "service": {
+      "@context": "http://iiif.io/api/image/2/context.json",
+      "@id": "https://demo.limb-gallery.com/i/?IIIF=/7b/2e/bc/4c/7b2ebc4c-1a55-4d5d-a154-8b590764caa6/iiif/Van_Gogh_-_Starry_Night_-_Google_Art_Project.tif",
+      "profile": "http://iiif.io/api/image/2/level2.json"
+    }
+  },
+  "sequences": [
+    {
+      "@type": "sc:Sequence",
+      "canvases": [
+        {
+          "@id": "https://demo.limb-gallery.com/iiif/25290/canvas/1",
+          "label": "1",
+          "height": 23756,
+          "width": 30000,
+          "@type": "sc:Canvas",
+          "images": [
+            {
+              "motivation": "sc:painting",
+              "@type": "oa:Annotation",
+              "@id": "https://demo.limb-gallery.com/iiif/25290/annotation/1",
+              "on": "https://demo.limb-gallery.com/iiif/25290/canvas/1",
+              "resource": {
+                "format": "image/jpeg",
+                "service": {
+                  "@context": "https://iiif.io/api/image/2/context.json",
+                  "profile": "https://library.stanford.edu/iiif/image-api/1.1/compliance.html#level2",
+                  "@id": "https://demo.limb-gallery.com/i/?IIIF=/7b/2e/bc/4c/7b2ebc4c-1a55-4d5d-a154-8b590764caa6/iiif/Van_Gogh_-_Starry_Night_-_Google_Art_Project.tif"
+                },
+                "height": 23756,
+                "width": 30000,
+                "@type": "dctypes:Image",
+                "@id": "https://demo.limb-gallery.com/i/?IIIF=/7b/2e/bc/4c/7b2ebc4c-1a55-4d5d-a154-8b590764caa6/iiif/Van_Gogh_-_Starry_Night_-_Google_Art_Project.tif/full/full/0/default.jpg"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

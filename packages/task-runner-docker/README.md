@@ -1,8 +1,12 @@
-# Task Runner Docker
+# @lde/task-runner-docker
 
 Run shell commands inside Docker containers for isolated, reproducible execution.
 
-## Usage
+## Installation
+
+```sh
+npm install @lde/task-runner-docker
+```
 
 ```typescript
 import { DockerTaskRunner } from '@lde/task-runner-docker';
@@ -20,26 +24,8 @@ const container = await runner.run('ls -la /mount');
 // Wait for completion
 const output = await runner.wait(container);
 console.log(output);
-
-// Or stop a running container
-await runner.stop(container);
 ```
 
-## Options
+## Documentation
 
-| Option          | Type     | Required | Description                                          |
-| --------------- | -------- | -------- | ---------------------------------------------------- |
-| `image`         | `string` | Yes      | Docker image to use                                  |
-| `containerName` | `string` | No       | Name for the container (auto-removed on restart)     |
-| `mountDir`      | `string` | No       | Host directory to mount at `/mount` in the container |
-| `port`          | `number` | No       | Port to expose from the container                    |
-| `docker`        | `Docker` | No       | Custom Dockerode instance                            |
-
-## Features
-
-- Automatically pulls the Docker image before running
-- Mounts a host directory as `/mount` with the `mountDir` option
-- Runs commands as the current user (UID/GID) for file permissions
-- Exposes ports with `port` option
-- Removes previous containers with the same name on restart
-- Streams container logs to stdout
+See the [full documentation](https://ldelements.org/reference/task-runner-docker).

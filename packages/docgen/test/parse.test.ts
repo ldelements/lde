@@ -8,4 +8,31 @@ describe('parseRdfToJsonLd', () => {
     const shapes = await parseRdfToJsonLd(filePath);
     expect(shapes.length).toBe(12);
   });
+
+  it('keeps blank nodes in the order of the source file', async () => {
+    const filePath = resolve('./test/fixtures/order.ttl');
+    const shapes = await parseRdfToJsonLd(filePath);
+    const names = shapes
+      .filter((shape) => shape['http://www.w3.org/ns/shacl#name'])
+      .map(
+        (shape) =>
+          (
+            shape['http://www.w3.org/ns/shacl#name'] as { '@value': string }[]
+          )[0]['@value'],
+      );
+    expect(names).toEqual([
+      'First',
+      'Second',
+      'Third',
+      'Fourth',
+      'Fifth',
+      'Sixth',
+      'Seventh',
+      'Eighth',
+      'Ninth',
+      'Tenth',
+      'Eleventh',
+      'Twelfth',
+    ]);
+  });
 });

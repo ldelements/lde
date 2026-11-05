@@ -2,6 +2,7 @@ import { resolveDistributions } from '../../src/distribution/index.js';
 import {
   ResolvedDistribution,
   NoDistributionAvailable,
+  ProbedDistributions,
   type DistributionResolver,
 } from '../../src/distribution/index.js';
 import { Dataset, Distribution } from '@lde/dataset';
@@ -10,7 +11,7 @@ import {
   SparqlProbeResult,
   DataDumpProbeResult,
   NetworkError,
-} from '../../src/distribution/probe.js';
+} from '@lde/distribution-probe';
 import { describe, it, expect } from 'vitest';
 
 async function collect<T>(iterable: AsyncIterable<T>): Promise<T[]> {
@@ -24,7 +25,11 @@ async function collect<T>(iterable: AsyncIterable<T>): Promise<T[]> {
 function mockResolver(
   result: ResolvedDistribution | NoDistributionAvailable,
 ): DistributionResolver {
-  return { resolve: async () => result };
+  return {
+    probe: async (dataset) =>
+      new ProbedDistributions(dataset, result.probeResults, null),
+    resolve: async () => result,
+  };
 }
 
 describe('resolveDistributions', () => {
@@ -38,6 +43,8 @@ describe('resolveDistributions', () => {
         status: 200,
         headers: { 'Content-Type': 'application/sparql-results+json' },
       }),
+      0,
+      'application/sparql-results+json',
     );
     const dataset = new Dataset({
       iri: new URL('http://example.org/dataset'),
@@ -65,6 +72,7 @@ describe('resolveDistributions', () => {
     const networkError = new NetworkError(
       'http://example.org/sparql',
       'Connection refused',
+      0,
     );
     const resolver = mockResolver(
       new NoDistributionAvailable(
@@ -102,6 +110,7 @@ describe('resolveDistributions', () => {
         status: 200,
         headers: { 'Content-Length': '1000' },
       }),
+      0,
     );
     const importFailed: ImportFailed = {
       type: 'failed',
@@ -141,6 +150,8 @@ describe('resolveDistributions', () => {
         status: 200,
         headers: { 'Content-Type': 'application/sparql-results+json' },
       }),
+      0,
+      'application/sparql-results+json',
     );
     const dataset = new Dataset({
       iri: new URL('http://custom.org/dataset'),
@@ -148,6 +159,12 @@ describe('resolveDistributions', () => {
     });
 
     const customResolver: DistributionResolver = {
+      async probe(dataset) {
+        return new ProbedDistributions(dataset, [probeResult], {
+          distribution,
+          probeResult,
+        });
+      },
       async resolve() {
         return new ResolvedDistribution(distribution, [probeResult]);
       },

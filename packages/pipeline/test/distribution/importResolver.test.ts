@@ -2,13 +2,18 @@ import {
   ImportResolver,
   ResolvedDistribution,
   NoDistributionAvailable,
+  ProbedDistributions,
   DataDumpProbeResult,
+  SparqlProbeResult,
   type DistributionResolver,
+  type ProbeResultType,
+  type ResolveCallbacks,
 } from '../../src/distribution/index.js';
 import { Dataset, Distribution } from '@lde/dataset';
-import type { ImportSuccessful, ImportFailed } from '@lde/sparql-importer';
 import type { SparqlServer } from '@lde/sparql-server';
 import { describe, it, expect, vi } from 'vitest';
+
+const SPARQL_URL = 'http://example.org/sparql';
 
 const dataDumpProbeResult = new DataDumpProbeResult(
   'http://example.org/data.nt',
@@ -19,7 +24,20 @@ const dataDumpProbeResult = new DataDumpProbeResult(
       'Content-Type': 'application/n-triples',
     },
   }),
+  0,
 );
+
+function sparqlProbeResult(): SparqlProbeResult {
+  return new SparqlProbeResult(
+    SPARQL_URL,
+    new Response('{"results":{"bindings":[]}}', {
+      status: 200,
+      headers: { 'Content-Type': 'application/sparql-results+json' },
+    }),
+    0,
+    'application/sparql-results+json',
+  );
+}
 
 function makeDataset(): Dataset {
   return new Dataset({
@@ -33,10 +51,34 @@ function makeDataset(): Dataset {
   });
 }
 
-function makeInnerResolver(
-  result: ResolvedDistribution | NoDistributionAvailable,
+/** An inner resolver whose probe found a working SPARQL endpoint. */
+function innerWithSparqlEndpoint(
+  dataset: Dataset,
+  sparqlDistribution: Distribution,
+  probeResults: ProbeResultType[],
 ): DistributionResolver {
-  return { resolve: vi.fn().mockResolvedValue(result) };
+  return {
+    probe: vi.fn().mockResolvedValue(
+      new ProbedDistributions(dataset, probeResults, {
+        distribution: sparqlDistribution,
+        probeResult: probeResults[0],
+      }),
+    ),
+    resolve: vi.fn(),
+  };
+}
+
+/** An inner resolver whose probe found no SPARQL endpoint. */
+function innerNoSparqlEndpoint(
+  dataset: Dataset,
+  probeResults: ProbeResultType[],
+): DistributionResolver {
+  return {
+    probe: vi
+      .fn()
+      .mockResolvedValue(new ProbedDistributions(dataset, probeResults, null)),
+    resolve: vi.fn(),
+  };
 }
 
 function makeServer(): SparqlServer & {
@@ -50,32 +92,38 @@ function makeServer(): SparqlServer & {
   };
 }
 
+/** Run both phases, threading callbacks to each, as the pipeline does. */
+async function resolve(
+  resolver: ImportResolver,
+  dataset: Dataset,
+  callbacks?: ResolveCallbacks,
+) {
+  return resolver.resolve(await resolver.probe(dataset, callbacks), callbacks);
+}
+
 describe('ImportResolver', () => {
-  it('returns inner result when it is a ResolvedDistribution', async () => {
-    const distribution = Distribution.sparql(
-      new URL('http://example.org/sparql'),
-    );
-    const resolved = new ResolvedDistribution(distribution, []);
-    const inner = makeInnerResolver(resolved);
+  it('returns the SPARQL endpoint without importing when one is found', async () => {
+    const dataset = makeDataset();
+    const distribution = Distribution.sparql(new URL(SPARQL_URL));
+    const inner = innerWithSparqlEndpoint(dataset, distribution, [
+      sparqlProbeResult(),
+    ]);
     const mockImporter = { import: vi.fn() };
 
     const resolver = new ImportResolver(inner, {
       importer: mockImporter,
       server: makeServer(),
     });
-    const result = await resolver.resolve(makeDataset());
+    const result = await resolve(resolver, dataset);
 
-    expect(result).toBe(resolved);
+    expect(result).toBeInstanceOf(ResolvedDistribution);
+    expect((result as ResolvedDistribution).distribution).toBe(distribution);
     expect(mockImporter.import).not.toHaveBeenCalled();
   });
 
-  it('falls back to import when inner resolver returns NoDistributionAvailable', async () => {
+  it('falls back to import when no SPARQL endpoint is found', async () => {
     const dataset = makeDataset();
-    const inner = makeInnerResolver(
-      new NoDistributionAvailable(dataset, 'No endpoint', [
-        dataDumpProbeResult,
-      ]),
-    );
+    const inner = innerNoSparqlEndpoint(dataset, [dataDumpProbeResult]);
 
     const mockImporter = {
       import: vi.fn().mockResolvedValue({
@@ -84,7 +132,10 @@ describe('ImportResolver', () => {
           new URL('http://localhost:7878/sparql'),
         ),
         identifier: 'test-graph',
-      } satisfies ImportSuccessful),
+        tripleCount: 42000,
+        warnings: [],
+        engine: { name: 'QLever', version: '9352d0' },
+      }),
     };
 
     const server = makeServer();
@@ -92,10 +143,12 @@ describe('ImportResolver', () => {
       importer: mockImporter,
       server,
     });
-    const result = await resolver.resolve(dataset);
+    const result = await resolve(resolver, dataset);
 
     expect(result).toBeInstanceOf(ResolvedDistribution);
-    expect(mockImporter.import).toHaveBeenCalledWith(dataset);
+    expect(mockImporter.import).toHaveBeenCalledWith([
+      dataset.distributions[0],
+    ]);
     expect(server.start).toHaveBeenCalled();
     const resolved = result as ResolvedDistribution;
     expect(resolved.distribution.accessUrl.toString()).toBe(
@@ -103,15 +156,16 @@ describe('ImportResolver', () => {
     );
     expect(resolved.probeResults).toHaveLength(1);
     expect(resolved.probeResults[0]).toBeInstanceOf(DataDumpProbeResult);
+    expect(resolved.imported?.tripleCount).toBe(42000);
+    expect(resolved.imported?.engine).toEqual({
+      name: 'QLever',
+      version: '9352d0',
+    });
   });
 
-  it('sets importedFrom on ResolvedDistribution when import succeeds', async () => {
+  it('sets imported on ResolvedDistribution when import succeeds', async () => {
     const dataset = makeDataset();
-    const inner = makeInnerResolver(
-      new NoDistributionAvailable(dataset, 'No endpoint', [
-        dataDumpProbeResult,
-      ]),
-    );
+    const inner = innerNoSparqlEndpoint(dataset, [dataDumpProbeResult]);
 
     const importedDistribution = Distribution.sparql(
       new URL('http://localhost:7878/sparql'),
@@ -121,45 +175,41 @@ describe('ImportResolver', () => {
         type: 'successful',
         distribution: importedDistribution,
         identifier: 'test-graph',
-      } satisfies ImportSuccessful),
+        warnings: [],
+      }),
     };
 
-    const server = makeServer();
     const resolver = new ImportResolver(inner, {
       importer: mockImporter,
-      server,
+      server: makeServer(),
     });
-    const result = await resolver.resolve(dataset);
+    const result = await resolve(resolver, dataset);
 
     const resolved = result as ResolvedDistribution;
-    expect(resolved.importedFrom).toBe(importedDistribution);
+    expect(resolved.imported?.from).toBe(importedDistribution);
   });
 
-  it('importedFrom is undefined when inner resolver succeeds directly', async () => {
-    const distribution = Distribution.sparql(
-      new URL('http://example.org/sparql'),
-    );
-    const resolved = new ResolvedDistribution(distribution, []);
-    const inner = makeInnerResolver(resolved);
+  it('imported is undefined when a SPARQL endpoint is used directly', async () => {
+    const dataset = makeDataset();
+    const distribution = Distribution.sparql(new URL(SPARQL_URL));
+    const inner = innerWithSparqlEndpoint(dataset, distribution, [
+      sparqlProbeResult(),
+    ]);
     const mockImporter = { import: vi.fn() };
 
     const resolver = new ImportResolver(inner, {
       importer: mockImporter,
       server: makeServer(),
     });
-    const result = await resolver.resolve(makeDataset());
+    const result = await resolve(resolver, dataset);
 
     expect(result).toBeInstanceOf(ResolvedDistribution);
-    expect((result as ResolvedDistribution).importedFrom).toBeUndefined();
+    expect((result as ResolvedDistribution).imported).toBeUndefined();
   });
 
   it('returns NoDistributionAvailable with importFailed when import fails', async () => {
     const dataset = makeDataset();
-    const inner = makeInnerResolver(
-      new NoDistributionAvailable(dataset, 'No endpoint', [
-        dataDumpProbeResult,
-      ]),
-    );
+    const inner = innerNoSparqlEndpoint(dataset, [dataDumpProbeResult]);
 
     const mockImporter = {
       import: vi.fn().mockResolvedValue({
@@ -169,14 +219,14 @@ describe('ImportResolver', () => {
           'application/n-triples',
         ),
         error: 'Parse error',
-      } satisfies ImportFailed),
+      }),
     };
 
     const resolver = new ImportResolver(inner, {
       importer: mockImporter,
       server: makeServer(),
     });
-    const result = await resolver.resolve(dataset);
+    const result = await resolve(resolver, dataset);
 
     expect(result).toBeInstanceOf(NoDistributionAvailable);
     const noDistribution = result as NoDistributionAvailable;
@@ -185,16 +235,91 @@ describe('ImportResolver', () => {
     expect(noDistribution.probeResults).toHaveLength(1);
   });
 
+  it('returns NoDistributionAvailable when importer returns NotSupported', async () => {
+    const dataset = makeDataset();
+    const inner = innerNoSparqlEndpoint(dataset, [dataDumpProbeResult]);
+
+    const mockImporter = {
+      import: vi.fn().mockResolvedValue({ type: 'not-supported' }),
+    };
+
+    const onImportFailed = vi.fn();
+    const resolver = new ImportResolver(inner, {
+      importer: mockImporter,
+      server: makeServer(),
+    });
+    const result = await resolve(resolver, dataset, { onImportFailed });
+
+    expect(result).toBeInstanceOf(NoDistributionAvailable);
+    const noDistribution = result as NoDistributionAvailable;
+    expect(noDistribution.message).toBe('No supported import format available');
+    expect(onImportFailed).toHaveBeenCalledWith(
+      dataset.distributions[0],
+      'No supported import format',
+    );
+  });
+
+  it('throws when the importer returns a result of unknown type', async () => {
+    const dataset = makeDataset();
+    const inner = innerNoSparqlEndpoint(dataset, [dataDumpProbeResult]);
+
+    // What an importer built against an incompatible @lde/sparql-importer
+    // returns: a result without a known `type`.
+    const mockImporter = {
+      import: vi
+        .fn()
+        .mockResolvedValue({ distribution: dataset.distributions[0] }),
+    };
+
+    const resolver = new ImportResolver(inner, {
+      importer: mockImporter,
+      server: makeServer(),
+    });
+
+    await expect(resolve(resolver, dataset)).rejects.toThrow(
+      /unknown type undefined.*npm ls @lde\/sparql-importer/,
+    );
+  });
+
+  it('returns NoDistributionAvailable when the server fails to start after import', async () => {
+    const dataset = makeDataset();
+    const inner = innerNoSparqlEndpoint(dataset, [dataDumpProbeResult]);
+    const importedDistribution = dataset.distributions[0];
+
+    const mockImporter = {
+      import: vi.fn().mockResolvedValue({
+        type: 'successful',
+        distribution: importedDistribution,
+        warnings: [],
+      }),
+    };
+    const server = makeServer();
+    server.start.mockRejectedValue(new Error('Port in use'));
+
+    const onImportFailed = vi.fn();
+    const resolver = new ImportResolver(inner, {
+      importer: mockImporter,
+      server,
+    });
+    const result = await resolve(resolver, dataset, { onImportFailed });
+
+    expect(result).toBeInstanceOf(NoDistributionAvailable);
+    expect((result as NoDistributionAvailable).message).toBe(
+      'SPARQL server failed to start after import',
+    );
+    expect(onImportFailed).toHaveBeenCalledWith(
+      importedDistribution,
+      'Port in use',
+    );
+  });
+
   describe('import strategy', () => {
-    it('ignores inner ResolvedDistribution and imports instead', async () => {
+    it('ignores an available SPARQL endpoint and imports instead', async () => {
       const dataset = makeDataset();
-      const distribution = Distribution.sparql(
-        new URL('http://example.org/sparql'),
-      );
-      const resolved = new ResolvedDistribution(distribution, [
+      const distribution = Distribution.sparql(new URL(SPARQL_URL));
+      const inner = innerWithSparqlEndpoint(dataset, distribution, [
         dataDumpProbeResult,
       ]);
-      const inner = makeInnerResolver(resolved);
 
       const mockImporter = {
         import: vi.fn().mockResolvedValue({
@@ -203,7 +328,8 @@ describe('ImportResolver', () => {
             new URL('http://localhost:7878/sparql'),
           ),
           identifier: 'test-graph',
-        } satisfies ImportSuccessful),
+          warnings: [],
+        }),
       };
 
       const server = makeServer();
@@ -212,10 +338,12 @@ describe('ImportResolver', () => {
         server,
         strategy: 'import',
       });
-      const result = await resolver.resolve(dataset);
+      const result = await resolve(resolver, dataset);
 
-      expect(inner.resolve).toHaveBeenCalled();
-      expect(mockImporter.import).toHaveBeenCalledWith(dataset);
+      expect(inner.probe).toHaveBeenCalled();
+      expect(mockImporter.import).toHaveBeenCalledWith([
+        dataset.distributions[0],
+      ]);
       expect(result).toBeInstanceOf(ResolvedDistribution);
       expect(server.start).toHaveBeenCalled();
       const res = result as ResolvedDistribution;
@@ -227,13 +355,10 @@ describe('ImportResolver', () => {
 
     it('returns NoDistributionAvailable with probe results from inner when import fails', async () => {
       const dataset = makeDataset();
-      const distribution = Distribution.sparql(
-        new URL('http://example.org/sparql'),
-      );
-      const resolved = new ResolvedDistribution(distribution, [
+      const distribution = Distribution.sparql(new URL(SPARQL_URL));
+      const inner = innerWithSparqlEndpoint(dataset, distribution, [
         dataDumpProbeResult,
       ]);
-      const inner = makeInnerResolver(resolved);
 
       const mockImporter = {
         import: vi.fn().mockResolvedValue({
@@ -243,7 +368,7 @@ describe('ImportResolver', () => {
             'application/n-triples',
           ),
           error: 'Parse error',
-        } satisfies ImportFailed),
+        }),
       };
 
       const resolver = new ImportResolver(inner, {
@@ -251,7 +376,7 @@ describe('ImportResolver', () => {
         server: makeServer(),
         strategy: 'import',
       });
-      const result = await resolver.resolve(dataset);
+      const result = await resolve(resolver, dataset);
 
       expect(result).toBeInstanceOf(NoDistributionAvailable);
       const noDistribution = result as NoDistributionAvailable;
@@ -260,20 +385,125 @@ describe('ImportResolver', () => {
     });
 
     it('default strategy preserves existing sparql-first behaviour', async () => {
-      const distribution = Distribution.sparql(
-        new URL('http://example.org/sparql'),
-      );
-      const resolved = new ResolvedDistribution(distribution, []);
-      const inner = makeInnerResolver(resolved);
+      const dataset = makeDataset();
+      const distribution = Distribution.sparql(new URL(SPARQL_URL));
+      const inner = innerWithSparqlEndpoint(dataset, distribution, [
+        sparqlProbeResult(),
+      ]);
       const mockImporter = { import: vi.fn() };
 
       const resolver = new ImportResolver(inner, {
         importer: mockImporter,
         server: makeServer(),
       });
-      const result = await resolver.resolve(makeDataset());
+      const result = await resolve(resolver, dataset);
 
-      expect(result).toBe(resolved);
+      expect(result).toBeInstanceOf(ResolvedDistribution);
+      expect((result as ResolvedDistribution).distribution).toBe(distribution);
+      expect(mockImporter.import).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('reactive dump fallback', () => {
+    /** A probed dataset whose chosen source is a SPARQL endpoint, but which
+     * also has an importable dump that passed probing. */
+    function probedEndpointWithDump(): {
+      dataset: Dataset;
+      probed: ProbedDistributions;
+    } {
+      const sparqlDistribution = Distribution.sparql(new URL(SPARQL_URL));
+      const downloadDistribution = new Distribution(
+        new URL('http://example.org/data.nt'),
+        'application/n-triples',
+      );
+      const dataset = new Dataset({
+        iri: new URL('http://example.org/dataset'),
+        distributions: [sparqlDistribution, downloadDistribution],
+      });
+      const sparqlProbe = sparqlProbeResult();
+      const probed = new ProbedDistributions(
+        dataset,
+        [sparqlProbe, dataDumpProbeResult],
+        { distribution: sparqlDistribution, probeResult: sparqlProbe },
+      );
+      return { dataset, probed };
+    }
+
+    function dummyInner(): DistributionResolver {
+      return { probe: vi.fn(), resolve: vi.fn() };
+    }
+
+    it('imports the dump, ignoring the endpoint, when enabled', async () => {
+      const { dataset, probed } = probedEndpointWithDump();
+      const importedDistribution = Distribution.sparql(
+        new URL('http://localhost:7878/sparql'),
+      );
+      const mockImporter = {
+        import: vi.fn().mockResolvedValue({
+          type: 'successful',
+          distribution: importedDistribution,
+          identifier: 'test-graph',
+          tripleCount: 99,
+          warnings: [],
+        }),
+      };
+      const server = makeServer();
+      const resolver = new ImportResolver(dummyInner(), {
+        importer: mockImporter,
+        server,
+        strategy: 'sparqlWithImportFallback',
+      });
+
+      const result = await resolver.resolveFallback(probed);
+
+      expect(mockImporter.import).toHaveBeenCalledWith([
+        dataset.distributions[1],
+      ]);
+      expect(server.start).toHaveBeenCalled();
+      expect(result).toBeInstanceOf(ResolvedDistribution);
+      const resolved = result as ResolvedDistribution;
+      expect(resolved.distribution.accessUrl.toString()).toBe(
+        'http://localhost:7001/sparql',
+      );
+      expect(resolved.imported?.from).toBe(importedDistribution);
+      expect(resolved.imported?.tripleCount).toBe(99);
+    });
+
+    it('returns NoDistributionAvailable without importing when disabled', async () => {
+      const { probed } = probedEndpointWithDump();
+      const mockImporter = { import: vi.fn() };
+      const resolver = new ImportResolver(dummyInner(), {
+        importer: mockImporter,
+        server: makeServer(),
+      });
+
+      const result = await resolver.resolveFallback(probed);
+
+      expect(result).toBeInstanceOf(NoDistributionAvailable);
+      expect(mockImporter.import).not.toHaveBeenCalled();
+    });
+
+    it('returns NoDistributionAvailable when no dump passed probing', async () => {
+      const sparqlDistribution = Distribution.sparql(new URL(SPARQL_URL));
+      const dataset = new Dataset({
+        iri: new URL('http://example.org/dataset'),
+        distributions: [sparqlDistribution],
+      });
+      const sparqlProbe = sparqlProbeResult();
+      const probed = new ProbedDistributions(dataset, [sparqlProbe], {
+        distribution: sparqlDistribution,
+        probeResult: sparqlProbe,
+      });
+      const mockImporter = { import: vi.fn() };
+      const resolver = new ImportResolver(dummyInner(), {
+        importer: mockImporter,
+        server: makeServer(),
+        strategy: 'sparqlWithImportFallback',
+      });
+
+      const result = await resolver.resolveFallback(probed);
+
+      expect(result).toBeInstanceOf(NoDistributionAvailable);
       expect(mockImporter.import).not.toHaveBeenCalled();
     });
   });
@@ -281,11 +511,7 @@ describe('ImportResolver', () => {
   describe('server integration', () => {
     it('starts server after import and uses its endpoint', async () => {
       const dataset = makeDataset();
-      const inner = makeInnerResolver(
-        new NoDistributionAvailable(dataset, 'No endpoint', [
-          dataDumpProbeResult,
-        ]),
-      );
+      const inner = innerNoSparqlEndpoint(dataset, [dataDumpProbeResult]);
 
       const mockImporter = {
         import: vi.fn().mockResolvedValue({
@@ -294,7 +520,8 @@ describe('ImportResolver', () => {
             new URL('http://localhost:7878/sparql'),
           ),
           identifier: 'test-graph',
-        } satisfies ImportSuccessful),
+          warnings: [],
+        }),
       };
 
       const server = makeServer();
@@ -303,7 +530,7 @@ describe('ImportResolver', () => {
         importer: mockImporter,
         server,
       });
-      const result = await resolver.resolve(dataset);
+      const result = await resolve(resolver, dataset);
 
       expect(result).toBeInstanceOf(ResolvedDistribution);
       expect(server.start).toHaveBeenCalled();
@@ -313,12 +540,12 @@ describe('ImportResolver', () => {
       );
     });
 
-    it('does not start server when inner resolver succeeds', async () => {
-      const distribution = Distribution.sparql(
-        new URL('http://example.org/sparql'),
-      );
-      const resolved = new ResolvedDistribution(distribution, []);
-      const inner = makeInnerResolver(resolved);
+    it('does not start server when a SPARQL endpoint is used', async () => {
+      const dataset = makeDataset();
+      const distribution = Distribution.sparql(new URL(SPARQL_URL));
+      const inner = innerWithSparqlEndpoint(dataset, distribution, [
+        sparqlProbeResult(),
+      ]);
       const mockImporter = { import: vi.fn() };
       const server = makeServer();
 
@@ -326,18 +553,156 @@ describe('ImportResolver', () => {
         importer: mockImporter,
         server,
       });
-      await resolver.resolve(makeDataset());
+      await resolve(resolver, dataset);
 
       expect(server.start).not.toHaveBeenCalled();
     });
 
+    it('propagates Last-Modified from probe to candidate distribution', async () => {
+      const dataset = makeDataset();
+      const lastModified = new Date('2026-01-15T10:00:00Z');
+      const probeResult = new DataDumpProbeResult(
+        'http://example.org/data.nt',
+        new Response('', {
+          status: 200,
+          headers: {
+            'Content-Length': '1000',
+            'Content-Type': 'application/n-triples',
+            'Last-Modified': lastModified.toUTCString(),
+          },
+        }),
+        0,
+      );
+      const inner = innerNoSparqlEndpoint(dataset, [probeResult]);
+
+      const mockImporter = {
+        import: vi.fn().mockResolvedValue({
+          type: 'successful',
+          distribution: Distribution.sparql(
+            new URL('http://localhost:7878/sparql'),
+          ),
+          identifier: 'test-graph',
+          warnings: [],
+        }),
+      };
+
+      const resolver = new ImportResolver(inner, {
+        importer: mockImporter,
+        server: makeServer(),
+      });
+      await resolve(resolver, dataset);
+
+      expect(dataset.distributions[0].lastModified).toEqual(lastModified);
+      expect(mockImporter.import).toHaveBeenCalledWith([
+        dataset.distributions[0],
+      ]);
+    });
+
+    it('prefers a newer probe Last-Modified over a stale register date', async () => {
+      const staleRegisterDate = new Date('2026-01-01T00:00:00Z');
+      const realHttpLastModified = new Date('2026-02-15T10:00:00Z');
+      const dataset = new Dataset({
+        iri: new URL('http://example.org/dataset'),
+        distributions: [
+          (() => {
+            const distribution = new Distribution(
+              new URL('http://example.org/data.nt'),
+              'application/n-triples',
+            );
+            distribution.lastModified = staleRegisterDate;
+            return distribution;
+          })(),
+        ],
+      });
+      const probeResult = new DataDumpProbeResult(
+        'http://example.org/data.nt',
+        new Response('', {
+          status: 200,
+          headers: {
+            'Content-Length': '1000',
+            'Content-Type': 'application/n-triples',
+            'Last-Modified': realHttpLastModified.toUTCString(),
+          },
+        }),
+        0,
+      );
+      const inner = innerNoSparqlEndpoint(dataset, [probeResult]);
+
+      const mockImporter = {
+        import: vi.fn().mockResolvedValue({
+          type: 'successful',
+          distribution: Distribution.sparql(
+            new URL('http://localhost:7878/sparql'),
+          ),
+          identifier: 'test-graph',
+          warnings: [],
+        }),
+      };
+
+      const resolver = new ImportResolver(inner, {
+        importer: mockImporter,
+        server: makeServer(),
+      });
+      await resolve(resolver, dataset);
+
+      expect(dataset.distributions[0].lastModified).toEqual(
+        realHttpLastModified,
+      );
+    });
+
+    it('keeps a newer register date over an older probe Last-Modified', async () => {
+      const newerRegisterDate = new Date('2026-03-01T00:00:00Z');
+      const olderHttpLastModified = new Date('2026-02-15T10:00:00Z');
+      const dataset = new Dataset({
+        iri: new URL('http://example.org/dataset'),
+        distributions: [
+          (() => {
+            const distribution = new Distribution(
+              new URL('http://example.org/data.nt'),
+              'application/n-triples',
+            );
+            distribution.lastModified = newerRegisterDate;
+            return distribution;
+          })(),
+        ],
+      });
+      const probeResult = new DataDumpProbeResult(
+        'http://example.org/data.nt',
+        new Response('', {
+          status: 200,
+          headers: {
+            'Content-Length': '1000',
+            'Content-Type': 'application/n-triples',
+            'Last-Modified': olderHttpLastModified.toUTCString(),
+          },
+        }),
+        0,
+      );
+      const inner = innerNoSparqlEndpoint(dataset, [probeResult]);
+
+      const mockImporter = {
+        import: vi.fn().mockResolvedValue({
+          type: 'successful',
+          distribution: Distribution.sparql(
+            new URL('http://localhost:7878/sparql'),
+          ),
+          identifier: 'test-graph',
+          warnings: [],
+        }),
+      };
+
+      const resolver = new ImportResolver(inner, {
+        importer: mockImporter,
+        server: makeServer(),
+      });
+      await resolve(resolver, dataset);
+
+      expect(dataset.distributions[0].lastModified).toEqual(newerRegisterDate);
+    });
+
     it('preserves subjectFilter from imported distribution', async () => {
       const dataset = makeDataset();
-      const inner = makeInnerResolver(
-        new NoDistributionAvailable(dataset, 'No endpoint', [
-          dataDumpProbeResult,
-        ]),
-      );
+      const inner = innerNoSparqlEndpoint(dataset, [dataDumpProbeResult]);
 
       const importedDistribution = new Distribution(
         new URL('http://example.org/data.nt'),
@@ -350,7 +715,8 @@ describe('ImportResolver', () => {
           type: 'successful',
           distribution: importedDistribution,
           identifier: 'test-graph',
-        } satisfies ImportSuccessful),
+          warnings: [],
+        }),
       };
 
       const server = makeServer();
@@ -358,7 +724,7 @@ describe('ImportResolver', () => {
         importer: mockImporter,
         server,
       });
-      const result = await resolver.resolve(dataset);
+      const result = await resolve(resolver, dataset);
 
       const resolved = result as ResolvedDistribution;
       expect(resolved.distribution.subjectFilter).toBe(
@@ -367,14 +733,11 @@ describe('ImportResolver', () => {
     });
 
     it('cleanup stops server', async () => {
+      const dataset = makeDataset();
+      const distribution = Distribution.sparql(new URL(SPARQL_URL));
       const server = makeServer();
       const resolver = new ImportResolver(
-        makeInnerResolver(
-          new ResolvedDistribution(
-            Distribution.sparql(new URL('http://example.org/sparql')),
-            [],
-          ),
-        ),
+        innerWithSparqlEndpoint(dataset, distribution, [sparqlProbeResult()]),
         { importer: { import: vi.fn() }, server },
       );
 

@@ -1,3 +1,160 @@
+## 0.12.0 (2026-11-03)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset to 0.10.0
+
+## 0.11.0 (2026-10-30)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/local-sparql-endpoint to 0.4.0
+- Updated @lde/dataset to 0.9.0
+
+## 0.10.1 (2026-10-28)
+
+This was a version bump only for @lde/dataset-registry-client to align it with other projects, there were no code changes.
+
+## 0.10.0 (2026-10-15)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/local-sparql-endpoint to 0.3.0
+- Updated @lde/dataset to 0.8.0
+
+## 0.9.5 (2026-10-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/local-sparql-endpoint to 0.2.16
+- Updated @lde/dataset to 0.7.10
+
+## 0.9.4 (2026-10-14)
+
+### 🩹 Fixes
+
+- **dataset-registry-client:** drop workaround for LDkit count() ignoring $id ([#875](https://github.com/ldelements/lde/pull/875))
+
+## 0.9.3 (2026-08-24)
+
+This was a version bump only for @lde/dataset-registry-client to align it with other projects, there were no code changes.
+
+## 0.9.2 (2026-08-21)
+
+### 🩹 Fixes
+
+- **dataset-registry-client:** type the IRI-valued schema properties as IRIs ([#762](https://github.com/ldelements/lde/pull/762))
+
+## 0.9.1 (2026-07-24)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/local-sparql-endpoint to 0.2.15
+- Updated @lde/dataset to 0.7.9
+
+## 0.9.0 (2026-07-23)
+
+This was a version bump only for @lde/dataset-registry-client to align it with other projects, there were no code changes.
+
+## 0.8.6 (2026-07-08)
+
+This was a version bump only for @lde/dataset-registry-client to align it with other projects, there were no code changes.
+
+## 0.8.5 (2026-06-26)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/local-sparql-endpoint to 0.2.14
+- Updated @lde/dataset to 0.7.8
+
+## 0.8.4 (2026-06-19)
+
+This was a version bump only for @lde/dataset-registry-client to align it with other projects, there were no code changes.
+
+## 0.8.3 (2026-06-15)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset to 0.7.7
+
+## 0.8.2 (2026-06-15)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset to 0.7.6
+
+## 0.8.1 (2026-06-10)
+
+### 🚀 Features
+
+- **dataset:** accept application/rdf+xml as an RDF media type ([#449](https://github.com/ldelements/lde/pull/449))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset to 0.7.5
+
+## 0.8.0 (2026-05-27)
+
+### 🚀 Features
+
+- ⚠️  **pipeline-shacl-validator:** composable reportWriters in place of reportDir ([#408](https://github.com/ldelements/lde/pull/408))
+
+### ⚠️  Breaking Changes
+
+- **pipeline-shacl-validator:** composable reportWriters in place of reportDir  ([#408](https://github.com/ldelements/lde/pull/408))
+  reportDir is no longer accepted and was required; pass
+  `reportWriters: [new FileWriter({ outputDir: ... })]` to preserve the
+  previous on-disk behaviour.
+  * fix(pipeline-shacl-validator): restore ValidationResult.message and document writer ergonomics
+  Address findings from a recall-biased code review of #408.
+  - Restore ValidationResult.message when violations are routed to reportWriters,
+    so the halt-mode error in Stage.validateBuffer (stage.ts:302) still points at
+    the report destination instead of degrading to a context-free count.
+  - README: actionable guidance for SparqlUpdateWriter named graphs (no per-call
+    override exists, so route to a separate endpoint or wrap the writer).
+  - README: warn about FileWriter filesystem collisions when main writer and
+    report writer share outputDir; the old .validation.<ext> infix prevented this
+    implicitly, the new ergonomics do not.
+  - README: flag that an empty reportWriters default silently discards violation
+    detail, so the trade-off is deliberate rather than surprising.
+
+## 0.7.9 (2026-05-22)
+
+### 🚀 Features
+
+- **pipeline-shacl-sampler:** support namespace aliases ([#398](https://github.com/ldelements/lde/pull/398))
+
+## 0.7.8 (2026-05-21)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset to 0.7.4
+
+## 0.7.7 (2026-04-28)
+
+### 🚀 Features
+
+- **docgen:** deep-merge user-supplied JSON-LD frame with built-in default ([#366](https://github.com/ldelements/lde/pull/366), [#313](https://github.com/ldelements/lde/issues/313))
+
+## 0.7.6 (2026-04-23)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/local-sparql-endpoint to 0.2.13
+- Updated @lde/dataset to 0.7.3
+
+## 0.7.5 (2026-04-17)
+
+### 🚀 Features
+
+- **dataset-registry-client:** expose full DCAT 3 vocabulary ([#356](https://github.com/ldelements/lde/pull/356))
+
+## 0.7.4 (2026-03-16)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset to 0.7.2
+
 ## 0.7.3 (2026-03-06)
 
 ### 🧱 Updated Dependencies

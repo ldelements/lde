@@ -7,6 +7,8 @@ export default [
   {
     ignores: [
       '**/dist',
+      '**/dist-docker',
+      '**/dist-agent',
       '**/coverage',
       '**/out-tsc',
       '**/vite.config.*.timestamp*',

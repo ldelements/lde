@@ -1,0 +1,37 @@
+{
+  "@context": "http://iiif.io/api/presentation/2/context.json",
+  "@id": "https://example.org/manifest.json",
+  "@type": "sc:Manifest",
+  "label": "Presentation 2 manifest with a null canvas",
+  "sequences": [
+    {
+      "@id": "https://example.org/sequence/1",
+      "@type": "sc:Sequence",
+      "canvases": [
+        {
+          "@id": "https://example.org/canvas/1",
+          "@type": "sc:Canvas",
+          "label": "p1",
+          "height": 100,
+          "width": 100,
+          "images": [
+            {
+              "@id": "https://example.org/annotation/1",
+              "@type": "oa:Annotation",
+              "motivation": "sc:painting",
+              "on": "https://example.org/canvas/1",
+              "resource": {
+                "@id": "https://example.org/image/1.jpg",
+                "@type": "dctypes:Image",
+                "format": "image/jpeg",
+                "height": 100,
+                "width": 100
+              }
+            }
+          ]
+        },
+        null
+      ]
+    }
+  ]
+}

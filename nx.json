@@ -44,7 +44,6 @@
       "plugin": "@nx/vite/plugin",
       "options": {
         "buildTargetName": "build",
-        "testTargetName": "test",
         "serveTargetName": "serve",
         "devTargetName": "dev",
         "previewTargetName": "preview",
@@ -53,30 +52,86 @@
         "buildDepsTargetName": "build-deps",
         "watchDepsTargetName": "watch-deps"
       }
+    },
+    {
+      "plugin": "@nx/vitest",
+      "options": {
+        "testTargetName": "test"
+      }
+    },
+    {
+      "plugin": "@nx/docker",
+      "options": {
+        "buildTarget": "docker:build",
+        "runTarget": "docker:run"
+      }
     }
   ],
   "targetDefaults": {
     "test": {
       "dependsOn": ["^build"]
+    },
+    "docker:stage": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "dependsOn": ["build"],
+      "inputs": ["production", "^production"],
+      "outputs": ["{projectRoot}/dist-docker"]
+    },
+    "copy-workspace-modules": {
+      "executor": "@nx/js:copy-workspace-modules",
+      "dependsOn": ["docker:stage"],
+      "options": {
+        "outputPath": "{projectRoot}/dist-docker"
+      }
+    },
+    "prune-lockfile": {
+      "executor": "@nx/js:prune-lockfile",
+      "dependsOn": ["docker:stage"],
+      "options": {
+        "outputPath": "{projectRoot}/dist-docker"
+      }
+    },
+    "docker:lockfile": {
+      "executor": "nx:run-commands",
+      "dependsOn": ["copy-workspace-modules", "prune-lockfile"],
+      "options": {
+        "cwd": "{projectRoot}/dist-docker",
+        "command": "find workspace_modules -type d \\( -name src -o -name test \\) -prune -exec rm -rf {} + && find . -name '*.tsbuildinfo' -type f -delete && find . -name package.json -execdir npm pkg delete devDependencies \\; && npm install --package-lock-only --ignore-scripts --legacy-peer-deps"
+      }
+    },
+    "docker:build": {
+      "dependsOn": ["docker:lockfile"]
     }
   },
   "release": {
     "projectsRelationship": "independent",
     "conventionalCommits": {
-      "useCommitScope": false
+      "useCommitScope": false,
+      "types": {
+        "perf": {
+          "semverBump": "patch"
+        }
+      }
     },
     "version": {
       "preVersionCommand": "npx nx run-many -t build",
       "conventionalCommits": true,
       "updateDependents": "auto",
+      "versionPrefix": "^",
+      "preserveMatchingDependencyRanges": false,
       "fallbackCurrentVersionResolver": "disk",
+      "adjustSemverBumpsForZeroMajorVersion": true,
       "versionActionsOptions": {
         "skipLockFileUpdate": true
       }
     },
     "changelog": {
       "projectChangelogs": {
-        "createRelease": "github"
+        "createRelease": "github",
+        "renderOptions": {
+          "authors": false
+        }
       },
       "automaticFromRef": true
     }
@@ -89,7 +144,13 @@
       "bundler": "tsc",
       "linter": "eslint",
       "publishable": true,
-      "unitTestRunner": "vitest"
+      "unitTestRunner": "vitest",
+      "useProjectJson": false,
+      "minimal": true
     }
+  },
+  "analytics": false,
+  "affected": {
+    "legacy": true
   }
 }

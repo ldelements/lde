@@ -35,6 +35,15 @@
     dcat:byteSize "87654321" ;
   ] .
 
+<http://baz.org/id/dataset/baz> a dcat:Dataset ;
+  dct:title "test" ;
+  dcat:distribution [
+    a dcat:Distribution ;
+    dcat:accessURL <http://baz.org/files/baz.rdf> ;
+    dcat:mediaType <https://www.iana.org/assignments/media-types/application/rdf+xml> ;
+    dcat:byteSize "87654321" ;
+  ] .
+
 <http://foo.org> a foaf:Organization ;
   foaf:name "Foo Organization" ;
 .

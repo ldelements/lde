@@ -1,17 +1,23 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "baseUrl": ".",
     "rootDir": "src",
     "outDir": "dist",
     "tsBuildInfoFile": "dist/tsconfig.lib.tsbuildinfo",
     "emitDeclarationOnly": false,
-    "types": ["node"]
+    "types": ["node"],
+    "ignoreDeprecations": "6.0"
   },
   "include": ["src/**/*.ts"],
   "references": [
     {
       "path": "../dataset/tsconfig.lib.json"
+    },
+    {
+      "path": "../distribution-downloader/tsconfig.lib.json"
+    },
+    {
+      "path": "../task-runner/tsconfig.lib.json"
     }
   ],
   "exclude": [

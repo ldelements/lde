@@ -1,10 +1,11 @@
 {
   "name": "@lde/sparql-qlever",
-  "version": "0.8.5",
+  "version": "0.20.0",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
     "directory": "packages/sparql-qlever"
   },
+  "license": "MIT",
   "type": "module",
   "exports": {
     "./package.json": "./package.json",
@@ -23,14 +24,38 @@
     "!**/*.tsbuildinfo"
   ],
   "dependencies": {
-    "@lde/dataset": "0.7.1",
-    "@lde/distribution-downloader": "0.5.1",
-    "@lde/sparql-importer": "0.3.1",
-    "@lde/sparql-server": "0.4.10",
-    "@lde/task-runner": "0.2.10",
-    "@lde/task-runner-docker": "0.2.11",
-    "@lde/task-runner-native": "0.2.11",
-    "@lde/wait-for-sparql": "0.2.11",
-    "tslib": "^2.3.0"
+    "@lde/dataset": "^0.10.0",
+    "@lde/distribution-downloader": "^0.9.0",
+    "@lde/sparql-importer": "^0.10.0",
+    "@lde/sparql-server": "^0.6.0",
+    "@lde/task-runner": "^0.4.0",
+    "@lde/task-runner-docker": "^0.5.0",
+    "@lde/task-runner-http": "^0.2.0",
+    "@lde/task-runner-native": "^0.4.0",
+    "@lde/wait-for-sparql": "^0.4.0",
+    "jsonld-context-parser": "^3.1.0",
+    "rdf-parse": "^5.0.0",
+    "rdf-serialize": "^5.1.0",
+    "tslib": "^2.3.0",
+    "yauzl": "^3.4.0"
+  },
+  "devDependencies": {
+    "@rdfjs/types": "^2.0.0",
+    "@types/yauzl": "^3.4.0"
+  },
+  "nx": {
+    "targets": {
+      "test": {
+        "dependsOn": [
+          "^build",
+          {
+            "projects": [
+              "@lde/task-runner-http"
+            ],
+            "target": "docker:build"
+          }
+        ]
+      }
+    }
   }
 }

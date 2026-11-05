@@ -6,3 +6,5 @@ package-lock.json
 /.nx/workspace-data
 packages/docgen/src/cli.ts
 CHANGELOG.md
+
+.nx/self-healing

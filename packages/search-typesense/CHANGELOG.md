@@ -1,0 +1,2022 @@
+## 0.43.2 (2026-11-05)
+
+### 🩹 Fixes
+
+- **search:** write no facet companion inside a nested entry ([#995](https://github.com/ldelements/lde/pull/995))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.36.2
+
+## 0.43.1 (2026-11-05)
+
+### 🚀 Features
+
+- **search:** facet a local lookup through its identity companion ([#993](https://github.com/ldelements/lde/pull/993))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.36.1
+
+## 0.43.0 (2026-11-05)
+
+### 🚀 Features
+
+- ⚠️  **search:** declare date facet bins in ISO 8601, with max covering its whole period ([#991](https://github.com/ldelements/lde/pull/991))
+
+### ⚠️  Breaking Changes
+
+- **search:** declare date facet bins in ISO 8601, with max covering its whole period  ([#991](https://github.com/ldelements/lde/pull/991))
+  a date field's facetRanges take ISO 8601 strings
+  instead of Unix seconds ({ min: '1900', max: '2000' }), and its
+  binned buckets are DateRangeBucket instead of RangeBucket.
+  NumericField is now a union of NumberField and DateField.
+  * feat(search)!: include the whole period a date's max names
+  - Add lastSecondOf, the last stored second of a date's period
+  - Compile a date range filter's max to the end of its period, so
+    max: '1999' runs through 1999
+  - Make a date bin inclusive at both ends, like the filter; its stored
+    max is the first second after its period, so bins and the filter
+    that selects them count the same documents
+  BREAKING CHANGE: a date range filter's max, and a date bin's max, now
+  include the whole period they name. max: '2000' used to stop at the
+  first second of 2000 and now runs through its end; write max: '1999'
+  for a range that ends with 1999."
+  M	docs/reference/search-api-graphql.md
+  M	docs/reference/search.md
+  M	packages/search-api-graphql/src/build-schema.ts
+  M	packages/search-api-graphql/test/build-schema.test.ts
+  M	packages/search-api-graphql/vite.config.ts
+  M	packages/search-typesense/src/query-compiler.ts
+  M	packages/search-typesense/src/search.ts
+  M	packages/search-typesense/test/parse-response.test.ts
+  M	packages/search-typesense/test/query-compiler.test.ts
+  M	packages/search-typesense/test/search-engine.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/src/adapter.ts
+  M	packages/search/src/index.ts
+  M	packages/search/src/query.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/test/schema.test.ts
+  M	packages/search/vite.config.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.36.0
+
+## 0.42.0 (2026-11-04)
+
+### 🚀 Features
+
+- ⚠️  **search:** serve dates at their source precision, typed as ISO8601Date ([#987](https://github.com/ldelements/lde/pull/987))
+
+### ⚠️  Breaking Changes
+
+- **search:** serve dates at their source precision, typed as ISO8601Date  ([#987](https://github.com/ldelements/lde/pull/987))
+  GraphQL date fields come back at their source’s precision
+  rather than as a millisecond timestamp: 1999 instead of
+  1999-01-01T00:00:00.000Z, and date-times as 1999-05-03T12:30:00Z.
+  isoToUnixSeconds returns { seconds, precision } instead of a number,
+  unixSecondsToIso takes a required precision, and a date’s SearchValue is a
+  StoredDate instead of a number. Reindex to fill the companion; until then
+  dates are served as date-times.
+  * feat(search-api-graphql)!: type dates with an ISO8601Date scalar
+  - Type date fields, DateExtent bounds and DateRange bounds as
+    ISO8601Date, specified by the dates section of the docs
+  - Serve an unbinned date facet's buckets as DateBucket, so a bucket
+    value feeds straight into DateRange
+  - Reject an unreadable date bound at coercion with BAD_USER_INPUT
+  - Document the ISO 8601 agreement the scalar follows
+  BREAKING CHANGE: date fields, DateExtent, DateRange bounds and date
+  facet buckets are typed ISO8601Date instead of String, and date
+  buckets are DateBucket instead of ValueBucket. Declare variables as
+  ISO8601Date and select DateBucket where you selected ValueBucket."
+  M	docs/reference/search-api-graphql.md
+  M	docs/reference/search.md
+  M	packages/search-api-graphql/src/build-schema.ts
+  M	packages/search-api-graphql/test/__snapshots__/generator-stability.test.ts.snap
+  M	packages/search-api-graphql/test/build-schema.test.ts
+  M	packages/search-api-graphql/vite.config.ts
+  M	packages/search-typesense/src/collection-definition.ts
+  M	packages/search-typesense/src/lookup.ts
+  M	packages/search-typesense/src/query-compiler.ts
+  M	packages/search-typesense/src/search.ts
+  M	packages/search-typesense/test/__snapshots__/generator-stability.test.ts.snap
+  M	packages/search-typesense/test/parse-response.test.ts
+  M	packages/search-typesense/test/projected-lookup.test.ts
+  M	packages/search-typesense/test/query-compiler.test.ts
+  M	packages/search-typesense/test/search-engine.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/src/adapter.ts
+  M	packages/search/src/engine.ts
+  M	packages/search/src/index.ts
+  M	packages/search/src/project.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/test/project.test.ts
+  M	packages/search/test/schema.test.ts
+  M	packages/search/vite.config.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.35.0
+
+## 0.41.0 (2026-11-03)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.41.0
+- Updated @lde/dataset to 0.10.0
+
+## 0.40.1 (2026-10-31)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.40.1
+
+## 0.40.0 (2026-10-30)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/text-normalization to 0.3.0
+- Updated @lde/pipeline to 0.40.0
+- Updated @lde/dataset to 0.9.0
+- Updated @lde/search to 0.34.0
+
+## 0.39.0 (2026-10-28)
+
+### 🚀 Features
+
+- ⚠️  **search:** hand rebuild requests to the run holding the lock ([#970](https://github.com/ldelements/lde/pull/970))
+
+### ⚠️  Breaking Changes
+
+- **search:** hand rebuild requests to the run holding the lock  ([#970](https://github.com/ldelements/lde/pull/970))
+  import RebuildAlreadyRunning from @lde/search instead of
+  @lde/search-typesense."
+  A	docs/decisions/0030-hand-a-rebuild-request-to-the-run-that-holds-the-lock.md
+  M	docs/reference/search-typesense.md
+  M	docs/reference/search.md
+  M	packages/search-typesense/src/index.ts
+  M	packages/search-typesense/src/lock.ts
+  A	packages/search-typesense/src/rebuild-requests.ts
+  M	packages/search-typesense/test/blue-green-rebuild.test.ts
+  M	packages/search-typesense/test/in-place-rebuild.test.ts
+  A	packages/search-typesense/test/rebuild-requests.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/src/adapter.ts
+  M	packages/search/src/index.ts
+  A	packages/search/src/rebuild.ts
+  A	packages/search/test/rebuild.test.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.33.0
+
+## 0.38.5 (2026-10-28)
+
+### 🩹 Fixes
+
+- **search:** read deep-time years beyond Date as xsd:gYear ([#967](https://github.com/ldelements/lde/pull/967))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.32.3
+
+## 0.38.4 (2026-10-28)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.39.3
+- Updated @lde/search to 0.32.2
+
+## 0.38.3 (2026-10-27)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.39.2
+
+## 0.38.2 (2026-10-27)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.39.1
+
+## 0.38.1 (2026-10-26)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.32.1
+
+## 0.38.0 (2026-10-26)
+
+### 🚀 Features
+
+- ⚠️  **search-typesense:** skip and report documents a collection cannot index ([#954](https://github.com/ldelements/lde/pull/954))
+
+### ⚠️  Breaking Changes
+
+- **search-typesense:** skip and report documents a collection cannot index  ([#954](https://github.com/ldelements/lde/pull/954))
+  a document Typesense refuses no longer fails its dataset; the
+  dataset goes live without it unless more than maxRejectedShare of its documents
+  are left out. Set maxRejectedShare: 0 to fail a dataset on its first rejection."
+  M	docs/reference/pipeline.md
+  M	docs/reference/search-typesense.md
+  M	packages/pipeline-console-reporter/src/consoleReporter.ts
+  M	packages/pipeline-console-reporter/test/consoleReporter.test.ts
+  M	packages/pipeline-console-reporter/vite.config.ts
+  M	packages/pipeline/src/combineReporters.ts
+  M	packages/pipeline/src/pipeline.ts
+  M	packages/pipeline/src/progressReporter.ts
+  M	packages/pipeline/src/writer/writer.ts
+  M	packages/pipeline/test/combineReporters.test.ts
+  M	packages/pipeline/test/pipeline.test.ts
+  M	packages/pipeline/vite.config.ts
+  M	packages/search-pipeline/src/search-index-writer.ts
+  M	packages/search-pipeline/test/search-index-writer.test.ts
+  M	packages/search-typesense/src/blue-green-rebuild.ts
+  M	packages/search-typesense/src/documents.ts
+  M	packages/search-typesense/src/in-place-rebuild.ts
+  M	packages/search-typesense/src/rebuild-support.ts
+  M	packages/search-typesense/test/blue-green-rebuild.test.ts
+  M	packages/search-typesense/test/documents.test.ts
+  M	packages/search-typesense/test/in-place-rebuild.test.ts
+  M	packages/search-typesense/test/rebuild-support.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/src/adapter.ts
+  M	packages/search/src/project.ts
+  A	packages/search/test/missing-required-fields.test.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.39.0
+- Updated @lde/search to 0.32.0
+
+## 0.37.0 (2026-10-25)
+
+### 🚀 Features
+
+- ⚠️  **search:** count a facet without its own filter in the engine, keeping its selection ([#932](https://github.com/ldelements/lde/pull/932))
+
+### ⚠️  Breaking Changes
+
+- **search:** count a facet without its own filter in the engine, keeping its selection  ([#932](https://github.com/ldelements/lde/pull/932))
+  a SearchEngine must count each facet without its own where clause and
+  report the values that clause selects, so search() with facets and filters returns different
+  buckets than before.
+  * docs(search): rewrite the skip-own-filter decision record for readers new to it
+  * docs(search): state that search() fails as a whole, and why that is accepted
+  * fix(search): merge a counted selected value among its facet’s buckets by count
+  - Sort a value counted outside a policy-narrowed facet among the engine’s buckets
+  - Count selected values through the same chunked multi_search as every other search
+  - Leave facet-only paging to searchFacets instead of stripping it in the GraphQL loader
+  - Correct the docs that promised a single multi_search request
+  - Move the private ownership helpers below the module’s exports"
+  M	docs/decisions/0004-search-api-graphql-surface.md
+  M	docs/decisions/0005-batch-facet-queries-through-the-engine-port.md
+  A	docs/decisions/0029-make-skip-own-filter-what-a-facet-means.md
+  M	docs/reference/search-api-graphql.md
+  M	docs/reference/search-typesense.md
+  M	docs/reference/search.md
+  M	packages/search-api-graphql/src/build-schema.ts
+  M	packages/search-api-graphql/src/facet-batch.ts
+  M	packages/search-api-graphql/test/build-schema.test.ts
+  M	packages/search-api-graphql/test/facet-batch.test.ts
+  M	packages/search-api-graphql/vite.config.ts
+  M	packages/search-typesense/src/search.ts
+  M	packages/search-typesense/test/facet-policy.test.ts
+  M	packages/search-typesense/test/search-engine.test.ts
+  A	packages/search-typesense/test/skip-own-filter.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/src/adapter.ts
+  M	packages/search/src/engine.ts
+  M	packages/search/src/query.ts
+  M	packages/search/src/testing.ts
+  A	packages/search/test/facet-searches.test.ts
+  M	packages/search/vite.config.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.31.0
+
+## 0.36.1 (2026-10-25)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.38.1
+
+## 0.36.0 (2026-10-23)
+
+### 🚀 Features
+
+- ⚠️  **search:** report a range facet’s extent, over the collection and within the other filters ([#945](https://github.com/ldelements/lde/pull/945))
+
+### ⚠️  Breaking Changes
+
+- **search:** report a range facet’s extent, over the collection and within the other filters  ([#945](https://github.com/ldelements/lde/pull/945))
+  FacetMap values are Facet objects – read facet.buckets.
+  A facetable integer, number or date field no longer returns per-value buckets;
+  declare facetRanges for a histogram. In GraphQL a numeric facet is an object:
+  select size { buckets { min max count } } instead of size { min max count },
+  and all { min max } or matching { min max } for its extent. A collection whose
+  type has a facetable, non-sortable numeric field changes definition: rebuild it.
+  * feat(search)!: keep a numeric facet’s per-value buckets beside its extent
+  - An unbinned numeric facet buckets per distinct value again; Typesense reports
+    its stats either way, so the open extent-only bin is gone
+  - Add isBinnedRangeFacet for a field with bins; isRangeFacet holds for every
+    numeric field
+  - Index only a binned field for sorting, which Typesense needs to bin it
+  - Rename the GraphQL ‹Kind›HistogramFacet to ‹Kind›BinnedRangeFacet and give
+    ‹Kind›RangeFacet per-value buckets, a date’s in ISO 8601
+  - Report a facet that fails in both scopes once
+  BREAKING CHANGE: isRangeFacet now holds for every numeric field; use
+  isBinnedRangeFacet for its old meaning. In GraphQL, ‹Kind›HistogramFacet is
+  ‹Kind›BinnedRangeFacet, and a date facet’s per-value bucket value is ISO 8601."
+  M	docs/reference/search-api-graphql.md
+  M	docs/reference/search-typesense.md
+  M	docs/reference/search.md
+  M	packages/search-api-graphql/src/build-schema.ts
+  M	packages/search-api-graphql/src/facet-batch.ts
+  M	packages/search-api-graphql/test/build-schema.test.ts
+  M	packages/search-api-graphql/test/facet-batch.test.ts
+  M	packages/search-api-graphql/vite.config.ts
+  M	packages/search-typesense/src/collection-definition.ts
+  M	packages/search-typesense/src/query-compiler.ts
+  M	packages/search-typesense/src/search.ts
+  M	packages/search-typesense/test/collection-definition.test.ts
+  M	packages/search-typesense/test/facet-policy.test.ts
+  M	packages/search-typesense/test/label-sources.test.ts
+  M	packages/search-typesense/test/parse-response.test.ts
+  M	packages/search-typesense/test/polymorphic-lookup.test.ts
+  M	packages/search-typesense/test/search-engine.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/src/adapter.ts
+  M	packages/search/src/engine.ts
+  M	packages/search/src/index.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/src/testing.ts
+  M	packages/search/test/engine.test.ts
+  M	packages/search/test/schema.test.ts
+  M	packages/search/vite.config.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.30.0
+
+## 0.35.0 (2026-10-16)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.38.0
+
+## 0.34.0 (2026-10-16)
+
+### 🚀 Features
+
+- ⚠️  **search:** resolve a reference across several targets ([#848](https://github.com/ldelements/lde/pull/848))
+
+### ⚠️  Breaking Changes
+
+- **search:** resolve a reference across several targets  ([#848](https://github.com/ldelements/lde/pull/848))
+  labelSourceNameOf, labelTargetNameOf, localLookupTypeOf
+  and inheritedFacetKeys are replaced by labelSourceNamesOf,
+  labelTargetNamesOf, localLookupTargetsOf and inheritedFacetPolicies,
+  which return lists (or a map) rather than a single value; _target is a
+  reserved field name.
+  * test(search): cover the polymorphic lookup where CI found it bare
+  - Drop the GraphQL fixture that named one field at two referents: the
+    schema now rejects that pairing, so the interface builder no longer
+    re-checks it and the branch threshold is re-anchored.
+  - Cover a single-target lookup skipping an id-only selection, an empty
+    stored referent field, a single-valued polymorphic nesting and a
+    cut descent that still declares its discriminator.
+  * test(search-typesense): reach the edge with no endpoint through the local lookup
+  The empty-endpoint case is read one level in, by the stored lookup,
+  not by the inline entry above it – so the test states an edge without
+  a creator rather than a work without edges.
+  * fix(search): close review gaps in lookups over several targets
+  - Rebuild an unanswered stored referent against its target’s levels, so its lookups nest
+  - Ask each target’s collection only for the lookup fields that target declares
+  - Reject an empty target or labelSource list with a new empty-target issue
+  - Refuse a type whose filter name collides with a multi-target lookup’s, output or not
+  - Read rdf:type and key hops as UNION branches of one OPTIONAL, so no row cross product
+  - Stop tracking a generated coverage summary and ignore coverage directories everywhere
+  - Drop a stale coverage-threshold comment and a duplicated GraphQL test
+  * fix(search-api-graphql): serve an untyped referent as an unresolved reference
+  - Resolve a referent no collection holds to ‹Set›UnresolvedReference, not the first target
+  - Make every interface field nullable, since the unresolved type carries only its id
+  - Record the choice, and why dropping the referent was rejected, in ADR 28
+  * test(search-api-graphql): cover the nullable id of a local lookup over several targets"
+  M	.gitignore
+  A	docs/decisions/0028-resolve-a-reference-across-several-targets.md
+  M	docs/reference/search-api-graphql.md
+  M	docs/reference/search-pipeline.md
+  M	docs/reference/search-typesense.md
+  M	docs/reference/search.md
+  M	packages/search-api-graphql/src/build-schema.ts
+  M	packages/search-api-graphql/src/projection.ts
+  A	packages/search-api-graphql/test/polymorphic-lookup.test.ts
+  M	packages/search-pipeline/src/extraction.ts
+  M	packages/search-pipeline/test/extraction.test.ts
+  A	packages/search-pipeline/test/polymorphic-extraction.test.ts
+  M	packages/search-typesense/src/collection-definition.ts
+  M	packages/search-typesense/src/lookup.ts
+  M	packages/search-typesense/src/query-compiler.ts
+  M	packages/search-typesense/src/search.ts
+  A	packages/search-typesense/test/polymorphic-lookup.test.ts
+  M	packages/search-typesense/test/qualified-relation.test.ts
+  M	packages/search/src/adapter.ts
+  M	packages/search/src/engine.ts
+  M	packages/search/src/index.ts
+  M	packages/search/src/join-graph.ts
+  M	packages/search/src/project.ts
+  M	packages/search/src/query.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/src/testing.ts
+  A	packages/search/test/polymorphic-lookup.test.ts
+  M	packages/search/test/qualified-relation.test.ts
+  M	packages/search/test/schema.test.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.29.0
+
+## 0.33.1 (2026-10-16)
+
+### 🩹 Fixes
+
+- **search:** match language tags against locales as language ranges ([#919](https://github.com/ldelements/lde/pull/919))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.28.1
+
+## 0.33.0 (2026-10-15)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/text-normalization to 0.2.0
+- Updated @lde/pipeline to 0.37.0
+- Updated @lde/dataset to 0.8.0
+- Updated @lde/search to 0.28.0
+
+## 0.32.4 (2026-10-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/text-normalization to 0.1.3
+- Updated @lde/pipeline to 0.36.9
+- Updated @lde/dataset to 0.7.10
+- Updated @lde/search to 0.27.2
+
+## 0.32.3 (2026-10-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.36.8
+
+## 0.32.2 (2026-10-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.27.1
+
+## 0.32.1 (2026-09-21)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.36.7
+
+## 0.32.0 (2026-09-09)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.27.0
+
+## 0.31.2 (2026-09-09)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.36.6
+
+## 0.31.1 (2026-09-09)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.36.5
+
+## 0.31.0 (2026-09-09)
+
+### 🩹 Fixes
+
+- ⚠️  **search:** give a Reference Type's entries no id ([#832](https://github.com/ldelements/lde/pull/832))
+
+### ⚠️  Breaking Changes
+
+- **search:** give a Reference Type's entries no id  ([#832](https://github.com/ldelements/lde/pull/832))
+  a nested entry of a Reference Type no longer carries `id`. In a
+  GraphQL surface the emitted edge type loses its `id` field. Two entries that
+  differed only by the node IRI behind them now deduplicate into one, which is
+  what two statements of the same fact should be.
+  * docs(search): say that a nested entry has no id, in the three places that claimed otherwise
+  Dropping the id from a Reference Type's entries left three descriptions of the
+  contract it replaced, each still drawing a distinction that no longer exists –
+  that a named referent nests with an id and a blank one without.
+  - NestedDocument, the public result type a consumer reads. Its JSDoc would have
+    them write `entry.id` handling that can never fire for an inline reference
+  - the reference docs, which AGENTS.md makes the source of truth
+  - nestedValue, where reconstruction reads the id back. The code is right – the
+    id it finds belongs to a local lookup's Root Type – but the comment described
+    the old contract
+  Each now says the same thing: an entry of a Reference Type carries no id, and a
+  local lookup is the exception because it nests a Root Type, whose collection
+  files the referent under exactly that key."
+  M	docs/reference/search.md
+  M	packages/search-typesense/src/search.ts
+  M	packages/search/src/engine.ts
+  M	packages/search/src/project.ts
+  M	packages/search/test/project.test.ts
+  M	packages/search/test/qualified-relation.test.ts
+  M	packages/search/vite.config.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.26.0
+
+## 0.30.0 (2026-09-04)
+
+### 🩹 Fixes
+
+- ⚠️  **search:** fan out a qualified edge into one entry per tuple ([#801](https://github.com/ldelements/lde/pull/801))
+
+### ⚠️  Breaking Changes
+
+- **search:** fan out a qualified edge into one entry per tuple  ([#801](https://github.com/ldelements/lde/pull/801))
+  a nested field may no longer declare both “filterable” and
+  “array”; searchSchema refuses it. Declare the leaf single-valued – the
+  projection now emits one entry per combination.
+  * fix(search): type a nested identity companion by the arity of its path
+  Three defects found reviewing the fan-out, two of them introduced by it and
+  each invisible without a live engine.
+  - restore the already-a-list case when widening a nested leaf. Only Reference
+    Types are held to the single-valued rule, and the same path declares the
+    fields of the Root Type a local lookup nests, where array and filterable meet
+    on an ordinary facet – the leaf was emitted with no type at all, which the
+    engine refuses outright
+  - declare a nested identity companion by what its path yields rather than
+    always as a list. Under a single-valued edge the parent is an object, nothing
+    flattens, and Typesense rejects the scalar the projection writes against a
+    declared list: the whole import fails
+  - expand every tuple the cap keeps. Stopping mid-expansion left the remaining
+    weldable leaves holding their lists, and a single-valued leaf then kept the
+    first value and dropped the rest – losing data quietly rather than fanning it
+    out
+  Two existing tests asserted the arity rule inverted, stating that a companion is
+  always a list and that a single value is what the engine rejects. A live import
+  says the opposite, so both now read the other way.
+  An identity on a Reference Type's field is already refused, and a nested
+  filterable lookup can no longer be an array, so a nested companion never holds
+  more than one id; no change was needed there. The entry budget is per node
+  carrying the reference rather than per document, so nested edges compound it –
+  documented rather than changed.
+  * docs(search): record what a companion's declared type follows, and the arity 30.2 will not weld
+  Two limitations found verifying the fan-out against a live engine, neither
+  visible from a collection definition alone.
+  - a nested identity companion is typed by the path that reaches it rather than
+    by what one entry holds, and Typesense enforces that wherever nothing widens
+    the path
+  - the weld hangs on 30.2 against a single-valued edge whatever its leaves hold,
+    which is a different defect from the array one and is not addressed by fanning
+    out. It costs nothing today, because a qualified relation is multi-valued by
+    nature
+  * fix(search): decide nesting from where a node is projected, not from its type
+  A Root Type reached by a local lookup is nested exactly as a Reference Type is;
+  it just happens to have a collection of its own elsewhere. Reading that from the
+  type made the projection treat a locally-nested root as a root, so it wrote a
+  list where the collection declared a single value – and Typesense rejects the
+  document at import, for every document carrying such a reference.
+  - thread the nesting flag from the call site into projectFields, rather than
+    deriving it from whether the declaring type declares a class
+  - declare a nested identity companion by both routes to a list, the field's own
+    array as well as a flattening ancestor, as every sibling declaration in that
+    function already does
+  - reject a maxEntries that is not a positive integer. The budget is counted off
+    one entry at a time, so a fractional or non-positive cap is never reached and
+    the fan-out grows with the data – the unbounded case the cap exists to
+    prevent. Compare with >= rather than ==, so no cap can be stepped over
+  - export DEFAULT_MAX_ENTRIES beside DEFAULT_LABEL_FIELD, and state the number in
+    the option's own documentation, so the default is legible without it
+  Left alone deliberately: a single-valued inline reference still fans out up to
+  the full budget before keeping one entry. Capping it at one would change which
+  entry survives when the first projects empty, and the waste is bounded.
+  * fix(search): spend the fan-out budget only on what fans out, and on what survives
+  Three ways the entry budget took data it was never meant to touch, each verified
+  against the projection before and after.
+  - cap only a reference that CAN fan out. The budget bounds the multiplication
+    this decision introduces, but it was applied to every inline reference: a
+    display-only nesting of 300 entries silently became 100, shortening a list
+    that has always been stored whole
+  - charge it against the entries that SURVIVE, not the framed values considered.
+    A run of values the reference type reads nothing from – dirty source data,
+    which the emptiness filter exists for – spent the budget and left the real
+    referents behind them with nowhere to go, dropping the reference entirely
+  - narrow a nested companion only where fan-out underwrites it. An identity is
+    earned by filterable OR facetable, and only a weldable leaf is ever split, so
+    a facetable-only companion kept its first id and dropped the rest – silently,
+    because the collection declared it a single value too
+  The declared type follows the same rule, so the two agree again.
+  Also drop an unreachable guard: tuplesOf is handed what remains of the budget
+  and never returns more, so the inner loop cannot overshoot it.
+  The ADR claimed entries past the cap are “dropped and reported”. There is no
+  reporting channel and inventing one for data that should never arise is not
+  worth the seam, so it now says the drop is silent, that truncation follows
+  declaration order rather than being representative, and why a local lookup is
+  uncapped.
+  * refactor(search): drop the entry cap, which guarded the wrong end
+  The fan-out needs a bound – a cartesian product over an edge's own values is no
+  bound at all – but capping the entries a document stores is not it. By the time
+  the projection runs every cost has been paid: the CONSTRUCT matched those values
+  and the endpoint paid for it, they crossed the wire, the subject index holds
+  them, and framing has materialised them into one node. Capping the product
+  declines the last and cheapest step while keeping all the expensive ones, and
+  bounds nothing framing did not already hold.
+  It also missed the case that predates fan-out entirely: a wide edge, or a
+  display-only nesting of ten thousand entries, is linear rather than
+  multiplicative and was never bounded either.
+  - remove maxEntries, its default, its validation and its export
+  - remove the budget from the projection, and with it the survivor-charging and
+    part-way expansion the cap alone made necessary
+  - record in ADR 26 why the bound belongs at the framing seam instead, and that
+    the fan-out is unbounded until it lands
+  The bound is tracked separately, where it can be decided on its own evidence:
+  capping values per leaf where they enter memory makes the product k^(weldable
+  leaves), and leaf count is a schema constant – a bound in the schema's own units
+  rather than a number written against the data's.
+  Lower the branch threshold by 0.01 to match: the tests that raised it existed
+  only to exercise the cap, and the code they covered has gone with it.
+  * fix(search): treat an inline reference's identity field as a tuple position
+  Nothing welds the identity field by name, so fan-out passed over it – but the
+  flat companion harvested FROM it is the leaf a weld uses to name the endpoint.
+  An entry whose identity field held three ids therefore stood for three
+  endpoints at once, and the companion kept the first and dropped the rest: a
+  filter on either of the others missed a document that genuinely carried it,
+  with the entry beside it still listing all three.
+  The same tuple problem the fan-out exists to remove, one field further in, so
+  it takes the same answer: the identity field is a tuple position like any
+  weldable leaf, and multiplicity moves to the entry list. Three endpoints now
+  make three entries holding one endpoint each, and every id stays reachable.
+  This is what the narrowing in setIdentity always assumed. It justified itself
+  with "fan-out splits weldable leaves only", which was true of `filterable`
+  fields and not of the one the companion actually reads.
+  * fix(search): dedupe fanned entries, and say what a single-valued edge drops
+  Fan-out splits RAW framed values, and two distinct ones can still collapse
+  downstream – a transform mapping two spellings onto one canonical value, or a
+  keyed target re-keying two referent IRIs to the same document key. Before
+  fan-out those values met inside one entry and were deduped there; split across
+  entries they reached the index and the API as byte-identical duplicates.
+  - dedupe the projected entries by content, restoring the guarantee the
+    pre-fan-out shape had
+  - document what a single-valued edge now drops. It stores one entry, so an edge
+    the graph gave two endpoints indexes the first where the old single entry
+    listed both. The old shape was never answerable by a weld, so this is the
+    ordinary single-valued rule meeting data that outgrew the declaration – but it
+    changes what a filter matches, and nothing can refuse it at startup because
+    the declaration is only wrong once the data has more than one value
+  - correct the justification shared by setIdentity and nestedIdentityFields.
+    Both claimed a facetable-only identity is never split, which stopped being
+    true when the identity field became a tuple position: it is always split, and
+    `filterable` decides only whether the companion is worth the narrower declared
+    type. The arity was right; the reason given for it was not
+  Also fixes the reference docs promising that nothing is dropped, which held only
+  for an array edge, and counting two consequences before listing three."
+  A	docs/decisions/0026-fan-out-a-qualified-edge-into-one-entry-per-tuple.md
+  M	docs/reference/search.md
+  M	packages/search-pipeline/test/extraction-roundtrip.integration.test.ts
+  M	packages/search-pipeline/test/extraction.test.ts
+  M	packages/search-pipeline/test/nested-fanout.integration.test.ts
+  M	packages/search-typesense/src/collection-definition.ts
+  M	packages/search-typesense/test/qualified-relation.test.ts
+  A	packages/search-typesense/test/welded-filter.integration.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/src/project.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/test/qualified-relation.test.ts
+  M	packages/search/test/schema.test.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.25.0
+
+## 0.29.4 (2026-09-04)
+
+### 🩹 Fixes
+
+- **search:** display every value of an array text field per language ([61d1916d](https://github.com/ldelements/lde/commit/61d1916d))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.24.4
+
+## 0.29.3 (2026-09-04)
+
+### 🩹 Fixes
+
+- **search-typesense:** replace what a local lookup stated with the resolved document ([#819](https://github.com/ldelements/lde/pull/819))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.24.3
+
+## 0.29.2 (2026-08-31)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.24.2
+
+## 0.29.1 (2026-08-31)
+
+### 🩹 Fixes
+
+- **search-pipeline:** read a local lookup's own fields off the referent ([#788](https://github.com/ldelements/lde/pull/788))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.24.1
+
+## 0.29.0 (2026-08-31)
+
+### 🩹 Fixes
+
+- ⚠️  **search-typesense:** record which datasets reference a document ([#785](https://github.com/ldelements/lde/pull/785))
+
+### ⚠️  Breaking Changes
+
+- **search-typesense:** record which datasets reference a document  ([#785](https://github.com/ldelements/lde/pull/785))
+
+## 0.28.0 (2026-08-31)
+
+### 🚀 Features
+
+- ⚠️  **search:** carry data on a reference edge ([#780](https://github.com/ldelements/lde/pull/780))
+
+### ⚠️  Breaking Changes
+
+- **search:** carry data on a reference edge  ([#780](https://github.com/ldelements/lde/pull/780))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.36.4
+- Updated @lde/search to 0.24.0
+
+## 0.27.4 (2026-08-24)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.36.3
+
+## 0.27.3 (2026-08-24)
+
+### 🚀 Features
+
+- **search:** narrow a reference’s facet to the keys its target admits ([#765](https://github.com/ldelements/lde/pull/765))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.36.2
+- Updated @lde/search to 0.23.2
+
+## 0.27.2 (2026-08-22)
+
+### 🚀 Features
+
+- **search:** key a root type on a declared field ([#764](https://github.com/ldelements/lde/pull/764))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.23.1
+
+## 0.27.1 (2026-08-21)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.36.1
+
+## 0.27.0 (2026-08-20)
+
+### 🩹 Fixes
+
+- ⚠️  **search-typesense:** compile a where clause that can match nothing to a term matching nothing ([#753](https://github.com/ldelements/lde/pull/753))
+
+### ⚠️  Breaking Changes
+
+- **search-typesense:** compile a where clause that can match nothing to a term matching nothing  ([#753](https://github.com/ldelements/lde/pull/753))
+  buildSearchParams compiles a where clause it cannot compile
+  to “id:=[]” instead of omitting it, so a query that used to come back with
+  every document now comes back empty. onIgnoredFilter still fires for it."
+  M	docs/reference/search.md
+  M	packages/search-typesense/src/query-compiler.ts
+  M	packages/search-typesense/test/joins.test.ts
+  M	packages/search-typesense/test/query-compiler.test.ts
+  M	packages/search-typesense/test/search-engine.test.ts
+
+## 0.26.0 (2026-08-20)
+
+### 🩹 Fixes
+
+- ⚠️  **search:** reject a date range bound the codec cannot read, instead of dropping it ([#751](https://github.com/ldelements/lde/pull/751))
+
+### ⚠️  Breaking Changes
+
+- **search:** reject a date range bound the codec cannot read, instead of dropping it  ([#751](https://github.com/ldelements/lde/pull/751))
+  a query whose date range carries a bound the storage codec
+  cannot read (‘yesterday’, or a year past the ±271,821 window Date covers) now
+  throws from assertValidQuery instead of matching every document. QueryIssue
+  gains the unparseable-bound reason and an optional value."
+  M	docs/reference/search.md
+  M	packages/search-typesense/src/query-compiler.ts
+  M	packages/search-typesense/test/query-compiler.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/src/query.ts
+  M	packages/search/test/query.test.ts
+  M	packages/search/vite.config.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.23.0
+
+## 0.25.1 (2026-08-20)
+
+### 🩹 Fixes
+
+- **search:** read an out-of-form year as a year, not an offset or local date ([#747](https://github.com/ldelements/lde/pull/747))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.22.1
+
+## 0.25.0 (2026-08-17)
+
+### 🚀 Features
+
+- ⚠️  **search:** replace labelOnly with a lookup strategy naming its target ([#739](https://github.com/ldelements/lde/pull/739))
+
+### ⚠️  Breaking Changes
+
+- **search:** replace labelOnly with a lookup strategy naming its target  ([#739](https://github.com/ldelements/lde/pull/739))
+  strategy 'labelOnly' is now 'lookup', taking 'target'
+  instead of 'labelSource' plus 'ref.typeName'.
+  * test(search): cover the lookup strategy and the resolve projection
+  - labelSourceNameOf across lookup, idOnly and a reference resolving none
+  - labelSource rejected on a lookup; a lookup target that serves no labels
+  - projection validated at this type's level: unknown and non-lookup fields
+  * refactor(search)!: validate a query's projection at every level
+  validateQuery and assertValidQuery take the schema, so each projection
+  level is checked against the target the level above names – the guard's
+  promise held a hole exactly where the newest feature is. Both production
+  call sites are schema-bound already.
+  BREAKING CHANGE: validateQuery and assertValidQuery take the SearchSchema
+  as a third argument.
+  * refactor(search-typesense): resolve label sources through labelSourceNameOf
+  One reading for a lookup's target and an idOnly's labelSource, so the
+  adapter never branches on strategy to find a collection. Fixtures that
+  declared a typeName and a labelSource for the same type now name it
+  once; the emitted collection schema is unchanged.
+  * test(search-pipeline): declare lookup targets in the extraction fixtures
+  The reference that resolved no labels becomes idOnly; the rest name the
+  target they already declared twice.
+  * feat(search-api-graphql)!: serve a lookup reference as its target's fields
+  - a lookup's emitted type derives from its target and carries that root
+    type's output fields, the rule inline already followed; its id is
+    non-null, since a lookup resolves a document by IRI
+  - a target's own references are registered in turn, so a cycle between
+    two targets terminates on the memo rather than recursing
+  - an output idOnly reference must name its emitted type: it is the one
+    strategy that derives no name, and graphql-js failed cryptically on it
+  BREAKING CHANGE: a labelOnly reference becomes a lookup naming its
+  target, and is served with the target's output fields rather than a
+  resolved label alone.
+  * refactor(search-api-graphql)!: drop the id-plus-label reference shape
+  Rebasing onto the IRI-typed filters made an idOnly reference a bare IRI,
+  which leaves no reference emitting an id-plus-label object: a lookup
+  carries its target's fields, an inline reference its Reference Type's.
+  So labelKeyOf and the label-word agreement check go, and with them the
+  missing-ref-type-name rule – an idOnly reference names no emitted type
+  because it emits none.
+  Fixtures that declared a labelOnly reference to a type nothing indexes
+  were serving a label no engine could fill; they are bare IRIs now, or
+  lookups where the target really is a root type.
+  * feat(search-typesense)!: fetch a lookup's fields from its target's collection
+  resolveProjection walks a query's projection level by level: the IRIs of
+  each level are deduped across the whole page, grouped by the collection
+  they live in and fetched in one batched multi_search with include_fields
+  holding exactly what the level asked for. One round-trip per level, not
+  per document, and a level that cannot be fetched degrades its references
+  to bare ids rather than failing the search.
+  The referents reconstruct through the same path a hit does, read through
+  the target's own declaration, so a consumer cannot tell a projected
+  referent from an inline one. The facet path is untouched: a bucket
+  carries one label and stays on the cacheable label lookup.
+  * docs(search): describe the lookup strategy and its projection
+  - the strategy table, the reference prose and three examples described the
+    removed labelOnly; copied today they threw
+  - a section on projecting what a lookup carries, since what it fetches is
+    named per query rather than declared
+  - CONTEXT.md gains Target and Reference Projection, and marks labelOnly as
+    a word to avoid
+  - corrects a JSDoc claim that an output idOnly reference must name a type:
+    it surfaces as a bare IRI, so there is no type to name
+  * fix(search): require a ref typeName on an inline reference alone
+  A lookup derives its emitted name from the target it already names, and an
+  idOnly reference is served as a bare IRI, so neither can be nameless.
+  * fix(search-api-graphql): project only the fields a target serves
+  Every GraphQL client injects __typename into each selection set, and it
+  was carried into the projection verbatim: the port's guard then reported
+  it as an unknown field of the target and threw, failing the whole search
+  for any query selecting a lookup. The projection now asks only for what
+  the target declares as output.
+  Two more, from the same review:
+  - one lookup selected twice (two fragments spreading it) merged its
+    deeper levels shallowly, so the second selection replaced the first and
+    a field the client asked for was never fetched
+  - a lookup declaring no target passed validation, since the type-name
+    rule had been narrowed to inline alone
+  * fix(search): reject a lookup declared inside a Reference Type
+  A lookup resolves level by level from the hit's projection, and a nested
+  document is read back with its referent – so nothing resolves a lookup
+  inside one. It was accepted, emitting a type whose every field served
+  null; now it fails at schema construction, naming the field."
+  A	docs/decisions/0020-resolve-a-references-fields-from-the-targets-own-collection.md
+  M	docs/reference/search.md
+  M	packages/search-api-graphql/src/build-schema.ts
+  A	packages/search-api-graphql/src/projection.ts
+  M	packages/search-api-graphql/test/__snapshots__/generator-stability.test.ts.snap
+  M	packages/search-api-graphql/test/build-schema.test.ts
+  M	packages/search-api-graphql/test/generator-stability.test.ts
+  A	packages/search-api-graphql/test/projection.test.ts
+  M	packages/search-api-graphql/vite.config.ts
+  M	packages/search-pipeline/test/extraction-roundtrip.integration.test.ts
+  M	packages/search-pipeline/test/extraction.test.ts
+  M	packages/search-pipeline/test/joins.integration.test.ts
+  M	packages/search-pipeline/test/registry-extraction.integration.test.ts
+  M	packages/search-pipeline/test/search-stages.test.ts
+  A	packages/search-typesense/src/lookup.ts
+  M	packages/search-typesense/src/search.ts
+  M	packages/search-typesense/test/blue-green-rebuild.test.ts
+  M	packages/search-typesense/test/collection-name.test.ts
+  M	packages/search-typesense/test/generator-stability.test.ts
+  M	packages/search-typesense/test/in-place-rebuild.test.ts
+  M	packages/search-typesense/test/label-sources.test.ts
+  M	packages/search-typesense/test/parse-response.test.ts
+  A	packages/search-typesense/test/projected-lookup.test.ts
+  M	packages/search-typesense/test/search-engine.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/CONTEXT.md
+  M	packages/search/src/adapter.ts
+  M	packages/search/src/index.ts
+  M	packages/search/src/join-graph.ts
+  M	packages/search/src/query.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/test/project.test.ts
+  M	packages/search/test/query.test.ts
+  M	packages/search/test/schema.test.ts
+  M	packages/search/vite.config.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.22.0
+
+## 0.24.1 (2026-08-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.21.1
+
+## 0.24.0 (2026-08-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.21.0
+
+## 0.23.0 (2026-08-14)
+
+### 🚀 Features
+
+- ⚠️  **search:** filter across collections through declared joins ([#719](https://github.com/ldelements/lde/pull/719))
+
+### ⚠️  Breaking Changes
+
+- **search:** filter across collections through declared joins  ([#719](https://github.com/ldelements/lde/pull/719))
+  the Typesense rebuild and collection-definition options
+  take `collectionNameFor: (searchType) => string` instead of `name: string`.
+  Pass `collectionNameFor: () => 'x'` where a single name was passed before.
+  * fix(search): close four gaps the review found in the join implementation
+  - never abort a member of a partly-committed join component: the half-built
+    collection it would drop is what the member that DID commit references by
+    concrete name, so dropping it broke every join through the live index
+    permanently. An orphaned collection is the lesser evil
+  - reject `joinable` on an inline reference: the collection definition emitted
+    the nesting and silently dropped the reference, so the join validated,
+    compiled and only then failed at the engine
+  - reject a `collectionNameFor` that gives a join target this type's own
+    collection – the trap in migrating a constant from the old `name` option,
+    which made the reference point the collection at itself
+  - name the empty joined `where` inside an `or` on its own terms; it crashed on
+    the missing clause instead of reporting anything
+  * fix(pipeline): let a coordinating caller end a run without discarding its output
+  - add the optional `RunWriter.abandon(error)`: finalize and release run-level
+    resources, keep what was built. It falls back to `abort`, which is already
+    right for a writer whose abort discards nothing
+  - implement it on the Typesense blue/green rebuild as a lock release without
+    the collection drop, and use it for the uncommitted peers of a committed
+    member. Skipping them instead held the rebuild lock for its whole TTL and
+    failed the next run outright
+  - count `joinable` as a Role, so a join-only reference is stored rather than
+    pruned as an Internal Field and then joined against a column that is not there
+  - tell a lookalike search type apart from a missing schema when a joinable
+    reference cannot be resolved
+  * fix(search-api-graphql): key a join's `in` arm on IRI like every other identity filter
+  - the arm asks what `‹Target›Filter` asks – which of the target's ids the
+    field holds – so it must accept the same `[IRI!]` variable a consumer
+    declares. Typing it `String` left the join the one place identity was not
+    IRI-keyed"
+  M	AGENTS.md
+  A	docs/decisions/0019-filter-across-collections-through-declared-joins.md
+  M	docs/reference/pipeline.md
+  M	docs/reference/search-api-graphql.md
+  M	docs/reference/search-pipeline.md
+  M	docs/reference/search-typesense.md
+  M	docs/reference/search.md
+  M	packages/pipeline/src/writer/writer.ts
+  M	packages/search-api-graphql/src/build-schema.ts
+  M	packages/search-api-graphql/src/facet-batch.ts
+  M	packages/search-api-graphql/test/facet-batch.test.ts
+  A	packages/search-api-graphql/test/joins.test.ts
+  M	packages/search-api-graphql/vite.config.ts
+  M	packages/search-indexer/src/composition.ts
+  M	packages/search-pipeline/src/search-index-writer.ts
+  A	packages/search-pipeline/test/fixtures/joins-sample.ttl
+  A	packages/search-pipeline/test/joins.integration.test.ts
+  M	packages/search-pipeline/test/multi-collection.integration.test.ts
+  M	packages/search-pipeline/test/search-index-writer.test.ts
+  M	packages/search-typesense/src/blue-green-rebuild.ts
+  M	packages/search-typesense/src/collection-definition.ts
+  M	packages/search-typesense/src/in-place-rebuild.ts
+  M	packages/search-typesense/src/index.ts
+  M	packages/search-typesense/src/lock.ts
+  M	packages/search-typesense/src/query-compiler.ts
+  M	packages/search-typesense/src/rebuild-support.ts
+  M	packages/search-typesense/src/search.ts
+  M	packages/search-typesense/test/blue-green-rebuild.test.ts
+  M	packages/search-typesense/test/collection-definition.test.ts
+  M	packages/search-typesense/test/collection-name.test.ts
+  M	packages/search-typesense/test/generator-stability.test.ts
+  M	packages/search-typesense/test/in-place-rebuild.test.ts
+  A	packages/search-typesense/test/joins.test.ts
+  M	packages/search-typesense/test/rebuild-error-paths.test.ts
+  M	packages/search-typesense/test/rebuild-support.test.ts
+  A	packages/search-typesense/test/reference-backfill.integration.test.ts
+  M	packages/search-typesense/test/search-engine.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/src/adapter.ts
+  M	packages/search/src/index.ts
+  A	packages/search/src/join-graph.ts
+  M	packages/search/src/query.ts
+  M	packages/search/src/schema.ts
+  A	packages/search/test/join-graph.test.ts
+  M	packages/search/test/query.test.ts
+  M	packages/search/test/schema.test.ts
+  M	packages/search/vite.config.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.36.0
+- Updated @lde/search to 0.20.0
+
+## 0.22.0 (2026-08-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.19.0
+
+## 0.21.3 (2026-08-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.18.3
+
+## 0.21.2 (2026-08-12)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.18.2
+
+## 0.21.1 (2026-08-12)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.18.1
+
+## 0.21.0 (2026-08-07)
+
+### 🚀 Features
+
+- ⚠️  **search:** filter across several fields with one where clause ([#711](https://github.com/ldelements/lde/pull/711))
+
+### ⚠️  Breaking Changes
+
+- **search:** filter across several fields with one where clause  ([#711](https://github.com/ldelements/lde/pull/711))
+  SearchQuery.where clauses are { or: [Criterion] } rather than
+  a field plus an operator; filterOn builds the single-field case. A SearchType
+  declaring a field named and or or no longer validates."
+  M	docs/decisions/0003-search-api-core-query-model.md
+  A	docs/decisions/0018-filter-across-several-fields-with-one-clause.md
+  M	docs/reference/search-api-graphql.md
+  M	docs/reference/search.md
+  M	packages/search-api-graphql/package.json
+  M	packages/search-api-graphql/src/build-schema.ts
+  M	packages/search-api-graphql/src/facet-batch.ts
+  M	packages/search-api-graphql/test/__snapshots__/generator-stability.test.ts.snap
+  M	packages/search-api-graphql/test/build-schema.test.ts
+  M	packages/search-api-graphql/test/facet-batch.test.ts
+  M	packages/search-api-graphql/vite.config.ts
+  M	packages/search-typesense/src/query-compiler.ts
+  M	packages/search-typesense/test/parse-response.test.ts
+  M	packages/search-typesense/test/query-compiler.test.ts
+  M	packages/search-typesense/test/search-engine.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/src/adapter.ts
+  M	packages/search/src/index.ts
+  M	packages/search/src/query.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/src/testing.ts
+  M	packages/search/test/query.test.ts
+  M	packages/search/test/schema.test.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.18.0
+
+## 0.20.0 (2026-08-07)
+
+### 🚀 Features
+
+- ⚠️  **search-api-graphql:** type boolean facets with a BooleanBucket ([#707](https://github.com/ldelements/lde/pull/707))
+
+### ⚠️  Breaking Changes
+
+- **search-api-graphql:** type boolean facets with a BooleanBucket  ([#707](https://github.com/ldelements/lde/pull/707))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.17.0
+
+## 0.19.0 (2026-08-07)
+
+### 🚀 Features
+
+- ⚠️  **search:** declare a field over the indexed dataset ([#708](https://github.com/ldelements/lde/pull/708))
+
+### ⚠️  Breaking Changes
+
+- **search:** declare a field over the indexed dataset  ([#708](https://github.com/ldelements/lde/pull/708))
+  `staleDocumentsFilter`, `sourceDocumentsFilter`,
+  `thisRunDocumentsFilter` and `membershipSweepFilters` now take the provenance
+  field name as their first argument. Callers filtering on the private
+  bookkeeping field pass the exported `SOURCE_FIELD`.
+  * fix(search): reject a projection value carried by an inline reference
+  An inline reference is stored as a nested object and carries a referent's
+  projected fields; a projection value is a bare IRI with no referent. Declared
+  together they passed validation, so the collection definition declared an
+  object field that the projection filled with a string – and every document
+  import failed. Also soften datasetField's JSDoc: it is the only such field for
+  a type that reached a SearchSchema, not for a hand-built one that skipped
+  validation.
+  * docs(search-typesense): state what adopting a declared dataset field requires
+  - InPlaceRebuild leaves an existing collection alone, so a type that gains a
+    `from: 'dataset'` field keeps the old `source` column and has no field for
+    the new one: the run imports, then commit fails faceting a field the
+    collection does not declare. Say so, and say to rebuild the collection.
+  - Note that the writer's stamp reasserts the sweep's column only, never the
+    folded search companion a searchable declared field also fans out to –
+    folding is the projection's convention, and restating it in the writer would
+    put it in two places."
+  M	docs/reference/search-typesense.md
+  M	docs/reference/search.md
+  M	packages/search-pipeline/src/search-stages.ts
+  M	packages/search-pipeline/test/search-stages.test.ts
+  M	packages/search-typesense/src/blue-green-rebuild.ts
+  M	packages/search-typesense/src/in-place-rebuild.ts
+  M	packages/search-typesense/src/rebuild-support.ts
+  M	packages/search-typesense/src/sweep.ts
+  M	packages/search-typesense/test/blue-green-rebuild.test.ts
+  M	packages/search-typesense/test/in-place-rebuild.test.ts
+  M	packages/search-typesense/test/rebuild-support.test.ts
+  M	packages/search-typesense/test/sweep.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/CONTEXT.md
+  M	packages/search/src/adapter.ts
+  M	packages/search/src/index.ts
+  M	packages/search/src/project.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/test/project.test.ts
+  M	packages/search/test/schema.test.ts
+  M	packages/search/vite.config.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.16.0
+
+## 0.18.2 (2026-08-07)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.35.6
+
+## 0.18.1 (2026-08-07)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.35.5
+
+## 0.18.0 (2026-07-31)
+
+### 🚀 Features
+
+- ⚠️  **search:** serve a surfaced inline reference as a nested document ([#689](https://github.com/ldelements/lde/pull/689))
+
+### ⚠️  Breaking Changes
+
+- **search:** serve a surfaced inline reference as a nested document  ([#689](https://github.com/ldelements/lde/pull/689))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.15.0
+
+## 0.17.0 (2026-07-31)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.14.0
+
+## 0.16.0 (2026-07-30)
+
+### 🚀 Features
+
+- ⚠️  **search:** look documents up by their IRI on every type ([#676](https://github.com/ldelements/lde/pull/676))
+
+### ⚠️  Breaking Changes
+
+- **search:** look documents up by their IRI on every type  ([#676](https://github.com/ldelements/lde/pull/676))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.13.0
+
+## 0.15.6 (2026-07-27)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.12.3
+
+## 0.15.5 (2026-07-25)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.35.4
+
+## 0.15.4 (2026-07-24)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/text-normalization to 0.1.2
+- Updated @lde/pipeline to 0.35.3
+- Updated @lde/dataset to 0.7.9
+- Updated @lde/search to 0.12.2
+
+## 0.15.3 (2026-07-24)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.35.2
+
+## 0.15.2 (2026-07-24)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.35.1
+
+## 0.15.1 (2026-07-23)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.12.1
+
+## 0.15.0 (2026-07-23)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.35.0
+
+## 0.14.2 (2026-07-23)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.34.4
+
+## 0.14.1 (2026-07-23)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.34.3
+
+## 0.14.0 (2026-07-22)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.12.0
+
+## 0.13.0 (2026-07-21)
+
+### 🚀 Features
+
+- ⚠️  **search:** implement inline references and class-less reference types ([#629](https://github.com/ldelements/lde/pull/629))
+
+### ⚠️  Breaking Changes
+
+- **search:** implement inline references and class-less reference types  ([#629](https://github.com/ldelements/lde/pull/629))
+  class is now optional on SearchType (a reference type declares
+  none); an inline ref.typeName is resolved and cycle-checked at searchSchema
+  construction.
+  * feat(search): prune internal fields recursively through surfaced inline referents
+  - Prune internal (no-role) fields at every depth: a surfaced (output)
+    inline reference now has its referent's internal helper fields removed
+    before the writer, so the "a field without a role reaches neither the
+    engine nor the API" invariant holds inside nested documents, not just
+    at the root.
+  - Pruning runs as one post-order pass after all projection, so a derive
+    at any depth still reads a helper field before it is removed.
+  - Mark ADR 11 Accepted."
+  M	docs/decisions/0011-decouple-rdf-depth-from-the-api-surface.md
+  M	packages/search-api-graphql/src/build-schema.ts
+  M	packages/search-api-graphql/src/facet-batch.ts
+  M	packages/search-api-graphql/test/build-schema.test.ts
+  M	packages/search-pipeline/src/search-index-writer.ts
+  M	packages/search-pipeline/src/search-stages.ts
+  M	packages/search-pipeline/src/typed-search-document.ts
+  M	packages/search-pipeline/test/multi-collection.integration.test.ts
+  M	packages/search-pipeline/test/search-index-writer.test.ts
+  M	packages/search-pipeline/test/search-stages.test.ts
+  M	packages/search-typesense/src/search.ts
+  M	packages/search-typesense/test/collection-name.test.ts
+  M	packages/search/README.md
+  M	packages/search/src/adapter.ts
+  M	packages/search/src/engine.ts
+  M	packages/search/src/frame-by-type.ts
+  M	packages/search/src/index.ts
+  M	packages/search/src/project.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/src/testing.ts
+  M	packages/search/test/frame-by-type.test.ts
+  M	packages/search/test/project.test.ts
+  M	packages/search/test/schema.test.ts
+  M	packages/search/vite.config.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.11.0
+
+## 0.12.0 (2026-07-19)
+
+### 🚀 Features
+
+- ⚠️  **search:** make path the whole statement of what projection reads ([#628](https://github.com/ldelements/lde/pull/628))
+
+### ⚠️  Breaking Changes
+
+- **search:** make path the whole statement of what projection reads  ([#628](https://github.com/ldelements/lde/pull/628))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.10.0
+
+## 0.11.0 (2026-07-18)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.9.0
+
+## 0.10.2 (2026-07-18)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.8.1
+
+## 0.10.1 (2026-07-17)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.34.2
+
+## 0.10.0 (2026-07-16)
+
+### 🚀 Features
+
+- ⚠️  **search:** refuse to name a search type whose name cannot be spelled ([#605](https://github.com/ldelements/lde/pull/605))
+
+### ⚠️  Breaking Changes
+
+- **search:** refuse to name a search type whose name cannot be spelled  ([#605](https://github.com/ldelements/lde/pull/605))
+  physicalNameTokens throws for a name it cannot spell, and for
+  one leaving no word to name a container after, where it previously returned
+  mangled tokens or an empty array. Adapters keep only their own engine's
+  legality rules - the Typesense adapter still rules on the formatted result.
+  - Drop the now-redundant top-level name from ResolvedRebuildOptions (internal),
+    leaving definitionOptions.name as the one place the resolved name lives.
+  - Fix the unclosed Blue/green Rebuild link in the search-typesense README."
+  M	packages/search-typesense/README.md
+  M	packages/search-typesense/src/blue-green-rebuild.ts
+  M	packages/search-typesense/src/collection-name.ts
+  M	packages/search-typesense/src/in-place-rebuild.ts
+  M	packages/search-typesense/src/rebuild-support.ts
+  M	packages/search-typesense/test/collection-name.test.ts
+  M	packages/search-typesense/test/rebuild-support.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/src/physical-name.ts
+  M	packages/search/test/physical-name.test.ts
+  M	packages/search/vite.config.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.8.0
+
+## 0.9.1 (2026-07-16)
+
+### 🚀 Features
+
+- **search-typesense:** derive collection names from the search type ([#604](https://github.com/ldelements/lde/pull/604))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.7.1
+
+## 0.9.0 (2026-07-15)
+
+### 🚀 Features
+
+- ⚠️  **search:** preserve all languages in text display ([#601](https://github.com/ldelements/lde/pull/601))
+
+### ⚠️  Breaking Changes
+
+- **search:** preserve all languages in text display  ([#601](https://github.com/ldelements/lde/pull/601))
+  PhysicalFields no longer carries the enumerated display array;
+  use displayFieldName/displayFieldPattern/displayLangOf. Label collections must
+  be rebuilt to gain the regex display field.
+  * fix(search): harden language-tag and field-name handling
+  - Normalise an underscore-style language tag (pt_BR -> pt-BR) at projection, so
+    a non-BCP-47 tag round-trips through the regex display field instead of being
+    silently dropped on read.
+  - Validate field names as metacharacter-free identifiers (the name is
+    interpolated into the display RE2 pattern) and text locales as BCP-47-shaped
+    (no underscore, the reserved name-locale separator).
+  - Collapse the display projection to a single pass, and add a round-trip test
+    binding displayFieldName/displayFieldPattern/displayLangOf so the convention
+    cannot silently drift."
+  A	docs/decisions/0010-preserve-all-languages-in-text-display.md
+  M	packages/search-typesense/README.md
+  M	packages/search-typesense/src/collection-definition.ts
+  M	packages/search-typesense/src/search.ts
+  M	packages/search-typesense/test/__snapshots__/generator-stability.test.ts.snap
+  M	packages/search-typesense/test/collection-definition.test.ts
+  M	packages/search-typesense/test/label-sources.test.ts
+  M	packages/search-typesense/test/parse-response.test.ts
+  M	packages/search-typesense/test/search-engine.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/README.md
+  M	packages/search/src/adapter.ts
+  M	packages/search/src/project.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/test/project.test.ts
+  M	packages/search/test/schema.test.ts
+  M	packages/search/vite.config.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.7.0
+
+## 0.8.0 (2026-07-13)
+
+### 🚀 Features
+
+- ⚠️  **search:** rename to de-overload “schema” in the search family ([#595](https://github.com/ldelements/lde/pull/595))
+
+### ⚠️  Breaking Changes
+
+- **search:** rename to de-overload “schema” in the search family  ([#595](https://github.com/ldelements/lde/pull/595))
+  @lde/search SearchType.type is renamed to .class, and
+  @lde/search-typesense buildCollectionSchema / CollectionSchemaOptions become
+  buildCollectionDefinition / CollectionDefinitionOptions. @lde/search-pipeline
+  and @lde/search-api-graphql adapt internally; their own public APIs are
+  unchanged."
+  M	docs/decisions/0003-search-api-core-query-model.md
+  M	docs/decisions/0004-search-api-graphql-surface.md
+  M	docs/decisions/0008-resolve-reference-labels-from-per-reference-label-sources.md
+  M	docs/decisions/0009-route-a-whole-schema-projection-to-per-type-collections.md
+  M	packages/search-api-graphql/test/build-schema.test.ts
+  M	packages/search-api-graphql/test/facet-batch.test.ts
+  M	packages/search-api-graphql/test/generator-stability.test.ts
+  M	packages/search-pipeline/README.md
+  M	packages/search-pipeline/src/search-index-writer.ts
+  M	packages/search-pipeline/test/multi-collection.integration.test.ts
+  M	packages/search-pipeline/test/search-index-writer.test.ts
+  M	packages/search-typesense/README.md
+  M	packages/search-typesense/src/blue-green-rebuild.ts
+  R096	packages/search-typesense/src/collection-schema.ts	packages/search-typesense/src/collection-definition.ts
+  M	packages/search-typesense/src/in-place-rebuild.ts
+  M	packages/search-typesense/src/index.ts
+  M	packages/search-typesense/src/rebuild-support.ts
+  M	packages/search-typesense/src/search.ts
+  M	packages/search-typesense/test/__snapshots__/generator-stability.test.ts.snap
+  M	packages/search-typesense/test/blue-green-rebuild.test.ts
+  R093	packages/search-typesense/test/collection-schema.test.ts	packages/search-typesense/test/collection-definition.test.ts
+  M	packages/search-typesense/test/generator-stability.test.ts
+  M	packages/search-typesense/test/in-place-rebuild.test.ts
+  M	packages/search-typesense/test/label-sources.test.ts
+  M	packages/search-typesense/test/parse-response.test.ts
+  M	packages/search-typesense/test/query-compiler.test.ts
+  M	packages/search-typesense/test/rebuild-error-paths.test.ts
+  M	packages/search-typesense/test/rebuild-support.test.ts
+  M	packages/search-typesense/test/search-engine.test.ts
+  M	packages/search/README.md
+  M	packages/search/src/project.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/src/testing.ts
+  M	packages/search/test/engine.test.ts
+  M	packages/search/test/project.test.ts
+  M	packages/search/test/query.test.ts
+  M	packages/search/test/schema.test.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.6.0
+
+## 0.7.1 (2026-07-12)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.34.1
+
+## 0.7.0 (2026-07-10)
+
+### 🚀 Features
+
+- ⚠️  **search:** route a whole-schema projection to per-type collections ([#592](https://github.com/ldelements/lde/pull/592))
+
+### ⚠️  Breaking Changes
+
+- **search:** route a whole-schema projection to per-type collections  ([#592](https://github.com/ldelements/lde/pull/592))
+  projectGraph yields TypedSearchDocument, not SearchDocument. Read
+  .document for the projected document.
+  * feat(search-pipeline)!: route a whole-schema projection to per-type collections
+  searchIndexWriter now fans one mixed projection stream out to the engine writer for
+  each root type's collection, instead of streaming to a single writer. It takes a
+  writerFor(searchType) factory, opens one engine run per type, and dispatches each
+  projected document to the run for its type. A single-collection deployment is the N=1
+  case; the pipeline never branches on the multi-collection shape.
+  Each type is an independent blue/green rebuild (own collection, alias, lock), so the
+  collections commit, sweep and fail in isolation: an empty projection for one type
+  touches only its own collection; commit finalizes every collection independently and
+  throws an AggregateError if any fails, so a label-collection failure never blocks the
+  datasets index going live; abort finalizes only the collections that did not already
+  go live (aborting a committed rebuild would drop its now-live collection).
+  - add a Typesense-container integration test for independent swaps, one-type failure
+    isolation, empty projection and abort cleanup
+  - add ADR 9; update the READMEs
+  BREAKING CHANGE: searchIndexWriter takes writerFor(searchType) instead of a single
+  writer option.
+  * fix(search-typesense): make BlueGreenRebuild.commit atomic at the alias swap
+  The alias swap is the commit point: once it lands the new collection is live.
+  The lock release that followed was unguarded, so a transient failure there
+  rejected commit AFTER the swap. A caller that aborts on a rejected commit (the
+  pipeline does) would then drop the collection the alias now points at, leaving
+  the index pointed at a deleted collection.
+  - swallow a post-swap lock-release failure (the lock is reclaimed on its TTL),
+    matching the already-guarded superseded-collection delete
+  - regression test: commit stays resolved when releasing the lock fails"
+  M	README.md
+  A	docs/decisions/0009-route-a-whole-schema-projection-to-per-type-collections.md
+  M	package-lock.json
+  M	packages/search-pipeline/README.md
+  M	packages/search-pipeline/package.json
+  M	packages/search-pipeline/src/search-index-writer.ts
+  A	packages/search-pipeline/test/multi-collection.integration.test.ts
+  M	packages/search-pipeline/test/search-index-writer.test.ts
+  A	packages/search-pipeline/test/typesense-container.ts
+  M	packages/search-pipeline/tsconfig.lib.json
+  M	packages/search-pipeline/tsconfig.spec.json
+  M	packages/search-typesense/src/blue-green-rebuild.ts
+  M	packages/search-typesense/test/rebuild-error-paths.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/README.md
+  M	packages/search/src/index.ts
+  M	packages/search/src/project.ts
+  M	packages/search/test/project.test.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.5.0
+
+## 0.6.1 (2026-07-10)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.4.1
+
+## 0.6.0 (2026-07-09)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.34.0
+
+## 0.5.0 (2026-07-08)
+
+### 🚀 Features
+
+- ⚠️  **search:** per-reference label sources ([#566](https://github.com/ldelements/lde/pull/566), [#568](https://github.com/ldelements/lde/issues/568))
+
+### ⚠️  Breaking Changes
+
+- **search:** per-reference label sources  ([#566](https://github.com/ldelements/lde/pull/566), [#568](https://github.com/ldelements/lde/issues/568))
+  TypesenseSearchEngineOptions.labelsCollection is
+  removed. Declare each label source as a SearchType (with an output,
+  searchable text field ‘label’), add its collection to
+  options.collections, set labelSource on each reference field, and
+  rebuild label collections via buildCollectionSchema so the physical
+  label fields exist. fetchLabels now takes label-lookup groups instead
+  of (collection, iris).
+  * refactor(search): single-source the label-field convention
+  Review cleanups on the label sources:
+  - labelFieldOf (exported via @lde/search/adapter) is the one place that
+    knows what makes a type a label source; the schema validation and the
+    Typesense engine both consult it instead of re-deriving the ‘label’
+    convention per package.
+  - labelValue reuses the existing localizedValue reconstruction and reads
+    the untagged fallback from the label field’s own name instead of a
+    literal.
+  - The engine precomputes each type’s distinct label-source collections
+    at construction and reuses the merged cached label map until any
+    constituent collection reloads, instead of re-deduplicating and
+    re-merging the full maps on every search.
+  * fix(search): reject a labelSource declared on a non-reference field
+  assertResolvableLabelSources validated labelSource only on reference fields, so
+  a labelSource on a keyword or text field – reachable from a generated or
+  hand-written schema, the untyped path this validator guards – passed searchSchema
+  silently and then resolved nothing. Throw at startup so the misconfiguration
+  fails fast instead of surfacing as unlabelled buckets in production.
+  * fix(search-typesense): query all label locales and keep empty labels id-only
+  Two per-reference label-resolution fixes found in review:
+  - LabelSource.queryBy used only the first locale’s folded search field
+    (physicalFields(labelField).search[0]); join all per-locale search fields so a
+    label search matches every locale, not just the first.
+  - a label document with no usable locale column and no bare label produced
+    label: {}, which referenceValue treats as a present label; labelValue now
+    returns undefined and the write skips it, so the reference stays id-only.
+  * fix(search-typesense): isolate label-source failures and honor id-only references
+  From the #566 review:
+  - a single label collection erroring inline (e.g. mid-rebuild) made fetchLabels
+    throw, blanking every reference on the page to id-only; report the failed
+    source via onLabelError and skip only its entry, so healthy sources still
+    resolve.
+  - a reference or facet with no labelSource could still gain a label in cached
+    mode, where the whole collection is preloaded into the shared map; skip the
+    lookup for id-only fields and facets so they stay id-only by declaration.
+  * perf(search-typesense): precompute label-lookup sources, skip non-source facets
+  From the #566 review: labelLookupGroups re-derived the output reference fields
+  and re-resolved their label sources on every search/searchFacets call, and
+  probed `sources` per facet bucket. Precompute the { field, source } pairs once
+  at construction, and skip a non-source facet in one check instead of per bucket.
+  Behaviour-preserving; adds a facet test covering an id-only reference facet.
+  * docs(search): renumber the label-sources ADR to 0008
+  ADR 0007 is now taken by 0007-merge-namespace-alias-partitions on main (#568),
+  so renumber the per-reference-label-sources ADR from 0007 to 0008 to avoid the
+  collision when this branch merges.
+  * docs(search): mark the label-sources ADR (0008) Accepted"
+  M	docs/decisions/0005-batch-facet-queries-through-the-engine-port.md
+  A	docs/decisions/0008-resolve-reference-labels-from-per-reference-label-sources.md
+  M	packages/search-typesense/README.md
+  M	packages/search-typesense/src/search.ts
+  M	packages/search-typesense/test/fake-typesense-client.ts
+  A	packages/search-typesense/test/label-sources.test.ts
+  M	packages/search-typesense/test/parse-response.test.ts
+  M	packages/search-typesense/test/search-engine.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/README.md
+  M	packages/search/src/adapter.ts
+  M	packages/search/src/engine.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/test/schema.test.ts
+  M	packages/search/vite.config.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.4.0
+
+## 0.4.4 (2026-07-08)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.33.4
+
+## 0.4.3 (2026-07-08)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.33.3
+- Updated @lde/search to 0.3.1
+
+## 0.4.2 (2026-07-08)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.33.2
+
+## 0.4.1 (2026-07-08)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.33.1
+
+## 0.4.0 (2026-07-08)
+
+### 🚀 Features
+
+- ⚠️  **search-typesense:** BlueGreenRebuild and InPlaceRebuild writers ([#560](https://github.com/ldelements/lde/pull/560))
+
+### ⚠️  Breaking Changes
+
+- **search-typesense:** BlueGreenRebuild and InPlaceRebuild writers  ([#560](https://github.com/ldelements/lde/pull/560))
+  RunWriter.flush takes a second DatasetOutcome argument.
+  Implementations that ignore it are unaffected; direct callers pass one.
+  * feat(search-typesense)!: replace rebuild() with transactional writers
+  The one-shot rebuild() becomes two @lde/pipeline Writer implementations,
+  one per update mode, so a Pipeline drives indexing without branching on
+  the mode (see docs/decisions/0006):
+  - BlueGreenRebuild: openRun takes the single-flight cross-pod lock and
+    creates a fresh versioned collection; write streams documents into it,
+    batched across write calls; commit atomically repoints the alias,
+    drops the superseded collection and releases the lock; abort drops the
+    half-built collection. Deletion is implicit.
+  - InPlaceRebuild (new): per-source upsert into one long-lived collection,
+    each document stamped with source and last_seen. A successful dataset
+    flush sweeps the source’s documents the run did not rewrite (a failed
+    dataset is not swept – the next successful run reconciles); commit
+    sweeps sources that left the run’s selection and releases the lock;
+    abort only releases the lock.
+  The pure sweep planning (departed sources, stale/source filters) is
+  exported for reuse; the membership sweep throws beyond the 10 000-source
+  facet cap rather than sweeping blind. A run opened while another holds
+  the lock throws RebuildAlreadyRunning instead of returning null.
+  BREAKING CHANGE: rebuild() and RebuildOptions are gone; construct a
+  BlueGreenRebuild (options unchanged) and drive it via openRun →
+  write → commit, or let an @lde/pipeline Pipeline do so. @lde/pipeline
+  and @lde/dataset are now peerDependencies.
+  * refactor(search-typesense): deduplicate the rebuild writers’ plumbing
+  Review cleanups on the rebuild writers:
+  - The lock choreography lives once: openLockedRun acquires the
+    single-flight lock, runs the writer-specific setup, and releases the
+    lock again when the setup fails – both writers now contain only their
+    genuinely different bodies. The shared import batch default moves next
+    to BatchImporter.
+  - acquireLock takes the lock in a single request on the happy path,
+    creating the lock collection only on the first-ever 404, via a shared
+    ensureCollectionExists that both the lock and the In-place collection
+    use (giving the latter concurrent-creator tolerance for free).
+  - sweep.ts owns the source/last_seen bookkeeping names, so stamping and
+    sweeping can never disagree, and quotes filter values with the
+    query compiler’s escapeFilterValue instead of a second quoting policy
+    that threw on backticks.
+  - The membership sweep deletes departed sources in combined, length-
+    budgeted filters (membershipSweepFilters) instead of one round-trip
+    per source.
+  - The rebuild specs share one test/helpers.ts (run contexts, document
+    streams, Typesense errors, lock seeding) instead of four copies.
+  * build(search-typesense): align peer range and lockfile with the release
+  main released @lde/pipeline 0.32.0 (and rewrote dependent peer ranges)
+  after this branch declared its ^0.31.4 peer, so npm ci failed with
+  ERESOLVE. The peer range now tracks the released major-equivalent and
+  the lockfile is regenerated from main’s.
+  * docs(search-typesense): gloss the Blue/green and In-place rebuild patterns
+  Keep the shared ubiquitous language (the NDE Stack pattern names, matched
+  1:1 in code and docs) but expand each term inline the first time it
+  appears, so a reader without deployment background gets the mechanism
+  without a rename: Blue/green = build fresh then swap atomically, In-place
+  = update the live index directly. Links to the Stack patterns page.
+  * fix(search-typesense): correct the membership-sweep source-cap boundary
+  The cap check requested max_facet_values equal to the ceiling and threw
+  on counts.length >= ceiling, so exactly N distinct sources (Typesense
+  returns at most max_facet_values) tripped a false truncation error, and
+  an index that genuinely grew past the ceiling threw on every commit –
+  the sweep never ran, the source count never dropped, and the index
+  wedged permanently.
+  Now request ceiling + 1 and throw only on > ceiling, so a full-but-not-
+  truncated facet proceeds and only a real overflow refuses. The ceiling
+  is exposed as InPlaceRebuildOptions.maxSweepableSources (default 10 000)
+  so an operator can raise it ahead of the wall instead of redeploying.
+  * fix(pipeline): roll back opened writers when a fan-out sibling’s openRun fails
+  FanOutWriter.openRun awaited all writers with Promise.all and the
+  pipeline opens the run outside its try, so if one writer opened (taking
+  a cross-pod lock, creating a collection) and a sibling’s openRun then
+  rejected, the pipeline threw before it had a run to abort – leaking the
+  opened writer’s lock and collection. openRun now settles all writers,
+  aborts the ones that opened, and rethrows the first failure.
+  * fix(search-typesense): roll back a failed dataset from both rebuild writers
+  The rebuild writers implemented no reset and Blue/green consulted no
+  per-dataset outcome, so the pipeline's dump-fallback discard was a
+  no-op and a dataset that failed after streaming documents left them in
+  the index: Blue/green shipped them at the swap, In-place kept them
+  stamped with the current runId where the success sweep could not reach.
+  Both writers now stamp each document with its source (dataset IRI) and
+  roll a dataset out on reset / a failed flush, streaming — no buffering,
+  so it scales to object volumes:
+  - Blue/green deletes the dataset's documents from the not-yet-live
+    collection (source = dataset); a failed dataset contributes nothing to
+    the swap.
+  - In-place deletes only this run's writes for the source
+    (source = dataset && last_seen = runId) on reset, leaving prior-run
+    documents for the success sweep to reconcile; a failed flush still
+    leaves them for the next run.
+  The shared bookkeeping (SOURCE_FIELD stamping, deleteByFilter, options
+  resolution, reserved-field guard) moves to rebuild-support.ts so both
+  writers single-source it.
+  * test(pipeline): lower coverage floor for the fan-out openRun rollback branch"
+  M	docs/decisions/0006-make-the-writer-transaction-aware.md
+  M	package-lock.json
+  M	packages/pipeline-shacl-validator/src/shacl-validator.ts
+  M	packages/pipeline-shacl-validator/test/shacl-validator.test.ts
+  M	packages/pipeline/README.md
+  M	packages/pipeline/src/pipeline.ts
+  M	packages/pipeline/src/writer/fileWriter.ts
+  M	packages/pipeline/src/writer/writer.ts
+  M	packages/pipeline/test/pipeline.test.ts
+  M	packages/pipeline/vite.config.ts
+  M	packages/search-typesense/README.md
+  M	packages/search-typesense/package.json
+  D	packages/search-typesense/src/adapter.ts
+  A	packages/search-typesense/src/blue-green-rebuild.ts
+  A	packages/search-typesense/src/import.ts
+  A	packages/search-typesense/src/in-place-rebuild.ts
+  M	packages/search-typesense/src/index.ts
+  A	packages/search-typesense/src/lock.ts
+  A	packages/search-typesense/src/rebuild-support.ts
+  A	packages/search-typesense/src/sweep.ts
+  D	packages/search-typesense/test/adapter.test.ts
+  A	packages/search-typesense/test/blue-green-rebuild.test.ts
+  A	packages/search-typesense/test/helpers.ts
+  A	packages/search-typesense/test/in-place-rebuild.test.ts
+  A	packages/search-typesense/test/lock.test.ts
+  A	packages/search-typesense/test/rebuild-error-paths.test.ts
+  A	packages/search-typesense/test/rebuild-support.test.ts
+  A	packages/search-typesense/test/sweep.test.ts
+  M	packages/search-typesense/tsconfig.lib.json
+  M	packages/search-typesense/vite.config.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.33.0
+
+## 0.3.0 (2026-07-06)
+
+### 🚀 Features
+
+- ⚠️  **search:** batch facet searches into a single multi_search ([#554](https://github.com/ldelements/lde/pull/554))
+
+### 🩹 Fixes
+
+- **release:** unblock the search 0.3.0 release version bumps ([#557](https://github.com/ldelements/lde/pull/557))
+
+### ⚠️  Breaking Changes
+
+- **search:** batch facet searches into a single multi_search  ([#554](https://github.com/ldelements/lde/pull/554))
+  SearchEngine implementations must add the searchFacets method.
+  * feat(search)!: report per-query outcomes from searchFacets
+  - searchFacets returns one FacetsOutcome ({ facets } or { error }) per query,
+    so one failed query no longer discards its siblings' facets: the surface
+    degrades exactly the failed query's facets and reports each via onFacetError
+  - the Typesense adapter passes a failed multi_search entry through as an
+    in-place error naming the query's facet fields, and normalizes orderBy
+    away alongside limit/offset (facet-only compiles carry no sort)
+  - fetchLabels now throws on an inline multi_search error entry, engaging the
+    label degradation path instead of silently missing every label
+  - a missing outcome (port-contract breach) is reported, not read as empty
+  - restore the lazy iris thunk so the cached-label path skips collecting them
+  - record the decision as ADR 5 and amend the port snippet in ADR 3
+  BREAKING CHANGE: searchFacets returns FacetsOutcome[] instead of FacetMap[].
+  * style: use EN dashes in prose added by the facet batching
+  * test(search-typesense): extract a shared fake Typesense client
+  - one configurable fake (search, export, multi_search; recorded performs and
+    export calls) replaces the five bespoke fakes in parse-response.test.ts
+  - labelLookup() shares the filter_by id-list answering between the fetchLabels
+    and bundled-label-lookup tests
+  - re-anchor coverage thresholds: the helper's defensive guards are uncovered"
+  M	docs/decisions/0003-search-api-core-query-model.md
+  A	docs/decisions/0005-batch-facet-queries-through-the-engine-port.md
+  M	package-lock.json
+  M	packages/search-api-graphql/README.md
+  M	packages/search-api-graphql/package.json
+  M	packages/search-api-graphql/src/build-schema.ts
+  A	packages/search-api-graphql/src/facet-batch.ts
+  M	packages/search-api-graphql/test/build-schema.test.ts
+  A	packages/search-api-graphql/test/facet-batch.test.ts
+  M	packages/search-api-graphql/vite.config.ts
+  M	packages/search-typesense/README.md
+  M	packages/search-typesense/src/search.ts
+  A	packages/search-typesense/test/fake-typesense-client.ts
+  M	packages/search-typesense/test/parse-response.test.ts
+  M	packages/search-typesense/test/search-engine.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/README.md
+  M	packages/search/src/engine.ts
+  M	packages/search/src/index.ts
+  M	packages/search/src/testing.ts
+  M	packages/search/test/engine.test.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.3.0
+
+## 0.2.0 (2026-07-05)
+
+### 🚀 Features
+
+- ⚠️  **search:** engine- and domain-agnostic query model, Typesense adapter, and GraphQL surface ([#529](https://github.com/ldelements/lde/pull/529))
+
+### 🩹 Fixes
+
+- **release:** unblock the search release version bumps ([#551](https://github.com/ldelements/lde/pull/551))
+
+### ⚠️  Breaking Changes
+
+- **search:** engine- and domain-agnostic query model, Typesense adapter, and GraphQL surface  ([#529](https://github.com/ldelements/lde/pull/529))
+  reworks the @lde/search and @lde/search-typesense public APIs; see
+  the package READMEs and ADRs 0003/0004.
+  Claude-Session: https://claude.ai/code/session_01PDZBfA1bj35oc7Yqn1pc2n"
+  M	README.md
+  M	docs/decisions/0003-search-api-core-query-model.md
+  M	docs/decisions/0004-search-api-graphql-surface.md
+  M	package-lock.json
+  A	packages/search-api-graphql/README.md
+  A	packages/search-api-graphql/eslint.config.mjs
+  A	packages/search-api-graphql/package.json
+  A	packages/search-api-graphql/src/build-schema.ts
+  A	packages/search-api-graphql/src/index.ts
+  A	packages/search-api-graphql/src/language.ts
+  A	packages/search-api-graphql/test/__snapshots__/generator-stability.test.ts.snap
+  A	packages/search-api-graphql/test/build-schema.test.ts
+  A	packages/search-api-graphql/test/generator-stability.test.ts
+  A	packages/search-api-graphql/tsconfig.json
+  A	packages/search-api-graphql/tsconfig.lib.json
+  A	packages/search-api-graphql/tsconfig.spec.json
+  A	packages/search-api-graphql/vite.config.ts
+  M	packages/search-typesense/README.md
+  M	packages/search-typesense/package.json
+  M	packages/search-typesense/src/adapter.ts
+  A	packages/search-typesense/src/collection-schema.ts
+  M	packages/search-typesense/src/index.ts
+  A	packages/search-typesense/src/query-compiler.ts
+  A	packages/search-typesense/src/search.ts
+  A	packages/search-typesense/test/__snapshots__/generator-stability.test.ts.snap
+  M	packages/search-typesense/test/adapter.test.ts
+  A	packages/search-typesense/test/collection-schema.test.ts
+  A	packages/search-typesense/test/generator-stability.test.ts
+  A	packages/search-typesense/test/parse-response.test.ts
+  A	packages/search-typesense/test/query-compiler.test.ts
+  A	packages/search-typesense/test/search-engine.test.ts
+  M	packages/search-typesense/tsconfig.lib.json
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/README.md
+  M	packages/search/package.json
+  A	packages/search/src/adapter.ts
+  A	packages/search/src/engine.ts
+  M	packages/search/src/index.ts
+  M	packages/search/src/project.ts
+  A	packages/search/src/query.ts
+  A	packages/search/src/schema.ts
+  A	packages/search/src/testing.ts
+  A	packages/search/test/engine.test.ts
+  M	packages/search/test/project.test.ts
+  A	packages/search/test/query.test.ts
+  A	packages/search/test/schema.test.ts
+  M	packages/search/vite.config.ts
+  M	tsconfig.json
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.2.0
+
+## 0.1.1 (2026-06-26)
+
+This was a version bump only for @lde/search-typesense to align it with other projects, there were no code changes.
+
+## 0.1.0 (2026-06-18)
+
+### 🚀 Features
+
+- add @lde/search-typesense and @lde/text-normalization ([#475](https://github.com/ldelements/lde/pull/475), [#252](https://github.com/ldelements/lde/issues/252))

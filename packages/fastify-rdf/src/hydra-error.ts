@@ -1,13 +1,7 @@
 import { DataFactory, Store } from 'n3';
+import { hydra, rdf } from '@tpluscode/rdf-ns-builders';
 
-const { namedNode, blankNode, literal } = DataFactory;
-
-const RDF_TYPE = namedNode('http://www.w3.org/1999/02/22-rdf-syntax-ns#type');
-const HYDRA_ERROR = namedNode('http://www.w3.org/ns/hydra/core#Error');
-const HYDRA_TITLE = namedNode('http://www.w3.org/ns/hydra/core#title');
-const HYDRA_DESCRIPTION = namedNode(
-  'http://www.w3.org/ns/hydra/core#description',
-);
+const { blankNode, literal } = DataFactory;
 
 /**
  * Serialize a Hydra error as compact JSON-LD without needing the `jsonld` dependency.
@@ -36,11 +30,11 @@ export function createHydraErrorDataset(
 ): Store {
   const store = new Store();
   const subject = blankNode();
-  store.add(DataFactory.quad(subject, RDF_TYPE, HYDRA_ERROR));
-  store.add(DataFactory.quad(subject, HYDRA_TITLE, literal(title)));
+  store.add(DataFactory.quad(subject, rdf.type, hydra.Error));
+  store.add(DataFactory.quad(subject, hydra.title, literal(title)));
   if (description !== undefined) {
     store.add(
-      DataFactory.quad(subject, HYDRA_DESCRIPTION, literal(description)),
+      DataFactory.quad(subject, hydra.description, literal(description)),
     );
   }
   return store;

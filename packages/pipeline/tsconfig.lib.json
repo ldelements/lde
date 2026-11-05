@@ -1,12 +1,12 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "baseUrl": ".",
     "rootDir": "src",
     "outDir": "dist",
     "tsBuildInfoFile": "dist/tsconfig.lib.tsbuildinfo",
     "emitDeclarationOnly": false,
-    "types": ["node"]
+    "types": ["node"],
+    "ignoreDeprecations": "6.0"
   },
   "include": ["src/**/*.ts"],
   "references": [
@@ -18,6 +18,12 @@
     },
     {
       "path": "../sparql-importer/tsconfig.lib.json"
+    },
+    {
+      "path": "../distribution-health/tsconfig.lib.json"
+    },
+    {
+      "path": "../distribution-probe/tsconfig.lib.json"
     },
     {
       "path": "../dataset-registry-client/tsconfig.lib.json"

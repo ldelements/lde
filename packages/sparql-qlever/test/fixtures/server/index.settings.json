@@ -1,1 +1,1 @@
-{ "ascii-prefixes-only": true, "num-triples-per-batch": 100000 }
+{ "ascii-prefixes-only": true, "num-triples-per-batch": 3000000 }

@@ -1,0 +1,9 @@
+{
+  "@context": {
+    "schema": "https://schema.org/"
+  },
+  "@id": "https://example.org/utrecht/story/1",
+  "@type": "schema:CreativeWork",
+  "schema:name": "Een verhaal uit Utrecht",
+  "schema:inLanguage": "nl"
+}

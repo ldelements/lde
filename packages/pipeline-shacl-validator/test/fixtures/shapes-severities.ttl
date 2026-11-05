@@ -1,0 +1,25 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://example.org/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+ex:PersonSeveritiesShape
+  a sh:NodeShape ;
+  sh:targetClass ex:Person ;
+  sh:property [
+    sh:path ex:name ;
+    sh:minCount 1 ;
+    sh:datatype xsd:string ;
+    sh:message "A person must have at least one name of type xsd:string." ;
+  ] ;
+  sh:property [
+    sh:path ex:nickname ;
+    sh:minCount 1 ;
+    sh:severity sh:Warning ;
+    sh:message "A person should have a nickname." ;
+  ] ;
+  sh:property [
+    sh:path ex:email ;
+    sh:minCount 1 ;
+    sh:severity ex:Critical ;
+    sh:message "A person must have an email address (custom severity)." ;
+  ] .

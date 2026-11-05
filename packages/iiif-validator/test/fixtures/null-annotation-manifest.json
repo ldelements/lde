@@ -1,0 +1,76 @@
+{
+  "@context": "http://iiif.io/api/presentation/3/context.json",
+  "id": "https://archief.literatuurmuseum.nl/iiif/presentation/3.0/46764587/manifest.json",
+  "type": "Manifest",
+  "label": {
+    "nl": ["Presentatie van 46764587"],
+    "en": ["Presentation of 46764587"]
+  },
+  "items": [
+    {
+      "id": "https://archief.literatuurmuseum.nl/iiif/presentation/13297860/canvas",
+      "type": "Canvas",
+      "height": 50,
+      "width": 50,
+      "items": [
+        {
+          "type": "AnnotationPage",
+          "id": "https://archief.literatuurmuseum.nl/iiif/presentation/13297860/canvas/annotation",
+          "items": [
+            {
+              "id": "https://archief.literatuurmuseum.nl/iiif/presentation/13297860/canvas/annotation/image",
+              "type": "Annotation",
+              "motivation": "painting",
+              "target": "https://archief.literatuurmuseum.nl/iiif/presentation/13297860/canvas",
+              "body": {
+                "id": "https://archief.literatuurmuseum.nl/iiif/image/3.0/ic:13297860/full/max/0/default.jpg",
+                "type": "Image",
+                "format": "image/jpg",
+                "service": [
+                  {
+                    "id": "https://archief.literatuurmuseum.nl/iiif/image/3.0/ic:13297860",
+                    "type": "ImageService3",
+                    "profile": "level1"
+                  }
+                ],
+                "height": 50,
+                "width": 50
+              }
+            }
+          ]
+        }
+      ],
+      "annotations": [null]
+    }
+  ],
+  "thumbnail": [
+    {
+      "id": "https://archief.literatuurmuseum.nl/iiif/image/3.0/ic:13297860/full/150,/0/default.png",
+      "type": "Image"
+    }
+  ],
+  "summary": {
+    "none": ["J 00XXX Jonker, Ingrid 1933-1968"]
+  },
+  "provider": [
+    {
+      "id": "https://archief.literatuurmuseum.nl",
+      "type": "Agent",
+      "homepage": [
+        {
+          "id": "https://archief.literatuurmuseum.nl",
+          "type": "Text",
+          "format": "text/html"
+        }
+      ]
+    }
+  ],
+  "homepage": [
+    {
+      "id": "https://hdl.handle.net/21.12129/46764587",
+      "type": "Text",
+      "format": "text/html"
+    }
+  ],
+  "rights": "https://creativecommons.org/licenses/zero/1.0/"
+}

@@ -8,6 +8,7 @@ import {
   SparqlProbeResult,
   DataDumpProbeResult,
 } from '../../src/distribution/index.js';
+import { assertNoBlankNodes } from '../../src/index.js';
 
 const SCHEMA = 'https://schema.org/';
 const VOID = 'http://rdfs.org/ns/void#';
@@ -35,7 +36,7 @@ function sparqlResponse(overrides?: ResponseInit): Response {
 describe('probeResultsToQuads', () => {
   it('yields schema:error literal for a network error', async () => {
     const results = [
-      new NetworkError('http://example.org/sparql', 'ECONNREFUSED'),
+      new NetworkError('http://example.org/sparql', 'ECONNREFUSED', 0),
     ];
     const store = await collect(
       probeResultsToQuads(results, 'http://example.org/dataset'),
@@ -46,10 +47,22 @@ describe('probeResultsToQuads', () => {
     expect(errors[0].object.value).toBe('ECONNREFUSED');
   });
 
+  it('emits no blank nodes (they fuse across datasets in a cat-built index, #474)', async () => {
+    const results = [
+      new NetworkError('http://example.org/sparql', 'ECONNREFUSED', 0),
+    ];
+    const store = await collect(
+      probeResultsToQuads(results, 'http://example.org/dataset'),
+    );
+    assertNoBlankNodes(store.getQuads(null, null, null, null));
+  });
+
   it('yields schema:error with status URI for HTTP error', async () => {
     const result = new SparqlProbeResult(
       'http://example.org/sparql',
       new Response('', { status: 404, statusText: 'Not Found' }),
+      0,
+      'application/sparql-results+json',
     );
     const store = await collect(
       probeResultsToQuads([result], 'http://example.org/dataset'),
@@ -66,6 +79,8 @@ describe('probeResultsToQuads', () => {
     const result = new SparqlProbeResult(
       'http://example.org/sparql',
       sparqlResponse(),
+      0,
+      'application/sparql-results+json',
     );
     const store = await collect(
       probeResultsToQuads([result], 'http://example.org/dataset'),
@@ -106,6 +121,7 @@ describe('probeResultsToQuads', () => {
           'Last-Modified': 'Wed, 01 Jan 2025 00:00:00 GMT',
         },
       }),
+      0,
     );
     const store = await collect(
       probeResultsToQuads([result], 'http://example.org/dataset'),
@@ -156,8 +172,13 @@ describe('probeResultsToQuads', () => {
 
   it('yields quads for multiple probe results', async () => {
     const results = [
-      new SparqlProbeResult('http://example.org/sparql', sparqlResponse()),
-      new NetworkError('http://example.org/other', 'timeout'),
+      new SparqlProbeResult(
+        'http://example.org/sparql',
+        sparqlResponse(),
+        0,
+        'application/sparql-results+json',
+      ),
+      new NetworkError('http://example.org/other', 'timeout', 0),
     ];
     const store = await collect(
       probeResultsToQuads(results, 'http://example.org/dataset'),
@@ -167,7 +188,7 @@ describe('probeResultsToQuads', () => {
     expect(actions).toHaveLength(2);
   });
 
-  it('attaches import error to the correct action blank node', async () => {
+  it('attaches import error to the correct action node', async () => {
     const distribution = new Distribution(
       new URL('http://example.org/data.nt'),
       'application/n-triples',
@@ -178,6 +199,7 @@ describe('probeResultsToQuads', () => {
         status: 200,
         headers: { 'Content-Length': '1000' },
       }),
+      0,
     );
     const importError: ImportFailed = {
       type: 'failed',
@@ -193,7 +215,7 @@ describe('probeResultsToQuads', () => {
       ),
     );
 
-    // The import error should be on the same blank node as the action target
+    // The import error should be on the same action node as the action target
     const targets = store.getQuads(
       null,
       `${SCHEMA}target`,
@@ -215,6 +237,7 @@ describe('probeResultsToQuads', () => {
         status: 200,
         headers: { 'Content-Type': 'text/turtle' },
       }),
+      0,
       'Distribution is empty',
     );
     const store = await collect(
@@ -228,6 +251,39 @@ describe('probeResultsToQuads', () => {
     // Should not emit void:dataDump since it's a failure.
     const dumps = store.getQuads(null, `${VOID}dataDump`, null, null);
     expect(dumps).toHaveLength(0);
+  });
+
+  it('mints stable, distinct action IRIs per URL, not blank nodes (issue #474)', async () => {
+    const results = [
+      new SparqlProbeResult(
+        'http://example.org/sparql',
+        sparqlResponse(),
+        0,
+        'application/sparql-results+json',
+      ),
+      new NetworkError('http://example.org/other', 'timeout', 0),
+    ];
+
+    const actionSubjects = async () => {
+      const store = await collect(
+        probeResultsToQuads(results, 'http://example.org/dataset'),
+      );
+      return store
+        .getQuads(null, `${RDF}type`, `${SCHEMA}Action`, null)
+        .map((q) => q.subject);
+    };
+
+    const subjects = await actionSubjects();
+    // Two URLs -> two distinct action nodes, each an IRI.
+    expect(subjects).toHaveLength(2);
+    expect(subjects.every((s) => s.termType === 'NamedNode')).toBe(true);
+    expect(new Set(subjects.map((s) => s.value)).size).toBe(2);
+
+    // Re-running yields the same IRIs (idempotent across runs).
+    const rerun = await actionSubjects();
+    expect(rerun.map((s) => s.value).sort()).toEqual(
+      subjects.map((s) => s.value).sort(),
+    );
   });
 
   it('yields nothing for empty probe results', async () => {

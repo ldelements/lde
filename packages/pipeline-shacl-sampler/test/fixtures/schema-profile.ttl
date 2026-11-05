@@ -1,0 +1,839 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix schema: <https://schema.org/> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+_:CreativeWorkShape
+    a sh:NodeShape ;
+    sh:targetClass schema:CreativeWork ;
+    sh:nodeKind sh:IRI ;
+    sh:name "CreativeWork" ;
+    sh:description """
+        The type for [=heritage objects=] ([[DERA]]’s *cultuurhistorisch object*) in this application profile.
+
+        Some heritage objects fit CreativeWork well, such as paintings, books or musical compositions.
+        Others are a less natural fit, such as fossils, buses or bridges,
+        either because they are not ‘creative works’ in the everyday sense
+        or because they fit somewhere else in Schema.org’s type hierarchy.
+
+        Nevertheless, CreativeWork serves as the catch-all type for all heritage objects in this application profile,
+        to differentiate them from the other top-level classes (Person, Organization, Place).
+
+        For more fine-grained typing, [[#CreativeWork-additionalType]] *SHOULD* be used.
+    """ ;
+    sh:property
+        [
+            sh:path schema:name ;
+            sh:datatype rdf:langString ;
+            sh:uniqueLang true ;
+            sh:minCount 1 ;
+            sh:description """
+                The CreativeWork’s name or title, assigned either by its creator, collection managers or by others.
+            """ ;
+            rdfs:seeAlso [
+                rdfs:label "A language-tagged name" ;
+                rdfs:comment "file://examples/CreativeWork-name.jsonld" ;
+            ]
+        ] ,
+        [
+            sh:path schema:creator ;
+            sh:or (
+                [ sh:class schema:Person ]
+                [ sh:class schema:Organization ]
+                [ sh:node _:CreatorShape ]
+            ) ;
+            sh:minCount 1 ;
+            sh:description """
+                A *REQUIRED* property that identifies the person(s) or organization(s) that had a role in the production of the CreativeWork.
+
+                If a [=term=] is available, that MUST be referenced. If not, a Person or Organization resource *MUST* be used instead.
+
+                The type *MAY* be omitted if the dataset publisher does not know whether the creator is a Person or Organization.
+
+                Even where more specific properties, applicable to CreativeWork’s subtypes, are available in Schema.org,
+                such as [artist](https://schema.org/artist), [composer](https://schema.org/composer) and [director](https://schema.org/director),
+                the creator property *MUST* be used for consistency.
+                Although Schema.org defines [author](https://schema.org/author) as equivalent to creator for CreativeWorks,
+                this profile picks creator so that consumers can rely on a single property.
+
+                Multiple creators (for example an author and a photographer) *MUST* each be expressed as separate, flat creator values.
+                The creator property *MUST NOT* wrap its values in a [Role](https://schema.org/Role) node,
+                since this would force consumers to handle two value shapes.
+                Publishers who wish to express qualified contributor roles *MAY* do so on a separate property such as [contributor](https://schema.org/contributor),
+                which is outside this profile and does not affect profile validity.
+            """ ;
+            rdfs:seeAlso [
+                rdfs:label "Van Gogh’s panting The Starry Night" ;
+                rdfs:comment "file://examples/CreativeWork-creator.jsonld" ;
+            ] , [
+                rdfs:label "A creator with unknown type:" ;
+                rdfs:comment "file://examples/CreativeWork-creator-untyped.jsonld" ;
+            ]
+        ] ,
+        [
+            sh:path schema:isPartOf ;
+            sh:minCount 1 ;
+            sh:severity sh:Warning ;
+            sh:description """
+                Points to the dataset(s) that the CreativeWork is part of, *REQUIRED* if the CreativeWork is part of one or more datasets.
+
+                This contextualizes the CreativeWork for consumers, with the [[NDE-DATASETS|dataset’s description]] providing
+                information about properties that are shared between CreativeWorks in the same dataset,
+                such as publisher and license.
+
+                Note that a CreativeWork may be part of multiple datasets.
+
+                The dataset *MUST* be typed as a `Dataset`.
+
+                The `isPartOf` property *MAY* also be used to indicate hierarchical relations between CreativeWorks within the dataset.
+                In that case, the value’s type will be something other than `Dataset`.
+                This usage is out of scope for this document.
+                """ ;
+            rdfs:seeAlso [
+                rdfs:label "Indicating the dataset that the CreativeWork is part of:" ;
+                rdfs:comment "file://examples/CreativeWork-isPartOf.jsonld" ;
+            ]
+        ] ,
+        [
+            a sh:PropertyShape ;
+            sh:path schema:associatedMedia ;
+            sh:or (
+                [ sh:node _:MediaObjectShape ]
+                [ sh:node _:IIIFPresentationManifestShape ]
+            ) ;
+            sh:minCount 1 ;
+            sh:severity sh:Warning ;
+            sh:description """
+                One or more media objects that represent the CreativeWork.
+                This property is *REQUIRED* if at least one media object is available.
+
+                If an <a href="https://iiif.io/api/presentation/">IIIF Presentation API</a> manifest is available
+                for the CreativeWork, it *MUST* be included as an additional `associatedMedia` entry with:
+                - `@id` set to the manifest URI
+                - `encodingFormat` set to `application/ld+json;profile='http://iiif.io/api/presentation/3/context.json'`.
+                - `license` matching the `rights` property specified in the presentation manifest
+
+                The IIIF Presentation manifest *MUST* describe all media for the CreativeWork.
+
+                IIIF-aware consumers *SHOULD* access media via the IIIF Presentation manifest.
+
+                Non-IIIF consumers *SHOULD* access media via the per-image entries’ `contentUrl` and `thumbnailUrl`,
+                and can ignore the manifest entry (it has no `contentUrl`).
+
+                Note: Schema.org lists MediaObject as the only range of `associatedMedia`. This profile additionally permits a single IIIF Presentation manifest entry, which is not itself a MediaObject but is identified by its `encodingFormat` rather than by its class.
+
+                See MediaObject for this property’s allowed values.
+            """;
+            rdfs:seeAlso [
+                rdfs:label "An image representation of the Starry Night:" ;
+                rdfs:comment "file://examples/CreativeWork-associatedMedia.jsonld" ;
+            ] , [
+                rdfs:label "IIIF Presentation manifest as `associatedMedia`:" ;
+                rdfs:comment "file://examples/CreativeWork-IIIF-Presentation.jsonld" ;
+            ]
+        ] ,
+        [
+            a sh:PropertyShape ;
+            sh:path schema:identifier ;
+            sh:or (
+              [ sh:datatype xsd:string ]
+              [ sh:class schema:PropertyValue ]
+          ) ;
+            sh:minCount 0 ;
+            sh:description """
+                An *OPTIONAL* property that provides a unique identifier for the CreativeWork,
+                usually an assigned alphanumeric string.
+                The identifier may be useful for referencing the CreativeWork in non-RDF contexts, such as exhibitions.
+                Note that this is different from the CreativeWork’s URI.
+                The value *MUST* be either a string or a [schema:PropertyValue](https://schema.org/PropertyValue).
+            """;
+            rdfs:seeAlso [
+                rdfs:label "A string as identifier:" ;
+                rdfs:comment "file://examples/CreativeWork-identifier-string.jsonld" ;
+            ] , [
+                rdfs:label "A structured PropertyValue as identifier:" ;
+                rdfs:comment "file://examples/CreativeWork-identifier-structured.jsonld" ;
+            ]
+        ] ,
+        [
+            a sh:PropertyShape ;
+            sh:path schema:additionalType ;
+            sh:nodeKind sh:IRI ;
+            sh:minCount 0 ;
+            sh:description """
+                An *OPTIONAL* property that provides additional types for the CreativeWork.
+                This is useful to add more specific types to your [=metadata record=] that may not be available as a Schema.org [[#subclasses|subclass]].
+
+                The value *MUST* reference [=terms=].
+            """ ;
+            rdfs:seeAlso [
+                rdfs:label "The Starry Night is both a Schema.org Painting and an AAT painting:" ;
+                rdfs:comment "file://examples/CreativeWork-additionalType.jsonld" ;
+            ]
+        ] ,
+        [
+            a sh:PropertyShape ;
+            sh:path schema:description ;
+            sh:datatype rdf:langString ;
+            sh:minCount 0 ;
+            sh:description """
+                An *OPTIONAL* property that gives a full description of the CreativeWork.
+            """ ;
+            rdfs:seeAlso [
+                rdfs:label "A description of the Starry Night:" ;
+                rdfs:comment "file://examples/CreativeWork-description.jsonld" ;
+            ]
+        ] ,
+        [
+            a sh:PropertyShape ;
+            sh:path schema:abstract ;
+            sh:datatype rdf:langString ;
+            sh:minCount 0 ;
+            sh:description """
+                Summarizes the CreativeWork in one sentence.
+                The abstract *SHOULD* be free of jargon and abbreviations so it can be understood by others.
+            """ ;
+            rdfs:seeAlso [
+                rdfs:label "A single-sentence abstract:" ;
+                rdfs:comment "file://examples/CreativeWork-abstract.jsonld" ;
+            ]
+        ] ,
+        [
+            a sh:PropertyShape ;
+            sh:path schema:text ;
+            sh:datatype rdf:langString ;
+            sh:minCount 0 ;
+            sh:description """
+                An *OPTIONAL* property containing the complete textual content of the CreativeWork,
+                primarily used for search indexing and discovery.
+
+                This includes content such as:
+                - the full text of a written work (e.g. story)
+                - transcribed text from visual media (e.g., inscriptions in photographs).
+
+                Note that this property contains plain text only, without preserving structural elements
+                like paragraphs, headings or the relationship between text and embedded media.
+            """ ;
+            rdfs:seeAlso [
+                rdfs:label "A story:" ;
+                rdfs:comment "file://examples/CreativeWork-text.jsonld" ;
+            ] ;
+        ] ,
+        [
+            a sh:PropertyShape ;
+            sh:path schema:size ;
+            sh:datatype xsd:string ;
+            sh:minCount 0 ;
+            sh:description """
+                Indicates the physical size of the CreativeWork in its preferred display form.
+            """;
+            rdfs:seeAlso [
+                rdfs:label "The dimensions of Van Gogh’s Starry Night" ;
+                rdfs:comment "file://examples/CreativeWork-size.jsonld" ;
+            ] ;
+        ] ,
+        [
+            a sh:PropertyShape ;
+            sh:path schema:contentLocation ;
+            sh:or (
+                [ sh:node _:DefinedTermShape ]
+                [ sh:node _:PlaceShape ]
+            ) ;
+            sh:minCount 0 ;
+            sh:description """
+                Indicates the location(s) depicted or described in the CreativeWork.
+                For example, the location in a photograph or painting.
+
+                If available, a term *MUST* be referenced. If not, a Place resource *MUST* be used instead.
+            """ ;
+            rdfs:seeAlso [
+                rdfs:label "Van Gogh’s painting The Starry Night:" ;
+                rdfs:comment "file://examples/CreativeWork-contentLocation.jsonld" ;
+            ] ;
+        ] ,
+        [
+            a sh:PropertyShape ;
+            sh:path schema:temporalCoverage ;
+            sh:or (
+                [ sh:nodeKind sh:IRI ; sh:pattern "^https?://" ]
+                [ sh:pattern "^(-?\\d{4}(-\\d{2}(-\\d{2}(T\\d{2}:\\d{2}(:\\d{2})?)?)?)?|\\.\\.)(/(-?\\d{4}(-\\d{2}(-\\d{2}(T\\d{2}:\\d{2}(:\\d{2})?)?)?)?|\\d{2}(-\\d{2})?|\\.\\.))?$" ]
+            ) ;
+            sh:minCount 0 ;
+            sh:description """
+                Indicates the period that the content applies to,
+                i.e. the time period(s) that the CreativeWork describes or depicts.
+
+                The value *MUST* be either an ISO 8601 date or time interval
+                (such as ‘2011’, ‘2011/2012’, ‘1889-06/07’ for shortened notation,
+                ‘-0431/-0404’ for BCE dates, or ‘1440/..’ for an open-ended range),
+                or an HTTP(S) URI.
+            """ ;
+            rdfs:seeAlso [
+                rdfs:label "Van Gogh’s painting The Starry Night:" ;
+                rdfs:comment "file://examples/CreativeWork-temporalCoverage.jsonld" ;
+            ] ;
+        ] ,
+        [
+            a sh:PropertyShape ;
+            sh:path schema:locationCreated ;
+            sh:or (
+                [ sh:node _:DefinedTermShape ]
+                [ sh:node _:PlaceShape ]
+            ) ;
+            sh:minCount 0 ;
+            sh:description """
+                Indicates the location(s) where the CreativeWork was created
+                (which may be different from its contentLocation).
+
+                If available, a term *MUST* be referenced. If not, a Place resource *MUST* be used instead.
+            """ ;
+            rdfs:seeAlso [
+                rdfs:label "Van Gogh’s painting The Starry Night:" ;
+                rdfs:comment "file://examples/CreativeWork-locationCreated.jsonld" ;
+            ]
+        ] ,
+        [
+            a sh:PropertyShape ;
+            sh:path schema:dateCreated ;
+            sh:node _:DateShape ;
+            sh:minCount 0 ;
+            sh:description """
+                Indicates the date the CreativeWork was created.
+
+                The value *MUST* be in ISO 8601 format: YYYY, YYYY-MM, or YYYY-MM-DD. Partial dates *MAY* be used if the exact date is unknown.
+            """ ;
+            rdfs:seeAlso [
+                rdfs:label "Van Gogh painted The Starry Night in June 1889:" ;
+                rdfs:comment "file://examples/CreativeWork-dateCreated.jsonld" ;
+            ]
+        ] ,
+        [
+            a sh:PropertyShape ;
+            sh:path schema:about ;
+            sh:or (
+                [ sh:node _:DefinedTermShape ]
+                [ sh:class schema:CreativeWork ]
+            ) ;
+            sh:minCount 0 ;
+            sh:description """
+                Indicates the subject-matter of the CreativeWork.
+                For example, which subjects are depicted in a painting or photograph?
+                Or which subjects is a story about?
+                And/or which CreativeWork (e.g. collection object) is this CreativeWork (story) about?
+
+                The value *MUST* either reference terms or other CreativeWork(s).
+
+                If the subject is a location, it *MUST* be listed under contentLocation instead.
+            """ ;
+            rdfs:seeAlso [
+                rdfs:label "The Starry Night depicts ‘starry sky’ and ‘Moon’." ;
+                rdfs:comment "file://examples/CreativeWork-about.jsonld" ;
+            ]
+        ] ,
+        [
+            a sh:PropertyShape ;
+            sh:path schema:material ;
+            sh:node _:DefinedTermShape ;
+            sh:minCount 0 ;
+            sh:description """
+                Indicates the material(s) that the CreativeWork is made from, e.g. leather, wool, cotton, paper.
+                The value *MUST* reference terms.
+            """ ;
+            rdfs:seeAlso [
+                rdfs:label "The Starry Night is made from ‘oil paint’ and ‘canvas’:" ;
+                rdfs:comment "file://examples/CreativeWork-material.jsonld" ;
+            ]
+        ] ,
+        [
+            a sh:PropertyShape ;
+            sh:path schema:genre ;
+            sh:node _:DefinedTermShape ;
+            sh:minCount 0 ;
+            sh:description """
+                Indicates the genre(s) of the CreativeWork,
+                for example art movements or periods.
+
+                The value *MUST* reference a term.
+            """ ;
+            rdfs:seeAlso [
+                rdfs:label "The Starry Night belongs to the Post-Impressionist art movement:" ;
+                rdfs:comment "file://examples/CreativeWork-genre.jsonld" ;
+            ]
+        ] ,
+        [
+            a sh:PropertyShape ;
+            sh:path schema:sdDatePublished ;
+            sh:or (
+                [
+                    sh:datatype xsd:date ;
+                    sh:pattern "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" ;
+                ]
+                [
+                    sh:datatype xsd:dateTime ;
+                    sh:pattern "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(Z|[+-][0-9]{2}:[0-9]{2})?$" ;
+                ]
+            ) ;
+            sh:minCount 0 ;
+            sh:description """
+                Indicates the date when the [=metadata record=] was last changed.
+
+                The value *MUST* be in ISO 8601 format: `YYYY-MM-DD` or `YYYY-MM-DDThh:mm:ssZ`.
+            """ ;
+        ]
+    .
+
+_:CreatorShape
+    a sh:NodeShape ;
+    sh:description """
+        If the type of a creator is not known, the type *MAY* be omitted.
+        A name is still *REQUIRED* to identify the creator.
+    """ ;
+    sh:not [
+        sh:path rdf:type ;
+        sh:minCount 1
+    ] ;
+    sh:property [
+        sh:path schema:name ;
+        sh:datatype rdf:langString ;
+        sh:uniqueLang true ;
+        sh:minCount 1 ;
+        sh:description """
+            A *REQUIRED* property that indicates the creator’s name in its preferred display form.
+        """ ;
+    ] .
+
+_:DefinedTermShape
+    a sh:NodeShape ;
+    sh:class schema:DefinedTerm ;
+    sh:description """
+        A vocabulary term identified by a human-readable name and, when available, a URI.
+        A name is *REQUIRED* and sameAs is *RECOMMENDED*.
+    """ ;
+    sh:property [
+        sh:path schema:name ;
+        sh:datatype rdf:langString ;
+        sh:uniqueLang true ;
+        sh:minCount 1 ;
+        sh:description """
+            A *REQUIRED* property that indicates the term’s preferred label.
+        """ ;
+    ] ,
+    [
+        sh:path schema:sameAs ;
+        sh:nodeKind sh:IRI ;
+        sh:minCount 0 ;
+        sh:description """
+            A *RECOMMENDED* property that references the term in a controlled vocabulary.
+            If a public term URI is known, it *MUST* be provided.
+        """ ;
+    ] .
+
+_:PersonShape
+    a sh:NodeShape ;
+    sh:name "Person" ;
+    sh:targetClass schema:Person ;
+    sh:description """
+        If a [=metadata record=] is a person, it *MUST* be typed as `Person`.
+        If a [=term=] is available for the person, that *MUST* be [[#reference-terms|referenced]].
+        If not, the person *MUST* be defined by the required properties listed below.
+
+        The objective for the Person model is not to fully describe all aspects of a person,
+        but to easily identify and distinguish between similar persons.
+    """ ;
+    sh:property
+        [
+            sh:path schema:name ;
+            sh:datatype rdf:langString ;
+            sh:uniqueLang true ;
+            sh:minCount 1 ;
+            sh:description """
+                A *REQUIRED* property that indicates the Person’s full name in its preferred display form.
+
+                The name *MUST NOT* contain information that belongs to other properties, such as birthDate or deathDate.
+            """ ;
+            rdfs:seeAlso [
+                rdfs:label "Person with a language-tagged name:" ;
+                rdfs:comment "file://examples/Person-name.jsonld" ;
+            ]
+        ] ,
+        [
+            sh:path schema:birthDate ;
+            sh:node _:DateShape ;
+            sh:minCount 0 ;
+            sh:maxCount 1 ;
+            sh:description """
+                An *OPTIONAL* property that indicates the person’s date of birth in ISO 8601 format: `YYYY-MM-DD`. Partial dates *MAY* be used if the exact date is unknown: `YYYY` or `YYYY-MM`.
+            """ ;
+        ] ,
+        [
+            sh:path schema:birthPlace ;
+            sh:or (
+                [ sh:node _:DefinedTermShape ]
+                [ sh:node _:PlaceShape ]
+            ) ;
+            sh:minCount 0 ;
+            sh:maxCount 1 ;
+            sh:description """
+                An *OPTIONAL* property that references the person’s place of birth.
+                The value *MUST* reference a [=term=]. If no term is available, a custom Place resource *MUST* be used.
+            """ ;
+            rdfs:seeAlso [
+                rdfs:label "Person with birthPlace:" ;
+                rdfs:comment "file://examples/Person-birthPlace.jsonld" ;
+            ]
+        ] ,
+        [
+            sh:path schema:deathDate ;
+            sh:node _:DateShape ;
+            sh:minCount 0 ;
+            sh:maxCount 1 ;
+            sh:description """
+                An *OPTIONAL* property that indicates the person’s date of death in ISO 8601 format: `YYYY-MM-DD`. Partial dates *MAY* be used if the exact date is unknown: `YYYY` or `YYYY-MM`.
+            """ ;
+        ] ,
+        [
+            sh:path schema:deathPlace ;
+            sh:or (
+                [ sh:node _:DefinedTermShape ]
+                [ sh:node _:PlaceShape ]
+            ) ;
+            sh:minCount 0 ;
+            sh:maxCount 1 ;
+            sh:description """
+                An *OPTIONAL* property that references the person’s place of death.
+                The value *MUST* reference a term, or, if no term is available, a custom Place resource *MUST* be used.
+            """ ;
+            rdfs:seeAlso [
+                rdfs:label "Person with deathPlace:" ;
+                rdfs:comment "file://examples/Person-deathPlace.jsonld" ;
+            ]
+        ] ,
+        [
+            sh:path schema:hasOccupation ;
+            sh:or (
+                [ sh:node _:DefinedTermShape ]
+                [ sh:node _:OccupationShape ]
+            ) ;
+            sh:minCount 0 ;
+            sh:description """
+                An *OPTIONAL* property that indicates the person’s occupation(s).
+                If available, a [[#reference-terms|term reference]] *MUST* be included in `sameAs`.
+            """ ;
+            rdfs:seeAlso [
+                rdfs:label "A carpenter (as a term):" ;
+                rdfs:comment "file://examples/Person-hasOccupation-term.jsonld" ;
+            ] ;
+            rdfs:seeAlso [
+                rdfs:label "A sekreetruimer (for which no term is known):" ;
+                rdfs:comment "file://examples/Person-hasOccupation.jsonld" ;
+            ]
+        ] .
+
+_:OrganizationShape
+    a sh:NodeShape ;
+    sh:targetClass schema:Organization ;
+    sh:nodeKind sh:IRI ;
+    sh:name "Organization" ;
+    sh:description """
+        Each Organization *MUST* be identified by a persistent URI.
+        Blank nodes *MUST NOT* be used for identifying Organizations.
+    """ ;
+    sh:property [
+        sh:path schema:name ;
+        sh:datatype rdf:langString ;
+        sh:uniqueLang true ;
+        sh:minCount 1 ;
+        sh:description """
+            A *REQUIRED* property that indicates the Organization’s full name in its preferred display form.
+        """ ;
+        rdfs:seeAlso [
+            rdfs:label "Organization name:" ;
+            rdfs:comment "file://examples/Organization-name.jsonld" ;
+        ]
+    ] ,
+    [
+        sh:path schema:location ;
+        sh:minCount 0 ;
+        sh:maxCount 1 ;
+        sh:class schema:Place ;
+        sh:node _:PlaceShape ;
+        sh:description """
+            An *OPTIONAL* property that indicates the Organization’s location,
+            useful for distinguishing the organization from others with similar names.
+
+            See Place for this property’s allowed values.
+        """ ;
+        rdfs:seeAlso [
+            rdfs:label "Organization with a location:" ;
+            rdfs:comment "file://examples/Organization-location.jsonld" ;
+        ]
+    ] .
+
+_:MediaObjectShape
+    a sh:NodeShape ;
+    sh:name "MediaObject" ;
+    sh:description """
+        In case of image, video, audio or 3d model objects, in addition to the MediaObject class,
+        the relevant subclass *MUST* be used:
+        - ImageObject
+        - VideoObject
+        - AudioObject
+        - 3DModel
+
+        For other types of media, the generic class MediaObject *MUST* be used by itself.
+    """ ;
+    sh:property
+        [
+            sh:path schema:license ;
+            sh:nodeKind sh:IRI ;
+            sh:minCount 1 ;
+            sh:pattern "^https?://" ;
+            sh:description """
+                A REQUIRED property that points to the URI for a license under which the digital reproduction may be used.
+                This concerns the use of the reproduction, not of the heritage object itself.
+                The value *MUST* be the canonical URI of a license.
+                For example, use https://creativecommons.org/licenses/by/4.0/ instead
+                of http://creativecommons.org/licenses/by/4.0/deed.nl.
+
+                The value *SHOULD* be an open license that allows the media to consumed,
+                for example one of the [Creative Commons](https://creativecommons.org/choose/) licenses.
+            """ ;
+            rdfs:seeAlso [
+                rdfs:label "CC0 “No Rights Reserved” license on an ImageObject:" ;
+                rdfs:comment "file://examples/MediaObject-license.jsonld" ;
+            ]
+        ] ,
+        [
+            sh:path schema:contentUrl ;
+            sh:nodeKind sh:IRI ;
+            sh:minCount 1 ;
+            sh:pattern "^https?://" ;
+            sh:severity sh:Warning ;
+            sh:description """
+                Points to the URL of the media object, *REQUIRED* if the MediaObject is published under an open license.
+
+                For ImageObjects, this *SHOULD* be a high-resolution image to be used in full-screen viewers etc.
+            """ ;
+            rdfs:seeAlso [
+                rdfs:label "Full-sized image representation of the Starry Night." ;
+                rdfs:comment "file://examples/MediaObject-contentUrl.jsonld" ;
+            ]
+        ] ,
+        [
+            sh:path schema:thumbnailUrl ;
+            sh:nodeKind sh:IRI ;
+            sh:minCount 1 ;
+            sh:pattern "^https?://" ;
+            sh:severity sh:Warning ;
+            sh:description """
+                Points to a smaller version of the MediaObject, *REQUIRED* if the MediaObject is published under an open license.
+
+                For ImageObjects, this *SHOULD* be a small image to be used in lists, search results etc.
+            """ ;
+            rdfs:seeAlso [
+                rdfs:label "Both full-sized image and thumbnail of the Starry Night." ;
+                rdfs:comment "file://examples/MediaObject-thumbnailUrl.jsonld" ;
+            ]
+        ] ,
+        [
+            sh:path schema:copyrightNotice ;
+            sh:datatype rdf:langString ;
+            sh:minCount 0 ;
+            sh:description """
+                An *OPTIONAL* property that indicates the copyright aspects of the MediaObject,
+                particularly useful if the license requires attribution.
+            """ ;
+            rdfs:seeAlso [
+                rdfs:label "A MediaObject that may be used only with attribution." ;
+                rdfs:comment "file://examples/MediaObject-copyrightNotice.jsonld" ;
+            ]
+        ] .
+
+_:IIIFPresentationManifestShape
+    a sh:NodeShape ;
+    sh:nodeKind sh:IRI ;
+    sh:property [
+        sh:path schema:license ;
+        sh:nodeKind sh:IRI ;
+        sh:minCount 1 ;
+        sh:pattern "^https?://" ;
+    ] ,
+    [
+        sh:path schema:encodingFormat ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:pattern "^application/ld\\+json;profile='http://iiif\\.io/api/presentation/\\d+/context\\.json'$" ;
+    ] .
+
+_:CreativeWorkAssociatedMediaCardinalityShape
+    a sh:NodeShape ;
+    sh:targetClass schema:CreativeWork ;
+    sh:property [
+        sh:path schema:associatedMedia ;
+        sh:qualifiedValueShape _:MediaObjectShape ;
+        sh:qualifiedMinCount 1 ;
+        sh:severity sh:Warning ;
+        sh:message "At least one renderable MediaObject is required when media is available." ;
+    ] ,
+    [
+        sh:path schema:associatedMedia ;
+        sh:qualifiedValueShape _:IIIFPresentationManifestShape ;
+        sh:qualifiedMaxCount 1 ;
+        sh:message "At most one IIIF Presentation manifest may be exposed per CreativeWork." ;
+    ] .
+
+_:PlaceShape
+    a sh:NodeShape ;
+    sh:name "Place" ;
+    sh:targetClass schema:Place ;
+    sh:description """
+        For properties that reference locations, if no term is available, a custom Place resource *MUST* be used instead.
+    """ ;
+    sh:property [
+        sh:path schema:name ;
+        sh:datatype rdf:langString ;
+        sh:uniqueLang true ;
+        sh:minCount 1 ;
+        sh:description """
+            A *REQUIRED* property that indicates the name of the place.
+        """ ;
+    ] ,
+    [
+        sh:path schema:address ;
+        sh:class schema:PostalAddress ;
+        sh:node _:PostalAddressShape ;
+        sh:minCount 0 ;
+        sh:description """
+            A property that indicates the Place’s address, *REQUIRED* if known.
+
+            See PostalAddress for this property’s allowed values.
+        """ ;
+        rdfs:seeAlso [
+            rdfs:label "A place with an address:" ;
+            rdfs:comment "file://examples/Place-address.jsonld" ;
+        ]
+    ] ,
+    [
+        sh:path schema:geo ;
+        sh:or (
+            [
+                sh:class schema:GeoCoordinates ;
+                sh:node [
+                    a sh:NodeShape ;
+                    sh:name "GeoCoordinates" ;
+                    sh:description """
+                        Geographic coordinates for a Place.
+                    """ ;
+                    sh:property [
+                        sh:path schema:latitude ;
+                        sh:datatype xsd:double ;
+                        sh:minCount 1 ;
+                        sh:maxCount 1 ;
+                        sh:description """
+                            The latitude of a location. For example 37.42242 (WGS 84).
+                        """ ;
+                    ] ,
+                    [
+                        sh:path schema:longitude ;
+                        sh:datatype xsd:double ;
+                        sh:minCount 1 ;
+                        sh:maxCount 1 ;
+                        sh:description """
+                            The longitude of a location. For example -122.08585 (WGS 84).
+                        """ ;
+                    ]
+                ] ;
+            ]
+            [ sh:class schema:GeoShape ]
+        ) ;
+        sh:minCount 0 ;
+        sh:maxCount 1 ;
+        sh:description """
+            A property that indicates the Place’s [[!WGS84]] geo coordinates, *REQUIRED* if known.
+        """ ;
+        rdfs:seeAlso [
+            rdfs:label "A place with coordinates:" ;
+            rdfs:comment "file://examples/Place-geo.jsonld" ;
+        ]
+    ] .
+
+_:OccupationShape
+    a sh:NodeShape ;
+    sh:class schema:Occupation ;
+    sh:description """
+        A Person’s occupation.
+    """ ;
+    sh:property [
+        sh:path schema:name ;
+        sh:datatype rdf:langString ;
+        sh:uniqueLang true ;
+        sh:minCount 1 ;
+        sh:description """
+            A *REQUIRED* property that indicates the occupation’s name.
+        """ ;
+    ] .
+
+_:PostalAddressShape
+    a sh:NodeShape ;
+    sh:name "PostalAddress" ;
+    sh:description """
+        A postal address for an Organization or Place.
+        All properties are *OPTIONAL*.
+    """ ;
+    sh:property [
+        sh:path schema:streetAddress ;
+        sh:datatype xsd:string ;
+        sh:minCount 0 ;
+        sh:maxCount 1 ;
+        sh:description """
+            An *OPTIONAL* property that indicates the street address, e.g. ‘Street 123’.
+        """ ;
+    ] ,
+    [
+        sh:path schema:postalCode ;
+        sh:datatype xsd:string ;
+        sh:minCount 0 ;
+        sh:maxCount 1 ;
+        sh:description """
+            An *OPTIONAL* property that indicates the postal code, e.g. ‘1234 AB’.
+        """ ;
+    ] ,
+    [
+        sh:path schema:addressLocality ;
+        sh:datatype xsd:string ;
+        sh:minCount 0 ;
+        sh:maxCount 1 ;
+        sh:description """
+            An *OPTIONAL* property that indicates the locality (city).
+        """ ;
+    ] ,
+    [
+        sh:path schema:addressRegion ;
+        sh:datatype xsd:string ;
+        sh:minCount 0 ;
+        sh:maxCount 1 ;
+        sh:description """
+            An *OPTIONAL* property that indicates the region (province or state).
+        """ ;
+    ] ,
+    [
+        sh:path schema:addressCountry ;
+        sh:datatype xsd:string ;
+        sh:minCount 0 ;
+        sh:maxCount 1 ;
+        sh:description """
+            An *OPTIONAL* property that indicates the country.
+            For countries that have an [ISO 3166-1](https://en.wikipedia.org/wiki/ISO_3166-1) alpha-2 country code (e.g. ‘NL’), that *MUST* be used.
+            For historical countries, their name *MAY* be used instead (e.g. ‘Prussia’).
+        """ ;
+    ] .
+
+_:DateShape
+    a sh:NodeShape ;
+    sh:or (
+        [ sh:datatype schema:Date ]
+        [ sh:datatype xsd:date ]
+    ) ;
+    sh:pattern "^[0-9]{4}(-[0-9]{2}(-[0-9]{2})?)?$" ;
+.

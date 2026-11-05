@@ -1,9 +1,14 @@
 import type { Dataset, Distribution } from '@lde/dataset';
 import type {
   DistributionAnalysisResult,
+  ImportDetails,
+  ItemsRejected,
   ProgressReporter,
+  TimeoutTransitionEvent,
+  ValidationReport,
 } from '@lde/pipeline';
 import chalk from 'chalk';
+import logSymbols from 'log-symbols';
 import ora, { type Ora } from 'ora';
 import prettyMilliseconds from 'pretty-ms';
 
@@ -12,69 +17,202 @@ const compactNumber = new Intl.NumberFormat('en', {
   maximumFractionDigits: 1,
 });
 
+function formatBytes(bytes: number): string {
+  const megabytes = bytes / 1024 / 1024;
+  return `${megabytes.toFixed(0)} MB`;
+}
+
 export class ConsoleReporter implements ProgressReporter {
-  private stageSpinner?: Ora;
+  private activeSpinner?: Ora;
   private stageStartTime = 0;
   private datasetStartTime = 0;
   private datasetTotal = 0;
   private datasetIndex = 0;
-  private analysisResults: DistributionAnalysisResult[] = [];
+  private importTimer?: ReturnType<typeof setInterval>;
+  private probeLines: { url: string; text: string }[] = [];
+
+  /** Print a static line with a symbol prefix. */
+  private printLine(symbol: string, text: string, indent = 0): void {
+    process.stderr.write(`${'  '.repeat(indent)}${symbol} ${text}\n`);
+  }
+
+  /** Stop any active spinner and start a new one. */
+  private startSpinner(text: string, indent = 0): Ora {
+    this.activeSpinner?.stop();
+    this.clearImportTimer();
+    const padding = '  '.repeat(indent);
+    this.activeSpinner = ora({
+      discardStdin: false,
+      prefixText: padding,
+    }).start(text);
+    return this.activeSpinner;
+  }
 
   pipelineStart(_name: string): void {
-    this.stageSpinner = ora({
-      discardStdin: false,
-      text: 'Selecting datasets',
-    }).start();
+    this.startSpinner('Selecting datasets');
   }
 
   datasetsSelected(count: number, duration: number): void {
     this.datasetTotal = count;
-    if (this.stageSpinner) {
-      this.stageSpinner.text = `Selected datasets: found ${chalk.bold(count)} datasets in ${chalk.bold(prettyMilliseconds(duration))}`;
+    if (this.activeSpinner) {
+      this.activeSpinner.text = `Selected datasets: found ${chalk.bold(count)} ${
+        count === 1 ? 'dataset' : 'datasets'
+      } in ${chalk.bold(prettyMilliseconds(duration))}`;
     }
   }
 
-  datasetStart(dataset: Dataset): void {
-    this.stageSpinner?.succeed();
-    this.stageSpinner = undefined;
-    this.datasetStartTime = Date.now();
-    this.datasetIndex++;
-    const counter = this.datasetTotal
-      ? ` ${chalk.dim(`[${this.datasetIndex}/${this.datasetTotal}]`)}`
-      : '';
-    console.info();
-    console.info(`Dataset ${chalk.bold(dataset.iri.toString())}${counter}`);
+  selectionEmpty(reason: string): void {
+    // A run that changed nothing on purpose – loud enough to notice on a cron,
+    // because the usual cause is an outage or a criteria typo rather than a
+    // genuinely empty registry. Printed either way: a spinner is only running
+    // when the pipeline reached selection through `pipelineStart`, and the
+    // warning matters most precisely where it did not.
+    if (this.activeSpinner) {
+      this.activeSpinner.warn(chalk.yellow(reason));
+      this.activeSpinner = undefined;
+      return;
+    }
+    this.printLine(logSymbols.warning, chalk.yellow(reason));
   }
 
-  distributionsAnalyzed(
-    _dataset: Dataset,
-    results: DistributionAnalysisResult[],
-  ): void {
-    this.analysisResults = results;
+  datasetStart(dataset: Dataset): void {
+    this.activeSpinner?.succeed();
+    this.activeSpinner = undefined;
+    this.clearImportTimer();
+    this.datasetStartTime = Date.now();
+    this.probeLines = [];
+    this.datasetIndex++;
+    const counter =
+      this.datasetTotal > 1
+        ? ` ${chalk.dim(`[${this.datasetIndex}/${this.datasetTotal}]`)}`
+        : '';
+    process.stderr.write(
+      `\nDataset ${chalk.bold(dataset.iri.toString())}${counter}\n`,
+    );
+  }
+
+  distributionProbed(result: DistributionAnalysisResult): void {
+    const url = result.distribution.accessUrl.toString();
+    const typeLabel =
+      result.type === 'sparql'
+        ? 'SPARQL endpoint'
+        : result.type === 'data-dump'
+          ? 'Data dump'
+          : 'Network error';
+
+    if (result.available) {
+      const detail =
+        result.statusCode !== undefined ? ` (HTTP ${result.statusCode})` : '';
+      const text = `${typeLabel} ${url}${detail}`;
+      this.printLine(logSymbols.success, text, 1);
+      this.probeLines.push({ url, text });
+      for (const warning of result.warnings) {
+        this.printLine(logSymbols.warning, warning, 1);
+      }
+    } else {
+      const detail = result.error
+        ? ` (${result.error})`
+        : result.statusCode !== undefined
+          ? ` (HTTP ${result.statusCode})`
+          : '';
+      this.printLine(logSymbols.error, `${typeLabel} ${url}${detail}`, 1);
+      this.probeLines.push({ url, text: '' });
+    }
+  }
+
+  importStarted(): void {
+    const importStart = Date.now();
+    const spinner = this.startSpinner('Importing\u2026', 1);
+    this.importTimer = setInterval(() => {
+      if (spinner.isSpinning) {
+        spinner.suffixText = prettyMilliseconds(Date.now() - importStart);
+      }
+    }, 1_000);
+  }
+
+  importFailed(_distribution: Distribution, error: string): void {
+    if (this.activeSpinner) {
+      this.activeSpinner.text = `Import failed: ${error}`;
+      this.activeSpinner.suffixText = '';
+      this.activeSpinner.fail();
+    } else {
+      this.printLine(logSymbols.error, `Import failed: ${error}`, 1);
+    }
+    this.clearImportTimer();
+    this.activeSpinner = undefined;
   }
 
   distributionSelected(
     _dataset: Dataset,
     distribution: Distribution,
-    importedFrom?: Distribution,
-    importDuration?: number,
+    imported?: ImportDetails,
   ): void {
-    this.printAnalysisResults(distribution, importedFrom, importDuration);
+    if (imported) {
+      const engine = imported.engine
+        ? ` into ${imported.engine.name} ${imported.engine.version}`
+        : '';
+      const count =
+        imported.tripleCount !== undefined
+          ? `${compactNumber.format(imported.tripleCount)} triples, `
+          : '';
+      const duration = ` in ${chalk.bold(prettyMilliseconds(imported.duration))}`;
+      const text = `Imported ${imported.from.accessUrl.toString()}${engine} (${count}to ${distribution.accessUrl.toString()})${duration}`;
+      if (this.activeSpinner) {
+        this.activeSpinner.text = text;
+        this.activeSpinner.suffixText = '';
+        this.activeSpinner.succeed();
+      } else {
+        this.printLine(logSymbols.success, text, 1);
+      }
+      this.clearImportTimer();
+      this.activeSpinner = undefined;
+    } else {
+      this.clearImportTimer(); // defensive – prevents leaks from a previous dataset
+      const url = distribution.accessUrl.toString();
+      const probe = this.probeLines.find((line) => line.url === url);
+      const text = probe?.text || url;
+      const selectedText = `${text} ${chalk.green('(selected)')}`;
+
+      if (probe?.text && process.stderr.isTTY) {
+        const linesUp = this.probeLines.length - this.probeLines.indexOf(probe);
+        // Move cursor up to the probe line and clear it.
+        process.stderr.write(`\x1B[${linesUp}A\x1B[2K\r`);
+        this.printLine(logSymbols.success, selectedText, 1);
+        // Move cursor back down to original position.
+        if (linesUp > 1) {
+          process.stderr.write(`\x1B[${linesUp - 1}B`);
+        }
+      } else {
+        this.printLine(logSymbols.success, selectedText, 1);
+      }
+    }
+  }
+
+  private clearImportTimer(): void {
+    if (this.importTimer) {
+      clearInterval(this.importTimer);
+      this.importTimer = undefined;
+    }
   }
 
   stageStart(stage: string): void {
     this.stageStartTime = Date.now();
-    this.stageSpinner = ora({ discardStdin: false }).start();
-    this.stageSpinner.text = `Stage ${chalk.bold(stage)}`;
+    this.startSpinner(`Stage ${chalk.bold(stage)}`, 1);
   }
 
   stageProgress(update: {
     itemsProcessed: number;
     quadsGenerated: number;
+    memoryUsageBytes: number;
+    heapUsedBytes: number;
   }): void {
-    if (this.stageSpinner) {
+    if (this.activeSpinner) {
       const elapsed = prettyMilliseconds(Date.now() - this.stageStartTime);
-      this.stageSpinner.suffixText = `${compactNumber.format(update.itemsProcessed)} items, ${compactNumber.format(update.quadsGenerated)} quads, ${elapsed}`;
+      this.activeSpinner.suffixText = `${compactNumber.format(
+        update.itemsProcessed,
+      )} items, ${compactNumber.format(
+        update.quadsGenerated,
+      )} quads, ${elapsed}, memory: ${formatBytes(update.memoryUsageBytes)} RSS, ${formatBytes(update.heapUsedBytes)} heap`;
     }
   }
 
@@ -86,103 +224,124 @@ export class ConsoleReporter implements ProgressReporter {
       duration: number;
     },
   ): void {
-    if (this.stageSpinner) {
-      this.stageSpinner.suffixText = `took ${chalk.bold(prettyMilliseconds(result.duration))}`;
-      this.stageSpinner.succeed();
-      this.stageSpinner = undefined;
+    if (this.activeSpinner) {
+      const counts =
+        result.itemsProcessed > 0
+          ? ` ${compactNumber.format(result.itemsProcessed)} items, ${compactNumber.format(result.quadsGenerated)} quads,`
+          : '';
+      this.activeSpinner.suffixText = '';
+      this.activeSpinner.text = `${this.activeSpinner.text}${counts} took ${chalk.bold(
+        prettyMilliseconds(result.duration),
+      )}`;
+      this.activeSpinner.succeed();
+      this.activeSpinner = undefined;
     }
   }
 
-  stageFailed(_stage: string, error: Error): void {
-    if (this.stageSpinner) {
-      this.stageSpinner.suffixText = chalk.red(error.message);
-      this.stageSpinner.fail();
-      this.stageSpinner = undefined;
+  stageFailed(stage: string, error: Error): void {
+    if (this.activeSpinner) {
+      this.activeSpinner.suffixText = chalk.red(error.message);
+      this.activeSpinner.fail();
+      this.activeSpinner = undefined;
+    } else {
+      // The pipeline also reports failures outside any stage – a writer
+      // flush, a provenance write, the reactive dump fallback – where no
+      // spinner is running. Those must leave a trace too: a failure that
+      // prints nothing is worse than the failure itself.
+      this.printLine(
+        logSymbols.error,
+        `${chalk.bold(stage)} failed: ${chalk.red(error.message)}`,
+        1,
+      );
+    }
+  }
+
+  datasetValidated(_dataset: Dataset, report: ValidationReport): void {
+    if (report.conforms) {
+      this.printLine(
+        logSymbols.success,
+        `Validated ${compactNumber.format(report.quadsValidated)} quads`,
+        2,
+      );
+    } else {
+      this.printLine(
+        logSymbols.error,
+        `Validated ${compactNumber.format(report.quadsValidated)} quads: ${chalk.red(`${compactNumber.format(report.violations)} violation(s)`)}`,
+        2,
+      );
     }
   }
 
   stageSkipped(_stage: string, reason: string): void {
-    if (this.stageSpinner) {
-      this.stageSpinner.suffixText = `skipped: ${chalk.red(reason)}`;
-      this.stageSpinner.fail();
-      this.stageSpinner = undefined;
+    if (this.activeSpinner) {
+      this.activeSpinner.suffixText = `skipped: ${chalk.red(reason)}`;
+      this.activeSpinner.fail();
+      this.activeSpinner = undefined;
     }
   }
 
-  datasetComplete(_dataset: Dataset): void {
-    const s = ora({
-      discardStdin: false,
-      text: `Completed in ${chalk.bold(prettyMilliseconds(Date.now() - this.datasetStartTime))}`,
-    }).start();
-    s.succeed();
+  datasetComplete(
+    _dataset: Dataset,
+    result: { memoryUsageBytes: number; heapUsedBytes: number },
+  ): void {
+    this.printLine(
+      logSymbols.success,
+      `Completed in ${chalk.bold(
+        prettyMilliseconds(Date.now() - this.datasetStartTime),
+      )} ${chalk.dim(`(memory: ${formatBytes(result.memoryUsageBytes)} RSS, ${formatBytes(result.heapUsedBytes)} heap)`)}`,
+      1,
+    );
   }
 
   datasetSkipped(_dataset: Dataset, reason: string): void {
-    this.printAnalysisResults();
-    const s = ora({
-      discardStdin: false,
-      text: `Skipped: ${chalk.red(reason)}`,
-    }).start();
-    s.fail();
+    this.printLine(logSymbols.error, `Skipped: ${chalk.red(reason)}`, 1);
   }
 
-  private printAnalysisResults(
-    selected?: Distribution,
-    importedFrom?: Distribution,
-    importDuration?: number,
-  ): void {
-    // Match by selected distribution URL, or by importedFrom URL (when a data
-    // dump was imported to a local SPARQL endpoint, the selected distribution
-    // is the local endpoint which doesn't appear in probe results).
-    const selectedUrl = selected?.accessUrl.toString();
-    const importedFromUrl = importedFrom?.accessUrl.toString();
-
-    for (const result of this.analysisResults) {
-      const resultUrl = result.distribution.accessUrl.toString();
-      const isSelected =
-        selected &&
-        (resultUrl === selectedUrl || resultUrl === importedFromUrl);
-      const typeLabel =
-        result.type === 'sparql'
-          ? 'SPARQL endpoint'
-          : result.type === 'data-dump'
-            ? 'Data dump'
-            : 'Network error';
-      const url = resultUrl;
-
-      const s = ora({ discardStdin: false });
-      if (isSelected) {
-        if (importedFrom) {
-          const duration =
-            importDuration !== undefined
-              ? ` in ${chalk.bold(prettyMilliseconds(importDuration))}`
-              : '';
-          s.start(`Imported ${url} (to ${selectedUrl!})${duration}`);
-        } else {
-          s.start(`${typeLabel} ${url} ${chalk.dim('(selected)')}`);
-        }
-        s.succeed();
-      } else if (result.available) {
-        const detail =
-          result.statusCode !== undefined ? ` (HTTP ${result.statusCode})` : '';
-        s.start(`${typeLabel} ${url}${detail}`);
-        s.succeed();
-      } else {
-        const detail = result.error
-          ? ` (${result.error})`
-          : result.statusCode !== undefined
-            ? ` (HTTP ${result.statusCode})`
-            : '';
-        s.start(`${typeLabel} ${url}${detail}`);
-        s.fail();
-      }
+  itemsRejected(_dataset: Dataset, rejection: ItemsRejected): void {
+    const { target, written, rejected, reasons } = rejection;
+    this.printLine(
+      logSymbols.warning,
+      `${chalk.bold(target)}: ${compactNumber.format(written - rejected)} of ${compactNumber.format(written)} items written, ${chalk.yellow(`${compactNumber.format(rejected)} rejected`)}`,
+      1,
+    );
+    for (const { reason, count, examples } of reasons) {
+      this.printLine(
+        logSymbols.warning,
+        `${compactNumber.format(count)} × ${reason} ${chalk.dim(`(e.g. ${examples.join(', ')})`)}`,
+        2,
+      );
     }
-    this.analysisResults = [];
   }
 
-  pipelineComplete(result: { duration: number }): void {
-    console.info(
-      `\nPipeline completed in ${chalk.bold(prettyMilliseconds(result.duration))}`,
+  pipelineComplete(result: {
+    duration: number;
+    memoryUsageBytes: number;
+    heapUsedBytes: number;
+  }): void {
+    process.stderr.write(
+      `\nPipeline completed in ${chalk.bold(
+        prettyMilliseconds(result.duration),
+      )} ${chalk.dim(`(memory: ${formatBytes(result.memoryUsageBytes)} RSS, ${formatBytes(result.heapUsedBytes)} heap)`)}\n`,
+    );
+  }
+
+  timeoutTightened(event: TimeoutTransitionEvent): void {
+    this.printLine(
+      chalk.yellow('↘'),
+      `Tightened timeout for ${event.endpoint.toString()} to ${chalk.bold(
+        prettyMilliseconds(event.toTimeoutMs),
+      )} after ${chalk.bold(event.consecutiveTimeouts)} consecutive timeouts`,
+      2,
+    );
+  }
+
+  timeoutRelaxed(event: TimeoutTransitionEvent): void {
+    this.printLine(
+      chalk.green('↗'),
+      `Relaxed timeout for ${event.endpoint.toString()} back to ${chalk.bold(
+        prettyMilliseconds(event.toTimeoutMs),
+      )} after successful request`,
+      2,
     );
   }
 }

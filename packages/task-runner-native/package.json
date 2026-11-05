@@ -1,10 +1,11 @@
 {
   "name": "@lde/task-runner-native",
-  "version": "0.2.11",
+  "version": "0.4.0",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
     "directory": "packages/task-runner-native"
   },
+  "license": "MIT",
   "type": "module",
   "exports": {
     "./package.json": "./package.json",
@@ -23,7 +24,7 @@
     "!**/*.tsbuildinfo"
   ],
   "dependencies": {
-    "@lde/task-runner": "0.2.10",
+    "@lde/task-runner": "^0.4.0",
     "tslib": "^2.3.0"
   }
 }

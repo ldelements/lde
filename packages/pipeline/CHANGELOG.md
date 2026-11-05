@@ -1,3 +1,1296 @@
+## 0.41.0 (2026-11-03)
+
+### 🚀 Features
+
+- ⚠️  **search-indexer:** index local RDF files beside registered datasets ([#985](https://github.com/ldelements/lde/pull/985))
+
+### ⚠️  Breaking Changes
+
+- **search-indexer:** index local RDF files beside registered datasets  ([#985](https://github.com/ldelements/lde/pull/985))
+  IndexerConfig.registryEndpoint is optional, undefined
+  when DATASETS names only local data. Code reading it must handle
+  undefined.
+  * fix: re-copy restored local files and isolate combined selections
+  - Record a local file’s size and modification time beside its copy and
+    copy again whenever either changes, so a same-size replacement restored
+    with an older time reaches the index
+  - Cancel a local copy when the download signal aborts
+  - Give each iteration of a CombinedSelector selection its own stream, so
+    overlapping or restarted loops never skip or repeat datasets
+  - Stop Dataset.localFile sharing one URL object between the IRI and the
+    access URL
+  - Test RegistrySelector
+  - Argue the full directory listing against ADR 12 in ADR 31, and note
+    that an own IRI counts as registered for registry-sourced types"
+  A	docs/decisions/0031-import-local-files-through-the-data-dump-path.md
+  M	docs/guide/import-data-dumps.md
+  M	docs/guide/what-is-lde.md
+  M	docs/reference/dataset.md
+  M	docs/reference/distribution-downloader.md
+  M	docs/reference/distribution-probe.md
+  M	docs/reference/pipeline.md
+  M	docs/reference/search-indexer.md
+  M	docs/reference/search-pipeline.md
+  M	package-lock.json
+  M	packages/dataset/src/dataset.ts
+  M	packages/dataset/src/distribution.ts
+  A	packages/dataset/test/dataset.test.ts
+  M	packages/dataset/test/distribution.test.ts
+  M	packages/distribution-downloader/src/download.ts
+  A	packages/distribution-downloader/test/localFile.test.ts
+  M	packages/distribution-downloader/vite.config.ts
+  M	packages/distribution-probe/src/probe.ts
+  A	packages/distribution-probe/test/localFile.test.ts
+  M	packages/distribution-probe/vite.config.ts
+  M	packages/pipeline/src/selector.ts
+  A	packages/pipeline/test/directorySelector.test.ts
+  A	packages/pipeline/test/distribution/localFile.test.ts
+  A	packages/pipeline/test/selector.test.ts
+  M	packages/pipeline/vite.config.ts
+  M	packages/search-indexer/package.json
+  M	packages/search-indexer/src/cli.ts
+  M	packages/search-indexer/src/composition.ts
+  M	packages/search-indexer/src/config.ts
+  M	packages/search-indexer/src/indexer.ts
+  M	packages/search-indexer/test/composition.test.ts
+  M	packages/search-indexer/test/config.test.ts
+  M	packages/search-indexer/tsconfig.lib.json
+  M	packages/search-pipeline/src/search-stages.ts
+  M	packages/search-pipeline/test/search-stages.test.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset-registry-client to 0.12.0
+- Updated @lde/distribution-health to 0.6.0
+- Updated @lde/distribution-probe to 0.5.0
+- Updated @lde/sparql-importer to 0.10.0
+- Updated @lde/dataset to 0.10.0
+
+## 0.40.1 (2026-10-31)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-health to 0.5.1
+- Updated @lde/distribution-probe to 0.4.1
+
+## 0.40.0 (2026-10-30)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset-registry-client to 0.11.0
+- Updated @lde/local-sparql-endpoint to 0.4.0
+- Updated @lde/distribution-health to 0.5.0
+- Updated @lde/distribution-probe to 0.4.0
+- Updated @lde/sparql-importer to 0.9.0
+- Updated @lde/sparql-server to 0.6.0
+- Updated @lde/dataset to 0.9.0
+
+## 0.39.3 (2026-10-28)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset-registry-client to 0.10.1
+- Updated @lde/distribution-health to 0.4.2
+- Updated @lde/distribution-probe to 0.3.2
+
+## 0.39.2 (2026-10-27)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-health to 0.4.1
+- Updated @lde/distribution-probe to 0.3.1
+
+## 0.39.1 (2026-10-27)
+
+### 🔥 Performance
+
+- **pipeline:** inject a batch’s VALUES into each UNION branch ([#957](https://github.com/ldelements/lde/pull/957))
+
+## 0.39.0 (2026-10-26)
+
+### 🚀 Features
+
+- ⚠️  **search-typesense:** skip and report documents a collection cannot index ([#954](https://github.com/ldelements/lde/pull/954))
+
+### ⚠️  Breaking Changes
+
+- **search-typesense:** skip and report documents a collection cannot index  ([#954](https://github.com/ldelements/lde/pull/954))
+  a document Typesense refuses no longer fails its dataset; the
+  dataset goes live without it unless more than maxRejectedShare of its documents
+  are left out. Set maxRejectedShare: 0 to fail a dataset on its first rejection."
+  M	docs/reference/pipeline.md
+  M	docs/reference/search-typesense.md
+  M	packages/pipeline-console-reporter/src/consoleReporter.ts
+  M	packages/pipeline-console-reporter/test/consoleReporter.test.ts
+  M	packages/pipeline-console-reporter/vite.config.ts
+  M	packages/pipeline/src/combineReporters.ts
+  M	packages/pipeline/src/pipeline.ts
+  M	packages/pipeline/src/progressReporter.ts
+  M	packages/pipeline/src/writer/writer.ts
+  M	packages/pipeline/test/combineReporters.test.ts
+  M	packages/pipeline/test/pipeline.test.ts
+  M	packages/pipeline/vite.config.ts
+  M	packages/search-pipeline/src/search-index-writer.ts
+  M	packages/search-pipeline/test/search-index-writer.test.ts
+  M	packages/search-typesense/src/blue-green-rebuild.ts
+  M	packages/search-typesense/src/documents.ts
+  M	packages/search-typesense/src/in-place-rebuild.ts
+  M	packages/search-typesense/src/rebuild-support.ts
+  M	packages/search-typesense/test/blue-green-rebuild.test.ts
+  M	packages/search-typesense/test/documents.test.ts
+  M	packages/search-typesense/test/in-place-rebuild.test.ts
+  M	packages/search-typesense/test/rebuild-support.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/src/adapter.ts
+  M	packages/search/src/project.ts
+  A	packages/search/test/missing-required-fields.test.ts
+
+## 0.38.1 (2026-10-25)
+
+### 🩹 Fixes
+
+- **pipeline:** fail loudly on an import result the resolver does not recognise ([#951](https://github.com/ldelements/lde/pull/951))
+
+## 0.38.0 (2026-10-16)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-health to 0.4.0
+- Updated @lde/sparql-importer to 0.8.0
+
+## 0.37.0 (2026-10-15)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset-registry-client to 0.10.0
+- Updated @lde/local-sparql-endpoint to 0.3.0
+- Updated @lde/distribution-health to 0.3.0
+- Updated @lde/distribution-probe to 0.3.0
+- Updated @lde/sparql-importer to 0.7.0
+- Updated @lde/sparql-server to 0.5.0
+- Updated @lde/dataset to 0.8.0
+
+## 0.36.9 (2026-10-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset-registry-client to 0.9.5
+- Updated @lde/local-sparql-endpoint to 0.2.16
+- Updated @lde/distribution-health to 0.2.15
+- Updated @lde/distribution-probe to 0.2.10
+- Updated @lde/sparql-importer to 0.6.13
+- Updated @lde/dataset to 0.7.10
+
+## 0.36.8 (2026-10-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset-registry-client to 0.9.4
+
+## 0.36.7 (2026-09-21)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-health to 0.2.14
+- Updated @lde/sparql-importer to 0.6.12
+
+## 0.36.6 (2026-09-09)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-health to 0.2.13
+- Updated @lde/sparql-importer to 0.6.11
+
+## 0.36.5 (2026-09-09)
+
+### 🩹 Fixes
+
+- **pipeline:** surface reactive fallback failures and retry them next run ([#841](https://github.com/ldelements/lde/pull/841))
+
+## 0.36.4 (2026-08-31)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-health to 0.2.12
+- Updated @lde/sparql-importer to 0.6.10
+
+## 0.36.3 (2026-08-24)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-health to 0.2.11
+- Updated @lde/distribution-probe to 0.2.9
+
+## 0.36.2 (2026-08-24)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset-registry-client to 0.9.3
+- Updated @lde/distribution-health to 0.2.10
+- Updated @lde/distribution-probe to 0.2.8
+
+## 0.36.1 (2026-08-21)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset-registry-client to 0.9.2
+
+## 0.36.0 (2026-08-14)
+
+### 🚀 Features
+
+- ⚠️  **search:** filter across collections through declared joins ([#719](https://github.com/ldelements/lde/pull/719))
+
+### ⚠️  Breaking Changes
+
+- **search:** filter across collections through declared joins  ([#719](https://github.com/ldelements/lde/pull/719))
+  the Typesense rebuild and collection-definition options
+  take `collectionNameFor: (searchType) => string` instead of `name: string`.
+  Pass `collectionNameFor: () => 'x'` where a single name was passed before.
+  * fix(search): close four gaps the review found in the join implementation
+  - never abort a member of a partly-committed join component: the half-built
+    collection it would drop is what the member that DID commit references by
+    concrete name, so dropping it broke every join through the live index
+    permanently. An orphaned collection is the lesser evil
+  - reject `joinable` on an inline reference: the collection definition emitted
+    the nesting and silently dropped the reference, so the join validated,
+    compiled and only then failed at the engine
+  - reject a `collectionNameFor` that gives a join target this type's own
+    collection – the trap in migrating a constant from the old `name` option,
+    which made the reference point the collection at itself
+  - name the empty joined `where` inside an `or` on its own terms; it crashed on
+    the missing clause instead of reporting anything
+  * fix(pipeline): let a coordinating caller end a run without discarding its output
+  - add the optional `RunWriter.abandon(error)`: finalize and release run-level
+    resources, keep what was built. It falls back to `abort`, which is already
+    right for a writer whose abort discards nothing
+  - implement it on the Typesense blue/green rebuild as a lock release without
+    the collection drop, and use it for the uncommitted peers of a committed
+    member. Skipping them instead held the rebuild lock for its whole TTL and
+    failed the next run outright
+  - count `joinable` as a Role, so a join-only reference is stored rather than
+    pruned as an Internal Field and then joined against a column that is not there
+  - tell a lookalike search type apart from a missing schema when a joinable
+    reference cannot be resolved
+  * fix(search-api-graphql): key a join's `in` arm on IRI like every other identity filter
+  - the arm asks what `‹Target›Filter` asks – which of the target's ids the
+    field holds – so it must accept the same `[IRI!]` variable a consumer
+    declares. Typing it `String` left the join the one place identity was not
+    IRI-keyed"
+  M	AGENTS.md
+  A	docs/decisions/0019-filter-across-collections-through-declared-joins.md
+  M	docs/reference/pipeline.md
+  M	docs/reference/search-api-graphql.md
+  M	docs/reference/search-pipeline.md
+  M	docs/reference/search-typesense.md
+  M	docs/reference/search.md
+  M	packages/pipeline/src/writer/writer.ts
+  M	packages/search-api-graphql/src/build-schema.ts
+  M	packages/search-api-graphql/src/facet-batch.ts
+  M	packages/search-api-graphql/test/facet-batch.test.ts
+  A	packages/search-api-graphql/test/joins.test.ts
+  M	packages/search-api-graphql/vite.config.ts
+  M	packages/search-indexer/src/composition.ts
+  M	packages/search-pipeline/src/search-index-writer.ts
+  A	packages/search-pipeline/test/fixtures/joins-sample.ttl
+  A	packages/search-pipeline/test/joins.integration.test.ts
+  M	packages/search-pipeline/test/multi-collection.integration.test.ts
+  M	packages/search-pipeline/test/search-index-writer.test.ts
+  M	packages/search-typesense/src/blue-green-rebuild.ts
+  M	packages/search-typesense/src/collection-definition.ts
+  M	packages/search-typesense/src/in-place-rebuild.ts
+  M	packages/search-typesense/src/index.ts
+  M	packages/search-typesense/src/lock.ts
+  M	packages/search-typesense/src/query-compiler.ts
+  M	packages/search-typesense/src/rebuild-support.ts
+  M	packages/search-typesense/src/search.ts
+  M	packages/search-typesense/test/blue-green-rebuild.test.ts
+  M	packages/search-typesense/test/collection-definition.test.ts
+  M	packages/search-typesense/test/collection-name.test.ts
+  M	packages/search-typesense/test/generator-stability.test.ts
+  M	packages/search-typesense/test/in-place-rebuild.test.ts
+  A	packages/search-typesense/test/joins.test.ts
+  M	packages/search-typesense/test/rebuild-error-paths.test.ts
+  M	packages/search-typesense/test/rebuild-support.test.ts
+  A	packages/search-typesense/test/reference-backfill.integration.test.ts
+  M	packages/search-typesense/test/search-engine.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/src/adapter.ts
+  M	packages/search/src/index.ts
+  A	packages/search/src/join-graph.ts
+  M	packages/search/src/query.ts
+  M	packages/search/src/schema.ts
+  A	packages/search/test/join-graph.test.ts
+  M	packages/search/test/query.test.ts
+  M	packages/search/test/schema.test.ts
+  M	packages/search/vite.config.ts
+
+## 0.35.6 (2026-08-07)
+
+### 🩹 Fixes
+
+- **pipeline:** abandon a run whose selection is empty ([#706](https://github.com/ldelements/lde/pull/706))
+
+## 0.35.5 (2026-08-07)
+
+### 🚀 Features
+
+- **search-pipeline:** extract root types from the dataset registry ([#698](https://github.com/ldelements/lde/pull/698))
+
+## 0.35.4 (2026-07-25)
+
+### 🩹 Fixes
+
+- **pipeline:** fail fast when the provenance store cannot persist records ([#662](https://github.com/ldelements/lde/pull/662))
+
+## 0.35.3 (2026-07-24)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset-registry-client to 0.9.1
+- Updated @lde/local-sparql-endpoint to 0.2.15
+- Updated @lde/distribution-health to 0.2.9
+- Updated @lde/distribution-probe to 0.2.7
+- Updated @lde/sparql-importer to 0.6.9
+- Updated @lde/sparql-server to 0.4.14
+- Updated @lde/dataset to 0.7.9
+
+## 0.35.2 (2026-07-24)
+
+### 🩹 Fixes
+
+- **pipeline:** count fetched rows for selector pagination ([#653](https://github.com/ldelements/lde/pull/653))
+
+## 0.35.1 (2026-07-24)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-health to 0.2.8
+- Updated @lde/sparql-importer to 0.6.8
+- Updated @lde/sparql-server to 0.4.13
+
+## 0.35.0 (2026-07-23)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset-registry-client to 0.9.0
+
+## 0.34.4 (2026-07-23)
+
+### 🚀 Features
+
+- **pipeline:** add file-backed FileProvenanceStore ([1365270](https://github.com/ldelements/lde/commit/1365270))
+
+## 0.34.3 (2026-07-23)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-health to 0.2.7
+- Updated @lde/sparql-importer to 0.6.7
+
+## 0.34.2 (2026-07-17)
+
+### 🚀 Features
+
+- **pipeline:** add Stage<Out> and the project seam ([#624](https://github.com/ldelements/lde/pull/624))
+
+## 0.34.1 (2026-07-12)
+
+### 🩹 Fixes
+
+- **pipeline:** skolemise blank nodes in FileWriter n-quads output ([#598](https://github.com/ldelements/lde/pull/598))
+
+## 0.34.0 (2026-07-09)
+
+### 🚀 Features
+
+- ⚠️  **pipeline:** add beforeDatasetWrite hook; split namespace normalization ([#577](https://github.com/ldelements/lde/pull/577), [#334](https://github.com/ldelements/lde/issues/334))
+
+### ⚠️  Breaking Changes
+
+- **pipeline:** add beforeDatasetWrite hook; split namespace normalization  ([#577](https://github.com/ldelements/lde/pull/577), [#334](https://github.com/ldelements/lde/issues/334))
+  @lde/pipeline no longer exports schemaOrgNormalizationPlugin
+  or namespaceNormalizationPlugin; use schemaOrgNormalizationPlugin from
+  @lde/pipeline-void. @lde/pipeline-void's voidStages no longer accepts
+  namespaceAliases; add schemaOrgNormalizationPlugin to the pipeline plugins
+  instead.
+  * refactor(pipeline)!: keep a generic namespace-rewrite plugin, merge stays in pipeline-void
+  Split schema.org namespace handling by generality instead of removing the
+  generic capability, so a non-VoID consumer (e.g. mapping instance data to an
+  application profile) can still normalize a namespace.
+  - @lde/pipeline keeps namespaceNormalizationPlugin / schemaOrgNormalizationPlugin,
+    now a blanket, vocabulary-agnostic beforeStageWrite rewrite of a namespace’s
+    IRIs in every term position (previously only void:class/void:property objects,
+    and only in this package before this PR removed them).
+  - @lde/pipeline-void renames its beforeDatasetWrite merge to
+    schemaOrgPartitionMergePlugin / namespacePartitionMergePlugin, so a VoID
+    consumer can’t pick the plain rewrite and leave the duplicate partition nodes
+    (#334) unmerged.
+  - Both share the canonicalizeIri primitive; the merge keeps its own selective
+    canonicalization (leaves void:vocabulary and entity-properties in the source
+    namespace), which the blanket rewrite deliberately does not.
+  Docs: renumber the ADR to 7 and make it self-contained; document the split in
+  the ADR and both package READMEs.
+  BREAKING CHANGE: @lde/pipeline’s namespaceNormalizationPlugin and
+  schemaOrgNormalizationPlugin now rewrite every matching IRI in any term position
+  via beforeStageWrite, not just void:class/void:property objects. The VoID
+  partition merge is now schemaOrgPartitionMergePlugin / namespacePartitionMergePlugin
+  in @lde/pipeline-void.
+  Claude-Session: https://claude.ai/code/session_01H8MVbsXSoNbYREYMFLy6Eg"
+  D	docs/decisions/0007-merge-namespace-alias-partitions.md
+  A	docs/decisions/0007-namespace-merge-as-a-dataset-plugin.md
+  M	packages/pipeline-void/README.md
+  M	packages/pipeline-void/queries/class-partition.rq
+  M	packages/pipeline-void/queries/class-properties-objects.rq
+  M	packages/pipeline-void/queries/class-properties-subjects.rq
+  M	packages/pipeline-void/queries/class-property-datatypes.rq
+  M	packages/pipeline-void/queries/class-property-languages.rq
+  M	packages/pipeline-void/queries/class-property-object-classes.rq
+  M	packages/pipeline-void/src/index.ts
+  D	packages/pipeline-void/src/namespaceAliases.ts
+  A	packages/pipeline-void/src/partitionIri.ts
+  M	packages/pipeline-void/src/partitionMerge.ts
+  M	packages/pipeline-void/src/stage.ts
+  D	packages/pipeline-void/test/namespaceAliases.test.ts
+  M	packages/pipeline-void/test/namespaceNormalization.integration.test.ts
+  A	packages/pipeline-void/test/partitionIri.test.ts
+  M	packages/pipeline-void/test/partitionMerge.test.ts
+  M	packages/pipeline-void/vite.config.ts
+  M	packages/pipeline/README.md
+  M	packages/pipeline/src/index.ts
+  M	packages/pipeline/src/pipeline.ts
+  M	packages/pipeline/src/plugin/namespaceNormalization.ts
+  M	packages/pipeline/src/plugin/schemaOrgNormalization.ts
+  M	packages/pipeline/test/pipeline.test.ts
+  M	packages/pipeline/test/plugin/namespaceNormalization.test.ts
+  M	packages/pipeline/test/plugin/schemaOrgNormalization.test.ts
+  M	packages/pipeline/vite.config.ts
+
+## 0.33.4 (2026-07-08)
+
+### 🚀 Features
+
+- **pipeline-void:** merge namespace-alias variants into one VoID partition ([#568](https://github.com/ldelements/lde/pull/568), [#334](https://github.com/ldelements/lde/issues/334))
+
+## 0.33.3 (2026-07-08)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset-registry-client to 0.8.6
+- Updated @lde/distribution-health to 0.2.6
+- Updated @lde/distribution-probe to 0.2.6
+
+## 0.33.2 (2026-07-08)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-health to 0.2.5
+- Updated @lde/distribution-probe to 0.2.5
+
+## 0.33.1 (2026-07-08)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-health to 0.2.4
+- Updated @lde/distribution-probe to 0.2.4
+
+## 0.33.0 (2026-07-08)
+
+### 🚀 Features
+
+- ⚠️  **search-typesense:** BlueGreenRebuild and InPlaceRebuild writers ([#560](https://github.com/ldelements/lde/pull/560))
+
+### ⚠️  Breaking Changes
+
+- **search-typesense:** BlueGreenRebuild and InPlaceRebuild writers  ([#560](https://github.com/ldelements/lde/pull/560))
+  RunWriter.flush takes a second DatasetOutcome argument.
+  Implementations that ignore it are unaffected; direct callers pass one.
+  * feat(search-typesense)!: replace rebuild() with transactional writers
+  The one-shot rebuild() becomes two @lde/pipeline Writer implementations,
+  one per update mode, so a Pipeline drives indexing without branching on
+  the mode (see docs/decisions/0006):
+  - BlueGreenRebuild: openRun takes the single-flight cross-pod lock and
+    creates a fresh versioned collection; write streams documents into it,
+    batched across write calls; commit atomically repoints the alias,
+    drops the superseded collection and releases the lock; abort drops the
+    half-built collection. Deletion is implicit.
+  - InPlaceRebuild (new): per-source upsert into one long-lived collection,
+    each document stamped with source and last_seen. A successful dataset
+    flush sweeps the source’s documents the run did not rewrite (a failed
+    dataset is not swept – the next successful run reconciles); commit
+    sweeps sources that left the run’s selection and releases the lock;
+    abort only releases the lock.
+  The pure sweep planning (departed sources, stale/source filters) is
+  exported for reuse; the membership sweep throws beyond the 10 000-source
+  facet cap rather than sweeping blind. A run opened while another holds
+  the lock throws RebuildAlreadyRunning instead of returning null.
+  BREAKING CHANGE: rebuild() and RebuildOptions are gone; construct a
+  BlueGreenRebuild (options unchanged) and drive it via openRun →
+  write → commit, or let an @lde/pipeline Pipeline do so. @lde/pipeline
+  and @lde/dataset are now peerDependencies.
+  * refactor(search-typesense): deduplicate the rebuild writers’ plumbing
+  Review cleanups on the rebuild writers:
+  - The lock choreography lives once: openLockedRun acquires the
+    single-flight lock, runs the writer-specific setup, and releases the
+    lock again when the setup fails – both writers now contain only their
+    genuinely different bodies. The shared import batch default moves next
+    to BatchImporter.
+  - acquireLock takes the lock in a single request on the happy path,
+    creating the lock collection only on the first-ever 404, via a shared
+    ensureCollectionExists that both the lock and the In-place collection
+    use (giving the latter concurrent-creator tolerance for free).
+  - sweep.ts owns the source/last_seen bookkeeping names, so stamping and
+    sweeping can never disagree, and quotes filter values with the
+    query compiler’s escapeFilterValue instead of a second quoting policy
+    that threw on backticks.
+  - The membership sweep deletes departed sources in combined, length-
+    budgeted filters (membershipSweepFilters) instead of one round-trip
+    per source.
+  - The rebuild specs share one test/helpers.ts (run contexts, document
+    streams, Typesense errors, lock seeding) instead of four copies.
+  * build(search-typesense): align peer range and lockfile with the release
+  main released @lde/pipeline 0.32.0 (and rewrote dependent peer ranges)
+  after this branch declared its ^0.31.4 peer, so npm ci failed with
+  ERESOLVE. The peer range now tracks the released major-equivalent and
+  the lockfile is regenerated from main’s.
+  * docs(search-typesense): gloss the Blue/green and In-place rebuild patterns
+  Keep the shared ubiquitous language (the NDE Stack pattern names, matched
+  1:1 in code and docs) but expand each term inline the first time it
+  appears, so a reader without deployment background gets the mechanism
+  without a rename: Blue/green = build fresh then swap atomically, In-place
+  = update the live index directly. Links to the Stack patterns page.
+  * fix(search-typesense): correct the membership-sweep source-cap boundary
+  The cap check requested max_facet_values equal to the ceiling and threw
+  on counts.length >= ceiling, so exactly N distinct sources (Typesense
+  returns at most max_facet_values) tripped a false truncation error, and
+  an index that genuinely grew past the ceiling threw on every commit –
+  the sweep never ran, the source count never dropped, and the index
+  wedged permanently.
+  Now request ceiling + 1 and throw only on > ceiling, so a full-but-not-
+  truncated facet proceeds and only a real overflow refuses. The ceiling
+  is exposed as InPlaceRebuildOptions.maxSweepableSources (default 10 000)
+  so an operator can raise it ahead of the wall instead of redeploying.
+  * fix(pipeline): roll back opened writers when a fan-out sibling’s openRun fails
+  FanOutWriter.openRun awaited all writers with Promise.all and the
+  pipeline opens the run outside its try, so if one writer opened (taking
+  a cross-pod lock, creating a collection) and a sibling’s openRun then
+  rejected, the pipeline threw before it had a run to abort – leaking the
+  opened writer’s lock and collection. openRun now settles all writers,
+  aborts the ones that opened, and rethrows the first failure.
+  * fix(search-typesense): roll back a failed dataset from both rebuild writers
+  The rebuild writers implemented no reset and Blue/green consulted no
+  per-dataset outcome, so the pipeline's dump-fallback discard was a
+  no-op and a dataset that failed after streaming documents left them in
+  the index: Blue/green shipped them at the swap, In-place kept them
+  stamped with the current runId where the success sweep could not reach.
+  Both writers now stamp each document with its source (dataset IRI) and
+  roll a dataset out on reset / a failed flush, streaming — no buffering,
+  so it scales to object volumes:
+  - Blue/green deletes the dataset's documents from the not-yet-live
+    collection (source = dataset); a failed dataset contributes nothing to
+    the swap.
+  - In-place deletes only this run's writes for the source
+    (source = dataset && last_seen = runId) on reset, leaving prior-run
+    documents for the success sweep to reconcile; a failed flush still
+    leaves them for the next run.
+  The shared bookkeeping (SOURCE_FIELD stamping, deleteByFilter, options
+  resolution, reserved-field guard) moves to rebuild-support.ts so both
+  writers single-source it.
+  * test(pipeline): lower coverage floor for the fan-out openRun rollback branch"
+  M	docs/decisions/0006-make-the-writer-transaction-aware.md
+  M	package-lock.json
+  M	packages/pipeline-shacl-validator/src/shacl-validator.ts
+  M	packages/pipeline-shacl-validator/test/shacl-validator.test.ts
+  M	packages/pipeline/README.md
+  M	packages/pipeline/src/pipeline.ts
+  M	packages/pipeline/src/writer/fileWriter.ts
+  M	packages/pipeline/src/writer/writer.ts
+  M	packages/pipeline/test/pipeline.test.ts
+  M	packages/pipeline/vite.config.ts
+  M	packages/search-typesense/README.md
+  M	packages/search-typesense/package.json
+  D	packages/search-typesense/src/adapter.ts
+  A	packages/search-typesense/src/blue-green-rebuild.ts
+  A	packages/search-typesense/src/import.ts
+  A	packages/search-typesense/src/in-place-rebuild.ts
+  M	packages/search-typesense/src/index.ts
+  A	packages/search-typesense/src/lock.ts
+  A	packages/search-typesense/src/rebuild-support.ts
+  A	packages/search-typesense/src/sweep.ts
+  D	packages/search-typesense/test/adapter.test.ts
+  A	packages/search-typesense/test/blue-green-rebuild.test.ts
+  A	packages/search-typesense/test/helpers.ts
+  A	packages/search-typesense/test/in-place-rebuild.test.ts
+  A	packages/search-typesense/test/lock.test.ts
+  A	packages/search-typesense/test/rebuild-error-paths.test.ts
+  A	packages/search-typesense/test/rebuild-support.test.ts
+  A	packages/search-typesense/test/sweep.test.ts
+  M	packages/search-typesense/tsconfig.lib.json
+  M	packages/search-typesense/vite.config.ts
+
+## 0.32.0 (2026-07-07)
+
+### 🚀 Features
+
+- ⚠️  **pipeline:** transaction-aware Writer and the Executor→Reader rename ([#559](https://github.com/ldelements/lde/pull/559))
+
+### ⚠️  Breaking Changes
+
+- **pipeline:** transaction-aware Writer and the Executor→Reader rename  ([#559](https://github.com/ldelements/lde/pull/559))
+  ‘Executor’ is now ‘Reader’ and its ‘execute()’ method
+  is ‘read()’. Renamed accordingly: SparqlConstructExecutor →
+  SparqlConstructReader, SparqlConstructExecutorOptions →
+  SparqlConstructReaderOptions, ExecuteOptions → ReadOptions,
+  ExecutorContext → ReaderContext, AttachedExecutor → AttachedReader (its
+  ‘executor’ property → ‘reader’), StageExecutors → StageReaders, and
+  StageOptions.executors → StageOptions.readers. @lde/pipeline-void
+  re-exports the renamed types.
+  * feat(pipeline)!: make the Writer transaction-aware
+  A Writer is now a factory of per-run transactions: Pipeline.run opens
+  one run (openRun(context) → RunWriter), writes every dataset through it,
+  and ends it with exactly one commit() or abort(error) – the home of
+  run-level lifecycle such as alias swaps, deletion sweeps and cross-pod
+  locks. The pipeline never branches on the writer’s update mode. Stages
+  write through the narrower DatasetWriter, so a stage can never commit or
+  abort the run. RunContext carries runId, startedAt, selectedSources()
+  (complete by commit time, including datasets skipped as unchanged) and
+  the provenance store. Lifecycle-free destinations wrap a per-dataset
+  write with the new perDatasetWriter() helper.
+  FileWriter and SparqlUpdateWriter keep per-run state (open files,
+  cleared graphs) in the run, so re-running a pipeline on the same writer
+  instance replaces output instead of appending – previously a latent bug.
+  FileWriter.commit finalizes files still open; abort discards temp
+  output. Chained (sub-stage) scratch FileWriters are now flushed before
+  their output is resolved. ShaclValidator opens one long-lived run per
+  report writer. See docs/decisions/0006.
+  BREAKING CHANGE: Writer’s per-dataset write/flush/reset moved to the
+  RunWriter returned by the new openRun(context); custom writers implement
+  openRun or wrap their per-dataset write with perDatasetWriter(). Generic
+  payload: Writer<Item = Quad>. Stage.run now takes a DatasetWriter.
+  * refactor(pipeline): tighten the run-transaction internals
+  Review cleanups on the transactional Writer:
+  - Fan-out commits run concurrently (mirroring abort): destinations are
+    independent, so their alias swaps and sweeps – the slowest part of a
+    run – no longer queue behind each other. Both share one
+    settleBranches helper that rethrows the first failure after every
+    branch had its chance.
+  - A chained stage’s scratch run is now bracketed like any other run:
+    committed on success, aborted on failure – so a failing chained stage
+    no longer leaves a stale temp file behind.
+  - RunWriter.commit documents the driver contract: every written dataset
+    is flushed before commit, so commit-time unflushed writes only occur
+    under direct use and should be finalized non-destructively.
+  - perDatasetWriter forwards flush/reset with bind instead of manual
+    wrapper closures.
+  * refactor(pipeline)!: drop the unused perDatasetWriter helper
+  No production caller existed – every in-repo destination turned out to
+  want real run lifecycle behaviour – so the helper was pure API surface.
+  A destination without run-level state implements the same contract with
+  a five-line openRun returning no-op commit/abort, as SparqlUpdateWriter
+  shows. Coverage thresholds re-baselined after removing fully covered
+  code. See docs/decisions/0006."
+  M	README.md
+  A	docs/decisions/0006-make-the-writer-transaction-aware.md
+  M	packages/pipeline-shacl-sampler/src/sampleStages.ts
+  M	packages/pipeline-shacl-validator/README.md
+  M	packages/pipeline-shacl-validator/src/shacl-validator.ts
+  M	packages/pipeline-shacl-validator/test/shacl-validator.test.ts
+  M	packages/pipeline-void/README.md
+  M	packages/pipeline-void/src/index.ts
+  M	packages/pipeline-void/src/stage.ts
+  M	packages/pipeline-void/src/uriSpaceTransform.ts
+  M	packages/pipeline-void/src/vocabularyTransform.ts
+  M	packages/pipeline-void/test/uriSpaceTransform.test.ts
+  M	packages/pipeline-void/test/vocabularyTransform.test.ts
+  M	packages/pipeline-void/test/voidStages.test.ts
+  M	packages/pipeline/README.md
+  M	packages/pipeline/src/pipeline.ts
+  M	packages/pipeline/src/provenance/fileLoadedSparqlProvenanceStore.ts
+  M	packages/pipeline/src/sparql/index.ts
+  R088	packages/pipeline/src/sparql/executor.ts	packages/pipeline/src/sparql/reader.ts
+  M	packages/pipeline/src/sparql/selector.ts
+  M	packages/pipeline/src/sparql/values.ts
+  M	packages/pipeline/src/stage.ts
+  M	packages/pipeline/src/writer/fileWriter.ts
+  M	packages/pipeline/src/writer/sparqlUpdateWriter.ts
+  M	packages/pipeline/src/writer/writer.ts
+  M	packages/pipeline/test/pipeline.test.ts
+  R088	packages/pipeline/test/sparql/executor.test.ts	packages/pipeline/test/sparql/reader.test.ts
+  M	packages/pipeline/test/sparql/selector.test.ts
+  M	packages/pipeline/test/stage.test.ts
+  M	packages/pipeline/test/writer/fileWriter.test.ts
+  M	packages/pipeline/test/writer/sparqlUpdateWriter.test.ts
+  M	packages/pipeline/vite.config.ts
+
+## 0.31.5 (2026-06-26)
+
+### 🩹 Fixes
+
+- relax workspace dependency pins to caret (versionPrefix) to fix downstream dual-package hazard ([#528](https://github.com/ldelements/lde/pull/528))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset-registry-client to 0.8.5
+- Updated @lde/local-sparql-endpoint to 0.2.14
+- Updated @lde/distribution-health to 0.2.3
+- Updated @lde/distribution-probe to 0.2.3
+- Updated @lde/sparql-importer to 0.6.6
+- Updated @lde/sparql-server to 0.4.12
+- Updated @lde/dataset to 0.7.8
+
+## 0.31.4 (2026-06-26)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-health to 0.2.2
+- Updated @lde/distribution-probe to 0.2.2
+
+## 0.31.3 (2026-06-25)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-health to 0.2.1
+- Updated @lde/distribution-probe to 0.2.1
+
+## 0.31.2 (2026-06-25)
+
+### 🚀 Features
+
+- **pipeline:** add expectsOutput to fail a stage that yields no quads ([#515](https://github.com/ldelements/lde/pull/515))
+
+## 0.31.1 (2026-06-25)
+
+### 🚀 Features
+
+- **pipeline:** reactively fall back to data dump when an endpoint stage fails ([#514](https://github.com/ldelements/lde/pull/514))
+
+## 0.31.0 (2026-06-22)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-health to 0.2.0
+- Updated @lde/distribution-probe to 0.2.0
+
+## 0.30.22 (2026-06-19)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset-registry-client to 0.8.4
+- Updated @lde/distribution-health to 0.1.5
+- Updated @lde/distribution-probe to 0.1.13
+
+## 0.30.21 (2026-06-18)
+
+### 🩹 Fixes
+
+- **pipeline:** preserve reporter `this` when forwarding to combined reporters ([#491](https://github.com/ldelements/lde/pull/491))
+
+## 0.30.20 (2026-06-18)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-health to 0.1.4
+- Updated @lde/distribution-probe to 0.1.12
+
+## 0.30.19 (2026-06-17)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-health to 0.1.3
+- Updated @lde/distribution-probe to 0.1.11
+
+## 0.30.18 (2026-06-17)
+
+### 🚀 Features
+
+- **pipeline:** accept multiple progress reporters ([#483](https://github.com/ldelements/lde/pull/483))
+
+## 0.30.17 (2026-06-17)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-health to 0.1.2
+
+## 0.30.16 (2026-06-16)
+
+### 🚀 Features
+
+- **pipeline:** surface per-distribution RDF-validity verdicts ([#476](https://github.com/ldelements/lde/pull/476), [#2103](https://github.com/ldelements/lde/issues/2103), [#469](https://github.com/ldelements/lde/issues/469))
+
+## 0.30.15 (2026-06-15)
+
+### 🚀 Features
+
+- **pipeline:** blank-node guard + regression assertions for cat-built indexes ([#477](https://github.com/ldelements/lde/pull/477), [#474](https://github.com/ldelements/lde/issues/474), [#352](https://github.com/ldelements/lde/issues/352))
+
+## 0.30.14 (2026-06-15)
+
+### 🩹 Fixes
+
+- skolemize structural nodes to prevent blank-node collisions in merged graphs ([#471](https://github.com/ldelements/lde/pull/471), [#352](https://github.com/ldelements/lde/issues/352), [#474](https://github.com/ldelements/lde/issues/474))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset-registry-client to 0.8.3
+- Updated @lde/distribution-probe to 0.1.10
+- Updated @lde/sparql-importer to 0.6.5
+- Updated @lde/dataset to 0.7.7
+
+## 0.30.13 (2026-06-15)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset-registry-client to 0.8.2
+- Updated @lde/distribution-probe to 0.1.9
+- Updated @lde/sparql-importer to 0.6.4
+- Updated @lde/dataset to 0.7.6
+
+## 0.30.12 (2026-06-11)
+
+### 🚀 Features
+
+- **pipeline:** skip unchanged datasets — provenance store, two-phase resolver, gate ([#454](https://github.com/ldelements/lde/pull/454))
+
+## 0.30.11 (2026-06-11)
+
+### 🚀 Features
+
+- **pipeline:** add source-change fingerprint and reprocess decision ([#451](https://github.com/ldelements/lde/pull/451), [#450](https://github.com/ldelements/lde/issues/450))
+
+## 0.30.10 (2026-06-10)
+
+### 🚀 Features
+
+- **pipeline:** add FileWriter graphIri option and atomic writes ([#452](https://github.com/ldelements/lde/pull/452))
+
+## 0.30.9 (2026-06-10)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset-registry-client to 0.8.1
+- Updated @lde/distribution-probe to 0.1.8
+- Updated @lde/sparql-importer to 0.6.3
+- Updated @lde/dataset to 0.7.5
+
+## 0.30.8 (2026-06-10)
+
+### 🩹 Fixes
+
+- **pipeline:** prefer the most recent of register and HTTP dates for dump change detection ([#447](https://github.com/ldelements/lde/pull/447))
+
+## 0.30.7 (2026-06-08)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-probe to 0.1.7
+
+## 0.30.6 (2026-06-08)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-probe to 0.1.6
+
+## 0.30.5 (2026-06-08)
+
+### 🚀 Features
+
+- make VoID stage executors wrappable with quad transforms ([#438](https://github.com/ldelements/lde/pull/438))
+
+## 0.30.4 (2026-06-01)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-probe to 0.1.5
+
+## 0.30.3 (2026-05-28)
+
+### 🚀 Features
+
+- **pipeline:** adaptive per-endpoint SPARQL timeouts ([#421](https://github.com/ldelements/lde/pull/421), [#419](https://github.com/ldelements/lde/issues/419))
+
+## 0.30.2 (2026-05-27)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-probe to 0.1.4
+
+## 0.30.1 (2026-05-27)
+
+### 🚀 Features
+
+- **pipeline:** add graphIri option to SparqlUpdateWriter ([#409](https://github.com/ldelements/lde/pull/409))
+
+## 0.30.0 (2026-05-27)
+
+### 🚀 Features
+
+- ⚠️  **pipeline-shacl-validator:** composable reportWriters in place of reportDir ([#408](https://github.com/ldelements/lde/pull/408))
+
+### ⚠️  Breaking Changes
+
+- **pipeline-shacl-validator:** composable reportWriters in place of reportDir  ([#408](https://github.com/ldelements/lde/pull/408))
+  reportDir is no longer accepted and was required; pass
+  `reportWriters: [new FileWriter({ outputDir: ... })]` to preserve the
+  previous on-disk behaviour.
+  * fix(pipeline-shacl-validator): restore ValidationResult.message and document writer ergonomics
+  Address findings from a recall-biased code review of #408.
+  - Restore ValidationResult.message when violations are routed to reportWriters,
+    so the halt-mode error in Stage.validateBuffer (stage.ts:302) still points at
+    the report destination instead of degrading to a context-free count.
+  - README: actionable guidance for SparqlUpdateWriter named graphs (no per-call
+    override exists, so route to a separate endpoint or wrap the writer).
+  - README: warn about FileWriter filesystem collisions when main writer and
+    report writer share outputDir; the old .validation.<ext> infix prevented this
+    implicitly, the new ergonomics do not.
+  - README: flag that an empty reportWriters default silently discards violation
+    detail, so the trade-off is deliberate rather than surprising.
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset-registry-client to 0.8.0
+
+## 0.29.2 (2026-05-22)
+
+### 🚀 Features
+
+- **pipeline-shacl-sampler:** support namespace aliases ([#398](https://github.com/ldelements/lde/pull/398))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset-registry-client to 0.7.9
+
+## 0.29.1 (2026-05-21)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset-registry-client to 0.7.8
+- Updated @lde/distribution-probe to 0.1.3
+- Updated @lde/sparql-importer to 0.6.2
+- Updated @lde/dataset to 0.7.4
+
+## 0.29.0 (2026-05-18)
+
+### 🚀 Features
+
+- **pipeline:** add maxResults option to SparqlItemSelector ([36d6e89](https://github.com/ldelements/lde/commit/36d6e89))
+
+## 0.28.14 (2026-05-15)
+
+### 🚀 Features
+
+- **pipeline-shacl-sampler:** add per-class sampling stages derived from SHACL ([#381](https://github.com/ldelements/lde/pull/381))
+
+## 0.28.13 (2026-04-28)
+
+### 🚀 Features
+
+- **docgen:** deep-merge user-supplied JSON-LD frame with built-in default ([#366](https://github.com/ldelements/lde/pull/366), [#313](https://github.com/ldelements/lde/issues/313))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset-registry-client to 0.7.7
+
+## 0.28.12 (2026-04-28)
+
+### 🩹 Fixes
+
+- **pipeline:** propagate Last-Modified from probe to candidate distribution ([#365](https://github.com/ldelements/lde/pull/365), [#296](https://github.com/ldelements/lde/issues/296))
+
+## 0.28.11 (2026-04-23)
+
+### 🚀 Features
+
+- consolidate probing, rename sparql-monitor to distribution-monitor ([#358](https://github.com/ldelements/lde/pull/358))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset-registry-client to 0.7.6
+- Updated @lde/local-sparql-endpoint to 0.2.13
+- Updated @lde/distribution-probe to 0.1.2
+- Updated @lde/sparql-importer to 0.6.1
+- Updated @lde/sparql-server to 0.4.11
+- Updated @lde/dataset to 0.7.3
+
+## 0.28.10 (2026-04-23)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-probe to 0.1.1
+
+## 0.28.9 (2026-04-17)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset-registry-client to 0.7.5
+
+## 0.28.8 (2026-04-15)
+
+### 🚀 Features
+
+- **pipeline:** add generic namespace normalization plugin ([#337](https://github.com/ldelements/lde/pull/337))
+
+## 0.28.7 (2026-04-09)
+
+### 🩹 Fixes
+
+- **pipeline:** fix race condition in tee that skips quads for slow consumers ([#336](https://github.com/ldelements/lde/pull/336))
+
+## 0.28.6 (2026-04-06)
+
+### 🚀 Features
+
+- **pipeline:** add schema.org namespace normalization plugin ([#335](https://github.com/ldelements/lde/pull/335))
+
+## 0.28.5 (2026-03-24)
+
+### 🚀 Features
+
+- **pipeline:** add deduplicate option to SparqlConstructExecutor ([#309](https://github.com/ldelements/lde/pull/309))
+
+## 0.28.4 (2026-03-24)
+
+### 🩹 Fixes
+
+- **pipeline:** share maxConcurrency across parallel executors ([#312](https://github.com/ldelements/lde/pull/312))
+
+## 0.28.3 (2026-03-24)
+
+### 🚀 Features
+
+- **pipeline:** run executors in parallel per batch ([#311](https://github.com/ldelements/lde/pull/311))
+
+## 0.28.2 (2026-03-23)
+
+### 🚀 Features
+
+- **pipeline:** add lineBuffer option to work around N3.js chunk-splitting bug ([#304](https://github.com/ldelements/lde/pull/304))
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.28.1 (2026-03-23)
+
+### 🚀 Features
+
+- **pipeline:** use batchSize as selector page size ([#301](https://github.com/ldelements/lde/pull/301))
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.28.0 (2026-03-22)
+
+### 🚀 Features
+
+- ⚠️  detect and correct MIME type mismatches in distribution imports ([#291](https://github.com/ldelements/lde/pull/291))
+
+### ⚠️  Breaking Changes
+
+- detect and correct MIME type mismatches in distribution imports  ([#291](https://github.com/ldelements/lde/pull/291))
+  Downloader.download() returns DownloadResult instead
+  of string; qleverOptions on createQlever() renamed to indexOptions.
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/sparql-importer to 0.6.0
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.27.0 (2026-03-20)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/sparql-importer to 0.5.0
+
+## 0.26.0 (2026-03-19)
+
+### 🚀 Features
+
+- **pipeline:** validate SPARQL probe response body and drain fetch responses ([#261](https://github.com/ldelements/lde/pull/261))
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.25.3 (2026-03-19)
+
+### 🩹 Fixes
+
+- **pipeline:** handle `NotSupported` result from importer to prevent orphaned spinner ([#259](https://github.com/ldelements/lde/pull/259))
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.25.2 (2026-03-19)
+
+### 🩹 Fixes
+
+- **pipeline:** eliminate FanOutWriter memory growth via tee pattern ([#258](https://github.com/ldelements/lde/pull/258))
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.25.1 (2026-03-19)
+
+### 🩹 Fixes
+
+- **pipeline:** handle empty distributions and eliminate duplicate probing ([#257](https://github.com/ldelements/lde/pull/257))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/sparql-importer to 0.4.2
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.25.0 (2026-03-18)
+
+### 🚀 Features
+
+- **pipeline:** report memory usage (RSS) during pipeline execution ([#255](https://github.com/ldelements/lde/pull/255))
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.24.4 (2026-03-16)
+
+### 🩹 Fixes
+
+- **dataset:** guard SPARQL IRI interpolation against injection ([99933a7](https://github.com/ldelements/lde/commit/99933a7))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset-registry-client to 0.7.4
+- Updated @lde/sparql-importer to 0.4.1
+- Updated @lde/dataset to 0.7.2
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.24.3 (2026-03-16)
+
+### 🩹 Fixes
+
+- **pipeline:** avoid concurrent ora spinners and fix misleading skip message ([#246](https://github.com/ldelements/lde/pull/246))
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.24.2 (2026-03-16)
+
+### 🩹 Fixes
+
+- **pipeline:** handle WriteStream errors in FileWriter to prevent silent failures ([997401c](https://github.com/ldelements/lde/commit/997401c))
+- **pipeline:** add 5-minute timeout to SPARQL UPDATE requests ([d9fb604](https://github.com/ldelements/lde/commit/d9fb604))
+- **pipeline:** destroy read streams in readFiles to prevent file descriptor leaks ([7a2bf47](https://github.com/ldelements/lde/commit/7a2bf47))
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.24.1 (2026-03-16)
+
+### 🩹 Fixes
+
+- **pipeline:** replace all #subjectFilter# occurrences in query templates ([#244](https://github.com/ldelements/lde/pull/244))
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.24.0 (2026-03-13)
+
+### 🚀 Features
+
+- **pipeline:** retry on transient network errors, not just HTTP 502/503/504 ([#237](https://github.com/ldelements/lde/pull/237))
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.23.0 (2026-03-13)
+
+### 🚀 Features
+
+- **pipeline:** add retry logic, perClass conversion, and tuneable concurrency ([#235](https://github.com/ldelements/lde/pull/235))
+
+### ❤️ Thank You
+
+- David de Boer
+
+## 0.22.1 (2026-03-13)
+
+### 🩹 Fixes
+
+- **pipeline:** inject VALUES into innermost subquery for per-class queries ([#234](https://github.com/ldelements/lde/pull/234))
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.22.0 (2026-03-13)
+
+### 🚀 Features
+
+- **pipeline:** decouple SHACL validation from write path when onInvalid is 'write' ([#230](https://github.com/ldelements/lde/pull/230))
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.21.0 (2026-03-12)
+
+### 🚀 Features
+
+- **pipeline:** add "Importing…" spinner with elapsed time ([#220](https://github.com/ldelements/lde/pull/220))
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.20.0 (2026-03-09)
+
+### 🚀 Features
+
+- **pipeline:** add SHACL validation as a stage option ([#218](https://github.com/ldelements/lde/pull/218))
+
+### ❤️ Thank You
+
+- David de Boer
+
+## 0.19.0 (2026-03-08)
+
+### 🚀 Features
+
+- **pipeline:** include triple count in import result reporting ([#217](https://github.com/ldelements/lde/pull/217))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/sparql-importer to 0.4.0
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.18.0 (2026-03-07)
+
+### 🚀 Features
+
+- **pipeline:** report distribution probe results as they complete ([#215](https://github.com/ldelements/lde/pull/215))
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
 ## 0.17.1 (2026-03-06)
 
 ### 🧱 Updated Dependencies

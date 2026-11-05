@@ -1,3 +1,536 @@
+## 0.20.0 (2026-11-03)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-downloader to 0.9.0
+- Updated @lde/sparql-importer to 0.10.0
+- Updated @lde/dataset to 0.10.0
+
+## 0.19.0 (2026-10-30)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-downloader to 0.8.0
+- Updated @lde/task-runner-docker to 0.5.0
+- Updated @lde/task-runner-native to 0.4.0
+- Updated @lde/task-runner-http to 0.2.0
+- Updated @lde/sparql-importer to 0.9.0
+- Updated @lde/wait-for-sparql to 0.4.0
+- Updated @lde/sparql-server to 0.6.0
+- Updated @lde/task-runner to 0.4.0
+- Updated @lde/dataset to 0.9.0
+
+## 0.18.3 (2026-10-28)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/wait-for-sparql to 0.3.1
+
+## 0.18.2 (2026-10-27)
+
+### 🚀 Features
+
+- let consumers replace remote JSON-LD contexts ([#962](https://github.com/ldelements/lde/pull/962))
+
+## 0.18.1 (2026-10-23)
+
+### 🚀 Features
+
+- **sparql-qlever:** add the construct-deduplication server option ([#930](https://github.com/ldelements/lde/pull/930))
+
+## 0.18.0 (2026-10-16)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/sparql-importer to 0.8.0
+
+## 0.17.0 (2026-10-15)
+
+### 🚀 Features
+
+- ⚠️  run QLever in a sidecar through a localhost task agent ([#906](https://github.com/ldelements/lde/pull/906))
+
+### ⚠️  Breaking Changes
+
+- run QLever in a sidecar through a localhost task agent  ([#906](https://github.com/ldelements/lde/pull/906))
+  QleverConfig is now discriminated by a required mode. A config built in code
+  rather than with configFromEnvironment() must add mode: 'docker' to keep its Docker setup, or
+  use mode: 'remote' (without image and network) for a sidecar.
+  * docs(task-runner-http): explain the exec probe against listening on the pod IP
+  - Explain why kubelet’s httpGet and tcpSocket probes cannot reach the agent on 127.0.0.1
+  - Set the exec probe against letting the agent listen on the pod’s IP address, which would
+    open it to the cluster network
+  * fix(task-runner-native): report the signal that killed a process
+  - Reject wait() with 'Process was killed by SIGKILL' instead of 'Process failed with code null'
+    when a signal ends the process
+  * feat(task-runner-http): say when a task ran out of memory
+  - Have the agent compare its cgroup’s oom_kill count before and after a task, and put the
+    container’s memory limit first in the failure when the kernel killed a process meanwhile
+  - Say in the lost-agent error that its container most likely ran out of memory, and where
+    Kubernetes records why, without needing permission to read pods
+  - Test a real out-of-memory kill in a memory-limited QLever sidecar
+  * docs(task-runner-http): document out-of-memory reporting and thin the text
+  - Explain what wait() reports when the kernel kills one process or the whole container
+  - State that the package needs no Kubernetes permissions
+  - Explain both restartPolicy settings in the example and the Job apiVersion
+  - Name the precedents exactly: the OpenTelemetry Operator copies its agents into an emptyDir,
+    Istio runs its proxy as a native sidecar
+  - Shorten the probe explanation and point the search-indexer remote section to the reasons
+  * refactor(task-runner-http): rename sea to agent
+  - Name the directory of the task agent’s executable after what it holds, not after Node’s
+    single executable packaging, and its bundle output dist-agent to match
+  * docs(sparql-anything): run the JVMs in a sidecar on Kubernetes
+  - Describe running the converter’s JVMs through HttpTaskRunner in a JRE sidecar with its own
+    memory limit, sized at concurrency × heap plus JVM overhead"
+  M	.github/workflows/docker.yml
+  M	.gitignore
+  M	AGENTS.md
+  M	README.md
+  M	docs/.vitepress/config.mts
+  A	docs/decisions/0027-run-qlever-in-a-sidecar-controlled-through-a-localhost-task-agent.md
+  M	docs/reference/packages.md
+  M	docs/reference/search-indexer.md
+  M	docs/reference/sparql-anything.md
+  M	docs/reference/sparql-qlever.md
+  A	docs/reference/task-runner-http.md
+  M	docs/reference/task-runner-native.md
+  M	docs/reference/task-runner.md
+  M	eslint.config.mjs
+  M	package-lock.json
+  M	package.json
+  M	packages/search-indexer/src/composition.ts
+  M	packages/search-indexer/src/config.ts
+  M	packages/search-indexer/test/composition.test.ts
+  M	packages/search-indexer/test/config.test.ts
+  M	packages/sparql-qlever/package.json
+  M	packages/sparql-qlever/src/createQlever.ts
+  A	packages/sparql-qlever/test/remote.test.ts
+  M	packages/sparql-qlever/tsconfig.lib.json
+  M	packages/sparql-qlever/vite.config.ts
+  A	packages/task-runner-http/Dockerfile
+  A	packages/task-runner-http/README.md
+  A	packages/task-runner-http/agent/agent.ts
+  A	packages/task-runner-http/agent/main.ts
+  A	packages/task-runner-http/agent/rolldown.config.mjs
+  A	packages/task-runner-http/agent/sea-config.json
+  A	packages/task-runner-http/eslint.config.mjs
+  A	packages/task-runner-http/package.json
+  A	packages/task-runner-http/src/http-task-runner.ts
+  A	packages/task-runner-http/src/index.ts
+  A	packages/task-runner-http/src/protocol.ts
+  A	packages/task-runner-http/test/index.test.ts
+  A	packages/task-runner-http/test/out-of-memory.test.ts
+  A	packages/task-runner-http/tsconfig.json
+  A	packages/task-runner-http/tsconfig.lib.json
+  A	packages/task-runner-http/tsconfig.spec.json
+  A	packages/task-runner-http/vite.config.ts
+  M	packages/task-runner-native/src/index.ts
+  M	packages/task-runner-native/test/index.test.ts
+  A	tools/docker-smoke-task-agent.sh
+  M	tsconfig.json
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-downloader to 0.7.0
+- Updated @lde/task-runner-docker to 0.4.0
+- Updated @lde/task-runner-native to 0.3.0
+- Updated @lde/task-runner-http to 0.1.0
+- Updated @lde/sparql-importer to 0.7.0
+- Updated @lde/wait-for-sparql to 0.3.0
+- Updated @lde/sparql-server to 0.5.0
+- Updated @lde/task-runner to 0.3.0
+- Updated @lde/dataset to 0.8.0
+
+## 0.16.3 (2026-10-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-downloader to 0.6.10
+- Updated @lde/task-runner-docker to 0.3.2
+- Updated @lde/task-runner-native to 0.2.20
+- Updated @lde/sparql-importer to 0.6.13
+- Updated @lde/wait-for-sparql to 0.2.18
+- Updated @lde/task-runner to 0.2.16
+- Updated @lde/dataset to 0.7.10
+
+## 0.16.2 (2026-09-21)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/task-runner-docker to 0.3.1
+- Updated @lde/task-runner-native to 0.2.19
+- Updated @lde/sparql-importer to 0.6.12
+- Updated @lde/task-runner to 0.2.15
+
+## 0.16.1 (2026-09-09)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-downloader to 0.6.9
+- Updated @lde/sparql-importer to 0.6.11
+
+## 0.16.0 (2026-08-31)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/task-runner-docker to 0.3.0
+
+## 0.15.7 (2026-08-31)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/task-runner-native to 0.2.18
+
+## 0.15.6 (2026-08-31)
+
+### 🚀 Features
+
+- **sparql-anything:** add SparqlAnythingConverter for chunked non-RDF to RDF conversion ([#511](https://github.com/ldelements/lde/pull/511))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/task-runner-docker to 0.2.17
+- Updated @lde/task-runner-native to 0.2.17
+- Updated @lde/sparql-importer to 0.6.10
+- Updated @lde/task-runner to 0.2.14
+
+## 0.15.5 (2026-08-24)
+
+### 🩹 Fixes
+
+- **sparql-qlever:** detect gzip by magic bytes when preprocessing ([99ce67b](https://github.com/ldelements/lde/commit/99ce67b))
+
+## 0.15.4 (2026-08-24)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/wait-for-sparql to 0.2.17
+
+## 0.15.3 (2026-07-25)
+
+### 🚀 Features
+
+- **sparql-qlever:** reach QLever by container name over a Docker network ([#663](https://github.com/ldelements/lde/pull/663))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/task-runner-docker to 0.2.16
+
+## 0.15.2 (2026-07-24)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-downloader to 0.6.8
+- Updated @lde/task-runner-docker to 0.2.15
+- Updated @lde/task-runner-native to 0.2.16
+- Updated @lde/sparql-importer to 0.6.9
+- Updated @lde/wait-for-sparql to 0.2.16
+- Updated @lde/sparql-server to 0.4.14
+- Updated @lde/task-runner to 0.2.13
+- Updated @lde/dataset to 0.7.9
+
+## 0.15.1 (2026-07-24)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/sparql-importer to 0.6.8
+- Updated @lde/sparql-server to 0.4.13
+
+## 0.15.0 (2026-07-23)
+
+### 🩹 Fixes
+
+- ⚠️  **sparql-qlever:** pass parallel parsing as -p to support current QLever ([9303761](https://github.com/ldelements/lde/commit/9303761))
+
+### ⚠️  Breaking Changes
+
+- **sparql-qlever:** pass parallel parsing as -p to support current QLever  ([9303761](https://github.com/ldelements/lde/commit/9303761))
+  The QleverIndexOptions key 'parse-parallel' is renamed to 'parallel-parsing'.
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-downloader to 0.6.7
+- Updated @lde/sparql-importer to 0.6.7
+
+## 0.14.12 (2026-07-08)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/wait-for-sparql to 0.2.15
+
+## 0.14.11 (2026-06-26)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-downloader to 0.6.6
+- Updated @lde/task-runner-docker to 0.2.14
+- Updated @lde/task-runner-native to 0.2.15
+- Updated @lde/sparql-importer to 0.6.6
+- Updated @lde/wait-for-sparql to 0.2.14
+- Updated @lde/sparql-server to 0.4.12
+- Updated @lde/task-runner to 0.2.12
+- Updated @lde/dataset to 0.7.8
+
+## 0.14.10 (2026-06-19)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/wait-for-sparql to 0.2.13
+
+## 0.14.9 (2026-06-15)
+
+### 🚀 Features
+
+- **sparql-qlever:** import TriG distributions via N-Quads preprocessing ([#467](https://github.com/ldelements/lde/pull/467), [#470](https://github.com/ldelements/lde/issues/470))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-downloader to 0.6.5
+- Updated @lde/sparql-importer to 0.6.5
+- Updated @lde/dataset to 0.7.7
+
+## 0.14.8 (2026-06-15)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-downloader to 0.6.4
+- Updated @lde/sparql-importer to 0.6.4
+- Updated @lde/dataset to 0.7.6
+
+## 0.14.7 (2026-06-10)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-downloader to 0.6.3
+- Updated @lde/sparql-importer to 0.6.3
+- Updated @lde/dataset to 0.7.5
+
+## 0.14.6 (2026-06-08)
+
+### 🚀 Features
+
+- **sparql-qlever:** support RDF/XML distributions on import ([#439](https://github.com/ldelements/lde/pull/439))
+
+## 0.14.5 (2026-05-29)
+
+### 🩹 Fixes
+
+- **sparql-qlever:** shell-escape data filenames in the QLever index command ([#424](https://github.com/ldelements/lde/pull/424))
+
+## 0.14.4 (2026-05-21)
+
+### 🚀 Features
+
+- **sparql-qlever:** support JSON-LD and zipped distributions ([bdf48f0](https://github.com/ldelements/lde/commit/bdf48f0))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-downloader to 0.6.2
+- Updated @lde/sparql-importer to 0.6.2
+- Updated @lde/dataset to 0.7.4
+
+## 0.14.3 (2026-04-23)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-downloader to 0.6.1
+- Updated @lde/task-runner-docker to 0.2.13
+- Updated @lde/task-runner-native to 0.2.14
+- Updated @lde/sparql-importer to 0.6.1
+- Updated @lde/wait-for-sparql to 0.2.12
+- Updated @lde/sparql-server to 0.4.11
+- Updated @lde/task-runner to 0.2.11
+- Updated @lde/dataset to 0.7.3
+
+## 0.14.2 (2026-03-23)
+
+### 🚀 Features
+
+- **sparql-qlever:** add cache-max-size option to Server ([#306](https://github.com/ldelements/lde/pull/306))
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.14.1 (2026-03-23)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/task-runner-docker to 0.2.12
+
+## 0.14.0 (2026-03-22)
+
+### 🚀 Features
+
+- ⚠️  detect and correct MIME type mismatches in distribution imports ([#291](https://github.com/ldelements/lde/pull/291))
+
+### ⚠️  Breaking Changes
+
+- detect and correct MIME type mismatches in distribution imports  ([#291](https://github.com/ldelements/lde/pull/291))
+  Downloader.download() returns DownloadResult instead
+  of string; qleverOptions on createQlever() renamed to indexOptions.
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-downloader to 0.6.0
+- Updated @lde/sparql-importer to 0.6.0
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.13.0 (2026-03-21)
+
+### 🚀 Features
+
+- ⚠️  **sparql-qlever:** expose configurable QLever server options ([#289](https://github.com/ldelements/lde/pull/289), [#288](https://github.com/ldelements/lde/issues/288))
+
+### ⚠️  Breaking Changes
+
+- **sparql-qlever:** expose configurable QLever server options  ([#289](https://github.com/ldelements/lde/pull/289), [#288](https://github.com/ldelements/lde/issues/288))
+  `qleverOptions` renamed to `indexOptions`;
+  `queryTimeout` replaced by `serverOptions`.
+  * docs(sparql-qlever): document index and server options in README
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.12.2 (2026-03-21)
+
+### 🚀 Features
+
+- **sparql-qlever:** add queryTimeout option to QLever server ([#288](https://github.com/ldelements/lde/pull/288))
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.12.1 (2026-03-21)
+
+### 🩹 Fixes
+
+- **sparql-qlever:** fix conflicting --parse-parallel flags on import retry ([#287](https://github.com/ldelements/lde/pull/287))
+
+### ❤️ Thank You
+
+- David de Boer
+
+## 0.12.0 (2026-03-20)
+
+### 🚀 Features
+
+- ⚠️  **sparql-qlever:** tune QLever index build for large datasets ([#263](https://github.com/ldelements/lde/pull/263))
+
+### ⚠️  Breaking Changes
+
+- **sparql-qlever:** tune QLever index build for large datasets  ([#263](https://github.com/ldelements/lde/pull/263))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/sparql-importer to 0.5.0
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.11.0 (2026-03-19)
+
+### 🚀 Features
+
+- **sparql-qlever:** retry TTL indexing with parallel parsing disabled on multiline literal error ([#260](https://github.com/ldelements/lde/pull/260))
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.10.2 (2026-03-19)
+
+### 🩹 Fixes
+
+- **pipeline:** handle empty distributions and eliminate duplicate probing ([#257](https://github.com/ldelements/lde/pull/257))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/sparql-importer to 0.4.2
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.10.1 (2026-03-16)
+
+### 🩹 Fixes
+
+- **sparql-qlever:** use gunzip -c instead of zcat for macOS compatibility ([#250](https://github.com/ldelements/lde/pull/250))
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.10.0 (2026-03-16)
+
+### 🚀 Features
+
+- **sparql-qlever:** cache QLever indices across pipeline runs ([#249](https://github.com/ldelements/lde/pull/249))
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.9.3 (2026-03-16)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-downloader to 0.5.3
+- Updated @lde/sparql-importer to 0.4.1
+- Updated @lde/dataset to 0.7.2
+
+## 0.9.2 (2026-03-16)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-downloader to 0.5.2
+- Updated @lde/task-runner-native to 0.2.13
+
+## 0.9.1 (2026-03-15)
+
+### 🩹 Fixes
+
+- **sparql-qlever:** unify mountDir/cwd into dataDir and fix NativeTaskRunner bugs ([#239](https://github.com/ldelements/lde/pull/239))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/task-runner-native to 0.2.12
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.9.0 (2026-03-08)
+
+### 🚀 Features
+
+- **pipeline:** include triple count in import result reporting ([#217](https://github.com/ldelements/lde/pull/217))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/sparql-importer to 0.4.0
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.8.6 (2026-03-07)
+
+### 🩹 Fixes
+
+- **sparql-qlever:** filter unsupported MIME types before downloading ([#214](https://github.com/ldelements/lde/pull/214))
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
 ## 0.8.5 (2026-03-06)
 
 ### 🩹 Fixes

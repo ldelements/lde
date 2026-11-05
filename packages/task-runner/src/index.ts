@@ -1,3 +1,6 @@
+export * from './child-tasks.js';
+export * from './shell-quote.js';
+
 export interface TaskRunner<Task> {
   run(command: string): Promise<Task>;
   wait(task: Task): Promise<string>;

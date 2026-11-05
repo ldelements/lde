@@ -133,6 +133,23 @@ describe('fastifyRdf plugin', () => {
       expect(response.body).toContain('<http://example.org/subject>');
     });
 
+    it('should not negotiate to SHACLC types', async () => {
+      await app.register(fastifyRdf);
+      app.get('/data', async (_request, reply) => {
+        return reply.sendRdf(createTestDataset());
+      });
+      await app.ready();
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/data',
+        headers: { accept: 'text/shaclc, text/turtle;q=0.5' },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.headers['content-type']).toContain('text/turtle');
+    });
+
     it('should fall back to default when Accept type is not supported', async () => {
       await app.register(fastifyRdf);
       app.get('/data', async (_request, reply) => {
@@ -413,6 +430,43 @@ describe('fastifyRdf plugin', () => {
       });
 
       expect(response.statusCode).toBe(400);
+    });
+
+    it('should load remote JSON-LD contexts through the fetch option', async () => {
+      const contextUrl = 'http://example.org/context.jsonld';
+      const fetchedUrls: string[] = [];
+      const stubFetch: typeof globalThis.fetch = async (input) => {
+        fetchedUrls.push(String(input));
+        return new Response(
+          JSON.stringify({
+            '@context': {
+              license: { '@id': 'http://example.org/license', '@type': '@id' },
+            },
+          }),
+          { headers: { 'content-type': 'application/ld+json' } },
+        );
+      };
+      await app.register(fastifyRdf, { fetch: stubFetch });
+      app.post('/data', { config: { parseRdf: true } }, async (request) => {
+        const dataset = request.body as DatasetCore;
+        return [...dataset].map((quad) => quad.object.termType);
+      });
+      await app.ready();
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/data',
+        headers: { 'content-type': 'application/ld+json' },
+        body: JSON.stringify({
+          '@context': contextUrl,
+          '@id': 'http://example.org/dataset',
+          license: 'https://creativecommons.org/licenses/by/4.0/',
+        }),
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(fetchedUrls).toEqual([contextUrl]);
+      expect(response.json()).toEqual(['NamedNode']);
     });
 
     it('should return 400 for malformed RDF body', async () => {

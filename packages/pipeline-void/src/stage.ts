@@ -1,16 +1,23 @@
 import {
   Stage,
-  SparqlConstructExecutor,
+  SparqlConstructReader,
   SparqlItemSelector,
   readQueryFile,
-  type Executor,
+  type AttachedReader,
+  type ReaderContext,
   type ItemSelector,
+  type QuadTransform,
 } from '@lde/pipeline';
+import { assertSafeIri } from '@lde/dataset';
 import type { Quad } from '@rdfjs/types';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { VocabularyExecutor } from './vocabularyAnalyzer.js';
-import { UriSpaceExecutor } from './uriSpaceExecutor.js';
+import {
+  withVocabularies,
+  defaultVocabularies,
+} from './vocabularyTransform.js';
+import { withUriSpaces } from './uriSpaceTransform.js';
+import { substituteMintMarkers } from './partitionIri.js';
 
 const queriesDir = resolve(
   dirname(fileURLToPath(import.meta.url)),
@@ -18,129 +25,434 @@ const queriesDir = resolve(
   'queries',
 );
 
-async function createVoidStage(
-  filename: string,
-  options?: {
-    executor?: (query: string) => Executor;
-    selection?: 'perClass';
-  },
-): Promise<Stage> {
-  const query = await readQueryFile(resolve(queriesDir, filename));
-  const executor =
-    options?.executor?.(query) ?? new SparqlConstructExecutor({ query });
+/**
+ * Stable names for every VoID stage, equal to the underlying query filename.
+ *
+ * Consumers reference these constants – e.g. when routing a transform through
+ * {@link VoidStagesOptions.transforms} – instead of hard-coding `.rq`
+ * filenames, so internal query names never leak into consumer code.
+ */
+export const VOID_STAGE_NAMES = {
+  subjects: 'subjects.rq',
+  properties: 'properties.rq',
+  objectLiterals: 'object-literals.rq',
+  objectUris: 'object-uris.rq',
+  datatypes: 'datatypes.rq',
+  triples: 'triples.rq',
+  classPartitions: 'class-partition.rq',
+  classPropertySubjects: 'class-properties-subjects.rq',
+  classPropertyObjects: 'class-properties-objects.rq',
+  perClassDatatypes: 'class-property-datatypes.rq',
+  perClassObjectClasses: 'class-property-object-classes.rq',
+  perClassLanguages: 'class-property-languages.rq',
+  licenses: 'licenses.rq',
+  vocabularies: 'entity-properties.rq',
+  subjectUriSpace: 'subject-uri-space.rq',
+  objectUriSpace: 'object-uri-space.rq',
+} as const;
 
-  if (options?.selection === 'perClass') {
-    return new Stage({
-      name: filename,
-      itemSelector: classSelector(),
-      executors: executor,
-    });
-  }
-  return new Stage({ name: filename, executors: executor });
+/** The name of a VoID stage. @see VOID_STAGE_NAMES */
+export type VoidStageName =
+  (typeof VOID_STAGE_NAMES)[keyof typeof VOID_STAGE_NAMES];
+
+/** A transform, or transforms, decorating a VoID stage's reader output. */
+export type VoidStageTransform =
+  QuadTransform<ReaderContext> | QuadTransform<ReaderContext>[];
+
+/**
+ * Options for configuring VoID stage execution.
+ *
+ * Per-request timeouts are configured at the {@link Pipeline} level via
+ * `PipelineOptions.timeout`; VoID stages no longer expose their own timeout
+ * knob. Kept as a named type so per-class / per-stages option types can
+ * extend it as more knobs are added.
+ */
+export interface VoidStageOptions {
+  /**
+   * Transform(s) decorating this stage's reader output before the stage
+   * merges readers. For a global stage the transform sees the reader's
+   * complete output; for a per-class stage it sees one batch – one class at
+   * `batchSize: 1`. Built-in transforms (e.g. {@link uriSpaces}) compose
+   * with these, built-in first.
+   */
+  transform?: VoidStageTransform;
 }
 
-function classSelector(): ItemSelector {
+/**
+ * Options for per-class VoID stages that iterate over classes.
+ *
+ * `batchSize` and `maxConcurrency` control how item bindings are batched and
+ * processed concurrently. They apply to every iterating stage – the five
+ * per-class stages and (via {@link VoidStagesOptions}) the per-property
+ * vocabularies stage – and have no effect on global one-query stages.
+ */
+export interface PerClassVoidStageOptions extends VoidStageOptions {
+  /** Maximum number of item bindings per reader call. @default 10 */
+  batchSize?: number;
+  /** Maximum concurrent in-flight reader batches. @default 10 */
+  maxConcurrency?: number;
+  /** When true, iterate queries per class using a class selector. @default true */
+  perClass?: boolean;
+}
+
+/**
+ * Options for the {@link voidStages} convenience function.
+ *
+ * The single-stage `transform` seam is intentionally absent here: a bundle
+ * spans many stages, so transforms are routed per stage via
+ * {@link VoidStagesOptions.transforms}.
+ */
+export interface VoidStagesOptions extends Omit<
+  PerClassVoidStageOptions,
+  'transform'
+> {
+  /** When provided, includes the object URI space stage using this map. */
+  uriSpaces?: ReadonlyMap<string, readonly Quad[]>;
+  /** Additional vocabulary namespace URIs to detect beyond the built-in defaults. */
+  vocabularies?: readonly string[];
+  /**
+   * When true, iterate the vocabularies (property-partition) stage per
+   * property (see {@link DetectVocabulariesOptions.perProperty}).
+   * @default true
+   */
+  perProperty?: boolean;
+  /**
+   * Transforms to attach to bundled stages, keyed by {@link VOID_STAGE_NAMES}.
+   *
+   * Each transform decorates the reader of the named stage – so a consumer
+   * can wrap a stage it never constructs. Where a stage already carries a
+   * built-in transform ({@link uriSpaces}, {@link detectVocabularies}), the
+   * consumer transform composes after it. An invalid key is a compile error.
+   */
+  transforms?: Partial<Record<VoidStageName, VoidStageTransform>>;
+}
+
+async function createVoidStage(
+  filename: VoidStageName,
+  options?: {
+    transform?: VoidStageTransform;
+    perClass?: boolean;
+    perProperty?: boolean;
+    batchSize?: number;
+    maxConcurrency?: number;
+    expectsOutput?: boolean;
+  },
+): Promise<Stage> {
+  const query = substituteMintMarkers(
+    await readQueryFile(resolve(queriesDir, filename)),
+  );
+  const reader: AttachedReader = {
+    reader: new SparqlConstructReader({ query }),
+    transform: options?.transform,
+  };
+
+  return new Stage({
+    name: filename,
+    readers: reader,
+    itemSelector: options?.perClass
+      ? classSelector()
+      : options?.perProperty
+        ? propertySelector()
+        : undefined,
+    batchSize: options?.batchSize,
+    maxConcurrency: options?.maxConcurrency,
+    expectsOutput: options?.expectsOutput,
+  });
+}
+
+/** Normalise a {@link VoidStageTransform} to an array. */
+function asTransforms(
+  transform?: VoidStageTransform,
+): QuadTransform<ReaderContext>[] {
+  if (transform === undefined) return [];
+  return Array.isArray(transform) ? [...transform] : [transform];
+}
+
+/**
+ * Build an {@link ItemSelector} that pages through the distinct bindings of
+ * one variable.
+ *
+ * The `ORDER BY` is load-bearing: the inner {@link SparqlItemSelector} pages
+ * with `LIMIT`/`OFFSET` (the query’s `LIMIT` is the page size), and SPARQL
+ * guarantees no result order without `ORDER BY` – unordered pages can skip or
+ * repeat items on endpoints with unstable ordering.
+ */
+function distinctItemSelector(
+  variable: string,
+  pattern: (subjectFilter: string) => string,
+): ItemSelector {
   return {
-    select: (distribution) => {
+    // Forward `options` so the Pipeline’s per-dataset TimeoutPolicy
+    // reaches the inner SparqlItemSelector – without this the adaptive
+    // budget is silently bypassed for item selection.
+    select: (distribution, batchSize, options) => {
       const subjectFilter = distribution.subjectFilter ?? '';
-      const fromClause = distribution.namedGraph
-        ? `FROM <${distribution.namedGraph}>`
-        : '';
+      let fromClause = '';
+      if (distribution.namedGraph) {
+        assertSafeIri(distribution.namedGraph);
+        fromClause = `FROM <${distribution.namedGraph}>`;
+      }
       const selectorQuery = [
-        'SELECT DISTINCT ?class',
+        `SELECT DISTINCT ?${variable}`,
         fromClause,
-        `WHERE { ${subjectFilter} ?s a ?class . }`,
+        `WHERE { ${pattern(subjectFilter)} }`,
+        `ORDER BY ?${variable}`,
         'LIMIT 1000',
       ].join('\n');
 
       return new SparqlItemSelector({
         query: selectorQuery,
-        pageSize: 1000,
-      }).select(distribution);
+      }).select(distribution, batchSize, options);
     },
   };
 }
 
+function classSelector(): ItemSelector {
+  // Exclude blank-node classes at the endpoint: the selector would drop
+  // them client-side anyway (no stable identity), but only after fetching
+  // them.
+  return distinctItemSelector(
+    'class',
+    (subjectFilter) =>
+      `${subjectFilter} ?s a ?class . FILTER(!isBlank(?class))`,
+  );
+}
+
+/**
+ * Select the distinct properties of a dataset, so the property-partition
+ * query can iterate in bounded batches instead of aggregating every property
+ * at once.
+ *
+ * The chunking exists for memory, not style: the unchunked
+ * `entity-properties.rq` computes two `COUNT(DISTINCT …)` aggregates grouped
+ * over every property in one query, which materializes the dataset’s full
+ * scan – measured to exhaust a 16 GB query budget on a 608M-triple dataset,
+ * so large datasets got no property partitions (and, downstream, no
+ * `void:vocabulary`) at all. With a property batch injected as `VALUES`, the
+ * working set is bounded by one batch’s triples regardless of dataset size.
+ */
+function propertySelector(): ItemSelector {
+  return distinctItemSelector(
+    'p',
+    (subjectFilter) => `${subjectFilter} ?s ?p ?o .`,
+  );
+}
+
 // Global stages
 
-export function subjectUriSpaces(): Promise<Stage> {
-  return createVoidStage('subject-uri-space.rq');
+export function subjectUriSpaces(options?: VoidStageOptions): Promise<Stage> {
+  return createVoidStage(VOID_STAGE_NAMES.subjectUriSpace, options);
 }
 
-export function classPartitions(): Promise<Stage> {
-  return createVoidStage('class-partition.rq');
+export function classPartitions(options?: VoidStageOptions): Promise<Stage> {
+  return createVoidStage(VOID_STAGE_NAMES.classPartitions, options);
 }
 
-export function countObjectLiterals(): Promise<Stage> {
-  return createVoidStage('object-literals.rq');
+// Scalar-aggregate counts: each query ends in one COUNT without GROUP BY/HAVING,
+// so it always returns exactly one row. Zero output therefore means the endpoint
+// truncated the response, so they set `expectsOutput` to fail (and trigger the
+// reactive dump fallback) rather than store a missing count.
+
+export function countObjectLiterals(
+  options?: VoidStageOptions,
+): Promise<Stage> {
+  return createVoidStage(VOID_STAGE_NAMES.objectLiterals, {
+    ...options,
+    expectsOutput: true,
+  });
 }
 
-export function countObjectUris(): Promise<Stage> {
-  return createVoidStage('object-uris.rq');
+export function countObjectUris(options?: VoidStageOptions): Promise<Stage> {
+  return createVoidStage(VOID_STAGE_NAMES.objectUris, {
+    ...options,
+    expectsOutput: true,
+  });
 }
 
-export function countProperties(): Promise<Stage> {
-  return createVoidStage('properties.rq');
+export function countProperties(options?: VoidStageOptions): Promise<Stage> {
+  return createVoidStage(VOID_STAGE_NAMES.properties, {
+    ...options,
+    expectsOutput: true,
+  });
 }
 
-export function countSubjects(): Promise<Stage> {
-  return createVoidStage('subjects.rq');
+export function countSubjects(options?: VoidStageOptions): Promise<Stage> {
+  return createVoidStage(VOID_STAGE_NAMES.subjects, {
+    ...options,
+    expectsOutput: true,
+  });
 }
 
-export function countTriples(): Promise<Stage> {
-  return createVoidStage('triples.rq');
+export function countTriples(options?: VoidStageOptions): Promise<Stage> {
+  return createVoidStage(VOID_STAGE_NAMES.triples, {
+    ...options,
+    expectsOutput: true,
+  });
 }
 
-export function classPropertySubjects(): Promise<Stage> {
-  return createVoidStage('class-properties-subjects.rq');
+export function classPropertySubjects(
+  options?: PerClassVoidStageOptions,
+): Promise<Stage> {
+  return createVoidStage(VOID_STAGE_NAMES.classPropertySubjects, {
+    ...options,
+    perClass: options?.perClass ?? true,
+  });
 }
 
-export function classPropertyObjects(): Promise<Stage> {
-  return createVoidStage('class-properties-objects.rq');
+export function classPropertyObjects(
+  options?: PerClassVoidStageOptions,
+): Promise<Stage> {
+  return createVoidStage(VOID_STAGE_NAMES.classPropertyObjects, {
+    ...options,
+    perClass: options?.perClass ?? true,
+  });
 }
 
-export function countDatatypes(): Promise<Stage> {
-  return createVoidStage('datatypes.rq');
+export function countDatatypes(options?: VoidStageOptions): Promise<Stage> {
+  // No expectsOutput: unlike the other counts, this query joins the scalar
+  // count with a `SELECT DISTINCT ?datatype` group, so a dataset with no
+  // literals yields zero rows – a legitimately empty result, not a truncation.
+  return createVoidStage(VOID_STAGE_NAMES.datatypes, options);
 }
 
-export function detectLicenses(): Promise<Stage> {
-  return createVoidStage('licenses.rq');
+export function detectLicenses(options?: VoidStageOptions): Promise<Stage> {
+  return createVoidStage(VOID_STAGE_NAMES.licenses, options);
 }
 
 // Per-class stages
 
-export function perClassObjectClasses(): Promise<Stage> {
-  return createVoidStage('class-property-object-classes.rq', {
-    selection: 'perClass',
+export function perClassObjectClasses(
+  options?: PerClassVoidStageOptions,
+): Promise<Stage> {
+  return createVoidStage(VOID_STAGE_NAMES.perClassObjectClasses, {
+    ...options,
+    perClass: options?.perClass ?? true,
   });
 }
 
-export function perClassDatatypes(): Promise<Stage> {
-  return createVoidStage('class-property-datatypes.rq', {
-    selection: 'perClass',
+export function perClassDatatypes(
+  options?: PerClassVoidStageOptions,
+): Promise<Stage> {
+  return createVoidStage(VOID_STAGE_NAMES.perClassDatatypes, {
+    ...options,
+    perClass: options?.perClass ?? true,
   });
 }
 
-export function perClassLanguages(): Promise<Stage> {
-  return createVoidStage('class-property-languages.rq', {
-    selection: 'perClass',
+export function perClassLanguages(
+  options?: PerClassVoidStageOptions,
+): Promise<Stage> {
+  return createVoidStage(VOID_STAGE_NAMES.perClassLanguages, {
+    ...options,
+    perClass: options?.perClass ?? true,
   });
 }
 
-// Domain-specific executor stages
+// Stages with a built-in transform
 
 export function uriSpaces(
-  uriSpaces: ReadonlyMap<string, readonly Quad[]>,
+  uriSpaceMap: ReadonlyMap<string, readonly Quad[]>,
+  options?: VoidStageOptions,
 ): Promise<Stage> {
-  return createVoidStage('object-uri-space.rq', {
-    executor: (query) =>
-      new UriSpaceExecutor(new SparqlConstructExecutor({ query }), uriSpaces),
+  return createVoidStage(VOID_STAGE_NAMES.objectUriSpace, {
+    transform: [
+      withUriSpaces(uriSpaceMap),
+      ...asTransforms(options?.transform),
+    ],
   });
 }
 
-export function detectVocabularies(): Promise<Stage> {
-  return createVoidStage('entity-properties.rq', {
-    executor: (query) =>
-      new VocabularyExecutor(new SparqlConstructExecutor({ query })),
+export interface DetectVocabulariesOptions extends Omit<
+  PerClassVoidStageOptions,
+  'perClass'
+> {
+  /** Additional vocabulary namespace URIs to detect beyond the built-in defaults. */
+  vocabularies?: readonly string[];
+  /**
+   * When true, iterate the property-partition query per property using a
+   * property selector, so its memory use is bounded by the batch instead of
+   * the whole dataset (see {@link propertySelector}). @default true
+   */
+  perProperty?: boolean;
+}
+
+export function detectVocabularies(
+  options?: DetectVocabulariesOptions,
+): Promise<Stage> {
+  const { vocabularies, transform, batchSize, maxConcurrency, perProperty } =
+    options ?? {};
+  const allVocabularies = vocabularies
+    ? [...defaultVocabularies, ...vocabularies]
+    : undefined;
+  return createVoidStage(VOID_STAGE_NAMES.vocabularies, {
+    transform: [withVocabularies(allVocabularies), ...asTransforms(transform)],
+    perProperty: perProperty ?? true,
+    batchSize,
+    maxConcurrency,
   });
+}
+
+/**
+ * Create all VoID analysis stages in their recommended execution order.
+ *
+ * The stages are ordered so that {@link classPartitions} runs before the
+ * per-class stages. This warms up the `?s a ?class` pattern cache on the
+ * SPARQL endpoint, preventing 504 timeouts on the heavier per-class queries
+ * when the cache is cold.
+ */
+export async function voidStages(
+  options?: VoidStagesOptions,
+): Promise<Stage[]> {
+  const {
+    uriSpaces: uriSpaceMap,
+    vocabularies,
+    transforms,
+    // Destructured out of stageOptions so it cannot leak into the global
+    // stages’ createVoidStage options – it applies to the vocabularies stage
+    // only.
+    perProperty,
+    ...stageOptions
+  } = options ?? {};
+
+  // Merge the shared per-stage options with the transform routed to a stage.
+  const withTransform = (name: VoidStageName) => ({
+    ...stageOptions,
+    transform: transforms?.[name],
+  });
+
+  return Promise.all([
+    // Global counting stages.
+    countSubjects(withTransform(VOID_STAGE_NAMES.subjects)),
+    countProperties(withTransform(VOID_STAGE_NAMES.properties)),
+    countObjectLiterals(withTransform(VOID_STAGE_NAMES.objectLiterals)),
+    countObjectUris(withTransform(VOID_STAGE_NAMES.objectUris)),
+    countDatatypes(withTransform(VOID_STAGE_NAMES.datatypes)),
+    countTriples(withTransform(VOID_STAGE_NAMES.triples)),
+
+    // Cache warming – must precede per-class stages.
+    classPartitions(withTransform(VOID_STAGE_NAMES.classPartitions)),
+
+    // Per-class stages.
+    classPropertySubjects(
+      withTransform(VOID_STAGE_NAMES.classPropertySubjects),
+    ),
+    classPropertyObjects(withTransform(VOID_STAGE_NAMES.classPropertyObjects)),
+    perClassDatatypes(withTransform(VOID_STAGE_NAMES.perClassDatatypes)),
+    perClassObjectClasses(
+      withTransform(VOID_STAGE_NAMES.perClassObjectClasses),
+    ),
+    perClassLanguages(withTransform(VOID_STAGE_NAMES.perClassLanguages)),
+
+    // Other stages.
+    detectLicenses(withTransform(VOID_STAGE_NAMES.licenses)),
+    detectVocabularies({
+      ...withTransform(VOID_STAGE_NAMES.vocabularies),
+      vocabularies,
+      perProperty,
+    }),
+    subjectUriSpaces(withTransform(VOID_STAGE_NAMES.subjectUriSpace)),
+    ...(uriSpaceMap
+      ? [uriSpaces(uriSpaceMap, withTransform(VOID_STAGE_NAMES.objectUriSpace))]
+      : []),
+  ]);
 }

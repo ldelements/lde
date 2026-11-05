@@ -3,17 +3,17 @@ PREFIX void: <http://rdfs.org/ns/void#>
 CONSTRUCT {
     ?dataset a void:Dataset ;
         void:classPartition ?classPartition .
-    ?classPartition void:class ?type ;
+    ?classPartition void:class ?class ;
         void:entities ?entities .
 }
 WHERE {
     {
-        SELECT (COUNT(?type) AS ?entities) ?type {
+        SELECT (COUNT(?class) AS ?entities) ?class {
             #subjectFilter#
-            ?s a ?type .
+            ?s a ?class .
         }
-        GROUP BY ?type
+        GROUP BY ?class
     }
-    BIND(URI(CONCAT(STR(?dataset), "/.well-known/void#class-", MD5(STR(?type)))) AS ?classPartition)
+    BIND(#mint:class# AS ?classPartition)
 }
 LIMIT 10000

@@ -1,0 +1,46 @@
+@prefix dcat: <http://www.w3.org/ns/dcat#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+@prefix schema: <https://schema.org/> .
+
+# A dataset-register-shaped sample, modelled on the NDE Dataset Register: each
+# registration is crawled into a named graph called after the dataset IRI, and
+# the registration is self-contained in it – the publisher’s foaf:name and its
+# foaf:Organization type sit inside the dataset’s own graph, so a graph-scoped
+# extraction resolves the publisher hop without reaching outside.
+#
+# Two registrations, so a run scoped to one must not see the other; and a
+# registrations graph asserting schema:Dataset, which a dcat:Dataset selector
+# scoped to a dataset’s graph can never reach. Both are the properties the
+# registry-sourced stages rest on.
+
+<https://ex/dataset/a> {
+  <https://ex/dataset/a> a dcat:Dataset ;
+    dcterms:title "Vaandels van Limburg"@nl, "Banners of Limburg"@en ;
+    dcterms:description "Een dataset over vaandels."@nl ;
+    dcterms:license <https://creativecommons.org/licenses/by-nc-nd/4.0/> ;
+    dcat:landingPage <https://ex/a/> ;
+    dcterms:publisher <https://ex/org/trace> .
+
+  <https://ex/org/trace> a foaf:Organization ;
+    foaf:name "Tracé - Limburgs Samenlevingsarchief"@nl .
+}
+
+<https://ex/dataset/b> {
+  <https://ex/dataset/b> a dcat:Dataset ;
+    dcterms:title "Schutterijen"@nl ;
+    dcterms:license <https://creativecommons.org/publicdomain/zero/1.0/> ;
+    dcterms:publisher <https://ex/org/other> .
+
+  <https://ex/org/other> a foaf:Organization ;
+    foaf:name "Ander archief"@nl .
+}
+
+# The registration records. Registrations whose description was never crawled
+# exist only here, typed schema:Dataset and nothing else – the shape a
+# schema.org-rooted selector would sweep in as content-free documents.
+<https://ex/registrations> {
+  <https://ex/dataset/a> a schema:Dataset .
+  <https://ex/dataset/b> a schema:Dataset .
+  <https://ex/dataset/uncrawled> a schema:Dataset .
+}

@@ -1,3 +1,856 @@
+## 0.32.0 (2026-11-03)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.41.0
+- Updated @lde/dataset to 0.10.0
+
+## 0.31.1 (2026-10-31)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.40.1
+
+## 0.31.0 (2026-10-30)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.40.0
+- Updated @lde/dataset to 0.9.0
+
+## 0.30.3 (2026-10-28)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.39.3
+
+## 0.30.2 (2026-10-27)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.39.2
+
+## 0.30.1 (2026-10-27)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.39.1
+
+## 0.30.0 (2026-10-26)
+
+### 🚀 Features
+
+- ⚠️  **search-typesense:** skip and report documents a collection cannot index ([#954](https://github.com/ldelements/lde/pull/954))
+
+### ⚠️  Breaking Changes
+
+- **search-typesense:** skip and report documents a collection cannot index  ([#954](https://github.com/ldelements/lde/pull/954))
+  a document Typesense refuses no longer fails its dataset; the
+  dataset goes live without it unless more than maxRejectedShare of its documents
+  are left out. Set maxRejectedShare: 0 to fail a dataset on its first rejection."
+  M	docs/reference/pipeline.md
+  M	docs/reference/search-typesense.md
+  M	packages/pipeline-console-reporter/src/consoleReporter.ts
+  M	packages/pipeline-console-reporter/test/consoleReporter.test.ts
+  M	packages/pipeline-console-reporter/vite.config.ts
+  M	packages/pipeline/src/combineReporters.ts
+  M	packages/pipeline/src/pipeline.ts
+  M	packages/pipeline/src/progressReporter.ts
+  M	packages/pipeline/src/writer/writer.ts
+  M	packages/pipeline/test/combineReporters.test.ts
+  M	packages/pipeline/test/pipeline.test.ts
+  M	packages/pipeline/vite.config.ts
+  M	packages/search-pipeline/src/search-index-writer.ts
+  M	packages/search-pipeline/test/search-index-writer.test.ts
+  M	packages/search-typesense/src/blue-green-rebuild.ts
+  M	packages/search-typesense/src/documents.ts
+  M	packages/search-typesense/src/in-place-rebuild.ts
+  M	packages/search-typesense/src/rebuild-support.ts
+  M	packages/search-typesense/test/blue-green-rebuild.test.ts
+  M	packages/search-typesense/test/documents.test.ts
+  M	packages/search-typesense/test/in-place-rebuild.test.ts
+  M	packages/search-typesense/test/rebuild-support.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/src/adapter.ts
+  M	packages/search/src/project.ts
+  A	packages/search/test/missing-required-fields.test.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.39.0
+
+## 0.29.1 (2026-10-25)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.38.1
+
+## 0.29.0 (2026-10-16)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.38.0
+
+## 0.28.0 (2026-10-15)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.37.0
+- Updated @lde/dataset to 0.8.0
+
+## 0.27.9 (2026-10-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.36.9
+- Updated @lde/dataset to 0.7.10
+
+## 0.27.8 (2026-10-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.36.8
+
+## 0.27.7 (2026-09-21)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.36.7
+
+## 0.27.6 (2026-09-09)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.36.6
+
+## 0.27.5 (2026-09-09)
+
+### 🩹 Fixes
+
+- **pipeline:** surface reactive fallback failures and retry them next run ([#841](https://github.com/ldelements/lde/pull/841))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.36.5
+
+## 0.27.4 (2026-08-31)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.36.4
+
+## 0.27.3 (2026-08-24)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.36.3
+
+## 0.27.2 (2026-08-24)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.36.2
+
+## 0.27.1 (2026-08-21)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.36.1
+
+## 0.27.0 (2026-08-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.36.0
+
+## 0.26.6 (2026-08-07)
+
+### 🩹 Fixes
+
+- **pipeline:** abandon a run whose selection is empty ([#706](https://github.com/ldelements/lde/pull/706))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.35.6
+
+## 0.26.5 (2026-08-07)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.35.5
+
+## 0.26.4 (2026-07-25)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.35.4
+
+## 0.26.3 (2026-07-24)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.35.3
+- Updated @lde/dataset to 0.7.9
+
+## 0.26.2 (2026-07-24)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.35.2
+
+## 0.26.1 (2026-07-24)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.35.1
+
+## 0.26.0 (2026-07-23)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.35.0
+
+## 0.25.4 (2026-07-23)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.34.4
+
+## 0.25.3 (2026-07-23)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.34.3
+
+## 0.25.2 (2026-07-17)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.34.2
+
+## 0.25.1 (2026-07-12)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.34.1
+
+## 0.25.0 (2026-07-09)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.34.0
+
+## 0.24.4 (2026-07-08)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.33.4
+
+## 0.24.3 (2026-07-08)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.33.3
+
+## 0.24.2 (2026-07-08)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.33.2
+
+## 0.24.1 (2026-07-08)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.33.1
+
+## 0.24.0 (2026-07-08)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.33.0
+
+## 0.23.0 (2026-07-07)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.32.0
+
+## 0.22.5 (2026-06-26)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.31.5
+- Updated @lde/dataset to 0.7.8
+
+## 0.22.4 (2026-06-26)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.31.4
+
+## 0.22.3 (2026-06-25)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.31.3
+
+## 0.22.2 (2026-06-25)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.31.2
+
+## 0.22.1 (2026-06-25)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.31.1
+
+## 0.22.0 (2026-06-22)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.31.0
+
+## 0.21.22 (2026-06-19)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.30.22
+
+## 0.21.21 (2026-06-18)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.30.21
+
+## 0.21.20 (2026-06-18)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.30.20
+
+## 0.21.19 (2026-06-17)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.30.19
+
+## 0.21.18 (2026-06-17)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.30.18
+
+## 0.21.17 (2026-06-17)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.30.17
+
+## 0.21.16 (2026-06-16)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.30.16
+
+## 0.21.15 (2026-06-15)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.30.15
+
+## 0.21.14 (2026-06-15)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.30.14
+- Updated @lde/dataset to 0.7.7
+
+## 0.21.13 (2026-06-15)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.30.13
+- Updated @lde/dataset to 0.7.6
+
+## 0.21.12 (2026-06-11)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.30.12
+
+## 0.21.11 (2026-06-11)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.30.11
+
+## 0.21.10 (2026-06-10)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.30.10
+
+## 0.21.9 (2026-06-10)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.30.9
+- Updated @lde/dataset to 0.7.5
+
+## 0.21.8 (2026-06-10)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.30.8
+
+## 0.21.7 (2026-06-08)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.30.7
+
+## 0.21.6 (2026-06-08)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.30.6
+
+## 0.21.5 (2026-06-08)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.30.5
+
+## 0.21.4 (2026-06-01)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.30.4
+
+## 0.21.3 (2026-05-28)
+
+### 🚀 Features
+
+- **pipeline:** adaptive per-endpoint SPARQL timeouts ([#421](https://github.com/ldelements/lde/pull/421), [#419](https://github.com/ldelements/lde/issues/419))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.30.3
+
+## 0.21.2 (2026-05-27)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.30.2
+
+## 0.21.1 (2026-05-27)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.30.1
+
+## 0.21.0 (2026-05-27)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.30.0
+
+## 0.20.2 (2026-05-22)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.29.2
+
+## 0.20.1 (2026-05-21)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.29.1
+- Updated @lde/dataset to 0.7.4
+
+## 0.20.0 (2026-05-18)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.29.0
+
+## 0.19.17 (2026-05-15)
+
+### 🚀 Features
+
+- **pipeline-shacl-sampler:** add per-class sampling stages derived from SHACL ([#381](https://github.com/ldelements/lde/pull/381))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.28.14
+
+## 0.19.16 (2026-04-28)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.28.13
+
+## 0.19.15 (2026-04-28)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.28.12
+
+## 0.19.14 (2026-04-23)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.28.11
+- Updated @lde/dataset to 0.7.3
+
+## 0.19.13 (2026-04-23)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.28.10
+
+## 0.19.12 (2026-04-17)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.28.9
+
+## 0.19.11 (2026-04-15)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.28.8
+
+## 0.19.10 (2026-04-09)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.28.7
+
+## 0.19.9 (2026-04-06)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.28.6
+
+## 0.19.8 (2026-03-24)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.28.5
+
+## 0.19.7 (2026-03-24)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.28.4
+
+## 0.19.6 (2026-03-24)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.28.3
+
+## 0.19.5 (2026-03-23)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.28.2
+
+## 0.19.4 (2026-03-23)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.28.1
+
+## 0.19.3 (2026-03-23)
+
+### 🩹 Fixes
+
+- **pipeline-console-reporter:** retain item and quad counts on stage completion ([#293](https://github.com/ldelements/lde/pull/293))
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.19.2 (2026-03-23)
+
+### 🚀 Features
+
+- **pipeline-console-reporter:** indent output to reflect dataset/stage hierarchy ([#295](https://github.com/ldelements/lde/pull/295))
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.19.1 (2026-03-23)
+
+### 🩹 Fixes
+
+- **pipeline-console-reporter:** use log symbols instead of literal strings for status lines ([#294](https://github.com/ldelements/lde/pull/294))
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.19.0 (2026-03-22)
+
+### 🚀 Features
+
+- ⚠️  detect and correct MIME type mismatches in distribution imports ([#291](https://github.com/ldelements/lde/pull/291))
+
+### ⚠️  Breaking Changes
+
+- detect and correct MIME type mismatches in distribution imports  ([#291](https://github.com/ldelements/lde/pull/291))
+  Downloader.download() returns DownloadResult instead
+  of string; qleverOptions on createQlever() renamed to indexOptions.
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.28.0
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.18.0 (2026-03-20)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.27.0
+
+## 0.17.0 (2026-03-19)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.26.0
+
+## 0.16.3 (2026-03-19)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.25.3
+
+## 0.16.2 (2026-03-19)
+
+### 🩹 Fixes
+
+- **pipeline:** eliminate FanOutWriter memory growth via tee pattern ([#258](https://github.com/ldelements/lde/pull/258))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.25.2
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.16.1 (2026-03-19)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.25.1
+
+## 0.16.0 (2026-03-18)
+
+### 🚀 Features
+
+- **pipeline:** report memory usage (RSS) during pipeline execution ([#255](https://github.com/ldelements/lde/pull/255))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.25.0
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.15.7 (2026-03-17)
+
+### 🩹 Fixes
+
+- **pipeline-console-reporter:** eliminate concurrent ora spinner warnings and timer leaks ([#253](https://github.com/ldelements/lde/pull/253))
+
+### ❤️ Thank You
+
+- David de Boer
+
+## 0.15.6 (2026-03-16)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.24.4
+- Updated @lde/dataset to 0.7.2
+
+## 0.15.5 (2026-03-16)
+
+### 🩹 Fixes
+
+- **pipeline:** avoid concurrent ora spinners and fix misleading skip message ([#246](https://github.com/ldelements/lde/pull/246))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.24.3
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.15.4 (2026-03-16)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.24.2
+
+## 0.15.3 (2026-03-16)
+
+### 🩹 Fixes
+
+- **pipeline-console-reporter:** write plain-text lines to stderr instead of stdout ([#243](https://github.com/ldelements/lde/pull/243))
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.15.2 (2026-03-16)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.24.1
+
+## 0.15.1 (2026-03-16)
+
+### 🩹 Fixes
+
+- **pipeline-console-reporter:** suppress ANSI cursor escapes in non-TTY output ([#241](https://github.com/ldelements/lde/pull/241))
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.15.0 (2026-03-15)
+
+### 🚀 Features
+
+- **pipeline-console-reporter:** merge \u201c(selected)\u201d into probe output line ([#240](https://github.com/ldelements/lde/pull/240))
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.14.0 (2026-03-13)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.24.0
+
+## 0.13.0 (2026-03-13)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.23.0
+
+## 0.12.2 (2026-03-13)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.22.1
+
+## 0.12.1 (2026-03-13)
+
+### 🩹 Fixes
+
+- **pipeline-console-reporter:** eliminate duplicate spinner lines in non-TTY environments ([#232](https://github.com/ldelements/lde/pull/232))
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.12.0 (2026-03-13)
+
+### 🚀 Features
+
+- **pipeline-console-reporter:** display validation status after stage completion ([#231](https://github.com/ldelements/lde/pull/231))
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.11.0 (2026-03-13)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.22.0
+
+## 0.10.0 (2026-03-12)
+
+### 🚀 Features
+
+- **pipeline:** add "Importing…" spinner with elapsed time ([#220](https://github.com/ldelements/lde/pull/220))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.21.0
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.9.0 (2026-03-09)
+
+### 🚀 Features
+
+- **pipeline:** add SHACL validation as a stage option ([#218](https://github.com/ldelements/lde/pull/218))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.20.0
+
+### ❤️ Thank You
+
+- David de Boer
+
+## 0.8.0 (2026-03-08)
+
+### 🚀 Features
+
+- **pipeline:** include triple count in import result reporting ([#217](https://github.com/ldelements/lde/pull/217))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.19.0
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.7.0 (2026-03-07)
+
+### 🚀 Features
+
+- **pipeline:** report distribution probe results as they complete ([#215](https://github.com/ldelements/lde/pull/215))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.18.0
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
+## 0.6.2 (2026-03-06)
+
+### 🩹 Fixes
+
+- **pipeline-console-reporter:** use singular 'dataset' and hide counter for single dataset ([#213](https://github.com/ldelements/lde/pull/213))
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
 ## 0.6.1 (2026-03-06)
 
 ### 🧱 Updated Dependencies

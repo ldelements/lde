@@ -1,0 +1,127 @@
+name: Docker
+
+# Triggered by the GitHub Releases nx release creates, NOT by tag pushes: a
+# multi-package release pushes all its tags in one batch, and GitHub emits no
+# tag-push events at all when more than three tags arrive at once – so a tag
+# trigger would silently never fire for this monorepo.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Tag or ref to build the image from (e.g. @lde/search-api-server@0.1.0)'
+        required: true
+
+permissions:
+  contents: read
+  packages: write
+
+# A multi-package nx release fires a burst of release events. GitHub keeps at
+# most one *pending* run per concurrency group (cancel-in-progress: false only
+# protects the in-progress run), so a single shared group silently cancelled
+# every image build in the batch except one. Key the group by release tag
+# instead: each package builds independently – safe, because every package
+# pushes to its own ghcr image, so their :latest tags never contend – while
+# duplicate runs for the same tag coalesce: builds of one immutable tag are
+# idempotent, so the newest run simply supersedes the older one.
+concurrency:
+  group: docker-publish-${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.event.release.tag_name }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # Every released package fires a release event; only the image-shipping
+    # packages get past this guard (keep it in sync with the packages that
+    # have a Dockerfile).
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      startsWith(github.event.release.tag_name, '@lde/search-api-server@') ||
+      startsWith(github.event.release.tag_name, '@lde/search-indexer@') ||
+      startsWith(github.event.release.tag_name, '@lde/task-runner-http@')
+    # Each architecture builds AND boots natively on its own runner, so the
+    # docker:smoke gate covers both – an emulated (QEMU) arm64 build could
+    # only ever boot-test amd64.
+    strategy:
+      matrix:
+        include:
+          - architecture: amd64
+            runner: ubuntu-latest
+          - architecture: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
+
+      # The image is built from this tagged commit's own workspace outputs
+      # (nx docker:build stages the compiled package, its workspace
+      # dependencies and a pruned lockfile), so it needs no npm publish to
+      # have happened – the release tag alone identifies the package and
+      # version (e.g. "@lde/search-indexer@0.1.0").
+      - name: Determine package and version
+        id: version
+        # The ref reaches the shell via env, never inline interpolation, so a
+        # crafted dispatch input cannot inject shell syntax.
+        env:
+          REF: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref_name }}
+        run: |
+          package="${REF#@lde/}"
+          echo "package=${package%@*}" >> "$GITHUB_OUTPUT"
+          echo "version=${REF##*@}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Build and smoke-test the image
+        run: npx nx run "@lde/${{ steps.version.outputs.package }}:docker:smoke"
+
+      - uses: docker/login-action@v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push the architecture image
+        run: |
+          package="${{ steps.version.outputs.package }}"
+          version="${{ steps.version.outputs.version }}"
+          docker tag "packages-${package}" "ghcr.io/ldelements/${package}:${version}-${{ matrix.architecture }}"
+          docker push "ghcr.io/ldelements/${package}:${version}-${{ matrix.architecture }}"
+
+  # Stitches the per-architecture images into one multi-architecture manifest,
+  # so :<version> and :latest resolve natively on amd64 and arm64 alike.
+  # Skipped automatically when build is skipped (needs propagates the skip).
+  publish-manifest:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Determine package and version
+        id: version
+        env:
+          REF: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.event.release.tag_name }}
+        run: |
+          package="${REF#@lde/}"
+          echo "package=${package%@*}" >> "$GITHUB_OUTPUT"
+          echo "version=${REF##*@}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/login-action@v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create the multi-architecture manifest
+        run: |
+          package="${{ steps.version.outputs.package }}"
+          version="${{ steps.version.outputs.version }}"
+          docker buildx imagetools create \
+            --tag "ghcr.io/ldelements/${package}:${version}" \
+            --tag "ghcr.io/ldelements/${package}:latest" \
+            "ghcr.io/ldelements/${package}:${version}-amd64" \
+            "ghcr.io/ldelements/${package}:${version}-arm64"

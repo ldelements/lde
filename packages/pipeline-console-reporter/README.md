@@ -1,6 +1,12 @@
-# Pipeline Console Reporter
+# @lde/pipeline-console-reporter
 
 Console progress reporter for [@lde/pipeline](../pipeline). Displays real-time pipeline progress with spinners, colours and timing information.
+
+## Installation
+
+```sh
+npm install @lde/pipeline-console-reporter
+```
 
 ## Usage
 
@@ -15,3 +21,7 @@ await new Pipeline({
   reporter: new ConsoleReporter(),
 }).run();
 ```
+
+## Documentation
+
+See the [full documentation](https://ldelements.org/reference/pipeline-console-reporter).

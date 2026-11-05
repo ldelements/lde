@@ -1,10 +1,11 @@
 {
   "name": "@lde/distribution-downloader",
-  "version": "0.5.1",
+  "version": "0.9.0",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
     "directory": "packages/distribution-downloader"
   },
+  "license": "MIT",
   "type": "module",
   "exports": {
     "./package.json": "./package.json",
@@ -23,7 +24,7 @@
     "!**/*.tsbuildinfo"
   ],
   "dependencies": {
-    "@lde/dataset": "0.7.1",
+    "@lde/dataset": "^0.10.0",
     "filenamify-url": "4.0.0",
     "tslib": "^2.3.0"
   }

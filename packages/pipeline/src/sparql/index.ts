@@ -1,12 +1,14 @@
 export {
-  SparqlConstructExecutor,
+  deduplicateQuads,
+  SparqlConstructReader,
+  LineBufferTransform,
   NotSupported,
   readQueryFile,
-  type ExecuteOptions,
-  type Executor,
-  type SparqlConstructExecutorOptions,
+  type ReadOptions,
+  type Reader,
+  type SparqlConstructReaderOptions,
   type VariableBindings,
-} from './executor.js';
+} from './reader.js';
 export {
   SparqlItemSelector,
   type SparqlItemSelectorOptions,
@@ -15,3 +17,17 @@ export {
 export { injectValues } from './values.js';
 
 export { withDefaultGraph } from './graph.js';
+
+export {
+  AdaptiveTimeoutPolicy,
+  ConstantTimeoutPolicy,
+  adaptiveTimeoutPolicy,
+  constantTimeoutPolicy,
+  type AdaptiveTimeoutPolicyOptions,
+  type AfterRequestContext,
+  type BeforeRequestContext,
+  type TimeoutOutcome,
+  type TimeoutPolicy,
+  type TimeoutPolicyObserver,
+  type TimeoutTransitionEvent,
+} from './timeoutPolicy.js';

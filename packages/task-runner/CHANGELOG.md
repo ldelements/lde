@@ -1,3 +1,39 @@
+## 0.4.0 (2026-10-30)
+
+This was a version bump only for @lde/task-runner to align it with other projects, there were no code changes.
+
+## 0.3.0 (2026-10-15)
+
+This was a version bump only for @lde/task-runner to align it with other projects, there were no code changes.
+
+## 0.2.16 (2026-10-14)
+
+This was a version bump only for @lde/task-runner to align it with other projects, there were no code changes.
+
+## 0.2.15 (2026-09-21)
+
+### 🚀 Features
+
+- **task-runner:** stop running tasks when the process is interrupted ([#837](https://github.com/ldelements/lde/pull/837))
+
+## 0.2.14 (2026-08-31)
+
+### 🚀 Features
+
+- **sparql-anything:** add SparqlAnythingConverter for chunked non-RDF to RDF conversion ([#511](https://github.com/ldelements/lde/pull/511))
+
+## 0.2.13 (2026-07-24)
+
+This was a version bump only for @lde/task-runner to align it with other projects, there were no code changes.
+
+## 0.2.12 (2026-06-26)
+
+This was a version bump only for @lde/task-runner to align it with other projects, there were no code changes.
+
+## 0.2.11 (2026-04-23)
+
+This was a version bump only for @lde/task-runner to align it with other projects, there were no code changes.
+
 ## 0.2.10 (2026-02-16)
 
 This was a version bump only for @lde/task-runner to align it with other projects, there were no code changes.

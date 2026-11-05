@@ -1,3 +1,81 @@
+## 0.5.0 (2026-10-30)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/task-runner to 0.4.0
+
+## 0.4.0 (2026-10-15)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/task-runner to 0.3.0
+
+## 0.3.2 (2026-10-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/task-runner to 0.2.16
+
+## 0.3.1 (2026-09-21)
+
+### 🚀 Features
+
+- **task-runner:** stop running tasks when the process is interrupted ([#837](https://github.com/ldelements/lde/pull/837))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/task-runner to 0.2.15
+
+## 0.3.0 (2026-08-31)
+
+### 🩹 Fixes
+
+- ⚠️  **task-runner-docker:** refuse a second task while the named one runs ([#796](https://github.com/ldelements/lde/pull/796))
+
+### ⚠️  Breaking Changes
+
+- **task-runner-docker:** refuse a second task while the named one runs  ([#796](https://github.com/ldelements/lde/pull/796))
+
+## 0.2.17 (2026-08-31)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/task-runner to 0.2.14
+
+## 0.2.16 (2026-07-25)
+
+### 🚀 Features
+
+- **sparql-qlever:** reach QLever by container name over a Docker network ([#663](https://github.com/ldelements/lde/pull/663))
+
+## 0.2.15 (2026-07-24)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/task-runner to 0.2.13
+
+## 0.2.14 (2026-06-26)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/task-runner to 0.2.12
+
+## 0.2.13 (2026-04-23)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/task-runner to 0.2.11
+
+## 0.2.12 (2026-03-23)
+
+### 🩹 Fixes
+
+- **task-runner-docker:** stop container instead of removing it ([#300](https://github.com/ldelements/lde/pull/300))
+
+### ❤️ Thank You
+
+- David de Boer @ddeboer
+
 ## 0.2.11 (2026-02-27)
 
 ### 🩹 Fixes

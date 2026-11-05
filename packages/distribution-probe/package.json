@@ -1,0 +1,33 @@
+{
+  "name": "@lde/distribution-probe",
+  "version": "0.5.0",
+  "repository": {
+    "url": "git+https://github.com/ldelements/lde.git",
+    "directory": "packages/distribution-probe"
+  },
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "!**/*.tsbuildinfo"
+  ],
+  "dependencies": {
+    "@lde/dataset": "^0.10.0",
+    "@lde/host-limiter": "^0.2.1",
+    "jsonld-context-parser": "^2.4.0",
+    "rdf-parse": "^5.0.0",
+    "tslib": "^2.3.0"
+  }
+}

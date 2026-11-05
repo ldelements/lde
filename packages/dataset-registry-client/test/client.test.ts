@@ -32,7 +32,8 @@ describe('Client', () => {
         },
       });
 
-      const expectedTotal = 2;
+      // foo (turtle), bar (turtle) and baz (rdf+xml) all match.
+      const expectedTotal = 3;
       expect(results.total).toEqual(expectedTotal);
       let count = 0;
       let firstResult;
@@ -74,7 +75,8 @@ describe('Client', () => {
       `;
       const results = await client.query(query);
 
-      const expectedTotal = 2;
+      // foo, bar and baz each have a titled distribution with a mediaType.
+      const expectedTotal = 3;
       expect(results.total).toEqual(expectedTotal);
       let count = 0;
       for await (const _ of results) {
@@ -96,6 +98,26 @@ describe('Client', () => {
         count++;
       }
       expect(count).toEqual(1);
+    });
+
+    it('reads back a distribution that declares no media type', async () => {
+      // Only reachable without media-type criteria: those narrow a dataset’s
+      // distributions to the matching ones, so a filtered query never returns
+      // this distribution.
+      const results = await client.query({
+        $id: 'http://bar.org/id/dataset/bar',
+      });
+
+      const mediaTypes = [];
+      for await (const dataset of results) {
+        mediaTypes.push(
+          ...dataset.distributions.map(
+            (distribution) => distribution.mediaType,
+          ),
+        );
+      }
+
+      expect(mediaTypes).toContain(undefined);
     });
 
     it('throws an error for non-CONSTRUCT queries', async () => {

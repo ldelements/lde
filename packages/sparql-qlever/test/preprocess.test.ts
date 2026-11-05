@@ -1,0 +1,388 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { Distribution } from '@lde/dataset';
+import { join, resolve } from 'node:path';
+import { copyFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { needsPreprocessing, preprocess } from '../src/preprocess.js';
+
+function makeDistribution(mediaType: string, compressFormat?: string) {
+  const distribution = new Distribution(
+    new URL('https://example.com/dataset/distribution'),
+    mediaType,
+  );
+  if (compressFormat !== undefined) {
+    distribution.compressFormat = compressFormat;
+  }
+  return distribution;
+}
+
+describe('needsPreprocessing', () => {
+  it('returns false for native QLever formats', () => {
+    expect(needsPreprocessing(makeDistribution('application/n-triples'))).toBe(
+      false,
+    );
+    expect(needsPreprocessing(makeDistribution('application/n-quads'))).toBe(
+      false,
+    );
+    expect(needsPreprocessing(makeDistribution('text/turtle'))).toBe(false);
+  });
+
+  it('returns false for gzipped native formats', () => {
+    expect(
+      needsPreprocessing(
+        makeDistribution('application/n-triples', 'application/gzip'),
+      ),
+    ).toBe(false);
+  });
+
+  it('returns false for standalone application/zip (inner format unknown)', () => {
+    expect(needsPreprocessing(makeDistribution('application/zip'))).toBe(false);
+  });
+
+  it('returns true for JSON-LD (plain or gzipped)', () => {
+    expect(needsPreprocessing(makeDistribution('application/ld+json'))).toBe(
+      true,
+    );
+    expect(
+      needsPreprocessing(
+        makeDistribution('application/ld+json', 'application/gzip'),
+      ),
+    ).toBe(true);
+  });
+
+  it('returns true for zipped JSON-LD', () => {
+    expect(
+      needsPreprocessing(
+        makeDistribution('application/ld+json', 'application/zip'),
+      ),
+    ).toBe(true);
+  });
+
+  it('returns true for RDF/XML (plain or gzipped)', () => {
+    expect(needsPreprocessing(makeDistribution('application/rdf+xml'))).toBe(
+      true,
+    );
+    expect(
+      needsPreprocessing(
+        makeDistribution('application/rdf+xml', 'application/gzip'),
+      ),
+    ).toBe(true);
+  });
+
+  it('returns true for TriG (plain or gzipped)', () => {
+    expect(needsPreprocessing(makeDistribution('application/trig'))).toBe(true);
+    expect(
+      needsPreprocessing(
+        makeDistribution('application/trig', 'application/gzip'),
+      ),
+    ).toBe(true);
+  });
+
+  it('returns false when the distribution has no declared media type', () => {
+    expect(
+      needsPreprocessing(new Distribution(new URL('https://example.com/data'))),
+    ).toBe(false);
+  });
+
+  it('returns false for native RDF wrapped in a zip – handled by the shell pipeline', () => {
+    expect(
+      needsPreprocessing(
+        makeDistribution('application/n-quads', 'application/zip'),
+      ),
+    ).toBe(false);
+    expect(
+      needsPreprocessing(
+        makeDistribution('application/n-triples', 'application/zip'),
+      ),
+    ).toBe(false);
+  });
+});
+
+describe('preprocess', () => {
+  let tempDir: string;
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'preprocess-test-'));
+  });
+
+  afterEach(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  it('converts plain JSON-LD to N-Quads', async () => {
+    const file = join(tempDir, 'data.jsonld');
+    await copyFile(resolve('test/fixtures/preprocess/data.jsonld'), file);
+
+    const result = await preprocess(
+      file,
+      makeDistribution('application/ld+json'),
+    );
+
+    expect(result.format).toBe('nq');
+    expect(result.path).toBe(`${file}.preprocessed.nq`);
+    const nquads = await readFile(result.path, 'utf-8');
+    expect(nquads).toContain('<https://example.org/utrecht/story/1>');
+    expect(nquads).toContain('Een verhaal uit Utrecht');
+    // N-Quads triples end with " ." on each line.
+    expect(nquads.trim().split('\n').length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('parses JSON-LD with a replaced remote context', async () => {
+    const file = join(tempDir, 'data.jsonld');
+    await writeFile(
+      file,
+      JSON.stringify({
+        '@context': 'https://schema.org',
+        '@id': 'https://example.org/dataset',
+        license: 'https://creativecommons.org/publicdomain/zero/1.0/',
+      }),
+    );
+    const replaceJsonLdContext = vi.fn((url: string) =>
+      url.startsWith('https://schema.org')
+        ? {
+            '@context': {
+              '@vocab': 'https://schema.org/',
+              license: { '@type': '@id' },
+            },
+          }
+        : undefined,
+    );
+
+    const result = await preprocess(
+      file,
+      makeDistribution('application/ld+json'),
+      replaceJsonLdContext,
+    );
+
+    const nquads = await readFile(result.path, 'utf-8');
+    expect(nquads).toContain(
+      '<https://example.org/dataset> <https://schema.org/license> <https://creativecommons.org/publicdomain/zero/1.0/>',
+    );
+    expect(replaceJsonLdContext).toHaveBeenCalledWith('https://schema.org');
+  });
+
+  it('fetches a remote context the replacement does not answer', async () => {
+    const server = createServer((_request, response) => {
+      response.setHeader('Content-Type', 'application/ld+json');
+      response.end(
+        JSON.stringify({ '@context': { name: 'https://example.org/name' } }),
+      );
+    });
+    await new Promise<void>((resolve) =>
+      server.listen(0, '127.0.0.1', resolve),
+    );
+    const { port } = server.address() as AddressInfo;
+    const file = join(tempDir, 'data.jsonld');
+    await writeFile(
+      file,
+      JSON.stringify({
+        '@context': `http://127.0.0.1:${port}/context.jsonld`,
+        '@id': 'https://example.org/thing',
+        name: 'Fetched',
+      }),
+    );
+
+    try {
+      const result = await preprocess(
+        file,
+        makeDistribution('application/ld+json'),
+        () => undefined,
+      );
+
+      const nquads = await readFile(result.path, 'utf-8');
+      expect(nquads).toContain('<https://example.org/name> "Fetched"');
+    } finally {
+      server.close();
+    }
+  });
+
+  it('converts plain RDF/XML to N-Quads', async () => {
+    const file = join(tempDir, 'data.rdf');
+    await copyFile(resolve('test/fixtures/preprocess/data.rdf'), file);
+
+    const result = await preprocess(
+      file,
+      makeDistribution('application/rdf+xml'),
+    );
+
+    expect(result.format).toBe('nq');
+    expect(result.path).toBe(`${file}.preprocessed.nq`);
+    const nquads = await readFile(result.path, 'utf-8');
+    expect(nquads).toContain('<https://example.org/utrecht/story/1>');
+    expect(nquads).toContain('Een verhaal uit Utrecht');
+    // N-Quads triples end with " ." on each line.
+    expect(nquads.trim().split('\n').length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('converts plain TriG to N-Quads, preserving the named graph', async () => {
+    const file = join(tempDir, 'data.trig');
+    await copyFile(resolve('test/fixtures/preprocess/data.trig'), file);
+
+    const result = await preprocess(file, makeDistribution('application/trig'));
+
+    expect(result.format).toBe('nq');
+    expect(result.path).toBe(`${file}.preprocessed.nq`);
+    const nquads = await readFile(result.path, 'utf-8');
+    expect(nquads).toContain('<https://example.org/utrecht/story/1>');
+    expect(nquads).toContain('Een verhaal uit Utrecht');
+    // The TriG named graph becomes the fourth term of every N-Quad.
+    expect(nquads).toContain('<https://example.org/utrecht/graph> .');
+  });
+
+  it('gunzips a JSON-LD distribution when compressFormat=application/gzip', async () => {
+    const file = join(tempDir, 'data.jsonld.gz');
+    await copyFile(resolve('test/fixtures/preprocess/data.jsonld.gz'), file);
+
+    const result = await preprocess(
+      file,
+      makeDistribution('application/ld+json', 'application/gzip'),
+    );
+
+    expect(result.format).toBe('nq');
+    const nquads = await readFile(result.path, 'utf-8');
+    expect(nquads).toContain('<https://example.org/utrecht/story/1>');
+  });
+
+  it('gunzips a JSON-LD distribution via .gz extension when compressFormat is missing', async () => {
+    const file = join(tempDir, 'data.jsonld.gz');
+    await copyFile(resolve('test/fixtures/preprocess/data.jsonld.gz'), file);
+
+    // No compressFormat declared (the UU collections case).
+    const result = await preprocess(
+      file,
+      makeDistribution('application/ld+json'),
+    );
+
+    const nquads = await readFile(result.path, 'utf-8');
+    expect(nquads).toContain('<https://example.org/utrecht/story/1>');
+  });
+
+  it('gunzips by magic bytes when neither compressFormat nor the filename says so', async () => {
+    // The KB case: the dump is gzip, the register carries no compressFormat,
+    // and the access URL’s query string leaves the local filename without a
+    // `.gz` suffix – so only the bytes themselves reveal the compression.
+    const file = join(tempDir, 'download.trig.gz!graph=http%3A%2F%2Fnta');
+    await copyFile(resolve('test/fixtures/preprocess/data.trig.gz'), file);
+
+    const result = await preprocess(file, makeDistribution('application/trig'));
+
+    const nquads = await readFile(result.path, 'utf-8');
+    expect(nquads).toContain('<https://example.org/utrecht/story/1>');
+    expect(nquads).toContain('<https://example.org/utrecht/graph> .');
+  });
+
+  it('leaves an uncompressed file alone even when its name ends in .gz', async () => {
+    // A misleading suffix must not send plain TriG through gunzip.
+    const file = join(tempDir, 'data.trig.gz');
+    await copyFile(resolve('test/fixtures/preprocess/data.trig'), file);
+
+    const result = await preprocess(file, makeDistribution('application/trig'));
+
+    const nquads = await readFile(result.path, 'utf-8');
+    expect(nquads).toContain('<https://example.org/utrecht/story/1>');
+  });
+
+  it('extracts a zip containing JSON-LD (declared via compressFormat) and converts to N-Quads', async () => {
+    const file = join(tempDir, 'data.zip');
+    await copyFile(resolve('test/fixtures/preprocess/data.zip'), file);
+
+    const result = await preprocess(
+      file,
+      makeDistribution('application/ld+json', 'application/zip'),
+    );
+
+    expect(result.format).toBe('nq');
+    const nquads = await readFile(result.path, 'utf-8');
+    expect(nquads).toContain('<https://example.org/utrecht/story/1>');
+    expect(nquads).toContain('Een verhaal uit Utrecht');
+  });
+
+  it('reuses the preprocessed file on a second call when source is unchanged', async () => {
+    const file = join(tempDir, 'data.jsonld');
+    await copyFile(resolve('test/fixtures/preprocess/data.jsonld'), file);
+    const distribution = makeDistribution('application/ld+json');
+
+    const first = await preprocess(file, distribution);
+    const firstStat = (await import('node:fs/promises')).stat(first.path);
+    const firstMtime = (await firstStat).mtimeMs;
+
+    const second = await preprocess(file, distribution);
+    expect(second.path).toBe(first.path);
+    const secondStat = (await import('node:fs/promises')).stat(second.path);
+    expect((await secondStat).mtimeMs).toBe(firstMtime);
+  });
+
+  it('skips directory entries and unparseable entries inside a zip', async () => {
+    const file = join(tempDir, 'mixed.zip');
+    await copyFile(resolve('test/fixtures/preprocess/mixed.zip'), file);
+
+    const result = await preprocess(
+      file,
+      makeDistribution('application/ld+json', 'application/zip'),
+    );
+
+    // The two JSON-LD entries (data.jsonld + subdir/data.jsonld) should both be
+    // folded into the N-Quads output; the subdir/ directory entry is ignored.
+    const nquads = await readFile(result.path, 'utf-8');
+    const tripleLines = nquads
+      .trim()
+      .split('\n')
+      .filter((line) => line.length > 0);
+    expect(tripleLines.length).toBeGreaterThanOrEqual(4);
+
+    // The non-RDF entry must be reported via warnings rather than aborting the
+    // whole import or being silently dropped.
+    expect(result.warnings.some((w) => w.includes('extra.txt'))).toBe(true);
+  });
+
+  it('throws when called for a distribution that does not need preprocessing', async () => {
+    const file = join(tempDir, 'data.nt');
+    await (await import('node:fs/promises')).writeFile(file, '');
+
+    await expect(
+      preprocess(file, makeDistribution('application/n-triples')),
+    ).rejects.toThrow(/does not need preprocessing/);
+  });
+
+  it('throws when called for a distribution without a media type', async () => {
+    const file = join(tempDir, 'data');
+    await (await import('node:fs/promises')).writeFile(file, '');
+
+    await expect(
+      preprocess(file, new Distribution(new URL('https://example.com/data'))),
+    ).rejects.toThrow(/does not need preprocessing/);
+  });
+
+  it('throws when no zip entry parses as the declared serialization', async () => {
+    const file = join(tempDir, 'empty.zip');
+    await copyFile(resolve('test/fixtures/preprocess/empty.zip'), file);
+
+    await expect(
+      preprocess(
+        file,
+        makeDistribution('application/ld+json', 'application/zip'),
+      ),
+    ).rejects.toThrow(/contains no valid JSON-LD entries/);
+  });
+
+  it('parses a zip entry regardless of its file extension', async () => {
+    // The entry is named `graph.bin` but contains JSON-LD; with the declared
+    // mediaType driving the parser, it is still folded into the output.
+    const file = join(tempDir, 'wrong-extension.zip');
+    await copyFile(
+      resolve('test/fixtures/preprocess/wrong-extension.zip'),
+      file,
+    );
+
+    const result = await preprocess(
+      file,
+      makeDistribution('application/ld+json', 'application/zip'),
+    );
+
+    const nquads = await readFile(result.path, 'utf-8');
+    expect(nquads).toContain('<https://example.org/utrecht/story/1>');
+    expect(result.warnings).toEqual([]);
+  });
+});
