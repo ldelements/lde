@@ -408,9 +408,22 @@ guarantees one output triple per genuine value:
   cross-product – the failure mode that inflates a non-deduplicating engine’s
   output by the product of their cardinalities (roughly 18-fold on a measured
   QLever workload).
+- **Plain reads share one branch.** Fields whose path is a single predicate are
+  read off their subject together, in one branch: `?root ?p ?value` joined with a
+  `VALUES (?p ?alias)` table that pairs each predicate with the alias it is
+  emitted under, and one template triple `?root ?alias ?value`. Each table row
+  binds one field, so they still add rather than multiply, and a predicate that
+  several targets share – `name`, `sameAs` – is read once for all of them.
+  Property paths and references with hops of their own keep their own branch.
+  This keeps the unions small: QLever runs out of its memory budget on a union of
+  many branches under an `OPTIONAL` ([ad-freiburg/qlever#3898](https://github.com/ad-freiburg/qlever/issues/3898)).
+  On LOL’s extraction it cut the unions from 123 to 44 and a batch of 10 works
+  from 320 ms at an 8 GB budget to 100 ms at the default 4 GB, with the same
+  triples.
 - **No projected-away template triple.** Every template triple binds its own
-  variables (`?root <alias> ?value`); there is no constant triple (e.g.
-  `?root a <Type>`) to be re-emitted once per solution.
+  variables (`?root <alias> ?value`, or `?root ?alias ?value` for plain reads);
+  there is no constant triple (e.g. `?root a <Type>`) to be re-emitted once per
+  solution.
 - **Given roots.** Roots arrive as a `VALUES` set, not a pattern that fans out.
 - **Inline references keep the discipline recursively:** a reference type’s
   fields are UNION’d off the referent variable, so even a multi-hop nested
@@ -449,7 +462,7 @@ guarantees one output triple per genuine value:
   own template triple then repeats once per key candidate – linearly, and only
   for a referent that carries several. `OPTIONAL`, so a referent with no key
   candidate keeps its row. The root side is unchanged: a key field is a declared field, so its own
-  branch and template triple are already there.
+  read and template triple are already there.
 
 Because the queries are duplicate-free by construction, correctness and bounded
 output volume do **not** depend on a client-side **post-processing deduplication
