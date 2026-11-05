@@ -11,6 +11,7 @@ import {
   displayFieldName,
   displayLangOf,
   documentKeyOf,
+  edgeClassesOf,
   fieldNamed,
   identityFieldOf,
   inheritedFacetPolicies,
@@ -628,13 +629,19 @@ function targetOfReferent(
   if (targets.length === 1 || !isObject(value)) {
     return targets[0];
   }
+  const classes = classesOf(value);
+  return targets.find((target) => classes.has(target.class)) ?? targets[0];
+}
+
+/** The classes a framed node states it is an instance of: its `@type`, which
+ *  framing gives as one IRI or a list – empty for a node stating none. */
+function classesOf(value: Record<string, unknown>): ReadonlySet<string> {
   const raw = value['@type'];
-  const classes = new Set(
+  return new Set(
     (Array.isArray(raw) ? raw : [raw]).filter(
       (type): type is string => typeof type === 'string',
     ),
   );
-  return targets.find((target) => classes.has(target.class)) ?? targets[0];
 }
 
 /**
@@ -943,15 +950,49 @@ function applyInlineReference(
   if (referenceType === undefined) {
     return;
   }
+  const asEdge = edgeReader(referenceType, field.ref.identity);
   const referents = applyNestedReferents(
     document,
-    valuesOf(node, alias),
+    valuesOf(node, alias).map(asEdge),
     field,
     [referenceType],
     schema,
     context,
   );
   applyIdentityCompanion(document, referents, field, schema, nested);
+}
+
+/**
+ * Read each framed node an inline reference reached as an **edge**: unchanged
+ * where the Reference Type declares no {@link ReferenceType.edgeClass edge
+ * class} or the node is of one, and otherwise the endpoint the graph pointed at
+ * directly, wrapped in an edge carrying it under the identity field alone – so
+ * a flat statement and a qualified one project through one path.
+ *
+ * None of the node’s other values are carried over: read off an endpoint, the
+ * edge’s own fields describe the endpoint rather than the edge – a role read
+ * from `schema:name` would be the agent’s name.
+ */
+function edgeReader(
+  referenceType: ReferenceType,
+  identity: string | undefined,
+): (value: unknown) => unknown {
+  const edgeClasses = edgeClassesOf(referenceType);
+  // `searchSchema` requires an identity wherever an edge class is declared.
+  if (edgeClasses.length === 0 || identity === undefined) {
+    return (value) => value;
+  }
+  const endpointAlias = irAlias(
+    referenceType,
+    fieldNamed(referenceType, identity) as SearchField,
+  );
+  return (value) => {
+    // A framed reference value is always a node object.
+    const classes = classesOf(value as Record<string, unknown>);
+    return edgeClasses.some((edgeClass) => classes.has(edgeClass))
+      ? value
+      : { [endpointAlias]: [value] };
+  };
 }
 
 /**

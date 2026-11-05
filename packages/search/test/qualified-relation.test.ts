@@ -1640,3 +1640,136 @@ describe('what the companion may harvest', () => {
     expect(document.creator_id).toEqual([RKD]);
   });
 });
+
+describe('an edge the graph may leave out', () => {
+  const ROLE = `${SCHEMA_ORG}Role`;
+  const RKD_OTHER = 'https://rkd.example/1';
+  /** The same edge, now telling its own nodes apart from a bare endpoint. */
+  const optionalEdge = defineSearchType({
+    ...creatorEdge,
+    name: 'OptionalEdge',
+    edgeClass: ROLE,
+  });
+  const optionalWork = defineSearchType({
+    name: 'OptionalWork',
+    class: `${SCHEMA_ORG}Painting`,
+    fields: [
+      {
+        ...work.fields[0],
+        ref: {
+          strategy: 'inline',
+          typeName: 'OptionalEdge',
+          identity: 'creator',
+        },
+      },
+    ],
+  });
+  const optionalSchema = searchSchema(optionalWork, person, optionalEdge);
+  const optionalKey = (field: string) => alias('OptionalEdge', field);
+  const document = projectDocument(
+    {
+      '@id': 'https://ex/work/30',
+      [alias('OptionalWork', 'creator')]: [
+        {
+          '@type': ROLE,
+          [optionalKey('role')]: [{ '@value': 'etser' }],
+          [optionalKey('creator')]: [
+            {
+              '@id': 'https://id.example/person/rembrandt',
+              [personKey('label')]: [{ '@value': 'Rembrandt van Rijn' }],
+              [personKey('sameAs')]: [{ '@id': RKD }],
+            },
+          ],
+        },
+        {
+          // Stated flat: the work points at the agent itself. Its name reaches
+          // the edge’s `role` too, because both read `schema:name` off the
+          // node the work points at – and must not become a role.
+          '@id': 'https://id.example/person/ceramique',
+          '@type': `${SCHEMA_ORG}Person`,
+          [optionalKey('role')]: [{ '@value': 'Société Céramique' }],
+          [personKey('label')]: [{ '@value': 'Société Céramique' }],
+          [personKey('sameAs')]: [{ '@id': RKD_OTHER }],
+        },
+        {
+          // A Role naming no agent: an edge with no endpoint, not an agent
+          // called “fabrikant”.
+          '@type': [ROLE],
+          [optionalKey('role')]: [{ '@value': 'fabrikant' }],
+        },
+      ],
+    },
+    optionalWork,
+    optionalSchema,
+  );
+  const entries = entriesOf(document);
+
+  it('reads a node of the edge class as the edge', () => {
+    expect(entries[0]).toMatchObject({
+      role: 'etser',
+      creator: { id: RKD, label_und: 'Rembrandt van Rijn' },
+    });
+  });
+
+  it('reads any other node as the endpoint, re-keyed, in an entry of its own', () => {
+    expect(entries[1]).toMatchObject({
+      creator: { id: RKD_OTHER, label_und: 'Société Céramique' },
+    });
+    expect(entries[1]).not.toHaveProperty('role');
+  });
+
+  it('keeps an edge naming no endpoint as an edge', () => {
+    expect(entries[2]).toEqual({ role: 'fabrikant' });
+  });
+
+  it('harvests both endpoints into the identity companion', () => {
+    expect(document.creator_id).toEqual([RKD, RKD_OTHER]);
+  });
+
+  it('reads a node of any declared edge class as the edge', () => {
+    // Publishers type one edge differently, and no store here reasons over
+    // subclasses: `schema:PerformanceRole` is a `schema:Role` only if declared.
+    const listedEdge = defineSearchType({
+      ...optionalEdge,
+      edgeClass: [ROLE, `${SCHEMA_ORG}PerformanceRole`],
+    });
+    const listed = projectDocument(
+      {
+        '@id': 'https://ex/work/31',
+        [alias('OptionalWork', 'creator')]: [
+          {
+            '@type': `${SCHEMA_ORG}PerformanceRole`,
+            [optionalKey('role')]: [{ '@value': 'uitvoerder' }],
+          },
+        ],
+      },
+      optionalWork,
+      searchSchema(optionalWork, person, listedEdge),
+    );
+
+    expect(entriesOf(listed)).toEqual([{ role: 'uitvoerder' }]);
+  });
+
+  it('requires an identity on every reference nesting the type', () => {
+    // A bare endpoint goes into the entry’s identity field; a reference that
+    // names none would have nowhere to put it.
+    const unnamed = defineSearchType({
+      name: 'UnnamedWork',
+      class: `${SCHEMA_ORG}Drawing`,
+      fields: [
+        {
+          name: 'creator',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}creator`,
+          array: true,
+          output: true,
+          ref: { strategy: 'inline', typeName: 'OptionalEdge' },
+        },
+      ],
+    });
+
+    expect(() => searchSchema(unnamed, person, optionalEdge)).toThrow(
+      /nests “OptionalEdge”, which declares an “edgeClass”, but names no “identity”/,
+    );
+  });
+});
