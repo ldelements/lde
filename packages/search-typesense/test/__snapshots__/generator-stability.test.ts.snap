@@ -93,6 +93,12 @@ exports[`collection-definition generator stability > derives a stable Typesense 
       "type": "int64",
     },
     {
+      "index": false,
+      "name": "created_precision",
+      "optional": true,
+      "type": "string",
+    },
+    {
       "facet": true,
       "name": "open",
       "optional": true,

@@ -53,6 +53,7 @@ import {
   OR_KEY,
   isRangeFacet,
   isBinnedRangeFacet,
+  isoToUnixSeconds,
   joinGraph,
   nestedReferenceType,
   outputFields,
@@ -60,6 +61,7 @@ import {
   sortableFields,
   unixSecondsToIso,
   type JoinGraph,
+  type StoredDate,
 } from '@lde/search/adapter';
 import {
   defaultLanguageOrder,
@@ -187,6 +189,44 @@ const iriScalar = new GraphQLScalarType<string, string>({
   parseLiteral: (node, variables) =>
     assertIri(GraphQLString.parseLiteral(node, variables)),
 });
+
+/**
+ * The date scalar: an ISO 8601 date at the precision its source gave,
+ * serialized as a string – `1999`, `1999-05`, `1999-05-03`,
+ * `1999-05-03T12:30:00Z`, or a bare year in deep time (`-318000000`).
+ *
+ * Not `String`, so the schema itself warns a client that a value may be one no
+ * JS `Date` (or Temporal) can hold: both stop at ±271,821 years around 1970,
+ * and `new Date('-318000000')` is `Invalid Date`. Deliberately not named
+ * `Date` or `DateTime`, since a client mapping those to a `Date` would get that
+ * failure back. ISO 8601 leaves expanded years and reduced precision to an
+ * agreement between the parties; the URL it is specified by states ours.
+ *
+ * Inbound, a value the storage codec ({@link isoToUnixSeconds}) cannot read is
+ * rejected at coercion, as {@link iriScalar} rejects a bare token: a bound with
+ * nothing to compare against is the caller’s to fix. Outbound it passes the
+ * codec’s canonical form through unchanged.
+ */
+const dateScalar = new GraphQLScalarType<string, string>({
+  name: 'ISO8601Date',
+  description:
+    'An ISO 8601 date at the precision its source gave (`1999`, `1999-05`, `1999-05-03` or `1999-05-03T12:30:00Z`, always UTC), serialized as a string. A year has at least four digits and may have more, so a value may lie beyond what a JavaScript `Date` can hold.',
+  specifiedByURL: 'https://ldelements.org/reference/search-api-graphql#dates',
+  serialize: (value: unknown) =>
+    (GraphQLString.serialize as (value: unknown) => string)(value),
+  parseValue: (value: unknown) => assertDate(GraphQLString.parseValue(value)),
+  parseLiteral: (node, variables) =>
+    assertDate(GraphQLString.parseLiteral(node, variables)),
+});
+
+function assertDate(value: string): string {
+  if (isoToUnixSeconds(value) === undefined) {
+    throw userError(
+      `ISO8601Date cannot represent “${value}”: write a year (“1999”), a month (“1999-05”), a day (“1999-05-03”) or a date-time (“1999-05-03T12:30:00Z”).`,
+    );
+  }
+  return value;
+}
 
 function assertIri(value: string): string {
   if (!isAbsoluteIri(value)) {
@@ -326,6 +366,16 @@ export function buildGraphQLSchema(
     name: 'IRIBucket',
     fields: valueBucketFields(iriScalar),
   });
+  // An unbinned date range-facet bucket, whose `value` is an `ISO8601Date` so
+  // it feeds straight into the DateRange filter that selects it. No label – a
+  // date has no data label to resolve.
+  const dateBucket = new GraphQLObjectType({
+    name: 'DateBucket',
+    fields: {
+      value: { type: new GraphQLNonNull(dateScalar) },
+      count: { type: new GraphQLNonNull(GraphQLInt) },
+    },
+  });
   // A numeric range-facet bin: half-open `[min, max)` bounds (max null on an
   // open-ended top bin) and the count of documents in it.
   const rangeBucket = new GraphQLObjectType({
@@ -353,11 +403,14 @@ export function buildGraphQLSchema(
   // A range facet’s extent, in the type its field’s `range` filter takes
   // (IntRange, FloatRange, DateRange), so a slider’s bounds feed straight back
   // into the filter that selects them. A date is stored as Unix seconds and
-  // served as ISO 8601 (an `xsd:gYear` in deep time), like the field itself.
+  // served as an ISO 8601 date-time (an `xsd:gYear` in deep time): a facet
+  // spans documents whose dates may each have a different precision, so it
+  // states none of its own, and a client draws the slider at whatever grain
+  // it chooses.
   const extentTypes = {
     integer: extentType('IntExtent', GraphQLInt),
     number: extentType('FloatExtent', GraphQLFloat),
-    date: extentType('DateExtent', GraphQLString, unixSecondsToIso),
+    date: extentType('DateExtent', dateScalar, servedDateTime),
   };
   const rangeFacetPrefixes = { integer: 'Int', number: 'Float', date: 'Date' };
   // A range facet: the extent over the whole collection and over the
@@ -399,18 +452,25 @@ export function buildGraphQLSchema(
             (await load(source, 'matching')).extent ?? null,
         },
         buckets: {
-          type: nonNullListOf(binned ? rangeBucket : valueBucket),
+          type: nonNullListOf(
+            binned
+              ? rangeBucket
+              : field.kind === 'date'
+                ? dateBucket
+                : valueBucket,
+          ),
           description: binned
             ? 'The declared bins over the same documents as “matching”.'
             : 'One bucket per distinct value over the same documents as “matching”.',
           resolve: async (source: Source) => {
             const { buckets } = await load(source, 'matching');
             // A date’s distinct value is stored as Unix seconds and served as
-            // ISO 8601 (an `xsd:gYear` in deep time), like its extent.
+            // an ISO 8601 date-time (an `xsd:gYear` in deep time), like its
+            // extent: a bucket spans every precision that stored its second.
             return field.kind === 'date' && !binned
               ? buckets.map((bucket) => ({
                   ...bucket,
-                  value: unixSecondsToIso(Number(bucket.value)),
+                  value: servedDateTime(Number(bucket.value)),
                 }))
               : buckets;
           },
@@ -516,7 +576,7 @@ export function buildGraphQLSchema(
   }
   const intRange = rangeInput('IntRange', GraphQLInt);
   const floatRange = rangeInput('FloatRange', GraphQLFloat);
-  const dateRange = rangeInput('DateRange', GraphQLString);
+  const dateRange = rangeInput('DateRange', dateScalar);
 
   const labelList = (
     resolveLabel: (source: Source) => LocalizedValue | undefined,
@@ -607,12 +667,14 @@ export function buildGraphQLSchema(
   const takenTypeNames = new Set([
     ...rootTypeNames,
     iriScalar.name,
+    dateScalar.name,
     keywordFilter.name,
     iriFilter.name,
     languageString.name,
     valueBucket.name,
     iriBucket.name,
     rangeBucket.name,
+    dateBucket.name,
     booleanBucket.name,
     paginationType.name,
     sortDirection.name,
@@ -1007,15 +1069,16 @@ export function buildGraphQLSchema(
       case 'number':
         return { type: scalarOutput(GraphQLFloat, field) };
       case 'date':
-        // Stored as Unix seconds (int64); the surface serves ISO 8601 (ADR 4), or
-        // an `xsd:gYear` in deep time.
+        // Stored as Unix seconds (int64) and the precision its source gave; the
+        // surface serves the canonical ISO 8601 form of that precision (ADR 4),
+        // or an `xsd:gYear` in deep time.
         return {
-          type: scalarOutput(GraphQLString, field),
+          type: scalarOutput(dateScalar, field),
           resolve: (source) => {
-            const value = source[field.name];
-            return typeof value === 'number'
-              ? unixSecondsToIso(value)
-              : (value ?? null);
+            const value = source[field.name] as StoredDate | null | undefined;
+            return value === undefined || value === null
+              ? null
+              : unixSecondsToIso(value.seconds, value.precision);
           },
         };
       case 'boolean':
@@ -1849,6 +1912,12 @@ function keyEntriesOf(
     }
   }
   return entries;
+}
+
+/** A facet’s stored date served as a date-time, the one precision a value
+ *  spanning many documents can always be read at. */
+function servedDateTime(seconds: number): string {
+  return unixSecondsToIso(seconds, 'dateTime');
 }
 
 function extentType(

@@ -49,8 +49,9 @@ export {
   isAbsoluteIri,
   isoToUnixSeconds,
   unixSecondsToIso,
+  isDatePrecision,
 } from './schema.js';
-export type { PhysicalFields } from './schema.js';
+export type { PhysicalFields, DatePrecision, StoredDate } from './schema.js';
 export { missingRequiredFields } from './project.js';
 export { physicalNameTokens } from './physical-name.js';
 export { matchLanguage } from './language.js';

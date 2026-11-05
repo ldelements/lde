@@ -36,6 +36,7 @@ import {
   type SearchField,
   type SearchSchema,
   type SearchType,
+  type StoredDate,
   type TextField,
 } from './schema.js';
 
@@ -426,22 +427,13 @@ function applyField(
     // this is the busiest way a non-IRI could otherwise reach the index. A
     // value that survives nothing leaves the field absent, exactly as a derive
     // returning `undefined` does.
+    if (field.kind === 'date') {
+      return applyDerivedDate(document, field, derived);
+    }
     const value =
       field.kind === 'reference' && derived !== undefined
         ? derivedIris(derived)
-        : // A derived `date` goes through the same storage codec as a read one:
-          // the field is stored as Unix seconds, so an ISO string returned here
-          // would otherwise land as a string in an int64 field.
-          field.kind === 'date' && typeof derived === 'string'
-          ? isoToUnixSeconds(derived)
-          : // A derive that computed seconds itself returns a number, which the
-            // codec never saw and so never range-checked. Seconds outside the
-            // int64 a `date` field is stored in would be refused by the
-            // engine, where an unparseable string merely leaves the field
-            // absent. Drop it too.
-            field.kind === 'date' && typeof derived === 'number'
-            ? storableUnixSeconds(derived)
-            : derived;
+        : derived;
     // NaN is not a value any kind stores, and a derive is the only route that
     // can produce one (`setNumber` guards the read route). It serializes as
     // `null`, which an engine rejects for a numeric field – so drop it, leaving
@@ -528,9 +520,9 @@ function applyField(
       );
     case 'date': {
       const literal = firstLiteralOf(node, alias);
-      return setNumber(
+      return setDate(
         document,
-        field.name,
+        field,
         literal === undefined ? undefined : isoToUnixSeconds(literal),
       );
     }
@@ -1375,6 +1367,51 @@ function toInteger(literal: string | undefined): number | undefined {
 
 function toNumber(literal: string | undefined): number | undefined {
   return literal === undefined ? undefined : Number(literal);
+}
+
+/**
+ * A derived `date` goes through the same storage codec as a read one: the field
+ * is stored as Unix seconds, so an ISO string returned here would otherwise
+ * land as a string in an int64 field – and it is parsed like any literal, its
+ * precision included. A derive that computed seconds itself returns a number,
+ * which states no precision and so is stored as a date-time; the codec never
+ * saw it and so never range-checked it, and seconds outside the int64 a `date`
+ * field is stored in would be refused by the engine where an unparseable
+ * string merely leaves the field absent – so drop those too.
+ */
+function applyDerivedDate(
+  document: ProjectedNode,
+  field: SearchField,
+  derived: unknown,
+): void {
+  if (typeof derived === 'string') {
+    return setDate(document, field, isoToUnixSeconds(derived));
+  }
+  if (typeof derived === 'number') {
+    // Truncated, as the codec truncates a string’s fractional seconds: the
+    // field is an int64. `storableUnixSeconds` drops NaN.
+    const seconds = storableUnixSeconds(Math.trunc(derived));
+    return setDate(
+      document,
+      field,
+      seconds === undefined ? undefined : { seconds, precision: 'dateTime' },
+    );
+  }
+}
+
+/** Store a `date` field’s seconds, and its precision in the companion beside
+ *  them ({@link physicalFields}), so the surface can serve the value in the
+ *  form its source gave. */
+function setDate(
+  document: ProjectedNode,
+  field: SearchField,
+  stored: StoredDate | undefined,
+): void {
+  if (stored === undefined) {
+    return;
+  }
+  document[field.name] = stored.seconds;
+  document[physicalFields(field).precision as string] = stored.precision;
 }
 
 function setNumber(

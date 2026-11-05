@@ -23,13 +23,13 @@ export default mergeConfig(
           // over one function fewer, which lowers the ratio without uncovering
           // anything.
           functions: 99.33,
-          lines: 99.56,
+          lines: 99.57,
           // Re-anchored for the projection lookup: its guards against a
           // projection naming what no lookup reaches are unreachable through
           // the port, since `assertValidQuery` rejects such a query first.
           // They hold for a direct caller, and are exercised as one.
-          branches: 96.71,
-          statements: 99.57,
+          branches: 96.75,
+          statements: 99.58,
         },
       },
     },

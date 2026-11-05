@@ -39,7 +39,7 @@ type Thing {
   license: IRI
   size: Int
   score: Float
-  created: String
+  created: ISO8601Date
   status: String!
   open: Boolean!
 }
@@ -53,6 +53,11 @@ type LanguageString {
   language: String
   value: String!
 }
+
+"""
+An ISO 8601 date at the precision its source gave (\`1999\`, \`1999-05\`, \`1999-05-03\` or \`1999-05-03T12:30:00Z\`, always UTC), serialized as a string. A year has at least four digits and may have more, so a value may lie beyond what a JavaScript \`Date\` can hold.
+"""
+scalar ISO8601Date @specifiedBy(url: "https://ldelements.org/reference/search-api-graphql#dates")
 
 type Pagination {
   total: Int!
@@ -151,8 +156,8 @@ input FloatRange {
 }
 
 input DateRange {
-  min: String
-  max: String
+  min: ISO8601Date
+  max: ISO8601Date
 }
 
 """
