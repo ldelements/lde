@@ -1,3 +1,9 @@
+## 0.41.1 (2026-11-05)
+
+### 🩹 Fixes
+
+- **search-pipeline:** read a node’s plain fields in one branch ([#1003](https://github.com/ldelements/lde/pull/1003))
+
 ## 0.41.0 (2026-11-05)
 
 ### 🧱 Updated Dependencies

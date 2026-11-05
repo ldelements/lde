@@ -1,3 +1,9 @@
+## 0.31.1 (2026-11-05)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-pipeline to 0.41.1
+
 ## 0.31.0 (2026-11-05)
 
 ### 🧱 Updated Dependencies
