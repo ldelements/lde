@@ -1,8 +1,9 @@
 # @lde/sparql-importer
 
 Import RDF data dumps to a local SPARQL endpoint. This package is **interface-only**: it defines the `Importer` contract and its
-result types (`ImportSuccessful`, `ImportFailed`, `NotSupported`) that pipeline
-components program against. It ships no importer of its own.
+`ImportResult` union (`ImportSuccessful`, `ImportFailed`, `NotSupported`, told
+apart by their `type`) that pipeline components program against. It ships no
+importer of its own.
 
 ## Installation
 
