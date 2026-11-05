@@ -1,3 +1,25 @@
+## 0.2.0 (2026-11-05)
+
+### 🚀 Features
+
+- ⚠️  **iiif-image:** yield every painted image, not just image services ([#1002](https://github.com/ldelements/lde/pull/1002))
+
+### ⚠️  Breaking Changes
+
+- **iiif-image:** yield every painted image, not just image services  ([#1002](https://github.com/ldelements/lde/pull/1002))
+  imageServices() is removed. Use images() and read each
+  image’s service field instead: [...images(manifest)].flatMap((image) =>
+  image.service ?? []) gives what imageServices() yielded."
+  M	README.md
+  M	docs/reference/iiif-image.md
+  M	packages/iiif-image/README.md
+  M	packages/iiif-image/package.json
+  M	packages/iiif-image/src/imageService.ts
+  M	packages/iiif-image/src/index.ts
+  A	packages/iiif-image/src/isPositiveInteger.ts
+  M	packages/iiif-image/src/manifest.ts
+  M	packages/iiif-image/test/manifest.test.ts
+
 ## 0.1.0 (2026-11-04)
 
 ### 🚀 Features
