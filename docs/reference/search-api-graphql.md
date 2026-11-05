@@ -447,10 +447,11 @@ in [XML Schema 1.1 Part 2](https://www.w3.org/TR/xmlschema11-2/#dateTime):
 
 As input, a `DateRange` bound may take any of the four forms, and also accepts
 an offset (`+02:00`) and fractional seconds. A bound that is none of these is
-rejected when the query is coerced, with `BAD_USER_INPUT`. A bound is the first
-second of the period it names, so `max: "1999"` stops at 1 January 1999; write
-`max: "1999-12-31T23:59:59Z"` to include the whole year. How each source literal
-is read is in [the field model](./search#field-model).
+rejected when the query is coerced, with `BAD_USER_INPUT`. Both bounds include
+the whole period they name, so `{ min: "1900", max: "1999" }` is the years 1900
+to 1999, and a `DateRangeBucket`’s bounds select exactly the documents it
+counts. How each source literal is read is in
+[the field model](./search#field-model).
 
 ## Pagination
 

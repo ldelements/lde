@@ -533,8 +533,8 @@ describe('buildGraphQLSchema', () => {
               facetable: true,
               output: true,
               facetRanges: [
-                { key: 'older', max: '+001900' },
-                { key: 'twentieth', min: '1900', max: '2000-01-01' },
+                { key: 'older', max: '+001899' },
+                { key: 'twentieth', min: '1900', max: '1999-12-31' },
                 { key: 'recent', min: '2000-01-01T00:00:00+01:00' },
               ],
             }
@@ -579,8 +579,8 @@ describe('buildGraphQLSchema', () => {
         }
       ).datePosted.buckets,
     ).toEqual([
-      { min: null, max: '1900', count: 1 },
-      { min: '1900', max: '2000-01-01', count: 4 },
+      { min: null, max: '1899', count: 1 },
+      { min: '1900', max: '1999-12-31', count: 4 },
       { min: '1999-12-31T23:00:00Z', max: null, count: 2 },
     ]);
   });

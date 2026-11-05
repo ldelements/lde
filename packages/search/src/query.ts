@@ -103,7 +103,9 @@ export type ReferenceProjection = Readonly<
  * One criterion on one field. The operator is fixed by that field’s
  * {@link FieldKind} ({@link filterOperatorFor}): keyword/reference use `in` (OR
  * within the value list), the numeric/date kinds use an inclusive `range`,
- * boolean uses `is`. Bounds are inclusive only – no `gt`/`gte`/`lt`/`lte`.
+ * boolean uses `is`. Bounds are inclusive only – no `gt`/`gte`/`lt`/`lte` – and
+ * a `date` bound includes the whole period it names, so `max: '1999'` runs
+ * through the end of 1999 (`lastSecondOf`).
  *
  * Criteria are the atoms a {@link Filter} is built from, so each carries its own
  * field AND its own operator: one clause may range over a `reference` and a

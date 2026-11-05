@@ -49,6 +49,7 @@ export {
   storedFacetRanges,
   isAbsoluteIri,
   isoToUnixSeconds,
+  lastSecondOf,
   unixSecondsToIso,
   isDatePrecision,
 } from './schema.js';

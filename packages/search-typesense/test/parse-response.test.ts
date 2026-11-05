@@ -454,7 +454,7 @@ describe('parseSearchResponse range facets', () => {
           kind: 'date',
           facetable: true,
           output: true,
-          facetRanges: [{ key: 'seventies', min: '1970', max: '1980' }],
+          facetRanges: [{ key: 'seventies', min: '1970', max: '1979' }],
         },
       ],
     };

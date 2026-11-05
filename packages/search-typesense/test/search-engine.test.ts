@@ -110,7 +110,7 @@ const datasetSchema: SearchType = {
       facetable: true,
       // Bins across eras, so a negative bound reaches Typesense intact.
       facetRanges: [
-        { key: 'before', max: '0001' },
+        { key: 'before', max: '0000' },
         { key: 'since', min: '0001' },
       ],
     },

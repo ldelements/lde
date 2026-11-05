@@ -31,6 +31,7 @@ export {
   // ISO string – so it belongs on the authoring surface, not only the adapter
   // one.
   isoToUnixSeconds,
+  lastSecondOf,
   unixSecondsToIso,
   isDatePrecision,
 } from './schema.js';

@@ -15,6 +15,7 @@ import {
   isAbsoluteIri,
   isDatePrecision,
   isoToUnixSeconds,
+  lastSecondOf,
   isInternalField,
   isRangeFacet,
   isBinnedRangeFacet,
@@ -36,6 +37,7 @@ import {
   type ReferenceStrategy,
   type RootType,
   type SearchField,
+  type StoredDate,
   type SearchType,
   type TextField,
 } from '../src/schema.js';
@@ -463,6 +465,44 @@ describe('isBinnedRangeFacet', () => {
   });
 });
 
+describe('lastSecondOf', () => {
+  const last = (iso: string) =>
+    lastSecondOf(isoToUnixSeconds(iso) as StoredDate);
+  const secondBefore = (iso: string) => Date.parse(iso) / 1000 - 1;
+
+  it.each([
+    ['1999', '2000-01-01T00:00:00Z'],
+    ['2000-02', '2000-03-01T00:00:00Z'],
+    ['1900-02', '1900-03-01T00:00:00Z'],
+    ['1999-12', '2000-01-01T00:00:00Z'],
+    ['1999-05-03', '1999-05-04T00:00:00Z'],
+    ['-0044', '-000043-01-01T00:00:00Z'],
+  ])('ends %s the second before %s', (iso, next) => {
+    expect(last(iso)).toBe(secondBefore(next));
+  });
+
+  it('is a date-time’s own second', () => {
+    expect(last('1999-05-03T12:30:00Z')).toBe(
+      Date.parse('1999-05-03T12:30:00Z') / 1000,
+    );
+  });
+
+  it('ends the last month `Date` holds an average month on', () => {
+    const lastMonth = isoToUnixSeconds('275760-09') as StoredDate;
+    expect(lastSecondOf(lastMonth)).toBe(
+      lastMonth.seconds + (146_097 * 86_400) / 400 / 12 - 1,
+    );
+  });
+
+  it('ends a deep-time year an average Gregorian year on', () => {
+    const start = isoToUnixSeconds('-318000000') as StoredDate;
+    const next = isoToUnixSeconds('-317999999') as StoredDate;
+    // Beyond 2^53, so compare at the precision the seconds hold.
+    expect(lastSecondOf(start)).toBeCloseTo(next.seconds - 1, -1);
+    expect(lastSecondOf(start)).toBeGreaterThan(start.seconds);
+  });
+});
+
 describe('storedFacetRanges', () => {
   it('passes a number’s bins through and reads a date’s as Unix seconds', () => {
     const numberBins = [{ key: '0', min: 1, max: 10 }];
@@ -480,14 +520,19 @@ describe('storedFacetRanges', () => {
         kind: 'date',
         facetable: true,
         facetRanges: [
-          { key: 'older', max: '1970' },
-          { key: 'seventies', min: '1970', max: '1980-01-01T01:00:00+01:00' },
+          { key: 'older', max: '1969' },
+          { key: 'seventies', min: '1970', max: '1979' },
+          // A date-time bound reaches only through its own second.
+          { key: 'eighties', min: '1980', max: '1989-12-31T23:59:59Z' },
           { key: 'unreadable', min: 'spring' },
         ],
       }),
     ).toEqual([
+      // Half-open in stored terms: each `max` is the first second after the
+      // period it names.
       { key: 'older', max: 0 },
       { key: 'seventies', min: 0, max: 315_532_800 },
+      { key: 'eighties', min: 315_532_800, max: 631_152_000 },
       // Left open – validateSearchType refuses such a declaration first.
       { key: 'unreadable' },
     ]);
@@ -791,7 +836,7 @@ describe('validateSearchType', () => {
           facetRanges,
         }),
       );
-    expect(created([{ key: 'twentieth', min: '1900', max: '2000' }])).toEqual(
+    expect(created([{ key: 'twentieth', min: '1900', max: '1999' }])).toEqual(
       [],
     );
     for (const bound of ['spring 1900', 1_000_000]) {

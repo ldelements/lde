@@ -374,10 +374,10 @@ export interface ReferenceField extends SearchFieldBase, Searchable {
 
 /**
  * Range-facet bins for a numeric (`integer`/`number`/`date`) facetable field.
- * When set, the field’s range facet buckets into these fixed half-open
- * `[min, max)` ranges rather than one bucket per distinct value – the
- * per-bucket counts a UI slider draws over the extent the facet reports
- * either way. Changing the bins needs no reindex, though a field’s first bins
+ * When set, the field’s range facet buckets into these fixed ranges – half-open
+ * `[min, max)` on a number, whole periods on a date ({@link DateFacetRange}) –
+ * rather than one bucket per distinct value. They are the per-bucket counts a
+ * UI slider draws over the extent the facet reports either way. Changing the bins needs no reindex, though a field’s first bins
  * may (the Typesense adapter indexes a binned field for sorting). Bins are
  * engine-neutral: the Typesense adapter emits a `facet_by` range, an
  * OpenSearch adapter a `range` aggregation. See {@link FacetRange}.
@@ -430,10 +430,13 @@ export interface FacetRange {
 }
 
 /**
- * A {@link FacetRange} on a `date` field, its bounds ISO 8601 as the codec
- * reads them ({@link isoToUnixSeconds}). A bound is the first second of the
- * period it names, so with `max` exclusive, `{ min: '1900', max: '2000' }` is
- * exactly the years 1900 to 1999. A bound the codec cannot read fails
+ * A range-facet bin on a `date` field, its bounds ISO 8601 as the codec reads
+ * them ({@link isoToUnixSeconds}). Both bounds are inclusive of the whole
+ * period they name, as a `date` range filter’s are: `{ min: '1900', max:
+ * '1999' }` is the years 1900 to 1999, and the next bin starts at `2000`.
+ * Contiguous periods still partition cleanly, since one ends before the next
+ * begins – which is why a date bin need not be half-open like a
+ * {@link FacetRange}. A bound the codec cannot read fails
  * {@link validateSearchType}.
  */
 export interface DateFacetRange {
@@ -2497,11 +2500,13 @@ export function isBinnedRangeFacet(
 }
 
 /**
- * A binned field’s bins in stored terms, for an adapter to compile and echo: a
- * number’s as declared, a date’s with each ISO 8601 bound read as the Unix
- * seconds it is stored as. The one place a date bin is parsed, so the facet
- * clause and the bounds a bucket echoes cannot disagree. Empty for a field
- * that declares no bins; a bound the codec cannot read is left open, which
+ * A binned field’s bins in stored terms, for an adapter to compile and echo:
+ * half-open `[min, max)` Unix seconds. A number’s pass as declared. A date’s
+ * `min` is its period’s first second and its `max` the first second after its
+ * period ({@link lastSecondOf}), since a date bin includes the whole period its
+ * `max` names. The one place a date bin is parsed, so the facet clause and the
+ * bounds a bucket echoes cannot disagree. Empty for a field that declares no
+ * bins; a bound the codec cannot read is left open, which
  * {@link validateSearchType} rules out before a query is ever compiled.
  */
 export function storedFacetRanges(field: SearchField): readonly FacetRange[] {
@@ -2522,9 +2527,11 @@ function storedBound(
   name: 'min' | 'max',
   bound: string | undefined,
 ): Partial<Record<'min' | 'max', number>> {
-  const seconds =
-    bound === undefined ? undefined : isoToUnixSeconds(bound)?.seconds;
-  return seconds === undefined ? {} : { [name]: seconds };
+  const stored = bound === undefined ? undefined : isoToUnixSeconds(bound);
+  if (stored === undefined) {
+    return {};
+  }
+  return { [name]: name === 'min' ? stored.seconds : lastSecondOf(stored) + 1 };
 }
 
 /**
@@ -2691,6 +2698,37 @@ export function unixSecondsToIso(
         date.getUTCSeconds(),
       )}Z`;
   }
+}
+
+/**
+ * The last stored second of the period a date names: the end of its year,
+ * month or day, or the date-time itself. What an upper bound reaches up to and
+ * including, so `max: '1999'` means through 1999, as a person reading it would
+ * say – where the period’s first second would admit every record dated just
+ * `2000` to a range that stops at `2000`, since those are stored there too.
+ */
+export function lastSecondOf(stored: StoredDate): number {
+  const { seconds, precision } = stored;
+  if (precision === 'dateTime') {
+    return seconds;
+  }
+  if (precision === 'day') {
+    return seconds + 86_400 - 1;
+  }
+  const next = new Date(seconds * 1000);
+  if (precision === 'year') {
+    next.setUTCFullYear(next.getUTCFullYear() + 1);
+  } else {
+    next.setUTCMonth(next.getUTCMonth() + 1);
+  }
+  // Past `Date`’s range (a deep-time year, or the last month or year it holds)
+  // a period spans the average Gregorian year deep time is stored in, or a
+  // twelfth of it.
+  const span =
+    precision === 'year' ? GREGORIAN_YEAR_SECONDS : GREGORIAN_YEAR_SECONDS / 12;
+  return Number.isNaN(next.getTime())
+    ? seconds + span - 1
+    : next.getTime() / 1000 - 1;
 }
 
 /** `seconds` if a `date` field can store it – the int64 the engine keeps
