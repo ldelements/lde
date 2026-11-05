@@ -20,61 +20,45 @@ jobs:
           node-version: lts/*
           cache: 'npm'
 
-      - name: Check for newer Nx version
-        id: check
+      - run: npm ci
+
+      # Leaves the tree unchanged when Nx is already up to date, in which case
+      # create-pull-request below has nothing to commit and opens no PR.
+      - run: npx nx migrate latest
+
+      - run: npm install
+
+      - if: hashFiles('migrations.json') != ''
+        run: npx nx migrate --run-migrations | tee "$RUNNER_TEMP/migrate.log"
+
+      # Nx skips agent-driven migrations in CI and lists their prompt files;
+      # put those in the PR description instead of committing them.
+      - name: Describe migration
+        id: describe
         run: |
-          current=$(node -p "require('./package.json').devDependencies.nx")
-          latest=$(npm view nx version)
-          echo "current=$current" >> "$GITHUB_OUTPUT"
-          echo "latest=$latest" >> "$GITHUB_OUTPUT"
-          if [ "$current" = "$latest" ]; then
-            echo "up_to_date=true" >> "$GITHUB_OUTPUT"
-            echo "Already on latest Nx version ($current)."
-          else
-            echo "up_to_date=false" >> "$GITHUB_OUTPUT"
-            echo "Nx update available: $current -> $latest"
-          fi
+          version=$(node -p "require('./package.json').devDependencies.nx")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          body="$RUNNER_TEMP/pr-body.md"
+          echo 'Automated Nx migration to '"$version"' by `nx migrate`, including its code migrations.' > "$body"
+          prompts=$(grep -oE '^[[:space:]]*- tools/ai-migrations/[^[:space:]]+\.md' "$RUNNER_TEMP/migrate.log" 2>/dev/null | sed -E 's/^[[:space:]]*- //' || true)
+          for prompt in $prompts; do
+            printf '\n<details><summary>Apply before merging: <code>%s</code></summary>\n\n%s\n\n</details>\n' "$prompt" "$(cat "$prompt")" >> "$body"
+          done
+          rm -rf migrations.json tools/ai-migrations
 
-      - name: Install dependencies
-        if: steps.check.outputs.up_to_date == 'false'
-        run: npm ci
-
-      - name: Run nx migrate
-        if: steps.check.outputs.up_to_date == 'false'
-        run: npx nx migrate latest
-
-      - name: Install updated dependencies
-        if: steps.check.outputs.up_to_date == 'false'
-        run: npm install
-
-      - name: Run migrations
-        if: steps.check.outputs.up_to_date == 'false' && hashFiles('migrations.json') != ''
-        run: npx nx migrate --run-migrations
-
-      - name: Remove migrations.json
-        if: steps.check.outputs.up_to_date == 'false'
-        run: rm -f migrations.json
-
-      - name: Generate app token
-        if: steps.check.outputs.up_to_date == 'false'
-        id: app-token
+      - id: app-token
         uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ secrets.GH_APP_ID }}
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
 
-      - name: Create pull request
-        if: steps.check.outputs.up_to_date == 'false'
-        uses: peter-evans/create-pull-request@v8
+      # A fixed branch keeps a single migration PR open: each run updates it
+      # on top of main instead of opening another.
+      - uses: peter-evans/create-pull-request@v8
         with:
           token: ${{ steps.app-token.outputs.token }}
           sign-commits: true
-          branch: build/nx-migrate-${{ steps.check.outputs.latest }}
-          commit-message: 'build(deps): migrate Nx to ${{ steps.check.outputs.latest }}'
-          title: 'build(deps): migrate Nx to ${{ steps.check.outputs.latest }}'
-          body: |
-            Automated Nx migration from ${{ steps.check.outputs.current }} to ${{ steps.check.outputs.latest }}.
-
-            This PR was created by `nx migrate` which also runs any code migrations (codemods) needed for the new version.
-
-            Please review the changes and verify that CI passes before merging.
+          branch: build/nx-migrate
+          commit-message: 'build(deps): migrate Nx to ${{ steps.describe.outputs.version }}'
+          title: 'build(deps): migrate Nx to ${{ steps.describe.outputs.version }}'
+          body-path: ${{ runner.temp }}/pr-body.md
