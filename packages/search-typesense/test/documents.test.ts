@@ -185,7 +185,7 @@ describe('assertWritableType', () => {
 
     expect(() =>
       assertWritableType(object, { requireFacetable: true, schema }),
-    ).toThrow(/inherits a facet policy/);
+    ).toThrow(/narrowed by a facet policy inherited from the type it names/);
     expect(() =>
       assertWritableType(object, { requireFacetable: false, schema }),
     ).not.toThrow();

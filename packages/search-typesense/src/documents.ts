@@ -283,7 +283,7 @@ export function assertWritableType(
     physicalFields(declared, options.schema).facet !== declared.name
   ) {
     problems.push(
-      'it inherits a facet policy from the type it names, so the engine facets only the datasets the policy admits, and the membership sweep enumerates the indexed datasets by faceting it',
+      'the engine facets a companion in its place – one narrowed by a facet policy inherited from the type it names, or the identity companion of a nested object – and the membership sweep enumerates the indexed datasets by faceting the field itself',
     );
   }
   if (problems.length > 0) {
