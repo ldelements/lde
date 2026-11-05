@@ -489,8 +489,9 @@ function applyField(
       );
       // A `local` lookup stores an object, so its own id is a level deeper than
       // a filter can reach – an engine welds conditions on an entry's LEAF
-      // fields only. `filterable` therefore fans out the id beside the object,
-      // exactly as an inline reference's identity companion does.
+      // fields only, and facets flat values. `filterable` and `facetable`
+      // therefore fan out the id beside the object, exactly as an inline
+      // reference’s identity companion does.
       applyLocalIdentity(document, endpoints, field, schema, nested);
       return;
     }
@@ -1005,30 +1006,14 @@ function applyIdentityCompanion(
       );
     }
   }
-  const ids = [...targetById.keys()];
-  if (ids.length === 0) {
-    return;
-  }
-  setIdentity(document, names.identity, ids, field, nested);
-  // Same rule as every other facetable reference: where the target declares a
-  // facet policy, the facet reads a narrowed companion of its own, so an
-  // excluded id is never seen by the engine rather than merely unlabelled.
-  const policies = inheritedFacetPolicies(field, schema);
-  if (policies.size > 0) {
-    const targets = referencedTargetsOf(
-      identityFieldOf(field, schema) as SearchField,
-      schema,
-    );
-    setIdentity(
-      document,
-      names.facet as string,
-      ids.filter((id) =>
-        admitsFacet(policies, targets, targetById.get(id), id),
-      ),
-      field,
-      nested,
-    );
-  }
+  writeIdentityCompanions(
+    document,
+    targetById,
+    field,
+    referencedTargetsOf(identityFieldOf(field, schema) as SearchField, schema),
+    schema,
+    nested,
+  );
 }
 
 /**
@@ -1071,10 +1056,12 @@ function setIdentity(
 /**
  * Write the identity companion of a {@link ReferenceStrategy.local local}
  * lookup: the ids of the endpoints just stored, under the flat physical name an
- * engine filters on ({@link physicalFields}).
+ * engine filters and facets on ({@link physicalFields}) – plus, where a target
+ * declares a facet policy, the narrowed companion the facet reads instead.
  *
- * Nothing to do where the field is not `filterable`: without that Role there is
- * no companion, and the endpoint is display weight like every other nesting.
+ * Nothing to do where the field is neither `filterable` nor `facetable`:
+ * without either Role there is no companion, and the endpoint is display
+ * weight like every other nesting.
  */
 function applyLocalIdentity(
   document: ProjectedNode,
@@ -1091,12 +1078,62 @@ function applyLocalIdentity(
   // keeps the first and drops the rest, and a companion holding an id from a
   // dropped one would match a filter whose hit shows a different endpoint.
   const stored = field.array === true ? endpoints : endpoints.slice(0, 1);
-  const ids = dedupe(
-    stored
-      .map((endpoint) => endpoint.id)
-      .filter((id): id is string => typeof id === 'string'),
+  // Each id with the target it was projected through, for the facet policy
+  // below: a lookup naming several targets says so on the endpoint
+  // ({@link TARGET_FIELD}); one naming a single target leaves it unsaid.
+  const targetById = new Map<string, string | undefined>();
+  for (const endpoint of stored) {
+    if (typeof endpoint.id !== 'string' || targetById.has(endpoint.id)) {
+      continue;
+    }
+    const target = endpoint[TARGET_FIELD];
+    targetById.set(
+      endpoint.id,
+      typeof target === 'string' ? target : undefined,
+    );
+  }
+  writeIdentityCompanions(
+    document,
+    targetById,
+    field,
+    referencedTargetsOf(field, schema),
+    schema,
+    nested,
   );
+}
+
+/**
+ * Write an identity companion – the ids, each with the target it was resolved
+ * through – and, where a target declares a facet policy, the narrowed
+ * companion the facet reads instead: the same rule as every other facetable
+ * reference, so an excluded id is never seen by the engine rather than merely
+ * unlabelled.
+ */
+function writeIdentityCompanions(
+  document: ProjectedNode,
+  targetById: ReadonlyMap<string, string | undefined>,
+  field: ReferenceField,
+  targets: readonly RootType[],
+  schema: SearchSchema,
+  nested: boolean,
+): void {
+  const names = physicalFields(field, schema);
+  const ids = [...targetById.keys()];
+  if (names.identity === undefined || ids.length === 0) {
+    return;
+  }
   setIdentity(document, names.identity, ids, field, nested);
+  const policies = inheritedFacetPolicies(field, schema);
+  if (policies.size === 0) {
+    return;
+  }
+  setIdentity(
+    document,
+    names.facet as string,
+    ids.filter((id) => admitsFacet(policies, targets, targetById.get(id), id)),
+    field,
+    nested,
+  );
 }
 
 /** The id a value under an identity field carries: the value itself when the

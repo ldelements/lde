@@ -585,6 +585,16 @@ only where there is no id, because the two failures differ – at index time the
 question is _is this endpoint identified_, at query time it is _is that document
 indexed_.
 
+A `local` lookup stores an object, so it filters and facets the way an inline
+reference does: `filterable` or `facetable` fans out a flat `${name}_id`
+companion holding the endpoints’ document keys, and the engine filters and
+facets that instead. Its buckets are keyed exactly like the target’s
+documents – two datasets’ nodes aligned to one authority record count in one
+bucket, labelled from the target’s collection – and an endpoint without an id
+contributes none. A target’s [facet policy](#facet-policy) narrows the facet as it
+does for a plain lookup. `searchable`, `sortable` and `joinable` are refused: no
+flat id stands in for an object to tokenize, order by, or join on.
+
 Note that the displayed name may not be the name a filter matches: the nested
 fields are indexed as this document states them, while the resolved document
 carries the target's own. Where a target is enriched from an authority the two

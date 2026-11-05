@@ -1173,11 +1173,9 @@ describe('a local lookup is held to the Roles a nested object can serve', () => 
   it.each([
     ['searchable', { searchable: { weight: 1 } }],
     ['sortable', { sortable: true }],
-    ['facetable', { facetable: true }],
   ])('rejects %s', (role, declaration) => {
-    // It stores the referent’s own document, not an id. Unrefused, each fails
-    // differently and late: a facet names a field the collection never
-    // declares, a join emits an engine reference over a field holding objects.
+    // It stores the referent’s own document, not an id, and no companion can
+    // stand in for an object to tokenize or order by.
     expect(() => searchSchema(localReference(declaration), person)).toThrow(
       new RegExp(`declares “${role}”`),
     );
@@ -1206,6 +1204,17 @@ describe('a local lookup is held to the Roles a nested object can serve', () => 
     expect(
       physicalFields(filterable.fields[0], filterableSchema).identity,
     ).toBe('creator_id');
+  });
+
+  it('accepts facetable, which it facets through the same companion', () => {
+    // The companion holds the endpoints’ document keys, which is what a facet
+    // over the referents counts – so `facetable` alone earns it too.
+    const facetable = localReference({ facetable: true }) as SearchType;
+    const facetableSchema = searchSchema(facetable, person);
+    const names = physicalFields(facetable.fields[0], facetableSchema);
+
+    expect(names.identity).toBe('creator_id');
+    expect(names.facet).toBe('creator_id');
   });
 
   it('accepts it as an output-only nesting', () => {

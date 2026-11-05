@@ -630,6 +630,88 @@ describe('projecting a local lookup over several targets', () => {
   });
 });
 
+describe('faceting a local lookup over several targets', () => {
+  /** `creator` stated directly, the referents projected through their target. */
+  const directWork = defineSearchType({
+    name: 'DirectWork',
+    class: `${SCHEMA_ORG}Sculpture`,
+    fields: [
+      {
+        name: 'creator',
+        kind: 'reference',
+        path: `${SCHEMA_ORG}creator`,
+        array: true,
+        output: true,
+        facetable: true,
+        ref: {
+          strategy: 'lookup',
+          target: ['Person', 'Organization'],
+          local: true,
+        },
+      },
+    ],
+  });
+  const directSchema = searchSchema(directWork, person, organization);
+  const creator = directWork.fields[0];
+  /** Another dataset’s node for the same artist, aligned to the same record. */
+  const rembrandtElsewhere = {
+    ...rembrandt,
+    '@id': 'https://other.example/rembrandt',
+  };
+  const document = projectDocument(
+    {
+      '@id': 'https://ex/work/3',
+      [alias('DirectWork', 'creator')]: [
+        rembrandt,
+        rembrandtElsewhere,
+        sisters,
+        untyped,
+        {
+          '@type': `${SCHEMA_ORG}Organization`,
+          [alias('Organization', 'name')]: [{ '@value': 'Gemeente' }],
+        },
+      ],
+    },
+    directWork,
+    directSchema,
+  );
+
+  it('facets the identity companion, narrowed by each target’s policy', () => {
+    expect(physicalFields(creator, directSchema)).toMatchObject({
+      identity: 'creator_id',
+      facet: 'creator_id_facet',
+    });
+    expect(labelTargetNamesOf(creator, directSchema)).toEqual([
+      'Person',
+      'Organization',
+    ]);
+  });
+
+  it('counts document keys, one per referent however many nodes name it', () => {
+    expect(document.creator_id).toEqual([
+      RKD,
+      'https://id.example/zusters',
+      'https://id.example/unknown',
+    ]);
+    expect(document.creator_id_facet).toEqual([
+      RKD,
+      'https://id.example/zusters',
+    ]);
+  });
+
+  it('stores a referent without an id, and leaves it out of the facet', () => {
+    const gemeente = (document.creator as readonly SearchDocument[]).find(
+      (entry) => entry.name_und === 'Gemeente',
+    );
+    expect(gemeente).toBeDefined();
+    expect(gemeente).not.toHaveProperty('id');
+    // The companions hold exactly the three identified referents above, so the
+    // id-less one added nothing – not even an empty value.
+    expect(document.creator_id).toHaveLength(3);
+    expect(document.creator_id_facet).toHaveLength(2);
+  });
+});
+
 describe('validating a projection over several targets', () => {
   const base = {
     where: [],

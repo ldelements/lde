@@ -614,3 +614,71 @@ describe('declaring the collection for a stored referent of several kinds', () =
     expect(names).toContain(`creator.creator.related.${TARGET_FIELD}`);
   });
 });
+
+describe('faceting a local lookup over several targets', () => {
+  /** `creator` stated directly, each referent stored as its target states it. */
+  const sculpture = defineSearchType({
+    name: 'Sculpture',
+    class: 'https://example.org/Sculpture',
+    fields: [
+      {
+        name: 'creator',
+        kind: 'reference',
+        array: true,
+        output: true,
+        facetable: true,
+        ref: {
+          strategy: 'lookup',
+          target: ['Person', 'Organization'],
+          local: true,
+        },
+      },
+    ],
+  });
+  const sculptureSchema = searchSchema(sculpture, person, organization);
+
+  it('declares the identity companion as the facet', () => {
+    const definition = buildCollectionDefinition(sculpture, {
+      schema: sculptureSchema,
+    });
+
+    expect(
+      definition.fields?.find((field) => field.name === 'creator_id'),
+    ).toMatchObject({ type: 'string[]', facet: true, optional: true });
+  });
+
+  it('labels each bucket from whichever collection holds its key', async () => {
+    const { fake } = client({
+      found: 0,
+      hits: [],
+      facet_counts: [
+        {
+          field_name: 'creator_id',
+          counts: [
+            { value: 'https://p/1', count: 3 },
+            { value: 'https://o/1', count: 2 },
+          ],
+        },
+      ],
+    });
+    const engine = createTypesenseSearchEngine(fake.client, sculptureSchema, {
+      collections: { ...collections, Sculpture: 'sculptures' },
+    });
+
+    const result = await engine.search(sculpture as never, {
+      ...base,
+      facets: ['creator'],
+    });
+
+    expect(
+      (result.facets as Record<string, Facet | undefined>).creator?.buckets,
+    ).toEqual([
+      { value: 'https://p/1', count: 3, label: { nl: ['Frank Koel'] } },
+      {
+        value: 'https://o/1',
+        count: 2,
+        label: { nl: ['Zusters Franciscanessen'] },
+      },
+    ]);
+  });
+});

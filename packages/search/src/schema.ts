@@ -1122,21 +1122,19 @@ function assertIdentityCompanion(
 /**
  * A {@link ReferenceStrategy.local local} lookup stores a nested object rather
  * than an id, so it is held to the same Roles an inline reference is: an engine
- * can neither tokenize an object for free text, order by it, facet it, nor
- * point a reference field at it.
+ * can neither tokenize an object for free text, order by it, nor point a
+ * reference field at it.
  *
- * Without this the failures are all silent-ish and all different: a `joinable`
- * one emits an engine reference over a field holding objects, a `facetable` one
- * has `physicalFields` name a facet field the collection never declares, and a
- * `filterable` one compiles a membership clause against an object. Refusing the
- * declaration is the only place these are one mistake.
+ * Without this a `joinable` one emits an engine reference over a field holding
+ * objects, and fails only at query time.
  *
- * `filterable` it CAN serve, and does so the same way an inline reference does:
- * through a flat `${name}_id` companion beside the stored object
+ * `filterable` and `facetable` it CAN serve, the same way an inline reference
+ * does: through a flat `${name}_id` companion beside the stored object
  * ({@link physicalFields}). That is what lets a condition on the endpoint's
  * identity be welded to a condition on the edge's own value – an engine can
  * only weld conditions on an entry's own **leaf** fields, and the endpoint's id
- * is otherwise one level further in.
+ * is otherwise one level further in – and it holds the endpoints’ document
+ * keys, which is what a facet counts.
  */
 function assertServiceableLocalLookup(
   searchType: SearchType,
@@ -1150,14 +1148,9 @@ function assertServiceableLocalLookup(
     return;
   }
   const unserviceable = unserviceableInlineRoles(field);
-  if (
-    unserviceable.length > 0 ||
-    field.facetable === true ||
-    field.joinable === true
-  ) {
+  if (unserviceable.length > 0 || field.joinable === true) {
     const roles = [
       ...unserviceable,
-      ...(field.facetable === true ? (['facetable'] as const) : []),
       // `validateSearchType` refuses `joinable` on an INLINE reference, not on
       // a lookup, so a `local` one would otherwise pass: `joinGraph` builds the
       // edge, the collection builder takes the nesting branch and emits no
@@ -1170,7 +1163,7 @@ function assertServiceableLocalLookup(
         .map((role) => `“${role}”`)
         .join(
           ', ',
-        )}, which it cannot serve: a “local” lookup stores the referent’s own document, not an id an engine can search, sort, facet or join on.`,
+        )}, which it cannot serve: a “local” lookup stores the referent’s own document, not an id an engine can search, sort or join on.`,
     );
   }
 }
@@ -2879,7 +2872,7 @@ export function physicalFields(
   const nestsAnObject =
     identityFieldOf(field, schema) !== undefined ||
     (localLookupTargetsOf(field, schema).length > 0 &&
-      field.filterable === true);
+      (field.filterable === true || field.facetable === true));
   const identity = nestsAnObject ? identityFieldName(field.name) : undefined;
   const filtered = identity ?? field.name;
   return {
