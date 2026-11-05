@@ -1,3 +1,13 @@
+## 0.43.1 (2026-11-05)
+
+### 🚀 Features
+
+- **search:** facet a local lookup through its identity companion ([#993](https://github.com/ldelements/lde/pull/993))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.36.1
+
 ## 0.43.0 (2026-11-05)
 
 ### 🚀 Features
