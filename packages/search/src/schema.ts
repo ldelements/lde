@@ -2837,12 +2837,14 @@ function deepTimeDate(year: number): StoredDate | undefined {
  * localized `text` field’s display fields are pattern-based and not enumerated
  * here – see {@link displayFieldName} and its siblings.
  *
- * The facet is the one member that depends on more than the declaration: a
- * facetable reference whose target declares a {@link FacetKeys facet policy}
- * facets a `${name}_facet` companion rather than itself, and only the `schema`
- * can resolve that target ({@link inheritedFacetPolicies}). Without one the field
- * facets on its own name – the same reading the projection makes without a
- * schema, where it cannot re-key a reference either.
+ * The facet is the one member that depends on more than the declaration. A
+ * field storing a nested object facets its `${name}_id` identity companion
+ * rather than itself, and a facetable reference whose target declares a
+ * {@link FacetKeys facet policy} facets a `_facet` companion of whichever field
+ * it would otherwise facet – `${name}_facet` or `${name}_id_facet`. Only the
+ * `schema` can resolve either ({@link inheritedFacetPolicies}). Without one the
+ * field facets on its own name – the same reading the projection makes without
+ * a schema, where it cannot re-key a reference either.
  */
 export function physicalFields(
   field: SearchField,
