@@ -79,4 +79,65 @@ describe('CLI Unit Tests', () => {
     expect(consoleErrorSpy).toHaveBeenCalledWith('Error: String error');
     expect(processExitSpy).toHaveBeenCalledWith(1);
   });
+
+  it('passes each --context to generateDocumentation', async () => {
+    const generateDocumentation = vi.fn().mockResolvedValue('');
+    vi.doMock('../src/index.js', () => ({ generateDocumentation }));
+
+    process.argv = [
+      'node',
+      'cli.js',
+      'from-shacl',
+      'test.ttl',
+      'template.liquid',
+      '--context',
+      'https://schema.org=context.jsonld',
+      '-c',
+      'https://example.org/a=b=c.jsonld',
+    ];
+    await import('../src/cli.js');
+
+    expect(generateDocumentation).toHaveBeenCalledWith(
+      'test.ttl',
+      'template.liquid',
+      undefined,
+      {
+        contexts: {
+          'https://schema.org': 'context.jsonld',
+          'https://example.org/a=b': 'c.jsonld',
+        },
+      },
+    );
+  });
+
+  it.each(['context.jsonld', '=context.jsonld', 'https://schema.org='])(
+    'rejects --context %s',
+    async (mapping) => {
+      const generateDocumentation = vi.fn();
+      vi.doMock('../src/index.js', () => ({ generateDocumentation }));
+      const stderr = vi
+        .spyOn(process.stderr, 'write')
+        .mockImplementation(() => true);
+      processExitSpy.mockImplementation(() => {
+        throw new Error('exit');
+      });
+
+      process.argv = [
+        'node',
+        'cli.js',
+        'from-shacl',
+        'test.ttl',
+        'template.liquid',
+        '--context',
+        mapping,
+      ];
+      await expect(import('../src/cli.js')).rejects.toThrow('exit');
+
+      expect(stderr).toHaveBeenCalledWith(
+        expect.stringContaining('Expected <url>=<file>.'),
+      );
+      expect(generateDocumentation).not.toHaveBeenCalled();
+      stderr.mockRestore();
+    },
+  );
 });

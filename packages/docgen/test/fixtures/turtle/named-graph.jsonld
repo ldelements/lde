@@ -1,0 +1,5 @@
+{
+  "@context": "https://example.org/context",
+  "@id": "https://example.org/graph",
+  "@graph": [{ "@id": "https://example.org/painting", "name": "De Nachtwacht" }]
+}

@@ -1,0 +1,5 @@
+{
+  "@context": { "name": "https://schema.org/name" },
+  "@id": "https://example.org/painting",
+  "title": "De Nachtwacht"
+}
