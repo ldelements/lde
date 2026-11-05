@@ -31,6 +31,7 @@ export {
   // ISO string – so it belongs on the authoring surface, not only the adapter
   // one.
   isoToUnixSeconds,
+  lastSecondOf,
   unixSecondsToIso,
   isDatePrecision,
 } from './schema.js';
@@ -43,6 +44,8 @@ export type {
   ReferenceField,
   ReferenceStrategy,
   NumericField,
+  NumberField,
+  DateField,
   BooleanField,
   SearchType,
   SearchTypeBase,
@@ -54,6 +57,7 @@ export type {
   FacetKeys,
   SearchSchema,
   FacetRange,
+  DateFacetRange,
   ProjectionValue,
   DatePrecision,
   StoredDate,

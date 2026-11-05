@@ -374,26 +374,39 @@ export interface ReferenceField extends SearchFieldBase, Searchable {
 
 /**
  * Range-facet bins for a numeric (`integer`/`number`/`date`) facetable field.
- * When set, the field’s range facet buckets into these fixed half-open
- * `[min, max)` ranges rather than one bucket per distinct value – the
- * per-bucket counts a UI slider draws over the extent the facet reports
- * either way. Changing the bins needs no reindex, though a field’s first bins
+ * When set, the field’s range facet buckets into these fixed ranges – half-open
+ * `[min, max)` on a number, whole periods on a date ({@link DateFacetRange}) –
+ * rather than one bucket per distinct value. They are the per-bucket counts a
+ * UI slider draws over the extent the facet reports either way. Changing the bins needs no reindex, though a field’s first bins
  * may (the Typesense adapter indexes a binned field for sorting). Bins are
  * engine-neutral: the Typesense adapter emits a `facet_by` range, an
  * OpenSearch adapter a `range` aggregation. See {@link FacetRange}.
  */
-export interface RangeFacetable {
-  readonly facetRanges?: readonly FacetRange[];
+export interface RangeFacetable<Range = FacetRange> {
+  readonly facetRanges?: readonly Range[];
 }
 
 /**
- * A numeric value: range-filtered, range-faceted, sortable.
- * `integer` is a whole number, `number` a float, `date` a point in time
- * (ISO 8601 at the edges, Unix seconds in the index) – identical capabilities,
- * so one interface serves all three kinds; `field.kind` still narrows.
+ * A field the `range` operator applies to: range-filtered, range-faceted,
+ * sortable. The kinds share every capability and differ only in how a bound is
+ * written, so `field.kind` narrows to the one that tells.
  */
-export interface NumericField extends SearchFieldBase, RangeFacetable {
-  readonly kind: 'integer' | 'number' | 'date';
+export type NumericField = NumberField | DateField;
+
+/** A number: `integer` a whole number, `number` a float. */
+export interface NumberField extends SearchFieldBase, RangeFacetable {
+  readonly kind: 'integer' | 'number';
+  readonly searchable?: never;
+}
+
+/**
+ * A point in time: ISO 8601 at the edges, Unix seconds in the index. Its bins
+ * are ISO 8601 too ({@link DateFacetRange}), like every other date a caller
+ * writes.
+ */
+export interface DateField
+  extends SearchFieldBase, RangeFacetable<DateFacetRange> {
+  readonly kind: 'date';
   readonly searchable?: never;
 }
 
@@ -414,6 +427,22 @@ export interface FacetRange {
   readonly key: string;
   readonly min?: number;
   readonly max?: number;
+}
+
+/**
+ * A range-facet bin on a `date` field, its bounds ISO 8601 as the codec reads
+ * them ({@link isoToUnixSeconds}). Both bounds are inclusive of the whole
+ * period they name, as a `date` range filter’s are: `{ min: '1900', max:
+ * '1999' }` is the years 1900 to 1999, and the next bin starts at `2000`.
+ * Contiguous periods still partition cleanly, since one ends before the next
+ * begins – which is why a date bin need not be half-open like a
+ * {@link FacetRange}. A bound the codec cannot read fails
+ * {@link validateSearchType}.
+ */
+export interface DateFacetRange {
+  readonly key: string;
+  readonly min?: string;
+  readonly max?: string;
 }
 
 /** The declaration members every {@link SearchType} shares. */
@@ -1560,6 +1589,7 @@ export interface SearchTypeIssue {
     | 'text-requires-locales'
     | 'locales-not-allowed'
     | 'facet-ranges-not-allowed'
+    | 'unparseable-facet-range'
     | 'searchable-not-allowed'
     | 'transform-not-allowed'
     | 'derive-with-path'
@@ -1708,7 +1738,8 @@ const LOCALE_PATTERN = /^[A-Za-z0-9]+(-[A-Za-z0-9]+)*$/;
  *   meaningless;
  * - a kind without a `where` operator (`text` – it feeds the free-text query)
  *   is neither `filterable` nor `facetable`;
- * - `facetRanges` only on the `range`-operator kinds (`integer`/`number`/`date`);
+ * - `facetRanges` only on the `range`-operator kinds (`integer`/`number`/`date`),
+ *   and a `date` bin’s bounds ISO 8601 the codec can read;
  * - `searchable` only on `text`/`keyword`/`reference` (projection emits no
  *   folded search field for the other kinds);
  * - `transform` only on `keyword`/`reference` (the only kinds whose
@@ -1875,6 +1906,21 @@ export function validateSearchType(
       filterOperatorFor(field.kind) !== 'range'
     ) {
       issue('facet-ranges-not-allowed');
+    }
+    if (
+      field.kind === 'date' &&
+      field.facetRanges?.some((range) =>
+        // A number here is a bound written in stored seconds, which a date
+        // bin does not take – so it is as unreadable as a malformed string.
+        [range.min, range.max].some(
+          (bound: unknown) =>
+            bound !== undefined &&
+            (typeof bound !== 'string' ||
+              isoToUnixSeconds(bound) === undefined),
+        ),
+      )
+    ) {
+      issue('unparseable-facet-range');
     }
     if (
       field.searchable !== undefined &&
@@ -2447,8 +2493,45 @@ export function isRangeFacet(field: SearchField): field is NumericField {
  */
 export function isBinnedRangeFacet(
   field: SearchField,
-): field is NumericField & { readonly facetRanges: readonly FacetRange[] } {
+): field is
+  | (NumberField & { readonly facetRanges: readonly FacetRange[] })
+  | (DateField & { readonly facetRanges: readonly DateFacetRange[] }) {
   return field.facetRanges !== undefined && field.facetRanges.length > 0;
+}
+
+/**
+ * A binned field’s bins in stored terms, for an adapter to compile and echo:
+ * half-open `[min, max)` Unix seconds. A number’s pass as declared. A date’s
+ * `min` is its period’s first second and its `max` the first second after its
+ * period ({@link lastSecondOf}), since a date bin includes the whole period its
+ * `max` names. The one place a date bin is parsed, so the facet clause and the
+ * bounds a bucket echoes cannot disagree. Empty for a field that declares no
+ * bins; a bound the codec cannot read is left open, which
+ * {@link validateSearchType} rules out before a query is ever compiled.
+ */
+export function storedFacetRanges(field: SearchField): readonly FacetRange[] {
+  if (!isBinnedRangeFacet(field)) {
+    return [];
+  }
+  if (field.kind !== 'date') {
+    return field.facetRanges;
+  }
+  return field.facetRanges.map(({ key, min, max }) => ({
+    key,
+    ...storedBound('min', min),
+    ...storedBound('max', max),
+  }));
+}
+
+function storedBound(
+  name: 'min' | 'max',
+  bound: string | undefined,
+): Partial<Record<'min' | 'max', number>> {
+  const stored = bound === undefined ? undefined : isoToUnixSeconds(bound);
+  if (stored === undefined) {
+    return {};
+  }
+  return { [name]: name === 'min' ? stored.seconds : lastSecondOf(stored) + 1 };
 }
 
 /**
@@ -2615,6 +2698,37 @@ export function unixSecondsToIso(
         date.getUTCSeconds(),
       )}Z`;
   }
+}
+
+/**
+ * The last stored second of the period a date names: the end of its year,
+ * month or day, or the date-time itself. What an upper bound reaches up to and
+ * including, so `max: '1999'` means through 1999, as a person reading it would
+ * say – where the period’s first second would admit every record dated just
+ * `2000` to a range that stops at `2000`, since those are stored there too.
+ */
+export function lastSecondOf(stored: StoredDate): number {
+  const { seconds, precision } = stored;
+  if (precision === 'dateTime') {
+    return seconds;
+  }
+  if (precision === 'day') {
+    return seconds + 86_400 - 1;
+  }
+  const next = new Date(seconds * 1000);
+  if (precision === 'year') {
+    next.setUTCFullYear(next.getUTCFullYear() + 1);
+  } else {
+    next.setUTCMonth(next.getUTCMonth() + 1);
+  }
+  // Past `Date`’s range (a deep-time year, or the last month or year it holds)
+  // a period spans the average Gregorian year deep time is stored in, or a
+  // twelfth of it.
+  const span =
+    precision === 'year' ? GREGORIAN_YEAR_SECONDS : GREGORIAN_YEAR_SECONDS / 12;
+  return Number.isNaN(next.getTime())
+    ? seconds + span - 1
+    : next.getTime() / 1000 - 1;
 }
 
 /** `seconds` if a `date` field can store it – the int64 the engine keeps

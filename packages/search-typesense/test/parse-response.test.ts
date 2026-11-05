@@ -445,6 +445,36 @@ describe('parseSearchResponse range facets', () => {
     ]);
   });
 
+  it('echoes a date bin’s bounds in stored seconds', () => {
+    const dateSchema: SearchType = {
+      ...rangeSchema,
+      fields: [
+        {
+          name: 'created',
+          kind: 'date',
+          facetable: true,
+          output: true,
+          facetRanges: [{ key: 'seventies', min: '1970', max: '1979' }],
+        },
+      ],
+    };
+    const result = parseSearchResponse(
+      {
+        found: 1,
+        hits: [],
+        facet_counts: [
+          { field_name: 'created', counts: [{ value: 'seventies', count: 1 }] },
+        ],
+      },
+      dateSchema,
+      new Map(),
+      searchSchema(dateSchema),
+    );
+    expect(result.facets.created?.buckets).toEqual([
+      { value: 'seventies', count: 1, min: 0, max: 315_532_800 },
+    ]);
+  });
+
   it('reports the extent from the facet’s stats, not from its bins', () => {
     const result = parseSearchResponse(
       {

@@ -19,6 +19,8 @@ import {
   filterOperatorFor,
   ID_FIELD,
   isoToUnixSeconds,
+  lastSecondOf,
+  storedFacetRanges,
   isInternalField,
   isBinnedRangeFacet,
   isWelded,
@@ -174,7 +176,7 @@ function compileFacetBy(
         return name;
       }
       return isBinnedRangeFacet(field)
-        ? compileRangeFacet(field.name, field.facetRanges)
+        ? compileRangeFacet(field.name, storedFacetRanges(field))
         : (physicalFields(field, schema).facet ?? name);
     })
     .join(',');
@@ -617,8 +619,8 @@ function compileRange(
   // the surface passes through – is a bound NOT SET, not a bound of `null`.
   // Read literally it reaches the engine as `datePosted:[null..…]`, which
   // Typesense rejects outright.
-  const min = storedBound(field, range.min ?? undefined);
-  const max = storedBound(field, range.max ?? undefined);
+  const min = storedBound(field, range.min ?? undefined, 'min');
+  const max = storedBound(field, range.max ?? undefined, 'max');
   if (min !== undefined && max !== undefined) {
     return `${name}:[${min}..${max}]`;
   }
@@ -632,14 +634,22 @@ function compileRange(
 }
 
 /** A range bound as stored: a `date` field’s ISO 8601 bound becomes the indexed
- *  Unix seconds ({@link isoToUnixSeconds}); an unparseable bound is dropped. */
+ *  Unix seconds ({@link isoToUnixSeconds}) – a `min` its period’s first second,
+ *  a `max` its last ({@link lastSecondOf}), so the inclusive clause takes in the
+ *  whole period each names. An unparseable bound is dropped. */
 function storedBound(
   field: SearchField,
   bound: number | string | undefined,
+  side: 'min' | 'max',
 ): number | string | undefined {
-  return field.kind === 'date' && typeof bound === 'string'
-    ? isoToUnixSeconds(bound)?.seconds
-    : bound;
+  if (field.kind !== 'date' || typeof bound !== 'string') {
+    return bound;
+  }
+  const stored = isoToUnixSeconds(bound);
+  if (stored === undefined) {
+    return undefined;
+  }
+  return side === 'min' ? stored.seconds : lastSecondOf(stored);
 }
 
 /**

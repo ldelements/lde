@@ -46,8 +46,10 @@ export {
   DEFAULT_LABEL_FIELD,
   isRangeFacet,
   isBinnedRangeFacet,
+  storedFacetRanges,
   isAbsoluteIri,
   isoToUnixSeconds,
+  lastSecondOf,
   unixSecondsToIso,
   isDatePrecision,
 } from './schema.js';

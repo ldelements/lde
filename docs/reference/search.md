@@ -343,10 +343,11 @@ is parsed like any literal; one that returns seconds states no precision and is
 stored as a date-time. An index built before precision was stored has no such
 field, and its dates are served as date-times until a reindex fills it in.
 
-A filter bound is read by the same codec, so `max: "1999"` means the first
-second of 1999, and a document dated `1999-05` falls outside it. The range is
-inclusive, so a filter covering the whole of 1999 takes
-`max: "1999-12-31T23:59:59Z"`.
+A filter bound is read by the same codec, and both bounds include the whole
+period they name: `min: "1999"` starts at the first second of 1999 and
+`max: "1999"` runs through its last, so `{ min: "1999", max: "1999" }` is the
+year 1999, a document dated `1999-05` included. A date-time bound is just that
+second.
 
 **`array` decides a field’s shape**, whatever the graph carries: a declared
 `array` field stores a list, and a single-valued one stores the first value –
@@ -1009,15 +1010,28 @@ when no matching document holds a value. Its `buckets` count each distinct
 value, like any other facet’s, so a document dated `1999` and one dated
 `1999-01-01T00:00:00Z` fall in one bucket: they store the same second.
 
-It may instead declare **`facetRanges`**: fixed half-open `[min, max)` bins (a
-`FacetRange` each), which make it a **binned range facet** that buckets into
+It may instead declare **`facetRanges`**: fixed bins, half-open `[min, max)`
+on a number (a `FacetRange` each), which make it a **binned range facet** that buckets into
 those bins – the per-bucket counts to draw over that extent. `min` is inclusive, `max`
 exclusive, so contiguous bins partition cleanly with no boundary
 double-counting; omit `min` (or `max`) for an open-ended bin (`< max`, resp.
 `≥ min`). Each bin’s `key` is its stable label, echoed back as the
 `FacetBucket` `value`, and the bucket also carries the bin’s declared
 `min`/`max` bounds, so it is self-describing – a consumer never hardcodes the
-bin formula. Bins are **query-time**: they shape the facet clause the adapter
+bin formula.
+
+A `date` field’s bins are different: ISO 8601, like any date a caller writes (a
+`DateFacetRange` each), and inclusive at both ends like a date filter, so a bin
+and the filter that selects it count the same documents.
+`{ key: '20th century', min: '1900', max: '1999' }` holds the years 1900 to
+1999, and the next bin starts at `2000`. Contiguous periods still partition
+cleanly, because one ends before the next begins. `validateSearchType` rejects
+a bound the codec cannot read. At the port the bucket echoes its bounds in
+stored terms: half-open Unix seconds, `max` the first second after its period
+(`storedFacetRanges` gives an adapter the bins in those terms). The GraphQL
+surface serves the declared ones.
+
+Bins are **query-time**: they shape the facet clause the adapter
 compiles per query, so changing them needs no reindex. Giving a field its
 first bins may: the Typesense adapter indexes a binned field for sorting.
 Engine-neutral by design – the Typesense adapter emits a `facet_by`

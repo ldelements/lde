@@ -7,6 +7,7 @@ import {
   type FacetsOutcome,
   type SearchEngine,
   type SearchQuery,
+  type SearchField,
   type SearchResult,
   type RootType,
   type SearchType,
@@ -519,6 +520,69 @@ describe('buildGraphQLSchema', () => {
     ]);
     // A value facet's ValueBuckets carry no bounds.
     expect(facets.keyword).toEqual([{ value: 'kaarten', count: 3 }]);
+  });
+
+  it('serves a binned date facet’s bins in the ISO 8601 they were declared in', async () => {
+    const binned: SearchType = {
+      ...schema,
+      fields: schema.fields.map((field): SearchField =>
+        field.name === 'datePosted'
+          ? {
+              name: 'datePosted',
+              kind: 'date',
+              facetable: true,
+              output: true,
+              facetRanges: [
+                { key: 'older', max: '+001899' },
+                { key: 'twentieth', min: '1900', max: '1999-12-31' },
+                { key: 'recent', min: '2000-01-01T00:00:00+01:00' },
+              ],
+            }
+          : field,
+      ),
+    };
+    const searchSchemaWithBins = searchSchema(binned, organization, term);
+    const facets: SearchResult['facets'] = {
+      datePosted: {
+        // The adapter echoes each bin’s bounds in stored seconds; the surface
+        // serves the declared ones instead.
+        buckets: [
+          { value: 'older', count: 1, max: -2_208_988_800 },
+          { value: 'twentieth', count: 4, min: -2_208_988_800 },
+          { value: 'recent', count: 2, min: 946_681_200 },
+        ],
+      },
+    };
+    const engine: SearchEngine = {
+      schema: searchSchemaWithBins,
+      search: async () => ({ total: 0, hits: [], facets }),
+      searchFacets: async (_searchType, queries) =>
+        queries.map(() => ({ facets })),
+    };
+    const built = buildGraphQLSchema(searchSchemaWithBins, datasetOptions);
+    expect(printSchema(built)).toMatch(
+      /type DateBinnedRangeFacet {[^}]*buckets: \[DateRangeBucket!\]!/,
+    );
+    expect(printSchema(built)).toMatch(
+      /type DateRangeBucket \{\s+min: ISO8601Date\s+max: ISO8601Date\s+count: Int!/,
+    );
+    const result = await graphql({
+      schema: built,
+      source: `{ datasets { facets { datePosted { buckets { min max count } } } } }`,
+      contextValue: { engine, acceptLanguage: ['nl'] },
+    });
+    expect(result.errors).toBeUndefined();
+    expect(
+      (
+        (result.data?.datasets as Record<string, unknown>).facets as {
+          datePosted: { buckets: unknown[] };
+        }
+      ).datePosted.buckets,
+    ).toEqual([
+      { min: null, max: '1899', count: 1 },
+      { min: '1900', max: '1999-12-31', count: 4 },
+      { min: '1999-12-31T23:00:00Z', max: null, count: 2 },
+    ]);
   });
 
   it('serves a range facet’s extent over the collection and over the other filters, in one dispatch', async () => {

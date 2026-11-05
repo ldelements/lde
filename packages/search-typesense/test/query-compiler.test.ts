@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   isoToUnixSeconds,
+  type StoredDate,
+  lastSecondOf,
   type SearchQuery,
+  type SearchField,
   type SearchType,
 } from '@lde/search';
 import { buildSearchParams } from '../src/query-compiler.js';
@@ -444,7 +447,8 @@ describe('buildSearchParams', () => {
 
   it('converts a deep-time xsd:gYear bound to the stored Unix seconds', () => {
     const min = isoToUnixSeconds('-318000000')?.seconds;
-    const max = isoToUnixSeconds('-316000000')?.seconds;
+    // An upper bound reaches through the year it names.
+    const max = lastSecondOf(isoToUnixSeconds('-316000000') as StoredDate);
     expect(
       buildSearchParams(
         {
@@ -463,6 +467,32 @@ describe('buildSearchParams', () => {
         schema,
       ).filter_by,
     ).toBe(`datePosted:[${min}..${max}]`);
+  });
+
+  it('reaches an upper bound through the end of the period it names', () => {
+    const compiled = (max: string) =>
+      buildSearchParams(
+        {
+          ...base,
+          where: [{ or: [{ field: 'datePosted', range: { max } }] }],
+        },
+        schema,
+      ).filter_by;
+    const before = (iso: string) => Date.parse(iso) / 1000 - 1;
+    expect(compiled('1999')).toBe(
+      `datePosted:<=${before('2000-01-01T00:00:00Z')}`,
+    );
+    // February of a leap year ends on the 29th.
+    expect(compiled('2000-02')).toBe(
+      `datePosted:<=${before('2000-03-01T00:00:00Z')}`,
+    );
+    expect(compiled('1999-12-31')).toBe(
+      `datePosted:<=${before('2000-01-01T00:00:00Z')}`,
+    );
+    // A date-time is its own last second.
+    expect(compiled('1999-12-31T12:00:00Z')).toBe(
+      `datePosted:<=${Date.parse('1999-12-31T12:00:00Z') / 1000}`,
+    );
   });
 
   it('drops a date bound the codec cannot read rather than compiling garbage', () => {
@@ -518,7 +548,8 @@ describe('buildSearchParams', () => {
 
   it('reads an unpadded BCE bound as a year, so the range is not inverted', () => {
     const min = Date.parse('-001100-01-01T00:00:00.000Z') / 1000;
-    const max = Date.parse('-000800-01-01T00:00:00.000Z') / 1000;
+    // Through the end of 801 BCE: the last second before -0799 begins.
+    const max = Date.parse('-000799-01-01T00:00:00.000Z') / 1000 - 1;
     expect(
       buildSearchParams(
         {
@@ -599,6 +630,30 @@ describe('buildSearchParams', () => {
     expect(
       buildSearchParams({ ...base, facets: ['size'] }, schema).facet_by,
     ).toBe('size(0:[1, 10], 1:[10, 100], 2:[100, ])');
+  });
+
+  it('facets a date field into its ISO 8601 bins as Unix seconds', () => {
+    const binned: SearchType = {
+      ...schema,
+      fields: schema.fields.map((field): SearchField =>
+        field.name === 'datePosted'
+          ? {
+              name: 'datePosted',
+              kind: 'date',
+              facetable: true,
+              facetRanges: [
+                { key: 'older', max: '1969' },
+                { key: 'seventies', min: '1970', max: '1979' },
+              ],
+            }
+          : field,
+      ),
+    };
+    expect(
+      buildSearchParams({ ...base, facets: ['datePosted'] }, binned).facet_by,
+      // A bin reaches through the period its `max` names, so Typesense’s
+      // exclusive end is the first second after it.
+    ).toBe('datePosted(older:[, 0], seventies:[0, 315532800])');
   });
 
   it('mixes range and plain facets in one facet_by clause', () => {

@@ -287,10 +287,11 @@ role: { in: ["etser"] } } }` asks for _this person in this role_, where the
     and buckets are always [date-times](#dates) and the client picks the grain
     it draws at. A field with
     [`facetRanges`](./search#range-facets) returns the
-    `‹Kind›BinnedRangeFacet` variant instead, whose `buckets:
-[RangeBucket!]!` hold one bucket per declared half-open `[min, max)` bin,
-    carrying `min`/`max` (null on an open end) and `count`, with no `value`
-    or `label`;
+    `‹Kind›BinnedRangeFacet` variant instead, whose buckets hold one bucket
+    per declared half-open `[min, max)` bin, carrying `min`/`max` (null on an
+    open end) and `count`, with no `value` or `label`: `[RangeBucket!]!` for a
+    number, `[DateRangeBucket!]!` for a date, whose bounds are served at the
+    precision they were declared in (`1900`, not `1900-01-01T00:00:00Z`);
   - a `boolean` field returns `[BooleanBucket!]!` – `value: Boolean!` +
     `count`, and **no `label` field at all**. The value is a real boolean, so
     the bucket a client selects is exactly the term the `where` filter takes
@@ -415,7 +416,7 @@ reports a source location instead.
 ## Dates
 
 Every date in the API – a `date` field, a `DateExtent` bound, a `DateBucket`
-value and a `DateRange` bound – is an `ISO8601Date`: an ISO 8601 date written as
+value, a `DateRangeBucket` bound and a `DateRange` bound – is an `ISO8601Date`: an ISO 8601 date written as
 a string, in one of four forms.
 
 | Precision | Form                   | Example                |
@@ -446,10 +447,11 @@ in [XML Schema 1.1 Part 2](https://www.w3.org/TR/xmlschema11-2/#dateTime):
 
 As input, a `DateRange` bound may take any of the four forms, and also accepts
 an offset (`+02:00`) and fractional seconds. A bound that is none of these is
-rejected when the query is coerced, with `BAD_USER_INPUT`. A bound is the first
-second of the period it names, so `max: "1999"` stops at 1 January 1999; write
-`max: "1999-12-31T23:59:59Z"` to include the whole year. How each source literal
-is read is in [the field model](./search#field-model).
+rejected when the query is coerced, with `BAD_USER_INPUT`. Both bounds include
+the whole period they name, so `{ min: "1900", max: "1999" }` is the years 1900
+to 1999, and a `DateRangeBucket`’s bounds select exactly the documents it
+counts. How each source literal is read is in
+[the field model](./search#field-model).
 
 ## Pagination
 

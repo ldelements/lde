@@ -386,6 +386,16 @@ export function buildGraphQLSchema(
       count: { type: new GraphQLNonNull(GraphQLInt) },
     },
   });
+  // A binned date facet’s bin: like RangeBucket, with its bounds served as the
+  // ISO 8601 the bin was declared in, so they feed straight into DateRange.
+  const dateRangeBucket = new GraphQLObjectType({
+    name: 'DateRangeBucket',
+    fields: {
+      min: { type: dateScalar },
+      max: { type: dateScalar },
+      count: { type: new GraphQLNonNull(GraphQLInt) },
+    },
+  });
   // A boolean-facet bucket: the value as a real boolean, so the bucket a client
   // selects round-trips straight into the `is` filter that selects it. No label
   // – a boolean has no data label to resolve, and the sensible rendering (“with
@@ -453,10 +463,12 @@ export function buildGraphQLSchema(
         },
         buckets: {
           type: nonNullListOf(
-            binned
-              ? rangeBucket
-              : field.kind === 'date'
-                ? dateBucket
+            field.kind === 'date'
+              ? binned
+                ? dateRangeBucket
+                : dateBucket
+              : binned
+                ? rangeBucket
                 : valueBucket,
           ),
           description: binned
@@ -464,15 +476,32 @@ export function buildGraphQLSchema(
             : 'One bucket per distinct value over the same documents as “matching”.',
           resolve: async (source: Source) => {
             const { buckets } = await load(source, 'matching');
+            if (field.kind !== 'date') {
+              return buckets;
+            }
+            if (isBinnedRangeFacet(field)) {
+              // A bin’s bounds are served as declared, in canonical form, by
+              // the key the bucket echoes – not from the stored seconds, which
+              // would turn `1900` into a date-time.
+              const bins = new Map(
+                field.facetRanges.map((range) => [range.key, range]),
+              );
+              return buckets.map((bucket) => {
+                const bin = bins.get(bucket.value);
+                return {
+                  count: bucket.count,
+                  min: canonicalDate(bin?.min),
+                  max: canonicalDate(bin?.max),
+                };
+              });
+            }
             // A date’s distinct value is stored as Unix seconds and served as
             // an ISO 8601 date-time (an `xsd:gYear` in deep time), like its
             // extent: a bucket spans every precision that stored its second.
-            return field.kind === 'date' && !binned
-              ? buckets.map((bucket) => ({
-                  ...bucket,
-                  value: servedDateTime(Number(bucket.value)),
-                }))
-              : buckets;
+            return buckets.map((bucket) => ({
+              ...bucket,
+              value: servedDateTime(Number(bucket.value)),
+            }));
           },
         },
       },
@@ -675,6 +704,7 @@ export function buildGraphQLSchema(
     iriBucket.name,
     rangeBucket.name,
     dateBucket.name,
+    dateRangeBucket.name,
     booleanBucket.name,
     paginationType.name,
     sortDirection.name,
@@ -1918,6 +1948,16 @@ function keyEntriesOf(
  *  spanning many documents can always be read at. */
 function servedDateTime(seconds: number): string {
   return unixSecondsToIso(seconds, 'dateTime');
+}
+
+/** A declared date in the canonical form of its own precision (`+001900` is
+ *  served `1900`); undefined for an open bound. */
+function canonicalDate(declared: string | undefined): string | undefined {
+  const stored =
+    declared === undefined ? undefined : isoToUnixSeconds(declared);
+  return stored === undefined
+    ? undefined
+    : unixSecondsToIso(stored.seconds, stored.precision);
 }
 
 function extentType(
