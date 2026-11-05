@@ -10,7 +10,6 @@ import {
 import { Dataset, Distribution } from '@lde/dataset';
 import { Stage } from '../src/stage.js';
 import { NotSupported } from '../src/sparql/reader.js';
-import { ImportFailed } from '@lde/sparql-importer';
 import {
   ResolvedDistribution,
   NoDistributionAvailable,
@@ -1927,12 +1926,11 @@ describe('Pipeline', () => {
       const resolver = makeFallbackResolver();
       // The dump import fails with a deep RDF-validity verdict.
       resolver.resolveFallback.mockResolvedValue(
-        new NoDistributionAvailable(
-          dataset,
-          'Import failed',
-          [],
-          new ImportFailed(dumpDistribution, 'Parse error'),
-        ),
+        new NoDistributionAvailable(dataset, 'Import failed', [], {
+          type: 'failed',
+          distribution: dumpDistribution,
+          error: 'Parse error',
+        }),
       );
       const reporter = makeReporter();
 
@@ -2768,15 +2766,11 @@ describe('Pipeline', () => {
 
     it('surfaces an invalid deep validity verdict when a distribution fails to import', async () => {
       const resolver = makeDumpResolver(
-        new NoDistributionAvailable(
-          dataset,
-          'Import failed',
-          [dumpProbe],
-          new ImportFailed(
-            dumpDistribution,
-            'QName not allowed for property: rdf:Description',
-          ),
-        ),
+        new NoDistributionAvailable(dataset, 'Import failed', [dumpProbe], {
+          type: 'failed',
+          distribution: dumpDistribution,
+          error: 'QName not allowed for property: rdf:Description',
+        }),
       );
       const reporter = makeReporter();
 

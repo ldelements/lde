@@ -1,4 +1,4 @@
-import { ImportFailed, ImportSuccessful } from '@lde/sparql-importer';
+import type { ImportFailed, ImportSuccessful } from '@lde/sparql-importer';
 import {
   DataDumpProbeResult,
   type ProbeResultType,
@@ -38,7 +38,7 @@ export function importOutcomeToVerdict(
   outcome: ImportFailed | ImportSuccessful,
   validatedFingerprint: string | null,
 ): ValidityVerdict {
-  if (outcome instanceof ImportSuccessful) {
+  if (outcome.type === 'successful') {
     if (outcome.tripleCount === 0) {
       return {
         valid: false,

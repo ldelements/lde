@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { Importer } from '../src/importer.js';
 import { DockerTaskRunner } from '@lde/task-runner-docker';
-import { ImportFailed, ImportSuccessful } from '@lde/sparql-importer';
+import type { ImportFailed, ImportSuccessful } from '@lde/sparql-importer';
 import { Distribution } from '@lde/dataset';
 import { join, resolve } from 'node:path';
 import {
@@ -77,7 +77,7 @@ describe('Importer', () => {
       ];
 
       const result = await importer.import(distributions);
-      expect(result).toBeInstanceOf(ImportSuccessful);
+      expect(result.type).toBe('successful');
       expect((result as ImportSuccessful).tripleCount).toBe(1);
       expect((result as ImportSuccessful).engine).toEqual({
         name: 'QLever',
@@ -134,7 +134,7 @@ describe('Importer', () => {
 
       const result = await importer.import(makeDistributions());
 
-      expect(result).toBeInstanceOf(ImportSuccessful);
+      expect(result.type).toBe('successful');
       expect((result as ImportSuccessful).tripleCount).toBe(42);
       expect((result as ImportSuccessful).engine).toEqual({
         name: 'QLever',
@@ -163,7 +163,7 @@ describe('Importer', () => {
 
       // Second run: cache hit, no indexing.
       const result = await importer.import(makeDistributions());
-      expect(result).toBeInstanceOf(ImportSuccessful);
+      expect(result.type).toBe('successful');
       expect((result as ImportSuccessful).tripleCount).toBe(42);
       // The QLever that built the cached index, not the one that would index now.
       expect((result as ImportSuccessful).engine).toEqual({
@@ -195,7 +195,7 @@ describe('Importer', () => {
       const importer = createImporter(runner);
 
       const result = await importer.import(makeDistributions());
-      expect(result).toBeInstanceOf(ImportSuccessful);
+      expect(result.type).toBe('successful');
       expect((result as ImportSuccessful).tripleCount).toBe(10);
       expect(runner.commands.length).toBe(1);
     });
@@ -225,7 +225,7 @@ describe('Importer', () => {
 
       const result = await importer.import(makeDistributions());
 
-      expect(result).toBeInstanceOf(ImportFailed);
+      expect(result.type).toBe('failed');
       expect((result as ImportFailed).error).toBe(
         'Indexed 0 triples from distribution',
       );
@@ -243,7 +243,7 @@ describe('Importer', () => {
 
       // Second run: cache hit but 0 triples.
       const result = await importer.import(makeDistributions());
-      expect(result).toBeInstanceOf(ImportFailed);
+      expect(result.type).toBe('failed');
       expect((result as ImportFailed).error).toBe(
         'Index is cached but contains 0 triples',
       );
@@ -274,7 +274,7 @@ describe('Importer', () => {
 
       const result = await importer.import(makeDistributions());
 
-      expect(result).toBeInstanceOf(ImportSuccessful);
+      expect(result.type).toBe('successful');
       expect(runner.commands.length).toBe(2);
       expect(runner.commands[0]).toContain('-p true');
       expect(runner.commands[1]).toContain('-p false');
@@ -298,7 +298,7 @@ describe('Importer', () => {
 
       const result = await importer.import(makeDistributions());
 
-      expect(result).toBeInstanceOf(ImportFailed);
+      expect(result.type).toBe('failed');
       expect((result as ImportFailed).error).toBe('some other indexing error');
       expect(runner.commands.length).toBe(1);
     });
@@ -341,7 +341,7 @@ describe('Importer', () => {
 
       const result = await importer.import(distributions);
 
-      expect(result).toBeInstanceOf(ImportSuccessful);
+      expect(result.type).toBe('successful');
       expect(runner.commands[0]).toContain('-F nq');
       expect((result as ImportSuccessful).warnings).toEqual([
         'Server Content-Type application/n-quads does not match declared media type application/n-triples; using nq format',
@@ -372,7 +372,7 @@ describe('Importer', () => {
 
       const result = await importer.import(makeDistributions());
 
-      expect(result).toBeInstanceOf(ImportSuccessful);
+      expect(result.type).toBe('successful');
 
       const command = runner.commands[0];
       // The apostrophe is POSIX-escaped, not left to break the quoting.
@@ -417,7 +417,7 @@ describe('Importer', () => {
 
       const result = await importer.import(distributions);
 
-      expect(result).toBeInstanceOf(ImportSuccessful);
+      expect(result.type).toBe('successful');
       expect(runner.commands[0]).toContain('-F nq');
       expect((result as ImportSuccessful).warnings).toEqual([
         'Declared media type application/n-triples does not match file extension .nq; using nq format',
@@ -430,7 +430,7 @@ describe('Importer', () => {
 
       const result = await importer.import(makeDistributions());
 
-      expect(result).toBeInstanceOf(ImportSuccessful);
+      expect(result.type).toBe('successful');
       expect(runner.commands[0]).toContain('-F ttl');
       expect((result as ImportSuccessful).warnings).toEqual([]);
     });
@@ -549,7 +549,7 @@ describe('Importer', () => {
         ),
       ]);
 
-      expect(result).toBeInstanceOf(ImportSuccessful);
+      expect(result.type).toBe('successful');
       // The preprocessed N-Quads file is what reaches qlever-index.
       expect(runner.commands[0]).toContain('data.jsonld.preprocessed.nq');
       expect(runner.commands[0]).toContain('-F nq');
@@ -576,7 +576,7 @@ describe('Importer', () => {
         ),
       ]);
 
-      expect(result).toBeInstanceOf(ImportSuccessful);
+      expect(result.type).toBe('successful');
       // The preprocessed N-Quads file is what reaches qlever-index.
       expect(runner.commands[0]).toContain('data.rdf.preprocessed.nq');
       expect(runner.commands[0]).toContain('-F nq');
@@ -620,7 +620,7 @@ describe('Importer', () => {
       ]);
 
       // NotSupported indicates no distribution was acceptable.
-      expect(result.constructor.name).toBe('NotSupported');
+      expect(result.type).toBe('not-supported');
     });
   });
 });

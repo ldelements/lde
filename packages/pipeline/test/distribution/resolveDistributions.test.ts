@@ -6,7 +6,7 @@ import {
   type DistributionResolver,
 } from '../../src/distribution/index.js';
 import { Dataset, Distribution } from '@lde/dataset';
-import { ImportFailed } from '@lde/sparql-importer';
+import type { ImportFailed } from '@lde/sparql-importer';
 import {
   SparqlProbeResult,
   DataDumpProbeResult,
@@ -112,7 +112,11 @@ describe('resolveDistributions', () => {
       }),
       0,
     );
-    const importFailed = new ImportFailed(dataDumpDistribution, 'Parse error');
+    const importFailed: ImportFailed = {
+      type: 'failed',
+      distribution: dataDumpDistribution,
+      error: 'Parse error',
+    };
     const resolver = mockResolver(
       new NoDistributionAvailable(
         dataset,
