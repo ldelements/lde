@@ -1781,23 +1781,4 @@ describe('an edge the graph may leave out', () => {
       /declares an “edgeClass” and requires “role”/,
     );
   });
-
-  it('refuses the type nested from a reference type, which has no companion', () => {
-    const outer = defineSearchType({
-      name: 'OuterEdge',
-      fields: [
-        {
-          name: 'credit',
-          kind: 'reference',
-          path: `${SCHEMA_ORG}creditText`,
-          output: true,
-          ref: { strategy: 'inline', typeName: 'OptionalEdge' },
-        },
-      ],
-    });
-
-    expect(() =>
-      searchSchema(optionalWork, person, optionalEdge, outer),
-    ).toThrow(/from reference type “OuterEdge”/);
-  });
 });

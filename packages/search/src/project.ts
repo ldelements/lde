@@ -985,9 +985,7 @@ function edgeReader(
   return (value) =>
     // Only a node can be an endpoint: anything else is left for the
     // projection to discard, as it would be without an edge class.
-    !isObject(value) ||
-    '@value' in value ||
-    classesOf(value).has(referenceType.edgeClass as string)
+    !isObject(value) || classesOf(value).has(referenceType.edgeClass as string)
       ? value
       : { [endpointAlias]: [value] };
 }

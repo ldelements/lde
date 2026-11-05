@@ -1064,7 +1064,8 @@ function assertResolvableInlineReferences(
       if (!isInlineReference(field)) {
         continue;
       }
-      if (!referenceTypes.has(field.ref.typeName)) {
+      const referenceType = referenceTypes.get(field.ref.typeName);
+      if (referenceType === undefined) {
         throw new Error(
           `Inline reference “${searchType.name}.${field.name}” names “${field.ref.typeName}”, which is not a declared reference type; declare a reference type (a SearchType with no class) with that name.`,
         );
@@ -1083,7 +1084,7 @@ function assertResolvableInlineReferences(
             )}, which it cannot serve: its value is a nested object, not a token an engine can search, sort or join on.`,
         );
       }
-      assertIdentityCompanion(searchType, field, referenceTypes);
+      assertIdentityCompanion(searchType, field, referenceType);
     }
   }
   for (const searchType of types) {
@@ -1113,21 +1114,15 @@ function assertResolvableInlineReferences(
 function assertIdentityCompanion(
   searchType: SearchType,
   field: ReferenceField & { readonly ref: { readonly typeName: string } },
-  referenceTypes: ReadonlyMap<string, ReferenceType>,
+  referenceType: ReferenceType,
 ): void {
   const where = `Inline reference “${searchType.name}.${field.name}”`;
   const identity = field.ref.identity;
   const filters = field.filterable === true || field.facetable === true;
-  const nestedType = referenceTypes.get(field.ref.typeName);
-  const edgeClass = nestedType?.edgeClass;
-  if (edgeClass !== undefined && searchType.class === undefined) {
-    throw new Error(
-      `${where} nests “${field.ref.typeName}”, which declares an “edgeClass”, from reference type “${searchType.name}”: a node that is not of the edge class goes into an identity companion, which only a Root Type’s field can carry. Nest “${field.ref.typeName}” from a Root Type’s field.`,
-    );
-  }
+  const { edgeClass } = referenceType;
   if (identity === undefined && edgeClass !== undefined) {
     throw new Error(
-      `${where} nests “${field.ref.typeName}”, which declares an “edgeClass”, but names no “identity”: a node that is not of the edge class is the endpoint itself, and the identity field is where it goes. Name the nested reference identifying the endpoint as “identity”, which also needs “filterable” or “facetable” on this reference.`,
+      `${where} nests “${field.ref.typeName}”, which declares an “edgeClass”, but names no “identity”: a node that is not of the edge class is the endpoint itself, and the identity field is where it goes. Nest it from a Root Type’s field that names the nested reference identifying the endpoint as “identity” and declares “filterable” or “facetable”.`,
     );
   }
   if (identity === undefined) {
@@ -1153,9 +1148,7 @@ function assertIdentityCompanion(
       `${where} declares an “identity”, but “${searchType.name}” is a reference type: an identity companion is a flat field beside the reference, and a nested one has nowhere to live. Declare the companion on the reference that carries this type.`,
     );
   }
-  // Resolvable by construction: the typeName was checked just above.
-  const referenceType = nestedType;
-  const identityField = referenceType && fieldNamed(referenceType, identity);
+  const identityField = fieldNamed(referenceType, identity);
   if (identityField === undefined) {
     throw new Error(
       `${where} names identity “${identity}”, which “${field.ref.typeName}” does not declare.`,
@@ -1174,7 +1167,7 @@ function assertIdentityCompanion(
   const requiredOnEdge =
     edgeClass === undefined
       ? undefined
-      : nestedType?.fields.find(
+      : referenceType.fields.find(
           (edgeField) =>
             edgeField.required === true && edgeField.name !== identity,
         );
