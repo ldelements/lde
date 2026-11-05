@@ -263,7 +263,7 @@ describe('ImportResolver', () => {
     expect(noDistribution.message).toBe('No supported import format available');
     expect(onImportFailed).toHaveBeenCalledWith(
       dataset.distributions[0],
-      'No supported import format',
+      expect.objectContaining({ message: 'No supported import format' }),
     );
   });
 

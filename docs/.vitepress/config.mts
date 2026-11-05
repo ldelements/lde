@@ -59,7 +59,11 @@ const packageGroups: Record<string, string[]> = {
     'search-typesense',
     'text-normalization',
   ],
-  Monitoring: ['distribution-monitor', 'pipeline-console-reporter'],
+  Monitoring: [
+    'distribution-monitor',
+    'pipeline-console-reporter',
+    'pipeline-logger-reporter',
+  ],
   Infrastructure: [
     'host-limiter',
     'public-fetch',

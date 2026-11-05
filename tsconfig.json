@@ -106,6 +106,9 @@
     },
     {
       "path": "./packages/iiif-image"
+    },
+    {
+      "path": "./packages/pipeline-logger-reporter"
     }
   ],
   "compilerOptions": {

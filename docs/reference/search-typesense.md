@@ -326,7 +326,7 @@ dataset. Two things leave one out:
   document would fail the GraphQL API at read time.
 
 When the dataset is flushed, the writer reports what it left out through the
-pipeline’s reporter (`itemsRejected`): per collection, how many documents the
+pipeline, which reports it as an `itemsRejected` event: per collection, how many documents the
 dataset wrote, how many were left out, and each reason with a few example ids.
 
 A dataset that leaves out more than `maxRejectedShare` of its documents (a share
