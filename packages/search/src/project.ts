@@ -1108,6 +1108,10 @@ function applyLocalIdentity(
  * companion the facet reads instead: the same rule as every other facetable
  * reference, so an excluded id is never seen by the engine rather than merely
  * unlabelled.
+ *
+ * The narrowed companion is written at the top level only. A nested field is
+ * never faceted – an engine facets per document, not per entry – so no
+ * collection declares one there for it to fill.
  */
 function writeIdentityCompanions(
   document: ProjectedNode,
@@ -1124,7 +1128,7 @@ function writeIdentityCompanions(
   }
   setIdentity(document, names.identity, ids, field, nested);
   const policies = inheritedFacetPolicies(field, schema);
-  if (policies.size === 0) {
+  if (nested || policies.size === 0) {
     return;
   }
   setIdentity(

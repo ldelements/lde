@@ -258,14 +258,14 @@ function assertReferencesAndFacetCompanionsPresent(
         .map((companion) => `“${companion}”`)
         .join(
           ', ',
-        )} its search type facets on – the companion of a reference to a type that declares a facet policy (“facetKeys”). A facet field cannot be added to a live collection here: drop “${name}” (and the collections that join to it) and let the next run rebuild them.`,
+        )} its search type facets on in place of the field itself – an identity companion, or one narrowed by a facet policy (“facetKeys”). A facet field cannot be added to a live collection here: drop “${name}” (and the collections that join to it) and let the next run rebuild them.`,
     );
   }
 }
 
-/** The `${name}_facet` companions a type’s facets read instead of the fields
- *  themselves – one per facetable reference inheriting a facet policy
- *  ({@link physicalFields}). */
+/** The companions a type’s facets read instead of the fields themselves – one
+ *  per facetable reference that stores a nested object or inherits a facet
+ *  policy ({@link physicalFields}). */
 function facetCompanionsOf(
   searchType: SearchType,
   schema: SearchSchema | undefined,
