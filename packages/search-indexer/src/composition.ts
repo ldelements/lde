@@ -105,12 +105,17 @@ export function distributionResolverFrom(
   if (!config.qlever) {
     return undefined;
   }
+  const serverOptions =
+    config.qlever.memoryMaxSize === undefined
+      ? undefined
+      : { 'memory-max-size': config.qlever.memoryMaxSize };
   const { importer, server } =
     config.qlever.mode === 'remote'
       ? createQlever({
           mode: 'remote',
           dataDir: config.qlever.dataDir,
           replaceJsonLdContext,
+          serverOptions,
         })
       : config.qlever.network
         ? createQlever({
@@ -124,12 +129,14 @@ export function distributionResolverFrom(
             // one indexer per network.
             containerName: `qlever-${config.qlever.network}`,
             replaceJsonLdContext,
+            serverOptions,
           })
         : createQlever({
             mode: 'docker',
             image: config.qlever.image,
             dataDir: config.qlever.dataDir,
             replaceJsonLdContext,
+            serverOptions,
           });
   return new ImportResolver(new SparqlDistributionResolver(), {
     importer,

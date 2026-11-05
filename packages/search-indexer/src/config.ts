@@ -52,7 +52,7 @@ export interface IndexerConfig {
    *  (`PROVENANCE_FILE` + `PIPELINE_VERSION`). */
   readonly provenance?: ProvenanceConfig;
   /** The QLever import path (`QLEVER_MODE` + `QLEVER_IMAGE` +
-   *  `IMPORT_STRATEGY` + `DATA_DIR`): import data dumps into a
+   *  `IMPORT_STRATEGY` + `DATA_DIR` + `QLEVER_MEMORY_MAX_SIZE`): import data dumps into a
    *  pipeline-controlled QLever instead of relying on live SPARQL endpoints
    *  alone. */
   readonly qlever?: QleverConfig;
@@ -85,6 +85,14 @@ export type QleverConfig = {
   readonly strategy: 'sparql' | 'sparqlWithImportFallback' | 'import';
   /** Directory for downloaded dumps and QLever index caches. */
   readonly dataDir: string;
+  /**
+   * The memory QLever may reserve for answering queries
+   * (`QLEVER_MEMORY_MAX_SIZE`, QLever’s `--memory-max-size`), e.g. `8G`.
+   * QLever refuses a query that would exceed it, with an HTTP 500 such as
+   * “Tried to allocate 8 MB, but only 5.8 MB were available”. Unset, the
+   * `@lde/sparql-qlever` default applies.
+   */
+  readonly memoryMaxSize?: string;
 } & (
   | {
       /** A sibling container the indexer starts over the Docker socket. */
@@ -105,6 +113,10 @@ export type QleverConfig = {
 );
 
 const QLEVER_MODES = ['docker', 'remote'] as const;
+
+/** A size QLever’s `--memory-max-size` reads: a number and a unit, such as
+ *  `8G`, `8 GB` or `512M`. */
+const MEMORY_SIZE = /^\d+(\.\d+)?\s?[kmgt]b?$/i;
 
 const IMPORT_STRATEGIES = [
   'sparql',
@@ -354,6 +366,7 @@ function qleverFromEnvironment(
   const image = environment['QLEVER_IMAGE'];
   const strategy = environment['IMPORT_STRATEGY'];
   const network = environment['QLEVER_NETWORK'];
+  const memoryMaxSize = environment['QLEVER_MEMORY_MAX_SIZE'];
   // QLEVER_IMAGE alone is how the Docker mode has always been enabled. An
   // empty QLEVER_MODE, as a template renders an unset one, counts as unset.
   const mode = environment['QLEVER_MODE'] || (image ? 'docker' : undefined);
@@ -366,6 +379,11 @@ function qleverFromEnvironment(
     if (network) {
       problems.push(
         'QLEVER_NETWORK requires QLEVER_IMAGE: without an import engine there is no QLever container to attach',
+      );
+    }
+    if (memoryMaxSize) {
+      problems.push(
+        'QLEVER_MEMORY_MAX_SIZE requires QLEVER_IMAGE or QLEVER_MODE=remote: without an import engine there is no QLever to size',
       );
     }
     return undefined;
@@ -384,9 +402,15 @@ function qleverFromEnvironment(
       `IMPORT_STRATEGY must be one of ${IMPORT_STRATEGIES.map((name) => `“${name}”`).join(', ')}, got “${strategy}”`,
     );
   }
+  if (memoryMaxSize && !MEMORY_SIZE.test(memoryMaxSize)) {
+    problems.push(
+      `QLEVER_MEMORY_MAX_SIZE must be a size such as “8G” or “8 GB”, got “${memoryMaxSize}”`,
+    );
+  }
   const common = {
     strategy: (strategy ?? 'sparql') as QleverConfig['strategy'],
     dataDir: environment['DATA_DIR'] ?? '/data',
+    ...(memoryMaxSize ? { memoryMaxSize } : {}),
   };
   if (mode === 'remote') {
     if (image) {
