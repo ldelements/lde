@@ -606,6 +606,36 @@ hop a keyed target's document key needs – so an endpoint two hops out is in th
 frame. See
 [ADR 24](../decisions/0024-carry-data-on-a-reference-edge).
 
+**`edgeClass`** on the Reference Type is for a graph that may leave the edge
+out: one work states `schema:contributor` through a `schema:Role`, the next
+points at the agent directly. A node of the declared class is read as the
+edge; any other node is the endpoint itself, stored in an entry under the
+reference’s `identity` field with none of the edge’s own fields – a role read
+off an agent’s `schema:name` would be the agent’s name. The extraction reads the
+node’s `rdf:type` and the endpoint’s own selection (its type, key and `local`
+fields) where the work points as well as one hop past an edge, so a flat agent
+is re-keyed exactly like one in a Role. An edge naming no endpoint stays an edge.
+
+```ts
+defineSearchType({
+  name: 'ContributorRole',
+  edgeClass: 'https://schema.org/Role',
+  fields: [/* role, contributor */],
+});
+```
+
+Declare an `identity` on each reference nesting the type, which `searchSchema`
+enforces. Since an `identity` needs `filterable` or `facetable` and lives only
+on a Root Type’s field, so does a reference to an edge with an `edgeClass`. The
+edge’s other fields cannot be `required`: a flat endpoint never carries them. The
+match is exact: an edge node the graph left untyped, or typed with a subclass,
+is read as an endpoint.
+
+Supporting both shapes reads both hops off every node: the endpoint’s fields
+off each edge node, and the edge’s fields off each flat endpoint. The
+projection discards what does not apply, so the cost is extraction volume, not
+what the index stores.
+
 **Conditions inside one edge's `where` are welded to one entry.** `creator: {
 where: { creator: { in: […] }, role: { in: ["etser"] } } }` means _this person
 in this role_, not _this person somewhere and this role somewhere_ – which two

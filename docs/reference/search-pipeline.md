@@ -434,6 +434,12 @@ guarantees one output triple per genuine value:
   and reads the referent’s `rdf:type` in an `OPTIONAL` of its own, emitted as
   `rdf:type` so framing carries it as `@type`: that is what the projection
   matches against each target’s `class` to tell which kind the referent is.
+- **An edge the graph may leave out is read at both hops.** Where a Reference
+  Type declares an [`edgeClass`](./search#data-on-the-edge), the node the work
+  points at may be the endpoint itself, so the reference’s union also reads that
+  node’s `rdf:type` and the endpoint’s own selection – its key, its `local`
+  fields – off it directly, each as one more branch. A flat agent then keeps its
+  row through those branches even where it states nothing the edge reads.
 - **A key hop stays inside its branch.** A reference naming a target that
   declares a [document key](./search#document-key) gets its branch extended with
   an `OPTIONAL` hop reading the referent’s key field, emitted under the target’s
