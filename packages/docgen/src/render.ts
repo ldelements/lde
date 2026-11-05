@@ -1,10 +1,20 @@
 import { Liquid } from 'liquidjs';
-import { basename, dirname } from 'path';
+import { basename, dirname, join } from 'path';
 import type { ContextDefinition, NodeObject } from 'jsonld';
+import { defaultTurtlePrefixes, JsonLdToTurtle } from './turtle.js';
+
+export interface DocumentationOptions {
+  /**
+   * Local files to read JSON-LD contexts from instead of the web, keyed by the
+   * context URL, for the `jsonLdToTurtle` filter.
+   */
+  contexts?: Record<string, string>;
+}
 
 export async function render(
   shapes: NodeObject,
   templatePath: string,
+  { contexts }: DocumentationOptions = {},
 ): Promise<string> {
   const templatesDir = dirname(templatePath);
   const engine = new Liquid({
@@ -54,6 +64,23 @@ export async function render(
   const prefixes = prefixesOf(shapes['@context']);
   engine.registerFilter('expandIri', (compactIri: unknown) =>
     expandIri(compactIri, prefixes),
+  );
+
+  // The frame adds prefixes, but can’t rename or redefine the built-in ones.
+  const builtInNamespaces = new Set(defaultTurtlePrefixes.values());
+  const converter = new JsonLdToTurtle({
+    contexts,
+    prefixes: new Map([
+      ...defaultTurtlePrefixes,
+      ...[...prefixes].filter(
+        ([prefix, namespace]) =>
+          !defaultTurtlePrefixes.has(prefix) &&
+          !builtInNamespaces.has(namespace),
+      ),
+    ]),
+  });
+  engine.registerFilter('jsonLdToTurtle', (path: string) =>
+    converter.convert(join(templatesDir, path)),
   );
 
   // The root is the template’s folder, so look the template up by its name there.

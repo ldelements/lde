@@ -1,0 +1,7 @@
+{
+  "@context": {
+    "@vocab": "https://schema.org/",
+    "dateCreated": { "@type": "http://www.w3.org/2001/XMLSchema#gYear" },
+    "sameAs": { "@type": "@id" }
+  }
+}
