@@ -712,69 +712,6 @@ describe('faceting a local lookup over several targets', () => {
   });
 });
 
-describe('faceting a local lookup nested by another', () => {
-  it('writes the identity companion inside the entry, but no facet companion', () => {
-    // `Group.member` is facetable at the root of a group document; nested in a
-    // work’s `group` entry it is never faceted, so no collection declares a
-    // narrowed companion there for the projection to write.
-    const group = defineSearchType({
-      name: 'Group',
-      class: `${SCHEMA_ORG}Organization`,
-      labelField: 'name',
-      fields: [
-        {
-          name: 'name',
-          kind: 'text',
-          path: `${SCHEMA_ORG}name`,
-          locales: ['und'],
-          output: true,
-          searchable: { weight: 1 },
-        },
-        {
-          name: 'member',
-          kind: 'reference',
-          path: `${SCHEMA_ORG}member`,
-          array: true,
-          output: true,
-          facetable: true,
-          ref: { strategy: 'lookup', target: 'Person', local: true },
-        },
-      ],
-    });
-    const groupedWork = defineSearchType({
-      name: 'GroupedWork',
-      class: `${SCHEMA_ORG}Drawing`,
-      fields: [
-        {
-          name: 'group',
-          kind: 'reference',
-          path: `${SCHEMA_ORG}creator`,
-          output: true,
-          ref: { strategy: 'lookup', target: 'Group', local: true },
-        },
-      ],
-    });
-    const groupedSchema = searchSchema(groupedWork, group, person);
-    const document = projectDocument(
-      {
-        '@id': 'https://ex/work/4',
-        [alias('GroupedWork', 'group')]: [
-          {
-            '@id': 'https://id.example/guild',
-            '@type': `${SCHEMA_ORG}Organization`,
-            [alias('Group', 'member')]: [rembrandt],
-          },
-        ],
-      },
-      groupedWork,
-      groupedSchema,
-    );
-
-    expect(document.group).toMatchObject({ member_id: [RKD] });
-    expect(document.group).not.toHaveProperty('member_id_facet');
-  });
-});
-
 describe('validating a projection over several targets', () => {
   const base = {
     where: [],

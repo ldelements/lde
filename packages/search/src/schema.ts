@@ -1094,16 +1094,18 @@ function assertIdentityCompanion(
  * A {@link ReferenceStrategy.local local} lookup stores a nested object rather
  * than an id, so it is held to the same Roles an inline reference is: an engine
  * can neither tokenize an object for free text, order by it, nor point a
- * reference field at it. A `joinable` one would otherwise emit an engine
- * reference over a field holding objects, and fail only at query time.
+ * reference field at it.
+ *
+ * Without this a `joinable` one emits an engine reference over a field holding
+ * objects, and fails only at query time.
  *
  * `filterable` and `facetable` it CAN serve, the same way an inline reference
  * does: through a flat `${name}_id` companion beside the stored object
- * ({@link physicalFields}), holding the endpoints’ document keys. That is what
- * lets a condition on the endpoint’s identity be welded to a condition on the
- * edge’s own value – an engine can only weld conditions on an entry’s own
- * **leaf** fields, and the endpoint’s id is otherwise one level further in –
- * and what a facet counts, one bucket per document key.
+ * ({@link physicalFields}). That is what lets a condition on the endpoint's
+ * identity be welded to a condition on the edge's own value – an engine can
+ * only weld conditions on an entry's own **leaf** fields, and the endpoint's id
+ * is otherwise one level further in – and it holds the endpoints’ document
+ * keys, which is what a facet counts.
  */
 function assertServiceableLocalLookup(
   searchType: SearchType,
@@ -2721,14 +2723,12 @@ function deepTimeDate(year: number): StoredDate | undefined {
  * localized `text` field’s display fields are pattern-based and not enumerated
  * here – see {@link displayFieldName} and its siblings.
  *
- * The facet is the one member that depends on more than the declaration. A
- * field storing a nested object facets its `${name}_id` identity companion
- * rather than itself, and a facetable reference whose target declares a
- * {@link FacetKeys facet policy} facets a `_facet` companion of whichever field
- * it would otherwise facet – `${name}_facet` or `${name}_id_facet`. Only the
- * `schema` can resolve either ({@link inheritedFacetPolicies}). Without one the
- * field facets on its own name – the same reading the projection makes without
- * a schema, where it cannot re-key a reference either.
+ * The facet is the one member that depends on more than the declaration: a
+ * facetable reference whose target declares a {@link FacetKeys facet policy}
+ * facets a `${name}_facet` companion rather than itself, and only the `schema`
+ * can resolve that target ({@link inheritedFacetPolicies}). Without one the field
+ * facets on its own name – the same reading the projection makes without a
+ * schema, where it cannot re-key a reference either.
  */
 export function physicalFields(
   field: SearchField,
