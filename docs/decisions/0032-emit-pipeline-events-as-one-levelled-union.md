@@ -1,4 +1,4 @@
-# 27. Emit pipeline events as one levelled union
+# 32. Emit pipeline events as one levelled union
 
 Date: 2026-10-23
 
