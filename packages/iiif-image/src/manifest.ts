@@ -1,25 +1,40 @@
 import { isImageService as isKnownImageService } from '@iiif/parser/image-3';
 import { convertPresentation2 } from '@iiif/parser/presentation-2';
+import { isPositiveInteger } from './isPositiveInteger.js';
 import { serviceBase } from './serviceBase.js';
 
+/** An image a manifest paints on a canvas. */
+export interface PaintedImage {
+  /** The image resource’s `id`. */
+  url: string;
+  /** The width the manifest states, if it states one as a positive integer. */
+  width?: number;
+  /** The height the manifest states, if it states one as a positive integer. */
+  height?: number;
+  /**
+   * The base of the image’s image service, without a trailing slash or
+   * `/info.json`, if the image has one. An image without one is a static file:
+   * the only version there is, which cannot be resized.
+   */
+  service?: string;
+}
+
 /**
- * The URLs of the image services of a manifest’s painted images, in Presentation
- * 2 or 3, in the order the manifest paints them. Take the first for a cover
- * image: the canvases after it are not walked. A Presentation 2 manifest is
- * upgraded whole first, so it costs the same either way.
+ * The images a manifest paints, in Presentation 2 or 3, in the order the
+ * manifest paints them, whether or not they have an image service. Take the
+ * first for a cover image: the canvases after it are not walked. A Presentation
+ * 2 manifest is upgraded whole first, so it costs the same either way.
  *
  * Tolerant by design: it walks the plain JSON rather than normalising it, so a
  * manifest with a structural defect elsewhere – `"annotations": [null]`, which
- * viewers built on `@iiif/parser` reject outright – still yields its services.
- *
- * Each URL is the service’s base, without a trailing slash or `/info.json`.
+ * viewers built on `@iiif/parser` reject outright – still yields its images.
  *
  * @throws {TypeError} when the document is not a manifest that can be read: one
  *   without canvases, such as an error page served as JSON, or a Presentation 2
- *   manifest the upgrade rejects. Unlike a manifest without image services, that
- *   is not a fact about the manifest’s images worth keeping.
+ *   manifest the upgrade rejects. Unlike a manifest without images, that is not
+ *   a fact about the manifest’s images worth keeping.
  */
-export function imageServices(manifest: unknown): IterableIterator<string> {
+export function images(manifest: unknown): IterableIterator<PaintedImage> {
   const document = upgraded(manifest);
   const canvases = arrayOf(fieldOf(document, 'items')).filter(
     (item) => fieldOf(item, 'type') === 'Canvas',
@@ -27,22 +42,50 @@ export function imageServices(manifest: unknown): IterableIterator<string> {
   if (canvases.length === 0) {
     throw new TypeError('not a IIIF manifest: it has no canvases');
   }
-  return servicesOf(canvases);
+  return imagesOf(canvases);
 }
 
-function* servicesOf(canvases: unknown[]): Generator<string> {
+function* imagesOf(canvases: unknown[]): Generator<PaintedImage> {
   for (const canvas of canvases) {
     for (const page of arrayOf(fieldOf(canvas, 'items'))) {
       for (const annotation of arrayOf(fieldOf(page, 'items'))) {
         for (const body of paintedResources(fieldOf(annotation, 'body'))) {
-          const service = imageServiceOf(body);
-          if (service !== undefined) {
-            yield service;
+          const image = paintedImageOf(body);
+          if (image !== undefined) {
+            yield image;
           }
         }
       }
     }
   }
+}
+
+/** The resource as a painted image, if it is an image or has an image service,
+ *  and states its `id`. */
+function paintedImageOf(resource: unknown): PaintedImage | undefined {
+  const url = fieldOf(resource, 'id') ?? fieldOf(resource, '@id');
+  const service = imageServiceOf(resource);
+  if (
+    typeof url !== 'string' ||
+    (!isImage(resource) && service === undefined)
+  ) {
+    return undefined;
+  }
+  const width = fieldOf(resource, 'width');
+  const height = fieldOf(resource, 'height');
+  return {
+    url,
+    ...(isPositiveInteger(width) && { width }),
+    ...(isPositiveInteger(height) && { height }),
+    ...(service !== undefined && { service }),
+  };
+}
+
+/** Whether the resource is typed as an image, in the Presentation 3 form or in
+ *  the Presentation 2 forms some Presentation 3 manifests keep. */
+function isImage(resource: unknown): boolean {
+  const type = fieldOf(resource, 'type') ?? fieldOf(resource, '@type');
+  return type === 'Image' || type === 'dctypes:Image';
 }
 
 /**
