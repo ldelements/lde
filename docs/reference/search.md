@@ -627,6 +627,7 @@ defineSearchType({
 Declare an `identity` on each reference nesting the type, which `searchSchema`
 enforces. Since an `identity` needs `filterable` or `facetable` and lives only
 on a Root Type’s field, so does a reference to an edge with an `edgeClass`. The
+edge’s other fields cannot be `required`: a flat endpoint never carries them. The
 match is exact: an edge node the graph left untyped, or typed with a subclass,
 is read as an endpoint.
 

@@ -1748,4 +1748,56 @@ describe('an edge the graph may leave out', () => {
       /nests “OptionalEdge”, which declares an “edgeClass”, but names no “identity”/,
     );
   });
+
+  it('leaves a value that is no node for the projection to discard', () => {
+    // Dirty source data: a literal or a bare string under the alias is no
+    // endpoint, with an edge class or without.
+    const dirty = projectDocument(
+      {
+        '@id': 'https://ex/work/32',
+        [alias('OptionalWork', 'creator')]: [
+          { '@value': 'Rembrandt' },
+          'https://id.example/person/rembrandt',
+        ],
+      },
+      optionalWork,
+      optionalSchema,
+    );
+
+    expect(dirty).not.toHaveProperty('creator');
+    expect(dirty).not.toHaveProperty('creator_id');
+  });
+
+  it('refuses a required edge field, which a flat endpoint never carries', () => {
+    const strictEdge = defineSearchType({
+      ...optionalEdge,
+      fields: [
+        { ...creatorEdge.fields[0], required: true },
+        creatorEdge.fields[1],
+      ],
+    });
+
+    expect(() => searchSchema(optionalWork, person, strictEdge)).toThrow(
+      /declares an “edgeClass” and requires “role”/,
+    );
+  });
+
+  it('refuses the type nested from a reference type, which has no companion', () => {
+    const outer = defineSearchType({
+      name: 'OuterEdge',
+      fields: [
+        {
+          name: 'credit',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}creditText`,
+          output: true,
+          ref: { strategy: 'inline', typeName: 'OptionalEdge' },
+        },
+      ],
+    });
+
+    expect(() =>
+      searchSchema(optionalWork, person, optionalEdge, outer),
+    ).toThrow(/from reference type “OuterEdge”/);
+  });
 });

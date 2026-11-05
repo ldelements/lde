@@ -31,6 +31,7 @@ export {
   inheritedFacetPolicies,
   referenceFields,
   referenceTypeNamed,
+  endpointFieldOf,
   rootTypeNamed,
   inlineFramingDepth,
   fieldNamed,

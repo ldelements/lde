@@ -11,6 +11,7 @@ import {
   displayFieldName,
   displayLangOf,
   documentKeyOf,
+  endpointFieldOf,
   fieldNamed,
   identityFieldOf,
   inheritedFacetPolicies,
@@ -976,21 +977,19 @@ function edgeReader(
   referenceType: ReferenceType,
   identity: string | undefined,
 ): (value: unknown) => unknown {
-  const { edgeClass } = referenceType;
-  // `searchSchema` requires an identity wherever an edge class is declared.
-  if (edgeClass === undefined || identity === undefined) {
+  const endpointField = endpointFieldOf(referenceType, identity);
+  if (endpointField === undefined) {
     return (value) => value;
   }
-  const endpointAlias = irAlias(
-    referenceType,
-    fieldNamed(referenceType, identity) as SearchField,
-  );
-  return (value) => {
-    // A framed reference value is always a node object.
-    return classesOf(value as Record<string, unknown>).has(edgeClass)
+  const endpointAlias = irAlias(referenceType, endpointField);
+  return (value) =>
+    // Only a node can be an endpoint: anything else is left for the
+    // projection to discard, as it would be without an edge class.
+    !isObject(value) ||
+    '@value' in value ||
+    classesOf(value).has(referenceType.edgeClass as string)
       ? value
       : { [endpointAlias]: [value] };
-  };
 }
 
 /**

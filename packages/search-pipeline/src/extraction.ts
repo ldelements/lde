@@ -11,6 +11,7 @@ import {
 import { Parser } from '@traqula/parser-sparql-1-1';
 import { Generator } from '@traqula/generator-sparql-1-1';
 import {
+  endpointFieldOf,
   fieldNamed,
   irAlias,
   isInlineReference,
@@ -19,7 +20,6 @@ import {
   referenceTypeNamed,
 } from '@lde/search/adapter';
 import type {
-  ReferenceType,
   RootType,
   SearchField,
   SearchSchema,
@@ -188,8 +188,8 @@ function buildFor(
       // endpoint’s own selection are read right here, beside the edge’s fields.
       const endpointField = endpointFieldOf(referenceType, field.ref.identity);
       if (endpointField !== undefined) {
-        // An empty branch first: an endpoint the graph says nothing else about
-        // keeps its row, and so its id, as it would inside an edge.
+        // An empty branch: an endpoint the graph says nothing else about keeps
+        // its row, and so its id, as it would inside an edge.
         nestedBranches.push(factory.patternGroup([], factory.gen()));
         const typeHop = buildTypeHop(referent, counter);
         template.push(typeHop.triple);
@@ -290,22 +290,6 @@ function buildReferentHops(
     expansions.push(...nested.branches);
   }
   return { template, expansions };
-}
-
-/**
- * The nested reference an endpoint stated without its edge goes into – the
- * inline reference’s {@link ReferenceStrategy.identity identity} – where the
- * Reference Type declares an {@link ReferenceType.edgeClass edge class}, and
- * `undefined` where every node it reaches is an edge.
- */
-function endpointFieldOf(
-  referenceType: ReferenceType,
-  identity: string | undefined,
-): SearchField | undefined {
-  if (referenceType.edgeClass === undefined || identity === undefined) {
-    return undefined;
-  }
-  return fieldNamed(referenceType, identity);
 }
 
 /**
