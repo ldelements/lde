@@ -1,3 +1,13 @@
+## 0.43.2 (2026-11-05)
+
+### 🩹 Fixes
+
+- **search:** write no facet companion inside a nested entry ([#995](https://github.com/ldelements/lde/pull/995))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.36.2
+
 ## 0.43.1 (2026-11-05)
 
 ### 🚀 Features
