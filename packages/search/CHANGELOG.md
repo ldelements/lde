@@ -1,3 +1,45 @@
+## 0.36.0 (2026-11-05)
+
+### 🚀 Features
+
+- ⚠️  **search:** declare date facet bins in ISO 8601, with max covering its whole period ([#991](https://github.com/ldelements/lde/pull/991))
+
+### ⚠️  Breaking Changes
+
+- **search:** declare date facet bins in ISO 8601, with max covering its whole period  ([#991](https://github.com/ldelements/lde/pull/991))
+  a date field's facetRanges take ISO 8601 strings
+  instead of Unix seconds ({ min: '1900', max: '2000' }), and its
+  binned buckets are DateRangeBucket instead of RangeBucket.
+  NumericField is now a union of NumberField and DateField.
+  * feat(search)!: include the whole period a date's max names
+  - Add lastSecondOf, the last stored second of a date's period
+  - Compile a date range filter's max to the end of its period, so
+    max: '1999' runs through 1999
+  - Make a date bin inclusive at both ends, like the filter; its stored
+    max is the first second after its period, so bins and the filter
+    that selects them count the same documents
+  BREAKING CHANGE: a date range filter's max, and a date bin's max, now
+  include the whole period they name. max: '2000' used to stop at the
+  first second of 2000 and now runs through its end; write max: '1999'
+  for a range that ends with 1999."
+  M	docs/reference/search-api-graphql.md
+  M	docs/reference/search.md
+  M	packages/search-api-graphql/src/build-schema.ts
+  M	packages/search-api-graphql/test/build-schema.test.ts
+  M	packages/search-api-graphql/vite.config.ts
+  M	packages/search-typesense/src/query-compiler.ts
+  M	packages/search-typesense/src/search.ts
+  M	packages/search-typesense/test/parse-response.test.ts
+  M	packages/search-typesense/test/query-compiler.test.ts
+  M	packages/search-typesense/test/search-engine.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/src/adapter.ts
+  M	packages/search/src/index.ts
+  M	packages/search/src/query.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/test/schema.test.ts
+  M	packages/search/vite.config.ts
+
 ## 0.35.0 (2026-11-04)
 
 ### 🚀 Features
