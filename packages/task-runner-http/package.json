@@ -31,7 +31,7 @@
   "devDependencies": {
     "@lde/task-runner-native": "^0.4.0",
     "commander": "^15.0.0",
-    "fastify": "^5.12.7"
+    "fastify": "^5.12.8"
   },
   "nx": {
     "targets": {
