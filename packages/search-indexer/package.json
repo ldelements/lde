@@ -38,7 +38,7 @@
     "@lde/sparql-qlever": "^0.21.0",
     "commander": "^15.0.0",
     "tslib": "^2.3.0",
-    "typesense": "^3.1.1"
+    "typesense": "^3.2.0"
   },
   "nx": {
     "targets": {
