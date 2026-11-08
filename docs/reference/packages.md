@@ -36,6 +36,7 @@ Serve and document your data.
 
 | Package                                         | Description                                                                                                                                                                    |
 | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [@lde/change-detection](./change-detection)     | Tell whether an RDF document changed since its last write, so writers can skip the unchanged ones                                                                              |
 | [@lde/fastify-rdf](./fastify-rdf)               | Fastify plugin for RDF content negotiation and request body parsing                                                                                                            |
 | [@lde/docgen](./docgen)                         | Generate documentation from RDF such as SHACL shapes                                                                                                                           |
 | [@lde/search](./search)                         | The search core: projects RDF into engine-agnostic search documents (framing + a declarative field spec)                                                                       |

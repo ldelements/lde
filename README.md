@@ -132,6 +132,10 @@ await pipeline.run();
 </tr>
 <tr><th colspan="2" align="left">Publication – Serve and document your data</th></tr>
 <tr>
+  <td><a href="packages/change-detection">@lde/change-detection</a><br><a href="https://www.npmjs.com/package/@lde/change-detection"><img src="https://img.shields.io/npm/v/@lde/change-detection" alt="npm"></a></td>
+  <td>Tell whether an RDF document changed since its last write, so writers can skip the unchanged ones</td>
+</tr>
+<tr>
   <td><a href="packages/fastify-rdf">@lde/fastify-rdf</a><br><a href="https://www.npmjs.com/package/@lde/fastify-rdf"><img src="https://img.shields.io/npm/v/@lde/fastify-rdf" alt="npm"></a></td>
   <td>Fastify plugin for RDF content negotiation and request body parsing</td>
 </tr>
