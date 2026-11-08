@@ -21,7 +21,7 @@ import {
   withContentHash,
 } from '@lde/change-detection';
 
-const hashes = new SparqlContentHashReader({ endpoint, auth });
+const hashes = new SparqlContentHashReader({ endpoint });
 
 const previous = (await hashes.read([iri])).get(iri.value);
 const { status, hash } = await detectChange(document, previous, 'conversion-7');
@@ -82,7 +82,7 @@ Filter the same way on every run; if you change the filter, bump `version`.
 
 ### Reading hashes
 
-`SparqlContentHashReader.read(iris)` reads the stored hashes of a batch of documents in one query, from the default graph and every named graph. You choose the batch: pass the IRIs of the documents you are about to write, not every IRI in your store, so the query and the returned `Map` stay as small as that batch. That covers both a named graph per document and one shared graph with a subject per document.
+`SparqlContentHashReader.read(iris)` reads the stored hashes of a batch of documents in one query, with an optional `fetch` for authentication or a timeout, from the default graph and every named graph. You choose the batch: pass the IRIs of the documents you are about to write, not every IRI in your store, so the query and the returned `Map` stay as small as that batch. That covers both a named graph per document and one shared graph with a subject per document.
 
 An IRI is missing from the returned `Map` when no hash is stored, and also when more than one distinct hash is (a document written into two graphs). Either way you pass `undefined` to `detectChange` and write the document again. Picking one of the two hashes could report `unchanged` while the other copy is stale.
 

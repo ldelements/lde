@@ -22,18 +22,13 @@ export function withContentHash(
   iri: NamedNode,
   hash: ContentHash,
 ): DatasetCore {
-  const hashPredicates = [contentHashPredicate, hashVersionPredicate];
-  return new Store([
-    ...[...document].filter(
-      (existing) =>
-        !(
-          existing.subject.equals(iri) &&
-          hashPredicates.some((predicate) =>
-            predicate.equals(existing.predicate),
-          )
-        ),
-    ),
-    quad(iri, contentHashPredicate, literal(hash.hash)),
-    quad(iri, hashVersionPredicate, literal(hash.version)),
-  ]);
+  const written: DatasetCore = new Store([...document]);
+  for (const predicate of [contentHashPredicate, hashVersionPredicate]) {
+    for (const existing of [...written.match(iri, predicate)]) {
+      written.delete(existing);
+    }
+  }
+  written.add(quad(iri, contentHashPredicate, literal(hash.hash)));
+  written.add(quad(iri, hashVersionPredicate, literal(hash.version)));
+  return written;
 }

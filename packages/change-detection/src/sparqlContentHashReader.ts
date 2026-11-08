@@ -9,12 +9,8 @@ export interface SparqlContentHashReaderOptions {
   /** The SPARQL query endpoint that holds the written documents. */
   endpoint: URL;
   /**
-   * Value for the Authorization header, e.g. `"Basic dXNlcjpwYXNz"` or
-   * `"Bearer my-token"`.
-   */
-  auth?: string;
-  /**
-   * Optional fetch implementation for making HTTP requests.
+   * Fetch implementation for the query, e.g. one that adds an Authorization
+   * header or aborts after a timeout.
    * @default globalThis.fetch
    */
   fetch?: typeof globalThis.fetch;
@@ -30,12 +26,7 @@ export class SparqlContentHashReader {
 
   constructor(options: SparqlContentHashReaderOptions) {
     this.endpoint = options.endpoint;
-    this.fetcher = new SparqlEndpointFetcher({
-      fetch: options.fetch,
-      defaultHeaders: new Headers(
-        options.auth ? { Authorization: options.auth } : {},
-      ),
-    });
+    this.fetcher = new SparqlEndpointFetcher({ fetch: options.fetch });
   }
 
   /**
