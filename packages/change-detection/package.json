@@ -1,0 +1,38 @@
+{
+  "name": "@lde/change-detection",
+  "version": "0.0.0",
+  "description": "Tell whether an RDF document changed since its last write, so writers can skip the unchanged ones",
+  "repository": {
+    "url": "git+https://github.com/ldelements/lde.git",
+    "directory": "packages/change-detection"
+  },
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "!**/*.tsbuildinfo"
+  ],
+  "dependencies": {
+    "@lde/dataset": "^0.10.0",
+    "@rdfjs/types": "^2.0.1",
+    "fetch-sparql-endpoint": "^7.2.0",
+    "n3": "^2.13.12",
+    "rdf-canonize": "^5.0.0",
+    "tslib": "^2.3.0"
+  },
+  "devDependencies": {
+    "testcontainers": "^12.1.0"
+  }
+}

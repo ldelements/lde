@@ -106,6 +106,9 @@
     },
     {
       "path": "./packages/iiif-image"
+    },
+    {
+      "path": "./packages/change-detection"
     }
   ],
   "compilerOptions": {
