@@ -32,6 +32,15 @@ describe('assertSafeIri', () => {
     );
   });
 
+  it.each(['{', '}', '"', '|', '^', '`', '\\'])(
+    'rejects an IRI containing %s, which a SPARQL IRI reference excludes',
+    (character) => {
+      expect(() => assertSafeIri(`http://example.org/x${character}y`)).toThrow(
+        /unsafe characters/,
+      );
+    },
+  );
+
   it('rejects an IRI containing a control character', () => {
     expect(() => assertSafeIri('http://example.org/\x00')).toThrow(
       /unsafe characters/,
