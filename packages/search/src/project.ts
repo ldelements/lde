@@ -7,6 +7,7 @@ import {
   type FramedNode,
 } from './frame-by-type.js';
 import {
+  companionNames,
   assertTypeInSchema,
   displayFieldName,
   displayLangOf,
@@ -40,6 +41,7 @@ import {
   type StoredDate,
   type TextField,
 } from './schema.js';
+import { periodOfAll } from './period.js';
 
 /**
  * A projected node: the fields of one {@link SearchType}, flat. A **Root Type**
@@ -146,7 +148,10 @@ function pruneInternalFields(
   }
   for (const field of searchType.fields) {
     if (isInternalField(field)) {
-      delete document[field.name];
+      // With its companions, which no collection declares for it either.
+      for (const name of [field.name, ...companionNames(field)]) {
+        delete document[name];
+      }
       continue;
     }
     if (schema === undefined || field.kind !== 'reference') {
@@ -431,6 +436,9 @@ function applyField(
     if (field.kind === 'date') {
       return applyDerivedDate(document, field, derived);
     }
+    if (field.kind === 'period') {
+      return setPeriod(document, field, derivedStrings(derived));
+    }
     const value =
       field.kind === 'reference' && derived !== undefined
         ? derivedIris(derived)
@@ -530,6 +538,8 @@ function applyField(
         literal === undefined ? undefined : isoToUnixSeconds(literal),
       );
     }
+    case 'period':
+      return setPeriod(document, field, literalsOf(node, alias));
     case 'boolean': {
       // The xsd:boolean lexical space: true/false/1/0.
       const literal = firstLiteralOf(node, alias);
@@ -1520,6 +1530,45 @@ function setDate(
   }
   document[field.name] = stored.seconds;
   document[physicalFields(field).precision as string] = stored.precision;
+}
+
+/**
+ * Store a `period` field: its values verbatim under the field’s own name, for
+ * output, and the stretch they cover between them in the bound companions
+ * ({@link physicalFields}). A value that states no period is still stored – it
+ * is what the source said – but bounds nothing.
+ *
+ * Blank values are dropped before a single-valued field keeps its first, so
+ * an empty literal cannot cost the field the value behind it; and the bounds
+ * are taken from exactly the values stored, so what is served and what is
+ * filtered cannot disagree.
+ */
+function setPeriod(
+  document: ProjectedNode,
+  field: SearchField,
+  values: readonly string[],
+): void {
+  const nonBlank = dedupe(values.map((value) => value.trim())).filter(
+    (value) => value !== '',
+  );
+  const stated = field.array === true ? nonBlank : nonBlank.slice(0, 1);
+  if (stated.length === 0) {
+    return;
+  }
+  document[field.name] = field.array === true ? stated : stated[0];
+  const companions = physicalFields(field).period;
+  const covered = periodOfAll(stated);
+  if (companions !== undefined && covered !== undefined) {
+    document[companions.start] = covered.start;
+    document[companions.end] = covered.end;
+  }
+}
+
+/** A derive’s value as the strings a `period` stores: one string, or the
+ *  strings in a list; anything else states no value. */
+function derivedStrings(derived: unknown): readonly string[] {
+  const values = Array.isArray(derived) ? derived : [derived];
+  return values.filter((value): value is string => typeof value === 'string');
 }
 
 function setNumber(

@@ -311,6 +311,9 @@ function typesenseFields(
     ];
   }
 
+  if (field.kind === 'period') {
+    return periodFields(field, names);
+  }
   const valueType = typesenseValueType(field);
   const fields: CollectionFieldSchema[] = [
     {
@@ -360,6 +363,36 @@ function typesenseFields(
     fields.push(precisionField(names.precision));
   }
   return fields;
+}
+
+/**
+ * A `period` field: its values verbatim, stored for output but never indexed –
+ * nothing filters or sorts on the text – and the two int64 bound companions
+ * ({@link physicalFields}) that filters and sorts read instead. The bounds are
+ * indexed for sorting whatever the field declares: a deployment may sort on a
+ * field it does not expose as sortable, and one more sort index on a numeric
+ * field costs little next to a collection rebuilt the day it becomes so.
+ */
+function periodFields(
+  field: SearchField,
+  names: ReturnType<typeof physicalFields>,
+): CollectionFieldSchema[] {
+  // Every period has bounds; `physicalFields` names them for no other kind.
+  const { start, end } = names.period as NonNullable<typeof names.period>;
+  return [
+    {
+      name: field.name,
+      type: typesenseValueType(field),
+      index: false,
+      optional: field.required !== true,
+    },
+    ...[start, end].map((name): CollectionFieldSchema => ({
+      name,
+      type: 'int64',
+      sort: true,
+      optional: true,
+    })),
+  ];
 }
 
 /** A `date` field’s precision companion ({@link physicalFields}): read back
@@ -720,6 +753,16 @@ function nestedLeafFields(
     );
     return fields;
   }
+  if (names.period !== undefined) {
+    // No filter reaches a nested period, so its value and its bounds are
+    // stored for output and never indexed.
+    return periodFields(field, names).map(({ name, type }) => ({
+      name: nestedFieldName(prefix, name),
+      type,
+      index: false,
+      optional: true,
+    }));
+  }
   // A nested field can be `filterable` or `searchable`, never `facetable` or
   // `sortable` (`searchSchema`), so `filterable` is what indexes the value
   // itself – its search companion below indexes on its own account.
@@ -807,6 +850,7 @@ function typesenseValueType(field: SearchField): ValueType {
     case 'keyword':
     case 'reference':
     case 'text':
+    case 'period':
       return field.array === true ? 'string[]' : 'string';
   }
 }

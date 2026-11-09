@@ -50,6 +50,7 @@ export {
   storedFacetRanges,
   isAbsoluteIri,
   isoToUnixSeconds,
+  storedRangeBound,
   lastSecondOf,
   unixSecondsToIso,
   isDatePrecision,

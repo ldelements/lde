@@ -18,9 +18,8 @@ import {
   filterOperator,
   filterOperatorFor,
   ID_FIELD,
-  isoToUnixSeconds,
-  lastSecondOf,
   storedFacetRanges,
+  storedRangeBound,
   isInternalField,
   isBinnedRangeFacet,
   isWelded,
@@ -602,7 +601,8 @@ function compileMembership(
   return names.facet === name ? `${name}:${list}` : `${name}:=${list}`;
 }
 
-/** An inclusive Typesense range clause, or `undefined` when neither bound is
+/** An inclusive Typesense range clause; `UNUSABLE` for a range that ends
+ *  before it starts, which holds no value; or `undefined` when neither bound is
  *  usable. Which of the two readings that is – the caller set no bounds, or the
  *  codec rejected the ones they set – is deliberately NOT decided here: a
  *  criterion dropped from a clause narrows the query while a clause dropped
@@ -613,14 +613,31 @@ function compileRange(
   field: SearchField,
   range: { readonly min?: number | string; readonly max?: number | string },
   prefix = '',
-): string | undefined {
-  const name = qualify(prefix, field.name);
+): string | typeof UNUSABLE | undefined {
   // A bound a caller sent as `null` – a GraphQL variable left unfilled, which
   // the surface passes through – is a bound NOT SET, not a bound of `null`.
   // Read literally it reaches the engine as `datePosted:[null..…]`, which
   // Typesense rejects outright.
-  const min = storedBound(field, range.min ?? undefined, 'min');
-  const max = storedBound(field, range.max ?? undefined, 'max');
+  const min = storedRangeBound(field, range.min ?? undefined, 'min');
+  const max = storedRangeBound(field, range.max ?? undefined, 'max');
+  // A range that ends before it starts holds no value. Compiled, a period’s
+  // overlap would match everything spanning the gap instead.
+  if (min !== undefined && max !== undefined && min > max) {
+    return UNUSABLE;
+  }
+  const period = physicalFields(field).period;
+  if (period !== undefined) {
+    // Overlap: the period starts no later than the range ends, and ends no
+    // earlier than it starts – so `1935/1955` matches 1940–1950.
+    const startsBefore =
+      max === undefined ? undefined : `${period.start}:<=${max}`;
+    const endsAfter = min === undefined ? undefined : `${period.end}:>=${min}`;
+    // Parenthesised, because the clause may stand beside others in an `||`.
+    return startsBefore !== undefined && endsAfter !== undefined
+      ? `(${startsBefore} && ${endsAfter})`
+      : (startsBefore ?? endsAfter);
+  }
+  const name = qualify(prefix, field.name);
   if (min !== undefined && max !== undefined) {
     return `${name}:[${min}..${max}]`;
   }
@@ -631,25 +648,6 @@ function compileRange(
     return `${name}:<=${max}`;
   }
   return undefined;
-}
-
-/** A range bound as stored: a `date` field’s ISO 8601 bound becomes the indexed
- *  Unix seconds ({@link isoToUnixSeconds}) – a `min` its period’s first second,
- *  a `max` its last ({@link lastSecondOf}), so the inclusive clause takes in the
- *  whole period each names. An unparseable bound is dropped. */
-function storedBound(
-  field: SearchField,
-  bound: number | string | undefined,
-  side: 'min' | 'max',
-): number | string | undefined {
-  if (field.kind !== 'date' || typeof bound !== 'string') {
-    return bound;
-  }
-  const stored = isoToUnixSeconds(bound);
-  if (stored === undefined) {
-    return undefined;
-  }
-  return side === 'min' ? stored.seconds : lastSecondOf(stored);
 }
 
 /**
@@ -677,6 +675,13 @@ function compileSort(
     if (sortName !== undefined) {
       return `${sortName}:${sort.direction}`;
     }
+  }
+  const period = field === undefined ? undefined : physicalFields(field).period;
+  if (period !== undefined) {
+    // Earliest first orders on where a period begins, latest first on where it
+    // ends, so each direction ranks a period by the end of it that direction
+    // reaches first.
+    return `${sort.direction === 'asc' ? period.start : period.end}:${sort.direction}`;
   }
   return `${sort.field}:${sort.direction}`;
 }

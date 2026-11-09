@@ -9,7 +9,14 @@ import { joinGraph } from './join-graph.js';
  * *derived* from this by the engine adapter, never declared here.
  */
 export type FieldKind =
-  'text' | 'keyword' | 'integer' | 'number' | 'boolean' | 'date' | 'reference';
+  | 'text'
+  | 'keyword'
+  | 'integer'
+  | 'number'
+  | 'boolean'
+  | 'date'
+  | 'period'
+  | 'reference';
 
 /** The `where` operator a kind accepts, or `undefined` when it is not filterable
  *  through `where` (`text` feeds the free-text `query` instead). */
@@ -24,6 +31,7 @@ const OPERATOR_BY_KIND: Readonly<
   integer: 'range',
   number: 'range',
   date: 'range',
+  period: 'range',
   boolean: 'is',
 };
 
@@ -74,7 +82,12 @@ export function filterOperatorFor(kind: FieldKind): FilterOperator | undefined {
  * and a hand-written declaration is just as valid.
  */
 export type SearchField =
-  TextField | KeywordField | ReferenceField | NumericField | BooleanField;
+  | TextField
+  | KeywordField
+  | ReferenceField
+  | NumericField
+  | PeriodField
+  | BooleanField;
 
 /** The declaration members every {@link SearchField} kind shares. */
 export interface SearchFieldBase {
@@ -408,6 +421,41 @@ export interface DateField
   extends SearchFieldBase, RangeFacetable<DateFacetRange> {
   readonly kind: 'date';
   readonly searchable?: never;
+}
+
+/**
+ * A stretch of time, stated as an [EDTF](https://www.loc.gov/standards/datetime/)
+ * value or an ISO 8601 date: `1935/1955`, `1620~`, `162X`, `1440/..`. Where a
+ * `date` holds one instant, a period holds what its source knows – often only
+ * that something happened somewhere between two dates.
+ *
+ * - **Output** is each value verbatim, as its source stated it: `1620~` stays
+ *   `1620~`, because the qualifier is part of what is known and how to render
+ *   it (“c. 1620”) depends on the reader’s language.
+ * - **A range filter matches by overlap**: `{ min: '1940', max: '1950' }`
+ *   matches `1935/1955`, which a filter on a start date alone would miss. The
+ *   bounds are ISO 8601, as a `date` filter’s are, and `max` reaches through
+ *   the end of the period it names.
+ * - **Sorting** ascending orders on the earliest second a value allows,
+ *   descending on the latest, so “newest first” places `1935/1955` by 1955.
+ *
+ * The bounds are two companions the engine stores beside the values
+ * ({@link PhysicalFields.period}), never fields a client sees. An `array`
+ * field is stored as the one stretch its values cover between them – the
+ * earliest start to the latest end – since that is what an engine can sort on
+ * and test in one clause. A value no reader can parse is still served; it just
+ * takes no part in filtering or sorting.
+ *
+ * Not facetable: a period belongs in every bin it overlaps, which no engine
+ * facet counts from two bounds. And filtered only on the document that holds
+ * it, never through a nesting or a weld: the two bounds are compared in one
+ * clause, which a nested entry has no room for.
+ */
+export interface PeriodField extends SearchFieldBase {
+  readonly kind: 'period';
+  readonly searchable?: never;
+  readonly facetable?: never;
+  readonly facetRanges?: never;
 }
 
 /** A boolean flag; absent in a document means `false`. */
@@ -1417,6 +1465,11 @@ function assertServiceableNestedFields(
           `Nested field “${referenceType.name}.${field.name}” declares a label source, which an inline reference cannot serve; declare a “lookup” on the nested reference instead of resolving a label for it.`,
         );
       }
+      if (field.filterable === true && field.kind === 'period') {
+        throw new Error(
+          `Nested field “${referenceType.name}.${field.name}” is a filterable “period”, which a weld cannot test: a period is matched by comparing two stored bounds, and a weld compares one value per condition. Declare it “output” only, or carry the period on the Root Type.`,
+        );
+      }
       if (field.filterable === true && field.array === true) {
         throw new Error(
           `Nested field “${referenceType.name}.${field.name}” declares both “filterable” and “array”: a weld asks whether ONE entry satisfies every condition, and an entry holding a list has no single value to test – it stands for each combination at once, so the weld degenerates into the cross-product it exists to exclude. Declare the field single-valued; the projection emits one entry per combination.`,
@@ -1721,6 +1774,7 @@ export interface SearchTypeIssue {
     | 'duplicate-projection-value'
     | 'text-not-filterable'
     | 'text-not-facetable'
+    | 'period-not-facetable'
     | 'joinable-not-allowed'
     | 'joinable-without-label-source'
     | 'joinable-with-inline-ref'
@@ -1888,12 +1942,11 @@ export function validateSearchType(
   const issues: SearchTypeIssue[] = [];
   const seen = new Set<string>();
   const seenProjectionValues = new Set<string>();
-  // A `date` field stores its precision under `${name}_precision`, so a
-  // declared field of that name would overwrite it, and be overwritten.
+  // A `date` field stores its precision under `${name}_precision`, and a
+  // `period` its bounds under `${name}_start` and `${name}_end`, so a declared
+  // field of such a name would overwrite one, and be overwritten.
   const precisionCompanions = new Set(
-    searchType.fields
-      .filter((field) => field.kind === 'date')
-      .map((field) => physicalFields(field).precision),
+    searchType.fields.flatMap(companionNames),
   );
   for (const declared of searchType.fields) {
     // Validation guards declarations built OUTSIDE TypeScript (a SHACL
@@ -2021,9 +2074,12 @@ export function validateSearchType(
     ) {
       issue('text-not-facetable');
     }
+    if (field.facetable === true && field.kind === 'period') {
+      issue('period-not-facetable');
+    }
     if (
       field.facetRanges !== undefined &&
-      filterOperatorFor(field.kind) !== 'range'
+      (filterOperatorFor(field.kind) !== 'range' || field.kind === 'period')
     ) {
       issue('facet-ranges-not-allowed');
     }
@@ -2251,6 +2307,17 @@ export interface PhysicalFields {
    * other kind.
    */
   readonly precision: string | undefined;
+  /**
+   * The **bound companions** of a `period` field: `${name}_start` and
+   * `${name}_end`, the first and last second its values cover, in Unix
+   * seconds. The field itself stores the values verbatim for output, so what
+   * a filter compares and a sort orders on lives here. Declared for every
+   * period, `filterable` and `sortable` or not: a deployment may sort on a
+   * field it does not expose as sortable, and two int64 values per document
+   * cost less than a sort the engine refuses. `undefined` for every other
+   * field.
+   */
+  readonly period: { readonly start: string; readonly end: string } | undefined;
 }
 
 /** The physical name of an inline reference’s
@@ -2851,6 +2918,29 @@ export function lastSecondOf(stored: StoredDate): number {
     : next.getTime() / 1000 - 1;
 }
 
+/** A range bound as stored: a `date` or `period` bound, ISO 8601 at the edge,
+ *  becomes Unix seconds ({@link isoToUnixSeconds}) – a `min` the first second
+ *  of what it names, a `max` the last ({@link lastSecondOf}), so the range
+ *  takes in the whole of each. Any other bound is stored as given; one the
+ *  codec cannot read is `undefined`. */
+export function storedRangeBound(
+  field: SearchField,
+  bound: number | string | undefined,
+  side: 'min' | 'max',
+): number | string | undefined {
+  if (
+    (field.kind !== 'date' && field.kind !== 'period') ||
+    typeof bound !== 'string'
+  ) {
+    return bound;
+  }
+  const stored = isoToUnixSeconds(bound);
+  if (stored === undefined) {
+    return undefined;
+  }
+  return side === 'min' ? stored.seconds : lastSecondOf(stored);
+}
+
 /** `seconds` if a `date` field can store it – the int64 the engine keeps
  *  Unix seconds in – or `undefined`, the same answer {@link isoToUnixSeconds}
  *  gives a string it cannot parse. */
@@ -2990,6 +3080,7 @@ export function physicalFields(
       facet: undefined,
       identity: undefined,
       precision: undefined,
+      period: undefined,
     };
   }
   // A field storing a nested OBJECT cannot be filtered or faceted as itself, so
@@ -3015,7 +3106,20 @@ export function physicalFields(
           : `${filtered}_facet`,
     identity,
     precision: field.kind === 'date' ? `${field.name}_precision` : undefined,
+    period:
+      field.kind === 'period'
+        ? { start: `${field.name}_start`, end: `${field.name}_end` }
+        : undefined,
   };
+}
+
+/** The value companions a field stores beside its own name: a `date`’s
+ *  precision, a `period`’s two bounds. */
+export function companionNames(field: SearchField): string[] {
+  const { precision, period } = physicalFields(field);
+  return [precision, period?.start, period?.end].filter(
+    (name): name is string => name !== undefined,
+  );
 }
 
 /**

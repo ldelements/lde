@@ -279,7 +279,7 @@ outside TypeScript – a SHACL generator, plain JS): `searchSchema()`
 rejects a structurally invalid declaration (duplicate or non-identifier field
 names, a field named `id` – see [Lookup by IRI](#lookup-by-iri) –, a locale containing `_`, an `output`
 reference without `ref`, `text` without locales, `locales` on a non-text kind,
-`facetRanges` on a non-numeric kind, `searchable`/`transform` on a kind whose
+`facetRanges` on a non-numeric kind, `facetable` on a `period`, `searchable`/`transform` on a kind whose
 projection cannot honour it, `filterable`/`facetable` on `text`, two types
 sharing a `class` IRI or `name`) – the declaration-time counterpart of the
 port’s always-on query validation, so a bad schema fails at startup rather
@@ -294,6 +294,7 @@ directly.
 | `reference`          | `in` (membership)    | yes   | –                | labelled reference (id + label), or a nested document for a surfaced inline reference |
 | `integer` / `number` | `range { min, max }` | yes   | yes              | number                                                                                |
 | `date`               | `range` (inclusive)  | yes   | yes              | ISO 8601 string at the source’s precision (surface), an `xsd:gYear` in deep time      |
+| `period`             | `range` (overlap)    | –     | yes              | EDTF string / `string[]`, as stated                                                   |
 | `boolean`            | `is`                 | yes   | –                | boolean (absent = false)                                                              |
 
 A **`date`** is stored as Unix seconds – a sortable, range-filterable integer –
@@ -348,6 +349,59 @@ period they name: `min: "1999"` starts at the first second of 1999 and
 `max: "1999"` runs through its last, so `{ min: "1999", max: "1999" }` is the
 year 1999, a document dated `1999-05` included. A date-time bound is just that
 second.
+
+A **`period`** holds what a source knows about when something happened, which
+is often only that it fell somewhere between two dates. Its values are
+[EDTF](https://www.loc.gov/standards/datetime/) Level 0 or 1 – or anything the
+`date` codec reads, which includes deep time – and are served exactly as
+stated: `1620~` stays `1620~`, because “circa” is part of what is known, and
+how to say it depends on the reader’s language.
+
+What a filter compares and a sort orders on is the stretch each value covers,
+from its first second to its last:
+
+| Value              | Covers                          |
+| ------------------ | ------------------------------- |
+| `1935`             | all of 1935                     |
+| `1935/1955`        | 1935 through 1955               |
+| `1620~`, `1620?`   | all of 1620                     |
+| `162X`             | 1620 through 1629               |
+| `1606-07-15/1607`  | 15 July 1606 through 1607       |
+| `1440/..`, `1440/` | 1440 onwards, with no end       |
+| `../1607`, `/1607` | up to the end of 1607, no start |
+
+- A **range filter matches by overlap**: a period matches when it starts no
+  later than `max` and ends no earlier than `min`, so `{ min: "1940", max:
+"1950" }` matches `1935/1955`. The bounds are read as a `date` filter’s are.
+- **Sorting** ascending orders on where a period starts, descending on where it
+  ends, so newest-first places `1935/1955` by 1955.
+- A **qualifier** (`~`, `?`, `%`) keeps the stated bounds. Widening them by a
+  guessed margin would invent a precision the source never gave.
+- An **unknown bound** (`1440/`) reads as an open one (`1440/..`). Leaving a
+  work out of every result it might belong to costs a reader more than one
+  extra hit.
+- An **`array`** field is stored as the one stretch its values cover between
+  them, from the earliest start to the latest end. A work dated `1668`, `1676`
+  and `1686` therefore matches a filter on 1670–1672.
+- A value that is not a date or period in either grammar (`ca. 1620`,
+  `onbekend`), and an interval that ends before it starts, is still served but
+  takes no part in filtering or sorting.
+
+The values are stored as strings under the field’s own name. The bounds are
+two hidden int64 fields beside them (`PhysicalFields.period`, `${name}_start`
+and `${name}_end`), stored for every period, whether or not it is
+`filterable` or `sortable`: a deployment may sort on a field it does not
+expose as sortable. They are not part of the field model and never reach a
+client’s schema. Each side of an interval is read through the `date` codec;
+EDTF Level 1’s qualifiers, unspecified digits and seasons are rewritten into
+a form it reads first. A season covers its whole year, since EDTF fixes no
+months for it, and a Level 2 value states no period.
+
+A period is not `facetable`: it belongs in every bin it overlaps, which no
+engine facet counts from two bounds. It is filtered only on the document that
+holds it: nested in a Reference Type it may be `output` only, since a weld
+compares one value per condition. Nor can it be a collection’s default sorting
+field, which needs a single value.
 
 **`array` decides a field’s shape**, whatever the graph carries: a declared
 `array` field stores a list, and a single-valued one stores the first value –
@@ -1296,7 +1350,7 @@ policy produced it. A typed surface like GraphQL makes most of these
 unrepresentable; the port enforces them for everyone else (deployment
 `queryDefaults`, in-process callers, weaker-typed surfaces).
 
-One rule is about a **value** rather than a field: a `date` range bound the
+Two rules are about a **value** rather than a field. A `date` range bound the
 storage codec cannot read (`'yesterday'`, or a year past the int64 of seconds
 the engine stores) is an `unparseable-bound` issue naming the rejected bound. No
 surface’s type system catches this – `String` is `String` – and it has to be
@@ -1304,7 +1358,10 @@ caught here because a compiler cannot recover what the caller meant: a rejected
 bound is indistinguishable from a bound never set, and inside an `or` the two
 readings pull opposite ways – read as unset it widens the range to unbounded,
 dropped it narrows the result to the criterion’s siblings. Only the caller can
-fix the bound, so validation hands it back to them instead of guessing.
+fix the bound, so validation hands it back to them instead of guessing. A
+range whose `min` comes after its `max` is an `inverted-range` for the same
+reason: a `date` field would match nothing and a `period` everything spanning
+the gap, and neither is what the caller meant.
 
 Validation is the guard, but it is not the only one: a compiler reached
 directly must not quietly answer a different question either. So a `where`

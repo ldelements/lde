@@ -1301,7 +1301,9 @@ function logicalValue(
         ? undefined
         : referenceValue(flat, field, labels);
     }
-    case 'keyword': {
+    // A period is served as stated; its bound companions are for the engine.
+    case 'keyword':
+    case 'period': {
       const value = flat[field.name];
       return Array.isArray(value) || typeof value === 'string'
         ? (value as SearchValue)
