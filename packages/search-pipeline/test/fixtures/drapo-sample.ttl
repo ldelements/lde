@@ -59,3 +59,12 @@ _:anonymousWork a schema:CreativeWork ;
                     [ a schema:PropertyValue ;
                       schema:propertyID <https://data.axiell.com/vocabulary#Priref> ;
                       schema:value "12042" ] .
+
+# A size stated bare is display text no QuantitativeValue node carries, so it
+# lands in a literal field with no path – tagged or not.
+<https://ex/dr/1> a schema:Drawing ;
+  schema:name "Studie"@nl ;
+  schema:size "74 cm hoog bij 92 cm breed"@nl ,
+              "groot" ,
+              [ a schema:QuantitativeValue ;
+                schema:value 74 ] .

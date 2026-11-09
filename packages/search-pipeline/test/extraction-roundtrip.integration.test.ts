@@ -267,6 +267,34 @@ const sculpture = defineSearchType({
 
 const literalSchema = searchSchema(sculpture, propertyValue);
 
+// A literal field with no path: filled from a literal only, its language tag
+// kept, while a node fills the type’s other fields.
+const size = defineSearchType({
+  name: 'Size',
+  literalField: 'statement',
+  fields: [
+    { name: 'statement', kind: 'text', locales: ['nl', 'und'], output: true },
+    { name: 'value', kind: 'number', output: true, path: `<${SCHEMA}value>` },
+  ],
+});
+
+const drawing = defineSearchType({
+  name: 'Drawing',
+  class: `${SCHEMA}Drawing`,
+  fields: [
+    {
+      name: 'size',
+      kind: 'reference',
+      array: true,
+      output: true,
+      path: `<${SCHEMA}size>`,
+      ref: { strategy: 'inline', typeName: 'Size' },
+    },
+  ],
+});
+
+const sizeSchema = searchSchema(drawing, size);
+
 describe('extraction round-trip: generate → read → frame → project', () => {
   const port = 3007;
   const distribution = Distribution.sparql(
@@ -429,5 +457,18 @@ describe('extraction round-trip: generate → read → frame → project', () =>
       value: '12042',
       propertyID: 'https://data.axiell.com/vocabulary#Priref',
     });
+  });
+
+  it('fills a literal field with no path from a literal only, tag kept', async () => {
+    const [item] = await runStage(sizeSchema, drawing);
+    const entries = item?.document.size as Record<string, unknown>[];
+
+    expect(entries).toHaveLength(3);
+    expect(entries).toContainEqual({
+      statement_nl: '74 cm hoog bij 92 cm breed',
+    });
+    // An untagged literal lands under the reserved `und` locale.
+    expect(entries).toContainEqual({ statement_und: 'groot' });
+    expect(entries).toContainEqual({ value: 74 });
   });
 });
