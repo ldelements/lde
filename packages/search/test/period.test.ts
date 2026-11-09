@@ -79,7 +79,13 @@ describe('the stretch a period value covers', () => {
       ).dateCreated_start,
     );
     // edtf.js holds dates in `Date`, which a Carboniferous year is beyond.
-    for (const value of ['-318000000', 'Y-318000000']) {
+    for (const value of [
+      '-318000000',
+      'Y-318000000',
+      '-318000000/-300000000',
+      'Y-318000000/Y-300000000',
+      'Y-318000000/1650~',
+    ]) {
       const deep = project(value);
       expect(deep.dateCreated).toBe(value);
       // Earlier than the earliest second `Date` holds: 8.64e15 ms before 1970.
@@ -111,6 +117,14 @@ describe('the stretch a period value covers', () => {
       expect(document.dateCreated_start).toBe(seconds('1440-01-01T00:00:00Z'));
       expect(document.dateCreated_end).toBe(OPEN_END);
     }
+    // Deep time on the other side too: edtf.js cannot read the interval
+    // whole, so each side is read on its own.
+    for (const value of ['-318000000/..', 'Y-318000000/']) {
+      const document = project(value);
+      expect(document.dateCreated_start).toBeLessThan(-8.64e12);
+      expect(document.dateCreated_end).toBe(OPEN_END);
+    }
+    expect(project('../Y-318000000').dateCreated_start).toBe(OPEN_START);
     for (const value of ['../1607', '/1607']) {
       const document = project(value);
       expect(document.dateCreated_start).toBe(OPEN_START);
@@ -129,6 +143,8 @@ describe('the stretch a period value covers', () => {
       '1955/1935',
       '1606/1607/1608',
       '../..',
+      // A `Y` year is a year alone.
+      'Y2020-05-01',
     ]) {
       const document = project(value);
       expect(document.dateCreated, value).toBe(value);

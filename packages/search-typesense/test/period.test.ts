@@ -146,12 +146,6 @@ describe('the collection a period is stored in', () => {
         .map((field) => field.name),
     ).toEqual(['temporalCoverage_start', 'temporalCoverage_end']);
   });
-
-  it('refuses a period as the default sorting field', () => {
-    expect(() =>
-      buildCollectionDefinition(work, { defaultSortingField: 'dateCreated' }),
-    ).toThrow(/default sorting field “dateCreated” of “Work” is a “period”/);
-  });
 });
 
 describe('sorting on a period nothing declares sortable', () => {

@@ -7,7 +7,6 @@ import {
 } from '@lde/search';
 import {
   displayFieldPattern,
-  fieldNamed,
   ID_FIELD,
   isInlineReference,
   isInternalField,
@@ -142,16 +141,6 @@ export function buildCollectionDefinition(
     collection.enable_nested_fields = true;
   }
   if (options.defaultSortingField !== undefined) {
-    // A period stores its values as unindexed strings, which Typesense cannot
-    // sort a collection by – and of its two bounds, neither is the obvious
-    // default, so the deployment names a field that is.
-    if (
-      fieldNamed(searchType, options.defaultSortingField)?.kind === 'period'
-    ) {
-      throw new Error(
-        `The default sorting field “${options.defaultSortingField}” of “${searchType.name}” is a “period”, which has no single value to sort a collection by: a period sorts on its start ascending and on its end descending. Name a numeric or date field instead.`,
-      );
-    }
     collection.default_sorting_field = options.defaultSortingField;
   }
   if (options.synonymSets !== undefined) {

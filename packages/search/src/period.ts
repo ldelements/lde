@@ -1,5 +1,5 @@
 import edtf from 'edtf';
-import { isoToUnixSeconds, lastSecondOf, type StoredDate } from './schema.js';
+import { isoToUnixSeconds, lastSecondOf } from './schema.js';
 
 /**
  * The stretch of time a `period` value covers, as stored: the first and the
@@ -47,31 +47,28 @@ export const OPEN_END = 2 ** 62;
  * must answer for both, and leaving a work out of every result it might belong
  * to costs a reader more than one extra hit.
  *
- * **The `date` codec reads first**, edtf.js only what is left: a qualifier,
- * unspecified digits, a season, a `Y`-prefixed year. edtf.js holds dates in
- * `Date`, so it cannot hold the deep-time years the codec can (`Y-318000000`
- * comes back `NaN`); a `Y` year is therefore read by the codec when edtf.js
- * cannot. An interval whose end comes before its start is no period at all.
+ * **Each side is read on its own**: an empty or `..` side is open, anything
+ * the `date` codec reads goes to the codec, and the rest – qualifiers,
+ * unspecified digits, seasons – to edtf.js. The codec comes first because
+ * edtf.js holds dates in `Date` and so cannot hold deep-time years
+ * (`Y-318000000/..`); a `Y` year is read by the codec without its `Y`. A value
+ * open at both ends, or ending before it starts, is no period at all.
  */
 export function periodOf(value: string): StoredPeriod | undefined {
-  const bounds = value.trim().split('/');
-  if (bounds.length === 1) {
-    return sideOf(bounds[0]);
-  }
-  if (bounds.length !== 2) {
+  const sides = value.trim().split('/');
+  if (sides.length > 2) {
     return undefined;
   }
-  const [from, to] = bounds;
-  // Open at both ends (`../..`, a bare `/`) is no claim about time at all.
-  if (isOpen(from) && isOpen(to)) {
+  const from = sideOf(sides[0]);
+  // A plain date is its own first and last side.
+  const to = sides.length === 1 ? from : sideOf(sides[1]);
+  if (from === undefined || to === undefined) {
     return undefined;
   }
-  const start = isOpen(from) ? OPEN_START : sideOf(from)?.start;
-  const end = isOpen(to) ? OPEN_END : sideOf(to)?.end;
-  if (start === undefined || end === undefined || start > end) {
-    return undefined;
-  }
-  return { start, end };
+  const { start } = from;
+  const { end } = to;
+  const openAtBothEnds = start === OPEN_START && end === OPEN_END;
+  return start <= end && !openAtBothEnds ? { start, end } : undefined;
 }
 
 /**
@@ -101,30 +98,16 @@ export function periodOfAll(
   return covered;
 }
 
-function isOpen(bound: string): boolean {
-  return bound === '' || bound === '..';
-}
-
-/** One side of an interval, or a whole single value. */
+/** One side of an interval, or a whole plain value. */
 function sideOf(text: string): StoredPeriod | undefined {
-  const stored = isoToUnixSeconds(text);
+  // EDTF’s open (`..`) and unknown (empty) bounds, both read as open.
+  if (text === '' || text === '..') {
+    return { start: OPEN_START, end: OPEN_END };
+  }
+  const stored = isoToUnixSeconds(text.replace(DEEP_YEAR, '$1'));
   if (stored !== undefined) {
-    return covering(stored);
+    return { start: stored.seconds, end: lastSecondOf(stored) };
   }
-  const parsed = parsedEdtf(text);
-  if (parsed !== undefined) {
-    return parsed;
-  }
-  const deepYear = DEEP_YEAR.exec(text);
-  const deep = deepYear === null ? undefined : isoToUnixSeconds(deepYear[1]);
-  return deep === undefined ? undefined : covering(deep);
-}
-
-function covering(stored: StoredDate): StoredPeriod {
-  return { start: stored.seconds, end: lastSecondOf(stored) };
-}
-
-function parsedEdtf(text: string): StoredPeriod | undefined {
   let parsed: ReturnType<typeof edtf>;
   try {
     // Level 1 at most: the library defaults to Level 2, which would read
@@ -133,18 +116,16 @@ function parsedEdtf(text: string): StoredPeriod | undefined {
   } catch {
     return undefined;
   }
-  const { min, max } = parsed;
-  if (!isFiniteNumber(min) || !isFiniteNumber(max)) {
-    return undefined;
-  }
-  // edtf.js counts in milliseconds, its `max` the period’s last millisecond.
-  return { start: Math.floor(min / 1000), end: Math.floor(max / 1000) };
+  // edtf.js counts in milliseconds, its `max` the last millisecond covered.
+  // A year `Date` cannot hold comes back `NaN`, which fails the `start <= end`
+  // test in `periodOf`. Only an interval has an unknown (`null`) bound, and a
+  // side is never one.
+  return {
+    start: Math.floor((parsed.min as number) / 1000),
+    end: Math.floor((parsed.max as number) / 1000),
+  };
 }
 
-function isFiniteNumber(value: number | null): value is number {
-  return typeof value === 'number' && Number.isFinite(value);
-}
-
-/** An EDTF `Y` year – a year of any length, signed – read as the bare year the
- *  codec stores it as. */
+/** An EDTF `Y` year – a year of any length, signed – read as the bare year
+ *  the codec stores it as. */
 const DEEP_YEAR = /^Y([+-]?\d+)$/;
