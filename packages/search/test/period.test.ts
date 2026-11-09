@@ -251,6 +251,15 @@ describe('the bound companions', () => {
     expect(document.dateCreated_start).toBe(seconds('1935-01-01T00:00:00Z'));
   });
 
+  it('are pruned with an internal field, as a date’s precision is', () => {
+    for (const field of [
+      { name: 'dateCreated', kind: 'period', path: dateCreated.path },
+      { name: 'dateCreated', kind: 'date', path: dateCreated.path },
+    ] as SearchField[]) {
+      expect(Object.keys(project('1935', field))).toEqual(['id']);
+    }
+  });
+
   it('may not be shadowed by a declared field', () => {
     const issues = validateSearchType(
       workType([
@@ -396,6 +405,53 @@ describe('filtering a period', () => {
         },
       ]),
     ).toEqual(['not-weldable']);
+  });
+
+  it('refuses a range that ends before it starts', () => {
+    const issues = (min: string, max: string) =>
+      validateQuery(
+        query([{ or: [{ field: 'dateCreated', range: { min, max } }] }]),
+        work,
+        schema,
+      );
+    expect(issues('1950', '1940')).toEqual([
+      { part: 'where', field: 'dateCreated', reason: 'inverted-range' },
+    ]);
+    // A `date` field too, and a number.
+    const dated = workType([
+      {
+        name: 'datePublished',
+        kind: 'date',
+        path: 'https://ex/published',
+        filterable: true,
+      },
+      {
+        name: 'pages',
+        kind: 'integer',
+        path: 'https://ex/pages',
+        filterable: true,
+      },
+    ]);
+    expect(
+      validateQuery(
+        query([
+          {
+            or: [
+              { field: 'datePublished', range: { min: '1950', max: '1940' } },
+              { field: 'pages', range: { min: 300, max: 100 } },
+            ],
+          },
+        ]),
+        dated,
+        searchSchema(dated),
+      ),
+    ).toEqual([
+      { part: 'where', field: 'datePublished', reason: 'inverted-range' },
+      { part: 'where', field: 'pages', reason: 'inverted-range' },
+    ]);
+    // `max` reaches through the end of what it names.
+    expect(issues('1950-06', '1950')).toEqual([]);
+    expect(issues('1950', '1950')).toEqual([]);
   });
 
   it('reads a bound as a date bound', () => {

@@ -1946,13 +1946,7 @@ export function validateSearchType(
   // `period` its bounds under `${name}_start` and `${name}_end`, so a declared
   // field of such a name would overwrite one, and be overwritten.
   const precisionCompanions = new Set(
-    searchType.fields.flatMap((field) => {
-      const { precision, period } = physicalFields(field);
-      return [
-        ...(precision === undefined ? [] : [precision]),
-        ...(period === undefined ? [] : [period.start, period.end]),
-      ];
-    }),
+    searchType.fields.flatMap(companionNames),
   );
   for (const declared of searchType.fields) {
     // Validation guards declarations built OUTSIDE TypeScript (a SHACL
@@ -2924,6 +2918,29 @@ export function lastSecondOf(stored: StoredDate): number {
     : next.getTime() / 1000 - 1;
 }
 
+/** A range bound as stored: a `date` or `period` bound, ISO 8601 at the edge,
+ *  becomes Unix seconds ({@link isoToUnixSeconds}) – a `min` the first second
+ *  of what it names, a `max` the last ({@link lastSecondOf}), so the range
+ *  takes in the whole of each. Any other bound is stored as given; one the
+ *  codec cannot read is `undefined`. */
+export function storedRangeBound(
+  field: SearchField,
+  bound: number | string | undefined,
+  side: 'min' | 'max',
+): number | string | undefined {
+  if (
+    (field.kind !== 'date' && field.kind !== 'period') ||
+    typeof bound !== 'string'
+  ) {
+    return bound;
+  }
+  const stored = isoToUnixSeconds(bound);
+  if (stored === undefined) {
+    return undefined;
+  }
+  return side === 'min' ? stored.seconds : lastSecondOf(stored);
+}
+
 /** `seconds` if a `date` field can store it – the int64 the engine keeps
  *  Unix seconds in – or `undefined`, the same answer {@link isoToUnixSeconds}
  *  gives a string it cannot parse. */
@@ -3094,6 +3111,15 @@ export function physicalFields(
         ? { start: `${field.name}_start`, end: `${field.name}_end` }
         : undefined,
   };
+}
+
+/** The value companions a field stores beside its own name: a `date`’s
+ *  precision, a `period`’s two bounds. */
+export function companionNames(field: SearchField): string[] {
+  const { precision, period } = physicalFields(field);
+  return [precision, period?.start, period?.end].filter(
+    (name): name is string => name !== undefined,
+  );
 }
 
 /**

@@ -101,6 +101,12 @@ describe('a range filter on a period', () => {
   });
 });
 
+describe('an inverted range', () => {
+  it('matches nothing, rather than every period spanning the gap', () => {
+    expect(filterBy({ min: '1950', max: '1940' })).toBe('id:=[]');
+  });
+});
+
 describe('sorting on a period', () => {
   it('orders ascending on where a period starts, descending on where it ends', () => {
     const sortBy = (direction: 'asc' | 'desc') =>
@@ -190,5 +196,57 @@ describe('a period read back from a hit', () => {
       temporalCoverage: '16XX',
     });
     expect(hits[1].document).not.toHaveProperty('temporalCoverage');
+  });
+});
+
+describe('a period nested in a Reference Type', () => {
+  it('is stored for output, its bounds declared but never indexed', () => {
+    const production: SearchType = {
+      name: 'Production',
+      fields: [
+        {
+          name: 'period',
+          kind: 'period',
+          path: 'https://ex/period',
+          output: true,
+        },
+      ],
+    };
+    const withProduction: SearchType = {
+      ...work,
+      fields: [
+        {
+          name: 'production',
+          kind: 'reference',
+          path: 'https://ex/production',
+          output: true,
+          ref: { strategy: 'inline', typeName: 'Production' },
+        },
+      ],
+    };
+    const schema = searchSchema(withProduction, production);
+    const fields = buildCollectionDefinition(withProduction, { schema }).fields;
+    expect(
+      fields?.filter((field) => field.name.startsWith('production.period')),
+    ).toEqual([
+      {
+        name: 'production.period',
+        type: 'string',
+        index: false,
+        optional: true,
+      },
+      {
+        name: 'production.period_start',
+        type: 'int64',
+        index: false,
+        optional: true,
+      },
+      {
+        name: 'production.period_end',
+        type: 'int64',
+        index: false,
+        optional: true,
+      },
+    ]);
   });
 });

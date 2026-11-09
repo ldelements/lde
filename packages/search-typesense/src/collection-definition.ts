@@ -753,6 +753,16 @@ function nestedLeafFields(
     );
     return fields;
   }
+  if (names.period !== undefined) {
+    // No filter reaches a nested period, so its value and its bounds are
+    // stored for output and never indexed.
+    return periodFields(field, names).map(({ name, type }) => ({
+      name: nestedFieldName(prefix, name),
+      type,
+      index: false,
+      optional: true,
+    }));
+  }
   // A nested field can be `filterable` or `searchable`, never `facetable` or
   // `sortable` (`searchSchema`), so `filterable` is what indexes the value
   // itself – its search companion below indexes on its own account.

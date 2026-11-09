@@ -1350,7 +1350,7 @@ policy produced it. A typed surface like GraphQL makes most of these
 unrepresentable; the port enforces them for everyone else (deployment
 `queryDefaults`, in-process callers, weaker-typed surfaces).
 
-One rule is about a **value** rather than a field: a `date` range bound the
+Two rules are about a **value** rather than a field. A `date` range bound the
 storage codec cannot read (`'yesterday'`, or a year past the int64 of seconds
 the engine stores) is an `unparseable-bound` issue naming the rejected bound. No
 surface’s type system catches this – `String` is `String` – and it has to be
@@ -1358,7 +1358,10 @@ caught here because a compiler cannot recover what the caller meant: a rejected
 bound is indistinguishable from a bound never set, and inside an `or` the two
 readings pull opposite ways – read as unset it widens the range to unbounded,
 dropped it narrows the result to the criterion’s siblings. Only the caller can
-fix the bound, so validation hands it back to them instead of guessing.
+fix the bound, so validation hands it back to them instead of guessing. A
+range whose `min` comes after its `max` is an `inverted-range` for the same
+reason: a `date` field would match nothing and a `period` everything spanning
+the gap, and neither is what the caller meant.
 
 Validation is the guard, but it is not the only one: a compiler reached
 directly must not quietly answer a different question either. So a `where`

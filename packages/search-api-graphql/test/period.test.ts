@@ -107,6 +107,18 @@ describe('a period field', () => {
     ]);
   });
 
+  it('refuses a range that ends before it starts', async () => {
+    const response = await graphql({
+      schema: buildGraphQLSchema(schema),
+      source: `{ works(where: { dateCreated: { min: "1950", max: "1940" } }) { items { dateCreated } } }`,
+      contextValue: { acceptLanguage: ['nl'] },
+    });
+    expect(response.errors?.[0]?.message).toMatch(
+      /“dateCreated” \(inverted-range\)/,
+    );
+    expect(response.errors?.[0]?.extensions.code).toBe('BAD_USER_INPUT');
+  });
+
   it('refuses a bound that is a period rather than a date', async () => {
     const response = await graphql({
       schema: buildGraphQLSchema(schema),

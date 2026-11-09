@@ -13,9 +13,11 @@ export interface StoredPeriod {
 
 /**
  * The stored start of a period with no known beginning (`../1607`, `/1607`).
- * Further back than any date the codec stores – deep time included – and still
- * an exact int64, so a period open at its start overlaps every range that
- * reaches back far enough to meet its end.
+ * An exact int64 further back than any year a source states – about 146
+ * billion years, ten times the age of the universe – so a period open at its
+ * start overlaps every range that reaches back far enough to meet its end.
+ * The codec reads years to ±2⁶³ seconds; a bound past ±2⁶² is not refused,
+ * just never a real one.
  */
 export const OPEN_START = -(2 ** 62);
 

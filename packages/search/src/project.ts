@@ -7,6 +7,7 @@ import {
   type FramedNode,
 } from './frame-by-type.js';
 import {
+  companionNames,
   assertTypeInSchema,
   displayFieldName,
   displayLangOf,
@@ -147,7 +148,10 @@ function pruneInternalFields(
   }
   for (const field of searchType.fields) {
     if (isInternalField(field)) {
-      delete document[field.name];
+      // With its companions, which no collection declares for it either.
+      for (const name of [field.name, ...companionNames(field)]) {
+        delete document[name];
+      }
       continue;
     }
     if (schema === undefined || field.kind !== 'reference') {

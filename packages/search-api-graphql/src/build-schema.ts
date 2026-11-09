@@ -39,6 +39,7 @@ import {
 } from '@lde/search';
 import {
   AND_KEY,
+  assertValidQuery,
   facetableFields,
   filterableFields,
   fieldNamed,
@@ -1705,7 +1706,7 @@ function argsToQuery(
       `perPage must be between 0 and ${maxPerPage}; got ${perPage}.`,
     );
   }
-  return {
+  const query: SearchQuery = {
     text: args.query,
     where: whereToFilters(args.where, searchType, joins, schema),
     orderBy: args.orderBy
@@ -1717,6 +1718,15 @@ function argsToQuery(
     facets: [],
     locale: context.acceptLanguage[0] ?? 'und',
   };
+  // The port refuses what no GraphQL type rules out, such as a range that ends
+  // before it starts. Its error would be masked as internal, so the caller’s
+  // query is validated here and the port’s reason handed back as theirs.
+  try {
+    assertValidQuery(query, searchType, schema, joins);
+  } catch (error) {
+    throw userError((error as Error).message);
+  }
+  return query;
 }
 
 /**
