@@ -453,6 +453,11 @@ guarantees one output triple per genuine value:
   node’s `rdf:type` and the endpoint’s own selection – its key, its `local`
   fields – off it directly, each as one more branch. A flat agent then keeps its
   row through those branches even where it states nothing the edge reads.
+- **A node the graph may state as a literal keeps its row.** Where a Reference
+  Type declares a [`literalField`](./search#data-on-the-edge), the reference’s
+  union gains an empty branch, so a literal in place of the node – which has no
+  values of its own to read – still binds the reference’s template triple and
+  reaches the projection.
 - **A key hop stays inside its branch.** A reference naming a target that
   declares a [document key](./search#document-key) gets its branch extended with
   an `OPTIONAL` hop reading the referent’s key field, emitted under the target’s

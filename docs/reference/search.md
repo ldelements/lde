@@ -636,6 +636,34 @@ off each edge node, and the edge’s fields off each flat endpoint. The
 projection discards what does not apply, so the cost is extraction volume, not
 what the index stores.
 
+**`literalField`** on the Reference Type is for a graph that may state the
+node’s value bare: SCHEMA-AP-NDE lets each `schema:identifier` be a string or a
+`schema:PropertyValue`, and one work may carry both. A literal the reference
+reaches is then an entry carrying it in the named field and none of the type’s
+other fields, so the consumer reads one list instead of two shapes:
+
+```ts
+defineSearchType({
+  name: 'PropertyValue',
+  literalField: 'value',
+  fields: [/* value, propertyID */],
+});
+// identifier: [{ value: 'G11125-19' }, { value: '12042', propertyID: '…#Priref' }]
+```
+
+The field must hold a literal – any kind but `reference`, with no `derive` or
+`from` – and no other field can be `required`, since an entry made from a
+literal never carries it; `searchSchema` enforces both. Without a `literalField`,
+a literal under an inline reference projects to nothing.
+
+The literal field may omit `path`, and is then filled from a literal only,
+never from a node. `schema:size` needs this: stated bare, it is display text –
+`"74 cm hoog bij 92 cm breed"@nl` – that no `schema:QuantitativeValue` node
+carries, so a `Size` type declares a pathless `text` field `statement` beside
+the node’s `value` and `unitCode`. A `text` literal field keeps the literal’s
+language tag. A pathless literal field cannot be `required`: an entry made from
+a node never has it.
+
 **Conditions inside one edge's `where` are welded to one entry.** `creator: {
 where: { creator: { in: […] }, role: { in: ["etser"] } } }` means _this person
 in this role_, not _this person somewhere and this role somewhere_ – which two

@@ -228,6 +228,73 @@ const optionalEdgeSchema = searchSchema(
   contributorRole,
 );
 
+// A value the graph may state bare or on a node: a literal identifier lands in
+// the PropertyValue’s `value`, beside the ones stated on a node.
+const propertyValue = defineSearchType({
+  name: 'PropertyValue',
+  literalField: 'value',
+  fields: [
+    {
+      name: 'value',
+      kind: 'keyword',
+      output: true,
+      path: `<${SCHEMA}value>`,
+    },
+    {
+      name: 'propertyID',
+      kind: 'reference',
+      output: true,
+      path: `<${SCHEMA}propertyID>`,
+      ref: { strategy: 'idOnly' },
+    },
+  ],
+});
+
+const sculpture = defineSearchType({
+  name: 'Sculpture',
+  class: `${SCHEMA}Sculpture`,
+  fields: [
+    {
+      name: 'identifier',
+      kind: 'reference',
+      array: true,
+      output: true,
+      path: `<${SCHEMA}identifier>`,
+      ref: { strategy: 'inline', typeName: 'PropertyValue' },
+    },
+  ],
+});
+
+const literalSchema = searchSchema(sculpture, propertyValue);
+
+// A literal field with no path: filled from a literal only, its language tag
+// kept, while a node fills the type’s other fields.
+const size = defineSearchType({
+  name: 'Size',
+  literalField: 'statement',
+  fields: [
+    { name: 'statement', kind: 'text', locales: ['nl', 'und'], output: true },
+    { name: 'value', kind: 'number', output: true, path: `<${SCHEMA}value>` },
+  ],
+});
+
+const drawing = defineSearchType({
+  name: 'Drawing',
+  class: `${SCHEMA}Drawing`,
+  fields: [
+    {
+      name: 'size',
+      kind: 'reference',
+      array: true,
+      output: true,
+      path: `<${SCHEMA}size>`,
+      ref: { strategy: 'inline', typeName: 'Size' },
+    },
+  ],
+});
+
+const sizeSchema = searchSchema(drawing, size);
+
 describe('extraction round-trip: generate → read → frame → project', () => {
   const port = 3007;
   const distribution = Distribution.sparql(
@@ -378,5 +445,30 @@ describe('extraction round-trip: generate → read → frame → project', () =>
     expect(item?.document.contributor_id).toEqual(
       expect.arrayContaining(['https://ex/p/1', 'https://rkd.example/104628']),
     );
+  });
+
+  it('reads a value stated bare beside one stated on a node, as one list', async () => {
+    const [item] = await runStage(literalSchema, sculpture);
+    const entries = item?.document.identifier as Record<string, unknown>[];
+
+    expect(entries).toHaveLength(2);
+    expect(entries).toContainEqual({ value: 'G11125-19' });
+    expect(entries).toContainEqual({
+      value: '12042',
+      propertyID: 'https://data.axiell.com/vocabulary#Priref',
+    });
+  });
+
+  it('fills a literal field with no path from a literal only, tag kept', async () => {
+    const [item] = await runStage(sizeSchema, drawing);
+    const entries = item?.document.size as Record<string, unknown>[];
+
+    expect(entries).toHaveLength(3);
+    expect(entries).toContainEqual({
+      statement_nl: '74 cm hoog bij 92 cm breed',
+    });
+    // An untagged literal lands under the reserved `und` locale.
+    expect(entries).toContainEqual({ statement_und: 'groot' });
+    expect(entries).toContainEqual({ value: 74 });
   });
 });

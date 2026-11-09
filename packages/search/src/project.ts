@@ -444,8 +444,10 @@ function applyField(
     }
     return;
   }
-  if (field.path === undefined) {
-    // Neither path nor derive: populated outside the projection, if at all.
+  if (field.path === undefined && field.name !== searchType.literalField) {
+    // Neither path nor derive: populated outside the projection, if at all. A
+    // pathless literal field is the exception: {@link literalReader} fills it
+    // from a literal the reference reached, never from a node.
     return;
   }
   // The framed node is keyed by the {@link irAlias IR Alias} the extraction
@@ -951,9 +953,12 @@ function applyInlineReference(
     return;
   }
   const asEdge = edgeReader(referenceType, field.ref.identity);
+  const asLiteralEntry = literalReader(referenceType);
   const referents = applyNestedReferents(
     document,
-    valuesOf(node, alias).map(asEdge),
+    valuesOf(node, alias).map(
+      (value) => asLiteralEntry(value) ?? asEdge(value),
+    ),
     field,
     [referenceType],
     schema,
@@ -984,10 +989,36 @@ function edgeReader(
   const endpointAlias = irAlias(referenceType, endpointField);
   return (value) =>
     // Only a node can be an endpoint: anything else is left for the
-    // projection to discard, as it would be without an edge class.
+    // projection to discard, as it would be without an edge class – unless
+    // {@link literalReader}, which runs first, read it as a literal entry.
     !isObject(value) || classesOf(value).has(referenceType.edgeClass as string)
       ? value
       : { [endpointAlias]: [value] };
+}
+
+/**
+ * Read a **literal** an inline reference reached in place of a node as an entry
+ * carrying it under the Reference Type’s
+ * {@link ReferenceType.literalField literal field} alone – so a value the graph
+ * states bare and one it states on a node project through one path. Returns
+ * `undefined` for anything that is not a literal, and for every value where the
+ * type declares no literal field, leaving it to {@link edgeReader}.
+ */
+function literalReader(
+  referenceType: ReferenceType,
+): (value: unknown) => FramedNode | undefined {
+  const field =
+    referenceType.literalField === undefined
+      ? undefined
+      : fieldNamed(referenceType, referenceType.literalField);
+  if (field === undefined) {
+    return () => undefined;
+  }
+  const literalAlias = irAlias(referenceType, field);
+  return (value) =>
+    literalString(value) === undefined
+      ? undefined
+      : { [literalAlias]: [value] };
 }
 
 /**
