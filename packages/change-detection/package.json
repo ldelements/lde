@@ -1,6 +1,6 @@
 {
   "name": "@lde/change-detection",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Tell whether an RDF document changed since its last write, so writers can skip the unchanged ones",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",

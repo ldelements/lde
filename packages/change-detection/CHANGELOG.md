@@ -1,3 +1,9 @@
+## 0.0.3 (2026-11-09)
+
+### 🚀 Features
+
+- **change-detection:** throw CanonicalizationLimitError for a document too costly to hash ([#1014](https://github.com/ldelements/lde/pull/1014))
+
 ## 0.0.2 (2026-11-09)
 
 ### 🧱 Updated Dependencies
