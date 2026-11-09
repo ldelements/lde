@@ -1,6 +1,6 @@
 {
   "name": "@lde/change-detection",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Tell whether an RDF document changed since its last write, so writers can skip the unchanged ones",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
@@ -25,7 +25,7 @@
     "!**/*.tsbuildinfo"
   ],
   "dependencies": {
-    "@lde/dataset": "^0.10.0",
+    "@lde/dataset": "^0.10.1",
     "@rdfjs/types": "^2.0.1",
     "fetch-sparql-endpoint": "^7.2.0",
     "n3": "^2.13.12",

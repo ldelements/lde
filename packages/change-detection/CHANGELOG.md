@@ -1,3 +1,9 @@
+## 0.0.2 (2026-11-09)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset to 0.10.1
+
 ## 0.0.1 (2026-11-08)
 
 ### 🚀 Features
