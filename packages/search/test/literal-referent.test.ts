@@ -139,6 +139,102 @@ describe('a node the graph may state as a bare literal', () => {
     ]);
   });
 
+  it('refuses a required literal field with no path, which a node never fills', () => {
+    const strict = defineSearchType({
+      name: 'PropertyValue',
+      literalField: 'statement',
+      fields: [
+        {
+          name: 'statement',
+          kind: 'text',
+          locales: ['nl'],
+          output: true,
+          required: true,
+        },
+      ],
+    });
+
+    expect(() => searchSchema(work, strict)).toThrow(
+      /requires literal field “statement”, which has no “path”/,
+    );
+  });
+
+  it('reads a literal as an entry ahead of reading it as an endpoint', () => {
+    // With an edge class too, the edge reader would wrap a literal value
+    // object as an endpoint; the literal reader runs first and keeps it.
+    const ROLE = `${SCHEMA_ORG}Role`;
+    const person = defineSearchType({
+      name: 'Person',
+      class: `${SCHEMA_ORG}Person`,
+      labelField: 'name',
+      fields: [
+        {
+          name: 'name',
+          kind: 'text',
+          path: `${SCHEMA_ORG}name`,
+          locales: ['und'],
+          output: true,
+          searchable: { weight: 1 },
+        },
+      ],
+    });
+    const role = defineSearchType({
+      name: 'CreditRole',
+      edgeClass: ROLE,
+      literalField: 'credit',
+      fields: [
+        {
+          name: 'credit',
+          kind: 'keyword',
+          path: `${SCHEMA_ORG}roleName`,
+          output: true,
+        },
+        {
+          name: 'agent',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}contributor`,
+          output: true,
+          ref: { strategy: 'lookup', target: 'Person' },
+        },
+      ],
+    });
+    const credited = defineSearchType({
+      name: 'Credited',
+      class: `${SCHEMA_ORG}Photograph`,
+      fields: [
+        {
+          name: 'contributor',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}contributor`,
+          array: true,
+          output: true,
+          filterable: true,
+          ref: {
+            strategy: 'inline',
+            typeName: 'CreditRole',
+            identity: 'agent',
+          },
+        },
+      ],
+    });
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/work/4',
+        [alias('Credited', 'contributor')]: [
+          { '@value': 'Studio Smeets' },
+          { '@id': 'https://ex/person/1', '@type': `${SCHEMA_ORG}Person` },
+        ],
+      },
+      credited,
+      searchSchema(credited, person, role),
+    );
+
+    expect(document.contributor).toEqual([
+      { credit: 'Studio Smeets' },
+      { agent: 'https://ex/person/1' },
+    ]);
+  });
+
   it('refuses a literal field the type does not declare', () => {
     const unknown = defineSearchType({
       ...propertyValue,

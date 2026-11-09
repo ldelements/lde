@@ -661,7 +661,8 @@ never from a node. `schema:size` needs this: stated bare, it is display text –
 `"74 cm hoog bij 92 cm breed"@nl` – that no `schema:QuantitativeValue` node
 carries, so a `Size` type declares a pathless `text` field `statement` beside
 the node’s `value` and `unitCode`. A `text` literal field keeps the literal’s
-language tag.
+language tag. A pathless literal field cannot be `required`: an entry made from
+a node never has it.
 
 **Conditions inside one edge's `where` are welded to one entry.** `creator: {
 where: { creator: { in: […] }, role: { in: ["etser"] } } }` means _this person

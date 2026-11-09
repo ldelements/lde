@@ -1125,7 +1125,8 @@ function assertResolvableInlineReferences(
  * `from`, which compute a value, and not a `reference`, which reads IRIs), and
  * no other field is `required` – an entry made from a literal carries that one
  * field alone, so any other required one would drop it. A `path` is optional:
- * without one, the field is filled from a literal only, never from a node.
+ * without one, the field is filled from a literal only, never from a node, so
+ * it cannot be `required` itself.
  */
 function assertLiteralField(referenceType: ReferenceType): void {
   const { literalField } = referenceType;
@@ -1154,6 +1155,13 @@ function assertLiteralField(referenceType: ReferenceType): void {
   if (required !== undefined) {
     throw new Error(
       `${where} declares a “literalField” and requires “${required.name}”: an entry made from a literal carries only “${literalField}”, so it would never have “${required.name}”. Drop “required” from “${required.name}”.`,
+    );
+  }
+  // The mirror image: a literal field with no path is filled from a literal
+  // only, so an entry made from a node would never have it.
+  if (field.path === undefined && field.required === true) {
+    throw new Error(
+      `${where} requires literal field “${literalField}”, which has no “path”: an entry made from a node never has it. Drop “required”, or give it a “path”.`,
     );
   }
 }
