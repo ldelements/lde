@@ -1,3 +1,17 @@
+## 0.41.0 (2026-11-09)
+
+### 🚀 Features
+
+- ⚠️  **search:** add a period field kind for EDTF dates and intervals ([#1016](https://github.com/ldelements/lde/pull/1016))
+
+### ⚠️  Breaking Changes
+
+- **search:** add a period field kind for EDTF dates and intervals  ([#1016](https://github.com/ldelements/lde/pull/1016))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.37.0
+
 ## 0.40.4 (2026-11-09)
 
 ### 🧱 Updated Dependencies
