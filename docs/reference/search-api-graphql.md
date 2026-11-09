@@ -205,7 +205,7 @@ editor.
   report and is served as `PersonOrOrganizationUnresolvedReference`, carrying
   only its `id`; scalars/booleans
   per kind; `date` → an [`ISO8601Date`](#dates) at the precision its record
-  gave; nullability from `required` / `array` / `kind`.
+  gave; `period` → an [`EDTF`](#periods) as its record stated it; nullability from `required` / `array` / `kind`.
 - **`where`** one input per `filterable` field, typed by what the field keys on:
   a `keyword` holds literals (`KeywordFilter`), a `reference` holds identity
   (`‹Target›Filter`, or `IRIFilter` when it names no target, or a filter named
@@ -451,6 +451,31 @@ rejected when the query is coerced, with `BAD_USER_INPUT`. Both bounds include
 the whole period they name, so `{ min: "1900", max: "1999" }` is the years 1900
 to 1999, and a `DateRangeBucket`’s bounds select exactly the documents it
 counts. How each source literal is read is in
+[the field model](./search#field-model).
+
+## Periods
+
+A `period` field is served as an `EDTF`: the value its record stated, unchanged –
+`1935`, `1935/1955`, `1620~`, `162X`, `1440/..`. Turning it into words (“c.
+1620”, “the 1620s”) is the client’s job, since the words depend on the
+reader’s language.
+
+It is filtered under the same name, with a `DateRange`, and matches every
+period that **overlaps** the range:
+
+```graphql
+{
+  creativeWorks(where: { dateCreated: { min: "1940", max: "1950" } }) {
+    items {
+      dateCreated # ["1935/1955"]
+    }
+  }
+}
+```
+
+Sorting on it ascending orders by where each period starts, descending by where
+it ends. A value read back is not always a valid `DateRange` bound:
+`1935/1955` is a period, not a date. What each value covers is in
 [the field model](./search#field-model).
 
 ## Pagination

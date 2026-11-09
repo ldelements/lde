@@ -614,13 +614,25 @@ function compileRange(
   range: { readonly min?: number | string; readonly max?: number | string },
   prefix = '',
 ): string | undefined {
-  const name = qualify(prefix, field.name);
   // A bound a caller sent as `null` – a GraphQL variable left unfilled, which
   // the surface passes through – is a bound NOT SET, not a bound of `null`.
   // Read literally it reaches the engine as `datePosted:[null..…]`, which
   // Typesense rejects outright.
   const min = storedBound(field, range.min ?? undefined, 'min');
   const max = storedBound(field, range.max ?? undefined, 'max');
+  const period = physicalFields(field).period;
+  if (period !== undefined) {
+    // Overlap: the period starts no later than the range ends, and ends no
+    // earlier than it starts – so `1935/1955` matches 1940–1950.
+    const startsBefore =
+      max === undefined ? undefined : `${period.start}:<=${max}`;
+    const endsAfter = min === undefined ? undefined : `${period.end}:>=${min}`;
+    // Parenthesised, because the clause may stand beside others in an `||`.
+    return startsBefore !== undefined && endsAfter !== undefined
+      ? `(${startsBefore} && ${endsAfter})`
+      : (startsBefore ?? endsAfter);
+  }
+  const name = qualify(prefix, field.name);
   if (min !== undefined && max !== undefined) {
     return `${name}:[${min}..${max}]`;
   }
@@ -642,7 +654,10 @@ function storedBound(
   bound: number | string | undefined,
   side: 'min' | 'max',
 ): number | string | undefined {
-  if (field.kind !== 'date' || typeof bound !== 'string') {
+  if (
+    (field.kind !== 'date' && field.kind !== 'period') ||
+    typeof bound !== 'string'
+  ) {
     return bound;
   }
   const stored = isoToUnixSeconds(bound);
@@ -677,6 +692,13 @@ function compileSort(
     if (sortName !== undefined) {
       return `${sortName}:${sort.direction}`;
     }
+  }
+  const period = field === undefined ? undefined : physicalFields(field).period;
+  if (period !== undefined) {
+    // Earliest first orders on where a period begins, latest first on where it
+    // ends, so each direction ranks a period by the end of it that direction
+    // reaches first.
+    return `${sort.direction === 'asc' ? period.start : period.end}:${sort.direction}`;
   }
   return `${sort.field}:${sort.direction}`;
 }

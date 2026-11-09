@@ -46,6 +46,7 @@
   "dependencies": {
     "@lde/text-normalization": "^0.3.0",
     "@rdfjs/types": "^2.0.1",
+    "edtf": "^4.11.1",
     "inflection": "^3.0.2",
     "jsonld": "^9.0.0",
     "tslib": "^2.3.0"

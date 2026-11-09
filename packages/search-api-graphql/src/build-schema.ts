@@ -219,6 +219,26 @@ const dateScalar = new GraphQLScalarType<string, string>({
     assertDate(GraphQLString.parseLiteral(node, variables)),
 });
 
+/**
+ * The period scalar: a `period` field’s value as its source stated it, an
+ * EDTF date or interval (`1935/1955`, `1620~`, `162X`, `1440/..`) or a plain
+ * ISO 8601 date, which EDTF Level 0 already is. Output only – a period is
+ * filtered with an {@link dateScalar} range – so it is passed through as
+ * stored, and declares no input parsing of its own.
+ *
+ * Not `String`, so a client knows to read the value as EDTF rather than show
+ * it raw; not normalised, because a qualifier such as `~` (“circa”) is part of
+ * what the source knows, and only the client knows how its reader says it.
+ */
+const edtfScalar = new GraphQLScalarType<string, string>({
+  name: 'EDTF',
+  description:
+    'A date or period as its source stated it, in the Extended Date/Time Format (EDTF): `1935`, `1935/1955`, `1620~` (circa), `1620?` (uncertain), `162X` (the 1620s), `1440/..` (open-ended). Serialized as a string, unchanged. Filter on it with an `ISO8601Date` range, which matches every period that overlaps it.',
+  specifiedByURL: 'https://www.loc.gov/standards/datetime/',
+  serialize: (value: unknown) =>
+    (GraphQLString.serialize as (value: unknown) => string)(value),
+});
+
 function assertDate(value: string): string {
   if (isoToUnixSeconds(value) === undefined) {
     throw userError(
@@ -697,6 +717,7 @@ export function buildGraphQLSchema(
     ...rootTypeNames,
     iriScalar.name,
     dateScalar.name,
+    edtfScalar.name,
     keywordFilter.name,
     iriFilter.name,
     languageString.name,
@@ -1111,6 +1132,15 @@ export function buildGraphQLSchema(
               : unixSecondsToIso(value.seconds, value.precision);
           },
         };
+      case 'period':
+        // Served as stated: the bounds a filter and a sort read stay in the
+        // engine.
+        return field.array === true
+          ? {
+              type: nonNullListOf(edtfScalar),
+              resolve: (s) => s[field.name] ?? [],
+            }
+          : { type: scalarOutput(edtfScalar, field) };
       case 'boolean':
         return {
           type: new GraphQLNonNull(GraphQLBoolean),

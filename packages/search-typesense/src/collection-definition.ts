@@ -7,6 +7,7 @@ import {
 } from '@lde/search';
 import {
   displayFieldPattern,
+  fieldNamed,
   ID_FIELD,
   isInlineReference,
   isInternalField,
@@ -141,6 +142,16 @@ export function buildCollectionDefinition(
     collection.enable_nested_fields = true;
   }
   if (options.defaultSortingField !== undefined) {
+    // A period stores its values as unindexed strings, which Typesense cannot
+    // sort a collection by – and of its two bounds, neither is the obvious
+    // default, so the deployment names a field that is.
+    if (
+      fieldNamed(searchType, options.defaultSortingField)?.kind === 'period'
+    ) {
+      throw new Error(
+        `The default sorting field “${options.defaultSortingField}” of “${searchType.name}” is a “period”, which has no single value to sort a collection by: a period sorts on its start ascending and on its end descending. Name a numeric or date field instead.`,
+      );
+    }
     collection.default_sorting_field = options.defaultSortingField;
   }
   if (options.synonymSets !== undefined) {
@@ -311,6 +322,9 @@ function typesenseFields(
     ];
   }
 
+  if (field.kind === 'period') {
+    return periodFields(field, names);
+  }
   const valueType = typesenseValueType(field);
   const fields: CollectionFieldSchema[] = [
     {
@@ -360,6 +374,36 @@ function typesenseFields(
     fields.push(precisionField(names.precision));
   }
   return fields;
+}
+
+/**
+ * A `period` field: its values verbatim, stored for output but never indexed –
+ * nothing filters or sorts on the text – and the two int64 bound companions
+ * ({@link physicalFields}) that filters and sorts read instead. The bounds are
+ * indexed for sorting whatever the field declares: a deployment may sort on a
+ * field it does not expose as sortable, and one more sort index on a numeric
+ * field costs little next to a collection rebuilt the day it becomes so.
+ */
+function periodFields(
+  field: SearchField,
+  names: ReturnType<typeof physicalFields>,
+): CollectionFieldSchema[] {
+  // Every period has bounds; `physicalFields` names them for no other kind.
+  const { start, end } = names.period as NonNullable<typeof names.period>;
+  return [
+    {
+      name: field.name,
+      type: typesenseValueType(field),
+      index: false,
+      optional: field.required !== true,
+    },
+    ...[start, end].map((name): CollectionFieldSchema => ({
+      name,
+      type: 'int64',
+      sort: true,
+      optional: true,
+    })),
+  ];
 }
 
 /** A `date` field’s precision companion ({@link physicalFields}): read back
@@ -807,6 +851,7 @@ function typesenseValueType(field: SearchField): ValueType {
     case 'keyword':
     case 'reference':
     case 'text':
+    case 'period':
       return field.array === true ? 'string[]' : 'string';
   }
 }

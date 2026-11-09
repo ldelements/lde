@@ -402,8 +402,12 @@ function collectLeafIssues(
     issues.push({ part: 'where', field, reason: 'operator-mismatch' });
     return;
   }
-  if (declared.kind === 'date' && 'range' in criterion) {
-    // A `date` bound is ISO 8601 at the edge and Unix seconds in storage, so a
+  if (
+    (declared.kind === 'date' || declared.kind === 'period') &&
+    'range' in criterion
+  ) {
+    // A `date` bound is ISO 8601 at the edge and Unix seconds in storage – a
+    // `period` bound too, compared against its stored bounds – so a
     // bound the codec cannot read has nothing to compare against. Both bounds
     // are checked, so a caller who wrote two bad ones is told about both
     // instead of fixing one to be told about the other.

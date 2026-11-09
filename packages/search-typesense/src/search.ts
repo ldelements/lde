@@ -1312,6 +1312,13 @@ function logicalValue(
       const value = flat[field.name];
       return typeof value === 'number' ? value : undefined;
     }
+    case 'period': {
+      // Served as stated; the bound companions are for the engine alone.
+      const value = flat[field.name];
+      return Array.isArray(value) || typeof value === 'string'
+        ? (value as SearchValue)
+        : undefined;
+    }
     case 'date': {
       const seconds = flat[field.name];
       if (typeof seconds !== 'number') {
