@@ -46,10 +46,14 @@ second they cover in two hidden int64 companions (`${name}_start`,
   them. Per-value bounds would need a welded condition per value and could not
   be sorted on; multi-valued periods are rare enough that the envelope is the
   better trade.
-- **Parsing** goes to the date codec first, which reads every `date` lexical
-  form and deep time, and to edtf.js for what is left – qualifiers,
-  unspecified digits, seasons. edtf.js holds dates in `Date` and cannot read a
-  deep-time year, which the codec can.
+- **Parsing** reads each side of an interval through the date codec, which
+  reads every `date` lexical form and deep time. What only EDTF states is
+  rewritten into a form the codec reads: a qualifier dropped, an unspecified
+  month or day dropped to the coarser precision, unspecified year digits read
+  as their lowest and highest. A season is read as its whole year, since EDTF
+  fixes no months for it. We tried edtf.js for these: it holds dates in `Date`,
+  so any interval with a deep-time side failed, and what it added over the
+  codec came to a few rewrites.
 
 A period is **not facetable**. It belongs in every bin it overlaps, and an
 engine facet counts a document once, from one value. It is filtered only on the

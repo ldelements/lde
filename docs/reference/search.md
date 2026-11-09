@@ -392,9 +392,10 @@ two hidden int64 fields beside them (`PhysicalFields.period`, `${name}_start`
 and `${name}_end`), stored for every period, whether or not it is
 `filterable` or `sortable`: a deployment may sort on a field it does not
 expose as sortable. They are not part of the field model and never reach a
-client’s schema. EDTF features beyond what the `date` codec reads –
-qualifiers, unspecified digits, seasons – are parsed by
-[edtf.js](https://www.npmjs.com/package/edtf), at Level 1 at most.
+client’s schema. Each side of an interval is read through the `date` codec;
+EDTF Level 1’s qualifiers, unspecified digits and seasons are rewritten into
+a form it reads first. A season covers its whole year, since EDTF fixes no
+months for it, and a Level 2 value states no period.
 
 A period is not `facetable`: it belongs in every bin it overlaps, which no
 engine facet counts from two bounds. It is filtered only on the document that

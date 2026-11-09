@@ -53,6 +53,19 @@ describe('the stretch a period value covers', () => {
     ['162X', '1620-01-01T00:00:00Z', '1629-12-31T23:59:59Z'],
     ['16XX', '1600-01-01T00:00:00Z', '1699-12-31T23:59:59Z'],
     ['1889-06-15', '1889-06-15T00:00:00Z', '1889-06-15T23:59:59Z'],
+    // EDTF fixes no months for a season, so it is read as its whole year.
+    ['1606-21', '1606-01-01T00:00:00Z', '1606-12-31T23:59:59Z'],
+    ['1606-24~', '1606-01-01T00:00:00Z', '1606-12-31T23:59:59Z'],
+    ['1620%', '1620-01-01T00:00:00Z', '1620-12-31T23:59:59Z'],
+    ['1620-05~', '1620-05-01T00:00:00Z', '1620-05-31T23:59:59Z'],
+    ['1620-XX', '1620-01-01T00:00:00Z', '1620-12-31T23:59:59Z'],
+    ['1620-XX-XX', '1620-01-01T00:00:00Z', '1620-12-31T23:59:59Z'],
+    ['2004-02-XX', '2004-02-01T00:00:00Z', '2004-02-29T23:59:59Z'],
+    ['1XXX', '1000-01-01T00:00:00Z', '1999-12-31T23:59:59Z'],
+    ['156X~', '1560-01-01T00:00:00Z', '1569-12-31T23:59:59Z'],
+    ['2004-XX?', '2004-01-01T00:00:00Z', '2004-12-31T23:59:59Z'],
+    ['2004-01-01T10:10:10+05', '2004-01-01T05:10:10Z', '2004-01-01T05:10:10Z'],
+    ['1620~ / 162X', '1620-01-01T00:00:00Z', '1629-12-31T23:59:59Z'],
     // A date-time is just that second, normalised to UTC as a `date` is.
     [
       '1999-05-03T14:30:00+02:00',
@@ -78,7 +91,7 @@ describe('the stretch a period value covers', () => {
         workType([dateCreated]),
       ).dateCreated_start,
     );
-    // edtf.js holds dates in `Date`, which a Carboniferous year is beyond.
+    // Further back than `Date` reaches, so no `Date`-based reader would do.
     for (const value of [
       '-318000000',
       'Y-318000000',
@@ -96,29 +109,13 @@ describe('the stretch a period value covers', () => {
     }
   });
 
-  it('reads a season as part of its year', () => {
-    // Which months a season spans is edtf.js’s reading; that it stays inside
-    // its year is what a filter on the year depends on.
-    const document = project('1606-21');
-    expect(document.dateCreated_start).toBeGreaterThanOrEqual(
-      seconds('1606-01-01T00:00:00Z'),
-    );
-    expect(document.dateCreated_end).toBeLessThanOrEqual(
-      seconds('1606-12-31T23:59:59Z'),
-    );
-    expect(document.dateCreated_start).toBeLessThan(
-      document.dateCreated_end as number,
-    );
-  });
-
   it('stores an open or unknown bound as unbounded', () => {
     for (const value of ['1440/..', '1440/']) {
       const document = project(value);
       expect(document.dateCreated_start).toBe(seconds('1440-01-01T00:00:00Z'));
       expect(document.dateCreated_end).toBe(OPEN_END);
     }
-    // Deep time on the other side too: edtf.js cannot read the interval
-    // whole, so each side is read on its own.
+    // Deep time on the other side too: each side is read on its own.
     for (const value of ['-318000000/..', 'Y-318000000/']) {
       const document = project(value);
       expect(document.dateCreated_start).toBeLessThan(-8.64e12);
@@ -145,6 +142,16 @@ describe('the stretch a period value covers', () => {
       '../..',
       // A `Y` year is a year alone.
       'Y2020-05-01',
+      // Level 2, or no EDTF at all: X digits in a year whose month is
+      // known, an unspecified month with a known day, a qualifier on a time.
+      '156X-12-25',
+      '1620-XX-15',
+      '16X5',
+      '1620~?',
+      '1620-13',
+      '1999-05-03T14:30:00Z~',
+      // Unspecified in every digit: no more known than `../..`.
+      'XXXX',
     ]) {
       const document = project(value);
       expect(document.dateCreated, value).toBe(value);
