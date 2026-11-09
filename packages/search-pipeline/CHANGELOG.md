@@ -1,3 +1,14 @@
+## 0.41.3 (2026-11-09)
+
+### 🚀 Features
+
+- **search:** read a literal stated in place of a nested node ([#1013](https://github.com/ldelements/lde/pull/1013))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.44.2
+- Updated @lde/search to 0.36.4
+
 ## 0.41.2 (2026-11-09)
 
 ### 🧱 Updated Dependencies

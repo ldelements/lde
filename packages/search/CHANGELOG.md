@@ -1,3 +1,9 @@
+## 0.36.4 (2026-11-09)
+
+### 🚀 Features
+
+- **search:** read a literal stated in place of a nested node ([#1013](https://github.com/ldelements/lde/pull/1013))
+
 ## 0.36.3 (2026-11-05)
 
 ### 🚀 Features
