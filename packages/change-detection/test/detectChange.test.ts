@@ -1,6 +1,6 @@
-import { Parser, Store } from 'n3';
+import { DataFactory, Parser, Store } from 'n3';
 import { describe, expect, it } from 'vitest';
-import { detectChange } from '../src/index.js';
+import { CanonicalizationLimitError, detectChange } from '../src/index.js';
 
 const version = 'conversion-1';
 
@@ -77,7 +77,21 @@ describe('detectChange', () => {
 
     await expect(
       detectChange(parse(poison), undefined, version),
-    ).rejects.toThrow();
+    ).rejects.toThrow(CanonicalizationLimitError);
+  });
+
+  it('lets other canonicalization errors through as they are', async () => {
+    const { quad, variable, namedNode } = DataFactory;
+    const invalid = new Store([
+      quad(variable('s'), namedNode('https://example.org/p'), variable('o')),
+    ]);
+
+    const error = await detectChange(invalid, undefined, version).catch(
+      (caught: unknown) => caught,
+    );
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(CanonicalizationLimitError);
   });
 
   it('returns unchanged when only blank node labels differ', async () => {

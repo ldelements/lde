@@ -26,11 +26,25 @@ export interface ContentHash {
 export type ChangeStatus = 'created' | 'changed' | 'reconverted' | 'unchanged';
 
 /**
+ * Thrown by {@link detectChange} for a document that RDFC-1.0 cannot
+ * canonicalize within its work limit, such as one with many indistinguishable
+ * blank nodes. Such a document can be written, but not hashed.
+ */
+export class CanonicalizationLimitError extends Error {
+  constructor(options?: ErrorOptions) {
+    super('The document is too costly to canonicalize', options);
+    this.name = 'CanonicalizationLimitError';
+  }
+}
+
+/**
  * Compare a document to its stored hash.
  *
  * @param document The document as it would be written.
  * @param previous The stored hash, or `undefined` if none is stored.
  * @param version The caller’s conversion version.
+ * @throws {CanonicalizationLimitError} When the document is too costly to
+ *   canonicalize.
  */
 export async function detectChange(
   document: DatasetCore,
@@ -56,6 +70,15 @@ async function contentHash(document: DatasetCore): Promise<string> {
   );
   const canonical = await canonize(content.map(toCanonizeQuad), {
     algorithm: 'RDFC-1.0',
+  }).catch((error: unknown) => {
+    // rdf-canonize signals its work limit with a plain Error.
+    if (
+      error instanceof Error &&
+      error.message.startsWith('Maximum deep iterations exceeded')
+    ) {
+      throw new CanonicalizationLimitError({ cause: error });
+    }
+    throw error;
   });
   return `${method}:${createHash('sha256').update(canonical).digest('hex')}`;
 }
