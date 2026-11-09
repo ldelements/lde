@@ -572,6 +572,9 @@ export interface RootType extends SearchTypeBase {
   /** Only a Reference Type is an edge a graph may leave out
    *  ({@link ReferenceType.edgeClass}). */
   readonly edgeClass?: never;
+  /** Only a Reference Type is a node a graph may state as a bare literal
+   *  ({@link ReferenceType.literalField}). */
+  readonly literalField?: never;
 }
 
 /**
@@ -616,6 +619,23 @@ export interface ReferenceType extends SearchTypeBase {
    * of its own.
    */
   readonly edgeClass?: string;
+  /**
+   * The field a **literal** goes into where an inline reference reaches one in
+   * place of this type’s node, for a graph that may state the node’s value
+   * bare – `schema:identifier "G11125-19"` on one work, a
+   * `schema:PropertyValue` carrying `schema:value "12042"` on the next.
+   *
+   * Declaring it is the opt-in. A literal the reference reaches is then an
+   * entry carrying that literal in this field and none of the type’s other
+   * fields, so a consumer reads both shapes as one list; without it, a literal
+   * projects to nothing. The field must hold a literal – any kind but
+   * `reference`, with no `derive` or `from` – and no other field may be
+   * `required`, since a literal never carries one ({@link searchSchema}
+   * enforces both). Without a `path`, it is filled from a literal only: the
+   * display text of a `schema:size` stated bare, which no `QuantitativeValue`
+   * node carries.
+   */
+  readonly literalField?: string;
 }
 
 /**
@@ -1095,6 +1115,46 @@ function assertResolvableInlineReferences(
   assertConsistentIdentities(types);
   for (const referenceType of referenceTypes.values()) {
     assertNoInlineCycle(referenceType, referenceTypes, new Set());
+    assertLiteralField(referenceType);
+  }
+}
+
+/**
+ * A Reference Type’s {@link ReferenceType.literalField literal field} can hold
+ * the literal it stands for: it is declared, it holds a literal (no `derive` or
+ * `from`, which compute a value, and not a `reference`, which reads IRIs), and
+ * no other field is `required` – an entry made from a literal carries that one
+ * field alone, so any other required one would drop it. A `path` is optional:
+ * without one, the field is filled from a literal only, never from a node.
+ */
+function assertLiteralField(referenceType: ReferenceType): void {
+  const { literalField } = referenceType;
+  if (literalField === undefined) {
+    return;
+  }
+  const where = `Reference type “${referenceType.name}”`;
+  const field = fieldNamed(referenceType, literalField);
+  if (field === undefined) {
+    throw new Error(
+      `${where} names literal field “${literalField}”, which it does not declare.`,
+    );
+  }
+  if (
+    field.kind === 'reference' ||
+    field.derive !== undefined ||
+    ('from' in field && field.from !== undefined)
+  ) {
+    throw new Error(
+      `${where} names literal field “${literalField}”, which reads no literal: declare it with a kind other than “reference”, and no “derive” or “from”.`,
+    );
+  }
+  const required = referenceType.fields.find(
+    (other) => other.required === true && other.name !== literalField,
+  );
+  if (required !== undefined) {
+    throw new Error(
+      `${where} declares a “literalField” and requires “${required.name}”: an entry made from a literal carries only “${literalField}”, so it would never have “${required.name}”. Drop “required” from “${required.name}”.`,
+    );
   }
 }
 

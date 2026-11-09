@@ -198,7 +198,7 @@ function buildFor(
       const endpointField = endpointFieldOf(referenceType, field.ref.identity);
       if (endpointField !== undefined) {
         // An empty branch: an endpoint the graph says nothing else about keeps
-        // its row, and so its id, as it would inside an edge.
+        // its row, and so its id, as it would inside an edge – a literal too.
         nestedBranches.push(factory.patternGroup([], factory.gen()));
         const typeHop = buildTypeHop(referent, counter);
         template.push(typeHop.triple);
@@ -212,6 +212,13 @@ function buildFor(
         );
         template.push(...hops.template);
         nestedBranches.push(...hops.expansions);
+      } else if (referenceType.literalField !== undefined) {
+        // A literal stated in place of the node has no values of its own to
+        // read, so it keeps its row through an empty branch. Not narrowed to
+        // literals: a branch is evaluated on its own, so a `FILTER(isLiteral)`
+        // in it sees the referent unbound and drops every row. A node that
+        // keeps its row this way, reading nothing, projects to nothing.
+        nestedBranches.push(factory.patternGroup([], factory.gen()));
       }
       const patterns: Pattern[] = [
         factory.patternBgp(

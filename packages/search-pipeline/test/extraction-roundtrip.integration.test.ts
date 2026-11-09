@@ -228,6 +228,45 @@ const optionalEdgeSchema = searchSchema(
   contributorRole,
 );
 
+// A value the graph may state bare or on a node: a literal identifier lands in
+// the PropertyValue’s `value`, beside the ones stated on a node.
+const propertyValue = defineSearchType({
+  name: 'PropertyValue',
+  literalField: 'value',
+  fields: [
+    {
+      name: 'value',
+      kind: 'keyword',
+      output: true,
+      path: `<${SCHEMA}value>`,
+    },
+    {
+      name: 'propertyID',
+      kind: 'reference',
+      output: true,
+      path: `<${SCHEMA}propertyID>`,
+      ref: { strategy: 'idOnly' },
+    },
+  ],
+});
+
+const sculpture = defineSearchType({
+  name: 'Sculpture',
+  class: `${SCHEMA}Sculpture`,
+  fields: [
+    {
+      name: 'identifier',
+      kind: 'reference',
+      array: true,
+      output: true,
+      path: `<${SCHEMA}identifier>`,
+      ref: { strategy: 'inline', typeName: 'PropertyValue' },
+    },
+  ],
+});
+
+const literalSchema = searchSchema(sculpture, propertyValue);
+
 describe('extraction round-trip: generate → read → frame → project', () => {
   const port = 3007;
   const distribution = Distribution.sparql(
@@ -378,5 +417,17 @@ describe('extraction round-trip: generate → read → frame → project', () =>
     expect(item?.document.contributor_id).toEqual(
       expect.arrayContaining(['https://ex/p/1', 'https://rkd.example/104628']),
     );
+  });
+
+  it('reads a value stated bare beside one stated on a node, as one list', async () => {
+    const [item] = await runStage(literalSchema, sculpture);
+    const entries = item?.document.identifier as Record<string, unknown>[];
+
+    expect(entries).toHaveLength(2);
+    expect(entries).toContainEqual({ value: 'G11125-19' });
+    expect(entries).toContainEqual({
+      value: '12042',
+      propertyID: 'https://data.axiell.com/vocabulary#Priref',
+    });
   });
 });

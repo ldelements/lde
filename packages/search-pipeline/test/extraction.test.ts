@@ -437,6 +437,49 @@ describe('inline references (nested template)', () => {
       irAlias(withName, withName.fields[0]),
     ]);
   });
+
+  it('keeps a literal stated in place of the node through an empty branch', () => {
+    // A literal has no values of its own, so without a branch of its own it
+    // would drop out of the nested union and never reach the projection.
+    const propertyValue = defineSearchType({
+      name: 'PropertyValue',
+      literalField: 'value',
+      fields: [{ name: 'value', kind: 'keyword', path: `<${SCHEMA}value>` }],
+    });
+    const work = defineSearchType({
+      name: 'Work',
+      class: `${SCHEMA}CreativeWork`,
+      fields: [
+        {
+          name: 'identifier',
+          kind: 'reference',
+          array: true,
+          path: `<${SCHEMA}identifier>`,
+          ref: { typeName: 'PropertyValue', strategy: 'inline' },
+        },
+      ],
+    });
+    const plain = defineSearchType({
+      name: 'PropertyValue',
+      fields: propertyValue.fields,
+    });
+
+    /** Whether the reference’s nested union has a branch reading nothing. */
+    const hasEmptyBranch = (forSchema: SearchSchema): boolean => {
+      const [group] = unionBranches(extractionQuery(work, forSchema));
+      const nested = group.patterns.find((pattern) =>
+        factory.isPatternUnion(pattern),
+      );
+      return (
+        nested !== undefined &&
+        factory.isPatternUnion(nested) &&
+        nested.patterns.some((branch) => branch.patterns.length === 0)
+      );
+    };
+
+    expect(hasEmptyBranch(searchSchema(work, propertyValue))).toBe(true);
+    expect(hasEmptyBranch(searchSchema(work, plain))).toBe(false);
+  });
 });
 
 describe('references into a keyed type', () => {

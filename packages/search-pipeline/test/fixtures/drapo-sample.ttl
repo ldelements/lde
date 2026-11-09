@@ -50,3 +50,12 @@ _:anonymousWork a schema:CreativeWork ;
 <https://ex/o/1> a schema:Organization ;
   schema:name "Société Céramique" ;
   schema:sameAs <https://rkd.example/104628> .
+
+# A value the publisher may state bare or on a node: SCHEMA-AP-NDE allows each
+# identifier to be a string or a PropertyValue, and one work may carry both.
+<https://ex/sc/1> a schema:Sculpture ;
+  schema:name "Borstbeeld"@nl ;
+  schema:identifier "G11125-19" ,
+                    [ a schema:PropertyValue ;
+                      schema:propertyID <https://data.axiell.com/vocabulary#Priref> ;
+                      schema:value "12042" ] .
