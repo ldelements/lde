@@ -588,14 +588,16 @@ function applyField(
     case 'period':
       return setPeriod(document, field, literalsOf(node, alias), unread);
     case 'boolean': {
-      // The xsd:boolean lexical space: true/false/1/0.
+      // The xsd:boolean lexical space: true/false/1/0. Anything else – `ja`,
+      // `yes` – states neither, so it is left out rather than stored as false.
       const literal = firstLiteralOf(node, alias);
-      if (literal !== undefined) {
-        if (!BOOLEAN_LEXICAL_SPACE.has(literal)) {
-          unread(literal);
-        }
-        document[field.name] = literal === 'true' || literal === '1';
+      if (literal === undefined) {
+        return;
       }
+      if (!BOOLEAN_LEXICAL_SPACE.has(literal)) {
+        return unread(literal);
+      }
+      document[field.name] = literal === 'true' || literal === '1';
       return;
     }
   }

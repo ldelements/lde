@@ -196,6 +196,33 @@ describe('a value a derive returns', () => {
   });
 });
 
+describe('a boolean field', () => {
+  const field: SearchField = {
+    name: 'open',
+    kind: 'boolean',
+    path: 'https://ex/open',
+    output: true,
+  };
+  const project = (value: string) =>
+    projectDocument(
+      { '@id': ID, [alias('Work', 'open')]: { '@value': value } },
+      workType([field]),
+    );
+
+  it.each([
+    ['true', true],
+    ['1', true],
+    ['false', false],
+    ['0', false],
+  ])('stores %s as %s', (value, stored) => {
+    expect(project(value).open).toBe(stored);
+  });
+
+  it('leaves out a value outside the xsd:boolean lexical space instead of storing false', () => {
+    expect(project('ja')).toEqual({ id: ID });
+  });
+});
+
 describe('a projection without a receiver', () => {
   it('projects as before', () => {
     const field: SearchField = {
