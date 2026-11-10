@@ -1,3 +1,42 @@
+## 0.45.0 (2026-11-09)
+
+### 🚀 Features
+
+- ⚠️  **search:** add a period field kind for EDTF dates and intervals ([#1016](https://github.com/ldelements/lde/pull/1016))
+
+### ⚠️  Breaking Changes
+
+- **search:** add a period field kind for EDTF dates and intervals  ([#1016](https://github.com/ldelements/lde/pull/1016))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.37.0
+
+## 0.44.2 (2026-11-09)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.36.4
+
+## 0.44.1 (2026-11-09)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.42.1
+- Updated @lde/dataset to 0.10.1
+
+## 0.44.0 (2026-11-05)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.42.0
+
+## 0.43.3 (2026-11-05)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.36.3
+
 ## 0.43.2 (2026-11-05)
 
 ### 🩹 Fixes

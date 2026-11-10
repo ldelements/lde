@@ -1,0 +1,30 @@
+@prefix ch: <https://w3id.org/lde/content-hash#> .
+@prefix ex: <https://example.org/> .
+
+# A named graph per document.
+ex:dataset-1 {
+  ex:dataset-1 ex:title "One" ;
+    ch:contentHash "rdfc10-sha256:aaa" ;
+    ch:hashVersion "conversion-1" .
+}
+
+# One shared graph, a subject per document.
+ex:health {
+  ex:distribution-1 ex:status "ok" ;
+    ch:contentHash "rdfc10-sha256:bbb" ;
+    ch:hashVersion "conversion-1" .
+}
+
+# The default graph.
+ex:dataset-2 ch:contentHash "rdfc10-sha256:ccc" ;
+  ch:hashVersion "conversion-1" .
+
+# The same document written into two graphs, with different hashes.
+ex:copy-a {
+  ex:dataset-3 ch:contentHash "rdfc10-sha256:ddd" ;
+    ch:hashVersion "conversion-1" .
+}
+ex:copy-b {
+  ex:dataset-3 ch:contentHash "rdfc10-sha256:eee" ;
+    ch:hashVersion "conversion-1" .
+}

@@ -46,6 +46,7 @@ export type {
   NumericField,
   NumberField,
   DateField,
+  PeriodField,
   BooleanField,
   SearchType,
   SearchTypeBase,

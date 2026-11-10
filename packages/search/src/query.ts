@@ -2,9 +2,9 @@ import {
   fieldNamed,
   filterOperatorFor,
   ID_FIELD,
-  isoToUnixSeconds,
   nestedReferenceType,
   referencedTargetsOf,
+  storedRangeBound,
   type SearchField,
   type SearchSchema,
   type SearchType,
@@ -370,13 +370,22 @@ export interface QueryIssue {
      * and a rejected criterion answers a narrower one. Neither is the query,
      * and only the caller can fix the bound.
      */
-    | 'unparseable-bound';
+    | 'unparseable-bound'
+    /**
+     * A range whose `min` comes after its `max` – for a `date` or `period`,
+     * after the last second `max` names (`1950` to `1940`, not `1950` to
+     * `1950`). A `date` field would match nothing and a
+     * `period` everything spanning the gap, and neither is what the caller
+     * meant, so the caller is told.
+     */
+    | 'inverted-range';
 }
 
 /**
  * The checks every leaf criterion answers to, wherever it sits: the field is
  * declared and `filterable` on the type it constrains, its operator matches
- * that field's kind, and a `date` range's bounds are readable.
+ * that field's kind, and a `date` or `period` range's bounds are readable and
+ * in order.
  *
  * Shared by an ordinary criterion and by each condition welded to an entry, so
  * a welded condition is held to exactly the same rules – there is no second,
@@ -402,13 +411,15 @@ function collectLeafIssues(
     issues.push({ part: 'where', field, reason: 'operator-mismatch' });
     return;
   }
-  if (declared.kind === 'date' && 'range' in criterion) {
-    // A `date` bound is ISO 8601 at the edge and Unix seconds in storage, so a
-    // bound the codec cannot read has nothing to compare against. Both bounds
-    // are checked, so a caller who wrote two bad ones is told about both
-    // instead of fixing one to be told about the other.
-    for (const bound of [criterion.range.min, criterion.range.max]) {
-      if (typeof bound === 'string' && isoToUnixSeconds(bound) === undefined) {
+  if ('range' in criterion) {
+    // A `date` or `period` bound is ISO 8601 at the edge and Unix seconds in
+    // storage, so a bound the codec cannot read has nothing to compare
+    // against. Both bounds are checked, so a caller who wrote two bad ones is
+    // told about both instead of fixing one to be told about the other.
+    const [min, max] = (['min', 'max'] as const).map((side) => {
+      const bound = criterion.range[side] ?? undefined;
+      const stored = storedRangeBound(declared, bound, side);
+      if (typeof bound === 'string' && stored === undefined) {
         issues.push({
           part: 'where',
           field,
@@ -416,6 +427,10 @@ function collectLeafIssues(
           reason: 'unparseable-bound',
         });
       }
+      return stored;
+    });
+    if (min !== undefined && max !== undefined && min > max) {
+      issues.push({ part: 'where', field, reason: 'inverted-range' });
     }
   }
 }

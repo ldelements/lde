@@ -75,3 +75,60 @@ describe('expandIri', () => {
     expect(output).toBe('https://example.org/dct:title');
   });
 });
+
+describe('jsonLdToTurtle', () => {
+  it('prints a JSON-LD file next to the template as Turtle, with the frame’s prefixes', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'docgen-render-'));
+    await mkdir(join(directory, 'examples'));
+    await writeFile(
+      join(directory, 'examples', 'painting.jsonld'),
+      JSON.stringify({
+        '@context': 'https://example.org/context',
+        '@id': 'https://example.org/painting',
+        '@type': 'https://example.org/Painting',
+        'http://schema.org/name': 'De Nachtwacht',
+        'https://schema.org/sameAs': { '@id': 'https://example.org/other' },
+      }),
+    );
+    await writeFile(
+      join(directory, 'context.jsonld'),
+      JSON.stringify({ '@context': {} }),
+    );
+    const templatePath = join(directory, 'template.liquid');
+    await writeFile(
+      templatePath,
+      `{{ 'examples/painting.jsonld' | jsonLdToTurtle }}`,
+    );
+
+    const output = await render(
+      {
+        // The built-in prefixes win over the frame’s: the default frame maps
+        // schema to http://schema.org/, and sdo here renames schema.
+        '@context': {
+          ex: 'https://example.org/',
+          schema: 'http://schema.org/',
+          sdo: 'https://schema.org/',
+        },
+        '@graph': [],
+      } as never,
+      templatePath,
+      {
+        contexts: {
+          'https://example.org/context': join(directory, 'context.jsonld'),
+        },
+      },
+    );
+
+    expect(output).toBe(
+      [
+        '@prefix ex: <https://example.org/>.',
+        '@prefix schema: <https://schema.org/>.',
+        '',
+        'ex:painting a ex:Painting;',
+        '  <http://schema.org/name> "De Nachtwacht";',
+        '  schema:sameAs ex:other.',
+        '',
+      ].join('\n'),
+    );
+  });
+});

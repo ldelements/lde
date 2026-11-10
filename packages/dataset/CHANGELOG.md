@@ -1,3 +1,9 @@
+## 0.10.1 (2026-11-09)
+
+### 🩹 Fixes
+
+- **dataset:** refuse every character a SPARQL IRI reference excludes ([#1011](https://github.com/ldelements/lde/pull/1011))
+
 ## 0.10.0 (2026-11-03)
 
 ### 🚀 Features

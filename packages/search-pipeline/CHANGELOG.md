@@ -1,3 +1,53 @@
+## 0.42.0 (2026-11-09)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.45.0
+- Updated @lde/search to 0.37.0
+
+## 0.41.3 (2026-11-09)
+
+### 🚀 Features
+
+- **search:** read a literal stated in place of a nested node ([#1013](https://github.com/ldelements/lde/pull/1013))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.44.2
+- Updated @lde/search to 0.36.4
+
+## 0.41.2 (2026-11-09)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.44.1
+- Updated @lde/pipeline to 0.42.1
+- Updated @lde/dataset to 0.10.1
+
+## 0.41.1 (2026-11-05)
+
+### 🩹 Fixes
+
+- **search-pipeline:** read a node’s plain fields in one branch ([#1003](https://github.com/ldelements/lde/pull/1003))
+
+## 0.41.0 (2026-11-05)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.44.0
+- Updated @lde/pipeline to 0.42.0
+
+## 0.40.3 (2026-11-05)
+
+### 🚀 Features
+
+- **search:** read an edge the graph may leave out ([#996](https://github.com/ldelements/lde/pull/996))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.43.3
+- Updated @lde/search to 0.36.3
+
 ## 0.40.2 (2026-11-05)
 
 ### 🧱 Updated Dependencies

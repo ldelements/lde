@@ -1,3 +1,25 @@
+## 0.37.0 (2026-11-09)
+
+### 🚀 Features
+
+- ⚠️  **search:** add a period field kind for EDTF dates and intervals ([#1016](https://github.com/ldelements/lde/pull/1016))
+
+### ⚠️  Breaking Changes
+
+- **search:** add a period field kind for EDTF dates and intervals  ([#1016](https://github.com/ldelements/lde/pull/1016))
+
+## 0.36.4 (2026-11-09)
+
+### 🚀 Features
+
+- **search:** read a literal stated in place of a nested node ([#1013](https://github.com/ldelements/lde/pull/1013))
+
+## 0.36.3 (2026-11-05)
+
+### 🚀 Features
+
+- **search:** read an edge the graph may leave out ([#996](https://github.com/ldelements/lde/pull/996))
+
 ## 0.36.2 (2026-11-05)
 
 ### 🩹 Fixes

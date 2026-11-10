@@ -1,3 +1,20 @@
+## 0.42.1 (2026-11-09)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset-registry-client to 0.12.1
+- Updated @lde/distribution-health to 0.7.1
+- Updated @lde/distribution-probe to 0.5.1
+- Updated @lde/sparql-importer to 0.11.1
+- Updated @lde/dataset to 0.10.1
+
+## 0.42.0 (2026-11-05)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-health to 0.7.0
+- Updated @lde/sparql-importer to 0.11.0
+
 ## 0.41.0 (2026-11-03)
 
 ### 🚀 Features

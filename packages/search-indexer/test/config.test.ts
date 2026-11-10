@@ -341,6 +341,42 @@ describe('configFromEnvironment', () => {
       );
     });
 
+    it('reads the memory cap for QLever’s queries', () => {
+      const config = configFromEnvironment({
+        ...minimal,
+        QLEVER_IMAGE: 'adfreiburg/qlever:latest',
+        QLEVER_MEMORY_MAX_SIZE: '8G',
+      });
+      expect(config.qlever).toMatchObject({ memoryMaxSize: '8G' });
+    });
+
+    it('reads the memory cap for a sidecar too', () => {
+      const config = configFromEnvironment({
+        ...minimal,
+        QLEVER_MODE: 'remote',
+        QLEVER_MEMORY_MAX_SIZE: '6 GB',
+      });
+      expect(config.qlever).toMatchObject({ memoryMaxSize: '6 GB' });
+    });
+
+    it('rejects a memory cap QLever cannot read', () => {
+      expect(() =>
+        configFromEnvironment({
+          ...minimal,
+          QLEVER_IMAGE: 'adfreiburg/qlever:latest',
+          QLEVER_MEMORY_MAX_SIZE: 'plenty',
+        }),
+      ).toThrowError(/QLEVER_MEMORY_MAX_SIZE must be a size/);
+    });
+
+    it('rejects a memory cap without an import path', () => {
+      expect(() =>
+        configFromEnvironment({ ...minimal, QLEVER_MEMORY_MAX_SIZE: '8G' }),
+      ).toThrowError(
+        /QLEVER_MEMORY_MAX_SIZE requires QLEVER_IMAGE or QLEVER_MODE=remote/,
+      );
+    });
+
     it('reads the Docker network QLever joins', () => {
       const config = configFromEnvironment({
         ...minimal,

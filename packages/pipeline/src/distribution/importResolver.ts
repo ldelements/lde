@@ -1,10 +1,5 @@
 import { type Dataset, Distribution } from '@lde/dataset';
 import type { Importer } from '@lde/sparql-importer';
-import {
-  ImportFailed,
-  ImportSuccessful,
-  NotSupported,
-} from '@lde/sparql-importer';
 import type { SparqlServer } from '@lde/sparql-server';
 import {
   type DistributionResolver,
@@ -194,7 +189,7 @@ export class ImportResolver implements DistributionResolver {
     callbacks?.onImportStart?.();
     const importResult = await this.options.importer.import(candidates);
 
-    if (importResult instanceof ImportSuccessful) {
+    if (importResult.type === 'successful') {
       try {
         await this.options.server.start();
       } catch (error) {
@@ -223,7 +218,7 @@ export class ImportResolver implements DistributionResolver {
       });
     }
 
-    if (importResult instanceof ImportFailed) {
+    if (importResult.type === 'failed') {
       callbacks?.onImportFailed?.(
         importResult.distribution,
         new Error(importResult.error),
@@ -236,7 +231,7 @@ export class ImportResolver implements DistributionResolver {
       );
     }
 
-    if (importResult instanceof NotSupported) {
+    if (importResult.type === 'not-supported') {
       const failedDistribution = importResult.distribution ?? candidates[0];
       callbacks?.onImportFailed?.(
         failedDistribution,
@@ -249,14 +244,13 @@ export class ImportResolver implements DistributionResolver {
       );
     }
 
-    // Unreachable by type, but not at runtime: an importer that loads its own
-    // copy of @lde/sparql-importer returns results that fail every instanceof
-    // above. Skipping the dataset here would hide that a successful import
-    // happened at all.
+    // Unreachable by type, but not at runtime: an importer built against an
+    // incompatible @lde/sparql-importer returns results without a known `type`.
+    // Skipping the dataset here would hide that an import may have succeeded.
     const unexpected: never = importResult;
     throw new Error(
-      `The importer returned a ${(unexpected as object).constructor.name} that is not one of this resolver’s import results. ` +
-        'This usually means @lde/sparql-importer is installed more than once: check with `npm ls @lde/sparql-importer` and run `npm dedupe`.',
+      `The importer returned a result of unknown type ${JSON.stringify((unexpected as { type?: unknown }).type)}. ` +
+        'Check that the importer and @lde/pipeline depend on compatible versions of @lde/sparql-importer (`npm ls @lde/sparql-importer`).',
     );
   }
 

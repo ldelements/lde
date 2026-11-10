@@ -25,22 +25,23 @@ export interface Importer {
    * downloads it, and indexes it. Returns {@link NotSupported} when none of
    * the distributions use a supported format.
    */
-  import(
-    distributions: Distribution[],
-  ): Promise<NotSupported | ImportFailed | ImportSuccessful>;
+  import(distributions: Distribution[]): Promise<ImportResult>;
 }
 
-export class ImportSuccessful {
-  constructor(
-    public readonly distribution: Distribution,
-    public readonly identifier?: string,
-    public readonly tripleCount?: number,
-    public readonly warnings: string[] = [],
-    /** The engine that built the imported data, when the importer can tell.
-     *  For a cached index this is the engine that built it, which may differ
-     *  from the one that serves it. */
-    public readonly engine?: Engine,
-  ) {}
+/** The outcome of {@link Importer.import}, discriminated by its `type`. */
+export type ImportResult = ImportSuccessful | ImportFailed | NotSupported;
+
+/** The distribution was imported. */
+export interface ImportSuccessful {
+  readonly type: 'successful';
+  readonly distribution: Distribution;
+  readonly identifier?: string;
+  readonly tripleCount?: number;
+  readonly warnings: string[];
+  /** The engine that built the imported data, when the importer can tell.
+   *  For a cached index this is the engine that built it, which may differ
+   *  from the one that serves it. */
+  readonly engine?: Engine;
 }
 
 /** A store engine, identified as precisely as it identifies itself. */
@@ -52,13 +53,15 @@ export interface Engine {
   readonly version: string;
 }
 
-export class ImportFailed {
-  constructor(
-    public readonly distribution: Distribution,
-    public readonly error: string,
-  ) {}
+/** The import was attempted but failed. */
+export interface ImportFailed {
+  readonly type: 'failed';
+  readonly distribution: Distribution;
+  readonly error: string;
 }
 
-export class NotSupported {
-  constructor(public readonly distribution?: Distribution) {}
+/** None of the distributions use a format the importer supports. */
+export interface NotSupported {
+  readonly type: 'not-supported';
+  readonly distribution?: Distribution;
 }

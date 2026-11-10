@@ -31,7 +31,6 @@ import {
   SparqlProbeResult,
   type ProbeResultType,
 } from '@lde/distribution-probe';
-import { ImportSuccessful } from '@lde/sparql-importer';
 import {
   importOutcomeToVerdict,
   probeResultToVerdict,
@@ -969,11 +968,12 @@ export class Pipeline<Out = Quad> {
         dataset,
         distribution: resolved.imported.from,
         verdict: importOutcomeToVerdict(
-          new ImportSuccessful(
-            resolved.imported.from,
-            undefined,
-            resolved.imported.tripleCount,
-          ),
+          {
+            type: 'successful',
+            distribution: resolved.imported.from,
+            tripleCount: resolved.imported.tripleCount,
+            warnings: [],
+          },
           fingerprint,
         ),
       });

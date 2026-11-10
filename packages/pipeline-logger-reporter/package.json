@@ -28,9 +28,9 @@
     "tslib": "^2.3.0"
   },
   "devDependencies": {
-    "@lde/dataset": "^0.10.0"
+    "@lde/dataset": "^0.10.1"
   },
   "peerDependencies": {
-    "@lde/pipeline": "^0.41.0"
+    "@lde/pipeline": "^0.42.1"
   }
 }

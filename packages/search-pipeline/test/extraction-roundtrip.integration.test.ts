@@ -134,6 +134,167 @@ const visualArtwork = defineSearchType({
 
 const roleSchema = searchSchema(visualArtwork, agent, creatorRole);
 
+// The same relation where the publisher may leave the Role out, over a
+// `Photograph`: the agent is a person or an organization, and an organization
+// is keyed on its authority record – so a flat agent is only found if its type
+// and alignment are read where the work points, not one hop past a Role.
+const photoPerson = defineSearchType({
+  name: 'PhotoPerson',
+  class: `${SCHEMA}Person`,
+  labelField: 'name',
+  fields: [
+    {
+      name: 'name',
+      kind: 'text',
+      path: `<${SCHEMA}name>`,
+      locales: ['und'],
+      output: true,
+      searchable: { weight: 1 },
+    },
+  ],
+});
+
+const photoOrganization = defineSearchType({
+  name: 'PhotoOrganization',
+  class: `${SCHEMA}Organization`,
+  labelField: 'name',
+  key: { field: 'sameAs' },
+  fields: [
+    {
+      name: 'name',
+      kind: 'text',
+      path: `<${SCHEMA}name>`,
+      locales: ['und'],
+      output: true,
+      searchable: { weight: 1 },
+    },
+    {
+      name: 'sameAs',
+      kind: 'reference',
+      array: true,
+      path: `<${SCHEMA}sameAs>`,
+    },
+  ],
+});
+
+const contributorRole = defineSearchType({
+  name: 'ContributorRole',
+  edgeClass: `${SCHEMA}Role`,
+  fields: [
+    {
+      name: 'role',
+      kind: 'keyword',
+      output: true,
+      path: `<${SCHEMA}roleName>`,
+    },
+    {
+      name: 'contributor',
+      kind: 'reference',
+      output: true,
+      path: `<${SCHEMA}contributor>`,
+      ref: {
+        strategy: 'lookup',
+        target: ['PhotoPerson', 'PhotoOrganization'],
+        local: true,
+      },
+    },
+  ],
+});
+
+const photograph = defineSearchType({
+  name: 'Photograph',
+  class: `${SCHEMA}Photograph`,
+  fields: [
+    {
+      name: 'contributor',
+      kind: 'reference',
+      array: true,
+      output: true,
+      facetable: true,
+      path: `<${SCHEMA}contributor>`,
+      ref: {
+        strategy: 'inline',
+        typeName: 'ContributorRole',
+        identity: 'contributor',
+      },
+    },
+  ],
+});
+
+const optionalEdgeSchema = searchSchema(
+  photograph,
+  photoPerson,
+  photoOrganization,
+  contributorRole,
+);
+
+// A value the graph may state bare or on a node: a literal identifier lands in
+// the PropertyValue’s `value`, beside the ones stated on a node.
+const propertyValue = defineSearchType({
+  name: 'PropertyValue',
+  literalField: 'value',
+  fields: [
+    {
+      name: 'value',
+      kind: 'keyword',
+      output: true,
+      path: `<${SCHEMA}value>`,
+    },
+    {
+      name: 'propertyID',
+      kind: 'reference',
+      output: true,
+      path: `<${SCHEMA}propertyID>`,
+      ref: { strategy: 'idOnly' },
+    },
+  ],
+});
+
+const sculpture = defineSearchType({
+  name: 'Sculpture',
+  class: `${SCHEMA}Sculpture`,
+  fields: [
+    {
+      name: 'identifier',
+      kind: 'reference',
+      array: true,
+      output: true,
+      path: `<${SCHEMA}identifier>`,
+      ref: { strategy: 'inline', typeName: 'PropertyValue' },
+    },
+  ],
+});
+
+const literalSchema = searchSchema(sculpture, propertyValue);
+
+// A literal field with no path: filled from a literal only, its language tag
+// kept, while a node fills the type’s other fields.
+const size = defineSearchType({
+  name: 'Size',
+  literalField: 'statement',
+  fields: [
+    { name: 'statement', kind: 'text', locales: ['nl', 'und'], output: true },
+    { name: 'value', kind: 'number', output: true, path: `<${SCHEMA}value>` },
+  ],
+});
+
+const drawing = defineSearchType({
+  name: 'Drawing',
+  class: `${SCHEMA}Drawing`,
+  fields: [
+    {
+      name: 'size',
+      kind: 'reference',
+      array: true,
+      output: true,
+      path: `<${SCHEMA}size>`,
+      ref: { strategy: 'inline', typeName: 'Size' },
+    },
+  ],
+});
+
+const sizeSchema = searchSchema(drawing, size);
+
 describe('extraction round-trip: generate → read → frame → project', () => {
   const port = 3007;
   const distribution = Distribution.sparql(
@@ -245,5 +406,69 @@ describe('extraction round-trip: generate → read → frame → project', () =>
     // The facet stays keyed on identity alone, so the inline agent buckets
     // under nothing rather than under a label.
     expect(item?.document.creator_id).toEqual(['https://ex/p/1']);
+  });
+
+  it('reads an agent stated without its Role, keyed like one stated in it', async () => {
+    const [item] = await runStage(optionalEdgeSchema, photograph);
+    const entries = item?.document.contributor as Record<string, unknown>[];
+
+    expect(entries).toHaveLength(4);
+    // A bare IRI the graph says nothing else about is still an endpoint, kept
+    // by id – as it would be inside a Role.
+    expect(entries).toContainEqual({
+      contributor: expect.objectContaining({ id: 'https://ex/o/2' }),
+    });
+    expect(entries).toContainEqual(
+      expect.objectContaining({
+        role: 'drukker',
+        contributor: expect.objectContaining({
+          id: 'https://ex/p/1',
+          name_und: 'Johannes Vermeer',
+        }),
+      }),
+    );
+    // Stated flat, and re-keyed on its authority record: the type and the
+    // alignment were read at the first hop, where the work points.
+    const flat = entries.find(
+      (entry) =>
+        (entry.contributor as Record<string, unknown> | undefined)?.name_und ===
+        'Société Céramique',
+    );
+    expect(flat?.contributor).toEqual(
+      expect.objectContaining({
+        id: 'https://rkd.example/104628',
+        name_und: 'Société Céramique',
+      }),
+    );
+    // A Role naming no agent stays an edge, not an agent called “fabrikant”.
+    expect(entries).toContainEqual({ role: 'fabrikant' });
+    expect(item?.document.contributor_id).toEqual(
+      expect.arrayContaining(['https://ex/p/1', 'https://rkd.example/104628']),
+    );
+  });
+
+  it('reads a value stated bare beside one stated on a node, as one list', async () => {
+    const [item] = await runStage(literalSchema, sculpture);
+    const entries = item?.document.identifier as Record<string, unknown>[];
+
+    expect(entries).toHaveLength(2);
+    expect(entries).toContainEqual({ value: 'G11125-19' });
+    expect(entries).toContainEqual({
+      value: '12042',
+      propertyID: 'https://data.axiell.com/vocabulary#Priref',
+    });
+  });
+
+  it('fills a literal field with no path from a literal only, tag kept', async () => {
+    const [item] = await runStage(sizeSchema, drawing);
+    const entries = item?.document.size as Record<string, unknown>[];
+
+    expect(entries).toHaveLength(3);
+    expect(entries).toContainEqual({
+      statement_nl: '74 cm hoog bij 92 cm breed',
+    });
+    // An untagged literal lands under the reserved `und` locale.
+    expect(entries).toContainEqual({ statement_und: 'groot' });
+    expect(entries).toContainEqual({ value: 74 });
   });
 });

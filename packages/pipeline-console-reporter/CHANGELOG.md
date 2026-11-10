@@ -1,3 +1,16 @@
+## 0.33.1 (2026-11-09)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.42.1
+- Updated @lde/dataset to 0.10.1
+
+## 0.33.0 (2026-11-05)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.42.0
+
 ## 0.32.0 (2026-11-03)
 
 ### 🧱 Updated Dependencies

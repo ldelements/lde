@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { Distribution } from '@lde/dataset';
-import { ImportFailed, ImportSuccessful } from '@lde/sparql-importer';
+import type { ImportFailed, ImportSuccessful } from '@lde/sparql-importer';
 import {
   DataDumpProbeResult,
   NetworkError,
@@ -27,10 +27,11 @@ const distribution = new Distribution(
 
 describe('importOutcomeToVerdict', () => {
   it('maps a failed import to an invalid deep verdict with a parse-error reason', () => {
-    const outcome = new ImportFailed(
+    const outcome: ImportFailed = {
+      type: 'failed',
       distribution,
-      'QName not allowed for property: rdf:Description',
-    );
+      error: 'QName not allowed for property: rdf:Description',
+    };
 
     const verdict = importOutcomeToVerdict(outcome, 'fp-1');
 
@@ -44,7 +45,13 @@ describe('importOutcomeToVerdict', () => {
   });
 
   it('maps a successful import that produced triples to a valid deep verdict', () => {
-    const outcome = new ImportSuccessful(distribution, 'graph-1', 42);
+    const outcome: ImportSuccessful = {
+      type: 'successful',
+      distribution,
+      identifier: 'graph-1',
+      tripleCount: 42,
+      warnings: [],
+    };
 
     const verdict = importOutcomeToVerdict(outcome, 'fp-1');
 
@@ -56,7 +63,13 @@ describe('importOutcomeToVerdict', () => {
   });
 
   it('maps a successful import that produced zero triples to an invalid empty verdict', () => {
-    const outcome = new ImportSuccessful(distribution, 'graph-1', 0);
+    const outcome: ImportSuccessful = {
+      type: 'successful',
+      distribution,
+      identifier: 'graph-1',
+      tripleCount: 0,
+      warnings: [],
+    };
 
     const verdict = importOutcomeToVerdict(outcome, 'fp-1');
 

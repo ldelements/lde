@@ -1,0 +1,11 @@
+{
+  "@context": "https://example.org/context/",
+  "@id": "https://example.org/painting",
+  "@type": "Painting",
+  "name": { "@value": "De Nachtwacht", "@language": "nl" },
+  "dateCreated": "1642",
+  "creator": {
+    "@type": "Person",
+    "sameAs": "https://example.org/rembrandt"
+  }
+}

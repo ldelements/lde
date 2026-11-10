@@ -49,6 +49,7 @@ const packageGroups: Record<string, string[]> = {
     'sparql-anything',
   ],
   Publication: [
+    'change-detection',
     'fastify-rdf',
     'docgen',
     'search',

@@ -1,0 +1,5 @@
+{
+  "@context": { "@vocab": "https://schema.org/", "sameAs": { "@type": "@id" } },
+  "@id": "https://example.org/id/painting/1",
+  "sameAs": ["https://example.org/end.", "https://example.org/painting"]
+}

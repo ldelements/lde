@@ -1,3 +1,61 @@
+## 0.32.0 (2026-11-09)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.45.0
+- Updated @lde/search-pipeline to 0.42.0
+- Updated @lde/search to 0.37.0
+
+## 0.31.3 (2026-11-09)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.44.2
+- Updated @lde/search-pipeline to 0.41.3
+- Updated @lde/search to 0.36.4
+
+## 0.31.2 (2026-11-09)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline-console-reporter to 0.33.1
+- Updated @lde/dataset-registry-client to 0.12.1
+- Updated @lde/search-typesense to 0.44.1
+- Updated @lde/search-pipeline to 0.41.2
+- Updated @lde/sparql-qlever to 0.21.1
+- Updated @lde/pipeline to 0.42.1
+- Updated @lde/dataset to 0.10.1
+
+## 0.31.1 (2026-11-05)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-pipeline to 0.41.1
+
+## 0.31.0 (2026-11-05)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline-console-reporter to 0.33.0
+- Updated @lde/search-typesense to 0.44.0
+- Updated @lde/search-pipeline to 0.41.0
+- Updated @lde/sparql-qlever to 0.21.0
+- Updated @lde/pipeline to 0.42.0
+
+## 0.30.4 (2026-11-05)
+
+### 🚀 Features
+
+- **search-indexer:** make QLever’s memory cap for queries configurable ([#998](https://github.com/ldelements/lde/pull/998))
+
+## 0.30.3 (2026-11-05)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.43.3
+- Updated @lde/search-pipeline to 0.40.3
+- Updated @lde/search to 0.36.3
+
 ## 0.30.2 (2026-11-05)
 
 ### 🧱 Updated Dependencies

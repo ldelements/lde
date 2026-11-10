@@ -1,6 +1,6 @@
 {
   "name": "@lde/docgen",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "description": "Generate documentation from SHACL shapes",
   "keywords": [
     "shacl",
@@ -35,6 +35,8 @@
     "!**/*.tsbuildinfo"
   ],
   "dependencies": {
+    "@rdfjs/prefix-map": "^0.1.2",
+    "@rdfjs/serializer-turtle": "^1.1.6",
     "@rdfjs/types": "^2.0.1",
     "@tpluscode/rdf-ns-builders": "^5.0.0",
     "commander": "^15.0.0",
@@ -47,6 +49,8 @@
     "tslib": "^2.3.0"
   },
   "devDependencies": {
-    "@types/jsonld": "^1.5.15"
+    "@types/jsonld": "^1.5.15",
+    "@types/rdfjs__prefix-map": "^0.1.5",
+    "@types/rdfjs__serializer-turtle": "^1.1.0"
   }
 }

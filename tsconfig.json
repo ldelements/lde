@@ -109,6 +109,9 @@
     },
     {
       "path": "./packages/pipeline-logger-reporter"
+    },
+    {
+      "path": "./packages/change-detection"
     }
   ],
   "compilerOptions": {

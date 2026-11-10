@@ -1,3 +1,9 @@
+## 0.9.1 (2026-11-05)
+
+### 🚀 Features
+
+- **docgen:** add a jsonLdToTurtle filter ([#999](https://github.com/ldelements/lde/pull/999))
+
 ## 0.9.0 (2026-10-30)
 
 This was a version bump only for @lde/docgen to align it with other projects, there were no code changes.
