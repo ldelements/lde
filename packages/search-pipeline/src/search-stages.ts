@@ -212,13 +212,36 @@ export function searchStages(
  * `rootVariable` defaults to `root` and must match the stage’s
  * {@link SearchStageType.rootVariable}; it must not be `dataset` (reserved by the
  * SPARQL reader).
+ *
+ * `pattern`, a SPARQL graph pattern over `?‹rootVariable›`, restricts the
+ * selection to the instances that also match it, e.g.
+ * `?root <https://schema.org/about> <http://vocab.getty.edu/aat/300000000>`.
+ * The reader injects the selected roots into the extraction, so a root the
+ * pattern leaves out is never extracted, projected or written. The query
+ * declares no prefixes, so write IRIs in full.
+ *
+ * The pattern is its own group, so a `UNION` of complete groups or a trailing
+ * comment stays under the class constraint and the blank-node filter. The
+ * pattern is spliced in as text, though: one with unbalanced braces can close
+ * the group itself. It must mention `?‹rootVariable›` – one over another
+ * variable joins nothing to the root, so it would restrict nothing – and that
+ * is checked by name only, so a mention inside `OPTIONAL` or a comment passes.
+ * A pattern without the variable, or one that does not parse, throws here.
  */
 export function selectByClass(
   searchType: RootType,
   rootVariable = 'root',
+  pattern?: string,
 ): ItemSelector {
+  if (
+    pattern !== undefined &&
+    !new RegExp(`[?$]${rootVariable}\\b`).test(pattern)
+  ) {
+    throw new Error(`The pattern must constrain ?${rootVariable}.`);
+  }
+  const restriction = pattern === undefined ? '' : `{\n${pattern}\n}`;
   return new SparqlItemSelector({
-    query: `SELECT DISTINCT ?${rootVariable} WHERE { ?${rootVariable} a <${searchType.class}> FILTER(!isBlank(?${rootVariable})) }`,
+    query: `SELECT DISTINCT ?${rootVariable} WHERE { ?${rootVariable} a <${searchType.class}> . ${restriction} FILTER(!isBlank(?${rootVariable})) }`,
   });
 }
 

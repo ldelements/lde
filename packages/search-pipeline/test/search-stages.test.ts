@@ -301,7 +301,39 @@ describe('selectByClass', () => {
     expect(await sentQuery()).toMatch(/SELECTDISTINCT\?root/i);
   });
 
-  async function sentQuery(): Promise<string> {
+  it('restricts the roots by a graph pattern, keeping blank nodes out', async () => {
+    const query = await sentQuery(
+      '?root <https://example.org/about> <https://example.org/term/1>',
+    );
+    expect(query).toContain(
+      '?root<https://example.org/about><https://example.org/term/1>',
+    );
+    expect(query).toMatch(/isblank\(\?root\)/i);
+  });
+
+  it('keeps a UNION or a trailing comment inside its own group', async () => {
+    const query = await sentQuery(
+      '{ ?root <https://example.org/p> <https://example.org/a> } UNION { ?root <https://example.org/p> <https://example.org/b> } # either',
+    );
+    // Both branches stay under the class constraint and the blank-node filter.
+    expect(query).toMatch(
+      /<https:\/\/example\.org\/Person>\.\{\{.*\}UNION\{.*\}\}FILTER/,
+    );
+    expect(query).toMatch(/isblank\(\?root\)/i);
+  });
+
+  it('rejects a pattern that does not parse', () => {
+    expect(() => selectByClass(person, 'root', '?root <unclosed')).toThrow();
+  });
+
+  it('rejects a pattern that does not constrain the root variable', () => {
+    // Joined to nothing, it would restrict nothing.
+    expect(() =>
+      selectByClass(person, 'work', '?root <https://example.org/p> ?o'),
+    ).toThrow(/must constrain \?work/);
+  });
+
+  async function sentQuery(pattern?: string): Promise<string> {
     let query = '';
     nock('http://example.org')
       .post('/sparql')
@@ -314,7 +346,7 @@ describe('selectByClass', () => {
         { 'Content-Type': 'application/sparql-results+json' },
       );
 
-    const selector = selectByClass(person);
+    const selector = selectByClass(person, 'root', pattern);
     for await (const row of selector.select(distribution, 10)) {
       void row;
     }

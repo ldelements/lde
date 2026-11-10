@@ -111,6 +111,28 @@ does not declare throws at wiring time. Note that a field a transform fills must
 still declare a `path` – projection skips a field with neither a `path` nor a
 `derive`.
 
+To index only some of a type’s instances, pass `restrictRoots`: a SPARQL graph
+pattern over `?root` per root type, keyed by `name`, added to the type’s root
+selection in every dataset:
+
+```ts
+searchIndexerPipeline({
+  schema,
+  datasets,
+  writerFor,
+  restrictRoots: {
+    Object: '?root <https://schema.org/about> <https://example.org/term/1>',
+  },
+});
+```
+
+A root the pattern leaves out is never extracted, so the collection and its
+facet counts hold only matching roots. Write IRIs in full: the query declares no
+prefixes. A key the schema does not declare, a
+registry-sourced type, a pattern that does not mention `?root` or one that does
+not parse throws at wiring time. The restrictions extend `pipelineVersion`, so
+changing one re-indexes every dataset instead of skipping it.
+
 A deployment that needs more – a bespoke root selector (where the entry point
 is a domain fact, not a class), per-stage tuning, non-SPARQL readers, or
 quad-level plugins – composes the parts directly, as below, restating the
@@ -251,6 +273,8 @@ document key, so it can never become a search document – a custom selector
 should exclude them too. It also selects `DISTINCT` roots, so a root typed in
 several named graphs is selected once on an engine whose default graph is their
 union – a custom selector on such an engine should select `DISTINCT` too.
+`selectByClass(searchType, rootVariable, pattern)` adds a graph pattern, in a
+group of its own, to restrict the selection.
 
 ## Registry-sourced root types
 

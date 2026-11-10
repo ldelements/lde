@@ -100,5 +100,6 @@ export async function createSearchIndexer(
     pipelineVersion: config.provenance?.pipelineVersion,
     reporter: new ConsoleReporter(),
     transforms: extensions.transforms,
+    restrictRoots: config.restrictRoots,
   });
 }
