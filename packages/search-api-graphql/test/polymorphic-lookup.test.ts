@@ -176,10 +176,13 @@ describe('serving a lookup over several targets', () => {
       ),
     );
     expect(local).toMatch(
-      /interface PersonOrOrganizationReference \{\s+id: IRI\s/,
+      /interface PersonOrOrganizationLocalReference \{\s+id: IRI\s/,
     );
     expect(local).toMatch(
-      /type PersonOrOrganizationUnresolvedReference implements PersonOrOrganizationReference \{\s+id: IRI\s/,
+      /type PersonOrOrganizationLocalUnresolvedReference implements PersonOrOrganizationLocalReference \{\s+id: IRI\s/,
+    );
+    expect(local).toMatch(
+      /type PersonLocalReference implements PersonOrOrganizationLocalReference \{\s+id: IRI\s/,
     );
   });
 
@@ -388,6 +391,84 @@ describe('serving a lookup over several targets', () => {
           __typename: 'PersonOrOrganizationUnresolvedReference',
           id: 'https://x/1',
           name: [],
+        },
+      ],
+    });
+  });
+
+  it('resolves a local lookup to the targets’ local reference types, an unidentified entry included', async () => {
+    const localWork: SearchType = {
+      ...work,
+      fields: [
+        {
+          name: 'creator',
+          kind: 'reference',
+          array: true,
+          output: true,
+          ref: {
+            strategy: 'lookup',
+            target: ['Person', 'Organization'],
+            local: true,
+          },
+        },
+      ],
+    };
+    const localSchema = searchSchema(localWork, person, organization, place);
+    const engine: SearchEngine = {
+      schema: localSchema,
+      async search(): Promise<SearchResult> {
+        return {
+          total: 1,
+          facets: {},
+          hits: [
+            {
+              id: 'https://w/1',
+              document: {
+                creator: [
+                  {
+                    id: 'https://p/1',
+                    name: { nl: ['Frank Koel'] },
+                    [NESTED_DOCUMENT_TYPE]: 'Person',
+                  },
+                  // Named inline by the source, with no IRI.
+                  { name: { nl: ['Onbekende maker'] } },
+                ],
+              },
+            },
+          ],
+        };
+      },
+      searchFacets: async (
+        _searchType: SearchType,
+        queries: readonly SearchQuery[],
+      ): Promise<readonly FacetsOutcome[]> =>
+        queries.map(() => ({ facets: {} })),
+    };
+
+    const result = await graphql({
+      schema: buildGraphQLSchema(localSchema),
+      source: `{
+        creativeWorks {
+          items { creator { __typename id name { value } } }
+        }
+      }`,
+      contextValue: { engine, acceptLanguage: ['nl'] },
+    });
+
+    expect(result.errors).toBeUndefined();
+    const [item] = (result.data as { creativeWorks: { items: unknown[] } })
+      .creativeWorks.items;
+    expect(item).toEqual({
+      creator: [
+        {
+          __typename: 'PersonLocalReference',
+          id: 'https://p/1',
+          name: [{ value: 'Frank Koel' }],
+        },
+        {
+          __typename: 'PersonOrOrganizationLocalUnresolvedReference',
+          id: null,
+          name: [{ value: 'Onbekende maker' }],
         },
       ],
     });

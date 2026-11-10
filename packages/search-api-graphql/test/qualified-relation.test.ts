@@ -128,10 +128,10 @@ async function run(source: string, engine: SearchEngine) {
   });
 }
 
-describe('the id of a type two references share', () => {
-  // One emitted type serves every field pointing at its target, so its `id`
-  // nullability cannot be read off whichever field registers first: declared
-  // the wrong way round, every unidentified endpoint fails the response.
+describe('the id of a local and a plain reference on one target', () => {
+  // A local lookup gets a type of its own, so its nullable `id` never weakens
+  // the `id` a plain lookup on the same target guarantees – whichever of the
+  // two is declared first.
   const sharedTarget = (localFirst: boolean) => {
     const plain = {
       name: 'publisher',
@@ -156,15 +156,18 @@ describe('the id of a type two references share', () => {
   it.each([
     ['the local reference declared first', true],
     ['the plain reference declared first', false],
-  ])('is nullable with %s', (_order, localFirst) => {
+  ])('is nullable on the local type only, with %s', (_order, localFirst) => {
     const type = sharedTarget(localFirst);
     const printed = printSchema(
       buildGraphQLSchema(searchSchema(type, person), {}),
     );
 
-    // `IRI!` here would fail the whole response for an endpoint the source
-    // named inline – which is the case `local` exists to carry.
-    expect(printed).toMatch(/type PersonReference \{[^}]*\bid: IRI\n/);
+    // `IRI!` on the local type would fail the whole response for an endpoint
+    // the source named inline – which is the case `local` exists to carry.
+    expect(printed).toMatch(/type PersonLocalReference \{[^}]*\bid: IRI\n/);
+    expect(printed).toMatch(/type PersonReference \{[^}]*\bid: IRI!/);
+    expect(printed).toMatch(/\bcreator: \[PersonLocalReference!\]!/);
+    expect(printed).toMatch(/\bpublisher: PersonReference\b/);
   });
 
   it('relaxes a required field of the target too', () => {
@@ -189,7 +192,43 @@ describe('the id of a type two references share', () => {
       buildGraphQLSchema(searchSchema(sharedTarget(true), withRequired), {}),
     );
 
-    expect(printed).toMatch(/type PersonReference \{[^}]*\bcode: String\n/);
+    expect(printed).toMatch(
+      /type PersonLocalReference \{[^}]*\bcode: String\n/,
+    );
+    expect(printed).toMatch(/type PersonReference \{[^}]*\bcode: String!/);
+  });
+
+  it('refuses a root type whose reference type a local lookup’s would spell', () => {
+    // `PersonLocal`’s plain reference type and a local lookup on `Person` are
+    // both `PersonLocalReference`: refused, never one served for the other.
+    const personLocal = defineSearchType({
+      ...person,
+      name: 'PersonLocal',
+      class: 'https://example.org/PersonLocal',
+    });
+    const both = defineSearchType({
+      name: 'Both',
+      class: 'https://example.org/Both',
+      fields: [
+        {
+          name: 'creator',
+          kind: 'reference',
+          array: true,
+          output: true,
+          ref: { strategy: 'lookup', target: 'Person', local: true },
+        },
+        {
+          name: 'publisher',
+          kind: 'reference',
+          output: true,
+          ref: { strategy: 'lookup', target: 'PersonLocal' },
+        },
+      ],
+    });
+
+    expect(() =>
+      buildGraphQLSchema(searchSchema(both, person, personLocal), {}),
+    ).toThrow(/“PersonLocalReference”, which collides/);
   });
 
   it('keeps the non-null id where no reference is local', () => {

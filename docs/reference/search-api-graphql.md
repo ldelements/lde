@@ -193,6 +193,11 @@ editor.
   object’s fields directly and renders one referent at a time. A `local` lookup
   gets the nullable `id` too, and for the same reason: it carries what the
   document states about an endpoint whether or not the endpoint is identified.
+  So it is served as a type of its own, `‹Target›LocalReference` (an interface
+  over several targets: `PersonOrOrganizationLocalReference`), with the target’s
+  own fields optional, and a plain lookup on the same target keeps `‹Target›Reference` and
+  its non-null `id`. A type’s name and nullability follow from the field’s own
+  strategy, never from the other fields pointing at its target.
   A lookup naming [several targets](./search#a-referent-of-several-kinds) is
   served as an **interface** named for the set (`creator` over `Person` and
   `Organization` → `PersonOrOrganizationReference`), implemented by each

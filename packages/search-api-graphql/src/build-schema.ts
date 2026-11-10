@@ -46,8 +46,6 @@ import {
   labelSourceNamesOf,
   labelTargetNamesOf,
   literalKindOf,
-  localLookupTargetsOf,
-  referenceFields,
   filterOn,
   filterOperatorFor,
   ID_FIELD,
@@ -667,51 +665,12 @@ export function buildGraphQLSchema(
   /** Each `‹Target›OrPeriod` entry type, by the target’s name
    *  ({@link referentOrPeriodType}). */
   const referentOrPeriodTypes = new Map<string, GraphQLObjectType>();
-  const interfaceMembers = new Map<string, readonly string[]>();
+  const interfaceMembers = new Map<
+    string,
+    { readonly targets: readonly string[]; readonly local: boolean }
+  >();
   /** Each interface’s implementation for a referent no collection holds. */
   const unresolvedTypes: GraphQLObjectType[] = [];
-  /**
-   * The lookup targets whose emitted type must carry a NULLABLE `id`: those
-   * some field reaches through a {@link ReferenceStrategy.local local} lookup,
-   * which stores what a document says about an endpoint whether or not the
-   * endpoint is identified.
-   *
-   * Computed over the whole schema before any type is registered, because one
-   * emitted type is SHARED by every field pointing at its target. Decided per
-   * field instead, the answer would depend on which field happened to register
-   * first: a plain `publisher` lookup registering before a `local` creator
-   * would make `id` non-null and then fail the response for every unidentified
-   * creator – exactly the endpoint `local` exists to serve.
-   *
-   * Nullability is therefore a property of the type, and takes the weakest
-   * guarantee any of its users can keep.
-   */
-  const nullableIdTargets = new Set<string>();
-  {
-    const walked = new Set<string>();
-    const collect = (searchType: SearchType): void => {
-      if (walked.has(searchType.name)) {
-        return;
-      }
-      walked.add(searchType.name);
-      for (const field of referenceFields(searchType)) {
-        if (field.ref?.strategy === 'lookup' && field.ref.local === true) {
-          for (const target of labelSourceNamesOf(field)) {
-            nullableIdTargets.add(target);
-          }
-        }
-        const referenceType = nestedReferenceType(schema, field);
-        for (const nested of referenceType === undefined
-          ? localLookupTargetsOf(field, schema)
-          : [referenceType]) {
-          collect(nested);
-        }
-      }
-    };
-    for (const rootType of schema.values()) {
-      collect(rootType);
-    }
-  }
   // Seeded with the shared types every schema carries, not just the root type
   // names: a declaration is free to name a type `IRI` or `ValueBucket`, and
   // without this it would pass both collision checks and fail at
@@ -767,6 +726,45 @@ export function buildGraphQLSchema(
    *  exactly as two lookups on one target share `‹Target›Reference`. */
   function polymorphicName(targets: readonly string[]): string {
     return targets.join('Or');
+  }
+
+  /**
+   * Whether a field is a {@link ReferenceStrategy.local local} lookup, which
+   * stores what a document says about an endpoint whether or not the endpoint
+   * is identified – so its entries may carry no `id`.
+   */
+  function isLocalLookup(field: SearchField): boolean {
+    return (
+      field.kind === 'reference' &&
+      field.ref?.strategy === 'lookup' &&
+      field.ref.local === true
+    );
+  }
+
+  /**
+   * The key a reference’s emitted types are kept under: its
+   * {@link referencedTypeName}, apart for a local lookup.
+   *
+   * A local lookup gets types of its own – `‹Target›LocalReference`, with a
+   * nullable `id` and the target’s fields optional – rather than sharing
+   * `‹Target›Reference` with the plain lookups on its target. Shared, one
+   * local field would weaken the `id` every plain field on that target can
+   * guarantee; split, each type states exactly what its own fields keep, and
+   * its name depends on the field alone, never on what else the schema holds.
+   *
+   * The `:` keeps the two apart where no declared name can reach: a GraphQL
+   * name cannot contain one, so a root type named `PersonLocal` never shares a
+   * key with a local lookup on `Person`, and a clash of their GraphQL names is
+   * refused by `takenTypeNames` instead.
+   */
+  function typeKey(name: string, local: boolean): string {
+    return local ? `local:${name}` : name;
+  }
+
+  /** What a local lookup’s GraphQL type names carry before their suffix:
+   *  `Person` + `Local` + `Reference`. */
+  function variant(local: boolean): string {
+    return local ? 'Local' : '';
   }
 
   /**
@@ -828,19 +826,23 @@ export function buildGraphQLSchema(
     field: SearchField,
     owner: SearchType,
   ): void {
+    const local = isLocalLookup(field);
     const typeName = polymorphicName(targets);
-    if (interfaceTypes.has(typeName)) {
+    const key = typeKey(typeName, local);
+    if (interfaceTypes.has(key)) {
       return;
     }
-    const graphQLName = `${typeName}Reference`;
-    const unresolvedName = `${typeName}UnresolvedReference`;
+    const graphQLName = `${typeName}${variant(local)}Reference`;
+    const unresolvedName = `${typeName}${variant(local)}UnresolvedReference`;
     // The joined name is derived, so a declared type may spell the same
     // thing – `PersonOrOrganization` as a Reference Type – and its filter
-    // would then share a name with this interface’s. Refused, naming both.
+    // would then share a name with this interface’s. Refused, naming both –
+    // unless the interface’s plain or local sibling reserved it.
     if (
       takenTypeNames.has(graphQLName) ||
       takenTypeNames.has(unresolvedName) ||
-      takenTypeNames.has(typeName)
+      (takenTypeNames.has(typeName) &&
+        !interfaceTypes.has(typeKey(typeName, !local)))
     ) {
       throw new Error(
         `Reference type “${typeName}” (field “${field.name}” of “${owner.name}”) would be served as “${graphQLName}”, which collides with another type name; rename one.`,
@@ -854,10 +856,7 @@ export function buildGraphQLSchema(
     const members = targets.map(
       (target) => rootTypesByName.get(target) as RootType,
     );
-    const nullableId = members.some((member) =>
-      nullableIdTargets.has(member.name),
-    );
-    interfaceMembers.set(typeName, targets);
+    interfaceMembers.set(key, { targets, local });
     // One field set for the interface and its unresolved implementation:
     // what every referent carries, which is all an untyped one can offer.
     const sharedFields = (): Record<
@@ -865,7 +864,7 @@ export function buildGraphQLSchema(
       GraphQLFieldConfig<Source, SearchContext>
     > => ({
       id: {
-        type: nullableId ? iriScalar : new GraphQLNonNull(iriScalar),
+        type: local ? iriScalar : new GraphQLNonNull(iriScalar),
       },
       ...Object.fromEntries(
         outputFields(members[0])
@@ -883,12 +882,12 @@ export function buildGraphQLSchema(
         // for: claiming any target for it could be false, so it is served as
         // what it is.
         return typeof resolved === 'string' && targets.includes(resolved)
-          ? `${resolved}Reference`
+          ? `${resolved}${variant(local)}Reference`
           : unresolvedName;
       },
       fields: sharedFields,
     });
-    interfaceTypes.set(typeName, interfaceType);
+    interfaceTypes.set(key, interfaceType);
     unresolvedTypes.push(
       new GraphQLObjectType({
         name: unresolvedName,
@@ -937,18 +936,19 @@ export function buildGraphQLSchema(
     field: ReferenceField,
     owner: SearchType,
   ): void {
-    if (referenceTypes.has(typeName)) {
+    const local = isLocalLookup(field);
+    const key = typeKey(typeName, local);
+    if (referenceTypes.has(key)) {
       // Fields sharing a referent share one emitted type, and cannot disagree
-      // about its FIELDS: a lookup's come from the target that names the type,
-      // an inline reference's from the Reference Type that does. They can
-      // disagree about `id` nullability, which is why that is settled over the
-      // whole schema up front ({@link nullableIdTargets}) rather than read off
-      // whichever field registers the type first.
+      // about it: a lookup's fields come from the target that names the type,
+      // an inline reference's from the Reference Type that does, and a local
+      // lookup is keyed apart from a plain one ({@link typeKey}).
       return;
     }
-    const graphQLName = rootTypeNames.has(typeName)
-      ? `${typeName}Reference`
-      : typeName;
+    const graphQLName =
+      local || rootTypeNames.has(typeName)
+        ? `${typeName}${variant(local)}Reference`
+        : typeName;
     if (takenTypeNames.has(graphQLName)) {
       throw new Error(
         `Reference type “${typeName}” (field “${field.name}” of “${owner.name}”) would be served as “${graphQLName}”, which collides with another type name; rename one.`,
@@ -970,7 +970,10 @@ export function buildGraphQLSchema(
     // the interface and its members does not matter.
     const implemented = (): GraphQLInterfaceType[] =>
       [...interfaceMembers]
-        .filter(([, members]) => members.includes(typeName))
+        .filter(
+          ([, members]) =>
+            members.local === local && members.targets.includes(typeName),
+        )
         .map(([key]) => interfaceTypes.get(key) as GraphQLInterfaceType);
     // An inline entry carries no `id`, so its output fields are all a client
     // can select; GraphQL refuses an object type with none.
@@ -980,7 +983,7 @@ export function buildGraphQLSchema(
       );
     }
     referenceTypes.set(
-      typeName,
+      key,
       new GraphQLObjectType({
         name: graphQLName,
         interfaces: implemented,
@@ -1004,9 +1007,7 @@ export function buildGraphQLSchema(
             ? {}
             : {
                 id: {
-                  type: nullableIdTargets.has(typeName)
-                    ? iriScalar
-                    : new GraphQLNonNull(iriScalar),
+                  type: local ? iriScalar : new GraphQLNonNull(iriScalar),
                 },
               }),
           ...Object.fromEntries(
@@ -1020,7 +1021,7 @@ export function buildGraphQLSchema(
               // holding this one to it fails the whole response for exactly
               // the endpoint `local` exists to serve.
               outputFieldConfig(
-                nullableIdTargets.has(typeName)
+                local
                   ? ({ ...nestedField, required: false } as SearchField)
                   : nestedField,
               ),
@@ -1066,7 +1067,8 @@ export function buildGraphQLSchema(
     if (existing !== undefined) {
       return existing;
     }
-    const graphQLName = `${typeName}OrPeriod`;
+    const target = referencedTypeName(field as ReferenceField) as string;
+    const graphQLName = `${target}${variant(isLocalLookup(field))}OrPeriod`;
     if (takenTypeNames.has(graphQLName)) {
       throw new Error(
         `Field “${field.name}” reads its literals as periods, so it would be served as “${graphQLName}”, which collides with another type name; rename one.`,
@@ -1077,7 +1079,7 @@ export function buildGraphQLSchema(
       typeof entry === 'string';
     const created = new GraphQLObjectType<unknown, SearchContext>({
       name: graphQLName,
-      description: `A period, as its source stated it, or a reference to ${typeName}: exactly one of the two is set.`,
+      description: `A period, as its source stated it, or a reference to ${target}: exactly one of the two is set.`,
       fields: {
         value: {
           type: edtfScalar,
@@ -1087,7 +1089,7 @@ export function buildGraphQLSchema(
         },
         reference: {
           type: referenceType,
-          description: `The ${typeName} referenced, where the source named one; null for a period.`,
+          description: `The ${target} referenced, where the source named one; null for a period.`,
           resolve: (entry) => (isPeriod(entry) ? null : entry),
         },
       },
@@ -1138,7 +1140,10 @@ export function buildGraphQLSchema(
                 resolve: (source) => iriOf(source[field.name]) ?? null,
               };
         }
-        const typeName = referencedTypeName(field) ?? '';
+        const typeName = typeKey(
+          referencedTypeName(field) ?? '',
+          isLocalLookup(field),
+        );
         const isLookup = field.ref?.strategy === 'lookup';
         // A lookup naming several targets is served as their interface.
         const referenceType = (

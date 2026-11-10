@@ -293,6 +293,10 @@ export type ReferenceStrategy =
        * rather than an id – and because framing must reach one step further to
        * read the target’s fields off the referent
        * ({@link inlineFramingDepth}). A schema that declares none pays neither.
+       *
+       * Served under a type of its own (GraphQL: `‹Target›LocalReference`, with
+       * a nullable `id`), so a plain lookup on the same target keeps the
+       * non-null `id` it can guarantee.
        */
       readonly local?: boolean;
       /**

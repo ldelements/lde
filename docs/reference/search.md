@@ -854,10 +854,11 @@ Each referent then resolves against every named collection and is read through
 the declaration of whichever one holds it: its label, its own fields, its
 [key](#document-key) and its [facet policy](#facet-policy) are those of _its_
 target, per value. A GraphQL surface serves the field as an interface named for
-the set (`PersonOrOrganizationReference`), implemented by each target’s own
-reference type, so `__typename` says which kind each referent is and an inline
-fragment reaches the fields only one kind has. The interface itself carries
-`id` and whatever every target declares alike.
+the set (`PersonOrOrganizationLocalReference` for this `local` lookup,
+`PersonOrOrganizationReference` for a plain one), implemented by each target’s
+own reference type, so `__typename` says which kind each referent is and an
+inline fragment reaches the fields only one kind has. The interface itself
+carries `id` and whatever every target declares alike.
 
 **Order is precedence.** A referent two collections hold – two Root Types
 whose `class` selections overlap – belongs to the first target listed, and so
