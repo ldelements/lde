@@ -40,8 +40,13 @@ export type DatasetSkipReason = Reason<
   'unchanged' | 'probeFailed' | 'resolveFailed' | 'noDistributionAvailable'
 >;
 
-/** Why the pipeline skipped a stage for a dataset. */
-export type StageSkipReason = Reason<'notSupported'>;
+/**
+ * Why the pipeline skipped a stage for a dataset: `noItemsSelected` when the
+ * stage’s item selector selected nothing, so the stage does not apply to the
+ * dataset; `notSupported` when it could not run against the dataset’s
+ * distribution.
+ */
+export type StageSkipReason = Reason<'notSupported' | 'noItemsSelected'>;
 
 /** The outcome of probing one distribution. */
 export interface DistributionAnalysisResult {
@@ -314,9 +319,10 @@ export function levelOf(event: PipelineEventPayload): Level {
       return event.verdict.valid ? 'info' : 'warn';
     case 'datasetValidated':
       return event.report.conforms ? 'info' : 'warn';
+    case 'stageSkipped':
+      return event.reason.code === 'noItemsSelected' ? 'info' : 'warn';
     case 'selectionEmpty':
     case 'importFailed':
-    case 'stageSkipped':
     case 'itemsRejected':
     case 'valuesUnread':
     case 'timeoutTightened':

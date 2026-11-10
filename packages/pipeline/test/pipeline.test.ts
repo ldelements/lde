@@ -9,7 +9,7 @@ import {
 } from '../src/pipeline.js';
 import { Dataset, Distribution } from '@lde/dataset';
 import { Stage } from '../src/stage.js';
-import { NotSupported } from '../src/sparql/reader.js';
+import { NoItemsSelected, NotSupported } from '../src/sparql/reader.js';
 import {
   ResolvedDistribution,
   NoDistributionAvailable,
@@ -873,6 +873,27 @@ describe('Pipeline', () => {
         }),
       );
       expect(stage2.run).toHaveBeenCalled();
+    });
+
+    it('reports a stage that selected no items at info, as not applying', async () => {
+      const stage = makeStage('stage1', new NoItemsSelected());
+      const reporter = makeReporter();
+
+      await new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [stage],
+        writers: writer,
+        distributionResolver: makeResolver(makeResolvedDistribution()),
+        reporter,
+      }).run();
+
+      expect(reporter.stageSkipped).toHaveBeenCalledWith(
+        expect.objectContaining({
+          stage: 'stage1',
+          defaultLevel: 'info',
+          reason: { code: 'noItemsSelected', message: 'No items selected' },
+        }),
+      );
     });
   });
 

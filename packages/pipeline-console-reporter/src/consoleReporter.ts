@@ -336,8 +336,14 @@ export class ConsoleReporter implements Reporter {
 
   private stageSkipped({ reason }: StageSkippedEvent): void {
     if (this.activeSpinner) {
-      this.activeSpinner.suffixText = `skipped: ${chalk.red(reason.message)}`;
-      this.activeSpinner.fail();
+      if (reason.code === 'noItemsSelected') {
+        // The stage does not apply to this dataset: not a failure.
+        this.activeSpinner.suffixText = `skipped: ${chalk.dim(reason.message)}`;
+        this.activeSpinner.info();
+      } else {
+        this.activeSpinner.suffixText = `skipped: ${chalk.red(reason.message)}`;
+        this.activeSpinner.fail();
+      }
       this.activeSpinner = undefined;
     }
   }

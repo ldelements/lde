@@ -35,7 +35,7 @@ import {
   importOutcomeToVerdict,
   probeResultToVerdict,
 } from '@lde/distribution-health';
-import { NotSupported } from './sparql/reader.js';
+import { NoItemsSelected, NotSupported } from './sparql/reader.js';
 import type { StageOutputResolver } from './stageOutputResolver.js';
 import {
   levelOf,
@@ -1079,7 +1079,13 @@ export class Pipeline<Out = Quad> {
         type: 'stageSkipped',
         dataset,
         stage: stage.name,
-        reason: { code: 'notSupported', message: result.message },
+        reason: {
+          code:
+            result instanceof NoItemsSelected
+              ? 'noItemsSelected'
+              : 'notSupported',
+          message: result.message,
+        },
       });
       return false;
     }

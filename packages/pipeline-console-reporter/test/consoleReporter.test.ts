@@ -298,6 +298,28 @@ describe('ConsoleReporter', () => {
       expect(output).toContain('skipped');
       expect(output).toContain('No SPARQL endpoint');
     });
+
+    it('marks a stage that selected no items as informational, not failed', () => {
+      const reporter = new ConsoleReporter();
+      const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+
+      reporter.onEvent(
+        event({ type: 'stageStart', dataset, stage: 'transform' }),
+      );
+      reporter.onEvent(
+        event({
+          type: 'stageSkipped',
+          dataset,
+          stage: 'transform',
+          reason: { code: 'noItemsSelected', message: 'No items selected' },
+        }),
+      );
+
+      const output = spy.mock.calls.map((c) => String(c[0])).join('');
+      expect(output).toContain('No items selected');
+      expect(output).toContain(logSymbols.info);
+      expect(output).not.toContain(logSymbols.error);
+    });
   });
 
   describe('stageProgress', () => {

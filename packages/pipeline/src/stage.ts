@@ -1,7 +1,7 @@
 import { Dataset, Distribution } from '@lde/dataset';
 import type { Quad } from '@rdfjs/types';
 import type { Reader, VariableBindings } from './sparql/reader.js';
-import { NotSupported } from './sparql/reader.js';
+import { NoItemsSelected, NotSupported } from './sparql/reader.js';
 import type { TimeoutPolicy } from './sparql/timeoutPolicy.js';
 import { batch } from './batch.js';
 import type { Validator } from './validator.js';
@@ -374,7 +374,7 @@ export class Stage<Out = Quad> {
     const iter = batches[Symbol.asyncIterator]();
     const first = await iter.next();
     if (first.done) {
-      return new NotSupported('No items selected');
+      return new NoItemsSelected();
     }
 
     // Reconstruct a full iterable including the peeked first batch.
