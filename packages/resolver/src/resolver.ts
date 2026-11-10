@@ -652,29 +652,25 @@ export function createResolver<Reference, Fact>(
       let stallCounted = false;
       for (;;) {
         // Checked before queueing too, so a written-off host’s batches take no
-        // slot – and are not read as successes by the limiter.
+        // slot.
         if (writtenOff.has(batch.host)) {
           return writtenOffStep().done;
         }
-        const step = await runReportingOverload(
-          limiter,
-          batch.host,
-          async () => {
-            // Queued before the host was written off: no request goes out, and
-            // the limiter must not read the slot as a success and raise a dead
-            // host’s limit.
-            if (writtenOff.has(batch.host)) {
-              return { step: writtenOffStep(), overloaded: true };
-            }
-            attempts++;
-            startedAt = ++tick;
-            const result = await attempt(batch.entries);
-            return {
-              step: settle(result),
-              overloaded: result.kind === 'threw',
-            };
-          },
-        );
+        const step = await limiter.run(batch.host, async (slot) => {
+          // Queued before the host was written off: no request goes out, so the
+          // slot says nothing about the host’s limit either way.
+          if (writtenOff.has(batch.host)) {
+            slot.ignore();
+            return writtenOffStep();
+          }
+          attempts++;
+          startedAt = ++tick;
+          const result = await attempt(batch.entries);
+          if (result.kind === 'threw') {
+            slot.overloaded();
+          }
+          return settle(result);
+        });
         if ('done' in step) {
           return step.done;
         }
@@ -776,7 +772,12 @@ export function createResolver<Reference, Fact>(
        * before the host’s last counted failure is not counted again.
        */
       function noteFailure(): boolean {
-        if ((lastCountedAt.get(batch.host) ?? 0) > startedAt) {
+        // The rest of the burst that wrote its host off has nothing left to
+        // tell the breaker.
+        if (
+          writtenOff.has(batch.host) ||
+          (lastCountedAt.get(batch.host) ?? 0) > startedAt
+        ) {
           return false;
         }
         lastCountedAt.set(batch.host, ++tick);
@@ -804,14 +805,11 @@ export function createResolver<Reference, Fact>(
       return;
     }
     window[window.lastIndexOf(true)] = false;
+    // The burst the stall belonged to may still be in flight, so its marker in
+    // `lastCountedAt` stays.
     if (!window.includes(true)) {
-      forgetFailures(host);
+      recentFailures.delete(host);
     }
-  }
-
-  function forgetFailures(host: string): void {
-    recentFailures.delete(host);
-    lastCountedAt.delete(host);
   }
 
   /**
@@ -829,11 +827,13 @@ export function createResolver<Reference, Fact>(
     const failures = window.filter(Boolean).length;
     if (failures >= hostFailureThreshold) {
       writtenOff.add(host);
-      forgetFailures(host); // Nothing reads it once written off.
+      recentFailures.delete(host); // Nothing reads it once written off.
+      lastCountedAt.delete(host);
     } else if (failures === 0) {
       // A window of successes counts the same as no window at all, so a
       // healthy host holds no memory.
-      forgetFailures(host);
+      recentFailures.delete(host);
+      lastCountedAt.delete(host);
     } else {
       recentFailures.set(host, window);
     }
@@ -1006,39 +1006,6 @@ type Step<Fact> = Done<Fact> | { readonly waitMs: number };
 /** A batch’s answer, per key. */
 interface Done<Fact> {
   readonly done: Array<readonly [string, FetchOutcome<Fact>]>;
-}
-
-/**
- * Run a batch’s attempt on the limiter, rejecting inside it when the attempt
- * threw or was written off, so the limiter never reads it as a success and
- * lowers the host’s limit instead – and answer the step either way.
- */
-async function runReportingOverload<Fact>(
-  limiter: HostLimiter,
-  host: string,
-  task: () => Promise<{ step: Step<Fact>; overloaded: boolean }>,
-): Promise<Step<Fact>> {
-  try {
-    return await limiter.run(host, async () => {
-      const { step, overloaded } = await task();
-      if (overloaded) {
-        throw new Overloaded(step);
-      }
-      return step;
-    });
-  } catch (error) {
-    if (!(error instanceof Overloaded)) {
-      throw error; // A limiter of the caller’s own that broke, say.
-    }
-    return error.step as Step<Fact>;
-  }
-}
-
-/** Carries a step out of the limiter, which reads the rejection as overload. */
-class Overloaded<Fact> extends Error {
-  constructor(readonly step: Step<Fact>) {
-    super('overloaded');
-  }
 }
 
 /** A batch’s failure, as every key in it reports it. */

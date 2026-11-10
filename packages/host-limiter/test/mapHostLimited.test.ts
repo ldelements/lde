@@ -5,6 +5,7 @@ import {
   mapHostLimited,
   positiveIntOrDefault,
   type HostLimiter,
+  type HostSlot,
 } from '../src/index.js';
 
 /**
@@ -520,7 +521,81 @@ describe('createHostLimiter’s adaptive per-host limit', () => {
   });
 });
 
+describe('HostSlot', () => {
+  /** Run `count` tasks on `host` one round at a time, each resolving after it
+   *  tells its slot what `tell` says. */
+  async function roundOf(
+    limiter: HostLimiter,
+    host: string,
+    count: number,
+    tell: (slot: HostSlot) => void,
+    settleAs: 'resolve' | 'reject' = 'resolve',
+  ) {
+    await Promise.allSettled(
+      Array.from({ length: count }, () =>
+        limiter.run(host, async (slot) => {
+          tell(slot);
+          await settle();
+          if (settleAs === 'reject') {
+            throw new Error('rejected');
+          }
+        }),
+      ),
+    );
+  }
+
+  it('halves the limit for a task that reports overload but resolves', async () => {
+    const limiter = createHostLimiter(100, 100);
+    const warm = queue(limiter, 'a', 3);
+    await warm.round();
+    await warm.drain(); // The limit is now 2.
+
+    await limiter.run('a', async (slot) => {
+      slot.overloaded();
+    });
+
+    expect(await limitNow(limiter, 'a')).toBe(1);
+  });
+
+  it('neither raises nor lowers the limit for a task that is ignored', async () => {
+    const limiter = createHostLimiter(100, 100);
+    await roundOf(limiter, 'a', 10, (slot) => slot.ignore(), 'reject');
+    await roundOf(limiter, 'a', 10, (slot) => slot.ignore());
+
+    expect(await limitNow(limiter, 'a')).toBe(1);
+  });
+
+  it('lets a later report of overload not undo an ignore', async () => {
+    const limiter = createHostLimiter(100, 100);
+    await roundOf(limiter, 'a', 10, (slot) => {
+      slot.ignore();
+      slot.overloaded();
+    });
+
+    expect(await limitNow(limiter, 'a')).toBe(1);
+  });
+});
+
 describe('HostLimiter.pause', () => {
+  it('starts the tasks queued during a pause before a task that arrives after it', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'Date'] });
+    const limiter = createHostLimiter(100, 100);
+    const started: string[] = [];
+    const record = (name: string) => async () => {
+      started.push(name);
+    };
+
+    limiter.pause('a', Date.now() + 1_000);
+    const queued = limiter.run('a', record('queued'));
+    // The pause is over, but its wake-up has not run yet.
+    vi.setSystemTime(Date.now() + 1_000);
+    const later = limiter.run('a', record('later'));
+    await vi.advanceTimersByTimeAsync(1_000);
+    await Promise.all([queued, later]);
+
+    expect(started).toEqual(['queued', 'later']);
+  });
+
   afterEach(() => {
     vi.useRealTimers();
   });

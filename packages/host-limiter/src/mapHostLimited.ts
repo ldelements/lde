@@ -1,4 +1,23 @@
 /**
+ * How a task tells the limiter what its outcome says about its host, when
+ * settling alone would say the wrong thing. Handed to every task
+ * {@link HostLimiter.run} starts; a task that ignores it is judged by how it
+ * settles.
+ */
+export interface HostSlot {
+  /**
+   * The host is overloaded, though the task resolves: halve the host’s limit
+   * as if the task had thrown. For a caller that answers failures as values.
+   */
+  overloaded(): void;
+  /**
+   * The task says nothing about the host – it sent no request, say: neither
+   * raise nor lower the host’s limit, however the task settles.
+   */
+  ignore(): void;
+}
+
+/**
  * Two concurrency caps that outlive any one batch of work, for tasks that arrive
  * from several places at once. Create one per thing being bounded and share it:
  * every {@link HostLimiter.run} on it counts against the same caps, where each
@@ -17,9 +36,14 @@ export interface HostLimiter {
    * @param host the contention key of the task – build one from a URL with
    *   {@link hostKeyOf}
    * @param task the work; it does not start until it has a slot, so a deadline
-   *   it sets on itself does not count the time spent queueing
+   *   it sets on itself does not count the time spent queueing. A throw or
+   *   rejection counts as overload, unless the task says otherwise through its
+   *   {@link HostSlot}.
    */
-  run<Result>(host: string, task: () => Promise<Result>): Promise<Result>;
+  run<Result>(
+    host: string,
+    task: (slot: HostSlot) => Promise<Result>,
+  ): Promise<Result>;
 
   /**
    * Start no task for `host` before `untilMs`, then let one through and
@@ -163,7 +187,11 @@ export function createHostLimiter(
     );
   };
 
-  const release = (host: string, generation: number, failed: boolean): void => {
+  const release = (
+    host: string,
+    generation: number,
+    outcome: 'success' | 'overload' | 'ignored',
+  ): void => {
     globalInFlight--;
     const state = stateOf(host);
     // Only a host that used its whole limit, with more work waiting on it, has
@@ -172,9 +200,9 @@ export function createHostLimiter(
     const saturated = state.inFlight >= state.limit && state.waiting > 0;
     state.inFlight--;
     const current = generation === state.generation;
-    if (current && failed) {
+    if (current && outcome === 'overload') {
       shrink(state);
-    } else if (current && saturated) {
+    } else if (current && outcome === 'success' && saturated) {
       grow(state, perHostLimit);
     }
     retireIfIdle(host, state);
@@ -182,29 +210,39 @@ export function createHostLimiter(
   };
 
   return {
-    run: <Result>(host: string, task: () => Promise<Result>) =>
+    run: <Result>(host: string, task: (slot: HostSlot) => Promise<Result>) =>
       new Promise<Result>((resolve, reject) => {
         const entry = {
           host,
           start: (generation: number) => {
+            let said: 'overload' | 'ignored' | undefined;
+            const slot: HostSlot = {
+              overloaded: () => {
+                said ??= 'overload';
+              },
+              ignore: () => {
+                said = 'ignored';
+              },
+            };
             // Through a promise, so a task that throws synchronously frees its
             // slot rather than breaking the scheduler that started it.
-            void new Promise<Result>((settle) => settle(task())).then(
+            void new Promise<Result>((settle) => settle(task(slot))).then(
               (result) => {
-                release(host, generation, false);
+                release(host, generation, said ?? 'success');
                 resolve(result);
               },
               (error: unknown) => {
-                release(host, generation, true);
+                release(host, generation, said ?? 'overload');
                 reject(error);
               },
             );
           },
         };
         // Every queued task is blocked until a release reschedules it, so only
-        // this one can start now. Rescanning the queue here would make queueing
-        // a large batch quadratic.
-        if (!startIfRoom(entry, Date.now())) {
+        // this one can start now – unless its host has tasks queued already,
+        // which go first. Rescanning the queue here would make queueing a large
+        // batch quadratic.
+        if (stateOf(host).waiting > 0 || !startIfRoom(entry, Date.now())) {
           if (stateOf(host).waiting++ === 0) {
             hostsWithWaiting++;
           }
@@ -218,6 +256,8 @@ export function createHostLimiter(
       state.pausedUntil = Math.max(state.pausedUntil, untilMs);
       if (beginning) {
         restart(state);
+      }
+      if (beginning && untilMs > Date.now()) {
         wakeAfterPause(host, state);
       }
       retireIfIdle(host, state);

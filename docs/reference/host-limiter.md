@@ -106,6 +106,10 @@ tasks, none of them can finish.
   caller. A task that rejects frees its slot and halves its host’s limit, so a
   task should reject only for a failure that load may have caused: a timeout,
   a refused connection, a 502 or 503. A 404 is an answer, not overload.
+- Every task is handed a `slot`, for when how it settles would say the wrong
+  thing: `slot.overloaded()` halves the limit though the task resolves – for a
+  caller that answers failures as values – and `slot.ignore()` leaves the limit
+  alone, for a task that sent no request.
 - `hostKeyOf(url)` is the host, falling back to the full href when the URL has no
   authority, so a `urn:` or `file:` URL gets its own budget rather than sharing a
   single empty-string bucket.
