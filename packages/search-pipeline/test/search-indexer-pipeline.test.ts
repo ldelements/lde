@@ -269,4 +269,142 @@ describe('searchIndexerPipeline', () => {
       ).toThrow(/Unknown transform type\(s\) “Organisation”/);
     });
   });
+
+  describe('restrictRoots', () => {
+    const PATTERN = '?root <https://example.org/about> <https://example.org/t>';
+
+    it('restricts the named type’s root selection only', async () => {
+      const selections: string[] = [];
+      nock('http://restricted.example.org')
+        .post('/sparql')
+        .times(4)
+        .reply(
+          200,
+          (_uri, body) => {
+            selections.push(
+              decodeURIComponent(String(body).replace(/\+/g, ' ')),
+            );
+            return { head: { vars: ['root'] }, results: { bindings: [] } };
+          },
+          { 'Content-Type': 'application/sparql-results+json' },
+        );
+
+      await searchIndexerPipeline({
+        schema,
+        datasets: [
+          new Dataset({
+            iri: new URL('http://example.org/dataset/1'),
+            distributions: [
+              Distribution.sparql(
+                new URL('http://restricted.example.org/sparql'),
+              ),
+            ],
+          }),
+        ],
+        writerFor: () => engineWriter,
+        restrictRoots: { Organization: PATTERN },
+      }).run();
+
+      const organization = selections.find((query) =>
+        query.includes(ORGANIZATION),
+      );
+      const dataset = selections.find((query) => query.includes(DATASET));
+      expect(organization).toContain('<https://example.org/about>');
+      expect(dataset).not.toContain('<https://example.org/about>');
+    });
+
+    it('rejects a name the schema does not declare', () => {
+      expect(() =>
+        searchIndexerPipeline({
+          schema,
+          datasets: [],
+          writerFor: () => engineWriter,
+          restrictRoots: { Organisation: PATTERN },
+        }),
+      ).toThrow(/Unknown restricted root type\(s\) “Organisation”/);
+    });
+
+    it('rejects a registry-sourced type', () => {
+      // A registry type reads the dataset’s description, not its records, so a
+      // restriction meant for the records would empty it.
+      expect(() =>
+        searchIndexerPipeline({
+          schema,
+          datasets: [],
+          writerFor: () => engineWriter,
+          registryTypes: {
+            endpoint: new URL('http://registry.example.org/sparql'),
+            names: ['Dataset'],
+          },
+          restrictRoots: { Dataset: PATTERN },
+        }),
+      ).toThrow(/cannot restrict “Dataset”: registry-sourced types/);
+    });
+
+    it('rejects a pattern that does not constrain ?root', () => {
+      // Over another variable it joins nothing to the root: every root passes.
+      for (const pattern of ['?work <https://example.org/about> ?t', ' ']) {
+        expect(() =>
+          searchIndexerPipeline({
+            schema,
+            datasets: [],
+            writerFor: () => engineWriter,
+            restrictRoots: { Organization: pattern },
+          }),
+        ).toThrow(/restrictRoots for “Organization” must constrain \?root/);
+      }
+    });
+
+    it('re-indexes every dataset when a restriction changes', async () => {
+      // The restriction is part of the version provenance skips are keyed by,
+      // so an unchanged dataset is not skipped with its old selection.
+      const versions: string[] = [];
+      const provenanceStore: ProvenanceStore = {
+        get: async () => null,
+        set: async (_dataset, record) => {
+          versions.push(record.pipelineVersion);
+        },
+      };
+      nock('http://versioned.example.org')
+        .post('/sparql')
+        .times(4)
+        .reply(
+          200,
+          { head: { vars: ['root'] }, results: { bindings: [] } },
+          { 'Content-Type': 'application/sparql-results+json' },
+        );
+
+      await searchIndexerPipeline({
+        schema,
+        datasets: [
+          new Dataset({
+            iri: new URL('http://example.org/dataset/1'),
+            distributions: [
+              Distribution.sparql(
+                new URL('http://versioned.example.org/sparql'),
+              ),
+            ],
+          }),
+        ],
+        writerFor: () => engineWriter,
+        provenanceStore,
+        pipelineVersion: '1',
+        restrictRoots: { Organization: PATTERN },
+      }).run();
+
+      expect(versions[0]).toMatch(/^1\+restrictRoots=/);
+      expect(versions[0]).toContain('Organization');
+    });
+
+    it('rejects a pattern that does not parse, naming the type', () => {
+      expect(() =>
+        searchIndexerPipeline({
+          schema,
+          datasets: [],
+          writerFor: () => engineWriter,
+          restrictRoots: { Organization: '?root <unclosed' },
+        }),
+      ).toThrow(/restrictRoots for “Organization”/);
+    });
+  });
 });

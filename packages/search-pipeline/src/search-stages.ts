@@ -212,13 +212,24 @@ export function searchStages(
  * `rootVariable` defaults to `root` and must match the stage’s
  * {@link SearchStageType.rootVariable}; it must not be `dataset` (reserved by the
  * SPARQL reader).
+ *
+ * `pattern`, a SPARQL graph pattern over `?‹rootVariable›`, restricts the
+ * selection to the instances that also match it, e.g.
+ * `?root <https://schema.org/about> <http://vocab.getty.edu/aat/300000000>`.
+ * The reader injects the selected roots into the extraction, so a root the
+ * pattern leaves out is never extracted, projected or written. The pattern is
+ * its own group, so a `UNION` or a trailing comment inside it cannot escape the
+ * class constraint or the blank-node filter. A pattern that does not parse
+ * throws here.
  */
 export function selectByClass(
   searchType: RootType,
   rootVariable = 'root',
+  pattern?: string,
 ): ItemSelector {
+  const restriction = pattern === undefined ? '' : `{\n${pattern}\n}`;
   return new SparqlItemSelector({
-    query: `SELECT DISTINCT ?${rootVariable} WHERE { ?${rootVariable} a <${searchType.class}> FILTER(!isBlank(?${rootVariable})) }`,
+    query: `SELECT DISTINCT ?${rootVariable} WHERE { ?${rootVariable} a <${searchType.class}> . ${restriction} FILTER(!isBlank(?${rootVariable})) }`,
   });
 }
 

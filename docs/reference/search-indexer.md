@@ -72,6 +72,7 @@ images.
 | `REGISTRY_ROOT_TYPES`    | none                         | Root types extracted from the registry instead of the dataset’s distribution (see below), by schema type name                                         |
 | `DATASETS`               | all registry datasets        | Dataset IRIs and `file:` URLs of local data to index (whitespace- or comma-separated; see below)                                                      |
 | `DATASET_CRITERIA`       | all registry datasets        | Search criteria as a JSON object, in [`@lde/dataset-registry-client`](./dataset-registry-client)’s criteria format (mutually exclusive w/ `DATASETS`) |
+| `RESTRICT_ROOTS`         | none                         | JSON object mapping root type names to a SPARQL graph pattern over `?root`; only matching roots are indexed (see below)                               |
 | `TYPESENSE_HOST`         | **required**                 | Typesense host                                                                                                                                        |
 | `TYPESENSE_PORT`         | `8108`                       | Typesense port                                                                                                                                        |
 | `TYPESENSE_PROTOCOL`     | `http`                       | `http` or `https`                                                                                                                                     |
@@ -188,6 +189,31 @@ schema: a `SearchType` is defined by its `class`, never by where its triples
 come from, and the same declaration serves a deployment that sources it
 differently. A name that the mounted schema does not declare fails the boot,
 rather than shipping an empty collection.
+
+## Restricted root types
+
+By default every instance of a root type’s class is indexed. To index only part
+of the selected datasets, give `RESTRICT_ROOTS` a SPARQL graph pattern per type,
+keyed by the type’s name. The pattern is added to the type’s root selection, so
+`?root` binds each candidate:
+
+```sh
+--env RESTRICT_ROOTS='{"CreativeWork": "?root <https://schema.org/about> <http://vocab.getty.edu/aat/300000000>"}'
+```
+
+The restriction applies to that type in every selected dataset. Other types are
+indexed whole. A root the pattern leaves out is never extracted, so the
+collection, and every facet count over it, holds only matching roots. A kept
+document may still reference a left-out root, such as a person who is the
+creator of a work.
+
+Restriction is deployment configuration: the same schema module serves a
+deployment that indexes everything and one that indexes a subset. A name the
+mounted schema does not declare, a type in `REGISTRY_ROOT_TYPES` (it describes
+the dataset, not its records), a pattern that does not mention `?root` or one
+that does not parse fails the boot. With `PROVENANCE_FILE`, changing a
+restriction re-indexes every dataset: the restrictions are part of the version
+skips are keyed by.
 
 ## The QLever import path
 
