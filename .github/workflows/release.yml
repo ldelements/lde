@@ -8,6 +8,11 @@ on:
   # accumulated since the last tags; a no-op when there are none.
   workflow_dispatch:
 
+# One run at a time. A group holds a single pending run, so a newer push
+# replaces an older pending one – harmless, because each run pulls main and
+# releases everything up to it. That is also why a run for a release commit
+# must not skip itself: it may be the pending run that replaced a merge's, and
+# with nothing left to release it is a no-op that pushes nothing.
 concurrency:
   group: release
   cancel-in-progress: false
@@ -18,7 +23,6 @@ permissions:
 
 jobs:
   release:
-    if: ${{ !startsWith(github.event.head_commit.message, 'chore(release)') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
