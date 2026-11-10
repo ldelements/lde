@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import nock from 'nock';
 import { DataFactory } from 'n3';
 import type { Quad } from '@rdfjs/types';
@@ -155,6 +155,52 @@ describe('searchStages', () => {
 
     expect(received[0].document.dataset).toBe('http://example.org/dataset/1');
     expect(received[0].document.fromDataset).toBe('yes');
+  });
+
+  it('passes what a field could not read on to the pipeline, under the type’s name', async () => {
+    const withNumber = searchSchema({
+      name: 'Person',
+      class: PERSON,
+      fields: [
+        { name: 'name', kind: 'keyword', path: NAME, output: true },
+        {
+          name: 'age',
+          kind: 'integer',
+          output: true,
+          derive: (document) => Number(document.name),
+        },
+      ],
+    });
+    const [stage] = searchStages({
+      schema: withNumber,
+      types: [
+        {
+          searchType: withNumber.get(PERSON) as RootType,
+          rootVariable: 'root',
+          itemSelector: rootsSelector(['https://ex/p/1']),
+          readers: nameReader,
+        },
+      ],
+    });
+    const valueUnread = vi.fn();
+
+    await stage.run(
+      dataset,
+      distribution,
+      {
+        write: async (_dataset, items) => {
+          for await (const item of items) {
+            void item;
+          }
+        },
+      },
+      { valueUnread },
+    );
+
+    expect(valueUnread).toHaveBeenCalledWith('Person', 'age', {
+      id: 'https://ex/p/1',
+      value: 'NaN',
+    });
   });
 
   it('names each stage after its type and yields one stage per type', () => {

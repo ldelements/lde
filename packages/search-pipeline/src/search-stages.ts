@@ -184,7 +184,12 @@ export function searchStages(
           // The same `iri.toString()` the writer’s provenance bookkeeping and
           // `selectedSources()` use, so a declared field, the membership sweep
           // and the selection all compare one spelling of the IRI.
-          { dataset: context.dataset.iri.toString() },
+          {
+            dataset: context.dataset.iri.toString(),
+            // Tallied by the pipeline and reported when the dataset completes.
+            onUnreadable: ({ field, id, value }) =>
+              context.valueUnread(searchType.name, field, { id, value }),
+          },
         )) {
           yield { searchType, document };
         }

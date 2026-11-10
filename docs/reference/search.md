@@ -1277,6 +1277,23 @@ bookkeeping** on – see [`@lde/search-typesense`](./search-typesense.md#provena
 – so the facet, the label, any derive and the membership sweep read one column
 rather than two copies of one IRI.
 
+### Values a field could not read
+
+A typed field leaves out a value it cannot read: an `integer` or `number` over
+`onbekend`, a `date` over `Z.j`, a `period` over `1987/1897`, a `reference` over
+a literal, a `boolean` outside `true`/`false`/`1`/`0`. The document is still
+projected; the value is missing from it. So that a run can say what it lost, the
+projection reports each such value to the context’s `onUnreadable`, with the
+field – dotted for a field of a nested referent, `creator.birthDate` – the value
+as stated, and the IRI of the node the document came from. A value a `derive`
+returned counts too, as `String(value)` when it is not a string.
+
+`@lde/search-pipeline`’s `searchStages` passes them on to the pipeline, which
+reports them per dataset and field ([`valuesUnread`](./pipeline.md#reporter)),
+so the console shows what each dataset lost and a publisher can be told which
+values to correct at the source. See
+[ADR 33](../decisions/0033-report-the-values-a-typed-field-could-not-read.md).
+
 ## Locales
 
 `locales` declares the languages a `text` field wants **indexed** (`und` =
