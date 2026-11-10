@@ -384,8 +384,10 @@ from its first second to its last:
   them, from the earliest start to the latest end. A work dated `1668`, `1676`
   and `1686` therefore matches a filter on 1670–1672.
 - A value that is not a date or period in either grammar (`ca. 1620`,
-  `onbekend`), and an interval that ends before it starts, is still served but
-  takes no part in filtering or sorting.
+  `onbekend`), and an interval that ends before it starts, is left out and
+  [reported](#values-a-field-could-not-read), so every value served is EDTF. A
+  single-valued field keeps its first readable value. To show such text anyway,
+  declare a `keyword` field over the same path.
 
 The values are stored as strings under the field’s own name. The bounds are
 two hidden int64 fields beside them (`PhysicalFields.period`, `${name}_start`

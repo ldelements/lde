@@ -74,30 +74,19 @@ export function periodOf(value: string): StoredPeriod | undefined {
 }
 
 /**
- * The period several values cover between them: the earliest start and the
- * latest end, or `undefined` when none states a period. One stored range per
- * document is what an engine can sort on and compare in a single clause, so a
- * work dated `1668`, `1676` and `1686` is stored as 1668 through 1686 – and a
- * range falling between its dates still matches it.
+ * The period several periods cover between them: the earliest start and the
+ * latest end. One stored range per document is what an engine can sort on and
+ * compare in a single clause, so a work dated `1668`, `1676` and `1686` is
+ * stored as 1668 through 1686 – and a range falling between its dates still
+ * matches it.
  */
-export function periodOfAll(
-  values: readonly string[],
-): StoredPeriod | undefined {
-  let covered: StoredPeriod | undefined;
-  for (const value of values) {
-    const period = periodOf(value);
-    if (period === undefined) {
-      continue;
-    }
-    covered =
-      covered === undefined
-        ? period
-        : {
-            start: Math.min(covered.start, period.start),
-            end: Math.max(covered.end, period.end),
-          };
-  }
-  return covered;
+export function periodCovering(
+  periods: readonly [StoredPeriod, ...StoredPeriod[]],
+): StoredPeriod {
+  return periods.reduce((covered, period) => ({
+    start: Math.min(covered.start, period.start),
+    end: Math.max(covered.end, period.end),
+  }));
 }
 
 /** One side of an interval, or a whole plain value. */

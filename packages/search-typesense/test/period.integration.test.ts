@@ -99,8 +99,8 @@ describe('a period field', () => {
           document('drawing', ['1942'], first('1942'), last('1942')),
           document('open-end', ['1440/..'], first('1440'), 2 ** 62),
           document('open-start', ['../1607'], -(2 ** 62), last('1607')),
-          // Served, but no period: no bounds, so it takes no part in a filter.
-          { id: 'undated', title: 'undated', dateCreated: ['onbekend'] },
+          // No period, so it takes no part in a filter.
+          { id: 'undated', title: 'undated' },
         ],
         { action: 'create' },
       );

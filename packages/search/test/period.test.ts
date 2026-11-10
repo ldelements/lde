@@ -129,7 +129,7 @@ describe('the stretch a period value covers', () => {
     }
   });
 
-  it('serves a value that states no period, but bounds nothing with it', () => {
+  it('leaves out a value that states no period', () => {
     for (const value of [
       'ca. 1620',
       'onbekend',
@@ -154,7 +154,7 @@ describe('the stretch a period value covers', () => {
       'XXXX',
     ]) {
       const document = project(value);
-      expect(document.dateCreated, value).toBe(value);
+      expect(document, value).not.toHaveProperty('dateCreated');
       expect(document, value).not.toHaveProperty('dateCreated_start');
       expect(document, value).not.toHaveProperty('dateCreated_end');
     }
@@ -162,7 +162,7 @@ describe('the stretch a period value covers', () => {
 });
 
 describe('a multi-valued period', () => {
-  it('serves every value and covers them all between them', () => {
+  it('serves the values that state a period and covers them all between them', () => {
     const field = { ...dateCreated, array: true };
     const document = projectDocument(
       {
@@ -176,7 +176,7 @@ describe('a multi-valued period', () => {
       },
       workType([field]),
     );
-    expect(document.dateCreated).toEqual(['1676', 'onbekend', '1686', '1668']);
+    expect(document.dateCreated).toEqual(['1676', '1686', '1668']);
     expect(document.dateCreated_start).toBe(seconds('1668-01-01T00:00:00Z'));
     expect(document.dateCreated_end).toBe(seconds('1686-12-31T23:59:59Z'));
   });
@@ -231,6 +231,18 @@ describe('a single-valued period', () => {
     );
     expect(document.dateCreated).toBe('1935/1955');
     expect(document.dateCreated_start).toBe(seconds('1935-01-01T00:00:00Z'));
+  });
+
+  it('skips a value that states no period rather than losing the one behind it', () => {
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/work/1',
+        [key('dateCreated')]: [{ '@value': 'onbekend' }, { '@value': '1935' }],
+      },
+      workType([dateCreated]),
+    );
+    expect(document.dateCreated).toBe('1935');
+    expect(document.dateCreated_end).toBe(seconds('1935-12-31T23:59:59Z'));
   });
 });
 

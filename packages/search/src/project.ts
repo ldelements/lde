@@ -41,7 +41,7 @@ import {
   type StoredDate,
   type TextField,
 } from './schema.js';
-import { periodOf, periodOfAll } from './period.js';
+import { periodCovering, periodOf, type StoredPeriod } from './period.js';
 
 /**
  * A projected node: the fields of one {@link SearchType}, flat. A **Root Type**
@@ -1606,15 +1606,17 @@ function setDate(
 }
 
 /**
- * Store a `period` field: its values verbatim under the field’s own name, for
- * output, and the stretch they cover between them in the bound companions
- * ({@link physicalFields}). A value that states no period is still stored – it
- * is what the source said – but bounds nothing.
+ * Store a `period` field: the values that state a period, verbatim under the
+ * field’s own name, for output, and the stretch they cover between them in the
+ * bound companions ({@link physicalFields}). A value that states no period –
+ * `onbekend`, `1987/1897` – is reported and left out, so every value served is
+ * the EDTF its scalar promises; a deployment that wants to show such text
+ * declares a `keyword` field over the same path.
  *
- * Blank values are dropped before a single-valued field keeps its first, so
- * an empty literal cannot cost the field the value behind it; and the bounds
- * are taken from exactly the values stored, so what is served and what is
- * filtered cannot disagree.
+ * Blank and unreadable values are dropped before a single-valued field keeps
+ * its first, so neither can cost the field the period behind it; and the
+ * bounds are taken from exactly the values stored, so what is served and what
+ * is filtered cannot disagree.
  */
 function setPeriod(
   document: ProjectedNode,
@@ -1622,22 +1624,30 @@ function setPeriod(
   values: readonly string[],
   unread: (value: string) => void,
 ): void {
-  const nonBlank = dedupe(values.map((value) => value.trim())).filter(
-    (value) => value !== '',
+  const readable = dedupe(values.map((value) => value.trim())).flatMap(
+    (value) => {
+      if (value === '') {
+        return [];
+      }
+      const period = periodOf(value);
+      if (period === undefined) {
+        unread(value);
+        return [];
+      }
+      return [{ value, period }];
+    },
   );
-  const stated = field.array === true ? nonBlank : nonBlank.slice(0, 1);
+  const stated = field.array === true ? readable : readable.slice(0, 1);
   if (stated.length === 0) {
     return;
   }
-  for (const value of stated) {
-    if (periodOf(value) === undefined) {
-      unread(value);
-    }
-  }
-  document[field.name] = field.array === true ? stated : stated[0];
+  document[field.name] =
+    field.array === true ? stated.map(({ value }) => value) : stated[0].value;
   const companions = physicalFields(field).period;
-  const covered = periodOfAll(stated);
-  if (companions !== undefined && covered !== undefined) {
+  if (companions !== undefined) {
+    const covered = periodCovering(
+      stated.map(({ period }) => period) as [StoredPeriod, ...StoredPeriod[]],
+    );
     document[companions.start] = covered.start;
     document[companions.end] = covered.end;
   }
