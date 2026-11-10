@@ -19,6 +19,7 @@ const context: ReaderContext = {
   dataset,
   distribution,
   stage: 'entity-properties.rq',
+  count: () => undefined,
 };
 
 function quadStream(quads: Quad[]): AsyncIterable<Quad> {

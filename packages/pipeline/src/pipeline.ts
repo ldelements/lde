@@ -43,6 +43,7 @@ import {
   type DistributionAnalysisResult,
   type PipelineEvent,
   type PipelineEventPayload,
+  type StageSummary,
 } from './pipelineEvent.js';
 import type { Reporter } from './reporter.js';
 import { UnreadValueTally } from './unreadValueTally.js';
@@ -1065,6 +1066,7 @@ export class Pipeline<Out = Quad> {
 
     let itemsProcessed = 0;
     let quadsGenerated = 0;
+    let summary: StageSummary | undefined;
 
     const result = await stage.run(dataset, distribution, writer, {
       onProgress: (items, quads) => {
@@ -1084,6 +1086,9 @@ export class Pipeline<Out = Quad> {
       timeout,
       valueUnread:
         unread && ((target, field, value) => unread.add(target, field, value)),
+      onComplete: (stageSummary) => {
+        summary = stageSummary;
+      },
     });
 
     if (result instanceof NotSupported) {
@@ -1109,6 +1114,7 @@ export class Pipeline<Out = Quad> {
       itemsProcessed,
       quadsGenerated,
       durationMs: Date.now() - stageStart,
+      ...summary,
     });
 
     return true;

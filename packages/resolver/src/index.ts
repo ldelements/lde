@@ -7,7 +7,9 @@ export {
 export type { ReferenceFailure } from './failures.js';
 export type {
   Resolution,
+  ResolutionCount,
   ResolutionFailure,
+  ResolveOptions,
   Resolver,
   ResolverLimits,
   ResolverOptions,

@@ -274,6 +274,69 @@ describe('ConsoleReporter', () => {
       expect(output).not.toContain('items');
       expect(output).toContain('took');
     });
+
+    it('shows the phases the stage spent time in', () => {
+      const reporter = new ConsoleReporter();
+      const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+
+      reporter.onEvent(
+        event({ type: 'stageStart', dataset, stage: 'transform' }),
+      );
+      reporter.onEvent(
+        event({
+          type: 'stageComplete',
+          dataset,
+          stage: 'transform',
+          itemsProcessed: 729,
+          quadsGenerated: 729,
+          durationMs: 1_443_000,
+          phases: {
+            selectMs: 0,
+            readMs: 100_000,
+            transforms: [
+              { name: 'anyUriToIri', durationMs: 2_000 },
+              { name: 'enrich', durationMs: 2_472_000 },
+            ],
+            validateMs: 0,
+            projectMs: 3_000,
+            writeMs: 5_000,
+          },
+        }),
+      );
+
+      const output = spy.mock.calls.map((c) => String(c[0])).join('');
+      expect(output).toContain(
+        'busy: read 1m 40s, anyUriToIri 2s, enrich 41m 12s, project 3s, write 5s',
+      );
+      // A phase the stage spent no time in is left out.
+      expect(output).not.toContain('select');
+      expect(output).not.toContain('validate');
+    });
+
+    it('shows what the stage counted', () => {
+      const reporter = new ConsoleReporter();
+      const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+
+      reporter.onEvent(
+        event({ type: 'stageStart', dataset, stage: 'transform' }),
+      );
+      reporter.onEvent(
+        event({
+          type: 'stageComplete',
+          dataset,
+          stage: 'transform',
+          itemsProcessed: 729,
+          quadsGenerated: 729,
+          durationMs: 1000,
+          counts: { 'manifests fetched': 249, 'manifests from store': 480 },
+        }),
+      );
+
+      const output = spy.mock.calls.map((c) => String(c[0])).join('');
+      expect(output).toContain(
+        '(manifests fetched 249, manifests from store 480)',
+      );
+    });
   });
 
   describe('stageSkipped', () => {

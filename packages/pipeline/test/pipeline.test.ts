@@ -1261,6 +1261,42 @@ describe('Pipeline', () => {
       );
     });
 
+    it('reports where the stage spent its time and what it counted', async () => {
+      const reporter = makeReporter();
+      const phases = {
+        selectMs: 1,
+        readMs: 2,
+        transforms: [{ name: 'enrich', durationMs: 3 }],
+        validateMs: 4,
+        projectMs: 5,
+        writeMs: 6,
+      };
+      const stage = new Stage({ name: 'stage1', readers: [] });
+      vi.spyOn(stage, 'run').mockImplementation(
+        async (_dataset, _distribution, _writer, options) => {
+          options?.onComplete?.({ phases, counts: { fetched: 7 } });
+        },
+      );
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [stage],
+        writers: makeWriter(),
+        distributionResolver: makeResolver(makeResolvedDistribution()),
+        reporter,
+      });
+
+      await pipeline.run();
+
+      expect(reporter.stageComplete).toHaveBeenCalledWith(
+        expect.objectContaining({
+          stage: 'stage1',
+          phases,
+          counts: { fetched: 7 },
+        }),
+      );
+    });
+
     it('reports each stage validator’s per-dataset verdict after the stages ran', async () => {
       const reporter = makeReporter();
       const report = { conforms: true, violations: 0, quadsValidated: 7 };

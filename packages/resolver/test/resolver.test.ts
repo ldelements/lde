@@ -931,6 +931,118 @@ describe('an attempt that outruns its deadline', () => {
   });
 });
 
+describe('counting', () => {
+  /** Resolve `references`, answering with how often each count was called. */
+  async function countsOf(
+    resolver: ReturnType<typeof resolverOver>['resolver'],
+    references: readonly string[],
+  ): Promise<Record<string, number>> {
+    const counts: Record<string, number> = {};
+    await resolver.resolveAll(references, {
+      count: (name) => {
+        counts[name] = (counts[name] ?? 0) + 1;
+      },
+    });
+    return counts;
+  }
+
+  it('counts each reference by where its answer came from', async () => {
+    const { resolver } = resolverOver(
+      // ELSEWHERE is left out of the answer: the source has none.
+      async (iris) =>
+        iris
+          .filter((iri) => iri !== ELSEWHERE)
+          .map((iri): [string, Place] => [iri, { name: 'fetched' }]),
+      {
+        store: storeHolding(
+          { [VENLO]: { name: 'stored' } },
+          '2026-01-01T00:00:00.000Z',
+        ),
+      },
+    );
+
+    expect(await countsOf(resolver, [MAASTRICHT, VENLO, ELSEWHERE])).toEqual({
+      fetched: 1,
+      'from store': 1,
+      absent: 1,
+    });
+  });
+
+  it('counts a failed fetch and a reference the budget deferred', async () => {
+    const { resolver } = resolverOver(
+      async () => {
+        throw new Error('HTTP 500');
+      },
+      { limits: { fetchesPerResolver: 1 } },
+    );
+
+    expect(await countsOf(resolver, [MAASTRICHT, VENLO])).toEqual({
+      failed: 1,
+      deferred: 1,
+    });
+  });
+
+  it('counts a reference written off with its host apart from a failed one', async () => {
+    const { resolver } = resolverOver(
+      async () => {
+        throw new Error('connection refused');
+      },
+      {
+        limits: {
+          batchSize: 1,
+          perHostConcurrency: 1,
+          hostFailureThreshold: 2,
+        },
+      },
+    );
+
+    expect(
+      await countsOf(resolver, [
+        MAASTRICHT,
+        VENLO,
+        'https://sws.geonames.org/1/',
+        'https://sws.geonames.org/2/',
+      ]),
+    ).toEqual({ failed: 2, 'written off': 2 });
+  });
+
+  it('counts a failed refresh that a stored fact stood in for as failed', async () => {
+    const { resolver } = resolverOver(
+      async () => {
+        throw new Error('HTTP 500');
+      },
+      {
+        store: storeHolding(
+          { [VENLO]: { name: 'stored' } },
+          '2020-01-01T00:00:00.000Z',
+        ),
+        limits: { ttlMs: 1 },
+      },
+    );
+
+    expect(await countsOf(resolver, [VENLO])).toEqual({ failed: 1 });
+  });
+
+  it('counts a stale fact the budget left unrefreshed as deferred', async () => {
+    const { resolver } = resolverOver(
+      async (iris) =>
+        iris.map((iri): [string, Place] => [iri, { name: 'fetched' }]),
+      {
+        store: storeHolding(
+          { [VENLO]: { name: 'stored' } },
+          '2020-01-01T00:00:00.000Z',
+        ),
+        limits: { ttlMs: 1, fetchesPerResolver: 1 },
+      },
+    );
+
+    expect(await countsOf(resolver, [MAASTRICHT, VENLO])).toEqual({
+      fetched: 1,
+      deferred: 1,
+    });
+  });
+});
+
 describe('a host that is down', () => {
   it('is written off rather than asked once per reference', async () => {
     const asked: string[][] = [];

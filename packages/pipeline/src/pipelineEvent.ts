@@ -200,6 +200,51 @@ export interface StageCompleteEvent extends DatasetEventEnvelope<'stageComplete'
   itemsProcessed: number;
   quadsGenerated: number;
   durationMs: number;
+  /** Where the stage spent its time. Always set by the pipeline; optional so
+   *  code constructing the event need not set it, as is `counts`. */
+  phases?: StagePhases;
+  /** What the stage’s transforms and projection counted, per name, through
+   *  `ReaderContext.count`. */
+  counts?: Readonly<Record<string, number>>;
+}
+
+/**
+ * The time a stage spent in each of its phases, in milliseconds.
+ *
+ * A stage runs several batches at once, so each phase is added up over all
+ * of them: the phases can together exceed the stage’s `durationMs`, and a
+ * phase that does is one batches spent their time waiting on. Each phase
+ * counts only its own time – a transform waiting on the reader it pulls from
+ * is the reader’s time, not the transform’s.
+ */
+export interface StagePhases {
+  /** Selecting the stage’s items, page by page. */
+  selectMs: number;
+  /** Running the readers’ queries and reading their results. */
+  readMs: number;
+  /** Each attached transform, in the order first attached. A transform
+   *  attached to several readers is one entry, its times added up. */
+  transforms: readonly TransformDuration[];
+  /** Validating the readers’ quads. */
+  validateMs: number;
+  /** Turning batches into the stage’s output items. */
+  projectMs: number;
+  /** The writer’s own work, not counting the time it waited for items. */
+  writeMs: number;
+}
+
+/** What a completed stage hands back: where its time went, and its counts. */
+export interface StageSummary {
+  phases: StagePhases;
+  counts: Readonly<Record<string, number>>;
+}
+
+/** One attached transform’s time, in {@link StagePhases.transforms}. */
+export interface TransformDuration {
+  /** The transform function’s name, or `transform N` for one without a name,
+   *  N counting the stage’s transforms from 1. */
+  name: string;
+  durationMs: number;
 }
 
 /**
