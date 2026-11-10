@@ -197,17 +197,39 @@ function compileRangeFacet(
  * folded `*_search` companion(s); a localized field’s active-locale companion
  * keeps its full weight while the other locale is gently demoted (−1, floored at
  * 1), so a match in the user’s language ranks higher while cross-language matches
- * still surface.
+ * still surface. A request with no language preference demotes nothing.
+ *
+ * The fields are ordered by weight, heaviest first, and among equal weights a
+ * leading companion – the request’s language, or the first tagged locale –
+ * comes first. Typesense stems the
+ * query once, with the settings of the highest-weighted field – the first one
+ * on a tie (https://github.com/typesense/typesense/issues/1815) – so an
+ * unstemmed companion in the lead leaves the query unstemmed, and the stemmed
+ * companions match only where the stem happens to equal the word. The order
+ * changes nothing else: every field carries an explicit weight.
  */
 function queryFields(
   searchType: SearchType,
   locale: string,
   schema: SearchSchema | undefined,
 ): { readonly names: string[]; readonly weights: number[] } {
-  const names: string[] = [];
-  const weights: number[] = [];
-  collectSearchable(searchType, locale, schema, '', new Set(), names, weights);
-  return { names, weights };
+  const fields: QueryField[] = [];
+  collectSearchable(searchType, locale, schema, '', new Set(), fields);
+  fields.sort(
+    (left, right) =>
+      right.weight - left.weight || Number(right.leads) - Number(left.leads),
+  );
+  return {
+    names: fields.map((field) => field.name),
+    weights: fields.map((field) => field.weight),
+  };
+}
+
+interface QueryField {
+  readonly name: string;
+  readonly weight: number;
+  /** The companion of the locale that should stem the query. */
+  readonly leads: boolean;
 }
 
 /**
@@ -235,8 +257,7 @@ function collectSearchable(
   schema: SearchSchema | undefined,
   prefix: string,
   onPath: ReadonlySet<string>,
-  names: string[],
-  weights: number[],
+  fields: QueryField[],
 ): void {
   const walked = new Set(onPath).add(searchType.name);
   for (const field of searchableFields(searchType)) {
@@ -245,21 +266,34 @@ function collectSearchable(
     if (field.kind === 'text') {
       const locales = field.locales;
       const activeLocale = matchLanguage(locale, locales)[0];
+      const noPreference = activeLocale === undefined || activeLocale === 'und';
+      // Without a preference the first tagged locale stems the query; only an
+      // `und`-only field leads with `und`.
+      const leading = noPreference
+        ? (locales.find((candidate) => candidate !== 'und') ?? activeLocale)
+        : activeLocale;
       search.forEach((name, index) => {
-        names.push(qualify(prefix, name));
-        // The active locale keeps full weight; `und` is language-neutral, so
-        // it is never demoted (an untagged-only field would otherwise always
-        // rank below its declared weight).
-        weights.push(
-          locales[index] === activeLocale || locales[index] === 'und'
-            ? baseWeight
-            : Math.max(1, baseWeight - 1),
-        );
+        fields.push({
+          name: qualify(prefix, name),
+          // The active locale keeps full weight; `und` is language-neutral, so
+          // it is never demoted (an untagged-only field would otherwise always
+          // rank below its declared weight).
+          weight:
+            noPreference ||
+            locales[index] === activeLocale ||
+            locales[index] === 'und'
+              ? baseWeight
+              : Math.max(1, baseWeight - 1),
+          leads: locales[index] === leading,
+        });
       });
     } else {
       for (const name of search) {
-        names.push(qualify(prefix, name));
-        weights.push(baseWeight);
+        fields.push({
+          name: qualify(prefix, name),
+          weight: baseWeight,
+          leads: false,
+        });
       }
     }
   }
@@ -295,8 +329,7 @@ function collectSearchable(
         schema,
         qualify(prefix, field.name),
         walked,
-        names,
-        weights,
+        fields,
       );
     }
   }
