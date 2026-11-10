@@ -6,6 +6,7 @@ import type {
   ProgressReporter,
   TimeoutTransitionEvent,
   ValidationReport,
+  ValuesUnread,
 } from '@lde/pipeline';
 import chalk from 'chalk';
 import logSymbols from 'log-symbols';
@@ -313,6 +314,23 @@ export class ConsoleReporter implements ProgressReporter {
     }
   }
 
+  valuesUnread(_dataset: Dataset, unread: ValuesUnread): void {
+    const { target, field, examples } = unread;
+    const count = compactNumber.format(unread.unread);
+    this.printLine(
+      logSymbols.warning,
+      `${chalk.bold(target)}: ${chalk.yellow(`${count} ${field} ${unread.unread === 1 ? 'value' : 'values'} unread`)}`,
+      1,
+    );
+    for (const { id, value } of examples) {
+      this.printLine(
+        logSymbols.warning,
+        `${JSON.stringify(truncated(value))} ${chalk.dim(`on ${id}`)}`,
+        2,
+      );
+    }
+  }
+
   pipelineComplete(result: {
     duration: number;
     memoryUsageBytes: number;
@@ -344,4 +362,14 @@ export class ConsoleReporter implements ProgressReporter {
       2,
     );
   }
+}
+
+/** Longest example value printed in full; a literal where a date belongs can
+ *  be a whole description. */
+const MAX_EXAMPLE_LENGTH = 80;
+
+function truncated(value: string): string {
+  return value.length > MAX_EXAMPLE_LENGTH
+    ? `${value.slice(0, MAX_EXAMPLE_LENGTH - 1)}…`
+    : value;
 }

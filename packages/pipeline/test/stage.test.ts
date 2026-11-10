@@ -1122,6 +1122,51 @@ describe('Stage', () => {
       expect(seen).toEqual(['http://root/1', 'http://root/2']);
     });
 
+    it('passes the values a projection could not read on to the run’s receiver', async () => {
+      const valueUnread = vi.fn();
+      const stage = new Stage<string>({
+        name: 'project',
+        itemSelector: mockItemSelector([{ s: namedNode('http://root/1') }]),
+        readers: mockExecutor([q1]),
+        project: (_quads, context) => {
+          context.valueUnread('Work', 'dateCreated', {
+            id: 'http://root/1',
+            value: 'onbekend',
+          });
+          return [];
+        },
+      });
+
+      await stage.run(dataset, distribution, collectingItemWriter<string>(), {
+        valueUnread,
+      });
+
+      expect(valueUnread).toHaveBeenCalledWith('Work', 'dateCreated', {
+        id: 'http://root/1',
+        value: 'onbekend',
+      });
+    });
+
+    it('lets a projection report unread values when the run has no receiver', async () => {
+      const stage = new Stage<string>({
+        name: 'project',
+        itemSelector: mockItemSelector([{ s: namedNode('http://root/1') }]),
+        readers: mockExecutor([q1]),
+        project: (_quads, context) => {
+          context.valueUnread('Work', 'dateCreated', {
+            id: 'http://root/1',
+            value: 'onbekend',
+          });
+          return ['projected'];
+        },
+      });
+      const writer = collectingItemWriter<string>();
+
+      await stage.run(dataset, distribution, writer);
+
+      expect(writer.items).toEqual(['projected']);
+    });
+
     it('invokes project once per batch (ceil(roots / batchSize))', async () => {
       const project = vi.fn((quads: readonly Quad[]) =>
         quads.map((quad) => quad.object.value),

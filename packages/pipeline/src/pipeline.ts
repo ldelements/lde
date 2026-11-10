@@ -42,6 +42,7 @@ import type {
   ProgressReporter,
 } from './progressReporter.js';
 import { combineReporters } from './combineReporters.js';
+import { UnreadValueTally } from './unreadValueTally.js';
 import type { Validator } from './validator.js';
 import {
   ConstantTimeoutPolicy,
@@ -680,14 +681,17 @@ export class Pipeline<Out = Quad> {
     });
 
     let stageFailed = false;
+    // What the kept attempt’s stages could not read, reported once the dataset
+    // completes.
+    let unread: UnreadValueTally | undefined;
     try {
-      stageFailed = await this.runStages(
+      ({ stageFailed, unread } = await this.runStages(
         dataset,
         resolved.distribution,
         timeout,
         runWriter,
         context,
-      );
+      ));
 
       // Reactive fallback: an endpoint that passed probing but could not serve
       // the analysis stages is empirically incapable. Switch to the dataset’s
@@ -736,13 +740,13 @@ export class Pipeline<Out = Quad> {
             // Discard the endpoint-sourced partial output before the re-run so
             // the dump-sourced stats replace it rather than appending to it.
             await runWriter.reset?.(dataset);
-            stageFailed = await this.runStages(
+            ({ stageFailed, unread } = await this.runStages(
               dataset,
               fallback.distribution,
               timeout,
               runWriter,
               context,
-            );
+            ));
             // Adopt the dump’s fingerprint only once the re-run has succeeded.
             // If the reset or the re-run throws, or a stage fails against the
             // dump, the dataset is recorded ‘failed’ under the endpoint’s
@@ -793,6 +797,11 @@ export class Pipeline<Out = Quad> {
       fingerprint,
       stageFailed ? 'failed' : 'success',
     );
+    if (!stageFailed && unread !== undefined) {
+      for (const entry of unread.entries()) {
+        this.reporter?.valuesUnread?.(dataset, entry);
+      }
+    }
     const datasetMemory = process.memoryUsage();
     this.reporter?.datasetComplete?.(dataset, {
       memoryUsageBytes: datasetMemory.rss,
@@ -910,7 +919,8 @@ export class Pipeline<Out = Quad> {
    * Run every top-level stage against one distribution, catching and reporting
    * per-stage failures so one failing stage does not abort the rest. Returns
    * whether any stage hard-failed – the signal the reactive dump fallback
-   * reacts to.
+   * reacts to – and what the stages could not read, which belongs to this
+   * attempt alone.
    */
   private async runStages(
     dataset: Dataset,
@@ -918,7 +928,8 @@ export class Pipeline<Out = Quad> {
     timeout: TimeoutPolicy,
     runWriter: RunWriter<Out>,
     context: RunContext,
-  ): Promise<boolean> {
+  ): Promise<{ stageFailed: boolean; unread: UnreadValueTally }> {
+    const unread = new UnreadValueTally();
     let stageFailed = false;
     for (const stage of this.stages) {
       try {
@@ -938,6 +949,7 @@ export class Pipeline<Out = Quad> {
             stage,
             this.stageWriter(runWriter, stage.name),
             timeout,
+            unread,
           );
         }
       } catch (error) {
@@ -948,7 +960,7 @@ export class Pipeline<Out = Quad> {
         );
       }
     }
-    return stageFailed;
+    return { stageFailed, unread };
   }
 
   /**
@@ -961,6 +973,7 @@ export class Pipeline<Out = Quad> {
     stage: Stage<Item>,
     writer: DatasetWriter<Item>,
     timeout?: TimeoutPolicy,
+    unread?: UnreadValueTally,
   ): Promise<boolean> {
     this.reporter?.stageStart?.(stage.name);
     const stageStart = Date.now();
@@ -981,6 +994,8 @@ export class Pipeline<Out = Quad> {
         });
       },
       timeout,
+      valueUnread:
+        unread && ((target, field, value) => unread.add(target, field, value)),
     });
 
     if (result instanceof NotSupported) {

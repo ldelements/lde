@@ -48,6 +48,34 @@ export interface RejectionReason {
   readonly examples: readonly string[];
 }
 
+/**
+ * Values a stage read from a dataset but could not interpret – an integer
+ * field over `onbekend`, a date over `Z.j` – and so left out of the items it
+ * produced, reported once per (dataset, target, field) when the dataset
+ * completes. The item itself is still produced; only the value is missing.
+ */
+export interface ValuesUnread {
+  /** The kind of item the values were read for, e.g. a search type’s name. */
+  readonly target: string;
+  /** The field that could not read them; dotted for a nested field. */
+  readonly field: string;
+  /** How many values the field left out. */
+  readonly unread: number;
+  /** A few of them, each a distinct value. Bounded, so a field that rejects
+   *  every value cannot grow the report with the data. */
+  readonly examples: readonly UnreadValue[];
+}
+
+/** One value a stage could not read, in {@link ValuesUnread.examples}. */
+export interface UnreadValue {
+  /** What the value was read from, as the stage names it – for a search
+   *  document, the node it was projected from, which a publisher can look up
+   *  even where the document is keyed on something else. */
+  readonly id: string;
+  /** The value as the source stated it. */
+  readonly value: string;
+}
+
 export interface ProgressReporter {
   pipelineStart?(name: string): void;
   datasetsSelected?(count: number, duration: number): void;
@@ -118,6 +146,13 @@ export interface ProgressReporter {
    * failing the dataset ({@link RunContext.itemsRejected}).
    */
   itemsRejected?(dataset: Dataset, rejection: ItemsRejected): void;
+  /**
+   * Called once per (target, field) that left values out of a dataset’s items
+   * ({@link BatchContext.valueUnread}), just before {@link datasetComplete}.
+   * Not called for a dataset whose stages or write failed: nothing of it is
+   * kept, so neither is what it could not read.
+   */
+  valuesUnread?(dataset: Dataset, unread: ValuesUnread): void;
   pipelineComplete?(result: {
     duration: number;
     memoryUsageBytes: number;
