@@ -1,4 +1,5 @@
 import { afterEach, describe, it, expect, vi } from 'vitest';
+import logSymbols from 'log-symbols';
 import { ConsoleReporter } from '../src/consoleReporter.js';
 import { Dataset, Distribution } from '@lde/dataset';
 import {
@@ -411,7 +412,7 @@ describe('ConsoleReporter', () => {
               new URL('http://example.org/data.nt'),
               'application/n-triples',
             ),
-            duration: 5000,
+            durationMs: 5000,
             tripleCount: 4800000,
           },
         }),
@@ -438,7 +439,7 @@ describe('ConsoleReporter', () => {
               new URL('http://example.org/data.nt'),
               'application/n-triples',
             ),
-            duration: 5000,
+            durationMs: 5000,
             engine: { name: 'QLever', version: '9352d0' },
           },
         }),
@@ -497,7 +498,7 @@ describe('ConsoleReporter', () => {
               new URL('http://example.org/data.nt'),
               'application/n-triples',
             ),
-            duration: 5000,
+            durationMs: 5000,
           },
         }),
       );
@@ -552,6 +553,15 @@ describe('ConsoleReporter', () => {
     });
   });
 
+  it('ignores an event type it does not know', () => {
+    const reporter = new ConsoleReporter();
+    const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+
+    reporter.onEvent({ type: 'unknown' } as unknown as PipelineEvent);
+
+    expect(spy).not.toHaveBeenCalled();
+  });
+
   describe('datasetSkipped', () => {
     it.each([
       ['unchanged', 'Unchanged since last run'],
@@ -566,6 +576,24 @@ describe('ConsoleReporter', () => {
 
       const output = spy.mock.calls.map((c) => String(c[0])).join('');
       expect(output).toContain(message);
+    });
+
+    it('renders an unchanged skip by its code, not its level', () => {
+      const reporter = new ConsoleReporter();
+      const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+
+      reporter.onEvent({
+        ...event({
+          type: 'datasetSkipped',
+          dataset,
+          reason: { code: 'unchanged', message: 'Unchanged since last run' },
+        }),
+        defaultLevel: 'debug',
+      });
+
+      const output = spy.mock.calls.map((c) => String(c[0])).join('');
+      expect(output).toContain(logSymbols.info);
+      expect(output).not.toContain(logSymbols.error);
     });
   });
 

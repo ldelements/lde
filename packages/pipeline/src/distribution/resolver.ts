@@ -20,7 +20,7 @@ export interface ImportDetails {
   /** The data dump that was imported. */
   readonly from: Distribution;
   /** Milliseconds the import took. */
-  readonly duration: number;
+  readonly durationMs: number;
   /** Triples in the imported data, when the importer can tell. */
   readonly tripleCount?: number;
   /** The engine that built the imported data, when the importer can tell. */

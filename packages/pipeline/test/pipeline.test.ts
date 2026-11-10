@@ -1366,7 +1366,7 @@ describe('Pipeline', () => {
       );
       const resolved = new ResolvedDistribution(sparqlDistribution, [], {
         from: importedFromDistribution,
-        duration: 1000,
+        durationMs: 1000,
         tripleCount: 42000,
       });
 
@@ -1386,7 +1386,7 @@ describe('Pipeline', () => {
           distribution: sparqlDistribution,
           imported: {
             from: importedFromDistribution,
-            duration: 1000,
+            durationMs: 1000,
             tripleCount: 42000,
           },
         }),
@@ -1401,7 +1401,7 @@ describe('Pipeline', () => {
       );
       const resolved = new ResolvedDistribution(sparqlDistribution, [], {
         from: importedFromDistribution,
-        duration: 1000,
+        durationMs: 1000,
         tripleCount: 42000,
       });
 
@@ -1684,7 +1684,7 @@ describe('Pipeline', () => {
           async () =>
             new ResolvedDistribution(importedDistribution, [], {
               from: dumpDistribution,
-              duration: 0,
+              durationMs: 0,
             }),
         ),
       };
@@ -1799,7 +1799,7 @@ describe('Pipeline', () => {
         async () =>
           new ResolvedDistribution(importedDistribution, [], {
             from: dumpDistribution,
-            duration: 0,
+            durationMs: 0,
           }),
       );
 
@@ -1834,7 +1834,7 @@ describe('Pipeline', () => {
           callbacks?.onImportStart?.();
           return new ResolvedDistribution(importedDistribution, [], {
             from: dumpDistribution,
-            duration: 0,
+            durationMs: 0,
           });
         },
       );
@@ -1948,7 +1948,7 @@ describe('Pipeline', () => {
         expect.objectContaining({
           dataset,
           distribution: importedDistribution,
-          imported: { from: dumpDistribution, duration: 0 },
+          imported: { from: dumpDistribution, durationMs: 0 },
         }),
       );
       expect(reporter.distributionValidated).toHaveBeenCalledWith(
@@ -2708,7 +2708,7 @@ describe('Pipeline', () => {
         [dumpProbe],
         {
           from: dumpDistribution,
-          duration: 1,
+          durationMs: 1,
           tripleCount: 100,
         },
       ),
@@ -2978,7 +2978,7 @@ describe('Pipeline', () => {
       const resolver = makeDumpResolver(
         new ResolvedDistribution(sparqlDistribution, [dumpProbe], {
           from: dumpDistribution,
-          duration: 1,
+          durationMs: 1,
           tripleCount: 0,
         }),
       );
@@ -3257,8 +3257,9 @@ describe('Pipeline', () => {
 
   describe('resolver phase errors', () => {
     it('skips a dataset and never resolves when probing throws', async () => {
+      const probeError = new Error('probe boom');
       const resolver: DistributionResolver = {
-        probe: vi.fn().mockRejectedValue(new Error('probe boom')),
+        probe: vi.fn().mockRejectedValue(probeError),
         resolve: vi.fn(),
       };
       const stage = makeStage('stage1');
@@ -3283,6 +3284,7 @@ describe('Pipeline', () => {
             code: 'probeFailed',
             message: expect.stringContaining('Distribution probing failed'),
           },
+          error: probeError,
         }),
       );
     });
@@ -3293,7 +3295,7 @@ describe('Pipeline', () => {
           async (probedDataset: Dataset) =>
             new ProbedDistributions(probedDataset, [], null),
         ),
-        resolve: vi.fn().mockRejectedValue(new Error('resolve boom')),
+        resolve: vi.fn().mockRejectedValue('resolve boom'),
       };
       const stage = makeStage('stage1');
       const reporter = makeReporter();
@@ -3316,6 +3318,7 @@ describe('Pipeline', () => {
             code: 'resolveFailed',
             message: expect.stringContaining('Distribution resolution failed'),
           },
+          error: new Error('resolve boom', { cause: 'resolve boom' }),
         }),
       );
     });
@@ -3431,7 +3434,7 @@ describe('beforeDatasetWrite hook', () => {
               new URL('http://example.org/dump.ttl'),
               'application/n-triples',
             ),
-            duration: 0,
+            durationMs: 0,
           }),
       ),
     };

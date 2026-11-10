@@ -2,11 +2,12 @@ import { describe, it, expect, vi, type Mock } from 'vitest';
 import { Dataset, Distribution } from '@lde/dataset';
 import {
   levelOf,
+  type Level,
   type DistributionAnalysisResult,
   type PipelineEvent,
   type PipelineEventPayload,
 } from '@lde/pipeline';
-import { LoggerReporter, type Logger } from '../src/loggerReporter.js';
+import { LoggerReporter } from '../src/loggerReporter.js';
 
 const dataset = new Dataset({
   iri: new URL('http://example.org/dataset'),
@@ -27,7 +28,7 @@ function envelope<Payload extends PipelineEventPayload>(
 
 type LogMethod = (obj: object, msg: string) => void;
 
-function makeLogger(): Record<keyof Logger, Mock<LogMethod>> {
+function makeLogger(): Record<Level, Mock<LogMethod>> {
   return {
     debug: vi.fn<LogMethod>(),
     info: vi.fn<LogMethod>(),
@@ -54,7 +55,7 @@ describe('LoggerReporter', () => {
     );
   });
 
-  it('leaves out the level and the logger’s reserved name', () => {
+  it('leaves out the level and logs the pipeline name as pipeline', () => {
     const logger = makeLogger();
 
     new LoggerReporter(logger).onEvent(
@@ -63,7 +64,43 @@ describe('LoggerReporter', () => {
 
     const [logObject] = logger.info.mock.calls[0];
     expect(logObject).not.toHaveProperty('name');
+    expect(logObject).toHaveProperty('pipeline', 'run');
     expect(logObject).not.toHaveProperty('defaultLevel');
+  });
+
+  it('skips events below the logger’s level', () => {
+    const logger = {
+      ...makeLogger(),
+      isLevelEnabled: (level: string) => level !== 'debug',
+    };
+
+    const reporter = new LoggerReporter(logger);
+    reporter.onEvent(envelope({ type: 'stageStart', dataset, stage: 's' }));
+    reporter.onEvent(envelope({ type: 'pipelineStart', name: 'run' }));
+
+    expect(logger.debug).not.toHaveBeenCalled();
+    expect(logger.info).toHaveBeenCalledOnce();
+  });
+
+  it('logs the data dump an import came from by its URL', () => {
+    const logger = makeLogger();
+    const dump = Distribution.sparql(new URL('http://example.org/dump.nt'));
+
+    new LoggerReporter(logger).onEvent(
+      envelope({
+        type: 'distributionSelected',
+        dataset,
+        distribution,
+        imported: { from: dump, durationMs: 5 },
+      }),
+    );
+
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        imported: { from: 'http://example.org/dump.nt', durationMs: 5 },
+      }),
+      'distributionSelected',
+    );
   });
 
   it('logs datasets and distributions by IRI and URL, and errors under err', () => {

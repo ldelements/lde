@@ -95,6 +95,8 @@ export class ConsoleReporter implements Reporter {
       case 'distributionValidated':
         // The probe and import lines already show the operator the outcome.
         return;
+      default:
+        event satisfies never;
     }
   }
 
@@ -224,7 +226,7 @@ export class ConsoleReporter implements Reporter {
         imported.tripleCount !== undefined
           ? `${compactNumber.format(imported.tripleCount)} triples, `
           : '';
-      const duration = ` in ${chalk.bold(prettyMilliseconds(imported.duration))}`;
+      const duration = ` in ${chalk.bold(prettyMilliseconds(imported.durationMs))}`;
       const text = `Imported ${imported.from.accessUrl.toString()}${engine} (${count}to ${distribution.accessUrl.toString()})${duration}`;
       if (this.activeSpinner) {
         this.activeSpinner.text = text;
@@ -345,8 +347,8 @@ export class ConsoleReporter implements Reporter {
     );
   }
 
-  private datasetSkipped({ defaultLevel, reason }: DatasetSkippedEvent): void {
-    if (defaultLevel === 'info') {
+  private datasetSkipped({ reason }: DatasetSkippedEvent): void {
+    if (reason.code === 'unchanged') {
       this.printLine(logSymbols.info, `Skipped: ${reason.message}`, 1);
       return;
     }

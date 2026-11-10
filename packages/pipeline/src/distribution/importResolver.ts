@@ -217,7 +217,7 @@ export class ImportResolver implements DistributionResolver {
 
       return new ResolvedDistribution(distribution, probeResults, {
         from: importResult.distribution,
-        duration: Date.now() - importStart,
+        durationMs: Date.now() - importStart,
         tripleCount: importResult.tripleCount,
         engine: importResult.engine,
       });

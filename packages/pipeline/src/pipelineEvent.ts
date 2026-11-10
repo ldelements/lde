@@ -29,17 +29,21 @@ export interface DatasetEventEnvelope<
   dataset: Dataset;
 }
 
+/** Why something was skipped: a stable `code` to branch on and a human-readable `message`. */
 export interface Reason<Code extends string> {
   code: Code;
   message: string;
 }
 
+/** Why the pipeline skipped a dataset. */
 export type DatasetSkipReason = Reason<
   'unchanged' | 'probeFailed' | 'resolveFailed' | 'noDistributionAvailable'
 >;
 
+/** Why the pipeline skipped a stage for a dataset. */
 export type StageSkipReason = Reason<'notSupported'>;
 
+/** The outcome of probing one distribution. */
 export interface DistributionAnalysisResult {
   type: 'sparql' | 'data-dump' | 'network-error';
   available: boolean;
@@ -83,15 +87,18 @@ export interface RejectionReason {
   readonly examples: readonly string[];
 }
 
+/** The process’s memory use when the event was reported. */
 export interface MemoryUsage {
   memoryUsageBytes: number;
   heapUsedBytes: number;
 }
 
+/** A run started; `name` is the pipeline’s name. */
 export interface PipelineStartEvent extends EventEnvelope<'pipelineStart'> {
   name: string;
 }
 
+/** The datasets to process were selected: how many, and how long selecting took. */
 export interface DatasetsSelectedEvent extends EventEnvelope<'datasetsSelected'> {
   count: number;
   durationMs: number;
@@ -105,13 +112,16 @@ export interface SelectionEmptyEvent extends EventEnvelope<'selectionEmpty'> {
   message: string;
 }
 
+/** A run finished. */
 export interface PipelineCompleteEvent
   extends EventEnvelope<'pipelineComplete'>, MemoryUsage {
   durationMs: number;
 }
 
+/** The pipeline started processing a dataset. */
 export type DatasetStartEvent = DatasetEventEnvelope<'datasetStart'>;
 
+/** One of a dataset’s distributions was probed. */
 export interface DistributionProbedEvent extends DatasetEventEnvelope<'distributionProbed'> {
   distribution: Distribution;
   result: DistributionAnalysisResult;
@@ -123,8 +133,10 @@ export interface DistributionValidatedEvent extends DatasetEventEnvelope<'distri
   verdict: ValidityVerdict;
 }
 
+/** A data dump started importing for a dataset. */
 export type ImportStartedEvent = DatasetEventEnvelope<'importStarted'>;
 
+/** Importing a distribution failed. */
 export interface ImportFailedEvent extends DatasetEventEnvelope<'importFailed'> {
   distribution: Distribution;
   error: Error;
@@ -136,10 +148,12 @@ export interface DistributionSelectedEvent extends DatasetEventEnvelope<'distrib
   imported?: ImportDetails;
 }
 
+/** A stage started for a dataset. */
 export interface StageStartEvent extends DatasetEventEnvelope<'stageStart'> {
   stage: string;
 }
 
+/** A running stage’s progress so far. */
 export interface StageProgressEvent
   extends DatasetEventEnvelope<'stageProgress'>, MemoryUsage {
   stage: string;
@@ -147,6 +161,7 @@ export interface StageProgressEvent
   quadsGenerated: number;
 }
 
+/** A stage finished for a dataset. */
 export interface StageCompleteEvent extends DatasetEventEnvelope<'stageComplete'> {
   stage: string;
   itemsProcessed: number;
@@ -163,6 +178,7 @@ export interface StageFailedEvent extends DatasetEventEnvelope<'stageFailed'> {
   error: Error;
 }
 
+/** A stage was skipped for a dataset. */
 export interface StageSkippedEvent extends DatasetEventEnvelope<'stageSkipped'> {
   stage: string;
   reason: StageSkipReason;
@@ -176,13 +192,17 @@ export interface DatasetValidatedEvent extends DatasetEventEnvelope<'datasetVali
   report: ValidationReport;
 }
 
+/** The pipeline finished processing a dataset. */
 export interface DatasetCompleteEvent
   extends DatasetEventEnvelope<'datasetComplete'>, MemoryUsage {
   durationMs: number;
 }
 
+/** A dataset the pipeline did not process, and why. */
 export interface DatasetSkippedEvent extends DatasetEventEnvelope<'datasetSkipped'> {
   reason: DatasetSkipReason;
+  /** The error that caused a `probeFailed` or `resolveFailed` skip. */
+  error?: Error;
 }
 
 /**
@@ -193,9 +213,11 @@ export interface ItemsRejectedEvent extends DatasetEventEnvelope<'itemsRejected'
   rejection: ItemsRejected;
 }
 
+/** The adaptive query timeout for an endpoint was tightened. */
 export interface TimeoutTightenedEvent
   extends DatasetEventEnvelope<'timeoutTightened'>, TimeoutTransitionEvent {}
 
+/** The adaptive query timeout for an endpoint was relaxed. */
 export interface TimeoutRelaxedEvent
   extends DatasetEventEnvelope<'timeoutRelaxed'>, TimeoutTransitionEvent {}
 

@@ -575,6 +575,22 @@ export class Pipeline<Out = Quad> {
     this.report(runId, { type: 'datasetStart', dataset });
     const skip = (reason: DatasetSkipReason) =>
       this.report(runId, { type: 'datasetSkipped', dataset, reason });
+    const skipOnError = (
+      code: 'probeFailed' | 'resolveFailed',
+      prefix: string,
+      thrown: unknown,
+    ) => {
+      const error =
+        thrown instanceof Error
+          ? thrown
+          : new Error(String(thrown), { cause: thrown });
+      this.report(runId, {
+        type: 'datasetSkipped',
+        dataset,
+        reason: { code, message: `${prefix}: ${error.message}` },
+        error,
+      });
+    };
 
     // Probe phase: gather probe results and the source-to-be, without importing.
     let probed: ProbedDistributions;
@@ -605,10 +621,7 @@ export class Pipeline<Out = Quad> {
         },
       });
     } catch (error) {
-      skip({
-        code: 'probeFailed',
-        message: `Distribution probing failed: ${error instanceof Error ? error.message : String(error)}`,
-      });
+      skipOnError('probeFailed', 'Distribution probing failed', error);
       return;
     }
 
@@ -665,10 +678,7 @@ export class Pipeline<Out = Quad> {
         importCallbacks,
       );
     } catch (error) {
-      skip({
-        code: 'resolveFailed',
-        message: `Distribution resolution failed: ${error instanceof Error ? error.message : String(error)}`,
-      });
+      skipOnError('resolveFailed', 'Distribution resolution failed', error);
       return;
     }
 
