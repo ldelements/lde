@@ -1,3 +1,13 @@
+## 0.50.1 (2026-11-10)
+
+### 🩹 Fixes
+
+- **search:** store open period bounds at the codec’s edge, nested periods without ([#1038](https://github.com/ldelements/lde/pull/1038))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.41.1
+
 ## 0.50.0 (2026-11-10)
 
 ### 🧱 Updated Dependencies
