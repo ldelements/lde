@@ -1,3 +1,14 @@
+## 0.44.1 (2026-11-10)
+
+### 🚀 Features
+
+- **search-pipeline:** copy fields of the dataset onto the documents indexed from it ([#1031](https://github.com/ldelements/lde/pull/1031))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.47.1
+- Updated @lde/search to 0.39.1
+
 ## 0.44.0 (2026-11-10)
 
 ### 🧱 Updated Dependencies

@@ -1,3 +1,9 @@
+## 0.39.1 (2026-11-10)
+
+### 🚀 Features
+
+- **search-pipeline:** copy fields of the dataset onto the documents indexed from it ([#1031](https://github.com/ldelements/lde/pull/1031))
+
 ## 0.39.0 (2026-11-10)
 
 ### 🩹 Fixes
