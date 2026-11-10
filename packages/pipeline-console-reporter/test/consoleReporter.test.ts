@@ -108,6 +108,22 @@ describe('ConsoleReporter', () => {
       expect(output).toContain('"[Begin 20e eeuw]"');
     });
 
+    it('shortens a long example', () => {
+      const reporter = new ConsoleReporter();
+      const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+
+      reporter.valuesUnread(makeDataset(), {
+        target: 'CreativeWork',
+        field: 'creator',
+        unread: 1,
+        examples: [{ id: 'https://example.org/obj/1', value: 'x'.repeat(500) }],
+      });
+
+      const output = spy.mock.calls.map((call) => String(call[0])).join('');
+      expect(output).toContain(`"${'x'.repeat(79)}…"`);
+      expect(output).not.toContain('x'.repeat(80));
+    });
+
     it('says “value” for a single one', () => {
       const reporter = new ConsoleReporter();
       const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);

@@ -325,7 +325,7 @@ export class ConsoleReporter implements ProgressReporter {
     for (const { id, value } of examples) {
       this.printLine(
         logSymbols.warning,
-        `${JSON.stringify(value)} ${chalk.dim(`on ${id}`)}`,
+        `${JSON.stringify(truncated(value))} ${chalk.dim(`on ${id}`)}`,
         2,
       );
     }
@@ -362,4 +362,14 @@ export class ConsoleReporter implements ProgressReporter {
       2,
     );
   }
+}
+
+/** Longest example value printed in full; a literal where a date belongs can
+ *  be a whole description. */
+const MAX_EXAMPLE_LENGTH = 80;
+
+function truncated(value: string): string {
+  return value.length > MAX_EXAMPLE_LENGTH
+    ? `${value.slice(0, MAX_EXAMPLE_LENGTH - 1)}…`
+    : value;
 }
