@@ -1,3 +1,36 @@
+## 0.39.0 (2026-11-10)
+
+### 🩹 Fixes
+
+- ⚠️  **search:** read each typed kind in one place, on both value routes ([#1033](https://github.com/ldelements/lde/pull/1033))
+
+### ⚠️  Breaking Changes
+
+- **search:** read each typed kind in one place, on both value routes  ([#1033](https://github.com/ldelements/lde/pull/1033))
+  a derived integer, number, boolean, date or reference value
+  is now read as its kind: a derived 12.7 for an integer stores 12, a derived
+  '12' stores 12, and a value the kind cannot read is left out. A blank integer
+  or number literal no longer stores 0. Reindex to apply.
+  * fix(search)!: keep a single-valued field’s first readable value
+  - Read every literal on the path route, as the derive route does, so an
+    unreadable or blank first value cannot cost an integer, number, boolean or
+    date field the readable one behind it
+  - Store a list only for an array reference: the other read kinds are
+    scalars in the engine, whatever shape a derive returned
+  - Refuse an integer beyond ±2^53, report a keyword or text derive’s NaN
+    again, read a period derive’s null as no value, and describe a value with
+    no string form by its type instead of throwing
+  BREAKING CHANGE: a single-valued integer, number, boolean or date field now
+  stores its first readable value instead of its first value, and a derive
+  returning a list for a non-array field stores its first readable value
+  instead of the list. Reindex to apply.
+  * refactor(search): keep Reading and READ_KINDS module-private
+  - Nothing outside read-value.ts uses them"
+  M	docs/reference/search.md
+  M	packages/search/src/project.ts
+  A	packages/search/src/read-value.ts
+  M	packages/search/test/unreadable.test.ts
+
 ## 0.38.0 (2026-11-10)
 
 ### 🚀 Features
