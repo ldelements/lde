@@ -127,7 +127,8 @@ searchIndexerPipeline({
 ```
 
 A root the pattern leaves out is never extracted, so the collection and its
-facet counts hold only matching roots. A key the schema does not declare, a
+facet counts hold only matching roots. Write IRIs in full: the query declares no
+prefixes. A key the schema does not declare, a
 registry-sourced type, a pattern that does not mention `?root` or one that does
 not parse throws at wiring time. The restrictions extend `pipelineVersion`, so
 changing one re-indexes every dataset instead of skipping it.

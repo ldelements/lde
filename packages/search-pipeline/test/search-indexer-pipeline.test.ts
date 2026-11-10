@@ -341,6 +341,30 @@ describe('searchIndexerPipeline', () => {
       ).toThrow(/cannot restrict “Dataset”: registry-sourced types/);
     });
 
+    it('ignores inherited members as patterns', () => {
+      // A type named after an Object.prototype member is unrestricted, not
+      // handed the inherited function.
+      const prototypeNamed = searchSchema({
+        name: 'constructor',
+        class: ORGANIZATION,
+        fields: [
+          {
+            name: 'name',
+            kind: 'keyword',
+            path: '<https://example.org/name>',
+            output: true,
+          },
+        ],
+      });
+      expect(() =>
+        searchIndexerPipeline({
+          schema: prototypeNamed,
+          datasets: [],
+          writerFor: () => engineWriter,
+        }),
+      ).not.toThrow();
+    });
+
     it('rejects a pattern that does not constrain ?root', () => {
       // Over another variable it joins nothing to the root: every root passes.
       for (const pattern of ['?work <https://example.org/about> ?t', ' ']) {
@@ -351,7 +375,7 @@ describe('searchIndexerPipeline', () => {
             writerFor: () => engineWriter,
             restrictRoots: { Organization: pattern },
           }),
-        ).toThrow(/restrictRoots for “Organization” must constrain \?root/);
+        ).toThrow(/restrictRoots for “Organization” .*must constrain \?root/);
       }
     });
 

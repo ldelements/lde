@@ -105,7 +105,8 @@ export interface SearchIndexerPipelineOptions {
    * References from a kept document to a left-out root stay as they are.
    * A name the schema does not declare, a registry-sourced type (it describes
    * the dataset, not its records), a pattern that does not mention `?root` or
-   * one that does not parse throws at wiring time. The restrictions are part
+   * one that does not parse throws at wiring time. Write IRIs in full: the
+   * query declares no prefixes. The restrictions are part
    * of the version a {@link provenanceStore} keys its skips by, so changing one
    * re-indexes every dataset.
    */
@@ -272,18 +273,6 @@ function assertRestrictable(
         )}: registry-sourced types describe the dataset, not its records.`,
     );
   }
-  // A pattern over another variable (or an empty one) joins nothing to the
-  // root: it restricts nothing, and a non-empty one multiplies the selection.
-  const unbound = Object.entries(restrictRoots)
-    .filter(([, pattern]) => !/[?$]root\b/.test(pattern))
-    .map(([name]) => name);
-  if (unbound.length > 0) {
-    throw new Error(
-      `restrictRoots for ${unbound
-        .map((name) => `“${name}”`)
-        .join(', ')} must constrain ?root.`,
-    );
-  }
 }
 
 /**
@@ -307,14 +296,17 @@ function rootSelector(
   searchType: RootType,
   restrictRoots: Readonly<Record<string, string>>,
 ): ItemSelector {
-  const pattern = restrictRoots[searchType.name];
-  if (pattern === undefined) return selectByClass(searchType);
+  // Own keys only: a type named after an `Object.prototype` member must not
+  // pick up the inherited function as its pattern.
+  if (!Object.hasOwn(restrictRoots, searchType.name)) {
+    return selectByClass(searchType);
+  }
   try {
-    return selectByClass(searchType, 'root', pattern);
+    return selectByClass(searchType, 'root', restrictRoots[searchType.name]);
   } catch (cause) {
-    // The SPARQL parser throws an Error naming the offending token.
+    // selectByClass and the SPARQL parser throw an Error saying what is wrong.
     throw new Error(
-      `restrictRoots for “${searchType.name}” is not a valid SPARQL graph pattern: ${(cause as Error).message}`,
+      `restrictRoots for “${searchType.name}” is not a usable SPARQL graph pattern: ${(cause as Error).message}`,
       { cause },
     );
   }

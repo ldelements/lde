@@ -201,7 +201,8 @@ keyed by the type’s name. The pattern is added to the type’s root selection,
 --env RESTRICT_ROOTS='{"CreativeWork": "?root <https://schema.org/about> <http://vocab.getty.edu/aat/300000000>"}'
 ```
 
-The restriction applies to that type in every selected dataset. Other types are
+Write IRIs in full: the query declares no prefixes, so `schema:about` does not
+parse. The restriction applies to that type in every selected dataset. Other types are
 indexed whole. A root the pattern leaves out is never extracted, so the
 collection, and every facet count over it, holds only matching roots. A kept
 document may still reference a left-out root, such as a person who is the

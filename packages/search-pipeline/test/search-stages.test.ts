@@ -326,6 +326,13 @@ describe('selectByClass', () => {
     expect(() => selectByClass(person, 'root', '?root <unclosed')).toThrow();
   });
 
+  it('rejects a pattern that does not constrain the root variable', () => {
+    // Joined to nothing, it would restrict nothing.
+    expect(() =>
+      selectByClass(person, 'work', '?root <https://example.org/p> ?o'),
+    ).toThrow(/must constrain \?work/);
+  });
+
   async function sentQuery(pattern?: string): Promise<string> {
     let query = '';
     nock('http://example.org')
