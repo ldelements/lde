@@ -1,6 +1,6 @@
 {
   "name": "@lde/pipeline-logger-reporter",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Structured-logger reporter for @lde/pipeline: logs every pipeline event to a logger of your choice, such as Pino",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
@@ -31,6 +31,6 @@
     "@lde/dataset": "^0.10.1"
   },
   "peerDependencies": {
-    "@lde/pipeline": "^0.45.0"
+    "@lde/pipeline": "^0.46.0"
   }
 }

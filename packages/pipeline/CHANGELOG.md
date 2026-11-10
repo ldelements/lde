@@ -1,3 +1,10 @@
+## 0.46.0 (2026-11-10)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-health to 0.8.0
+- Updated @lde/distribution-probe to 0.6.0
+
 ## 0.45.0 (2026-11-10)
 
 ### 🚀 Features

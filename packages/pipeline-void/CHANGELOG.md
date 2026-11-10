@@ -1,3 +1,9 @@
+## 0.45.0 (2026-11-10)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.46.0
+
 ## 0.44.0 (2026-11-10)
 
 ### 🚀 Features
