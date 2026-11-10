@@ -11,7 +11,6 @@ export { projectRoots } from './project.js';
 export type {
   ProjectedNode,
   ProjectionContext,
-  UnreadableValue,
   SearchDocument,
 } from './project.js';
 

@@ -81,12 +81,16 @@ export function periodOf(value: string): StoredPeriod | undefined {
  * matches it.
  */
 export function periodCovering(
-  periods: readonly [StoredPeriod, ...StoredPeriod[]],
+  first: StoredPeriod,
+  ...rest: readonly StoredPeriod[]
 ): StoredPeriod {
-  return periods.reduce((covered, period) => ({
-    start: Math.min(covered.start, period.start),
-    end: Math.max(covered.end, period.end),
-  }));
+  return rest.reduce(
+    (covered, period) => ({
+      start: Math.min(covered.start, period.start),
+      end: Math.max(covered.end, period.end),
+    }),
+    first,
+  );
 }
 
 /** One side of an interval, or a whole plain value. */

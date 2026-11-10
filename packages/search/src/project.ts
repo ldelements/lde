@@ -41,7 +41,7 @@ import {
   type StoredDate,
   type TextField,
 } from './schema.js';
-import { periodCovering, periodOf, type StoredPeriod } from './period.js';
+import { periodCovering, periodOf } from './period.js';
 
 /**
  * A projected node: the fields of one {@link SearchType}, flat. A **Root Type**
@@ -115,7 +115,8 @@ export function projectDocument(
   schema?: SearchSchema,
   context: ProjectionContext = NO_PROJECTION_CONTEXT,
 ): SearchDocument {
-  if (documentKey(node) === undefined) {
+  const key = documentKey(node);
+  if (key === undefined) {
     throw new Error(
       `Cannot project a “${searchType.name}” node whose @id is not an absolute IRI (got ${JSON.stringify(node['@id']) ?? 'none'}; a blank node label or a relative reference is not one): every search document needs a stable key, and an empty one would collide with other keyless nodes.`,
     );
@@ -127,7 +128,7 @@ export function projectDocument(
     searchType,
     schema,
     context,
-    unreadableSink(context, documentKey(node) as string),
+    unreadableSink(context, key),
   ) as SearchDocument;
   pruneInternalFields(document, searchType, schema);
   return document;
@@ -449,7 +450,7 @@ function applyField(
   nested: boolean,
 ): void {
   // A blank value states nothing, so there is nothing to correct at the source.
-  const unread = (value: string): void => {
+  const unread: Unread = (value) => {
     if (value.trim() !== '') {
       sink(field.name, value);
     }
@@ -641,7 +642,7 @@ function referenceValues(
   field: ReferenceField,
   schema: SearchSchema | undefined,
   targetsById: Map<string, RootType>,
-  unread: (value: string) => void,
+  unread: Unread,
 ): readonly string[] {
   // A literal where a referent belongs states no IRI to store. A node without
   // one – a blank node – carries no value a publisher could look up, so only
@@ -1336,10 +1337,10 @@ function applyNestedReferents(
           : targetOfReferent(value, nestedTypes as readonly RootType[]);
       // Every tuple of a node carries the node’s other values, so each value
       // is reported once per node, not once per tuple it was copied into.
-      const reported = new Set<string>();
+      let reported: Set<string> | undefined;
       const nestedSink: UnreadableSink = (name, value) => {
         const key = JSON.stringify([name, value]);
-        if (!reported.has(key)) {
+        if (!(reported ??= new Set()).has(key)) {
           reported.add(key);
           sink(`${field.name}.${name}`, value);
         }
@@ -1552,7 +1553,7 @@ function iriString(value: unknown): string | undefined {
  *  promises (a list stays a list, a single value stays single) so `array` still
  *  decides the stored shape. A lone non-IRI becomes `undefined`, i.e. absent –
  *  the same outcome the graph path gives it. */
-function derivedIris(value: unknown, unread: (value: string) => void): unknown {
+function derivedIris(value: unknown, unread: Unread): unknown {
   const isIri = (entry: unknown): entry is string => {
     const iri = typeof entry === 'string' && isAbsoluteIri(entry);
     if (!iri && entry !== undefined) {
@@ -1588,7 +1589,7 @@ function applyDerivedDate(
   document: ProjectedNode,
   field: SearchField,
   derived: unknown,
-  unread: (value: string) => void,
+  unread: Unread,
 ): void {
   let stored: StoredDate | undefined;
   if (typeof derived === 'string') {
@@ -1638,7 +1639,7 @@ function setPeriod(
   document: ProjectedNode,
   field: SearchField,
   values: readonly string[],
-  unread: (value: string) => void,
+  unread: Unread,
 ): void {
   const readable = dedupe(values.map((value) => value.trim())).flatMap(
     (value) => {
@@ -1661,9 +1662,8 @@ function setPeriod(
     field.array === true ? stated.map(({ value }) => value) : stated[0].value;
   const companions = physicalFields(field).period;
   if (companions !== undefined) {
-    const covered = periodCovering(
-      stated.map(({ period }) => period) as [StoredPeriod, ...StoredPeriod[]],
-    );
+    const [first, ...rest] = stated.map(({ period }) => period);
+    const covered = periodCovering(first, ...rest);
     document[companions.start] = covered.start;
     document[companions.end] = covered.end;
   }
@@ -1671,10 +1671,7 @@ function setPeriod(
 
 /** A derive’s value as the strings a `period` stores: one string, or the
  *  strings in a list; anything else states no value. */
-function derivedStrings(
-  derived: unknown,
-  unread: (value: string) => void,
-): readonly string[] {
+function derivedStrings(derived: unknown, unread: Unread): readonly string[] {
   const values = Array.isArray(derived) ? derived : [derived];
   return values.filter((value): value is string => {
     if (typeof value !== 'string' && value !== undefined) {
@@ -1738,6 +1735,9 @@ function isObject(value: unknown): value is Record<string, unknown> {
 /** Where a field reports a value it could not read: the field’s name, prefixed
  *  with its parents’ for a nested referent, and the value. */
 type UnreadableSink = (field: string, value: string) => void;
+
+/** Where one field reports a value it could not read. */
+type Unread = (value: string) => void;
 
 /** The sink a root document’s fields report to: the context’s
  *  {@link ProjectionContext.onUnreadable}, told which node the value was
