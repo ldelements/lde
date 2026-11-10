@@ -34,7 +34,10 @@ second they cover in two hidden int64 companions (`${name}_start`,
 
 - **Output** is each value as its source stated it, typed `EDTF` in GraphQL.
   A qualifier is part of what is known, and how to render it depends on the
-  reader’s language, so the client renders it.
+  reader’s language, so the client renders it. A value that states no period
+  (`onbekend`, `1987/1897`) is left out and reported (ADR 33), so the scalar
+  holds for every value served; a deployment that wants to show such text
+  declares a `keyword` field over the same path.
 - **A range filter matches by overlap**: the period starts no later than `max`
   and ends no earlier than `min`. The input is the existing `DateRange`, read by
   the existing date codec.

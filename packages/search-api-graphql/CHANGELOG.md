@@ -1,3 +1,9 @@
+## 0.42.0 (2026-11-10)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.38.0
+
 ## 0.41.0 (2026-11-09)
 
 ### 🚀 Features

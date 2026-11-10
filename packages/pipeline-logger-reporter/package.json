@@ -31,6 +31,6 @@
     "@lde/dataset": "^0.10.1"
   },
   "peerDependencies": {
-    "@lde/pipeline": "^0.42.1"
+    "@lde/pipeline": "^0.43.0"
   }
 }

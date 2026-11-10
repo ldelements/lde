@@ -1,3 +1,67 @@
+## 0.34.0 (2026-11-10)
+
+### 🚀 Features
+
+- ⚠️  **search:** report and drop the values a typed field cannot read ([#1028](https://github.com/ldelements/lde/pull/1028))
+
+### ⚠️  Breaking Changes
+
+- **search:** report and drop the values a typed field cannot read  ([#1028](https://github.com/ldelements/lde/pull/1028))
+  a period field no longer stores a value that states no
+  period. To display such values, declare a keyword field over the same path.
+  Reindex to drop the values already stored.
+  * fix(search)!: leave out a boolean value outside true/false/1/0
+  - A boolean field over ja or yes stored false; it now leaves the value out
+    and reports it, as every other typed field does
+  BREAKING CHANGE: a boolean field no longer stores false for a value outside
+  the xsd:boolean lexical space. The API still serves such a document as false,
+  but it no longer matches an is: false filter or counts in the false facet
+  bucket. Reindex to apply.
+  * fix(search): report each unreadable value once, and no blank ones
+  - Report a value on a fanned-out referent once per node, not once per entry
+    it was copied into
+  - Skip a blank value: it states nothing to correct at the source
+  - Collapse whitespace around a boolean literal, as xsd:boolean does
+  - Say what UnreadValue.id names: the node read from, not the document key
+  * fix(pipeline-console-reporter): shorten a long unread example
+  - Cut an example value at 80 characters, so a literal where a date belongs
+    cannot flood the run log
+  * refactor(search): simplify the unread-value plumbing
+  - Let runStages own each attempt’s tally and return it, so the dump fallback
+    needs no second reset beside the writer’s
+  - Read the document key once, drop the periodCovering cast, name the Unread
+    callback type, and create a referent’s dedupe set only on its first report
+  - Keep UnreadableValue off the package index: no caller imports it there"
+  M	docs/decisions/0032-index-a-period-as-the-stretch-it-covers.md
+  A	docs/decisions/0033-report-the-values-a-typed-field-could-not-read.md
+  M	docs/reference/pipeline.md
+  M	docs/reference/search.md
+  M	packages/pipeline-console-reporter/src/consoleReporter.ts
+  M	packages/pipeline-console-reporter/test/consoleReporter.test.ts
+  M	packages/pipeline-console-reporter/vite.config.ts
+  M	packages/pipeline/src/combineReporters.ts
+  M	packages/pipeline/src/pipeline.ts
+  M	packages/pipeline/src/progressReporter.ts
+  M	packages/pipeline/src/stage.ts
+  A	packages/pipeline/src/unreadValueTally.ts
+  M	packages/pipeline/test/combineReporters.test.ts
+  M	packages/pipeline/test/pipeline.test.ts
+  M	packages/pipeline/test/stage.test.ts
+  M	packages/pipeline/vite.config.ts
+  M	packages/search-pipeline/src/search-stages.ts
+  M	packages/search-pipeline/test/search-stages.test.ts
+  M	packages/search-typesense/test/period.integration.test.ts
+  M	packages/search/src/period.ts
+  M	packages/search/src/project.ts
+  M	packages/search/test/period.test.ts
+  M	packages/search/test/qualified-relation.test.ts
+  A	packages/search/test/unreadable.test.ts
+  M	packages/search/vite.config.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.43.0
+
 ## 0.33.1 (2026-11-09)
 
 ### 🧱 Updated Dependencies

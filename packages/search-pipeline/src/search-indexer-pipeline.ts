@@ -4,6 +4,7 @@ import {
   Pipeline,
   type DatasetSelector,
   type DistributionResolver,
+  type ItemSelector,
   type Reporter,
   type ProvenanceStore,
   type QuadTransform,
@@ -95,6 +96,22 @@ export interface SearchIndexerPipelineOptions {
     >
   >;
   /**
+   * A SPARQL graph pattern over `?root` per root type, keyed by
+   * {@link SearchType.name}, that restricts which of the type’s instances are
+   * indexed, in every dataset ({@link selectByClass}). A root left out is never
+   * extracted, so the collection and its facet counts hold only the roots that
+   * match. Types without an entry are indexed whole.
+   *
+   * References from a kept document to a left-out root stay as they are.
+   * A name the schema does not declare, a registry-sourced type (it describes
+   * the dataset, not its records), a pattern that does not mention `?root` or
+   * one that does not parse throws at wiring time. Write IRIs in full: the
+   * query declares no prefixes. The restrictions are part
+   * of the version a {@link provenanceStore} keys its skips by, so changing one
+   * re-indexes every dataset.
+   */
+  restrictRoots?: Readonly<Record<string, string>>;
+  /**
    * Optional per-dataset processing memory: skip a dataset whose source
    * fingerprint and {@link pipelineVersion} both match the stored record.
    * Requires {@link pipelineVersion}.
@@ -153,9 +170,16 @@ export interface SearchIndexerPipelineOptions {
 export function searchIndexerPipeline(
   options: SearchIndexerPipelineOptions,
 ): Pipeline<TypedSearchDocument> {
-  const { schema, datasets, registryTypes, transforms } = options;
+  const {
+    schema,
+    datasets,
+    registryTypes,
+    transforms,
+    restrictRoots = {},
+  } = options;
   const fromRegistry = registryTypeNames(schema, registryTypes?.names);
   assertDeclaredTypeNames(schema, Object.keys(transforms ?? {}), 'transform');
+  assertRestrictable(schema, restrictRoots, fromRegistry);
   const sourceFor =
     registryTypes === undefined
       ? undefined
@@ -170,14 +194,17 @@ export function searchIndexerPipeline(
       types: [...schema.values()].map((searchType) => ({
         searchType,
         rootVariable: 'root',
-        itemSelector: selectByClass(searchType),
+        itemSelector: rootSelector(searchType, restrictRoots),
         sourceFor: fromRegistry.has(searchType.name) ? sourceFor : undefined,
         transform: transforms?.[searchType.name],
       })),
     }),
     writers: searchIndexWriter({ schema, writerFor: options.writerFor }),
     provenanceStore: options.provenanceStore,
-    pipelineVersion: options.pipelineVersion,
+    pipelineVersion: versionWithRestrictions(
+      options.pipelineVersion,
+      restrictRoots,
+    ),
     reporter: options.reporter,
   });
 }
@@ -219,6 +246,68 @@ function assertDeclaredTypeNames(
         .join(', ')}; the schema declares ${[...declared]
         .map((name) => `“${name}”`)
         .join(', ')}.`,
+    );
+  }
+}
+
+/**
+ * Validate {@link SearchIndexerPipelineOptions.restrictRoots} at wiring time: a
+ * misspelt name would otherwise restrict nothing and index every root, and a
+ * registry-sourced type would apply a pattern meant for the records to the
+ * dataset’s description.
+ */
+function assertRestrictable(
+  schema: SearchSchema,
+  restrictRoots: Readonly<Record<string, string>>,
+  fromRegistry: ReadonlySet<string>,
+): void {
+  const names = Object.keys(restrictRoots);
+  assertDeclaredTypeNames(schema, names, 'restricted root');
+  const fromRegistryNames = names.filter((name) => fromRegistry.has(name));
+  if (fromRegistryNames.length > 0) {
+    throw new Error(
+      `restrictRoots cannot restrict ${fromRegistryNames
+        .map((name) => `“${name}”`)
+        .join(
+          ', ',
+        )}: registry-sourced types describe the dataset, not its records.`,
+    );
+  }
+}
+
+/**
+ * The pipeline version a provenance skip is keyed by: the consumer’s, extended
+ * with the restrictions, so changing one re-indexes every dataset instead of
+ * skipping it with its old selection.
+ */
+function versionWithRestrictions(
+  pipelineVersion: string | undefined,
+  restrictRoots: Readonly<Record<string, string>>,
+): string | undefined {
+  return pipelineVersion === undefined ||
+    Object.keys(restrictRoots).length === 0
+    ? pipelineVersion
+    : `${pipelineVersion}+restrictRoots=${JSON.stringify(restrictRoots)}`;
+}
+
+/** The type’s {@link selectByClass} selector, restricted by its
+ *  {@link SearchIndexerPipelineOptions.restrictRoots} pattern if it has one. */
+function rootSelector(
+  searchType: RootType,
+  restrictRoots: Readonly<Record<string, string>>,
+): ItemSelector {
+  // Own keys only: a type named after an `Object.prototype` member must not
+  // pick up the inherited function as its pattern.
+  if (!Object.hasOwn(restrictRoots, searchType.name)) {
+    return selectByClass(searchType);
+  }
+  try {
+    return selectByClass(searchType, 'root', restrictRoots[searchType.name]);
+  } catch (cause) {
+    // selectByClass and the SPARQL parser throw an Error saying what is wrong.
+    throw new Error(
+      `restrictRoots for “${searchType.name}” is not a usable SPARQL graph pattern: ${(cause as Error).message}`,
+      { cause },
     );
   }
 }

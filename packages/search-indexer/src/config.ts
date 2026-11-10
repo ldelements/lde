@@ -29,6 +29,14 @@ export interface IndexerConfig {
    *  search criteria (`DATASET_CRITERIA`), or every dataset when neither is
    *  set. */
   readonly datasetCriteria: SearchCriteria;
+  /**
+   * A SPARQL graph pattern over `?root` per root type, keyed by
+   * {@link SearchType.name}, that restricts which instances of the type are
+   * indexed, in every dataset (`RESTRICT_ROOTS`, a JSON object). Empty when
+   * unset: every root is indexed. The names and patterns are validated against
+   * the mounted schema when the pipeline is wired.
+   */
+  readonly restrictRoots: Readonly<Record<string, string>>;
   /** Local data to index besides what the registry selects, from the `file:`
    *  URLs in `DATASETS`: paths of files, each one dataset, and of directories,
    *  which end in `/`, with one dataset per RDF file. */
@@ -210,6 +218,7 @@ export function configFromEnvironment(
     registryEndpoint,
     registryRootTypes: names(environment['REGISTRY_ROOT_TYPES']),
     datasetCriteria,
+    restrictRoots: restrictRootsFromEnvironment(environment, problems),
     localSources,
     typesense: {
       host: required('TYPESENSE_HOST'),
@@ -332,6 +341,35 @@ function criteriaFromEnvironment(
     }
   }
   return {};
+}
+
+/** `RESTRICT_ROOTS`: a JSON object mapping root type names to SPARQL graph
+ *  patterns; empty when unset. */
+function restrictRootsFromEnvironment(
+  environment: Readonly<Record<string, string | undefined>>,
+  problems: string[],
+): Readonly<Record<string, string>> {
+  const json = environment['RESTRICT_ROOTS'];
+  if (!json) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    problems.push('RESTRICT_ROOTS must be valid JSON');
+    return {};
+  }
+  if (
+    typeof parsed !== 'object' ||
+    parsed === null ||
+    Array.isArray(parsed) ||
+    !Object.values(parsed).every((pattern) => typeof pattern === 'string')
+  ) {
+    problems.push(
+      'RESTRICT_ROOTS must be a JSON object mapping type names to graph patterns',
+    );
+    return {};
+  }
+  return parsed as Record<string, string>;
 }
 
 function provenanceFromEnvironment(

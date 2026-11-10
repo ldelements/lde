@@ -116,6 +116,81 @@ describe('ConsoleReporter', () => {
     });
   });
 
+  describe('valuesUnread', () => {
+    it('prints how many values a field could not read, and a few of them', () => {
+      const reporter = new ConsoleReporter();
+      const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+
+      reporter.onEvent(
+        event({
+          type: 'valuesUnread',
+          dataset,
+          unread: {
+            target: 'CreativeWork',
+            field: 'dateCreated',
+            unread: 27,
+            examples: [
+              { id: 'https://example.org/sheet/1', value: 'Z.j' },
+              { id: 'https://example.org/sheet/2', value: '[Begin 20e eeuw]' },
+            ],
+          },
+        }),
+      );
+
+      const output = spy.mock.calls.map((call) => String(call[0])).join('');
+      expect(output).toContain('CreativeWork');
+      expect(output).toContain('27 dateCreated values unread');
+      expect(output).toContain('"Z.j"');
+      expect(output).toContain('on https://example.org/sheet/1');
+      expect(output).toContain('"[Begin 20e eeuw]"');
+    });
+
+    it('shortens a long example', () => {
+      const reporter = new ConsoleReporter();
+      const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+
+      reporter.onEvent(
+        event({
+          type: 'valuesUnread',
+          dataset,
+          unread: {
+            target: 'CreativeWork',
+            field: 'creator',
+            unread: 1,
+            examples: [
+              { id: 'https://example.org/obj/1', value: 'x'.repeat(500) },
+            ],
+          },
+        }),
+      );
+
+      const output = spy.mock.calls.map((call) => String(call[0])).join('');
+      expect(output).toContain(`"${'x'.repeat(79)}…"`);
+      expect(output).not.toContain('x'.repeat(80));
+    });
+
+    it('says “value” for a single one', () => {
+      const reporter = new ConsoleReporter();
+      const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+
+      reporter.onEvent(
+        event({
+          type: 'valuesUnread',
+          dataset,
+          unread: {
+            target: 'CreativeWork',
+            field: 'dateCreated',
+            unread: 1,
+            examples: [{ id: 'https://example.org/obj/1', value: '1987/1897' }],
+          },
+        }),
+      );
+
+      const output = spy.mock.calls.map((call) => String(call[0])).join('');
+      expect(output).toContain('1 dateCreated value unread');
+    });
+  });
+
   describe('datasetValidated', () => {
     it('shows success when validation conforms', () => {
       const reporter = new ConsoleReporter();

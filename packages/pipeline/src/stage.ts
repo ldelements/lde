@@ -7,6 +7,7 @@ import { batch } from './batch.js';
 import type { Validator } from './validator.js';
 import type { DatasetWriter } from './writer/writer.js';
 import { AsyncQueue } from './asyncQueue.js';
+import type { UnreadValue } from './pipelineEvent.js';
 
 /**
  * Transforms a quad stream, given the context of its extension point.
@@ -54,6 +55,13 @@ export type BatchTransform<Out> = (
  */
 export interface BatchContext extends ReaderContext {
   bindings: readonly VariableBindings[];
+  /**
+   * Report a value the transform could not read and so left out of the item
+   * it produced – an integer field over `onbekend`, say. The pipeline tallies
+   * them per (`target`, `field`) and reports them when the dataset completes
+   * (the `valuesUnread` event).
+   */
+  valueUnread(target: string, field: string, unread: UnreadValue): void;
 }
 
 /**
@@ -189,6 +197,9 @@ export interface RunOptions {
    * stages within one dataset.
    */
   timeout?: TimeoutPolicy;
+  /** Receives what a {@link BatchTransform} reports through
+   *  {@link BatchContext.valueUnread}; dropped when absent. */
+  valueUnread?: BatchContext['valueUnread'];
 }
 
 /** Options accepted by {@link ItemSelector.select}. */
@@ -470,6 +481,7 @@ export class Stage<Out = Quad> {
                     distribution,
                     stage: this.name,
                     bindings,
+                    valueUnread: options?.valueUnread ?? ignoreUnreadValue,
                   })
                 : (acceptedQuads as unknown as Out[]);
               for await (const item of items) {
@@ -660,4 +672,10 @@ export interface ItemSelector {
     batchSize?: number,
     options?: SelectOptions,
   ): AsyncIterable<VariableBindings>;
+}
+
+/** The {@link BatchContext.valueUnread} a stage run without a receiver hands
+ *  its transform. */
+function ignoreUnreadValue(): void {
+  // Nobody asked for the report, so there is nothing to tally.
 }

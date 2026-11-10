@@ -19,6 +19,7 @@ import type {
   StageStartEvent,
   TimeoutRelaxedEvent,
   TimeoutTightenedEvent,
+  ValuesUnreadEvent,
 } from '@lde/pipeline';
 import chalk from 'chalk';
 import logSymbols from 'log-symbols';
@@ -86,6 +87,8 @@ export class ConsoleReporter implements Reporter {
         return this.datasetSkipped(event);
       case 'itemsRejected':
         return this.itemsRejected(event);
+      case 'valuesUnread':
+        return this.valuesUnread(event);
       case 'pipelineComplete':
         return this.pipelineComplete(event);
       case 'timeoutTightened':
@@ -375,6 +378,23 @@ export class ConsoleReporter implements Reporter {
     }
   }
 
+  private valuesUnread({ unread }: ValuesUnreadEvent): void {
+    const { target, field, examples } = unread;
+    const count = compactNumber.format(unread.unread);
+    this.printLine(
+      logSymbols.warning,
+      `${chalk.bold(target)}: ${chalk.yellow(`${count} ${field} ${unread.unread === 1 ? 'value' : 'values'} unread`)}`,
+      1,
+    );
+    for (const { id, value } of examples) {
+      this.printLine(
+        logSymbols.warning,
+        `${JSON.stringify(truncated(value))} ${chalk.dim(`on ${id}`)}`,
+        2,
+      );
+    }
+  }
+
   private pipelineComplete(result: PipelineCompleteEvent): void {
     process.stderr.write(
       `\nPipeline completed in ${chalk.bold(
@@ -402,4 +422,14 @@ export class ConsoleReporter implements Reporter {
       2,
     );
   }
+}
+
+/** Longest example value printed in full; a literal where a date belongs can
+ *  be a whole description. */
+const MAX_EXAMPLE_LENGTH = 80;
+
+function truncated(value: string): string {
+  return value.length > MAX_EXAMPLE_LENGTH
+    ? `${value.slice(0, MAX_EXAMPLE_LENGTH - 1)}…`
+    : value;
 }

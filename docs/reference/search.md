@@ -384,8 +384,10 @@ from its first second to its last:
   them, from the earliest start to the latest end. A work dated `1668`, `1676`
   and `1686` therefore matches a filter on 1670–1672.
 - A value that is not a date or period in either grammar (`ca. 1620`,
-  `onbekend`), and an interval that ends before it starts, is still served but
-  takes no part in filtering or sorting.
+  `onbekend`), and an interval that ends before it starts, is left out and
+  [reported](#values-a-field-could-not-read), so every value served is EDTF. A
+  single-valued field keeps its first readable value. To show such text anyway,
+  declare a `keyword` field over the same path.
 
 The values are stored as strings under the field’s own name. The bounds are
 two hidden int64 fields beside them (`PhysicalFields.period`, `${name}_start`
@@ -1276,6 +1278,23 @@ A declared dataset field is also what the engine writer keeps its **provenance
 bookkeeping** on – see [`@lde/search-typesense`](./search-typesense.md#provenance)
 – so the facet, the label, any derive and the membership sweep read one column
 rather than two copies of one IRI.
+
+### Values a field could not read
+
+A typed field leaves out a value it cannot read: an `integer` or `number` over
+`onbekend`, a `date` over `Z.j`, a `period` over `1987/1897`, a `reference` over
+a literal, a `boolean` outside `true`/`false`/`1`/`0`. The document is still
+projected; the value is missing from it. So that a run can say what it lost, the
+projection reports each such value to the context’s `onUnreadable`, with the
+field – dotted for a field of a nested referent, `creator.birthDate` – the value
+as stated, and the IRI of the node the document came from. A value a `derive`
+returned counts too, as `String(value)` when it is not a string.
+
+`@lde/search-pipeline`’s `searchStages` passes them on to the pipeline, which
+reports them per dataset and field ([`valuesUnread`](./pipeline.md#reporter)),
+so the console shows what each dataset lost and a publisher can be told which
+values to correct at the source. See
+[ADR 33](../decisions/0033-report-the-values-a-typed-field-could-not-read.md).
 
 ## Locales
 

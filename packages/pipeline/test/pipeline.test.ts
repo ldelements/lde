@@ -123,6 +123,7 @@ const eventTypes = [
   'datasetComplete',
   'datasetSkipped',
   'itemsRejected',
+  'valuesUnread',
   'timeoutTightened',
   'timeoutRelaxed',
 ] as const satisfies readonly PipelineEvent['type'][];
@@ -338,6 +339,95 @@ describe('Pipeline', () => {
       expect(reporter.itemsRejected).toHaveBeenCalledWith(
         expect.objectContaining({ dataset, rejection }),
       );
+    });
+
+    it('reports the values a stage could not read, per field, before the dataset completes', async () => {
+      const reporter = makeReporter();
+      const unreadingStage = makeStage('stage1');
+      vi.spyOn(unreadingStage, 'run').mockImplementation(
+        async (_dataset, _distribution, _writer, options) => {
+          for (let index = 0; index < 7; index++) {
+            options?.valueUnread?.('Work', 'dateCreated', {
+              id: `urn:work:${index}`,
+              value: `onbekend ${index}`,
+            });
+          }
+          options?.valueUnread?.('Work', 'dateCreated', {
+            id: 'urn:work:repeat',
+            value: 'onbekend 0',
+          });
+          options?.valueUnread?.('Work', 'count', {
+            id: 'urn:work:0',
+            value: 'many',
+          });
+        },
+      );
+
+      await new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [unreadingStage],
+        writers: makeWriter(),
+        distributionResolver: makeResolver(makeResolvedDistribution()),
+        reporter,
+      }).run();
+
+      expect(reporter.valuesUnread).toHaveBeenCalledTimes(2);
+      expect(reporter.valuesUnread).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          dataset,
+          unread: {
+            target: 'Work',
+            field: 'dateCreated',
+            unread: 8,
+            // Five distinct values; the repeated `onbekend 0` is not a new example.
+            examples: [0, 1, 2, 3, 4].map((index) => ({
+              id: `urn:work:${index}`,
+              value: `onbekend ${index}`,
+            })),
+          },
+        }),
+      );
+      expect(reporter.valuesUnread).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          dataset,
+          unread: {
+            target: 'Work',
+            field: 'count',
+            unread: 1,
+            examples: [{ id: 'urn:work:0', value: 'many' }],
+          },
+        }),
+      );
+      expect(reporter.valuesUnread.mock.invocationCallOrder[1]).toBeLessThan(
+        reporter.datasetComplete.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('reports no unread values for a dataset whose stage failed', async () => {
+      const reporter = makeReporter();
+      const failingStage = makeStage('stage1');
+      vi.spyOn(failingStage, 'run').mockImplementation(
+        async (_dataset, _distribution, _writer, options) => {
+          options?.valueUnread?.('Work', 'dateCreated', {
+            id: 'urn:work:0',
+            value: 'onbekend',
+          });
+          throw new Error('query timed out');
+        },
+      );
+
+      await new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [failingStage],
+        writers: makeWriter(),
+        distributionResolver: makeResolver(makeResolvedDistribution()),
+        reporter,
+      }).run();
+
+      expect(reporter.valuesUnread).not.toHaveBeenCalled();
+      expect(reporter.datasetComplete).toHaveBeenCalled();
     });
 
     it('commits – not aborts – when a stage fails for one dataset', async () => {

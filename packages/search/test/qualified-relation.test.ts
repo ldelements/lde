@@ -246,6 +246,39 @@ describe('fanning an edge out into one entry per tuple', () => {
     ).toEqual([RKD, RKD]);
   });
 
+  it('reports an unreadable value on a fanned-out edge once, not once per entry', () => {
+    const datedEdge = defineSearchType({
+      ...weldableEdge,
+      fields: [
+        ...weldableEdge.fields,
+        {
+          name: 'year',
+          kind: 'date',
+          path: `${SCHEMA_ORG}startDate`,
+          output: true,
+        },
+      ],
+    });
+    const node = {
+      ...twoRoles,
+      [workKey('creator')]: [
+        {
+          ...(twoRoles[workKey('creator')] as Record<string, unknown>[])[0],
+          [edgeKey('year')]: [{ '@value': 'Z.j' }],
+        },
+      ],
+    };
+    const unread: unknown[] = [];
+
+    projectDocument(node, work, searchSchema(work, person, datedEdge), {
+      onUnreadable: (value) => unread.push(value),
+    });
+
+    expect(unread).toEqual([
+      { field: 'creator.year', value: 'Z.j', id: 'https://ex/work/2' },
+    ]);
+  });
+
   it('takes the product where two weldable leaves are multi-valued', () => {
     const twoOfEach = {
       '@id': 'https://ex/work/3',
