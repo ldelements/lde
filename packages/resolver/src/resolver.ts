@@ -166,11 +166,12 @@ export interface ResolverLimits {
    * the host is written off for the rest of the resolver’s life. Default 5, so
    * 5 of the last 10.
    *
-   * **Slowing down comes first.** A failure counts only when the batch ran
-   * while the host’s limit in {@link ResolverOptions.limiter} was down to one
-   * batch at a time. A failure at a higher limit halves the limit instead, so a
-   * host that fails because it is overloaded is slowed down before it is given
-   * up on.
+   * **A burst of failures counts once.** When a host goes down, every batch in
+   * flight fails together, so a failure counts only if none of the host’s
+   * failures was counted after its batch started. One bad moment at a high
+   * limit therefore costs one failure, and halves the host’s limit in
+   * {@link ResolverOptions.limiter}; a host that keeps failing, burst after
+   * burst, is written off.
    *
    * A window rather than a run of consecutive failures, so a host where most
    * references fail is written off even when a few succeed in between. A dead
@@ -188,6 +189,9 @@ export interface ResolverLimits {
    * window at all, so broken references never write off a host whose other
    * references resolve. A batch with at least one fact or absence counts as a
    * success.
+   *
+   * Batches of the burst that writes a host off, already in flight then,
+   * still run.
    */
   hostFailureThreshold?: number;
 }
@@ -420,6 +424,11 @@ export function createResolver<Reference, Fact>(
   // stop.
   const recentFailures = new Map<string, boolean[]>();
   const writtenOff = new Set<string>();
+  // Orders attempts and counted failures, so a failure can tell whether one of
+  // its host’s failures was counted after its own attempt started; kept per
+  // host only while the host has a failure in its window.
+  let tick = 0;
+  const lastCountedAt = new Map<string, number>();
 
   const hostOf =
     typeof options.host === 'string'
@@ -636,9 +645,8 @@ export function createResolver<Reference, Fact>(
       let stalled: FetchOutcome<Fact> | undefined;
       // Why the latest attempt failed, for a batch that is waiting to try again.
       let lastFailure: FetchOutcome<Fact> | undefined;
-      // Whether the latest attempt ran with its host down to one batch at a
-      // time: only then does a failure count towards writing the host off.
-      let atLimitOne = false;
+      // When the latest attempt started, in `tick`s.
+      let startedAt = 0;
       // Whether the stall’s first failure was counted, so only then is it
       // taken back.
       let stallCounted = false;
@@ -659,7 +667,7 @@ export function createResolver<Reference, Fact>(
               return { step: writtenOffStep(), overloaded: true };
             }
             attempts++;
-            atLimitOne = limiter.limitOf(batch.host) === 1;
+            startedAt = ++tick;
             const result = await attempt(batch.entries);
             return {
               step: settle(result),
@@ -761,13 +769,19 @@ export function createResolver<Reference, Fact>(
         return everyKey(failedOutcome<Fact>(error, attempts, suffix));
       }
 
-      /** Count a failure against the host if it ran at a limit of one, and
-       *  answer whether it was counted. */
+      /**
+       * Count a failure against the host, once per burst, and answer whether it
+       * was counted. When a host goes down, everything in flight fails
+       * together: that is one signal, so a failure of an attempt that started
+       * before the host’s last counted failure is not counted again.
+       */
       function noteFailure(): boolean {
-        if (atLimitOne) {
-          noteHostOutcome(batch.host, false);
+        if ((lastCountedAt.get(batch.host) ?? 0) > startedAt) {
+          return false;
         }
-        return atLimitOne;
+        lastCountedAt.set(batch.host, ++tick);
+        noteHostOutcome(batch.host, false);
+        return true;
       }
 
       function everyKey(outcome: FetchOutcome<Fact>): Done<Fact> {
@@ -791,8 +805,13 @@ export function createResolver<Reference, Fact>(
     }
     window[window.lastIndexOf(true)] = false;
     if (!window.includes(true)) {
-      recentFailures.delete(host);
+      forgetFailures(host);
     }
+  }
+
+  function forgetFailures(host: string): void {
+    recentFailures.delete(host);
+    lastCountedAt.delete(host);
   }
 
   /**
@@ -810,11 +829,11 @@ export function createResolver<Reference, Fact>(
     const failures = window.filter(Boolean).length;
     if (failures >= hostFailureThreshold) {
       writtenOff.add(host);
-      recentFailures.delete(host); // Nothing reads it once written off.
+      forgetFailures(host); // Nothing reads it once written off.
     } else if (failures === 0) {
       // A window of successes counts the same as no window at all, so a
       // healthy host holds no memory.
-      recentFailures.delete(host);
+      forgetFailures(host);
     } else {
       recentFailures.set(host, window);
     }

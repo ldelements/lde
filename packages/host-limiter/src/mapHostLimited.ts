@@ -34,13 +34,6 @@ export interface HostLimiter {
    * @param untilMs epoch milliseconds; a pause never shortens a longer one
    */
   pause(host: string, untilMs: number): void;
-
-  /**
-   * How many tasks `host` may have in flight now: 1 for a host the limiter
-   * has not seen or has forgotten, at most the `perHostLimit` it was created
-   * with.
-   */
-  limitOf(host: string): number;
 }
 
 /**
@@ -229,7 +222,6 @@ export function createHostLimiter(
       }
       retireIfIdle(host, state);
     },
-    limitOf: (host) => (active.get(host) ?? idle.get(host))?.limit ?? 1,
   };
 }
 

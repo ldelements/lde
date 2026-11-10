@@ -382,20 +382,35 @@ function queue(limiter: HostLimiter, host: string, count: number) {
   };
 }
 
+/**
+ * How many tasks `host` may have in flight now: queue more than any limit and
+ * count those that start. They never settle, so a test calls this last.
+ */
+async function limitNow(limiter: HostLimiter, host: string): Promise<number> {
+  let started = 0;
+  for (let task = 0; task < 200; task++) {
+    void limiter.run(host, () => {
+      started++;
+      return new Promise(() => undefined);
+    });
+  }
+  await settle();
+  return started;
+}
+
 describe('createHostLimiter’s adaptive per-host limit', () => {
   it('starts a host at one task and doubles per round of successes', async () => {
     const limiter = createHostLimiter(100, 100);
-    expect(limiter.limitOf('a')).toBe(1);
     const tasks = queue(limiter, 'a', 20);
 
     const rounds = [
       await tasks.round(),
       await tasks.round(),
       await tasks.round(),
+      await tasks.round(),
     ];
 
-    expect(rounds).toEqual([1, 2, 4]);
-    expect(limiter.limitOf('a')).toBe(8);
+    expect(rounds).toEqual([1, 2, 4, 8]);
     await tasks.drain();
   });
 
@@ -407,10 +422,10 @@ describe('createHostLimiter’s adaptive per-host limit', () => {
       await tasks.round(),
       await tasks.round(),
       await tasks.round(),
+      await tasks.round(),
     ];
 
-    expect(rounds).toEqual([1, 2, 3]);
-    expect(limiter.limitOf('a')).toBe(3);
+    expect(rounds).toEqual([1, 2, 3, 3]);
     await tasks.drain();
   });
 
@@ -423,12 +438,10 @@ describe('createHostLimiter’s adaptive per-host limit', () => {
 
     // All 8 fail together: one overload, not eight.
     expect(await tasks.round('fail')).toBe(8);
-    expect(limiter.limitOf('a')).toBe(4);
 
     expect(await tasks.round()).toBe(4);
-    expect(limiter.limitOf('a')).toBe(5);
     expect(await tasks.round()).toBe(5);
-    expect(limiter.limitOf('a')).toBe(6);
+    expect(await tasks.round()).toBe(6);
     await tasks.drain();
   });
 
@@ -442,7 +455,7 @@ describe('createHostLimiter’s adaptive per-host limit', () => {
     await tasks.round('fail'); // 4
     await tasks.round('fail');
 
-    expect(limiter.limitOf('a')).toBe(2);
+    expect(await tasks.round()).toBe(2);
     await tasks.drain();
   });
 
@@ -453,24 +466,26 @@ describe('createHostLimiter’s adaptive per-host limit', () => {
       await limiter.run('a', async () => undefined);
     }
 
-    expect(limiter.limitOf('a')).toBe(1);
+    expect(await limitNow(limiter, 'a')).toBe(1);
   });
 
   it('does not raise the limit of a host held back by the global cap', async () => {
-    // Plenty is waiting, but the global cap keeps the host at one task in
-    // flight: its limit grows once, for using its limit of 1, and then stops.
-    const limiter = createHostLimiter(1, 100);
-    const first = queue(limiter, 'a', 10);
-    const second = queue(limiter, 'b', 10);
+    // Plenty is waiting, but with two of the three global slots held
+    // elsewhere the host has one task in flight: its limit grows once, for
+    // using its limit of 1, and then stops.
+    const limiter = createHostLimiter(3, 100);
+    const elsewhere = [queue(limiter, 'b', 1), queue(limiter, 'c', 1)];
+    const tasks = queue(limiter, 'a', 20);
 
     for (let round = 0; round < 4; round++) {
-      await first.round();
-      await second.round();
+      expect(await tasks.round()).toBe(1);
+    }
+    for (const other of elsewhere) {
+      await other.drain();
     }
 
-    expect(limiter.limitOf('a')).toBe(2);
-    await first.drain();
-    await second.drain();
+    expect(await tasks.round()).toBe(2);
+    await tasks.drain();
   });
 
   it('forgets the least recently used idle hosts beyond a thousand', async () => {
@@ -486,20 +501,21 @@ describe('createHostLimiter’s adaptive per-host limit', () => {
       await limiter.run(`host ${host}`, async () => undefined);
     }
 
-    expect(limiter.limitOf('remembered')).toBe(1);
-    expect(limiter.limitOf('touched later')).toBe(2);
+    expect(await limitNow(limiter, 'remembered')).toBe(1);
+    expect(await limitNow(limiter, 'touched later')).toBe(2);
   });
 
   it('remembers a host with work in flight however many others pass', async () => {
     const limiter = createHostLimiter(100, 100);
-    const busy = queue(limiter, 'busy', 4);
+    const busy = queue(limiter, 'busy', 20);
     await busy.round(); // Its limit is now 2, with 2 tasks in flight.
 
     for (let host = 0; host < 1_001; host++) {
       await limiter.run(`host ${host}`, async () => undefined);
     }
 
-    expect(limiter.limitOf('busy')).toBe(2);
+    expect(await busy.round()).toBe(2);
+    expect(await busy.round()).toBe(4);
     await busy.drain();
   });
 });
@@ -550,18 +566,16 @@ describe('HostLimiter.pause', () => {
 
     limiter.pause('a', Date.now());
 
-    expect(limiter.limitOf('a')).toBe(1);
     // In flight before the pause: failing now is the same overload, so the
     // limit is not halved again.
     expect(await tasks.round('fail')).toBe(16);
-    expect(limiter.limitOf('a')).toBe(1);
     expect([
       await tasks.round(),
       await tasks.round(),
       await tasks.round(),
       await tasks.round(),
-    ]).toEqual([1, 2, 4, 8]);
-    expect(limiter.limitOf('a')).toBe(9);
+      await tasks.round(),
+    ]).toEqual([1, 2, 4, 8, 9]);
     await tasks.drain();
   });
 
@@ -575,7 +589,7 @@ describe('HostLimiter.pause', () => {
     limiter.pause('a', Date.now());
     expect(await tasks.round()).toBe(8);
 
-    expect(limiter.limitOf('a')).toBe(1);
+    expect(await tasks.round()).toBe(1);
     await tasks.drain();
   });
 
@@ -598,8 +612,8 @@ describe('HostLimiter.pause', () => {
       await tasks.round(),
       await tasks.round(),
       await tasks.round(),
-    ]).toEqual([1, 2, 4]);
-    expect(limiter.limitOf('a')).toBe(8);
+      await tasks.round(),
+    ]).toEqual([1, 2, 4, 8]);
     await tasks.drain();
   });
 

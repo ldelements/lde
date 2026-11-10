@@ -60,7 +60,6 @@ per endpoint and nobody knows the publisher’s hardware:
   at one and slow-starts up to half of what it was, so the first task after the
   pause probes whether the host is back. A pause while one runs only extends
   it, and a pause keeps the process alive until it ends.
-- `limiter.limitOf(host)` reads the current limit.
 
 `mapHostLimited` builds a fresh limiter per call, and its tasks don’t reject, so
 there the limit only slow-starts: each host begins at one and rises to the cap.

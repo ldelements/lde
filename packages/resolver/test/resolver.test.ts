@@ -1215,7 +1215,6 @@ describe('a host that is down', () => {
         limiter: {
           run: () => Promise.reject(new Error('queue full')),
           pause: () => undefined,
-          limitOf: () => 1,
         },
       },
     );
@@ -1229,7 +1228,6 @@ describe('a host that is down', () => {
     const asked: string[] = [];
     let stallAttempts = 0;
     const host = 'https://sws.geonames.org';
-    const limiter = createHostLimiter(4, 2);
     const { resolver } = resolverOver(
       async (iris, { signal }) => {
         asked.push(...iris);
@@ -1246,24 +1244,27 @@ describe('a host that is down', () => {
         }
         throw new Error('HTTP 502');
       },
-      { limiter, limits: { timeoutMs: 5, hostFailureThreshold: 2 } },
+      {
+        limiter: createHostLimiter(4, 2),
+        limits: { timeoutMs: 5, hostFailureThreshold: 2 },
+      },
     );
-
-    await resolver.resolveAll([`${host}/first/`]); // Counted, at a limit of 1.
+    // Earns the host two batches in flight.
     await resolver.resolveAll([`${host}/ok/1/`, `${host}/ok/2/`]);
-    expect(limiter.limitOf('sws.geonames.org')).toBe(2);
-    // Stalls at a limit of 2, so not counted; its second attempt is answered.
-    await resolver.resolveAll([`${host}/stall/`]);
-    await resolver.resolveAll([`${host}/second/`]); // Counted: two, written off.
+
+    // Sent together: the 502 is counted, and the stall that times out after it
+    // is the same burst, so it is not. Its second attempt is answered, which
+    // must not take back the 502.
+    await resolver.resolveAll([`${host}/first/`, `${host}/stall/`]);
+    await resolver.resolveAll([`${host}/second/`]); // Two failures: written off.
     await resolver.resolveAll([`${host}/never/`]);
 
     expect(asked).not.toContain(`${host}/never/`);
   });
 
-  it('slows a failing host down to one batch at a time before writing it off', async () => {
+  it('counts a burst of failures once', async () => {
     let failing = false;
     const asked: string[] = [];
-    const limiter = createHostLimiter(4, 2);
     const { resolver } = resolverOver(
       async (iris) => {
         if (!failing) {
@@ -1272,13 +1273,15 @@ describe('a host that is down', () => {
         asked.push(...iris);
         throw new Error('HTTP 502');
       },
-      { limiter, limits: { hostFailureThreshold: 1 } },
+      {
+        limiter: createHostLimiter(4, 2),
+        limits: { hostFailureThreshold: 2 },
+      },
     );
     // A host that kept up has earned two batches in flight.
     await resolver.resolveAll(
       [1, 2, 3].map((index) => `https://sws.geonames.org/warm/${index}/`),
     );
-    expect(limiter.limitOf('sws.geonames.org')).toBe(2);
     failing = true;
 
     await resolver.resolveAll([
@@ -1288,11 +1291,10 @@ describe('a host that is down', () => {
       'https://sws.geonames.org/2/',
     ]);
 
-    // Maastricht and Venlo fail at two in flight: one overload, which halves
-    // the limit and writes nothing off. The first failure at one batch at a
-    // time does, so the last reference is never sent.
+    // Maastricht and Venlo fail together: one failure, and the limit halves.
+    // The next failure is a second one, which writes the host off, so the
+    // last reference is never sent.
     expect(asked).toEqual([MAASTRICHT, VENLO, 'https://sws.geonames.org/1/']);
-    expect(limiter.limitOf('sws.geonames.org')).toBe(1);
   });
 
   it('gives a stall no second attempt once its host is written off, nor a refund', async () => {

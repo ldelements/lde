@@ -208,12 +208,14 @@ at least one fact or absence counts as a success, a batch the call threw for
 counts as a failure, and a batch whose every key came back as a
 `referenceFailure` does not count at all.
 
-**Slowing down comes first.** A failure counts only when its batch ran while the
-host’s limit was down to one batch at a time. A failure at a higher limit halves
-the limit instead, so a host that fails because it is overloaded is slowed down
-first and written off only if it still fails one batch at a time. A dead host
-costs a few batches while its limit comes down, then the threshold, before the
-breaker saves the rest.
+**A burst of failures counts once.** When a host goes down, every batch in
+flight fails together, so a failure counts only if none of the host’s failures
+was counted after its batch started. One bad moment at a high limit costs one
+failure and halves the host’s limit; a host that keeps failing, burst after
+burst, is written off. The count is the resolver’s own: the requests of others
+sharing its limiter neither count towards it nor hide its failures. A dead host
+costs the threshold in bursts before the breaker saves the rest, plus the
+batches of the last burst, which were already in flight and still run.
 Retrying every reference against a host that is down is the stampede, not the
 remedy, and it costs the run’s wall clock as much as the host’s patience.
 Written-off references are refunded to the fetch budget, since they sent
