@@ -1,6 +1,6 @@
 {
   "name": "@lde/search-indexer",
-  "version": "0.38.0",
+  "version": "0.38.1",
   "description": "The @lde/search-pipeline indexer as a bootable process and prebuilt Docker image: loads a mounted schema-declaration module, dataset selection, Typesense connection and rebuild mode from the environment, then runs the object-grain searchIndexerPipeline once to completion. The composition layer that binds the engine-agnostic @lde/search-pipeline stages to @lde/search-typesense – the write-path counterpart of @lde/search-api-server.",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
@@ -33,8 +33,8 @@
     "@lde/pipeline": "^0.45.0",
     "@lde/pipeline-console-reporter": "^0.36.0",
     "@lde/search": "^0.41.1",
-    "@lde/search-pipeline": "^0.48.0",
-    "@lde/search-typesense": "^0.51.0",
+    "@lde/search-pipeline": "^0.48.1",
+    "@lde/search-typesense": "^0.51.1",
     "@lde/sparql-qlever": "^0.21.1",
     "commander": "^15.0.0",
     "tslib": "^2.3.0",

@@ -1,3 +1,9 @@
+## 0.51.1 (2026-11-10)
+
+### 🩹 Fixes
+
+- **search-typesense:** let a stemmed companion lead the query ([#1044](https://github.com/ldelements/lde/pull/1044))
+
 ## 0.51.0 (2026-11-10)
 
 ### 🧱 Updated Dependencies
