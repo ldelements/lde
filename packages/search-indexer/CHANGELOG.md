@@ -1,3 +1,17 @@
+## 0.33.0 (2026-11-10)
+
+### 🚀 Features
+
+- **search-indexer:** restrict which roots a deployment indexes ([#1027](https://github.com/ldelements/lde/pull/1027))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline-console-reporter to 0.34.0
+- Updated @lde/search-typesense to 0.46.0
+- Updated @lde/search-pipeline to 0.43.0
+- Updated @lde/pipeline to 0.43.0
+- Updated @lde/search to 0.38.0
+
 ## 0.32.0 (2026-11-09)
 
 ### 🧱 Updated Dependencies
