@@ -76,14 +76,6 @@ export interface SearchIndexerPipelineOptions {
     names: readonly string[];
   };
   /**
-   * The {@link SearchType.name} of the root type that describes the dataset
-   * being indexed, so a `derive` can copy a field of the dataset onto each
-   * document through `ProjectionContext.datasetDocument` – see
-   * `searchStages`’ `datasetType`. An unknown name throws here, at
-   * wiring time.
-   */
-  datasetType?: string;
-  /**
    * {@link QuadTransform}(s) attached to a root type’s reader, keyed by
    * {@link SearchType.name} – the extension point a deployment reaches for
    * when the data needs correcting, enriching or pruning before projection.
@@ -206,7 +198,6 @@ export function searchIndexerPipeline(
         sourceFor: fromRegistry.has(searchType.name) ? sourceFor : undefined,
         transform: transforms?.[searchType.name],
       })),
-      datasetType: options.datasetType,
     }),
     writers: searchIndexWriter({ schema, writerFor: options.writerFor }),
     provenanceStore: options.provenanceStore,

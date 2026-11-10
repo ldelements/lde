@@ -89,9 +89,9 @@ export interface ProjectionContext extends Partial<
    * The projected document of the dataset being indexed, whose `id` is
    * {@link dataset}: it lets a `derive` copy a field of the dataset – the
    * publisher of a work’s dataset, say – onto every document indexed from it.
-   * Supplied by a caller that projects the dataset first (`@lde/search-pipeline`
-   * with its `datasetType` option); absent otherwise. See the docs’ “Copy a
-   * field of the dataset” for when it is absent.
+   * Supplied by a caller that projects the dataset first (`@lde/search-pipeline`,
+   * for a schema with a `dcat:Dataset` root type); absent otherwise. See the
+   * docs’ “Copy a field of the dataset” for when it is absent.
    */
   readonly datasetDocument?: SearchDocument;
 }

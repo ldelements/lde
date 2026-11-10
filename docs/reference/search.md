@@ -1368,11 +1368,10 @@ values to correct at the source. See
 ### Copy a field of the dataset
 
 The context also carries `datasetDocument`: the projected document of the
-dataset being indexed. Name the type that describes the dataset with the
-`datasetType` option of `@lde/search-pipeline`’s `searchIndexerPipeline` (or
-`searchStages`): that type’s stage then runs first for each dataset, and the
-document it projects for the dataset itself – the one whose `id` is the dataset
-IRI – reaches every other stage.
+dataset being indexed. `@lde/search-pipeline` supplies it when the schema has a
+root type whose `class` is `dcat:Dataset`: that type’s stage runs first for each
+dataset, and the document it projects for the dataset itself – the one whose
+`id` is the dataset IRI – reaches every other stage.
 
 A `derive` uses it to copy a field of the dataset onto each document indexed
 from it. The copy is an ordinary stored field, so it filters, facets and counts
@@ -1397,7 +1396,7 @@ datasets, not works (see
 
 `datasetDocument` is the dataset’s document as written, so the dataset type’s
 [internal fields](#field-model) are not in it: a field you copy must declare
-a role on the dataset type. It is absent without `datasetType`, when the
+a role on the dataset type. It is absent when the schema has no `dcat:Dataset` type, when the
 dataset’s description is missing, and for documents of the dataset type itself.
 
 ## Locales
