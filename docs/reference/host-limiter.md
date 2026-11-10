@@ -116,6 +116,7 @@ tasks, none of them can finish.
 
 ## Users
 
-[@lde/distribution-probe](./distribution-probe) bounds a batch of probes with it,
-and [@lde/resolver](./resolver) shares one limiter across all the `resolveAll`
-calls on a resolver.
+[@lde/distribution-probe](./distribution-probe) bounds a batch of probes with it.
+[@lde/resolver](./resolver) runs every batch on one limiter, its own or one it is
+given to share, turns a failed call into a rejection so the host’s limit comes
+down, and pauses a host that asked it to come back later.

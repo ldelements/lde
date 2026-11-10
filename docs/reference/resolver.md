@@ -150,15 +150,35 @@ of them. Set it to what your upstream can bear.
 
 ## Bounding, waiting and giving up on a host
 
-Concurrency is bounded globally and per host through
-[@lde/host-limiter](./host-limiter), which the resolver **owns** rather than
-delegates: HTTP clients get this wrong often enough that it cannot be assumed
-(see [IIIF-Commons/iiif-helpers#39](https://github.com/IIIF-Commons/iiif-helpers/issues/39),
+Concurrency is bounded globally and per host through a
+[@lde/host-limiter](./host-limiter) limiter, which the resolver **owns** rather
+than delegates to an HTTP client: clients get this wrong often enough that it
+cannot be assumed (see [IIIF-Commons/iiif-helpers#39](https://github.com/IIIF-Commons/iiif-helpers/issues/39),
 where a client throttles on a single global counter borrowed from an unrelated
-config key). The caps belong to the resolver, not to one `resolveAll` call, so
+config key). The limits belong to the resolver, not to one `resolveAll` call, so
 batches resolving in parallel – a `Stage` running a transform per batch, say –
-share them. A batch never mixes hosts, so the per-host cap keeps meaning what it
-says even at `batchSize` above 1.
+share them. A batch never mixes hosts, so the per-host limit keeps meaning what
+it says even at `batchSize` above 1.
+
+**Each host’s limit adapts.** It starts at one batch in flight and rises while
+the host keeps up, up to the limiter’s per-host ceiling. A call that throws
+counts as overload and halves it; an answer – a `referenceFailure` included –
+does not. So a host that answers quickly is fetched from in parallel, and one
+that buckles under load is slowed down before it is given up on. Without a
+`limiter` option the resolver builds its own, with at most 4 batches in flight
+and at most 4 against any one host.
+
+**Share one limiter between everything that loads the same backend.** A
+resolver’s own limiter cannot see the requests a pipeline stage’s readers send,
+so when the facts and the stage’s data come from one server, create one limiter
+and pass it to both, with host keys that name that server:
+
+```ts
+import { createHostLimiter } from '@lde/host-limiter';
+
+const limiter = createHostLimiter(10, 8);
+const resolver = createResolver({ …, host: () => datasetIri, limiter });
+```
 
 `host` is **required**, and is either a constant – for a source reached through
 one endpoint – or a function of the reference. It is deliberately not defaulted
@@ -185,9 +205,14 @@ Museum’s manifests did exactly that, resetting a consecutive count for more th
 references never writes off a host whose other references resolve: a batch with
 at least one fact or absence counts as a success, a batch the call threw for
 counts as a failure, and a batch whose every key came back as a
-`referenceFailure` does not count at all. A dead host costs the threshold in
-batches before the breaker saves the rest, plus whatever was already in flight
-against it – up to `perHostConcurrency` batches, which still run.
+`referenceFailure` does not count at all.
+
+**Slowing down comes first.** A failure counts only when its batch ran while the
+host’s limit was down to one batch at a time. A failure at a higher limit halves
+the limit instead, so a host that fails because it is overloaded is slowed down
+first and written off only if it still fails one batch at a time. A dead host
+costs a few batches while its limit comes down, then the threshold, before the
+breaker saves the rest.
 Retrying every reference against a host that is down is the stampede, not the
 remedy, and it costs the run’s wall clock as much as the host’s patience.
 Written-off references are refunded to the fetch budget, since they sent
@@ -231,9 +256,11 @@ contacted once, so it is not refunded.
 **A source that says to come back later** gets what it asked for. Throw
 `RetryableError`, with `retryAfterMs` from `parseRetryAfter(response.headers.get('retry-after'))`,
 and no new attempt against the whole host – not just the one reference – starts
-until it has passed, because a rate limit is about this client. Attempts already
-in flight finish, and the wait holds no concurrency slot, so other hosts carry
-on. Without a delay – or with a delay of 0, which `Retry-After: 0` and a date
+until it has passed, because a rate limit is about this client. The limiter
+pauses the host, so the pause holds for everything sharing that limiter, and
+afterwards lets one batch through before slowly opening up again. Attempts
+already in flight finish, and the wait holds no concurrency slot, so other hosts
+carry on. Without a delay – or with a delay of 0, which `Retry-After: 0` and a date
 skewed into the past both give and which names no real wait – only that batch
 backs off, 500 ms and then 1 s. After two retries, or for a delay longer than
 `timeoutMs`, which is not waited out, the call fails for this run and counts
