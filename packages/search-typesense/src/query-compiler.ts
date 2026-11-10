@@ -506,7 +506,7 @@ function compileLeaf(
   }
   // A criterion whose operator does not match the field's kind (e.g. `range` on
   // a keyword) would reach the engine as garbage syntax – skip it instead.
-  if (filterOperatorFor(field.kind) !== filterOperator(criterion)) {
+  if (filterOperatorFor(field) !== filterOperator(criterion)) {
     return UNUSABLE;
   }
   if ('in' in criterion) {

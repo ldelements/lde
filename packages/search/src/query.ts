@@ -407,7 +407,7 @@ function collectLeafIssues(
     issues.push({ part: 'where', field, reason: 'not-filterable' });
     return;
   }
-  if (filterOperatorFor(declared.kind) !== filterOperator(criterion)) {
+  if (filterOperatorFor(declared) !== filterOperator(criterion)) {
     issues.push({ part: 'where', field, reason: 'operator-mismatch' });
     return;
   }

@@ -192,6 +192,10 @@ export type ResultDocument<OutputField extends string = string> = Readonly<
  * on, plus the precision its source gave, which a surface needs to serve it in
  * that precision’s canonical form. An index built before precision was stored
  * reports `dateTime`, the one form the seconds alone can always be read as.
+ *
+ * A lookup reading its literals as periods (one declaring `literal: 'period'`)
+ * mixes the two forms its source states: each entry is a period, as a string,
+ * or a referent, as an object – a single-valued one is either.
  */
 export type SearchValue =
   | string
@@ -203,7 +207,8 @@ export type SearchValue =
   | Reference
   | readonly Reference[]
   | NestedDocument
-  | readonly NestedDocument[];
+  | readonly NestedDocument[]
+  | readonly (string | Reference | NestedDocument)[];
 
 /**
  * A **nested Search Document**: the referent of a surfaced (`output`) inline

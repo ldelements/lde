@@ -21,6 +21,7 @@ import {
   isAbsoluteIri,
   isInternalField,
   isInlineReference,
+  literalKindOf,
   localLookupTargetsOf,
   physicalFields,
   referencedTargetsOf,
@@ -39,7 +40,7 @@ import {
   type StoredDate,
   type TextField,
 } from './schema.js';
-import { periodCovering, periodOf } from './period.js';
+import { periodCovering, periodOf, type StoredPeriod } from './period.js';
 import {
   describeValue,
   isReadKind,
@@ -433,14 +434,22 @@ export function missingRequiredFields(
 
 /** Whether a projected document carries a value for `field`: for text, in any
  *  of the physical fields it spreads over – never in a sibling field whose
- *  name only looks like one of them (`title_short` beside `title`). */
+ *  name only looks like one of them (`title_short` beside `title`); for a
+ *  lookup reading its literals as periods, a referent or a period. */
 function hasValue(
   document: ProjectedNode,
   field: SearchField,
   searchType: SearchType,
 ): boolean {
   if (field.kind !== 'text') {
-    return document[field.name] !== undefined;
+    const periods =
+      literalKindOf(field) === 'period'
+        ? physicalFields(field).period?.values
+        : undefined;
+    return (
+      document[field.name] !== undefined ||
+      (periods !== undefined && document[periods] !== undefined)
+    );
   }
   const { search, sort } = physicalFields(field);
   return Object.keys(document).some(
@@ -568,17 +577,22 @@ function applyField(
     case 'keyword':
       return applyFacet(document, literalsOf(node, alias), field, schema);
     case 'reference': {
-      const targetsById = new Map<string, RootType>();
-      const values = referenceValues(
-        node,
-        alias,
+      if (literalKindOf(field) === 'period') {
+        return applyReferentsOrPeriods(
+          document,
+          valuesOf(node, alias),
+          field,
+          schema,
+          unread,
+        );
+      }
+      return applyReferents(
+        document,
+        valuesOf(node, alias),
         field,
         schema,
-        targetsById,
         unread,
       );
-      rememberTargets(document, targetsById);
-      return applyFacet(document, values, field, schema, targetsById);
     }
     case 'integer':
     case 'number':
@@ -654,8 +668,7 @@ function applyRead(
  * worth declaring together only deliberately.
  */
 function referenceValues(
-  node: FramedNode,
-  alias: string,
+  values: readonly unknown[],
   field: ReferenceField,
   schema: SearchSchema | undefined,
   targetsById: Map<string, RootType>,
@@ -664,7 +677,7 @@ function referenceValues(
   // A literal where a referent belongs states no IRI to store. A node without
   // one – a blank node – carries no value a publisher could look up, so only
   // literals are reported, and a blank one states nothing to correct.
-  for (const value of valuesOf(node, alias)) {
+  for (const value of values) {
     const literal =
       iriString(value) === undefined ? literalString(value) : undefined;
     if (literal !== undefined && literal.trim() !== '') {
@@ -675,9 +688,9 @@ function referenceValues(
   // resolves, and the projection only ever runs against a type of its schema.
   const targets = referencedTargetsOf(field, schema);
   if (targets.length === 0) {
-    return irisOf(node, alias);
+    return irisAmong(values);
   }
-  return valuesOf(node, alias)
+  return values
     .map((value) => {
       const iri = iriString(value);
       if (iri === undefined) {
@@ -711,6 +724,70 @@ function referenceValues(
       return keyed;
     })
     .filter((value): value is string => value !== undefined);
+}
+
+/** Store a non-inline reference’s referents: their ids, re-keyed through the
+ *  targets they belong to ({@link referenceValues}), and every companion an
+ *  id feeds. */
+function applyReferents(
+  document: ProjectedNode,
+  values: readonly unknown[],
+  field: ReferenceField,
+  schema: SearchSchema | undefined,
+  unread: Unread,
+): void {
+  const targetsById = new Map<string, RootType>();
+  const ids = referenceValues(values, field, schema, targetsById, unread);
+  rememberTargets(document, targetsById);
+  applyFacet(document, ids, field, schema, targetsById);
+}
+
+/**
+ * Store a lookup that reads its literals as periods
+ * ({@link ReferenceStrategy.literal}): its referents as any lookup stores them,
+ * and its literals as a `period` field stores its values, in the companions
+ * {@link physicalFields} names for them.
+ *
+ * A single-valued field keeps the first value the graph carries that either
+ * form can read, whichever form it is – so it holds one value, never one of
+ * each. A literal no reader can parse does not count, exactly as a `period`
+ * keeps its first readable value; a blank node carries no id, so it does not
+ * count either.
+ */
+function applyReferentsOrPeriods(
+  document: ProjectedNode,
+  values: readonly unknown[],
+  field: ReferenceField,
+  schema: SearchSchema | undefined,
+  unread: Unread,
+): void {
+  const isReferent = (value: unknown) => iriString(value) !== undefined;
+  const referents = values.filter(isReferent);
+  const periods = readablePeriods(
+    values
+      .filter((value) => !isReferent(value))
+      .map(literalString)
+      .filter((value): value is string => value !== undefined),
+    unread,
+  );
+  if (field.array === true) {
+    applyReferents(document, referents, field, schema, unread);
+    storePeriods(document, field, periods);
+    return;
+  }
+  const readable = new Set(periods.map(({ value }) => value));
+  const first = values.find(
+    (value) =>
+      isReferent(value) || readable.has(literalString(value)?.trim() ?? ''),
+  );
+  if (first === undefined) {
+    return;
+  }
+  if (isReferent(first)) {
+    applyReferents(document, referents, field, schema, unread);
+  } else {
+    storePeriods(document, field, periods);
+  }
 }
 
 /**
@@ -1494,7 +1571,11 @@ function literalsOf(node: FramedNode, key: string): string[] {
 }
 
 function irisOf(node: FramedNode, key: string): string[] {
-  return valuesOf(node, key)
+  return irisAmong(valuesOf(node, key));
+}
+
+function irisAmong(values: readonly unknown[]): string[] {
+  return values
     .map(iriString)
     .filter((value): value is string => value !== undefined);
 }
@@ -1578,7 +1659,7 @@ function setDate(
 
 /**
  * Store a `period` field: the values that state a period, verbatim under the
- * field’s own name, for output, and the stretch they cover between them in the
+ * field’s own name (a lookup’s `${name}_literal` companion), for output, and the stretch they cover between them in the
  * bound companions ({@link physicalFields}). A value that states no period –
  * `onbekend`, `1987/1897` – is reported and left out, so every value served is
  * the EDTF its scalar promises; a deployment that wants to show such text
@@ -1595,32 +1676,52 @@ function setPeriod(
   values: readonly string[],
   unread: Unread,
 ): void {
-  const readable = dedupe(values.map((value) => value.trim())).flatMap(
-    (value) => {
-      if (value === '') {
-        return [];
-      }
-      const period = periodOf(value);
-      if (period === undefined) {
-        unread(value);
-        return [];
-      }
-      return [{ value, period }];
-    },
-  );
+  storePeriods(document, field, readablePeriods(values, unread));
+}
+
+/** The values a reader can parse as periods, trimmed and deduplicated in the
+ *  order stated, each with the stretch it covers; every other non-blank value
+ *  is reported. */
+function readablePeriods(
+  values: readonly string[],
+  unread: Unread,
+): readonly { readonly value: string; readonly period: StoredPeriod }[] {
+  return dedupe(values.map((value) => value.trim())).flatMap((value) => {
+    if (value === '') {
+      return [];
+    }
+    const period = periodOf(value);
+    if (period === undefined) {
+      unread(value);
+      return [];
+    }
+    return [{ value, period }];
+  });
+}
+
+/** Store readable periods ({@link readablePeriods}) and the stretch they
+ *  cover between them – the first alone for a single-valued field. */
+function storePeriods(
+  document: ProjectedNode,
+  field: SearchField,
+  readable: readonly {
+    readonly value: string;
+    readonly period: StoredPeriod;
+  }[],
+): void {
   const stated = field.array === true ? readable : readable.slice(0, 1);
-  if (stated.length === 0) {
+  // Named for every field that stores periods: a `period`, and a lookup
+  // reading its literals as periods.
+  const companions = physicalFields(field).period;
+  if (stated.length === 0 || companions === undefined) {
     return;
   }
-  document[field.name] =
+  document[companions.values] =
     field.array === true ? stated.map(({ value }) => value) : stated[0].value;
-  const companions = physicalFields(field).period;
-  if (companions !== undefined) {
-    const [first, ...rest] = stated.map(({ period }) => period);
-    const covered = periodCovering(first, ...rest);
-    document[companions.start] = covered.start;
-    document[companions.end] = covered.end;
-  }
+  const [first, ...rest] = stated.map(({ period }) => period);
+  const covered = periodCovering(first, ...rest);
+  document[companions.start] = covered.start;
+  document[companions.end] = covered.end;
 }
 
 /** A derive’s value as the strings a `period` stores: one string, or the

@@ -100,8 +100,9 @@ Exports are stratified by audience:
     graph needs;
   - `labelFieldOf`, `labelFieldNameOf` – the text field a label source serves
     labels from, and the name it serves it under (`label` by default);
-  - `filterOperatorFor`, `filterOperator`, `FilterOperator` – the kind→operator
-    table and the operator a `Filter` value carries;
+  - `filterOperatorFor`, `filterOperator`, `FilterOperator` – the operator a
+    field takes (its kind’s, or a period’s `range` for a lookup declaring
+    `literal: 'period'`) and the operator a `Filter` value carries;
   - `validateQuery` / `QueryIssue`, `assertValidQuery` – query validation
     (the port’s always-on guard);
   - `pageForOffset` – the 1-based page an offset falls on (`limit: 0` pins
@@ -404,6 +405,53 @@ engine facet counts from two bounds. It is filtered only on the document that
 holds it: nested in a Reference Type it may be `output` only, since a weld
 compares one value per condition. Nor can it be a collection’s default sorting
 field, which needs a single value.
+
+**A period stated as a value or as a reference.** A profile may let a
+publisher state a period either way: SCHEMA-AP-NDE gives
+`schema:temporalCoverage` an EDTF literal or a reference to a named period, and
+one dataset may use both. A `period` field drops the references and a lookup
+drops the literals, so serving both would take two fields over one path, which
+a client would then have to know to query together. Declare one lookup with
+`literal: 'period'` instead:
+
+```ts
+{
+  name: 'temporalCoverage',
+  kind: 'reference',
+  path: 'https://schema.org/temporalCoverage',
+  array: true,
+  output: true,
+  filterable: true,
+  sortable: true,
+  ref: { strategy: 'lookup', target: 'Term', literal: 'period' },
+}
+// temporalCoverage: ['1935/1955', { id: 'https://…/t17mnn3j0s32', label: { nl: ['19e/20e eeuw'] } }]
+```
+
+Each entry is a period, served as stated, or a referent, resolved like any
+lookup’s. The two forms keep their own rules:
+
+- The **literals** are read as a `period` field reads its values: stored as
+  stated, bounded by the stretch they cover, and
+  [reported](#values-a-field-could-not-read) when no reader can parse them.
+- The **referents** are stored by id, as any lookup stores them.
+- A **range filter** tests the periods by overlap, as it tests a `period`
+  field. A referent has no bounds, so it matches no range, and a work that
+  states only a referent sorts last, like a work with no period at all. The
+  field takes no `in`: its filter is `range` alone (`filterOperatorFor`), so
+  it is never `facetable` either, since a bucket per referent would offer a
+  selection no filter makes.
+- A **single-valued** field keeps the first value either form can read, so it
+  holds a period or a referent, never one of each.
+
+The periods are stored in a hidden `${name}_literal` field beside the
+referents’ ids, with the same `${name}_start` and `${name}_end` bounds a
+`period` field has (`PhysicalFields.period`). Such a lookup cannot also be
+`local` (which stores each referent as an object), `joinable` (whose filter is
+on ids) or a Reference Type’s field. `searchSchema` refuses all three. The
+literal kind is a union, so it can widen beyond `'period'` when a second
+literal form needs it. See
+[ADR 35](../decisions/0035-serve-a-propertys-literals-and-references-in-one-field.md).
 
 **`array` decides a field’s shape**, whatever the graph carries: a declared
 `array` field stores a list, and a single-valued one stores the first value –

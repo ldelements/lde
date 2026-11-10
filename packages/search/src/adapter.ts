@@ -43,6 +43,7 @@ export {
   labelFieldNameOf,
   labelSourceNamesOf,
   labelTargetNamesOf,
+  literalKindOf,
   documentKeyOf,
   DEFAULT_LABEL_FIELD,
   isRangeFacet,
