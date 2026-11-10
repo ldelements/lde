@@ -1,7 +1,7 @@
 # @lde/resolver
 
 Everything around fetching a fact from outside the graph: a durable store,
-bounded outbound work, retry with backoff, failure isolation and a cap on how
+bounded outbound work, retry of only what a retry can fix, failure isolation and a cap on how
 much a single run may fetch. You write the fetch and what to do with the answer.
 
 ## Installation

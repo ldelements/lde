@@ -2,8 +2,12 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createResolver,
   memoryFactStore,
+  parseRetryAfter,
+  referenceFailure,
+  RetryableError,
   urlHost,
   type FactStore,
+  type ReferenceFailure,
   type ResolutionFailure,
   type StoredFact,
 } from '../src/index.js';
@@ -18,12 +22,12 @@ const VENLO = 'https://sws.geonames.org/2745706/';
 const ELSEWHERE = 'https://vocab.example.org/place/1';
 
 /** A resolver over IRI references, with everything a test does not care about
- *  defaulted: the key’s own host, no delay between retries, and an empty store. */
+ *  defaulted: the key’s own host and an empty store. */
 function resolverOver(
   fetch: (
     references: readonly string[],
     options: { signal: AbortSignal },
-  ) => Promise<Array<[string, Place]>>,
+  ) => Promise<Array<[string, Place | ReferenceFailure]>>,
   overrides: Partial<Parameters<typeof createResolver<string, Place>>[0]> = {},
 ) {
   const failures: ResolutionFailure[] = [];
@@ -33,7 +37,7 @@ function resolverOver(
     fetch,
     report: (failure) => failures.push(failure),
     ...overrides,
-    limits: { retryDelayMs: 0, ...overrides.limits },
+    limits: overrides.limits,
   });
   return { resolver, failures };
 }
@@ -132,15 +136,12 @@ describe('resolveAll', () => {
   it('degrades one reference rather than the batch when a fetch throws', async () => {
     // Isolation is the point: batchSize 1 makes each reference its own call, so
     // the failing one cannot take the healthy one down with it.
-    const { resolver, failures } = resolverOver(
-      async (iris) => {
-        if (iris.includes(VENLO)) {
-          throw new Error('upstream exploded');
-        }
-        return iris.map((iri) => [iri, { name: 'Maastricht' }]);
-      },
-      { limits: { retries: 0 } },
-    );
+    const { resolver, failures } = resolverOver(async (iris) => {
+      if (iris.includes(VENLO)) {
+        throw new Error('upstream exploded');
+      }
+      return iris.map((iri) => [iri, { name: 'Maastricht' }]);
+    });
 
     const resolved = await resolver.resolveAll([MAASTRICHT, VENLO]);
 
@@ -164,7 +165,7 @@ describe('resolveAll', () => {
           { [MAASTRICHT]: { name: 'Maastricht' } },
           '2020-01-01T00:00:00.000Z',
         ),
-        limits: { retries: 0, ttlMs: 1 },
+        limits: { ttlMs: 1 },
       },
     );
 
@@ -183,13 +184,10 @@ describe('resolveAll', () => {
   });
 
   it('describes a thrown non-Error in the reason', async () => {
-    const { resolver } = resolverOver(
-      async () => {
-        // A GraphQL client rejecting with a plain value, not an Error.
-        throw 'source timed out';
-      },
-      { limits: { retries: 0 } },
-    );
+    const { resolver } = resolverOver(async () => {
+      // A GraphQL client rejecting with a plain value, not an Error.
+      throw 'source timed out';
+    });
 
     expect(await resolver.resolveAll([MAASTRICHT])).toEqual(
       new Map([
@@ -203,40 +201,324 @@ describe('resolveAll', () => {
       ]),
     );
   });
+});
 
-  it('retries a failing fetch and keeps what the retry found', async () => {
+describe('a failure', () => {
+  it('is not retried within the run when a retry would not fix it', async () => {
+    // A 500 or a 502 a moment later is the same 500 or 502; the next run tries again.
+    let attempts = 0;
+    const { resolver } = resolverOver(async () => {
+      attempts++;
+      throw new Error('HTTP 500');
+    });
+
+    const resolved = await resolver.resolveAll([MAASTRICHT]);
+
+    expect(attempts).toBe(1);
+    expect(resolved.get(MAASTRICHT)).toEqual({
+      outcome: 'unresolved',
+      reason: 'resolution failed after 1 attempt(s): HTTP 500',
+    });
+  });
+
+  it('is tried once more at the back of the queue when the connection broke', async () => {
+    // What Node’s fetch throws when a socket is reset mid-request.
     let attempts = 0;
     const { resolver } = resolverOver(async (iris) => {
       attempts++;
-      if (attempts < 3) {
-        throw new Error('transient');
+      if (attempts === 1) {
+        throw new TypeError('fetch failed', {
+          cause: Object.assign(new Error('read ECONNRESET'), {
+            code: 'ECONNRESET',
+          }),
+        });
       }
       return iris.map((iri) => [iri, { name: 'Maastricht' }]);
     });
 
     const resolved = await resolver.resolveAll([MAASTRICHT]);
 
-    expect(attempts).toBe(3); // the attempt plus the two default retries
+    expect(attempts).toBe(2);
     expect(resolved.get(MAASTRICHT)).toMatchObject({ outcome: 'resolved' });
   });
 
-  it('gives up after the configured retries, naming the attempts', async () => {
+  it('is not tried again for a host name that does not exist', async () => {
+    let attempts = 0;
+    const { resolver } = resolverOver(async () => {
+      attempts++;
+      throw new TypeError('fetch failed', {
+        cause: Object.assign(new Error('getaddrinfo ENOTFOUND'), {
+          code: 'ENOTFOUND',
+        }),
+      });
+    });
+
+    await resolver.resolveAll([MAASTRICHT]);
+
+    expect(attempts).toBe(1);
+  });
+
+  it('is retried when the source says to come back later, and keeps what the retry found', async () => {
+    let attempts = 0;
+    const { resolver } = resolverOver(async (iris) => {
+      attempts++;
+      if (attempts < 3) {
+        throw new RetryableError('HTTP 429', { retryAfterMs: 1 });
+      }
+      return iris.map((iri) => [iri, { name: 'Maastricht' }]);
+    });
+
+    const resolved = await resolver.resolveAll([MAASTRICHT]);
+
+    expect(attempts).toBe(3);
+    expect(resolved.get(MAASTRICHT)).toMatchObject({ outcome: 'resolved' });
+  });
+
+  it('gives up on coming back later after two retries, naming the attempts', async () => {
+    let attempts = 0;
+    const { resolver } = resolverOver(async () => {
+      attempts++;
+      throw new RetryableError('HTTP 429', { retryAfterMs: 1 });
+    });
+
+    const resolved = await resolver.resolveAll([MAASTRICHT]);
+
+    expect(attempts).toBe(3);
+    expect(resolved.get(MAASTRICHT)).toEqual({
+      outcome: 'unresolved',
+      reason: 'resolution failed after 3 attempt(s): HTTP 429',
+    });
+  });
+
+  it('is not waited out when the source asks for longer than an attempt may take', async () => {
     let attempts = 0;
     const { resolver } = resolverOver(
       async () => {
         attempts++;
-        throw new Error('still down');
+        throw new RetryableError('HTTP 503', { retryAfterMs: 3_600_000 });
       },
-      { limits: { retries: 1 } },
+      { limits: { timeoutMs: 50 } },
     );
+
+    const resolved = await resolver.resolveAll([MAASTRICHT]);
+
+    expect(attempts).toBe(1);
+    expect(resolved.get(MAASTRICHT)).toEqual({
+      outcome: 'unresolved',
+      reason:
+        'resolution failed after 1 attempt(s): HTTP 503; asked to retry after 3600000ms, longer than the 50ms timeout',
+    });
+  });
+
+  it('is retried twice and no more, even when it wraps a broken connection', async () => {
+    let attempts = 0;
+    const { resolver } = resolverOver(async () => {
+      attempts++;
+      throw new RetryableError('HTTP 503', {
+        retryAfterMs: 1,
+        cause: Object.assign(new Error('read ECONNRESET'), {
+          code: 'ECONNRESET',
+        }),
+      });
+    });
+
+    await resolver.resolveAll([MAASTRICHT]);
+
+    expect(attempts).toBe(3);
+  });
+
+  it('waits out a pause without holding a slot another host could use', async () => {
+    const startedAt = new Map<string, number>();
+    let rateLimited = false;
+    const began = Date.now();
+    const { resolver } = resolverOver(
+      async (iris) => {
+        const [iri] = iris;
+        if (!startedAt.has(iri)) {
+          startedAt.set(iri, Date.now() - began);
+        }
+        if (iri === MAASTRICHT && !rateLimited) {
+          rateLimited = true;
+          throw new RetryableError('HTTP 429', { retryAfterMs: 200 });
+        }
+        return iris.map((each) => [each, { name: 'a place' }]);
+      },
+      { limits: { concurrency: 1 } },
+    );
+
+    const resolved = await resolver.resolveAll([MAASTRICHT, ELSEWHERE]);
+
+    expect(resolved.get(MAASTRICHT)).toMatchObject({ outcome: 'resolved' });
+    expect(startedAt.get(ELSEWHERE)).toBeLessThan(150);
+  });
+
+  it('is recognised when it comes from another copy of this package', async () => {
+    // A pruned or nested install can load the package twice; a failure made by
+    // one copy must not be stored as a fact by the other.
+    const otherCopy: typeof import('../src/failures.js') =
+      // @ts-expect-error – the query string makes Vite load a second copy, which
+      // TypeScript cannot resolve.
+      await import('../src/failures.js?other-copy');
+    expect(otherCopy.referenceFailure).not.toBe(referenceFailure);
+    let attempts = 0;
+    const { resolver } = resolverOver(async (iris) => {
+      attempts++;
+      if (attempts === 1) {
+        throw new otherCopy.RetryableError('HTTP 429', { retryAfterMs: 1 });
+      }
+      return iris.map((iri) => [iri, otherCopy.referenceFailure('HTTP 500')]);
+    });
 
     const resolved = await resolver.resolveAll([MAASTRICHT]);
 
     expect(attempts).toBe(2);
     expect(resolved.get(MAASTRICHT)).toEqual({
       outcome: 'unresolved',
-      reason: 'resolution failed after 2 attempt(s): still down',
+      reason: 'HTTP 500',
     });
+  });
+
+  it('backs off on its own when the source names no delay', async () => {
+    const attemptedAt: number[] = [];
+    const { resolver } = resolverOver(async (iris) => {
+      attemptedAt.push(Date.now());
+      if (attemptedAt.length === 1) {
+        throw new RetryableError('HTTP 429');
+      }
+      return iris.map((iri) => [iri, { name: 'Maastricht' }]);
+    });
+
+    const resolved = await resolver.resolveAll([MAASTRICHT]);
+
+    expect(resolved.get(MAASTRICHT)).toMatchObject({ outcome: 'resolved' });
+    expect(attemptedAt[1] - attemptedAt[0]).toBeGreaterThanOrEqual(495);
+  });
+
+  it('pauses the whole host for as long as the source asked, not just the one reference', async () => {
+    // A rate limit is about this client: the other slot sending on regardless
+    // would earn the same 429.
+    const third = 'https://sws.geonames.org/3/';
+    const startedAt = new Map<string, number>();
+    let rateLimited = false;
+    const began = Date.now();
+    const { resolver } = resolverOver(
+      async (iris) => {
+        const [iri] = iris;
+        if (!startedAt.has(iri)) {
+          startedAt.set(iri, Date.now() - began);
+        }
+        if (iri === MAASTRICHT && !rateLimited) {
+          rateLimited = true;
+          throw new RetryableError('HTTP 429', { retryAfterMs: 100 });
+        }
+        return iris.map((each) => [each, { name: 'a place' }]);
+      },
+      { limits: { perHostConcurrency: 2 } },
+    );
+
+    const resolved = await resolver.resolveAll([MAASTRICHT, VENLO, third]);
+
+    expect(resolved.get(third)).toMatchObject({ outcome: 'resolved' });
+    // Venlo went out beside Maastricht; the third waited for the pause to end.
+    expect(startedAt.get(third)).toBeGreaterThanOrEqual(95);
+  });
+});
+
+describe('a failure of one reference', () => {
+  it('fails that reference alone, reported, while the rest of its batch resolves', async () => {
+    // A IIIF Collection tagged as a manifest answers 200 and will not improve.
+    const { resolver, failures } = resolverOver(
+      async (iris) =>
+        iris.map((iri) => [
+          iri,
+          iri === VENLO
+            ? referenceFailure('not a manifest')
+            : { name: 'Maastricht' },
+        ]),
+      { limits: { batchSize: 2 } },
+    );
+
+    const resolved = await resolver.resolveAll([MAASTRICHT, VENLO]);
+
+    expect(resolved.get(MAASTRICHT)).toMatchObject({ outcome: 'resolved' });
+    expect(resolved.get(VENLO)).toEqual({
+      outcome: 'unresolved',
+      reason: 'not a manifest',
+    });
+    expect(failures).toEqual([
+      { key: VENLO, reason: 'not a manifest', degradedToStore: false },
+    ]);
+  });
+
+  it('keeps the stored fact rather than overwriting it, and is asked again next run', async () => {
+    const store = storeHolding(
+      { [MAASTRICHT]: { name: 'Maastricht' } },
+      '2020-01-01T00:00:00.000Z',
+    );
+    const fetch = vi.fn(async (iris: readonly string[]) =>
+      iris.map((iri): [string, ReferenceFailure] => [
+        iri,
+        referenceFailure('HTTP 403'),
+      ]),
+    );
+    const { resolver } = resolverOver(fetch, { store, limits: { ttlMs: 1 } });
+
+    const resolved = await resolver.resolveAll([MAASTRICHT]);
+    await resolver.resolveAll([MAASTRICHT]);
+
+    expect(resolved.get(MAASTRICHT)).toMatchObject({
+      outcome: 'resolved',
+      fact: { name: 'Maastricht' },
+      fromStore: true,
+    });
+    expect((await store.get([MAASTRICHT])).get(MAASTRICHT)).toMatchObject({
+      status: 'present',
+      fetchedAt: '2020-01-01T00:00:00.000Z',
+    });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('never writes the host off, however many there are', async () => {
+    // A run of broken images says nothing about the images that work.
+    const asked: string[] = [];
+    const { resolver } = resolverOver(
+      async (iris) => {
+        asked.push(...iris);
+        return iris.map((iri) => [iri, referenceFailure('HTTP 500')]);
+      },
+      { limits: { perHostConcurrency: 1, hostFailureThreshold: 1 } },
+    );
+
+    await resolver.resolveAll([
+      MAASTRICHT,
+      VENLO,
+      'https://sws.geonames.org/1/',
+    ]);
+
+    expect(asked).toHaveLength(3);
+  });
+});
+
+describe('parseRetryAfter', () => {
+  const now = new Date('2026-11-10T10:00:00.000Z');
+
+  it('reads a number of seconds', () => {
+    expect(parseRetryAfter('120', now)).toBe(120_000);
+  });
+
+  it('reads an HTTP date as the time left until it', () => {
+    expect(parseRetryAfter('Tue, 10 Nov 2026 10:00:30 GMT', now)).toBe(30_000);
+  });
+
+  it('reads a date already past as no wait at all', () => {
+    expect(parseRetryAfter('Tue, 10 Nov 2026 09:59:00 GMT', now)).toBe(0);
+  });
+
+  it('answers nothing for a missing or unreadable header', () => {
+    // `Headers.get` answers null for a header that is not there.
+    expect(parseRetryAfter(null, now)).toBeUndefined();
+    expect(parseRetryAfter('soon', now)).toBeUndefined();
+    expect(parseRetryAfter('-5', now)).toBeUndefined();
   });
 });
 
@@ -309,7 +591,6 @@ describe('an absence', () => {
       {
         store: storeAbsences([ELSEWHERE], '2026-08-01T00:00:00.000Z'),
         now: () => new Date('2026-08-09T00:00:00.000Z'),
-        limits: { retries: 0 },
       },
     );
 
@@ -482,7 +763,6 @@ describe('the fact version', () => {
           '1',
         ),
         version: '2',
-        limits: { retries: 0 },
       },
     );
 
@@ -493,20 +773,67 @@ describe('the fact version', () => {
 });
 
 describe('an attempt that outruns its deadline', () => {
-  it('fails rather than hanging the run', async () => {
+  it('fails rather than hanging the run, once its second attempt times out too', async () => {
+    let attempts = 0;
     const { resolver, failures } = resolverOver(
       // Never settles on its own: without a deadline, resolveAll never returns.
-      () => new Promise(() => undefined),
-      { limits: { retries: 0, timeoutMs: 5 } },
+      () => {
+        attempts++;
+        return new Promise(() => undefined);
+      },
+      { limits: { timeoutMs: 5 } },
     );
 
     const resolved = await resolver.resolveAll([MAASTRICHT]);
 
+    expect(attempts).toBe(2);
     expect(resolved.get(MAASTRICHT)).toMatchObject({
       outcome: 'unresolved',
-      reason: 'resolution failed after 1 attempt(s): timed out after 5ms',
+      reason: 'resolution failed after 2 attempt(s): timed out after 5ms',
     });
     expect(failures).toHaveLength(1);
+  });
+
+  it('is tried once more at the back of the queue, so a passing stall costs no reference', async () => {
+    // A manifest that stalled for 30 s answered in under a second on the next pass.
+    const asked: string[] = [];
+    const { resolver, failures } = resolverOver(
+      async (iris) => {
+        asked.push(...iris);
+        if (iris.includes(MAASTRICHT) && asked.length === 1) {
+          return new Promise(() => undefined);
+        }
+        return iris.map((iri) => [iri, { name: 'a place' }]);
+      },
+      { limits: { timeoutMs: 20, perHostConcurrency: 1 } },
+    );
+
+    const resolved = await resolver.resolveAll([MAASTRICHT, VENLO]);
+
+    expect(asked).toEqual([MAASTRICHT, VENLO, MAASTRICHT]);
+    expect(resolved.get(MAASTRICHT)).toMatchObject({ outcome: 'resolved' });
+    expect(failures).toEqual([]);
+  });
+
+  it('spends no second unit of the budget on its second attempt', async () => {
+    // The budget counts references, so a stall does not cost a cold store the
+    // reference behind it.
+    let stalled = false;
+    const { resolver } = resolverOver(
+      async (iris) => {
+        if (!stalled) {
+          stalled = true;
+          return new Promise(() => undefined);
+        }
+        return iris.map((iri) => [iri, { name: 'a place' }]);
+      },
+      { limits: { timeoutMs: 5, fetchesPerResolver: 2 } },
+    );
+
+    await resolver.resolveAll([MAASTRICHT]);
+    const second = await resolver.resolveAll([VENLO]);
+
+    expect(second.get(VENLO)).toMatchObject({ outcome: 'resolved' });
   });
 
   it('aborts the signal it handed the caller, so the request can be cancelled', async () => {
@@ -518,7 +845,7 @@ describe('an attempt that outruns its deadline', () => {
             aborted = true;
           });
         }),
-      { limits: { retries: 0, timeoutMs: 5 } },
+      { limits: { timeoutMs: 5 } },
     );
 
     await resolver.resolveAll([MAASTRICHT]);
@@ -537,7 +864,6 @@ describe('a host that is down', () => {
       },
       {
         limits: {
-          retries: 0,
           batchSize: 1,
           perHostConcurrency: 1,
           hostFailureThreshold: 2,
@@ -560,6 +886,123 @@ describe('a host that is down', () => {
     });
   });
 
+  it('is written off when most of its references fail, even with successes in between', async () => {
+    // A host where most references time out, and a few answer in between, used
+    // to reset a count of consecutive failures and was never written off.
+    const asked: string[] = [];
+    const { resolver } = resolverOver(
+      async (iris) => {
+        asked.push(...iris);
+        if (asked.length % 3 !== 2) {
+          throw new Error('HTTP 502');
+        }
+        return iris.map((iri) => [iri, { name: 'a place' }]);
+      },
+      { limits: { perHostConcurrency: 1, hostFailureThreshold: 5 } },
+    );
+
+    await resolver.resolveAll(
+      Array.from(
+        { length: 12 },
+        (_, index) => `https://sws.geonames.org/${index}/`,
+      ),
+    );
+
+    // Fail, succeed, fail, fail, succeed, fail, fail: the fifth failure among
+    // the last ten writes the host off, and the other five are never sent.
+    expect(asked).toHaveLength(7);
+  });
+
+  it('gives a stall no second attempt once its host is written off, nor a refund', async () => {
+    // Maastricht stalls and waits at the back of the queue; Venlo’s 502 then
+    // writes the host off. Maastricht was sent once, so it keeps its charge and
+    // the reason it actually failed for.
+    const asked: string[] = [];
+    const { resolver } = resolverOver(
+      async (iris) => {
+        asked.push(...iris);
+        if (iris.includes(MAASTRICHT)) {
+          return new Promise(() => undefined);
+        }
+        if (iris.includes(VENLO)) {
+          throw new Error('HTTP 502');
+        }
+        return iris.map((iri) => [iri, { name: 'elsewhere' }]);
+      },
+      {
+        limits: {
+          timeoutMs: 5,
+          perHostConcurrency: 1,
+          hostFailureThreshold: 2,
+          fetchesPerResolver: 2,
+        },
+      },
+    );
+
+    const resolved = await resolver.resolveAll([MAASTRICHT, VENLO]);
+    const later = await resolver.resolveAll([ELSEWHERE]);
+
+    expect(asked).toEqual([MAASTRICHT, VENLO]);
+    expect(resolved.get(MAASTRICHT)).toEqual({
+      outcome: 'unresolved',
+      reason: 'resolution failed after 1 attempt(s): timed out after 5ms',
+    });
+    expect(later.get(ELSEWHERE)).toMatchObject({ outcome: 'unresolved' });
+  });
+
+  it('is written off while it times out, not after every reference has had its turn', async () => {
+    // A host that drops packets: waiting for each timeout’s second attempt
+    // before counting it would cost every reference one full timeout first.
+    const asked: string[] = [];
+    const { resolver } = resolverOver(
+      (iris) => {
+        asked.push(...iris);
+        return new Promise(() => undefined);
+      },
+      {
+        limits: {
+          timeoutMs: 5,
+          perHostConcurrency: 1,
+          hostFailureThreshold: 2,
+        },
+      },
+    );
+
+    await resolver.resolveAll(
+      Array.from(
+        { length: 6 },
+        (_, index) => `https://sws.geonames.org/${index}/`,
+      ),
+    );
+
+    expect(asked).toHaveLength(2);
+  });
+
+  it('forgets a failure that has slid out of its window', async () => {
+    // One failure in every four batches, against a threshold of two in the last
+    // four: an imperfect host, not a dead one.
+    const asked: string[] = [];
+    const { resolver } = resolverOver(
+      async (iris) => {
+        asked.push(...iris);
+        if (asked.length % 4 === 1) {
+          throw new Error('HTTP 502');
+        }
+        return iris.map((iri) => [iri, { name: 'a place' }]);
+      },
+      { limits: { perHostConcurrency: 1, hostFailureThreshold: 2 } },
+    );
+
+    await resolver.resolveAll(
+      Array.from(
+        { length: 12 },
+        (_, index) => `https://sws.geonames.org/${index}/`,
+      ),
+    );
+
+    expect(asked).toHaveLength(12);
+  });
+
   it('takes no other host down with it', async () => {
     const { resolver } = resolverOver(
       async (iris) => {
@@ -570,7 +1013,6 @@ describe('a host that is down', () => {
       },
       {
         limits: {
-          retries: 0,
           batchSize: 1,
           perHostConcurrency: 1,
           hostFailureThreshold: 2,
@@ -597,7 +1039,6 @@ describe('a host that is down', () => {
       },
       {
         limits: {
-          retries: 0,
           batchSize: 1,
           fetchesPerResolver: 3,
           hostFailureThreshold: 2,
@@ -634,7 +1075,6 @@ describe('a host that is down', () => {
       },
       {
         limits: {
-          retries: 0,
           batchSize: 1,
           hostFailureThreshold: 2,
           fetchesPerResolver: 4,
@@ -685,7 +1125,6 @@ describe('a host that is down', () => {
         // perHostConcurrency 1, so nothing else is already in flight when the
         // first failure settles.
         limits: {
-          retries: 0,
           batchSize: 1,
           perHostConcurrency: 1,
           hostFailureThreshold: 1,
@@ -715,14 +1154,14 @@ describe('a host that is down', () => {
     const store = memoryFactStore<Place>();
     const first = resolverOver(fetchFrom(), {
       store,
-      limits: { retries: 0, batchSize: 1, hostFailureThreshold: 2 },
+      limits: { batchSize: 1, hostFailureThreshold: 2 },
     });
     await first.resolver.resolveAll([MAASTRICHT, VENLO]);
 
     down = false;
     const second = resolverOver(fetchFrom(), {
       store,
-      limits: { retries: 0, batchSize: 1, hostFailureThreshold: 2 },
+      limits: { batchSize: 1, hostFailureThreshold: 2 },
     });
     const resolved = await second.resolver.resolveAll([MAASTRICHT]);
 
