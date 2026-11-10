@@ -14,10 +14,10 @@ export const UNREADABLE = Symbol('unreadable');
  * for a value it cannot store, or `undefined` for no value at all – a missing
  * or blank one, which states nothing to correct at the source.
  */
-export type Reading<T> = T | typeof UNREADABLE | undefined;
+type Reading<T> = T | typeof UNREADABLE | undefined;
 
 /** The kinds that can refuse a value: the rest store any literal. */
-export const READ_KINDS = [
+const READ_KINDS = [
   'integer',
   'number',
   'boolean',
