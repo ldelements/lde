@@ -1,3 +1,44 @@
+## 0.49.0 (2026-11-10)
+
+### 🚀 Features
+
+- ⚠️  **search:** let a lookup read its literals as periods ([#1035](https://github.com/ldelements/lde/pull/1035))
+
+### ⚠️  Breaking Changes
+
+- **search:** let a lookup read its literals as periods  ([#1035](https://github.com/ldelements/lde/pull/1035))
+  filterOperatorFor takes the field instead of its kind. Replace
+  filterOperatorFor(field.kind) with filterOperatorFor(field)."
+  A	docs/decisions/0035-serve-a-propertys-literals-and-references-in-one-field.md
+  M	docs/reference/search-api-graphql.md
+  M	docs/reference/search.md
+  M	packages/search-api-graphql/src/build-schema.ts
+  M	packages/search-api-graphql/src/projection.ts
+  A	packages/search-api-graphql/test/referent-or-period.test.ts
+  M	packages/search-api-graphql/vite.config.ts
+  M	packages/search-typesense/src/collection-definition.ts
+  M	packages/search-typesense/src/lookup.ts
+  M	packages/search-typesense/src/query-compiler.ts
+  M	packages/search-typesense/src/search.ts
+  A	packages/search-typesense/test/referent-or-period.integration.test.ts
+  A	packages/search-typesense/test/referent-or-period.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/src/adapter.ts
+  M	packages/search/src/engine.ts
+  M	packages/search/src/index.ts
+  M	packages/search/src/project.ts
+  M	packages/search/src/query.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/src/testing.ts
+  M	packages/search/test/period.test.ts
+  M	packages/search/test/query.test.ts
+  A	packages/search/test/referent-or-period.test.ts
+  M	packages/search/test/schema.test.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.40.0
+
 ## 0.48.0 (2026-11-10)
 
 ### 🧱 Updated Dependencies
