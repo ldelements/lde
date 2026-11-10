@@ -1292,14 +1292,19 @@ as stated, and the IRI of the node the document came from.
 What a kind reads is the same on both routes, a `path` and a `derive`, with
 surrounding whitespace collapsed and a blank value read as no value at all:
 
-| Kind        | Reads                                                                        |
-| ----------- | ---------------------------------------------------------------------------- |
-| `integer`   | a finite number, or an `xsd:decimal` or `xsd:double` lexical form, truncated |
-| `number`    | the same, untruncated; `INF`, `NaN`, `0x1F` and `Infinity` are not read      |
-| `boolean`   | `true` or `false`, or `true`/`false`/`1`/`0` as text                         |
-| `date`      | what the [date codec](#field-model) reads, or Unix seconds as a number       |
-| `period`    | an EDTF Level 0 or 1 date or interval                                        |
-| `reference` | an absolute IRI                                                              |
+| Kind        | Reads                                                                              |
+| ----------- | ---------------------------------------------------------------------------------- |
+| `integer`   | a number, or an `xsd:decimal` or `xsd:double` lexical form, truncated, within ±2⁵³ |
+| `number`    | the same, untruncated; `INF`, `NaN`, `0x1F` and `Infinity` are not read            |
+| `boolean`   | `true` or `false`, or `true`/`false`/`1`/`0` as text                               |
+| `date`      | what the [date codec](#field-model) reads, or Unix seconds as a number             |
+| `period`    | an EDTF Level 0 or 1 date or interval                                              |
+| `reference` | an absolute IRI                                                                    |
+
+A single-valued field keeps the first value it reads, so an unreadable or blank
+value ahead of it costs the field nothing; every unreadable one is still
+reported. An `array` reference keeps every value it reads. The other kinds are
+scalars in the engine, so they keep one value even when `array` is set.
 
 A value a `derive` returned is reported as `String(value)` when it is not a
 string – a derived `NaN` as `NaN`, which says the derive’s arithmetic failed

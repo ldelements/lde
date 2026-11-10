@@ -40,7 +40,13 @@ import {
   type TextField,
 } from './schema.js';
 import { periodCovering, periodOf } from './period.js';
-import { readValue, UNREADABLE, type ReadKind } from './read-value.js';
+import {
+  describeValue,
+  isReadKind,
+  readValue,
+  UNREADABLE,
+  type ReadKind,
+} from './read-value.js';
 
 /**
  * A projected node: the fields of one {@link SearchType}, flat. A **Root Type**
@@ -471,20 +477,21 @@ function applyField(
     // reader: a derived `reference` stores a selection key the surface types
     // `IRI` – ADR 21 sends an IRI-valued `keyword` derive here by converting it
     // to `reference`, so this is the busiest way a non-IRI could otherwise
-    // reach the index – and a derived `integer` an int64. A derive returning a
-    // list keeps it a list, so `array` still decides the stored shape.
+    // reach the index – and a derived `integer` an int64.
     if (isReadKind(field.kind)) {
       return applyRead(
         document,
         field,
         field.kind,
         Array.isArray(derived) ? derived : [derived],
-        Array.isArray(derived),
         unread,
       );
     }
-    // A `keyword` or `text` field reads any value.
-    if (derived !== undefined) {
+    // A `keyword` or `text` field reads any value but NaN, which serializes as
+    // `null` – stored by an engine as no value, or refused with the document.
+    if (Number.isNaN(derived)) {
+      unread('NaN');
+    } else if (derived !== undefined) {
       document[field.name] = derived;
     }
     return;
@@ -572,8 +579,7 @@ function applyField(
         document,
         field,
         field.kind,
-        [firstLiteralOf(node, alias)],
-        false,
+        literalsOf(node, alias),
         unread,
       );
     case 'period':
@@ -582,22 +588,22 @@ function applyField(
 }
 
 /**
- * Store what {@link readValue} reads of `values` as `kind`, reporting each
- * value it cannot: a list when `asList`, else the first value read. A `date`
- * is one instant, so it stores the first either way.
+ * Store what {@link readValue} reads of `values` as `kind`, reporting every
+ * value it cannot. An `array` reference stores the list; every other kind is a
+ * scalar in the engine, so it stores the first value read – and an unreadable
+ * or blank value cannot cost the field a readable one behind it.
  */
 function applyRead(
   document: ProjectedNode,
   field: SearchField,
   kind: ReadKind,
   values: readonly unknown[],
-  asList: boolean,
   unread: Unread,
 ): void {
   const read = values.flatMap((value) => {
     const reading = readValue(kind, value);
     if (reading === UNREADABLE) {
-      unread(String(value));
+      unread(describeValue(value));
       return [];
     }
     return reading === undefined ? [] : [reading];
@@ -605,21 +611,11 @@ function applyRead(
   if (kind === 'date') {
     return setDate(document, field, read[0] as StoredDate | undefined);
   }
-  if (asList) {
+  if (kind === 'reference' && field.array === true) {
     document[field.name] = read;
   } else if (read.length > 0) {
     document[field.name] = read[0];
   }
-}
-
-function isReadKind(kind: SearchField['kind']): kind is ReadKind {
-  return (
-    kind === 'integer' ||
-    kind === 'number' ||
-    kind === 'boolean' ||
-    kind === 'date' ||
-    kind === 'reference'
-  );
 }
 
 /**
@@ -1488,10 +1484,6 @@ function literalsOf(node: FramedNode, key: string): string[] {
     .filter((value): value is string => value !== undefined);
 }
 
-function firstLiteralOf(node: FramedNode, key: string): string | undefined {
-  return literalsOf(node, key)[0];
-}
-
 function irisOf(node: FramedNode, key: string): string[] {
   return valuesOf(node, key)
     .map(iriString)
@@ -1623,12 +1615,13 @@ function setPeriod(
 }
 
 /** A derive’s value as the strings a `period` stores: one string, or the
- *  strings in a list; anything else states no value. */
+ *  strings in a list. `null` and `undefined` state no value; anything else
+ *  is reported. */
 function derivedStrings(derived: unknown, unread: Unread): readonly string[] {
   const values = Array.isArray(derived) ? derived : [derived];
   return values.filter((value): value is string => {
-    if (typeof value !== 'string' && value !== undefined) {
-      unread(String(value));
+    if (typeof value !== 'string' && value !== undefined && value !== null) {
+      unread(describeValue(value));
     }
     return typeof value === 'string';
   });

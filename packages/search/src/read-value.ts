@@ -17,7 +17,21 @@ export const UNREADABLE = Symbol('unreadable');
 export type Reading<T> = T | typeof UNREADABLE | undefined;
 
 /** The kinds that can refuse a value: the rest store any literal. */
-export type ReadKind = 'integer' | 'number' | 'boolean' | 'date' | 'reference';
+export const READ_KINDS = [
+  'integer',
+  'number',
+  'boolean',
+  'date',
+  'reference',
+] as const;
+
+/** One of {@link READ_KINDS}. */
+export type ReadKind = (typeof READ_KINDS)[number];
+
+/** Whether `kind` is one {@link readValue} reads. */
+export function isReadKind(kind: string): kind is ReadKind {
+  return (READ_KINDS as readonly string[]).includes(kind);
+}
 
 /**
  * Read one value – a literal from the graph, or whatever a `derive` returned –
@@ -25,8 +39,10 @@ export type ReadKind = 'integer' | 'number' | 'boolean' | 'date' | 'reference';
  * and refuses the same values whichever route they came by.
  *
  * - `integer`: a finite number, or an `xsd:decimal` or `xsd:double` lexical
- *   form, truncated. `INF` and `NaN` are refused: an engine cannot store them.
- * - `number`: the same, untruncated.
+ *   form, truncated, within ±2⁵³ – beyond that a double no longer holds every
+ *   integer, so the stored value would not be the stated one. `INF` and `NaN`
+ *   are refused: an engine cannot store them.
+ * - `number`: any finite one, untruncated.
  * - `boolean`: `true` or `false`, or the `xsd:boolean` lexical space
  *   (`true`/`false`/`1`/`0`).
  * - `date`: anything the `date` codec reads ({@link isoToUnixSeconds}), or
@@ -55,10 +71,11 @@ export function readValue(
           : text !== undefined && NUMERIC.test(text)
             ? Number(text)
             : Number.NaN;
-      if (!Number.isFinite(number)) {
-        return UNREADABLE;
+      if (kind === 'number') {
+        return Number.isFinite(number) ? number : UNREADABLE;
       }
-      return kind === 'integer' ? Math.trunc(number) : number;
+      const integer = Math.trunc(number);
+      return Number.isSafeInteger(integer) ? integer : UNREADABLE;
     }
     case 'boolean':
       if (typeof value === 'boolean') {
@@ -82,6 +99,20 @@ export function readValue(
     }
     case 'reference':
       return text !== undefined && isAbsoluteIri(text) ? text : UNREADABLE;
+  }
+}
+
+/**
+ * A value as the report shows it: `String(value)`, or its `typeof` when it has
+ * no string form, as an object built without a prototype has not. Never
+ * throws, so a derive’s odd return is reported rather than crashing the
+ * projection.
+ */
+export function describeValue(value: unknown): string {
+  try {
+    return String(value);
+  } catch {
+    return typeof value;
   }
 }
 

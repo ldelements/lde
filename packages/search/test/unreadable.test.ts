@@ -82,6 +82,36 @@ describe('a value a typed field reads from the graph', () => {
     ).toEqual([]);
   });
 
+  it.each<[SearchField['kind'], string, unknown]>([
+    ['integer', '1987', 1987],
+    ['number', '1.5', 1.5],
+    ['boolean', 'true', true],
+    ['date', '2020-01-01', Date.parse('2020-01-01T00:00:00Z') / 1000],
+  ])(
+    'does not cost a single-valued %s field the readable value behind it',
+    (kind, readable, stored) => {
+      const field = {
+        name: 'value',
+        kind,
+        path: 'https://ex/value',
+        output: true,
+      } as SearchField;
+      const node = {
+        [alias('Work', 'value')]: [
+          { '@value': '  ' },
+          { '@value': 'onbekend' },
+          { '@value': readable },
+        ],
+      };
+      expect(
+        projectDocument({ '@id': ID, ...node }, workType([field])).value,
+      ).toEqual(stored);
+      expect(unreadOf(node, workType([field]))).toEqual([
+        { field: 'value', value: 'onbekend', id: ID },
+      ]);
+    },
+  );
+
   it.each<SearchField['kind']>(['date', 'integer', 'number', 'boolean'])(
     'is neither stored nor reported by a %s field when it is blank',
     (kind) => {
@@ -198,6 +228,10 @@ describe('a value a derive returns', () => {
     ['integer', Number.NaN, 'NaN'],
     ['number', Number.NaN, 'NaN'],
     ['integer', 'abc', 'abc'],
+    // Beyond ±2⁵³ a double no longer holds the integer stated.
+    ['integer', 1e20, '100000000000000000000'],
+    ['integer', '9007199254740993', '9007199254740993'],
+    ['keyword', Number.NaN, 'NaN'],
     ['number', Number.POSITIVE_INFINITY, 'Infinity'],
     ['boolean', 'ja', 'ja'],
     ['boolean', 1, '1'],
@@ -221,8 +255,10 @@ describe('a value a derive returns', () => {
     ['boolean', true, true],
     ['boolean', '0', false],
     ['reference', 'https://ex/a', 'https://ex/a'],
-    ['reference', ['https://ex/a', 'not an IRI'], ['https://ex/a']],
-    ['integer', [1, 'x', 3], [1, 3]],
+    // A single-valued field stores one value, whatever shape the derive gave.
+    ['reference', ['not an IRI', 'https://ex/a'], 'https://ex/a'],
+    // An integer is a scalar in the engine, so a list keeps its first read.
+    ['integer', ['x', 1, 3], 1],
   ])(
     'is stored as the read route stores it: %s %j',
     (kind, derived, stored) => {
@@ -256,6 +292,41 @@ describe('a value a derive returns', () => {
     );
     expect(document.value).toBe(Date.parse('1935-05-01T00:00:00Z') / 1000);
     expect(unread).toEqual([{ field: 'value', value: 'Z.j', id: ID }]);
+  });
+
+  it('stores an array reference as a list, a lone IRI included', () => {
+    const field: SearchField = {
+      name: 'value',
+      kind: 'reference',
+      array: true,
+      output: true,
+      derive: () => 'https://ex/a',
+    };
+    expect(projectDocument({ '@id': ID }, workType([field])).value).toEqual([
+      'https://ex/a',
+    ]);
+  });
+
+  it('reports a value with no string form by its type', () => {
+    const field: SearchField = {
+      name: 'value',
+      kind: 'integer',
+      output: true,
+      derive: () => Object.create(null),
+    };
+    expect(unreadOf({}, workType([field]))).toEqual([
+      { field: 'value', value: 'object', id: ID },
+    ]);
+  });
+
+  it('reads a period derive’s null as no value', () => {
+    const field: SearchField = {
+      name: 'value',
+      kind: 'period',
+      output: true,
+      derive: () => null,
+    };
+    expect(unreadOf({}, workType([field]))).toEqual([]);
   });
 
   it('is not reported when the derive returns nothing', () => {
