@@ -1,3 +1,21 @@
+## 0.41.0 (2026-11-10)
+
+### 🚀 Features
+
+- ⚠️  **search-pipeline:** infer the dataset type from its dcat:Dataset class ([#1036](https://github.com/ldelements/lde/pull/1036))
+
+### ⚠️  Breaking Changes
+
+- **search-pipeline:** infer the dataset type from its dcat:Dataset class  ([#1036](https://github.com/ldelements/lde/pull/1036))
+  searchStages and searchIndexerPipeline no longer take
+  datasetType; a schema with a dcat:Dataset root type gets the handover without it."
+  M	docs/reference/search-pipeline.md
+  M	docs/reference/search.md
+  M	packages/search-pipeline/src/search-indexer-pipeline.ts
+  M	packages/search-pipeline/src/search-stages.ts
+  M	packages/search-pipeline/test/search-stages.test.ts
+  M	packages/search/src/project.ts
+
 ## 0.40.0 (2026-11-10)
 
 ### 🚀 Features
