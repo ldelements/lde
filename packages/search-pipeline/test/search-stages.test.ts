@@ -767,5 +767,7 @@ describe('memory is bounded by batchSize, not the input (counting, not measuring
     expect(large.peakLiveDocuments).toBe(small.peakLiveDocuments);
     // …and it is a small constant, nowhere near the 10 000 roots.
     expect(large.peakLiveDocuments).toBeLessThanOrEqual(BATCH_SIZE);
-  });
+    // 10 000 roots take about 2 s locally, and past the 5 s default on a busy
+    // CI runner.
+  }, 30_000);
 });
