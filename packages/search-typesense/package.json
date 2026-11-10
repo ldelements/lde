@@ -1,6 +1,6 @@
 {
   "name": "@lde/search-typesense",
-  "version": "0.50.1",
+  "version": "0.51.0",
   "description": "Typesense implementation of the @lde/search SearchEngine port: collection-schema builder, query compiler, label-resolving result reconstruction, and blue/green index lifecycle. Engine-specific (Typesense) but domain-agnostic.",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
@@ -36,6 +36,6 @@
   },
   "peerDependencies": {
     "@lde/dataset": "^0.10.1",
-    "@lde/pipeline": "^0.44.0"
+    "@lde/pipeline": "^0.45.0"
   }
 }

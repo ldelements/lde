@@ -1,3 +1,37 @@
+## 0.36.0 (2026-11-10)
+
+### 🚀 Features
+
+- ⚠️  **pipeline:** report where a stage spent its time and what it counted ([#1041](https://github.com/ldelements/lde/pull/1041))
+
+### ⚠️  Breaking Changes
+
+- **pipeline:** report where a stage spent its time and what it counted  ([#1041](https://github.com/ldelements/lde/pull/1041))
+  ReaderContext.count is a required member. Code that
+  builds a ReaderContext or BatchContext by hand, such as a transform
+  test, must add it, e.g. count: () => undefined."
+  M	docs/reference/pipeline.md
+  M	docs/reference/resolver.md
+  M	packages/pipeline-console-reporter/src/consoleReporter.ts
+  M	packages/pipeline-console-reporter/test/consoleReporter.test.ts
+  M	packages/pipeline-console-reporter/vite.config.ts
+  M	packages/pipeline-void/test/uriSpaceTransform.test.ts
+  M	packages/pipeline-void/test/vocabularyTransform.test.ts
+  M	packages/pipeline/src/pipeline.ts
+  M	packages/pipeline/src/pipelineEvent.ts
+  M	packages/pipeline/src/stage.ts
+  A	packages/pipeline/src/stageTally.ts
+  M	packages/pipeline/test/pipeline.test.ts
+  M	packages/pipeline/test/stage.test.ts
+  M	packages/pipeline/vite.config.ts
+  M	packages/resolver/src/index.ts
+  M	packages/resolver/src/resolver.ts
+  M	packages/resolver/test/resolver.test.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.45.0
+
 ## 0.35.0 (2026-11-10)
 
 ### 🚀 Features
