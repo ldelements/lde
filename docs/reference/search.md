@@ -390,11 +390,15 @@ from its first second to its last:
   single-valued field keeps its first readable value. To show such text anyway,
   declare a `keyword` field over the same path.
 
-The values are stored as strings under the field’s own name. The bounds are
-two hidden int64 fields beside them (`PhysicalFields.period`, `${name}_start`
-and `${name}_end`), stored for every period, whether or not it is
-`filterable` or `sortable`: a deployment may sort on a field it does not
-expose as sortable. They are not part of the field model and never reach a
+The values are stored as strings under the field’s own name, without
+surrounding whitespace. The bounds are two hidden int64 fields beside them
+(`PhysicalFields.period`, `${name}_start` and `${name}_end`), stored for every
+period on a document, whether or not it is `filterable` or `sortable`: a
+deployment may sort on a field it does not expose as sortable. A period in a
+nested entry stores its values alone, since no filter or sort reaches it. An
+open bound is stored as the furthest second the `date` codec holds, so an
+open-ended period meets a range however deep in time it reaches. A `derive`
+may return a number, read as Unix seconds as a `date` derive’s is. They are not part of the field model and never reach a
 client’s schema. Each side of an interval is read through the `date` codec;
 EDTF Level 1’s qualifiers, unspecified digits and seasons are rewritten into
 a form it reads first. A season covers its whole year, since EDTF fixes no

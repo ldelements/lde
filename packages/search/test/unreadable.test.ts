@@ -223,7 +223,7 @@ describe('a value a derive returns', () => {
     ['date', 'Z.j', 'Z.j'],
     ['date', Number.NaN, 'NaN'],
     ['period', 'onbekend', 'onbekend'],
-    ['period', 42, '42'],
+    ['period', Number.NaN, 'NaN'],
     ['reference', 'not an IRI', 'not an IRI'],
     ['integer', Number.NaN, 'NaN'],
     ['number', Number.NaN, 'NaN'],
@@ -254,6 +254,8 @@ describe('a value a derive returns', () => {
     ['number', '1.5e3', 1500],
     ['boolean', true, true],
     ['boolean', '0', false],
+    // Unix seconds, as a `date` derive reads them, stored as the instant.
+    ['period', 42, '1970-01-01T00:00:42Z'],
     ['reference', 'https://ex/a', 'https://ex/a'],
     // A single-valued field stores one value, whatever shape the derive gave.
     ['reference', ['not an IRI', 'https://ex/a'], 'https://ex/a'],

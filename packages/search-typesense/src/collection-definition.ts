@@ -141,6 +141,7 @@ export function buildCollectionDefinition(
     collection.enable_nested_fields = true;
   }
   if (options.defaultSortingField !== undefined) {
+    assertSortableByDefault(searchType, options.defaultSortingField);
     collection.default_sorting_field = options.defaultSortingField;
   }
   if (options.synonymSets !== undefined) {
@@ -229,6 +230,18 @@ function referenceDeclaration(
     async_reference: true,
     cascade_delete: false,
   };
+}
+
+/** Refuse a default sorting field that stores periods: Typesense sorts a
+ *  collection by default on one stored number, and a period is stored as two
+ *  bounds. */
+function assertSortableByDefault(searchType: SearchType, name: string): void {
+  const field = searchType.fields.find((declared) => declared.name === name);
+  if (field !== undefined && physicalFields(field).period !== undefined) {
+    throw new Error(
+      `The default sorting field “${name}” of “${searchType.name}” stores periods, which Typesense cannot sort a collection on by default: a period is stored as two bounds, not one number. Name a numeric field instead.`,
+    );
+  }
 }
 
 /** The physical Typesense fields one declaration produces. */
@@ -377,7 +390,7 @@ function typesenseFields(
 
 /**
  * A `period` field – or the periods a lookup reads its literals as: its values
- * verbatim, stored for output but never indexed –
+ * as stated, stored for output but never indexed –
  * nothing filters or sorts on the text – and the two int64 bound companions
  * ({@link physicalFields}) that filters and sorts read instead. The bounds are
  * indexed for sorting whatever the field declares: a deployment may sort on a
@@ -769,14 +782,16 @@ function nestedLeafFields(
     return fields;
   }
   if (names.period !== undefined) {
-    // No filter reaches a nested period, so its value and its bounds are
-    // stored for output and never indexed.
-    return periodFields(field, names).map(({ name, type }) => ({
-      name: nestedFieldName(prefix, name),
-      type,
-      index: false,
-      optional: true,
-    }));
+    // No filter or sort reaches a nested period, so an entry stores its values
+    // alone, for output, and no bounds (`storePeriods`).
+    return [
+      {
+        name: nestedFieldName(prefix, names.period.values),
+        type: typesenseValueType(field),
+        index: false,
+        optional: true,
+      },
+    ];
   }
   // A nested field can be `filterable` or `searchable`, never `facetable` or
   // `sortable` (`searchSchema`), so `filterable` is what indexes the value

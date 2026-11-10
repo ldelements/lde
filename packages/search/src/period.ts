@@ -1,4 +1,4 @@
-import { isoToUnixSeconds, lastSecondOf } from './schema.js';
+import { isoToUnixSeconds, lastSecondOf, type StoredDate } from './schema.js';
 
 /**
  * The stretch of time a `period` value covers, as stored: the first and the
@@ -12,18 +12,18 @@ export interface StoredPeriod {
 }
 
 /**
- * The stored start of a period with no known beginning (`../1607`, `/1607`).
- * An exact int64 further back than any year a source states – about 146
- * billion years, ten times the age of the universe – so a period open at its
- * start overlaps every range that reaches back far enough to meet its end.
- * The codec reads years to ±2⁶³ seconds; a bound past ±2⁶² is not refused,
- * just never a real one.
+ * The stored start of a period with no known beginning (`../1607`, `/1607`):
+ * the earliest second the `date` codec stores (`storableUnixSeconds`),
+ * so a period open at its start overlaps every range that reaches back far
+ * enough to meet its end, however deep in time that range begins. It is the
+ * double nearest −2⁶³ that an int64 holds; −2⁶³ itself serialises as
+ * `-9223372036854776000`, which no int64 does.
  */
-export const OPEN_START = -(2 ** 62);
+export const OPEN_START = -(2 ** 63 - 1024);
 
 /** The stored end of a period with no known end (`1440/..`, `1440/`); the
  *  mirror of {@link OPEN_START}. */
-export const OPEN_END = 2 ** 62;
+export const OPEN_END = 2 ** 63 - 1024;
 
 /**
  * The period one value covers, or `undefined` for a value that states none.
@@ -103,7 +103,7 @@ function sideOf(text: string): StoredPeriod | undefined {
   // A plain date, the common case, needs no rewriting.
   const plain = isoToUnixSeconds(side.replace(DEEP_YEAR, '$1'));
   if (plain !== undefined) {
-    return { start: plain.seconds, end: lastSecondOf(plain) };
+    return { start: plain.seconds, end: endOf(plain) };
   }
   // What only EDTF states, rewritten into a form the codec reads.
   const date = side
@@ -119,7 +119,13 @@ function sideOf(text: string): StoredPeriod | undefined {
   const last = isoToUnixSeconds(highest);
   return first === undefined || last === undefined
     ? undefined
-    : { start: first.seconds, end: lastSecondOf(last) };
+    : { start: first.seconds, end: endOf(last) };
+}
+
+/** The last second a date covers, held to {@link OPEN_END}: the last year the
+ *  codec stores would otherwise end past what an int64 holds. */
+function endOf(date: StoredDate): number {
+  return Math.min(lastSecondOf(date), OPEN_END);
 }
 
 /** A time shift of whole hours (`T10:10:10+05`), which EDTF allows and the

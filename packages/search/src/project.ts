@@ -26,8 +26,10 @@ import {
   physicalFields,
   referencedTargetsOf,
   referenceTypeNamed,
+  storableUnixSeconds,
   storedTargetOf,
   TARGET_FIELD,
+  unixSecondsToIso,
   type KeywordField,
   type ProjectionValue,
   type FacetKeys,
@@ -489,6 +491,7 @@ function applyField(
         field,
         derivedStrings(derived, unread),
         unread,
+        nested,
       );
     }
     // A derived value is held to the same rule as a read one, through the same
@@ -584,6 +587,7 @@ function applyField(
           field,
           schema,
           unread,
+          nested,
         );
       }
       return applyReferents(
@@ -606,7 +610,13 @@ function applyField(
         unread,
       );
     case 'period':
-      return setPeriod(document, field, literalsOf(node, alias), unread);
+      return setPeriod(
+        document,
+        field,
+        literalsOf(node, alias),
+        unread,
+        nested,
+      );
   }
 }
 
@@ -760,6 +770,7 @@ function applyReferentsOrPeriods(
   field: ReferenceField,
   schema: SearchSchema | undefined,
   unread: Unread,
+  nested: boolean,
 ): void {
   const isReferent = (value: unknown) => iriString(value) !== undefined;
   const referents = values.filter(isReferent);
@@ -772,7 +783,7 @@ function applyReferentsOrPeriods(
   );
   if (field.array === true) {
     applyReferents(document, referents, field, schema, unread);
-    storePeriods(document, field, periods);
+    storePeriods(document, field, periods, nested);
     return;
   }
   const readable = new Set(periods.map(({ value }) => value));
@@ -786,7 +797,7 @@ function applyReferentsOrPeriods(
   if (isReferent(first)) {
     applyReferents(document, referents, field, schema, unread);
   } else {
-    storePeriods(document, field, periods);
+    storePeriods(document, field, periods, nested);
   }
 }
 
@@ -1658,9 +1669,10 @@ function setDate(
 }
 
 /**
- * Store a `period` field: the values that state a period, verbatim under the
- * field’s own name (a lookup’s `${name}_literal` companion), for output, and the stretch they cover between them in the
- * bound companions ({@link physicalFields}). A value that states no period –
+ * Store a `period` field: the values that state a period, as stated but for
+ * surrounding whitespace, under the field’s own name (a lookup’s
+ * `${name}_literal` companion), for output, and the stretch they cover between
+ * them in the bound companions ({@link physicalFields}). A value that states no period –
  * `onbekend`, `1987/1897` – is reported and left out, so every value served is
  * the EDTF its scalar promises; a deployment that wants to show such text
  * declares a `keyword` field over the same path.
@@ -1675,8 +1687,9 @@ function setPeriod(
   field: SearchField,
   values: readonly string[],
   unread: Unread,
+  nested: boolean,
 ): void {
-  storePeriods(document, field, readablePeriods(values, unread));
+  storePeriods(document, field, readablePeriods(values, unread), nested);
 }
 
 /** The values a reader can parse as periods, trimmed and deduplicated in the
@@ -1699,8 +1712,10 @@ function readablePeriods(
   });
 }
 
-/** Store readable periods ({@link readablePeriods}) and the stretch they
- *  cover between them – the first alone for a single-valued field. */
+/** Store readable periods ({@link readablePeriods}) – the first alone for a
+ *  single-valued field – and, outside a nested entry, the stretch they cover
+ *  between them. No filter or sort reaches a nested period, so an entry stores
+ *  its values alone. */
 function storePeriods(
   document: ProjectedNode,
   field: SearchField,
@@ -1708,6 +1723,7 @@ function storePeriods(
     readonly value: string;
     readonly period: StoredPeriod;
   }[],
+  nested: boolean,
 ): void {
   const stated = field.array === true ? readable : readable.slice(0, 1);
   // Named for every field that stores periods: a `period`, and a lookup
@@ -1718,22 +1734,36 @@ function storePeriods(
   }
   document[companions.values] =
     field.array === true ? stated.map(({ value }) => value) : stated[0].value;
+  if (nested) {
+    return;
+  }
   const [first, ...rest] = stated.map(({ period }) => period);
   const covered = periodCovering(first, ...rest);
   document[companions.start] = covered.start;
   document[companions.end] = covered.end;
 }
 
-/** A derive’s value as the strings a `period` stores: one string, or the
- *  strings in a list. `null` and `undefined` state no value; anything else
- *  is reported. */
+/** A derive’s value as the strings a `period` reads: one string or number,
+ *  or those in a list. A number is Unix seconds, as a `date` derive’s is, and
+ *  is stored as the instant it names (`1970-01-01T00:00:42Z`). `null` and
+ *  `undefined` state no value; anything else is reported. */
 function derivedStrings(derived: unknown, unread: Unread): readonly string[] {
   const values = Array.isArray(derived) ? derived : [derived];
-  return values.filter((value): value is string => {
-    if (typeof value !== 'string' && value !== undefined && value !== null) {
+  return values.flatMap((value) => {
+    if (typeof value === 'string') {
+      return [value];
+    }
+    const seconds =
+      typeof value === 'number'
+        ? storableUnixSeconds(Math.trunc(value))
+        : undefined;
+    if (seconds !== undefined) {
+      return [unixSecondsToIso(seconds, 'dateTime')];
+    }
+    if (value !== undefined && value !== null) {
       unread(describeValue(value));
     }
-    return typeof value === 'string';
+    return [];
   });
 }
 

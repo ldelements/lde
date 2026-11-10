@@ -630,8 +630,11 @@ function compileRange(
     // Overlap: the period starts no later than the range ends, and ends no
     // earlier than it starts – so `1935/1955` matches 1940–1950.
     const startsBefore =
-      max === undefined ? undefined : `${period.start}:<=${max}`;
-    const endsAfter = min === undefined ? undefined : `${period.end}:>=${min}`;
+      max === undefined
+        ? undefined
+        : `${qualify(prefix, period.start)}:<=${max}`;
+    const endsAfter =
+      min === undefined ? undefined : `${qualify(prefix, period.end)}:>=${min}`;
     // Parenthesised, because the clause may stand beside others in an `||`.
     return startsBefore !== undefined && endsAfter !== undefined
       ? `(${startsBefore} && ${endsAfter})`
