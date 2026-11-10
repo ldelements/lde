@@ -45,6 +45,7 @@ import {
   fieldNamed,
   labelSourceNamesOf,
   labelTargetNamesOf,
+  literalKindOf,
   localLookupTargetsOf,
   referenceFields,
   filterOn,
@@ -663,6 +664,9 @@ export function buildGraphQLSchema(
    * targets behind it.
    */
   const interfaceTypes = new Map<string, GraphQLInterfaceType>();
+  /** Each `‹Target›OrPeriod` entry type, by the target’s name
+   *  ({@link referentOrPeriodType}). */
+  const referentOrPeriodTypes = new Map<string, GraphQLObjectType>();
   const interfaceMembers = new Map<string, readonly string[]>();
   /** Each interface’s implementation for a referent no collection holds. */
   const unresolvedTypes: GraphQLObjectType[] = [];
@@ -1047,6 +1051,51 @@ export function buildGraphQLSchema(
     return { ...outputFieldType(field), description: field.description };
   }
 
+  /**
+   * The entry type of a lookup reading its literals as periods
+   * (`literal: 'period'`): `‹Target›OrPeriod`, holding either the period its
+   * source stated or the referent. Named for the target and shared, as
+   * `‹Target›Reference` is, by every such field that names it.
+   */
+  function referentOrPeriodType(
+    typeName: string,
+    referenceType: GraphQLOutputType,
+    field: SearchField,
+  ): GraphQLObjectType {
+    const existing = referentOrPeriodTypes.get(typeName);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const graphQLName = `${typeName}OrPeriod`;
+    if (takenTypeNames.has(graphQLName)) {
+      throw new Error(
+        `Field “${field.name}” reads its literals as periods, so it would be served as “${graphQLName}”, which collides with another type name; rename one.`,
+      );
+    }
+    takenTypeNames.add(graphQLName);
+    const isPeriod = (entry: unknown): entry is string =>
+      typeof entry === 'string';
+    const created = new GraphQLObjectType<unknown, SearchContext>({
+      name: graphQLName,
+      description: `A period, as its source stated it, or a reference to ${typeName}: exactly one of the two is set.`,
+      fields: {
+        value: {
+          type: edtfScalar,
+          description:
+            'The period, where the source stated one as a value; null for a reference.',
+          resolve: (entry) => (isPeriod(entry) ? entry : null),
+        },
+        reference: {
+          type: referenceType,
+          description: `The ${typeName} referenced, where the source named one; null for a period.`,
+          resolve: (entry) => (isPeriod(entry) ? null : entry),
+        },
+      },
+    });
+    referentOrPeriodTypes.set(typeName, created);
+    return created;
+  }
+
   function outputFieldType(
     field: SearchField,
   ): GraphQLFieldConfig<Source, SearchContext> {
@@ -1102,17 +1151,23 @@ export function buildGraphQLSchema(
         const extensions = isLookup
           ? costExtensions(operationCost * labelSourceNamesOf(field).length)
           : undefined;
+        // A lookup reading its literals as periods holds both forms, so each
+        // entry is wrapped in a type that says which.
+        const entryType =
+          literalKindOf(field) === 'period'
+            ? referentOrPeriodType(typeName, referenceType, field)
+            : referenceType;
         return field.array === true
           ? {
-              type: nonNullListOf(referenceType),
+              type: nonNullListOf(entryType),
               resolve: (s) => s[field.name] ?? [],
               extensions,
             }
           : {
               type:
                 field.required === true
-                  ? new GraphQLNonNull(referenceType)
-                  : referenceType,
+                  ? new GraphQLNonNull(entryType)
+                  : entryType,
               extensions,
             };
       }
@@ -1241,7 +1296,7 @@ export function buildGraphQLSchema(
    *  `reference` keys on identity (its target’s filter, or `IRIFilter` when it
    *  names no target), a `keyword` on literals. */
   function plainWhereFieldType(field: SearchField): GraphQLInputType {
-    switch (filterOperatorFor(field.kind)) {
+    switch (filterOperatorFor(field)) {
       case 'in': {
         if (field.kind !== 'reference') {
           return keywordFilter;
@@ -1956,7 +2011,7 @@ function keyEntriesOf(
         continue;
       }
     }
-    switch (filterOperatorFor(field.kind)) {
+    switch (filterOperatorFor(field)) {
       case 'in':
         entries.push({
           criterion: {

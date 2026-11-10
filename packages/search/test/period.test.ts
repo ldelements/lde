@@ -255,6 +255,7 @@ describe('the bound companions', () => {
       sortable: false,
     };
     expect(physicalFields(outputOnly).period).toEqual({
+      values: 'dateCreated',
       start: 'dateCreated_start',
       end: 'dateCreated_end',
     });

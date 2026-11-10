@@ -37,6 +37,7 @@ import {
   labelFieldOf,
   labelSourceNamesOf,
   labelTargetNamesOf,
+  literalKindOf,
   localLookupTargetsOf,
   nestedReferenceType,
   outputFields,
@@ -1232,12 +1233,47 @@ function reconstructDocument(
 ): ResultDocument {
   const document: Record<string, SearchValue> = {};
   for (const field of outputFields(searchType)) {
-    const value = logicalValue(flat, field, labels, schema, referents);
+    const value = withPeriods(
+      flat,
+      field,
+      logicalValue(flat, field, labels, schema, referents),
+    );
     if (value !== undefined) {
       document[field.name] = value;
     }
   }
   return document;
+}
+
+/**
+ * A lookup reading its literals as periods, with those periods added to its
+ * referents: one list in which each entry is a period, as stated, or a
+ * referent. A single-valued field stores only one of the two
+ * (`applyReferentsOrPeriods`). Any other field’s value is returned as it is.
+ */
+function withPeriods(
+  flat: Record<string, unknown>,
+  field: SearchField,
+  referents: SearchValue | undefined,
+): SearchValue | undefined {
+  const periods =
+    literalKindOf(field) === 'period'
+      ? physicalFields(field).period
+      : undefined;
+  if (periods === undefined) {
+    return referents;
+  }
+  const stored = flat[periods.values];
+  const values = (Array.isArray(stored) ? stored : [stored]).filter(
+    (value): value is string => typeof value === 'string',
+  );
+  if (field.array !== true || values.length === 0) {
+    return values[0] ?? referents;
+  }
+  return [
+    ...values,
+    ...((referents ?? []) as readonly (Reference | NestedDocument)[]),
+  ];
 }
 
 function logicalValue(

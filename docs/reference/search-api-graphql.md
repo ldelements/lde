@@ -478,6 +478,30 @@ it ends. A value read back is not always a valid `DateRange` bound:
 `1935/1955` is a period, not a date. What each value covers is in
 [the field model](./search#field-model).
 
+A lookup declaring `literal: 'period'` holds periods and references in one
+list, and is served as `‹Target›OrPeriod` entries, each setting either `value`
+(the `EDTF` its record stated) or `reference` (the resolved `‹Target›Reference`).
+Its filter is a `DateRange` on the periods alone, so an entry that is only a
+reference matches no range:
+
+```graphql
+{
+  creativeWorks(where: { temporalCoverage: { min: "1940", max: "1950" } }) {
+    items {
+      temporalCoverage {
+        value # "1935/1955", or null
+        reference {
+          id
+          label {
+            value
+          }
+        }
+      }
+    }
+  }
+}
+```
+
 ## Pagination
 
 Numbered pagination via two root-field arguments: `page` (1-based, default 1)

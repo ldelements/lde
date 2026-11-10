@@ -324,13 +324,19 @@ function typesenseFields(
       // a membership filter on it exact (`compileMembership`).
       facet: names.facet === field.name,
       // Typesense answers a binned facet only on a field indexed for
-      // sorting, so a field declaring bins is, sortable or not.
+      // sorting, so a field declaring bins is, sortable or not. A lookup
+      // reading its literals as periods sorts on their bounds instead.
       sort:
-        field.sortable === true ||
-        (field.facetable === true && isBinnedRangeFacet(field)),
+        names.period === undefined &&
+        (field.sortable === true ||
+          (field.facetable === true && isBinnedRangeFacet(field))),
       // A `required` field is non-optional; so is the `default_sorting_field`,
-      // which Typesense requires to be present. Everything else may be absent.
-      optional: field.required !== true && field.name !== defaultSortingField,
+      // which Typesense requires to be present. Everything else may be absent
+      // – a required lookup reading its literals as periods too, since its
+      // value may be a period alone, stored in a companion.
+      optional:
+        (field.required !== true || names.period !== undefined) &&
+        field.name !== defaultSortingField,
       ...referenceDeclaration(searchType, field, schema, collectionNameFor),
     },
   ];
@@ -362,11 +368,16 @@ function typesenseFields(
   if (names.precision !== undefined) {
     fields.push(precisionField(names.precision));
   }
+  // A lookup reading its literals as periods stores them as a `period` does.
+  if (names.period !== undefined) {
+    fields.push(...periodFields(field, names));
+  }
   return fields;
 }
 
 /**
- * A `period` field: its values verbatim, stored for output but never indexed –
+ * A `period` field – or the periods a lookup reads its literals as: its values
+ * verbatim, stored for output but never indexed –
  * nothing filters or sorts on the text – and the two int64 bound companions
  * ({@link physicalFields}) that filters and sorts read instead. The bounds are
  * indexed for sorting whatever the field declares: a deployment may sort on a
@@ -377,14 +388,18 @@ function periodFields(
   field: SearchField,
   names: ReturnType<typeof physicalFields>,
 ): CollectionFieldSchema[] {
-  // Every period has bounds; `physicalFields` names them for no other kind.
-  const { start, end } = names.period as NonNullable<typeof names.period>;
+  // Every period has bounds; `physicalFields` names them for no other field.
+  const { values, start, end } = names.period as NonNullable<
+    typeof names.period
+  >;
   return [
     {
-      name: field.name,
+      name: values,
       type: typesenseValueType(field),
       index: false,
-      optional: field.required !== true,
+      // A lookup’s periods are optional however `required` it is: its value
+      // may be a referent instead.
+      optional: field.required !== true || field.kind !== 'period',
     },
     ...[start, end].map((name): CollectionFieldSchema => ({
       name,

@@ -43,6 +43,7 @@ export type {
   KeywordField,
   ReferenceField,
   ReferenceStrategy,
+  LiteralKind,
   NumericField,
   NumberField,
   DateField,

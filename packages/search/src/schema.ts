@@ -36,13 +36,20 @@ const OPERATOR_BY_KIND: Readonly<
 };
 
 /**
- * The `where` operator a field of this kind accepts (per the ADR filter-semantics
- * table), or `undefined` for `text` – which feeds the free-text `query` rather
- * than `where`. The ONE source for the surface’s `where` input type, the
- * adapter’s filter compiler and declaration validation, so they cannot drift.
+ * The `where` operator a field accepts (per the ADR filter-semantics table),
+ * or `undefined` for `text` – which feeds the free-text `query` rather than
+ * `where`. Fixed by the field’s kind, except that a lookup reading a literal
+ * as a `period` ({@link ReferenceStrategy.literal}) takes a period’s `range`.
+ * The ONE source for the surface’s `where` input type, the adapter’s filter
+ * compiler and declaration validation, so they cannot drift.
  */
-export function filterOperatorFor(kind: FieldKind): FilterOperator | undefined {
-  return OPERATOR_BY_KIND[kind];
+export function filterOperatorFor(field: {
+  readonly kind: FieldKind;
+  readonly ref?: ReferenceStrategy;
+}): FilterOperator | undefined {
+  return storesPeriods(field)
+    ? OPERATOR_BY_KIND.period
+    : OPERATOR_BY_KIND[field.kind];
 }
 
 /**
@@ -288,6 +295,29 @@ export type ReferenceStrategy =
        * ({@link inlineFramingDepth}). A schema that declares none pays neither.
        */
       readonly local?: boolean;
+      /**
+       * Also read a **literal** the graph states in place of a referent, as a
+       * value of this kind – for a property a profile lets a publisher state
+       * either way: `schema:temporalCoverage "1935/1955"` on one work, a
+       * `schema:temporalCoverage` pointing at a named period on the next.
+       *
+       * What it buys is one field where there were two. Without it, a lookup
+       * drops a literal as unreadable, and a deployment serving both forms
+       * needs a second field over the same path – which a client then has to
+       * know to query beside this one.
+       *
+       * With `'period'`, the field holds one list in which each entry is a
+       * literal, served verbatim and read as a {@link PeriodField period}, or
+       * a referent, resolved like any lookup’s. A range filter tests the
+       * literal entries by overlap, as it tests a `period` field, and sorting
+       * orders on them; a referent has no bounds, so it matches no range and
+       * sorts as a period no reader can parse does. For that reason the field is filtered by `range` alone
+       * ({@link filterOperatorFor}) and is never `facetable`: a facet over the
+       * referents would offer buckets no filter selects. Neither `local` nor
+       * `joinable`, and only on a Root Type’s own field ({@link searchSchema}
+       * enforces all three).
+       */
+      readonly literal?: LiteralKind;
       readonly identity?: never;
     }
   | {
@@ -321,6 +351,36 @@ export type ReferenceStrategy =
        */
       readonly identity?: string;
     };
+
+/** The `literal` kinds a declaration may name, checked at runtime for one
+ *  built outside TypeScript. */
+const LITERAL_KINDS = ['period'] as const;
+
+/** The kinds a lookup may read a literal stated in place of a referent as
+ *  ({@link ReferenceStrategy.literal}). */
+export type LiteralKind = (typeof LITERAL_KINDS)[number];
+
+/** The kind a lookup reads a literal stated in place of a referent as
+ *  ({@link ReferenceStrategy.literal}), or `undefined` for a field that reads
+ *  no literal. */
+export function literalKindOf(field: {
+  readonly kind: FieldKind;
+  readonly ref?: ReferenceStrategy;
+}): LiteralKind | undefined {
+  return field.kind === 'reference' && field.ref?.strategy === 'lookup'
+    ? field.ref.literal
+    : undefined;
+}
+
+/** Whether a field stores periods – a `period`, or a lookup reading its
+ *  literals as periods: the one test its operator, its validation, its range
+ *  bounds and its companions ({@link PhysicalFields.period}) all read. */
+function storesPeriods(field: {
+  readonly kind: FieldKind;
+  readonly ref?: ReferenceStrategy;
+}): boolean {
+  return field.kind === 'period' || literalKindOf(field) === 'period';
+}
 
 /** An IRI-valued reference to another entity, resolved at the surface. */
 export interface ReferenceField extends SearchFieldBase, Searchable {
@@ -1465,6 +1525,12 @@ function assertServiceableNestedFields(
           `Nested field “${referenceType.name}.${field.name}” declares a label source, which an inline reference cannot serve; declare a “lookup” on the nested reference instead of resolving a label for it.`,
         );
       }
+      const literalKind = literalKindOf(field);
+      if (literalKind !== undefined) {
+        throw new Error(
+          `Nested field “${referenceType.name}.${field.name}” reads a literal as a “${literalKind}”, which only a Root Type’s own field can: carry the field on the Root Type.`,
+        );
+      }
       if (field.filterable === true && field.kind === 'period') {
         throw new Error(
           `Nested field “${referenceType.name}.${field.name}” is a filterable “period”, which a weld cannot test: a period is matched by comparing two stored bounds, and a weld compares one value per condition. Declare it “output” only, or carry the period on the Root Type.`,
@@ -1775,6 +1841,9 @@ export interface SearchTypeIssue {
     | 'text-not-filterable'
     | 'text-not-facetable'
     | 'period-not-facetable'
+    | 'unknown-literal-kind'
+    | 'literal-with-local'
+    | 'literal-with-joinable'
     | 'joinable-not-allowed'
     | 'joinable-without-label-source'
     | 'joinable-with-inline-ref'
@@ -1906,6 +1975,9 @@ const LOCALE_PATTERN = /^[A-Za-z0-9]+(-[A-Za-z0-9]+)*$/;
  *   an id a reference field can point at. The schema-wide half of the rule (at
  *   most one joinable field per (type, label source), no cycles) is
  *   {@link joinGraph}’s;
+ * - a lookup’s {@link ReferenceStrategy.literal `literal`} names a known
+ *   {@link LiteralKind}, and is neither `local` nor `joinable`; reading its
+ *   literals as periods, it is not `facetable`, as a `period` is not;
  * - a `text` field declares at least one locale (`und` = untagged; projection and
  *   result reconstruction have no representation for unlocalized text – use
  *   `keyword` for untagged strings); `locales` on any other kind is
@@ -2036,6 +2108,23 @@ export function validateSearchType(
       if (field.joinable === true && field.ref?.strategy === 'inline') {
         issue('joinable-with-inline-ref');
       }
+      if (field.ref?.strategy === 'lookup' && field.ref.literal !== undefined) {
+        // A declaration built outside TypeScript may name any string.
+        if (!(LITERAL_KINDS as readonly string[]).includes(field.ref.literal)) {
+          issue('unknown-literal-kind');
+        }
+        // A `local` lookup stores each referent as an object, and a literal
+        // read as a period is a string beside it: one stored list cannot be
+        // both.
+        if (field.ref.local === true) {
+          issue('literal-with-local');
+        }
+        // A join filters on the ids the field holds, and this field is
+        // filtered by its literals’ bounds instead.
+        if (field.joinable === true) {
+          issue('literal-with-joinable');
+        }
+      }
     } else {
       if (field.ref !== undefined) {
         issue('ref-not-allowed');
@@ -2062,24 +2151,22 @@ export function validateSearchType(
     // Derived from the kind→operator table, so validation, the surfaces and
     // the compilers cannot disagree: a kind without a `where` operator (text)
     // is neither filterable nor facetable, and only `range` kinds bin.
-    if (
-      field.filterable === true &&
-      filterOperatorFor(field.kind) === undefined
-    ) {
+    if (field.filterable === true && filterOperatorFor(field) === undefined) {
       issue('text-not-filterable');
     }
-    if (
-      field.facetable === true &&
-      filterOperatorFor(field.kind) === undefined
-    ) {
+    if (field.facetable === true && filterOperatorFor(field) === undefined) {
       issue('text-not-facetable');
     }
-    if (field.facetable === true && field.kind === 'period') {
+    // A lookup reading its literals as periods is no more facetable than a
+    // period field: its referents have no bounds, and a bucket per referent
+    // would offer a selection no filter can make.
+    const readsPeriods = storesPeriods(field);
+    if (field.facetable === true && readsPeriods) {
       issue('period-not-facetable');
     }
     if (
       field.facetRanges !== undefined &&
-      (filterOperatorFor(field.kind) !== 'range' || field.kind === 'period')
+      (filterOperatorFor(field) !== 'range' || readsPeriods)
     ) {
       issue('facet-ranges-not-allowed');
     }
@@ -2316,8 +2403,15 @@ export interface PhysicalFields {
    * field it does not expose as sortable, and two int64 values per document
    * cost less than a sort the engine refuses. `undefined` for every other
    * field.
+   *
+   * `values` is where the periods themselves are stored: under the field’s
+   * own name for a `period`, and in a `${name}_literal` companion for a
+   * lookup reading its literals as periods ({@link ReferenceStrategy.literal}),
+   * whose own name holds the referents’ ids, as every lookup’s does.
    */
-  readonly period: { readonly start: string; readonly end: string } | undefined;
+  readonly period:
+    | { readonly values: string; readonly start: string; readonly end: string }
+    | undefined;
 }
 
 /** The physical name of an inline reference’s
@@ -2918,7 +3012,8 @@ export function lastSecondOf(stored: StoredDate): number {
     : next.getTime() / 1000 - 1;
 }
 
-/** A range bound as stored: a `date` or `period` bound, ISO 8601 at the edge,
+/** A range bound as stored: a `date` or `period` bound (a lookup’s too, where
+ *  it reads its literals as periods), ISO 8601 at the edge,
  *  becomes Unix seconds ({@link isoToUnixSeconds}) – a `min` the first second
  *  of what it names, a `max` the last ({@link lastSecondOf}), so the range
  *  takes in the whole of each. Any other bound is stored as given; one the
@@ -2929,7 +3024,7 @@ export function storedRangeBound(
   side: 'min' | 'max',
 ): number | string | undefined {
   if (
-    (field.kind !== 'date' && field.kind !== 'period') ||
+    (field.kind !== 'date' && !storesPeriods(field)) ||
     typeof bound !== 'string'
   ) {
     return bound;
@@ -3106,20 +3201,33 @@ export function physicalFields(
           : `${filtered}_facet`,
     identity,
     precision: field.kind === 'date' ? `${field.name}_precision` : undefined,
-    period:
-      field.kind === 'period'
-        ? { start: `${field.name}_start`, end: `${field.name}_end` }
-        : undefined,
+    period: storesPeriods(field)
+      ? {
+          values:
+            field.kind === 'period' ? field.name : `${field.name}_literal`,
+          start: `${field.name}_start`,
+          end: `${field.name}_end`,
+        }
+      : undefined,
   };
 }
 
 /** The value companions a field stores beside its own name: a `date`’s
- *  precision, a `period`’s two bounds. */
+ *  precision, a `period`’s two bounds, and the periods a lookup reads its
+ *  literals as. */
 export function companionNames(field: SearchField): string[] {
+  // Text stores none, and a declaration without `locales` – which validation
+  // reports – has no per-locale fanout to compute.
+  if (field.kind === 'text') {
+    return [];
+  }
   const { precision, period } = physicalFields(field);
-  return [precision, period?.start, period?.end].filter(
-    (name): name is string => name !== undefined,
-  );
+  return [
+    precision,
+    period?.values === field.name ? undefined : period?.values,
+    period?.start,
+    period?.end,
+  ].filter((name): name is string => name !== undefined);
 }
 
 /**
