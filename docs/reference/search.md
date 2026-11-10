@@ -1419,7 +1419,14 @@ language present:
 - `searchable` → `title_search_nl`/`title_search_en` (folded; one field per
   locale lets a query `query_by` them and rank the user’s language higher, and
   lets a language that needs a dedicated tokenizer set its own stemming `locale`
-  in the engine schema);
+  in the engine schema). The request’s language keeps full weight and the other
+  tagged locales are demoted by one; a request with no language – `und`, or a
+  language the field does not declare – demotes none. Typesense stems the query
+  once, with the settings of the heaviest field
+  ([typesense#1815](https://github.com/typesense/typesense/issues/1815)), so that
+  field must be a stemmed one: the request’s language leads, or else the first
+  tagged locale in `locales`, ahead of `und` and every unstemmed field of equal
+  weight;
 - `sortable` → `title_sort_nl`/`title_sort_en` (folded, so a locale-switching UI
   sorts on the active language). Each locale’s key **falls back** to the
   document’s first value in `locales` order when that language is absent, so a
