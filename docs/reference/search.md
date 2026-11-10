@@ -1287,8 +1287,29 @@ a literal, a `boolean` outside `true`/`false`/`1`/`0`. The document is still
 projected; the value is missing from it. So that a run can say what it lost, the
 projection reports each such value to the context’s `onUnreadable`, with the
 field – dotted for a field of a nested referent, `creator.birthDate` – the value
-as stated, and the IRI of the node the document came from. A value a `derive`
-returned counts too, as `String(value)` when it is not a string.
+as stated, and the IRI of the node the document came from.
+
+What a kind reads is the same on both routes, a `path` and a `derive`, with
+surrounding whitespace collapsed and a blank value read as no value at all:
+
+| Kind        | Reads                                                                              |
+| ----------- | ---------------------------------------------------------------------------------- |
+| `integer`   | a number, or an `xsd:decimal` or `xsd:double` lexical form, truncated, within ±2⁵³ |
+| `number`    | the same, untruncated; `INF`, `NaN`, `0x1F` and `Infinity` are not read            |
+| `boolean`   | `true` or `false`, or `true`/`false`/`1`/`0` as text                               |
+| `date`      | what the [date codec](#field-model) reads, or Unix seconds as a number             |
+| `period`    | an EDTF Level 0 or 1 date or interval                                              |
+| `reference` | an absolute IRI                                                                    |
+
+A single-valued field keeps the first value it reads, so an unreadable or blank
+value ahead of it costs the field nothing; every unreadable one is still
+reported. An `array` reference keeps every value it reads. The other kinds are
+scalars in the engine, so they keep one value even when `array` is set.
+
+A value a `derive` returned is reported as `String(value)` when it is not a
+string – a derived `NaN` as `NaN`, which says the derive’s arithmetic failed
+but not on which source value; a derive that wants that in the report returns
+the source value instead.
 
 `@lde/search-pipeline`’s `searchStages` passes them on to the pipeline, which
 reports them per dataset and field ([`valuesUnread`](./pipeline.md#reporter)),

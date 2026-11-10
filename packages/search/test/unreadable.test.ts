@@ -39,6 +39,11 @@ describe('a value a typed field reads from the graph', () => {
     ['date', 'Z.j'],
     ['period', '1987/1897'],
     ['boolean', 'ja'],
+    // `Number()` reads these; no XSD numeric type does, and an engine cannot
+    // store infinity.
+    ['integer', '0x1F'],
+    ['number', 'Infinity'],
+    ['number', 'INF'],
   ])('is reported when a %s field cannot read it', (kind, value) => {
     const field = {
       name: 'value',
@@ -77,20 +82,53 @@ describe('a value a typed field reads from the graph', () => {
     ).toEqual([]);
   });
 
-  it('is not reported when it is blank, since it states nothing to correct', () => {
-    const field: SearchField = {
-      name: 'value',
-      kind: 'date',
-      path: 'https://ex/value',
-      output: true,
-    };
-    expect(
-      unreadOf(
-        { [alias('Work', 'value')]: { '@value': '  ' } },
-        workType([field]),
-      ),
-    ).toEqual([]);
-  });
+  it.each<[SearchField['kind'], string, unknown]>([
+    ['integer', '1987', 1987],
+    ['number', '1.5', 1.5],
+    ['boolean', 'true', true],
+    ['date', '2020-01-01', Date.parse('2020-01-01T00:00:00Z') / 1000],
+  ])(
+    'does not cost a single-valued %s field the readable value behind it',
+    (kind, readable, stored) => {
+      const field = {
+        name: 'value',
+        kind,
+        path: 'https://ex/value',
+        output: true,
+      } as SearchField;
+      const node = {
+        [alias('Work', 'value')]: [
+          { '@value': '  ' },
+          { '@value': 'onbekend' },
+          { '@value': readable },
+        ],
+      };
+      expect(
+        projectDocument({ '@id': ID, ...node }, workType([field])).value,
+      ).toEqual(stored);
+      expect(unreadOf(node, workType([field]))).toEqual([
+        { field: 'value', value: 'onbekend', id: ID },
+      ]);
+    },
+  );
+
+  it.each<SearchField['kind']>(['date', 'integer', 'number', 'boolean'])(
+    'is neither stored nor reported by a %s field when it is blank',
+    (kind) => {
+      const field = {
+        name: 'value',
+        kind,
+        path: 'https://ex/value',
+        output: true,
+      } as SearchField;
+      const node = { [alias('Work', 'value')]: { '@value': '  ' } };
+      expect(unreadOf(node, workType([field]))).toEqual([]);
+      // `Number('  ')` is 0, which is not what the source said.
+      expect(
+        projectDocument({ '@id': ID, ...node }, workType([field])),
+      ).toEqual({ id: ID });
+    },
+  );
 
   it('is reported for each value of an array period that states no period', () => {
     const field: SearchField = {
@@ -131,6 +169,7 @@ describe('a value a typed field reads from the graph', () => {
           [alias('Work', 'creator')]: [
             { '@id': 'https://ex/person/1' },
             { '@value': 'Jan Jansen' },
+            { '@value': ' ' },
             {},
           ],
         },
@@ -188,6 +227,15 @@ describe('a value a derive returns', () => {
     ['reference', 'not an IRI', 'not an IRI'],
     ['integer', Number.NaN, 'NaN'],
     ['number', Number.NaN, 'NaN'],
+    ['integer', 'abc', 'abc'],
+    // Beyond ±2⁵³ a double no longer holds the integer stated.
+    ['integer', 1e20, '100000000000000000000'],
+    ['integer', '9007199254740993', '9007199254740993'],
+    ['keyword', Number.NaN, 'NaN'],
+    ['number', Number.POSITIVE_INFINITY, 'Infinity'],
+    ['boolean', 'ja', 'ja'],
+    ['boolean', 1, '1'],
+    ['date', true, 'true'],
   ])('is reported when a %s field cannot read %s', (kind, derived, value) => {
     const field = {
       name: 'value',
@@ -198,6 +246,87 @@ describe('a value a derive returns', () => {
     expect(unreadOf({}, workType([field]))).toEqual([
       { field: 'value', value, id: ID },
     ]);
+  });
+
+  it.each<[SearchField['kind'], unknown, unknown]>([
+    ['integer', 12.7, 12],
+    ['integer', ' 12 ', 12],
+    ['number', '1.5e3', 1500],
+    ['boolean', true, true],
+    ['boolean', '0', false],
+    ['reference', 'https://ex/a', 'https://ex/a'],
+    // A single-valued field stores one value, whatever shape the derive gave.
+    ['reference', ['not an IRI', 'https://ex/a'], 'https://ex/a'],
+    // An integer is a scalar in the engine, so a list keeps its first read.
+    ['integer', ['x', 1, 3], 1],
+  ])(
+    'is stored as the read route stores it: %s %j',
+    (kind, derived, stored) => {
+      const field = {
+        name: 'value',
+        kind,
+        output: true,
+        derive: () => derived,
+      } as SearchField;
+      expect(projectDocument({ '@id': ID }, workType([field])).value).toEqual(
+        stored,
+      );
+    },
+  );
+
+  it('stores a date from its first readable value, as one instant', () => {
+    const field: SearchField = {
+      name: 'value',
+      kind: 'date',
+      output: true,
+      derive: () => ['Z.j', '1935-05-01', '1940-01-01'],
+    };
+    const unread: UnreadableValue[] = [];
+    const document = projectDocument(
+      { '@id': ID },
+      workType([field]),
+      undefined,
+      {
+        onUnreadable: (value) => unread.push(value),
+      },
+    );
+    expect(document.value).toBe(Date.parse('1935-05-01T00:00:00Z') / 1000);
+    expect(unread).toEqual([{ field: 'value', value: 'Z.j', id: ID }]);
+  });
+
+  it('stores an array reference as a list, a lone IRI included', () => {
+    const field: SearchField = {
+      name: 'value',
+      kind: 'reference',
+      array: true,
+      output: true,
+      derive: () => 'https://ex/a',
+    };
+    expect(projectDocument({ '@id': ID }, workType([field])).value).toEqual([
+      'https://ex/a',
+    ]);
+  });
+
+  it('reports a value with no string form by its type', () => {
+    const field: SearchField = {
+      name: 'value',
+      kind: 'integer',
+      output: true,
+      derive: () => Object.create(null),
+    };
+    expect(unreadOf({}, workType([field]))).toEqual([
+      { field: 'value', value: 'object', id: ID },
+    ]);
+  });
+
+  it('reads a period derive’s null as no value', () => {
+    const field: SearchField = {
+      name: 'value',
+      kind: 'period',
+      output: true,
+      derive: () => null,
+    };
+    expect(unreadOf({}, workType([field]))).toEqual([]);
   });
 
   it('is not reported when the derive returns nothing', () => {
