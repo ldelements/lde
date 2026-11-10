@@ -352,6 +352,83 @@ describe('a failure', () => {
     expect(startedAt.get(ELSEWHERE)).toBeLessThan(150);
   });
 
+  it('backs off on its own when the source asks for no wait at all', async () => {
+    // `Retry-After: 0`, or a date skewed into the past, names no real delay.
+    const attemptedAt: number[] = [];
+    const { resolver } = resolverOver(async (iris) => {
+      attemptedAt.push(Date.now());
+      if (attemptedAt.length === 1) {
+        throw new RetryableError('HTTP 429', { retryAfterMs: 0 });
+      }
+      return iris.map((iri) => [iri, { name: 'Maastricht' }]);
+    });
+
+    await resolver.resolveAll([MAASTRICHT]);
+
+    expect(attemptedAt[1] - attemptedAt[0]).toBeGreaterThanOrEqual(495);
+  });
+
+  it('keeps its charge and its reason when the host is written off during its pause', async () => {
+    // Maastricht was sent and told to come back later; Venlo’s 502 writes the
+    // host off meanwhile. Maastricht must not read as never contacted.
+    const asked: string[] = [];
+    const { resolver } = resolverOver(
+      async (iris) => {
+        asked.push(...iris);
+        if (iris.includes(MAASTRICHT)) {
+          throw new RetryableError('HTTP 429', { retryAfterMs: 30 });
+        }
+        if (iris.includes(VENLO)) {
+          throw new Error('HTTP 502');
+        }
+        return iris.map((iri) => [iri, { name: 'elsewhere' }]);
+      },
+      {
+        limits: {
+          perHostConcurrency: 2,
+          hostFailureThreshold: 1,
+          fetchesPerResolver: 2,
+        },
+      },
+    );
+
+    const resolved = await resolver.resolveAll([MAASTRICHT, VENLO]);
+    const later = await resolver.resolveAll([ELSEWHERE]);
+
+    expect(asked).toEqual([MAASTRICHT, VENLO]);
+    expect(resolved.get(MAASTRICHT)).toEqual({
+      outcome: 'unresolved',
+      reason: 'resolution failed after 1 attempt(s): HTTP 429',
+    });
+    expect(later.get(ELSEWHERE)).toMatchObject({ outcome: 'unresolved' });
+  });
+
+  it('is recognised as a timeout even when the caller’s own abort error wins the race', async () => {
+    // A fetch that rejects the moment its signal aborts, with its own error.
+    let attempts = 0;
+    const { resolver } = resolverOver(
+      (iris, { signal }) => {
+        attempts++;
+        if (attempts > 1) {
+          return Promise.resolve(iris.map((iri) => [iri, { name: 'a place' }]));
+        }
+        return new Promise((_resolve, reject) => {
+          signal.addEventListener('abort', () =>
+            reject(
+              new DOMException('This operation was aborted', 'AbortError'),
+            ),
+          );
+        });
+      },
+      { limits: { timeoutMs: 5 } },
+    );
+
+    const resolved = await resolver.resolveAll([MAASTRICHT]);
+
+    expect(attempts).toBe(2);
+    expect(resolved.get(MAASTRICHT)).toMatchObject({ outcome: 'resolved' });
+  });
+
   it('is recognised when it comes from another copy of this package', async () => {
     // A pruned or nested install can load the package twice; a failure made by
     // one copy must not be stored as a fact by the other.
@@ -911,6 +988,31 @@ describe('a host that is down', () => {
     // Fail, succeed, fail, fail, succeed, fail, fail: the fifth failure among
     // the last ten writes the host off, and the other five are never sent.
     expect(asked).toHaveLength(7);
+  });
+
+  it('lets a batch already in flight finish when its host is written off', async () => {
+    // Two slots: Venlo is in flight when Maastricht’s failure writes the host
+    // off, so it runs to the end; the batches behind them are never sent.
+    const asked: string[] = [];
+    const { resolver } = resolverOver(
+      async (iris) => {
+        asked.push(...iris);
+        throw new Error('HTTP 502');
+      },
+      { limits: { perHostConcurrency: 2, hostFailureThreshold: 1 } },
+    );
+
+    const resolved = await resolver.resolveAll([
+      MAASTRICHT,
+      VENLO,
+      'https://sws.geonames.org/1/',
+      'https://sws.geonames.org/2/',
+    ]);
+
+    expect(asked).toEqual([MAASTRICHT, VENLO]);
+    expect(resolved.get(VENLO)).toMatchObject({
+      reason: 'resolution failed after 1 attempt(s): HTTP 502',
+    });
   });
 
   it('gives a stall no second attempt once its host is written off, nor a refund', async () => {

@@ -608,6 +608,8 @@ export function createResolver<Reference, Fact>(
       let retries = 0;
       // Set once a stall has been counted and sent to the back of the queue.
       let stalled: FetchOutcome<Fact> | undefined;
+      // Why the latest attempt failed, for a batch that is waiting to try again.
+      let lastFailure: FetchOutcome<Fact> | undefined;
       for (;;) {
         await waitOutPause(batch.host);
         const step = await limiter.run(batch.host, async () => {
@@ -628,10 +630,11 @@ export function createResolver<Reference, Fact>(
       }
 
       function writtenOffStep(): Step<Fact> {
-        if (stalled !== undefined) {
-          // Contacted once already: it keeps its charge and the reason it
+        if (lastFailure !== undefined) {
+          // Contacted already, and waiting to try again – after a stall or a
+          // request to come back later: it keeps its charge and the reason it
           // actually failed for.
-          return everyKey(stalled);
+          return everyKey(lastFailure);
         }
         // The host has already failed its way out of this run. Answering
         // without a request is the whole point: retrying every reference
@@ -666,7 +669,10 @@ export function createResolver<Reference, Fact>(
           if (retries < RETRIES && !tooLong) {
             const backoffMs = RETRY_DELAY_MS * 2 ** retries;
             retries++;
-            if (error.retryAfterMs === undefined) {
+            lastFailure = failedOutcome(error, attempts, '');
+            // `Retry-After: 0`, or a date skewed into the past, names no real
+            // delay, so it gets our own backoff rather than an instant burst.
+            if (error.retryAfterMs === undefined || error.retryAfterMs <= 0) {
               return { waitMs: backoffMs };
             }
             pausedUntil.set(
@@ -693,6 +699,7 @@ export function createResolver<Reference, Fact>(
           // reference a full timeout before the breaker could see it.
           noteHostOutcome(batch.host, false);
           stalled = failedOutcome(error, attempts, '');
+          lastFailure = stalled;
           return { waitMs: 0 };
         }
         return failed(error, '');
@@ -727,6 +734,11 @@ export function createResolver<Reference, Fact>(
    * fail is cut off even when a few succeed in between.
    */
   function noteHostOutcome(host: string, succeeded: boolean): void {
+    // A batch still in flight when its host was written off has nothing left
+    // to tell the breaker.
+    if (writtenOff.has(host)) {
+      return;
+    }
     const window = recentFailures.get(host) ?? [];
     window.push(!succeeded);
     if (window.length > failureWindow) {
@@ -791,6 +803,13 @@ export function createResolver<Reference, Fact>(
         options.fetch(references, { signal: controller.signal }),
         rejectWhenAborted(controller.signal, timeoutMs),
       ]);
+    } catch (error) {
+      // Our deadline passed, whichever rejection won the race: a `fetch` that
+      // rejects on the abort with its own error must still read as a timeout.
+      if (controller.signal.aborted) {
+        throw new AttemptTimeout(`timed out after ${timeoutMs}ms`);
+      }
+      throw error;
     } finally {
       clearTimeout(expiry);
     }

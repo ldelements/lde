@@ -89,7 +89,8 @@ export function parseRetryAfter(
  * Only this is retried in the run, at most twice; any other throw fails the
  * call until the next run. With `retryAfterMs` the source sets the delay, and
  * the whole host waits it out: a rate limit is about this client, not about one
- * reference. Without it the resolver backs off by itself, 500 ms and then 1 s.
+ * reference. Without it, or with 0 – what `Retry-After: 0` and a date skewed
+ * into the past give – the resolver backs off by itself, 500 ms and then 1 s.
  * A delay longer than {@link ResolverLimits.timeoutMs} is not waited out; the
  * call fails for this run instead.
  */

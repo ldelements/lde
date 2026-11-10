@@ -228,17 +228,26 @@ contacted once, so it is not refunded.
 and no new attempt against the whole host – not just the one reference – starts
 until it has passed, because a rate limit is about this client. Attempts already
 in flight finish, and the wait holds no concurrency slot, so other hosts carry
-on. Without a delay, only that batch backs off, 500 ms and then 1 s. After two
-retries, or for a delay longer than `timeoutMs`, which is not waited out, the
-call fails for this run and counts against the host like any other throw.
+on. Without a delay – or with a delay of 0, which `Retry-After: 0` and a date
+skewed into the past both give and which names no real wait – only that batch
+backs off, 500 ms and then 1 s. After two retries, or for a delay longer than
+`timeoutMs`, which is not waited out, the call fails for this run and counts
+against the host like any other throw. If the host is written off while the
+batch waits, it is sent nothing more and keeps its own reason and its charge.
 
 ```ts
 fetch: async ([url], { signal }) => {
   const response = await fetch(url, { signal });
-  if (response.status === 429) {
-    throw new RetryableError('HTTP 429', {
-      retryAfterMs: parseRetryAfter(response.headers.get('retry-after')),
-    });
+  const retryAfterMs = parseRetryAfter(response.headers.get('retry-after'));
+  if (
+    response.status === 429 ||
+    (response.status === 503 && retryAfterMs !== undefined)
+  ) {
+    throw new RetryableError(`HTTP ${response.status}`, { retryAfterMs });
+  }
+  if ([502, 503, 504].includes(response.status)) {
+    // A proxy whose backend is down: the host, not this image.
+    throw new Error(`HTTP ${response.status}`);
   }
   if (!response.ok) {
     // This image, not the host: the others may well load.
