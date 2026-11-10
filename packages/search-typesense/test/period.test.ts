@@ -200,7 +200,7 @@ describe('a period read back from a hit', () => {
 });
 
 describe('a period nested in a Reference Type', () => {
-  it('is stored for output, its bounds declared but never indexed', () => {
+  it('is stored for output alone, without bounds', () => {
     const production: SearchType = {
       name: 'Production',
       fields: [
@@ -235,18 +235,14 @@ describe('a period nested in a Reference Type', () => {
         index: false,
         optional: true,
       },
-      {
-        name: 'production.period_start',
-        type: 'int64',
-        index: false,
-        optional: true,
-      },
-      {
-        name: 'production.period_end',
-        type: 'int64',
-        index: false,
-        optional: true,
-      },
     ]);
+  });
+});
+
+describe('a period as the default sorting field', () => {
+  it('is refused, since a period is stored as two bounds', () => {
+    expect(() =>
+      buildCollectionDefinition(work, { defaultSortingField: 'dateCreated' }),
+    ).toThrow(/default sorting field “dateCreated” of “Work” stores periods/);
   });
 });

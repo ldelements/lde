@@ -7,6 +7,8 @@ import { projectDocument } from '../src/project.js';
 import {
   physicalFields,
   searchSchema,
+  storableUnixSeconds,
+  storedRangeBound,
   validateSearchType,
   type SearchField,
   type SearchType,
@@ -129,6 +131,24 @@ describe('the stretch a period value covers', () => {
     }
   });
 
+  it('stores an open bound beyond any range a bound can name', () => {
+    // A range reaching back 200 billion years still meets `../1607`.
+    const deep = storedRangeBound(dateCreated, '-200000000000', 'max');
+    expect(deep).toBeLessThan(-(2 ** 62));
+    expect(OPEN_START).toBeLessThanOrEqual(deep as number);
+    expect(OPEN_END).toBeGreaterThanOrEqual(
+      storedRangeBound(dateCreated, '200000000000', 'min') as number,
+    );
+    // The last year the codec stores ends no later than an open end.
+    expect(project('292277026596').dateCreated_end).toBe(OPEN_END);
+    // Both are seconds an int64 holds, as JSON writes them.
+    for (const bound of [OPEN_START, OPEN_END]) {
+      expect(storableUnixSeconds(bound)).toBe(bound);
+      const written = BigInt(JSON.stringify(bound));
+      expect(written < 2n ** 63n && written >= -(2n ** 63n)).toBe(true);
+    }
+  });
+
   it('leaves out a value that states no period', () => {
     for (const value of [
       'ca. 1620',
@@ -194,13 +214,14 @@ describe('a derived period', () => {
           array: true,
           output: true,
           filterable: true,
-          derive: () => ['1600/1700', 42, '1650'],
+          derive: () => ['1600/1700', { year: 1620 }, '1650'],
         },
         { name: 'none', kind: 'period', output: true, derive: () => undefined },
       ]),
     );
     expect(document.dateCreated).toBe('1935/1955');
     expect(document.dateCreated_end).toBe(seconds('1955-12-31T23:59:59Z'));
+    // An object states no period.
     expect(document.temporalCoverage).toEqual(['1600/1700', '1650']);
     expect(document.temporalCoverage_start).toBe(
       seconds('1600-01-01T00:00:00Z'),
@@ -337,6 +358,21 @@ describe('declaring a period', () => {
       );
     expect(() => declare(true)).toThrow(/filterable “period”/);
     expect(() => declare(false)).not.toThrow();
+
+    // An entry stores its values alone: no filter or sort reaches its bounds.
+    const schema = declare(false);
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/work/1',
+        [key('production')]: {
+          '@id': 'https://ex/production/1',
+          'urn:lde:Production/period': { '@value': '1935/1955' },
+        },
+      },
+      [...schema.values()][0],
+      schema,
+    );
+    expect(document.production).toEqual([{ period: '1935/1955' }]);
   });
 });
 

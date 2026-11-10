@@ -307,7 +307,7 @@ export type ReferenceStrategy =
        * know to query beside this one.
        *
        * With `'period'`, the field holds one list in which each entry is a
-       * literal, served verbatim and read as a {@link PeriodField period}, or
+       * literal, served as stated and read as a {@link PeriodField period}, or
        * a referent, resolved like any lookup’s. A range filter tests the
        * literal entries by overlap, as it tests a `period` field, and sorting
        * orders on them; a referent has no bounds, so it matches no range and
@@ -489,8 +489,8 @@ export interface DateField
  * `date` holds one instant, a period holds what its source knows – often only
  * that something happened somewhere between two dates.
  *
- * - **Output** is each value verbatim, as its source stated it: `1620~` stays
- *   `1620~`, because the qualifier is part of what is known and how to render
+ * - **Output** is each value as its source stated it, without surrounding
+ *   whitespace: `1620~` stays `1620~`, because the qualifier is part of what is known and how to render
  *   it (“c. 1620”) depends on the reader’s language.
  * - **A range filter matches by overlap**: `{ min: '1940', max: '1950' }`
  *   matches `1935/1955`, which a filter on a start date alone would miss. The
@@ -503,8 +503,8 @@ export interface DateField
  * ({@link PhysicalFields.period}), never fields a client sees. An `array`
  * field is stored as the one stretch its values cover between them – the
  * earliest start to the latest end – since that is what an engine can sort on
- * and test in one clause. A value no reader can parse is still served; it just
- * takes no part in filtering or sorting.
+ * and test in one clause. A value no reader can parse is left out and
+ * reported, so every value served is one the bounds account for.
  *
  * Not facetable: a period belongs in every bin it overlaps, which no engine
  * facet counts from two bounds. And filtered only on the document that holds
@@ -2017,9 +2017,7 @@ export function validateSearchType(
   // A `date` field stores its precision under `${name}_precision`, and a
   // `period` its bounds under `${name}_start` and `${name}_end`, so a declared
   // field of such a name would overwrite one, and be overwritten.
-  const precisionCompanions = new Set(
-    searchType.fields.flatMap(companionNames),
-  );
+  const companionFields = new Set(searchType.fields.flatMap(companionNames));
   for (const declared of searchType.fields) {
     // Validation guards declarations built OUTSIDE TypeScript (a SHACL
     // generator, plain JS), so it inspects the uniform flat shape rather
@@ -2042,7 +2040,7 @@ export function validateSearchType(
     // answering a different question.
     if (
       RESERVED_FIELD_NAMES.includes(field.name) ||
-      precisionCompanions.has(field.name)
+      companionFields.has(field.name)
     ) {
       issue('reserved-field-name');
     }

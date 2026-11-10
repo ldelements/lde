@@ -97,8 +97,8 @@ describe('a period field', () => {
           document('mine', ['1935/1955'], first('1935'), last('1955')),
           document('portrait', ['1620~'], first('1620'), last('1620')),
           document('drawing', ['1942'], first('1942'), last('1942')),
-          document('open-end', ['1440/..'], first('1440'), 2 ** 62),
-          document('open-start', ['../1607'], -(2 ** 62), last('1607')),
+          document('open-end', ['1440/..'], first('1440'), 2 ** 63 - 1024),
+          document('open-start', ['../1607'], -(2 ** 63 - 1024), last('1607')),
           // No period, so it takes no part in a filter.
           { id: 'undated', title: 'undated' },
         ],
@@ -126,6 +126,11 @@ describe('a period field', () => {
     ]);
     expect(await overlapping('2020')).toEqual(['open-end']);
     expect(await overlapping(undefined, '1300')).toEqual(['open-start']);
+    // Deeper in time than ±2⁶² seconds, which the bounds once stopped at.
+    expect(await overlapping(undefined, '-200000000000')).toEqual([
+      'open-start',
+    ]);
+    expect(await overlapping('200000000000')).toEqual(['open-end']);
   });
 
   it('includes the whole period a bound names', async () => {
