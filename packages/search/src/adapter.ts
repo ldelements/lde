@@ -26,6 +26,7 @@ export {
   referencedTargetsOf,
   storedTargetOf,
   TARGET_FIELD,
+  holdsNoIds,
   identityFieldOf,
   identityFieldName,
   inheritedFacetPolicies,

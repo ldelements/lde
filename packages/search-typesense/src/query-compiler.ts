@@ -22,6 +22,7 @@ import {
   storedRangeBound,
   isInternalField,
   isBinnedRangeFacet,
+  holdsNoIds,
   isWelded,
   joinGraph,
   localLookupTargetsOf,
@@ -539,7 +540,12 @@ function compileLeaf(
   }
   // A criterion whose operator does not match the field's kind (e.g. `range` on
   // a keyword) would reach the engine as garbage syntax – skip it instead.
-  if (filterOperatorFor(field) !== filterOperator(criterion)) {
+  // Nor can membership on entries that hold no ids, which would test the
+  // nested object itself. `assertValidQuery` rejects both first.
+  if (
+    holdsNoIds(field, schema) ||
+    filterOperatorFor(field) !== filterOperator(criterion)
+  ) {
     return UNUSABLE;
   }
   if ('in' in criterion) {

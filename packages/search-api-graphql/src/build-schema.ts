@@ -1876,8 +1876,8 @@ function weldedCriterionOf(
 ): Criterion | undefined {
   // Every entry here is a plain criterion, and can only be: a hop needs either
   // a joinable reference (`joins.resolve` answers nothing from a Reference
-  // Type) or a filterable inline one (which needs an `identity`, refused inside
-  // a Reference Type). So there is nothing to skip.
+  // Type) or a filterable inline one (refused inside a Reference Type, with or
+  // without an `identity`). So there is nothing to skip.
   const conditions = keyEntriesOf(
     entry.nested,
     entry.target,
