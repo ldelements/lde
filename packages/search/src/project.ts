@@ -448,7 +448,12 @@ function applyField(
   sink: UnreadableSink,
   nested: boolean,
 ): void {
-  const unread = (value: string): void => sink(field.name, value);
+  // A blank value states nothing, so there is nothing to correct at the source.
+  const unread = (value: string): void => {
+    if (value.trim() !== '') {
+      sink(field.name, value);
+    }
+  };
   // The three value sources, mutually exclusive by declaration
   // (`validateSearchType`): a projection value, a computed value, a graph path.
   if (
@@ -590,7 +595,8 @@ function applyField(
     case 'boolean': {
       // The xsd:boolean lexical space: true/false/1/0. Anything else – `ja`,
       // `yes` – states neither, so it is left out rather than stored as false.
-      const literal = firstLiteralOf(node, alias);
+      // Surrounding whitespace is collapsed, as xsd:boolean’s facet says.
+      const literal = firstLiteralOf(node, alias)?.trim();
       if (literal === undefined) {
         return;
       }
@@ -1315,8 +1321,6 @@ function applyNestedReferents(
   context: ProjectionContext,
   sink: UnreadableSink,
 ): readonly ProjectedNode[] {
-  const nestedSink: UnreadableSink = (name, value) =>
-    sink(`${field.name}.${name}`, value);
   // One node may stand for several entries: a weldable leaf is single-valued,
   // so an edge the graph gave several roles or several endpoints fans out into
   // one entry per combination BEFORE it is projected (ADR 26).
@@ -1330,6 +1334,16 @@ function applyNestedReferents(
         nestedTypes.length === 1
           ? nestedTypes[0]
           : targetOfReferent(value, nestedTypes as readonly RootType[]);
+      // Every tuple of a node carries the node’s other values, so each value
+      // is reported once per node, not once per tuple it was copied into.
+      const reported = new Set<string>();
+      const nestedSink: UnreadableSink = (name, value) => {
+        const key = JSON.stringify([name, value]);
+        if (!reported.has(key)) {
+          reported.add(key);
+          sink(`${field.name}.${name}`, value);
+        }
+      };
       return tuplesOf(value, nestedType, field).map((tuple) => {
         const projected = projectFields(
           tuple,

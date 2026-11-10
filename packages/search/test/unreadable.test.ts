@@ -77,6 +77,21 @@ describe('a value a typed field reads from the graph', () => {
     ).toEqual([]);
   });
 
+  it('is not reported when it is blank, since it states nothing to correct', () => {
+    const field: SearchField = {
+      name: 'value',
+      kind: 'date',
+      path: 'https://ex/value',
+      output: true,
+    };
+    expect(
+      unreadOf(
+        { [alias('Work', 'value')]: { '@value': '  ' } },
+        workType([field]),
+      ),
+    ).toEqual([]);
+  });
+
   it('is reported for each value of an array period that states no period', () => {
     const field: SearchField = {
       name: 'temporalCoverage',
@@ -216,6 +231,10 @@ describe('a boolean field', () => {
     ['0', false],
   ])('stores %s as %s', (value, stored) => {
     expect(project(value).open).toBe(stored);
+  });
+
+  it('collapses surrounding whitespace, as xsd:boolean does', () => {
+    expect(project(' true\n').open).toBe(true);
   });
 
   it('leaves out a value outside the xsd:boolean lexical space instead of storing false', () => {

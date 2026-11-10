@@ -68,7 +68,9 @@ export interface ValuesUnread {
 
 /** One value a stage could not read, in {@link ValuesUnread.examples}. */
 export interface UnreadValue {
-  /** The id of the item the value was left out of. */
+  /** What the value was read from, as the stage names it – for a search
+   *  document, the node it was projected from, which a publisher can look up
+   *  even where the document is keyed on something else. */
   readonly id: string;
   /** The value as the source stated it. */
   readonly value: string;
