@@ -203,8 +203,8 @@ describe('searchStages', () => {
     });
   });
 
-  it('runs the dataset type first and hands its document to every later stage', async () => {
-    const DATASET = 'https://example.org/Dataset';
+  it('runs the dcat:Dataset type first and hands its document to every later stage', async () => {
+    const DATASET = 'http://www.w3.org/ns/dcat#Dataset';
     const WORK = 'https://example.org/Work';
     const PUBLISHER = 'https://example.org/publisher';
     const withDatasetType = searchSchema(
@@ -310,11 +310,7 @@ describe('searchStages', () => {
         .filter((item) => item.searchType === workType)
         .map((item) => item.document.publisher);
 
-    const stages = searchStages({
-      schema: withDatasetType,
-      types,
-      datasetType: 'Dataset',
-    });
+    const stages = searchStages({ schema: withDatasetType, types });
     expect(stages.map((stage) => stage.name)).toEqual(['Dataset', 'Work']);
     // A dataset’s stages run one after another, as the pipeline runs them.
     for (const stage of stages) {
@@ -333,23 +329,6 @@ describe('searchStages', () => {
     received.length = 0;
     await stages[1].run(other, distribution, writer);
     expect(publishersOfWorks()).toEqual([undefined, undefined]);
-
-    // Without the option, the order given stands and nothing is copied.
-    const unordered = searchStages({ schema: withDatasetType, types });
-    expect(unordered.map((stage) => stage.name)).toEqual(['Work', 'Dataset']);
-    received.length = 0;
-    for (const stage of [...unordered].reverse()) {
-      await stage.run(dataset, distribution, writer);
-    }
-    expect(publishersOfWorks()).toEqual([undefined, undefined]);
-
-    expect(() =>
-      searchStages({
-        schema: withDatasetType,
-        types: [types[0]],
-        datasetType: 'Dataset',
-      }),
-    ).toThrow(/Dataset type “Dataset” has no stage/);
   });
 
   it('names each stage after its type and yields one stage per type', () => {

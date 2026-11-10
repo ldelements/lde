@@ -101,15 +101,6 @@ export interface SearchStagesOptions {
   schema: SearchSchema;
   /** One entry per root type to index, each its own stage. */
   types: readonly SearchStageType[];
-  /**
-   * The {@link SearchType.name} of the root type that describes the dataset
-   * being indexed. Its stage then runs first, and the document it projects
-   * for the dataset itself – the one whose `id` is the dataset IRI – reaches
-   * every other stage’s projection as `ProjectionContext.datasetDocument`, so
-   * a `derive` can copy a field of the dataset onto each document. Must name
-   * one of {@link types}.
-   */
-  datasetType?: string;
 }
 
 /**
@@ -122,8 +113,11 @@ export interface SearchStagesOptions {
  * by the dataset
  * ([ADR 13](https://github.com/ldelements/lde/blob/main/docs/decisions/0013-project-inside-the-batch-per-root-type.md)).
  *
- * With {@link SearchStagesOptions.datasetType}, that type’s stage runs first
- * and hands the dataset’s own document to every other stage’s projection.
+ * A root type whose `class` is `dcat:Dataset` describes the dataset being
+ * indexed: its stage runs first, and the document it projects for the dataset
+ * itself – the one whose `id` is the dataset IRI – reaches every other stage’s
+ * projection as `ProjectionContext.datasetDocument`, so a `derive` can copy a
+ * field of the dataset onto each document.
  *
  * Wire the result as `new Pipeline<TypedSearchDocument>({ datasetSelector,
  * stages: searchStages(...), writers: searchIndexWriter(...) })` – one terminal,
@@ -132,16 +126,10 @@ export interface SearchStagesOptions {
 export function searchStages(
   options: SearchStagesOptions,
 ): Stage<TypedSearchDocument>[] {
-  const { schema, types, datasetType } = options;
+  const { schema, types } = options;
+  // The schema holds one root type per class, so at most one stage matches.
   const isDatasetType = (type: SearchStageType) =>
-    type.searchType.name === datasetType;
-  if (datasetType !== undefined && !types.some(isDatasetType)) {
-    // Without its stage the document is never projected, and every copy of a
-    // dataset field would be silently absent.
-    throw new Error(
-      `Dataset type “${datasetType}” has no stage; name one of the types searchStages projects.`,
-    );
-  }
+    type.searchType.class === DCAT_DATASET;
   // The dataset being indexed and its own projected document, for the stages
   // that run after its type’s. The pipeline processes datasets one at a time,
   // so one slot holds one document, never one per dataset; it is read only for
@@ -350,3 +338,6 @@ export function registrySource(
       ? distribution
       : Distribution.sparql(endpoint, dataset.iri.toString());
 }
+
+/** The class of a root type that describes the dataset being indexed. */
+const DCAT_DATASET = 'http://www.w3.org/ns/dcat#Dataset';

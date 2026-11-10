@@ -27,7 +27,7 @@ The division of labour ([ADR 6](../decisions/0006-make-the-writer-transaction-aw
     emits it under the field’s IR Alias (`urn:lde:‹Type›/‹field›`) – the same key
     the projection reads back – so the reader and the projection cannot drift. A
     stage without an explicit `readers` defaults to this generated reader.
-    With the `datasetType` option, that type’s stage runs first and the
+    A root type whose `class` is `dcat:Dataset` runs first, and the
     dataset’s own document reaches every other stage’s projection as
     `datasetDocument`, so a `derive` can copy a field of the dataset onto each
     document ([Copy a field of the dataset](./search#copy-a-field-of-the-dataset));
