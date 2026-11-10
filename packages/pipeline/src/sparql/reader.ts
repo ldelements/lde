@@ -33,6 +33,18 @@ export class NotSupported {
   constructor(public readonly message: string) {}
 }
 
+/**
+ * A stage’s item selector selected nothing for the dataset, so the stage does
+ * not apply to it – the usual outcome for a stage that only some datasets
+ * have items for. A {@link NotSupported}, so callers that only check for that
+ * keep treating it as a skip.
+ */
+export class NoItemsSelected extends NotSupported {
+  constructor() {
+    super('No items selected');
+  }
+}
+
 /** A single row of variable bindings (variable name → NamedNode). */
 export type VariableBindings = Record<string, NamedNode>;
 
@@ -82,7 +94,7 @@ export interface SparqlConstructReaderOptions {
    * Optional custom SparqlEndpointFetcher instance.
    *
    * When supplied, the reader uses this fetcher as-is for every attempt
-   * — the per-attempt timeout from the {@link TimeoutPolicy} is **not**
+   * – the per-attempt timeout from the {@link TimeoutPolicy} is **not**
    * enforced (the supplied fetcher’s own `timeout` governs). Policy
    * `beforeRequest`/`afterRequest` hooks still fire so outcome
    * classification works, but adaptive tightening cannot apply.
@@ -112,7 +124,7 @@ export interface SparqlConstructReaderOptions {
   /**
    * Deduplicate triples in the CONSTRUCT output stream.
    *
-   * SPARQL CONSTRUCT queries can produce duplicate triples — for example,
+   * SPARQL CONSTRUCT queries can produce duplicate triples – for example,
    * constant triples (like `?dataset a edm:ProvidedCHO`) are emitted for
    * every solution row. When enabled, a streaming identity filter removes
    * duplicates inline without buffering.
@@ -135,9 +147,9 @@ export interface SparqlConstructReaderOptions {
  * and parsed at {@link read} time after substitution.
  *
  * Template substitution (applied in order):
- * 1. `#subjectFilter#` — replaced with `distribution.subjectFilter` (deferred to read)
- * 2. `FROM <graph>` — set via `withDefaultGraph` if the distribution has a named graph
- * 3. `?dataset` — replaced with the dataset IRI (string substitution on the serialised query)
+ * 1. `#subjectFilter#` – replaced with `distribution.subjectFilter` (deferred to read)
+ * 2. `FROM <graph>` – set via `withDefaultGraph` if the distribution has a named graph
+ * 3. `?dataset` – replaced with the dataset IRI (string substitution on the serialised query)
  *
  * @example
  * ```typescript
@@ -340,8 +352,8 @@ export async function readQueryFile(filename: string): Promise<string> {
  * **Why this exists:** `fetch-sparql-endpoint` pipes the raw HTTP response
  * stream directly into N3.js's `StreamParser`. N3.js has a bug
  * ({@link https://github.com/rdfjs/N3.js/issues/578 | N3.js#578}) where
- * tokens that straddle chunk boundaries — most commonly language tags like
- * `@nl-nl` — cause spurious `Unexpected "-nl"` parse errors. The error is
+ * tokens that straddle chunk boundaries – most commonly language tags like
+ * `@nl-nl` – cause spurious `Unexpected "-nl"` parse errors. The error is
  * non-deterministic and typically surfaces only on responses larger than
  * ~12 MB, because that is when HTTP chunking starts splitting mid-token.
  *

@@ -1,11 +1,11 @@
-import type { UnreadValue, ValuesUnread } from './progressReporter.js';
+import type { UnreadValue, ValuesUnread } from './pipelineEvent.js';
 
 /** Distinct examples kept per (target, field). */
 const MAX_EXAMPLES = 5;
 
 /**
  * The values a dataset’s stages could not read, tallied per (target, field)
- * for {@link ProgressReporter.valuesUnread}. Bounded by the schema, not the
+ * for the `valuesUnread` event. Bounded by the schema, not the
  * data: one entry per field that rejected anything, each holding a count and
  * at most {@link MAX_EXAMPLES} distinct examples.
  *

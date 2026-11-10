@@ -108,6 +108,9 @@
       "path": "./packages/iiif-image"
     },
     {
+      "path": "./packages/pipeline-logger-reporter"
+    },
+    {
       "path": "./packages/change-detection"
     }
   ],

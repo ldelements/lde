@@ -35,13 +35,16 @@ import {
   importOutcomeToVerdict,
   probeResultToVerdict,
 } from '@lde/distribution-health';
-import { NotSupported } from './sparql/reader.js';
+import { NoItemsSelected, NotSupported } from './sparql/reader.js';
 import type { StageOutputResolver } from './stageOutputResolver.js';
-import type {
-  DistributionAnalysisResult,
-  ProgressReporter,
-} from './progressReporter.js';
-import { combineReporters } from './combineReporters.js';
+import {
+  levelOf,
+  type DatasetSkipReason,
+  type DistributionAnalysisResult,
+  type PipelineEvent,
+  type PipelineEventPayload,
+} from './pipelineEvent.js';
+import type { Reporter } from './reporter.js';
 import { UnreadValueTally } from './unreadValueTally.js';
 import type { Validator } from './validator.js';
 import {
@@ -139,13 +142,8 @@ export interface PipelineOptions<Out = Quad> {
     stageOutputResolver: StageOutputResolver;
     outputDir: string;
   };
-  /**
-   * Observer(s) notified of pipeline lifecycle events. Pass an array to have
-   * several reporters observe the same run – e.g. a console reporter alongside
-   * a verdict-collecting one; every reporter receives each event in array
-   * order. A single reporter may be passed directly.
-   */
-  reporter?: ProgressReporter | readonly ProgressReporter[];
+  /** Reporter(s) handed every {@link PipelineEvent} of a run, in array order. */
+  reporter?: Reporter | readonly Reporter[];
   /**
    * Optional per-dataset processing memory. When set, the pipeline skips a
    * dataset whose source-change fingerprint and {@link pipelineVersion} both
@@ -416,7 +414,7 @@ export class Pipeline<Out = Quad> {
   private readonly beforeDatasetWrite?: QuadTransform<BeforeDatasetWriteContext>;
   private readonly distributionResolver: DistributionResolver;
   private readonly chaining?: PipelineOptions<Out>['chaining'];
-  private readonly reporter?: ProgressReporter;
+  private readonly reporters: readonly Reporter[];
   private readonly timeoutFactory: () => TimeoutPolicy;
   private readonly provenanceStore?: ProvenanceStore;
   private readonly pipelineVersion?: string;
@@ -471,11 +469,7 @@ export class Pipeline<Out = Quad> {
     this.distributionResolver =
       options.distributionResolver ?? new SparqlDistributionResolver();
     this.chaining = options.chaining;
-    // `Array.isArray` narrows the array branch but not the readonly-array out of
-    // the else branch, so cast the single-reporter case explicitly.
-    this.reporter = Array.isArray(options.reporter)
-      ? combineReporters(options.reporter)
-      : (options.reporter as ProgressReporter | undefined);
+    this.reporters = [options.reporter ?? []].flat();
     this.timeoutFactory =
       options.timeout ?? (() => new ConstantTimeoutPolicy(300_000));
     this.provenanceStore = options.provenanceStore;
@@ -484,8 +478,9 @@ export class Pipeline<Out = Quad> {
 
   async run(): Promise<void> {
     const start = Date.now();
+    const runId = randomUUID();
 
-    this.reporter?.pipelineStart?.(this.name);
+    this.report(runId, { type: 'pipelineStart', name: this.name });
 
     // Fail fast on a store that cannot persist records (e.g. a provenance
     // file on a mount the runtime user cannot write to): every dataset would
@@ -495,7 +490,11 @@ export class Pipeline<Out = Quad> {
 
     const selectStart = Date.now();
     const datasets = await this.datasetSelector.select();
-    this.reporter?.datasetsSelected?.(datasets.total, Date.now() - selectStart);
+    this.report(runId, {
+      type: 'datasetsSelected',
+      count: datasets.total,
+      durationMs: Date.now() - selectStart,
+    });
 
     // The run transaction: one openRun → write* → commit/abort per pipeline
     // run. `selectedSources` accumulates every selected dataset – including
@@ -503,11 +502,11 @@ export class Pipeline<Out = Quad> {
     // membership.
     const selectedSources: string[] = [];
     const context: RunContext = {
-      runId: randomUUID(),
+      runId,
       startedAt: new Date().toISOString(),
       selectedSources: () => selectedSources,
       itemsRejected: (dataset, rejection) =>
-        this.reporter?.itemsRejected?.(dataset, rejection),
+        this.report(runId, { type: 'itemsRejected', dataset, rejection }),
       provenance: this.provenanceStore,
     };
     const openedWriter = await this.writer.openRun(context);
@@ -553,13 +552,14 @@ export class Pipeline<Out = Quad> {
     // meant not to do.
     if (abandoned) {
       const reason = new EmptySelection();
-      this.reporter?.selectionEmpty?.(reason.message);
+      this.report(runId, { type: 'selectionEmpty', message: reason.message });
       await runWriter.abort(reason);
     }
 
     const finalMemory = process.memoryUsage();
-    this.reporter?.pipelineComplete?.({
-      duration: Date.now() - start,
+    this.report(runId, {
+      type: 'pipelineComplete',
+      durationMs: Date.now() - start,
       memoryUsageBytes: finalMemory.rss,
       heapUsedBytes: finalMemory.heapUsed,
     });
@@ -570,16 +570,39 @@ export class Pipeline<Out = Quad> {
     runWriter: RunWriter<Out>,
     context: RunContext,
   ): Promise<void> {
-    this.reporter?.datasetStart?.(dataset);
+    const { runId } = context;
+    const datasetStart = Date.now();
+    this.report(runId, { type: 'datasetStart', dataset });
+    const skip = (reason: DatasetSkipReason) =>
+      this.report(runId, { type: 'datasetSkipped', dataset, reason });
+    const skipOnError = (
+      code: 'probeFailed' | 'resolveFailed',
+      prefix: string,
+      thrown: unknown,
+    ) => {
+      const error =
+        thrown instanceof Error
+          ? thrown
+          : new Error(String(thrown), { cause: thrown });
+      this.report(runId, {
+        type: 'datasetSkipped',
+        dataset,
+        reason: { code, message: `${prefix}: ${error.message}` },
+        error,
+      });
+    };
 
     // Probe phase: gather probe results and the source-to-be, without importing.
     let probed: ProbedDistributions;
     try {
       probed = await this.distributionResolver.probe(dataset, {
         onProbe: (distribution, result) => {
-          this.reporter?.distributionProbed?.(
-            mapProbeResult(distribution, result),
-          );
+          this.report(runId, {
+            type: 'distributionProbed',
+            dataset,
+            distribution,
+            result: mapProbeResult(distribution, result),
+          });
           // Shallow validity: the probe parse-validates small RDF bodies as a
           // by-product. Surface that verdict per distribution, judged against
           // the distribution's own observed fingerprint.
@@ -588,15 +611,17 @@ export class Pipeline<Out = Quad> {
             sourceFingerprint(distribution, result),
           );
           if (verdict) {
-            this.reporter?.distributionValidated?.(distribution, verdict);
+            this.report(runId, {
+              type: 'distributionValidated',
+              dataset,
+              distribution,
+              verdict,
+            });
           }
         },
       });
     } catch (error) {
-      this.reporter?.datasetSkipped?.(
-        dataset,
-        `Distribution probing failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      skipOnError('probeFailed', 'Distribution probing failed', error);
       return;
     }
 
@@ -629,27 +654,31 @@ export class Pipeline<Out = Quad> {
           stored,
         )
       ) {
-        this.reporter?.datasetSkipped?.(dataset, 'Unchanged since last run');
+        skip({ code: 'unchanged', message: 'Unchanged since last run' });
         return;
       }
     }
 
     // Resolve phase: import a data dump only when the source is one.
+    const importCallbacks = {
+      onImportStart: () =>
+        this.report(runId, { type: 'importStarted', dataset }),
+      onImportFailed: (distribution: Distribution, error: Error) =>
+        this.report(runId, {
+          type: 'importFailed',
+          dataset,
+          distribution,
+          error,
+        }),
+    };
     let resolved;
     try {
-      resolved = await this.distributionResolver.resolve(probed, {
-        onImportStart: () => {
-          this.reporter?.importStarted?.();
-        },
-        onImportFailed: (distribution, error) => {
-          this.reporter?.importFailed?.(distribution, error);
-        },
-      });
-    } catch (error) {
-      this.reporter?.datasetSkipped?.(
-        dataset,
-        `Distribution resolution failed: ${error instanceof Error ? error.message : String(error)}`,
+      resolved = await this.distributionResolver.resolve(
+        probed,
+        importCallbacks,
       );
+    } catch (error) {
+      skipOnError('resolveFailed', 'Distribution resolution failed', error);
       return;
     }
 
@@ -659,25 +688,33 @@ export class Pipeline<Out = Quad> {
       // no summary, so an invalid distribution is recorded rather than silently
       // dropped.
       if (resolved.importFailed) {
-        this.reporter?.distributionValidated?.(
-          resolved.importFailed.distribution,
-          importOutcomeToVerdict(resolved.importFailed, fingerprint),
-        );
+        this.report(runId, {
+          type: 'distributionValidated',
+          dataset,
+          distribution: resolved.importFailed.distribution,
+          verdict: importOutcomeToVerdict(resolved.importFailed, fingerprint),
+        });
       }
       // Record the failure so a dataset whose source is unchanged is not
       // re-imported every run; it is retried at the next fingerprint change or
       // version rotation.
-      await this.recordOutcome(dataset, fingerprint, 'failed');
-      this.reporter?.datasetSkipped?.(dataset, resolved.message);
+      await this.recordOutcome(runId, dataset, fingerprint, 'failed');
+      skip({ code: 'noDistributionAvailable', message: resolved.message });
       return;
     }
 
-    this.reportSelectedDistribution(dataset, resolved, fingerprint);
+    this.reportSelectedDistribution(runId, dataset, resolved, fingerprint);
 
     const timeout: TimeoutPolicy = this.timeoutFactory();
     const unsubscribe = timeout.subscribe?.({
-      onTighten: (event) => this.reporter?.timeoutTightened?.(event),
-      onRelax: (event) => this.reporter?.timeoutRelaxed?.(event),
+      onTighten: (transition) =>
+        this.report(runId, {
+          ...transition,
+          type: 'timeoutTightened',
+          dataset,
+        }),
+      onRelax: (transition) =>
+        this.report(runId, { ...transition, type: 'timeoutRelaxed', dataset }),
     });
 
     let stageFailed = false;
@@ -711,11 +748,7 @@ export class Pipeline<Out = Quad> {
         try {
           const fallback = await this.distributionResolver.resolveFallback(
             probed,
-            {
-              onImportStart: () => this.reporter?.importStarted?.(),
-              onImportFailed: (distribution, error) =>
-                this.reporter?.importFailed?.(distribution, error),
-            },
+            importCallbacks,
           );
           if (fallback instanceof ResolvedDistribution) {
             // The dump is now the dataset's effective source: report it as
@@ -733,6 +766,7 @@ export class Pipeline<Out = Quad> {
               }
             }
             this.reportSelectedDistribution(
+              runId,
               dataset,
               fallback,
               fallbackFingerprint,
@@ -760,15 +794,22 @@ export class Pipeline<Out = Quad> {
             // A failed dump import is a deep validity verdict on that dump –
             // surface it rather than silently keeping the endpoint's partial
             // output, matching the primary NoDistributionAvailable path.
-            this.reporter?.distributionValidated?.(
-              fallback.importFailed.distribution,
-              importOutcomeToVerdict(fallback.importFailed, fingerprint),
-            );
+            this.report(runId, {
+              type: 'distributionValidated',
+              dataset,
+              distribution: fallback.importFailed.distribution,
+              verdict: importOutcomeToVerdict(
+                fallback.importFailed,
+                fingerprint,
+              ),
+            });
           }
         } catch (error) {
-          this.reporter?.stageFailed?.(
+          this.reportStageFailed(
+            runId,
+            dataset,
             'reactive-dump-fallback',
-            error instanceof Error ? error : new Error(String(error)),
+            error,
           );
         }
       }
@@ -783,34 +824,75 @@ export class Pipeline<Out = Quad> {
       // A per-dataset writer failure must not abort the whole run: isolate it
       // like a stage failure so the remaining datasets still process. The
       // dataset is recorded 'failed' below and retried on the next run.
-      this.reporter?.stageFailed?.(
-        'write',
-        error instanceof Error ? error : new Error(String(error)),
-      );
+      this.reportStageFailed(runId, dataset, 'write', error);
       stageFailed = true;
     }
-    await this.reportValidators(dataset);
+    await this.reportValidators(runId, dataset);
     // A dataset whose stages threw produced incomplete output; record it as
     // ‘failed’ rather than freezing a broken result under a ‘success’ record.
     await this.recordOutcome(
+      runId,
       dataset,
       fingerprint,
       stageFailed ? 'failed' : 'success',
     );
     if (!stageFailed && unread !== undefined) {
       for (const entry of unread.entries()) {
-        this.reporter?.valuesUnread?.(dataset, entry);
+        this.report(runId, { type: 'valuesUnread', dataset, unread: entry });
       }
     }
     const datasetMemory = process.memoryUsage();
-    this.reporter?.datasetComplete?.(dataset, {
+    this.report(runId, {
+      type: 'datasetComplete',
+      dataset,
+      durationMs: Date.now() - datasetStart,
       memoryUsageBytes: datasetMemory.rss,
       heapUsedBytes: datasetMemory.heapUsed,
     });
   }
 
+  private report(runId: string, payload: PipelineEventPayload): void {
+    if (this.reporters.length === 0) return;
+    const event = {
+      ...payload,
+      defaultLevel: levelOf(payload),
+      timestamp: new Date(),
+      runId,
+    } as PipelineEvent;
+    for (const reporter of this.reporters) {
+      // A reporter only observes the run, so its failure must not change it:
+      // the other reporters still get the event, and the run carries on.
+      try {
+        reporter.onEvent(event);
+      } catch (error) {
+        process.emitWarning(
+          `A reporter threw on a ${event.type} event: ${error instanceof Error ? error.message : String(error)}`,
+          {
+            type: 'ReporterWarning',
+            detail: error instanceof Error ? error.stack : undefined,
+          },
+        );
+      }
+    }
+  }
+
+  private reportStageFailed(
+    runId: string,
+    dataset: Dataset,
+    stage: string,
+    error: unknown,
+  ): void {
+    this.report(runId, {
+      type: 'stageFailed',
+      dataset,
+      stage,
+      error: error instanceof Error ? error : new Error(String(error)),
+    });
+  }
+
   /** Persist the processing record for a dataset, when a store is configured. */
   private async recordOutcome(
+    runId: string,
     dataset: Dataset,
     fingerprint: string | null,
     status: ProcessingRecord['status'],
@@ -828,21 +910,21 @@ export class Pipeline<Out = Quad> {
       // reprocesses next run, its record not yet updated – but it must be
       // surfaced: a store that fails every write silently disables
       // skip-unchanged.
-      this.reporter?.stageFailed?.(
-        'provenance',
-        error instanceof Error ? error : new Error(String(error)),
-      );
+      this.reportStageFailed(runId, dataset, 'provenance', error);
     }
   }
 
-  private async reportValidators(dataset: Dataset): Promise<void> {
+  private async reportValidators(
+    runId: string,
+    dataset: Dataset,
+  ): Promise<void> {
     const validators = new Set<Validator>();
     for (const stage of this.collectStages(this.stages)) {
       if (stage.validator) validators.add(stage.validator);
     }
     for (const validator of validators) {
       const report = await validator.report(dataset);
-      this.reporter?.datasetValidated?.(dataset, report);
+      this.report(runId, { type: 'datasetValidated', dataset, report });
     }
   }
 
@@ -889,20 +971,24 @@ export class Pipeline<Out = Quad> {
    * deep verdict.
    */
   private reportSelectedDistribution(
+    runId: string,
     dataset: Dataset,
     resolved: ResolvedDistribution,
     fingerprint: string | null,
   ): void {
-    this.reporter?.distributionSelected?.(
+    this.report(runId, {
+      type: 'distributionSelected',
       dataset,
-      resolved.distribution,
-      resolved.imported,
-    );
+      distribution: resolved.distribution,
+      imported: resolved.imported,
+    });
 
     if (resolved.imported) {
-      this.reporter?.distributionValidated?.(
-        resolved.imported.from,
-        importOutcomeToVerdict(
+      this.report(runId, {
+        type: 'distributionValidated',
+        dataset,
+        distribution: resolved.imported.from,
+        verdict: importOutcomeToVerdict(
           {
             type: 'successful',
             distribution: resolved.imported.from,
@@ -911,7 +997,7 @@ export class Pipeline<Out = Quad> {
           },
           fingerprint,
         ),
-      );
+      });
     }
   }
 
@@ -944,6 +1030,7 @@ export class Pipeline<Out = Quad> {
           );
         } else {
           await this.runStage(
+            context.runId,
             dataset,
             distribution,
             stage,
@@ -954,10 +1041,7 @@ export class Pipeline<Out = Quad> {
         }
       } catch (error) {
         stageFailed = true;
-        this.reporter?.stageFailed?.(
-          stage.name,
-          error instanceof Error ? error : new Error(String(error)),
-        );
+        this.reportStageFailed(context.runId, dataset, stage.name, error);
       }
     }
     return { stageFailed, unread };
@@ -968,6 +1052,7 @@ export class Pipeline<Out = Quad> {
    * Returns `true` if the stage produced results, `false` if NotSupported.
    */
   private async runStage<Item>(
+    runId: string,
     dataset: Dataset,
     distribution: Distribution,
     stage: Stage<Item>,
@@ -975,7 +1060,7 @@ export class Pipeline<Out = Quad> {
     timeout?: TimeoutPolicy,
     unread?: UnreadValueTally,
   ): Promise<boolean> {
-    this.reporter?.stageStart?.(stage.name);
+    this.report(runId, { type: 'stageStart', dataset, stage: stage.name });
     const stageStart = Date.now();
 
     let itemsProcessed = 0;
@@ -986,7 +1071,10 @@ export class Pipeline<Out = Quad> {
         itemsProcessed = items;
         quadsGenerated = quads;
         const stageMemory = process.memoryUsage();
-        this.reporter?.stageProgress?.({
+        this.report(runId, {
+          type: 'stageProgress',
+          dataset,
+          stage: stage.name,
           itemsProcessed,
           quadsGenerated,
           memoryUsageBytes: stageMemory.rss,
@@ -999,14 +1087,28 @@ export class Pipeline<Out = Quad> {
     });
 
     if (result instanceof NotSupported) {
-      this.reporter?.stageSkipped?.(stage.name, result.message);
+      this.report(runId, {
+        type: 'stageSkipped',
+        dataset,
+        stage: stage.name,
+        reason: {
+          code:
+            result instanceof NoItemsSelected
+              ? 'noItemsSelected'
+              : 'notSupported',
+          message: result.message,
+        },
+      });
       return false;
     }
 
-    this.reporter?.stageComplete?.(stage.name, {
+    this.report(runId, {
+      type: 'stageComplete',
+      dataset,
+      stage: stage.name,
       itemsProcessed,
       quadsGenerated,
-      duration: Date.now() - stageStart,
+      durationMs: Date.now() - stageStart,
     });
 
     return true;
@@ -1014,6 +1116,7 @@ export class Pipeline<Out = Quad> {
 
   /** Run a stage in chained mode, throwing if the stage is not supported. */
   private async runChainedStage<Item>(
+    runId: string,
     dataset: Dataset,
     distribution: Distribution,
     stage: Stage<Item>,
@@ -1021,6 +1124,7 @@ export class Pipeline<Out = Quad> {
     timeout?: TimeoutPolicy,
   ): Promise<void> {
     const supported = await this.runStage(
+      runId,
       dataset,
       distribution,
       stage,
@@ -1062,6 +1166,7 @@ export class Pipeline<Out = Quad> {
       const scratchRun = await scratchWriter.openRun(context);
       try {
         await this.runChainedStage(
+          context.runId,
           dataset,
           stageDistribution,
           chainedStage,
@@ -1135,7 +1240,6 @@ function mapProbeResult(
   const fingerprint = sourceFingerprint(distribution, result);
   if (result instanceof NetworkError) {
     return {
-      distribution,
       type: 'network-error' as const,
       available: false,
       error: result.message,
@@ -1144,7 +1248,6 @@ function mapProbeResult(
     };
   }
   return {
-    distribution,
     type:
       result instanceof SparqlProbeResult
         ? ('sparql' as const)

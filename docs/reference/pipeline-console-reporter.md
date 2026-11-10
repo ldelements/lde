@@ -22,7 +22,7 @@ await new Pipeline({
 }).run();
 ```
 
-`ConsoleReporter` takes no constructor options.
+`ConsoleReporter` renders every event and does not filter by [event level](./pipeline#levels). Its spinners, dataset headers and probe lines build on earlier events, so dropping some of them would break the ones that follow. For unattended runs, or whenever you want to filter by level, use a structured logger through [@lde/pipeline-logger-reporter](./pipeline-logger-reporter).
 
 ## Output
 

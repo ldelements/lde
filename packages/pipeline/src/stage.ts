@@ -1,13 +1,13 @@
 import { Dataset, Distribution } from '@lde/dataset';
 import type { Quad } from '@rdfjs/types';
 import type { Reader, VariableBindings } from './sparql/reader.js';
-import { NotSupported } from './sparql/reader.js';
+import { NoItemsSelected, NotSupported } from './sparql/reader.js';
 import type { TimeoutPolicy } from './sparql/timeoutPolicy.js';
 import { batch } from './batch.js';
 import type { Validator } from './validator.js';
 import type { DatasetWriter } from './writer/writer.js';
 import { AsyncQueue } from './asyncQueue.js';
-import type { UnreadValue } from './progressReporter.js';
+import type { UnreadValue } from './pipelineEvent.js';
 
 /**
  * Transforms a quad stream, given the context of its extension point.
@@ -59,7 +59,7 @@ export interface BatchContext extends ReaderContext {
    * Report a value the transform could not read and so left out of the item
    * it produced – an integer field over `onbekend`, say. The pipeline tallies
    * them per (`target`, `field`) and reports them when the dataset completes
-   * ({@link ProgressReporter.valuesUnread}).
+   * (the `valuesUnread` event).
    */
   valueUnread(target: string, field: string, unread: UnreadValue): void;
 }
@@ -374,7 +374,7 @@ export class Stage<Out = Quad> {
     const iter = batches[Symbol.asyncIterator]();
     const first = await iter.next();
     if (first.done) {
-      return new NotSupported('No items selected');
+      return new NoItemsSelected();
     }
 
     // Reconstruct a full iterable including the peeked first batch.

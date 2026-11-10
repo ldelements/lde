@@ -48,7 +48,7 @@ TypeScript enters only where SPARQL cannot express the logic:
 
 - A [**quad transform**](./extend-a-stage-with-a-quad-transform) post-processes one reader’s output.
 - A **plugin** hooks into the write path across stages or datasets – provenance stamping, namespace rewriting ([plugins](../reference/pipeline#plugins)).
-- A **reporter** observes lifecycle events for progress display or metrics.
+- A [**reporter**](./observe-a-run-with-a-reporter) receives every pipeline event, each with a severity level, for progress display or logging.
 - A [**validator**](./validate-pipeline-output) checks each batch before it is written.
 
 ## Where the packages fit

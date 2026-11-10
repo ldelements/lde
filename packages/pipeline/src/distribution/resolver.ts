@@ -20,7 +20,7 @@ export interface ImportDetails {
   /** The data dump that was imported. */
   readonly from: Distribution;
   /** Milliseconds the import took. */
-  readonly duration: number;
+  readonly durationMs: number;
   /** Triples in the imported data, when the importer can tell. */
   readonly tripleCount?: number;
   /** The engine that built the imported data, when the importer can tell. */
@@ -67,7 +67,7 @@ export interface ResolveCallbacks {
   /** Called when a data-dump import begins (resolve phase). */
   onImportStart?: () => void;
   /** Called when importing a distribution fails (resolve phase). */
-  onImportFailed?: (distribution: Distribution, error: string) => void;
+  onImportFailed?: (distribution: Distribution, error: Error) => void;
 }
 
 /**
