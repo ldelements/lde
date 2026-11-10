@@ -20,6 +20,27 @@ export interface HostLimiter {
    *   it sets on itself does not count the time spent queueing
    */
   run<Result>(host: string, task: () => Promise<Result>): Promise<Result>;
+
+  /**
+   * Start no task for `host` before `untilMs`, then let one through and
+   * slow-start from there: for a host that is down or asked us to come back
+   * later. The first task after the pause probes whether the host is back.
+   * Tasks already in flight carry on, and how they settle no longer moves
+   * the limit. A pause while one is running only extends it: the tasks that
+   * report it are one overload, not several.
+   *
+   * The pause keeps the process alive until it ends, as any timer does.
+   *
+   * @param untilMs epoch milliseconds; a pause never shortens a longer one
+   */
+  pause(host: string, untilMs: number): void;
+
+  /**
+   * How many tasks `host` may have in flight now: 1 for a host the limiter
+   * has not seen or has forgotten, at most the `perHostLimit` it was created
+   * with.
+   */
+  limitOf(host: string): number;
 }
 
 /**
@@ -27,53 +48,143 @@ export interface HostLimiter {
  * one whose host is saturated yields to a later task on a free host, so a
  * saturated host never idles the global pool.
  *
+ * **The per-host limit adapts,** as TCP’s congestion window does. A host starts
+ * at one task in flight, and the limit doubles per round of successes – a round
+ * being as many successes as the limit – until a task fails; from then on it
+ * grows by one per round. A task that throws or rejects halves it, once per
+ * burst: failures of tasks that started before the last decrease don’t count
+ * again. It grows only when the host had its whole limit in flight and more
+ * tasks waiting, so a limit never runs ahead of what the host has shown it can
+ * take. The limit stays between 1 and `perHostLimit`.
+ *
+ * The limiter remembers the limits of the 1,000 idle hosts it used most
+ * recently; a host it forgot starts at one task again.
+ *
  * Each limit must be a positive integer, or tasks never start; see
  * {@link positiveIntOrDefault}.
  *
  * @param globalLimit maximum tasks in flight across all hosts
- * @param perHostLimit maximum tasks in flight for any one host key
+ * @param perHostLimit the ceiling of any one host key’s adaptive limit
  */
 export function createHostLimiter(
   globalLimit: number,
   perHostLimit: number,
 ): HostLimiter {
-  const waiting: Array<{ host: string; start: () => void }> = [];
-  // Only hosts with work in flight have an entry, so a long-lived limiter holds
-  // no memory per host it has ever seen.
-  const perHostInFlight = new Map<string, number>();
+  const waiting: Array<{ host: string; start: (generation: number) => void }> =
+    [];
+  // Hosts with work in flight, queued or paused. Bounded by the caller’s own
+  // queue, not by the hosts a run has seen.
+  const active = new Map<string, HostState>();
+  // Idle hosts whose limit is worth remembering, least recently used first;
+  // beyond `REMEMBERED_IDLE_HOSTS` the oldest is forgotten.
+  const idle = new Map<string, HostState>();
   let globalInFlight = 0;
+  // Lets a scan of the queue stop once every host with queued work is blocked,
+  // rather than walking the rest of a long queue for a saturated host.
+  let hostsWithWaiting = 0;
 
-  const startIfRoom = (entry: (typeof waiting)[number]): boolean => {
-    const hostInFlight = perHostInFlight.get(entry.host) ?? 0;
-    if (globalInFlight >= globalLimit || hostInFlight >= perHostLimit) {
+  const stateOf = (host: string): HostState => {
+    let state = active.get(host);
+    if (state === undefined) {
+      state = idle.get(host) ?? {
+        limit: 1,
+        slowStartThreshold: perHostLimit,
+        successesThisRound: 0,
+        generation: 0,
+        inFlight: 0,
+        waiting: 0,
+        pausedUntil: 0,
+      };
+      idle.delete(host);
+      active.set(host, state);
+    }
+    return state;
+  };
+
+  const retireIfIdle = (host: string, state: HostState): void => {
+    if (!isIdle(state)) {
+      return;
+    }
+    active.delete(host);
+    idle.set(host, state);
+    if (idle.size > REMEMBERED_IDLE_HOSTS) {
+      idle.delete(idle.keys().next().value as string);
+    }
+  };
+
+  const startIfRoom = (
+    entry: (typeof waiting)[number],
+    now: number,
+  ): boolean => {
+    const state = stateOf(entry.host);
+    if (
+      globalInFlight >= globalLimit ||
+      state.inFlight >= state.limit ||
+      state.pausedUntil > now
+    ) {
       return false;
     }
     globalInFlight++;
-    perHostInFlight.set(entry.host, hostInFlight + 1);
-    entry.start();
+    state.inFlight++;
+    entry.start(state.generation);
     return true;
   };
 
   const schedule = (): void => {
+    const now = Date.now();
+    const blocked = new Set<string>();
     let cursor = 0;
-    while (cursor < waiting.length && globalInFlight < globalLimit) {
-      if (startIfRoom(waiting[cursor])) {
+    while (
+      cursor < waiting.length &&
+      globalInFlight < globalLimit &&
+      blocked.size < hostsWithWaiting
+    ) {
+      const entry = waiting[cursor];
+      if (!blocked.has(entry.host) && startIfRoom(entry, now)) {
+        if (--stateOf(entry.host).waiting === 0) {
+          hostsWithWaiting--;
+        }
         waiting.splice(cursor, 1); // The next queued task moves up to cursor.
       } else {
-        cursor++; // Host saturated; leave it queued and try a later, different host.
+        // Host saturated or paused; leave it queued and try a later, different host.
+        blocked.add(entry.host);
+        cursor++;
       }
     }
   };
 
-  const release = (host: string): void => {
+  // Armed once per pause. A timer may fire a little early, one longer than
+  // `MAX_TIMER_MS` would overflow, and a pause may be extended meanwhile, so
+  // it re-arms until the pause is over rather than trusting a single delay.
+  const wakeAfterPause = (host: string, state: HostState): void => {
+    setTimeout(
+      () => {
+        if (state.pausedUntil > Date.now()) {
+          wakeAfterPause(host, state);
+          return;
+        }
+        retireIfIdle(host, state);
+        schedule();
+      },
+      Math.min(state.pausedUntil - Date.now(), MAX_TIMER_MS),
+    );
+  };
+
+  const release = (host: string, generation: number, failed: boolean): void => {
     globalInFlight--;
-    // The task being released is itself in flight, so its host has an entry.
-    const hostInFlight = perHostInFlight.get(host) as number;
-    if (hostInFlight > 1) {
-      perHostInFlight.set(host, hostInFlight - 1);
-    } else {
-      perHostInFlight.delete(host);
+    const state = stateOf(host);
+    // Only a host that used its whole limit, with more work waiting on it, has
+    // shown it could take more; a task of an older generation says nothing
+    // about the current limit.
+    const saturated = state.inFlight >= state.limit && state.waiting > 0;
+    state.inFlight--;
+    const current = generation === state.generation;
+    if (current && failed) {
+      shrink(state);
+    } else if (current && saturated) {
+      grow(state, perHostLimit);
     }
+    retireIfIdle(host, state);
     schedule();
   };
 
@@ -82,21 +193,43 @@ export function createHostLimiter(
       new Promise<Result>((resolve, reject) => {
         const entry = {
           host,
-          start: () => {
+          start: (generation: number) => {
             // Through a promise, so a task that throws synchronously frees its
             // slot rather than breaking the scheduler that started it.
-            void new Promise<Result>((settle) => settle(task()))
-              .finally(() => release(host))
-              .then(resolve, reject);
+            void new Promise<Result>((settle) => settle(task())).then(
+              (result) => {
+                release(host, generation, false);
+                resolve(result);
+              },
+              (error: unknown) => {
+                release(host, generation, true);
+                reject(error);
+              },
+            );
           },
         };
         // Every queued task is blocked until a release reschedules it, so only
         // this one can start now. Rescanning the queue here would make queueing
         // a large batch quadratic.
-        if (!startIfRoom(entry)) {
+        if (!startIfRoom(entry, Date.now())) {
+          if (stateOf(host).waiting++ === 0) {
+            hostsWithWaiting++;
+          }
           waiting.push(entry);
         }
       }),
+    pause: (host, untilMs) => {
+      const state = stateOf(host);
+      // A pause while one is running is the same overload, not a new one.
+      const beginning = state.pausedUntil <= Date.now();
+      state.pausedUntil = Math.max(state.pausedUntil, untilMs);
+      if (beginning) {
+        restart(state);
+        wakeAfterPause(host, state);
+      }
+      retireIfIdle(host, state);
+    },
+    limitOf: (host) => (active.get(host) ?? idle.get(host))?.limit ?? 1,
   };
 }
 
@@ -127,7 +260,8 @@ export function createHostLimiter(
  * @param hostKeys the contention key of each item, positionally – build one
  *   from a URL with {@link hostKeyOf}
  * @param globalLimit maximum tasks in flight across all hosts
- * @param perHostLimit maximum tasks in flight for any one host key
+ * @param perHostLimit the ceiling of any one host key’s adaptive limit; see
+ *   {@link createHostLimiter}
  * @param task the work, run once per item
  */
 export function mapHostLimited<Item, Result>(
@@ -172,4 +306,61 @@ export function positiveIntOrDefault(
   return value !== undefined && Number.isInteger(value) && value >= 1
     ? value
     : fallback;
+}
+
+/** Idle hosts whose limit a limiter remembers; see {@link createHostLimiter}. */
+const REMEMBERED_IDLE_HOSTS = 1_000;
+
+/** The longest delay `setTimeout` takes without overflowing to 1 ms. */
+const MAX_TIMER_MS = 2 ** 31 - 1;
+
+/** What a limiter knows about one host. */
+interface HostState {
+  /** Tasks this host may have in flight now, from 1 up to the ceiling. */
+  limit: number;
+  /** Below it the limit doubles per round, from it on it grows by 1. */
+  slowStartThreshold: number;
+  successesThisRound: number;
+  /** Bumped on every decrease, so a burst of failures counts once. */
+  generation: number;
+  inFlight: number;
+  waiting: number;
+  /** Epoch milliseconds before which no task for this host starts. */
+  pausedUntil: number;
+}
+
+function isIdle(state: HostState): boolean {
+  return (
+    state.inFlight === 0 &&
+    state.waiting === 0 &&
+    state.pausedUntil <= Date.now()
+  );
+}
+
+/** One more task per success below the threshold, so the limit doubles per
+ *  round; at or above it, one more per round. */
+function grow(state: HostState, ceiling: number): void {
+  if (state.limit < state.slowStartThreshold) {
+    state.limit++;
+  } else if (++state.successesThisRound >= state.limit) {
+    state.limit++;
+    state.successesThisRound = 0;
+  }
+  state.limit = Math.min(state.limit, ceiling);
+}
+
+/** Halve the limit. Bumping the generation makes the rest of the burst – the
+ *  tasks that started before this decrease – count as the same signal. */
+function shrink(state: HostState): void {
+  state.limit = Math.max(1, Math.floor(state.limit / 2));
+  state.slowStartThreshold = state.limit;
+  state.successesThisRound = 0;
+  state.generation++;
+}
+
+/** Back to one task, slow-starting up to half the old limit, as after a TCP
+ *  retransmission timeout. */
+function restart(state: HostState): void {
+  shrink(state);
+  state.limit = 1;
 }
