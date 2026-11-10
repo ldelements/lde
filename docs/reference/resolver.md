@@ -182,8 +182,12 @@ request. A window rather than consecutive failures, so a host where most
 references time out is cut off even when a few succeed in between: Limburgs
 Museum’s manifests did exactly that, resetting a consecutive count for more than
 24 minutes. Only systemic failures count (see below), so a run of broken
-references never writes off a host whose other references resolve. A dead host
-still costs exactly the threshold in batches before the breaker saves the rest.
+references never writes off a host whose other references resolve: a batch with
+at least one fact or absence counts as a success, a batch the call threw for
+counts as a failure, and a batch whose every key came back as a
+`referenceFailure` does not count at all. A dead host costs the threshold in
+batches before the breaker saves the rest, plus whatever was already in flight
+against it – up to `perHostConcurrency` batches, which still run.
 Retrying every reference against a host that is down is the stampede, not the
 remedy, and it costs the run’s wall clock as much as the host’s patience.
 Written-off references are refunded to the fetch budget, since they sent
@@ -210,16 +214,23 @@ stall that may pass: the resolver’s own timeout, or a broken connection –
 `UND_ERR_CONNECT_TIMEOUT` on the error or its `cause`, where Node’s `fetch` puts
 it. Such a batch queues again behind the batches already waiting for its host,
 for one more attempt at no second unit of the budget, which counts references,
-not requests. It counts against the host when it first fails, so a host that
-times out on everything is written off without every reference paying a timeout
-first.
+not requests.
+
+The stall counts against the host when it first fails, not after that second
+attempt, so a host that times out on everything is written off without every
+reference paying a timeout first. The second attempt is not counted again,
+whether it succeeds or fails. If the host is written off while the batch waits,
+the batch is sent nothing more and keeps the reason it first failed for; it was
+contacted once, so it is not refunded.
 
 **A source that says to come back later** gets what it asked for. Throw
 `RetryableError`, with `retryAfterMs` from `parseRetryAfter(response.headers.get('retry-after'))`,
-and the whole host – not just the one reference – waits that long, because a rate
-limit is about this client; the wait holds no concurrency slot, so other hosts
-carry on. Without a delay the resolver backs off by itself, 500 ms and then 1 s.
-A delay longer than `timeoutMs` is not waited out: the call fails for this run.
+and no new attempt against the whole host – not just the one reference – starts
+until it has passed, because a rate limit is about this client. Attempts already
+in flight finish, and the wait holds no concurrency slot, so other hosts carry
+on. Without a delay, only that batch backs off, 500 ms and then 1 s. After two
+retries, or for a delay longer than `timeoutMs`, which is not waited out, the
+call fails for this run and counts against the host like any other throw.
 
 ```ts
 fetch: async ([url], { signal }) => {

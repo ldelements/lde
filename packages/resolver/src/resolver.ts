@@ -160,8 +160,8 @@ export interface ResolverLimits {
    *
    * A window rather than a run of consecutive failures, so a host where most
    * references fail is written off even when a few succeed in between. A dead
-   * host still costs exactly the threshold in batches before the breaker saves
-   * the rest.
+   * host costs the threshold in batches before the breaker saves the rest, plus
+   * whatever was already in flight (see below).
    *
    * Only **systemic** failures count – a throw from
    * {@link ResolverOptions.fetch}, after any retry. A timeout or broken
