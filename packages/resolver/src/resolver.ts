@@ -167,7 +167,9 @@ export interface ResolverLimits {
    * {@link ResolverOptions.fetch}, after any retry. A timeout or broken
    * connection counts when it first fails, not after its second attempt, so a
    * host that times out on everything is written off without every reference
-   * paying a timeout first; the second attempt is not counted again. A batch
+   * paying a timeout first. A second attempt that is answered takes that
+   * failure back, so a host that recovers from a slow moment is not written
+   * off; one that fails is not counted again. A batch
    * whose every key came back as a {@link referenceFailure} does not enter the
    * window at all, so broken references never write off a host whose other
    * references resolve. A batch with at least one fact or absence counts as a
@@ -653,7 +655,11 @@ export function createResolver<Reference, Fact>(
           // host: as a success it would hide a host that serves only broken
           // documents, as a failure it would write off one whose other
           // references are fine.
-          if (stalled === undefined && !result.individualOnly) {
+          if (stalled !== undefined) {
+            // The host answered after all: the stall was a slow moment, not a
+            // dead host, so the failure counted for it is taken back.
+            forgiveStall(batch.host);
+          } else if (!result.individualOnly) {
             noteHostOutcome(batch.host, true);
           }
           return { done: result.outcomes };
@@ -725,6 +731,23 @@ export function createResolver<Reference, Fact>(
   /** Wait until the host’s pause, if any, has passed – holding no slot. */
   function waitOutPause(host: string): Promise<void> {
     return delay((pausedUntil.get(host) ?? 0) - Date.now());
+  }
+
+  /**
+   * Take back the failure a stall was counted for, now that its second attempt
+   * was answered: turn the host’s latest failure in the window into a success.
+   * Nothing to take back once the host is written off, or when the failure has
+   * already slid out of the window.
+   */
+  function forgiveStall(host: string): void {
+    const window = recentFailures.get(host);
+    if (window === undefined) {
+      return;
+    }
+    window[window.lastIndexOf(true)] = false;
+    if (!window.includes(true)) {
+      recentFailures.delete(host);
+    }
   }
 
   /**

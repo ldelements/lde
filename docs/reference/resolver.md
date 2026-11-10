@@ -218,8 +218,13 @@ not requests.
 
 The stall counts against the host when it first fails, not after that second
 attempt, so a host that times out on everything is written off without every
-reference paying a timeout first. The second attempt is not counted again,
-whether it succeeds or fails. If the host is written off while the batch waits,
+reference paying a timeout first. If the second attempt is answered, that
+failure is taken back – the stall was a slow moment, not a dead host – so a brief
+slowdown does not write off a host that recovers. If it fails, it is not counted
+a second time. A burst of stalls can still reach the threshold before any second
+attempt comes round, since those queue behind every batch already waiting for
+the host; within one run that cannot be told from a dead host, and the next run
+asks again. If the host is written off while the batch waits,
 the batch is sent nothing more and keeps the reason it first failed for; it was
 contacted once, so it is not refunded.
 

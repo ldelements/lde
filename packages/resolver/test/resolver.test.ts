@@ -990,6 +990,111 @@ describe('a host that is down', () => {
     expect(asked).toHaveLength(7);
   });
 
+  it('forgives a stall whose second attempt succeeds', async () => {
+    // A slow moment, not a dead host: once Maastricht answers on its second
+    // attempt, its timeout must not help write the host off later.
+    const third = 'https://sws.geonames.org/3/';
+    const attempted = new Set<string>();
+    const { resolver } = resolverOver(
+      (iris) => {
+        const [iri] = iris;
+        const first = !attempted.has(iri);
+        attempted.add(iri);
+        if (first && iri !== VENLO) {
+          return new Promise(() => undefined);
+        }
+        return Promise.resolve(iris.map((each) => [each, { name: 'a place' }]));
+      },
+      {
+        limits: {
+          timeoutMs: 5,
+          perHostConcurrency: 1,
+          hostFailureThreshold: 2,
+        },
+      },
+    );
+
+    await resolver.resolveAll([MAASTRICHT, VENLO]);
+    const later = await resolver.resolveAll([third]);
+
+    // Without forgiveness the window would hold two timeouts by now, and the
+    // third reference would be written off before its second attempt.
+    expect(later.get(third)).toMatchObject({ outcome: 'resolved' });
+  });
+
+  it('forgives each recovered stall once, and only its own', async () => {
+    // Maastricht and Venlo both stall; only Maastricht recovers. The window
+    // must keep Venlo’s failure, so two more stalls make three and write the
+    // host off before either gets its second attempt.
+    const third = 'https://sws.geonames.org/3/';
+    const fourth = 'https://sws.geonames.org/4/';
+    const fifth = 'https://sws.geonames.org/5/';
+    const attempted = new Set<string>();
+    const asked: string[] = [];
+    const { resolver } = resolverOver(
+      (iris) => {
+        const [iri] = iris;
+        asked.push(iri);
+        const first = !attempted.has(iri);
+        attempted.add(iri);
+        if (
+          [VENLO, fourth, fifth].includes(iri) ||
+          (first && iri === MAASTRICHT)
+        ) {
+          return new Promise(() => undefined);
+        }
+        return Promise.resolve(iris.map((each) => [each, { name: 'a place' }]));
+      },
+      {
+        limits: {
+          timeoutMs: 5,
+          perHostConcurrency: 1,
+          hostFailureThreshold: 3,
+        },
+      },
+    );
+
+    await resolver.resolveAll([MAASTRICHT, VENLO, third]);
+    await resolver.resolveAll([fourth, fifth]);
+
+    expect(asked.filter((iri) => iri === fourth)).toHaveLength(1);
+    expect(asked.filter((iri) => iri === fifth)).toHaveLength(1);
+  });
+
+  it('resolves a recovered stall whose failure has already left the window', async () => {
+    // A window of four: the four successes queued behind Maastricht push its
+    // timeout out before its second attempt comes round.
+    const attempted = new Set<string>();
+    const { resolver } = resolverOver(
+      (iris) => {
+        const [iri] = iris;
+        const first = !attempted.has(iri);
+        attempted.add(iri);
+        if (first && iri === MAASTRICHT) {
+          return new Promise(() => undefined);
+        }
+        return Promise.resolve(iris.map((each) => [each, { name: 'a place' }]));
+      },
+      {
+        limits: {
+          timeoutMs: 5,
+          perHostConcurrency: 1,
+          hostFailureThreshold: 2,
+        },
+      },
+    );
+
+    const resolved = await resolver.resolveAll([
+      MAASTRICHT,
+      ...Array.from(
+        { length: 4 },
+        (_, index) => `https://sws.geonames.org/${index}/`,
+      ),
+    ]);
+
+    expect(resolved.get(MAASTRICHT)).toMatchObject({ outcome: 'resolved' });
+  });
+
   it('lets a batch already in flight finish when its host is written off', async () => {
     // Two slots: Venlo is in flight when Maastricht’s failure writes the host
     // off, so it runs to the end; the batches behind them are never sent.
