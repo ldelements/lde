@@ -1368,6 +1368,41 @@ describe('Pipeline', () => {
       }
     });
 
+    it('keeps running and notifying the other reporters when one throws', async () => {
+      const failing: Reporter = {
+        onEvent: (event) => {
+          // Thrown values need not be Errors; cover both.
+          throw event.type === 'pipelineStart'
+            ? 'log transport down'
+            : new Error('log transport down');
+        },
+      };
+      const second = makeReporter();
+      const emitWarning = vi
+        .spyOn(process, 'emitWarning')
+        .mockImplementation(() => undefined);
+
+      try {
+        await new Pipeline({
+          datasetSelector: makeDatasetSelector(dataset),
+          stages: [makeStage('stage1')],
+          writers: writer,
+          distributionResolver: makeResolver(makeResolvedDistribution()),
+          reporter: [failing, second],
+        }).run();
+
+        expect(second.stageComplete).toHaveBeenCalled();
+        expect(second.pipelineComplete).toHaveBeenCalledTimes(1);
+        expect(writer.runWriter.commit).toHaveBeenCalled();
+        expect(emitWarning).toHaveBeenCalledWith(
+          expect.stringContaining('log transport down'),
+          expect.objectContaining({ type: 'ReporterWarning' }),
+        );
+      } finally {
+        emitWarning.mockRestore();
+      }
+    });
+
     it('distributionProbed called once per distribution with correct result', async () => {
       const reporter = makeReporter();
 

@@ -435,7 +435,7 @@ new Pipeline({
 });
 ```
 
-Each reporter receives every event, synchronously and in array order, and decides itself what to do with `defaultLevel`; a reporter that throws propagates into the run. See the how-to guide [Observe a run with a reporter](../guide/observe-a-run-with-a-reporter).
+Each reporter receives every event, synchronously and in array order, and decides itself what to do with `defaultLevel`. A reporter cannot break a run: if one throws, the others still get the event, the run carries on, and the error is emitted as a `ReporterWarning` process warning. See the how-to guide [Observe a run with a reporter](../guide/observe-a-run-with-a-reporter).
 
 Two reporters ship as their own packages: [@lde/pipeline-console-reporter](./pipeline-console-reporter) for a terminal and [@lde/pipeline-logger-reporter](./pipeline-logger-reporter) for a structured logger of your choice.
 

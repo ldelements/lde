@@ -860,7 +860,19 @@ export class Pipeline<Out = Quad> {
       runId,
     } as PipelineEvent;
     for (const reporter of this.reporters) {
-      reporter.onEvent(event);
+      // A reporter only observes the run, so its failure must not change it:
+      // the other reporters still get the event, and the run carries on.
+      try {
+        reporter.onEvent(event);
+      } catch (error) {
+        process.emitWarning(
+          `A reporter threw on a ${event.type} event: ${error instanceof Error ? error.message : String(error)}`,
+          {
+            type: 'ReporterWarning',
+            detail: error instanceof Error ? error.stack : undefined,
+          },
+        );
+      }
     }
   }
 
