@@ -1208,6 +1208,23 @@ describe('a host that is down', () => {
     expect(resolved.get(MAASTRICHT)).toMatchObject({ outcome: 'resolved' });
   });
 
+  it('passes on the error of a limiter that fails', async () => {
+    const { resolver } = resolverOver(
+      async (iris) => iris.map((iri) => [iri, { name: 'a place' }]),
+      {
+        limiter: {
+          run: () => Promise.reject(new Error('queue full')),
+          pause: () => undefined,
+          limitOf: () => 1,
+        },
+      },
+    );
+
+    await expect(resolver.resolveAll([MAASTRICHT])).rejects.toThrow(
+      'queue full',
+    );
+  });
+
   it('takes back no failure for a stall that was never counted', async () => {
     const asked: string[] = [];
     let stallAttempts = 0;

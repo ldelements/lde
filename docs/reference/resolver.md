@@ -168,16 +168,17 @@ that buckles under load is slowed down before it is given up on. Without a
 `limiter` option the resolver builds its own, with at most 4 batches in flight
 and at most 4 against any one host.
 
-**Share one limiter between everything that loads the same backend.** A
-resolver’s own limiter cannot see the requests a pipeline stage’s readers send,
-so when the facts and the stage’s data come from one server, create one limiter
-and pass it to both, with host keys that name that server:
+**Share one limiter between resolvers that load the same backend.** A
+resolver’s own limiter cannot see another resolver’s requests, so when two of
+them fetch from one server – under different host names, even – create one
+limiter and pass it to both, with host keys that name that server:
 
 ```ts
 import { createHostLimiter } from '@lde/host-limiter';
 
 const limiter = createHostLimiter(10, 8);
-const resolver = createResolver({ …, host: () => datasetIri, limiter });
+const manifests = createResolver({ …, host: () => backend, limiter });
+const services = createResolver({ …, host: () => backend, limiter });
 ```
 
 `host` is **required**, and is either a constant – for a source reached through
@@ -346,18 +347,18 @@ volume cap, not per-host concurrency, is what protects the store behind the API.
 
 ## API
 
-| Export                      | Purpose                                                                      |
-| --------------------------- | ---------------------------------------------------------------------------- |
-| `createResolver(options)`   | Build a `Resolver` from `key`, `host`, `fetch`, `store`, `version`, `limits` |
-| `Resolver.resolveAll(refs)` | Resolve references, one `Resolution` per distinct key; optionally `count`    |
-| `Resolver.check()`          | Fail a run at startup when the store cannot persist                          |
-| `Resolver.purge(keys)`      | Forget keys, so the next run resolves them afresh                            |
-| `urlHost(key)`              | The host of a key that is itself the URL fetched                             |
-| `referenceFailure(reason)`  | Fail one reference in `fetch`’s answer, without holding it against the host  |
-| `RetryableError`            | Throw from `fetch` when the source said to come back later                   |
-| `parseRetryAfter(header)`   | Read a `Retry-After` header as milliseconds, for `RetryableError`            |
-| `sqliteFactStore(options)`  | Durable `FactStore` on `node:sqlite`                                         |
-| `memoryFactStore(initial?)` | In-process `FactStore`, for tests                                            |
+| Export                      | Purpose                                                                                 |
+| --------------------------- | --------------------------------------------------------------------------------------- |
+| `createResolver(options)`   | Build a `Resolver` from `key`, `host`, `fetch`, `store`, `version`, `limits`, `limiter` |
+| `Resolver.resolveAll(refs)` | Resolve references, one `Resolution` per distinct key; optionally `count`               |
+| `Resolver.check()`          | Fail a run at startup when the store cannot persist                                     |
+| `Resolver.purge(keys)`      | Forget keys, so the next run resolves them afresh                                       |
+| `urlHost(key)`              | The host of a key that is itself the URL fetched                                        |
+| `referenceFailure(reason)`  | Fail one reference in `fetch`’s answer, without holding it against the host             |
+| `RetryableError`            | Throw from `fetch` when the source said to come back later                              |
+| `parseRetryAfter(header)`   | Read a `Retry-After` header as milliseconds, for `RetryableError`                       |
+| `sqliteFactStore(options)`  | Durable `FactStore` on `node:sqlite`                                                    |
+| `memoryFactStore(initial?)` | In-process `FactStore`, for tests                                                       |
 
 `Resolver.check()` writes a row and rolls it back rather than merely opening the
 store: a database left by an earlier run opens cleanly, and even takes a

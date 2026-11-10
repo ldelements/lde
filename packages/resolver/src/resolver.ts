@@ -287,10 +287,9 @@ export interface ResolverOptions<Reference, Fact> {
    * overload and halves it; an answer, a {@link referenceFailure} included, does
    * not. A {@link RetryableError} with a delay pauses the host for that long.
    *
-   * Pass one limiter to everything that loads the same backend – the
-   * resolvers of a pipeline stage, and the stage’s own readers – with host keys
-   * that name that backend, so their limits are one: a backend slowed down by
-   * one of them is slowed down for all.
+   * Pass one limiter to every resolver that loads the same backend, with host
+   * keys that name that backend, so their limits are one: a backend slowed down
+   * by one of them is slowed down for all.
    */
   limiter?: HostLimiter;
   /**
@@ -653,8 +652,11 @@ export function createResolver<Reference, Fact>(
           limiter,
           batch.host,
           async () => {
+            // Queued before the host was written off: no request goes out, and
+            // the limiter must not read the slot as a success and raise a dead
+            // host’s limit.
             if (writtenOff.has(batch.host)) {
-              return { step: writtenOffStep(), overloaded: false };
+              return { step: writtenOffStep(), overloaded: true };
             }
             attempts++;
             atLimitOne = limiter.limitOf(batch.host) === 1;
@@ -989,8 +991,8 @@ interface Done<Fact> {
 
 /**
  * Run a batch’s attempt on the limiter, rejecting inside it when the attempt
- * threw, so the limiter reads overload and lowers the host’s limit – and
- * answer the step either way.
+ * threw or was written off, so the limiter never reads it as a success and
+ * lowers the host’s limit instead – and answer the step either way.
  */
 async function runReportingOverload<Fact>(
   limiter: HostLimiter,
@@ -1006,8 +1008,10 @@ async function runReportingOverload<Fact>(
       return step;
     });
   } catch (error) {
-    // `task` never throws – an attempt hands its error back – so this is ours.
-    return (error as Overloaded<Fact>).step;
+    if (!(error instanceof Overloaded)) {
+      throw error; // A limiter of the caller’s own that broke, say.
+    }
+    return error.step as Step<Fact>;
   }
 }
 
