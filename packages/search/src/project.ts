@@ -21,12 +21,10 @@ import {
   isAbsoluteIri,
   isInternalField,
   isInlineReference,
-  isoToUnixSeconds,
   localLookupTargetsOf,
   physicalFields,
   referencedTargetsOf,
   referenceTypeNamed,
-  storableUnixSeconds,
   storedTargetOf,
   TARGET_FIELD,
   type KeywordField,
@@ -42,6 +40,7 @@ import {
   type TextField,
 } from './schema.js';
 import { periodCovering, periodOf } from './period.js';
+import { readValue, UNREADABLE, type ReadKind } from './read-value.js';
 
 /**
  * A projected node: the fields of one {@link SearchType}, flat. A **Root Type**
@@ -449,12 +448,7 @@ function applyField(
   sink: UnreadableSink,
   nested: boolean,
 ): void {
-  // A blank value states nothing, so there is nothing to correct at the source.
-  const unread: Unread = (value) => {
-    if (value.trim() !== '') {
-      sink(field.name, value);
-    }
-  };
+  const unread: Unread = (value) => sink(field.name, value);
   // The three value sources, mutually exclusive by declaration
   // (`validateSearchType`): a projection value, a computed value, a graph path.
   if (
@@ -465,15 +459,6 @@ function applyField(
   }
   if (field.derive !== undefined) {
     const derived = field.derive(document, context);
-    // A derived `reference` is held to the same rule as a read one: what it
-    // stores is a selection key, and the surface types it `IRI`. ADR 21 sends
-    // an IRI-valued `keyword` derive here by converting it to `reference`, so
-    // this is the busiest way a non-IRI could otherwise reach the index. A
-    // value that survives nothing leaves the field absent, exactly as a derive
-    // returning `undefined` does.
-    if (field.kind === 'date') {
-      return applyDerivedDate(document, field, derived, unread);
-    }
     if (field.kind === 'period') {
       return setPeriod(
         document,
@@ -482,18 +467,25 @@ function applyField(
         unread,
       );
     }
-    const value =
-      field.kind === 'reference' && derived !== undefined
-        ? derivedIris(derived, unread)
-        : derived;
-    // NaN is not a value any kind stores, and a derive is the only route that
-    // can produce one (`setNumber` guards the read route). It serializes as
-    // `null`, which an engine rejects for a numeric field – so drop it, leaving
-    // the field absent as an unparseable string already does.
-    if (value !== undefined && !Number.isNaN(value)) {
-      document[field.name] = value;
-    } else if (value !== undefined) {
-      unread(String(value));
+    // A derived value is held to the same rule as a read one, through the same
+    // reader: a derived `reference` stores a selection key the surface types
+    // `IRI` – ADR 21 sends an IRI-valued `keyword` derive here by converting it
+    // to `reference`, so this is the busiest way a non-IRI could otherwise
+    // reach the index – and a derived `integer` an int64. A derive returning a
+    // list keeps it a list, so `array` still decides the stored shape.
+    if (isReadKind(field.kind)) {
+      return applyRead(
+        document,
+        field,
+        field.kind,
+        Array.isArray(derived) ? derived : [derived],
+        Array.isArray(derived),
+        unread,
+      );
+    }
+    // A `keyword` or `text` field reads any value.
+    if (derived !== undefined) {
+      document[field.name] = derived;
     }
     return;
   }
@@ -573,41 +565,61 @@ function applyField(
       return applyFacet(document, values, field, schema, targetsById);
     }
     case 'integer':
-    case 'number': {
-      const literal = firstLiteralOf(node, alias);
-      const value =
-        field.kind === 'integer' ? toInteger(literal) : toNumber(literal);
-      if (literal !== undefined && Number.isNaN(value)) {
-        unread(literal);
-      }
-      return setNumber(document, field.name, value);
-    }
-    case 'date': {
-      const literal = firstLiteralOf(node, alias);
-      const stored =
-        literal === undefined ? undefined : isoToUnixSeconds(literal);
-      if (literal !== undefined && stored === undefined) {
-        unread(literal);
-      }
-      return setDate(document, field, stored);
-    }
+    case 'number':
+    case 'date':
+    case 'boolean':
+      return applyRead(
+        document,
+        field,
+        field.kind,
+        [firstLiteralOf(node, alias)],
+        false,
+        unread,
+      );
     case 'period':
       return setPeriod(document, field, literalsOf(node, alias), unread);
-    case 'boolean': {
-      // The xsd:boolean lexical space: true/false/1/0. Anything else – `ja`,
-      // `yes` – states neither, so it is left out rather than stored as false.
-      // Surrounding whitespace is collapsed, as xsd:boolean’s facet says.
-      const literal = firstLiteralOf(node, alias)?.trim();
-      if (literal === undefined) {
-        return;
-      }
-      if (!BOOLEAN_LEXICAL_SPACE.has(literal)) {
-        return unread(literal);
-      }
-      document[field.name] = literal === 'true' || literal === '1';
-      return;
-    }
   }
+}
+
+/**
+ * Store what {@link readValue} reads of `values` as `kind`, reporting each
+ * value it cannot: a list when `asList`, else the first value read. A `date`
+ * is one instant, so it stores the first either way.
+ */
+function applyRead(
+  document: ProjectedNode,
+  field: SearchField,
+  kind: ReadKind,
+  values: readonly unknown[],
+  asList: boolean,
+  unread: Unread,
+): void {
+  const read = values.flatMap((value) => {
+    const reading = readValue(kind, value);
+    if (reading === UNREADABLE) {
+      unread(String(value));
+      return [];
+    }
+    return reading === undefined ? [] : [reading];
+  });
+  if (kind === 'date') {
+    return setDate(document, field, read[0] as StoredDate | undefined);
+  }
+  if (asList) {
+    document[field.name] = read;
+  } else if (read.length > 0) {
+    document[field.name] = read[0];
+  }
+}
+
+function isReadKind(kind: SearchField['kind']): kind is ReadKind {
+  return (
+    kind === 'integer' ||
+    kind === 'number' ||
+    kind === 'boolean' ||
+    kind === 'date' ||
+    kind === 'reference'
+  );
 }
 
 /**
@@ -646,11 +658,11 @@ function referenceValues(
 ): readonly string[] {
   // A literal where a referent belongs states no IRI to store. A node without
   // one – a blank node – carries no value a publisher could look up, so only
-  // literals are reported.
+  // literals are reported, and a blank one states nothing to correct.
   for (const value of valuesOf(node, alias)) {
     const literal =
       iriString(value) === undefined ? literalString(value) : undefined;
-    if (literal !== undefined) {
+    if (literal !== undefined && literal.trim() !== '') {
       unread(literal);
     }
   }
@@ -1548,65 +1560,6 @@ function iriString(value: unknown): string | undefined {
   return typeof iri === 'string' && isAbsoluteIri(iri) ? iri : undefined;
 }
 
-/** What a `derive` on a `reference` field is allowed to have produced: the
- *  absolute IRIs among its return value, keeping the shape the declaration
- *  promises (a list stays a list, a single value stays single) so `array` still
- *  decides the stored shape. A lone non-IRI becomes `undefined`, i.e. absent –
- *  the same outcome the graph path gives it. */
-function derivedIris(value: unknown, unread: Unread): unknown {
-  const isIri = (entry: unknown): entry is string => {
-    const iri = typeof entry === 'string' && isAbsoluteIri(entry);
-    if (!iri && entry !== undefined) {
-      unread(String(entry));
-    }
-    return iri;
-  };
-  if (Array.isArray(value)) {
-    return value.filter(isIri);
-  }
-  return isIri(value) ? value : undefined;
-}
-
-function toInteger(literal: string | undefined): number | undefined {
-  return literal === undefined ? undefined : Math.trunc(Number(literal));
-}
-
-function toNumber(literal: string | undefined): number | undefined {
-  return literal === undefined ? undefined : Number(literal);
-}
-
-/**
- * A derived `date` goes through the same storage codec as a read one: the field
- * is stored as Unix seconds, so an ISO string returned here would otherwise
- * land as a string in an int64 field – and it is parsed like any literal, its
- * precision included. A derive that computed seconds itself returns a number,
- * which states no precision and so is stored as a date-time; the codec never
- * saw it and so never range-checked it, and seconds outside the int64 a `date`
- * field is stored in would be refused by the engine where an unparseable
- * string merely leaves the field absent – so drop those too.
- */
-function applyDerivedDate(
-  document: ProjectedNode,
-  field: SearchField,
-  derived: unknown,
-  unread: Unread,
-): void {
-  let stored: StoredDate | undefined;
-  if (typeof derived === 'string') {
-    stored = isoToUnixSeconds(derived);
-  } else if (typeof derived === 'number') {
-    // Truncated, as the codec truncates a string’s fractional seconds: the
-    // field is an int64. `storableUnixSeconds` drops NaN.
-    const seconds = storableUnixSeconds(Math.trunc(derived));
-    stored =
-      seconds === undefined ? undefined : { seconds, precision: 'dateTime' };
-  }
-  if (derived !== undefined && stored === undefined) {
-    unread(String(derived));
-  }
-  setDate(document, field, stored);
-}
-
 /** Store a `date` field’s seconds, and its precision in the companion beside
  *  them ({@link physicalFields}), so the surface can serve the value in the
  *  form its source gave. */
@@ -1681,16 +1634,6 @@ function derivedStrings(derived: unknown, unread: Unread): readonly string[] {
   });
 }
 
-function setNumber(
-  document: ProjectedNode,
-  field: string,
-  value: number | undefined,
-): void {
-  if (value !== undefined && !Number.isNaN(value)) {
-    document[field] = value;
-  }
-}
-
 function dedupe(values: readonly string[]): string[] {
   return [...new Set(values)];
 }
@@ -1755,11 +1698,3 @@ function unreadableSink(
 function ignoreUnreadable(): void {
   // Nobody asked for the report.
 }
-
-/** The xsd:boolean lexical space. */
-const BOOLEAN_LEXICAL_SPACE: ReadonlySet<string> = new Set([
-  'true',
-  'false',
-  '1',
-  '0',
-]);
