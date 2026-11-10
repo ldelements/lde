@@ -1,4 +1,10 @@
 export { createResolver, urlHost } from './resolver.js';
+export {
+  parseRetryAfter,
+  referenceFailure,
+  RetryableError,
+} from './failures.js';
+export type { ReferenceFailure } from './failures.js';
 export type {
   Resolution,
   ResolutionFailure,
