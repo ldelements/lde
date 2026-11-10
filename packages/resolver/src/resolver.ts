@@ -2,15 +2,14 @@ import {
   createHostLimiter,
   hostKeyOf,
   positiveIntOrDefault,
+  type HostLimiter,
 } from '@lde/host-limiter';
 import { ReferenceFailure, RetryableError } from './failures.js';
 import { memoryFactStore } from './memoryFactStore.js';
 import type { FactOutcome, FactStore } from './store.js';
 
-/** At most this many resolutions in flight across all hosts. */
+/** The caps of the limiter a resolver builds when it is given none. */
 const DEFAULT_CONCURRENCY = 4;
-/** At most this many in flight against any one host. */
-const DEFAULT_PER_HOST_CONCURRENCY = 2;
 /** References per outbound call – one, until a source says it takes a list. */
 const DEFAULT_BATCH_SIZE = 1;
 /** References a single resolver may fetch, so a cold store warms over runs. */
@@ -94,20 +93,9 @@ export interface ResolutionFailure {
 /** The bounds a run resolves within. Every one is optional and defaulted. */
 export interface ResolverLimits {
   /**
-   * Resolutions in flight across all hosts, counted over every
-   * {@link Resolver.resolveAll} call on this resolver. Default 4.
-   */
-  concurrency?: number;
-  /**
-   * Resolutions in flight against any one host, counted over every
-   * {@link Resolver.resolveAll} call on this resolver, so a batch never arrives
-   * as the burst that trips a rate limiter. Default 2.
-   */
-  perHostConcurrency?: number;
-  /**
    * References per call to {@link ResolverOptions.fetch}. Default 1 – raise it
    * only for a source that takes a list, where a batch of references is one
-   * request. A batch never mixes hosts, so the per-host cap keeps meaning it.
+   * request. A batch never mixes hosts, so the per-host limit keeps meaning it.
    *
    * Note what it costs: a failing call degrades **every** reference in its
    * batch, so `batchSize` trades throughput against the blast radius of one
@@ -178,6 +166,13 @@ export interface ResolverLimits {
    * the host is written off for the rest of the resolver’s life. Default 5, so
    * 5 of the last 10.
    *
+   * **A burst of failures counts once.** When a host goes down, every batch in
+   * flight fails together, so a failure counts only if none of the host’s
+   * failures was counted after its batch started. One bad moment at a high
+   * limit therefore costs one failure, and halves the host’s limit in
+   * {@link ResolverOptions.limiter}; a host that keeps failing, burst after
+   * burst, is written off.
+   *
    * A window rather than a run of consecutive failures, so a host where most
    * references fail is written off even when a few succeed in between. A dead
    * host costs the threshold in batches before the breaker saves the rest, plus
@@ -195,9 +190,8 @@ export interface ResolverLimits {
    * references resolve. A batch with at least one fact or absence counts as a
    * success.
    *
-   * The count is of failures that have *settled*, so up to
-   * {@link ResolverLimits.perHostConcurrency} batches may already be in flight
-   * when a host is written off; those still run.
+   * Batches of the burst that writes a host off, already in flight then,
+   * still run.
    */
   hostFailureThreshold?: number;
 }
@@ -287,6 +281,21 @@ export interface ResolverOptions<Reference, Fact> {
   version?: string;
   /** The bounds this resolver works within. */
   limits?: ResolverLimits;
+  /**
+   * The concurrency limits this resolver’s batches run under, keyed by
+   * {@link ResolverOptions.host}. Default: a limiter of its own, with at most
+   * 4 batches in flight and at most 4 against any one host.
+   *
+   * Each host’s limit adapts: it starts at one batch in flight and rises while
+   * the host keeps up. A throw from {@link ResolverOptions.fetch} counts as
+   * overload and halves it; an answer, a {@link referenceFailure} included, does
+   * not. A {@link RetryableError} with a delay pauses the host for that long.
+   *
+   * Pass one limiter to every resolver that loads the same backend, with host
+   * keys that name that backend, so their limits are one: a backend slowed down
+   * by one of them is slowed down for all.
+   */
+  limiter?: HostLimiter;
   /**
    * Called once per reference that failed or degraded: a fetch that threw,
    * timed out or was written off with its host. Not called for a key the
@@ -382,15 +391,12 @@ export function createResolver<Reference, Fact>(
   const now = options.now ?? (() => new Date());
   const version = options.version ?? DEFAULT_VERSION;
   const limits = options.limits ?? {};
-  // One limiter per resolver, for the reason the budget below is: a stage calls
-  // resolveAll from batches running in parallel, and the caps bound them together.
-  const limiter = createHostLimiter(
-    positiveIntOrDefault(limits.concurrency, DEFAULT_CONCURRENCY),
-    positiveIntOrDefault(
-      limits.perHostConcurrency,
-      DEFAULT_PER_HOST_CONCURRENCY,
-    ),
-  );
+  // At least one limiter per resolver, for the reason the budget below is: a
+  // stage calls resolveAll from batches running in parallel, and the caps bound
+  // them together.
+  const limiter =
+    options.limiter ??
+    createHostLimiter(DEFAULT_CONCURRENCY, DEFAULT_CONCURRENCY);
   const batchSize = positiveIntOrDefault(limits.batchSize, DEFAULT_BATCH_SIZE);
   const timeoutMs = positiveIntOrDefault(limits.timeoutMs, DEFAULT_TIMEOUT_MS);
   const ttlMs = limits.ttlMs;
@@ -418,10 +424,11 @@ export function createResolver<Reference, Fact>(
   // stop.
   const recentFailures = new Map<string, boolean[]>();
   const writtenOff = new Set<string>();
-  // When each host that asked us to come back later may be contacted again, as
-  // epoch milliseconds. A rate limit is about this client, so every attempt
-  // against the host waits, not just the one that was told.
-  const pausedUntil = new Map<string, number>();
+  // Orders attempts and counted failures, so a failure can tell whether one of
+  // its host’s failures was counted after its own attempt started; kept per
+  // host only while the host has a failure in its window.
+  let tick = 0;
+  const lastCountedAt = new Map<string, number>();
 
   const hostOf =
     typeof options.host === 'string'
@@ -622,11 +629,12 @@ export function createResolver<Reference, Fact>(
     /**
      * One batch to its end: answered, failed, or written off with its host.
      *
-     * What an attempt means – for the breaker, for a pause – is settled inside
-     * the slot, before the next queued batch can start; every wait happens
-     * outside it, so a waiting host never holds a slot another host could use.
-     * A further attempt queues again behind the batches already waiting for its
-     * host. The breaker hears of each batch once.
+     * What an attempt means – for the breaker, for a pause, for the host’s
+     * limit – is settled inside the slot, before the next queued batch can
+     * start; every wait happens outside it, so a waiting host never holds a
+     * slot another host could use. A further attempt queues again behind the
+     * batches already waiting for its host. The breaker hears of each batch
+     * once.
      */
     async function runBatch(
       batch: (typeof batches)[number],
@@ -637,18 +645,31 @@ export function createResolver<Reference, Fact>(
       let stalled: FetchOutcome<Fact> | undefined;
       // Why the latest attempt failed, for a batch that is waiting to try again.
       let lastFailure: FetchOutcome<Fact> | undefined;
+      // When the latest attempt started, in `tick`s.
+      let startedAt = 0;
+      // Whether the stall’s first failure was counted, so only then is it
+      // taken back.
+      let stallCounted = false;
       for (;;) {
-        await waitOutPause(batch.host);
-        const step = await limiter.run(batch.host, async () => {
+        // Checked before queueing too, so a written-off host’s batches take no
+        // slot.
+        if (writtenOff.has(batch.host)) {
+          return writtenOffStep().done;
+        }
+        const step = await limiter.run(batch.host, async (slot) => {
+          // Queued before the host was written off: no request goes out, so the
+          // slot says nothing about the host’s limit either way.
           if (writtenOff.has(batch.host)) {
+            slot.ignore();
             return writtenOffStep();
           }
-          // Paused while this batch queued: give the slot back and wait.
-          if ((pausedUntil.get(batch.host) ?? 0) > Date.now()) {
-            return { waitMs: 0 };
-          }
           attempts++;
-          return settle(await attempt(batch.entries));
+          startedAt = ++tick;
+          const result = await attempt(batch.entries);
+          if (result.kind === 'threw') {
+            slot.overloaded();
+          }
+          return settle(result);
         });
         if ('done' in step) {
           return step.done;
@@ -656,7 +677,7 @@ export function createResolver<Reference, Fact>(
         await delay(step.waitMs);
       }
 
-      function writtenOffStep(): Step<Fact> {
+      function writtenOffStep(): Done<Fact> {
         if (lastFailure !== undefined) {
           // Contacted already, and waiting to try again – after a stall or a
           // request to come back later: it keeps its charge and the reason it
@@ -684,7 +705,9 @@ export function createResolver<Reference, Fact>(
           if (stalled !== undefined) {
             // The host answered after all: the stall was a slow moment, not a
             // dead host, so the failure counted for it is taken back.
-            forgiveStall(batch.host);
+            if (stallCounted) {
+              forgiveStall(batch.host);
+            }
           } else if (!result.individualOnly) {
             noteHostOutcome(batch.host, true);
           }
@@ -707,13 +730,9 @@ export function createResolver<Reference, Fact>(
             if (error.retryAfterMs === undefined || error.retryAfterMs <= 0) {
               return { waitMs: backoffMs };
             }
-            pausedUntil.set(
-              batch.host,
-              Math.max(
-                pausedUntil.get(batch.host) ?? 0,
-                Date.now() + error.retryAfterMs,
-              ),
-            );
+            // A rate limit is about this client, so every batch for the host
+            // waits, not just the one that was told.
+            limiter.pause(batch.host, Date.now() + error.retryAfterMs);
             return { waitMs: 0 };
           }
           return failed(
@@ -729,7 +748,7 @@ export function createResolver<Reference, Fact>(
           // not requests. It counts against the host now, not after that
           // attempt, or a host that times out on everything would cost every
           // reference a full timeout before the breaker could see it.
-          noteHostOutcome(batch.host, false);
+          stallCounted = noteFailure();
           stalled = failedOutcome(error, attempts, '');
           lastFailure = stalled;
           return { waitMs: 0 };
@@ -741,22 +760,37 @@ export function createResolver<Reference, Fact>(
         // A stall was counted when it first failed; its second attempt is not
         // counted again.
         if (stalled === undefined) {
-          noteHostOutcome(batch.host, false);
+          noteFailure();
         }
         return everyKey(failedOutcome<Fact>(error, attempts, suffix));
       }
 
-      function everyKey(outcome: FetchOutcome<Fact>): Step<Fact> {
+      /**
+       * Count a failure against the host, once per burst, and answer whether it
+       * was counted. When a host goes down, everything in flight fails
+       * together: that is one signal, so a failure of an attempt that started
+       * before the host’s last counted failure is not counted again.
+       */
+      function noteFailure(): boolean {
+        // The rest of the burst that wrote its host off has nothing left to
+        // tell the breaker.
+        if (
+          writtenOff.has(batch.host) ||
+          (lastCountedAt.get(batch.host) ?? 0) > startedAt
+        ) {
+          return false;
+        }
+        lastCountedAt.set(batch.host, ++tick);
+        noteHostOutcome(batch.host, false);
+        return true;
+      }
+
+      function everyKey(outcome: FetchOutcome<Fact>): Done<Fact> {
         return {
           done: batch.entries.map(({ key }) => [key, outcome] as const),
         };
       }
     }
-  }
-
-  /** Wait until the host’s pause, if any, has passed – holding no slot. */
-  function waitOutPause(host: string): Promise<void> {
-    return delay((pausedUntil.get(host) ?? 0) - Date.now());
   }
 
   /**
@@ -771,6 +805,8 @@ export function createResolver<Reference, Fact>(
       return;
     }
     window[window.lastIndexOf(true)] = false;
+    // The burst the stall belonged to may still be in flight, so its marker in
+    // `lastCountedAt` stays.
     if (!window.includes(true)) {
       recentFailures.delete(host);
     }
@@ -783,11 +819,6 @@ export function createResolver<Reference, Fact>(
    * fail is cut off even when a few succeed in between.
    */
   function noteHostOutcome(host: string, succeeded: boolean): void {
-    // A batch still in flight when its host was written off has nothing left
-    // to tell the breaker.
-    if (writtenOff.has(host)) {
-      return;
-    }
     const window = recentFailures.get(host) ?? [];
     window.push(!succeeded);
     if (window.length > failureWindow) {
@@ -797,10 +828,12 @@ export function createResolver<Reference, Fact>(
     if (failures >= hostFailureThreshold) {
       writtenOff.add(host);
       recentFailures.delete(host); // Nothing reads it once written off.
+      lastCountedAt.delete(host);
     } else if (failures === 0) {
       // A window of successes counts the same as no window at all, so a
       // healthy host holds no memory.
       recentFailures.delete(host);
+      lastCountedAt.delete(host);
     } else {
       recentFailures.set(host, window);
     }
@@ -968,9 +1001,12 @@ type BatchResult<Fact> =
  * Where a batch stands after one turn in its slot: done, with an outcome per
  * key, or to queue again after waiting this long outside the slot.
  */
-type Step<Fact> =
-  | { readonly done: Array<readonly [string, FetchOutcome<Fact>]> }
-  | { readonly waitMs: number };
+type Step<Fact> = Done<Fact> | { readonly waitMs: number };
+
+/** A batch’s answer, per key. */
+interface Done<Fact> {
+  readonly done: Array<readonly [string, FetchOutcome<Fact>]>;
+}
 
 /** A batch’s failure, as every key in it reports it. */
 function failedOutcome<Fact>(

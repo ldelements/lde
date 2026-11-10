@@ -1,3 +1,4 @@
+import { createHostLimiter } from '@lde/host-limiter';
 import { describe, expect, it, vi } from 'vitest';
 import {
   createResolver,
@@ -343,7 +344,7 @@ describe('a failure', () => {
         }
         return iris.map((each) => [each, { name: 'a place' }]);
       },
-      { limits: { concurrency: 1 } },
+      { limiter: createHostLimiter(1, 2) },
     );
 
     const resolved = await resolver.resolveAll([MAASTRICHT, ELSEWHERE]);
@@ -384,8 +385,8 @@ describe('a failure', () => {
         return iris.map((iri) => [iri, { name: 'elsewhere' }]);
       },
       {
+        limiter: createHostLimiter(4, 2),
         limits: {
-          perHostConcurrency: 2,
           hostFailureThreshold: 1,
           fetchesPerResolver: 2,
         },
@@ -490,7 +491,7 @@ describe('a failure', () => {
         }
         return iris.map((each) => [each, { name: 'a place' }]);
       },
-      { limits: { perHostConcurrency: 2 } },
+      { limiter: createHostLimiter(4, 2) },
     );
 
     const resolved = await resolver.resolveAll([MAASTRICHT, VENLO, third]);
@@ -563,7 +564,7 @@ describe('a failure of one reference', () => {
         asked.push(...iris);
         return iris.map((iri) => [iri, referenceFailure('HTTP 500')]);
       },
-      { limits: { perHostConcurrency: 1, hostFailureThreshold: 1 } },
+      { limiter: createHostLimiter(4, 1), limits: { hostFailureThreshold: 1 } },
     );
 
     await resolver.resolveAll([
@@ -882,7 +883,7 @@ describe('an attempt that outruns its deadline', () => {
         }
         return iris.map((iri) => [iri, { name: 'a place' }]);
       },
-      { limits: { timeoutMs: 20, perHostConcurrency: 1 } },
+      { limiter: createHostLimiter(4, 1), limits: { timeoutMs: 20 } },
     );
 
     const resolved = await resolver.resolveAll([MAASTRICHT, VENLO]);
@@ -988,9 +989,9 @@ describe('counting', () => {
         throw new Error('connection refused');
       },
       {
+        limiter: createHostLimiter(4, 1),
         limits: {
           batchSize: 1,
-          perHostConcurrency: 1,
           hostFailureThreshold: 2,
         },
       },
@@ -1052,9 +1053,9 @@ describe('a host that is down', () => {
         throw new Error('connection refused');
       },
       {
+        limiter: createHostLimiter(4, 1),
         limits: {
           batchSize: 1,
-          perHostConcurrency: 1,
           hostFailureThreshold: 2,
         },
       },
@@ -1087,7 +1088,7 @@ describe('a host that is down', () => {
         }
         return iris.map((iri) => [iri, { name: 'a place' }]);
       },
-      { limits: { perHostConcurrency: 1, hostFailureThreshold: 5 } },
+      { limiter: createHostLimiter(4, 1), limits: { hostFailureThreshold: 5 } },
     );
 
     await resolver.resolveAll(
@@ -1118,9 +1119,9 @@ describe('a host that is down', () => {
         return Promise.resolve(iris.map((each) => [each, { name: 'a place' }]));
       },
       {
+        limiter: createHostLimiter(4, 1),
         limits: {
           timeoutMs: 5,
-          perHostConcurrency: 1,
           hostFailureThreshold: 2,
         },
       },
@@ -1158,9 +1159,9 @@ describe('a host that is down', () => {
         return Promise.resolve(iris.map((each) => [each, { name: 'a place' }]));
       },
       {
+        limiter: createHostLimiter(4, 1),
         limits: {
           timeoutMs: 5,
-          perHostConcurrency: 1,
           hostFailureThreshold: 3,
         },
       },
@@ -1188,9 +1189,9 @@ describe('a host that is down', () => {
         return Promise.resolve(iris.map((each) => [each, { name: 'a place' }]));
       },
       {
+        limiter: createHostLimiter(4, 1),
         limits: {
           timeoutMs: 5,
-          perHostConcurrency: 1,
           hostFailureThreshold: 2,
         },
       },
@@ -1207,29 +1208,93 @@ describe('a host that is down', () => {
     expect(resolved.get(MAASTRICHT)).toMatchObject({ outcome: 'resolved' });
   });
 
-  it('lets a batch already in flight finish when its host is written off', async () => {
-    // Two slots: Venlo is in flight when Maastricht’s failure writes the host
-    // off, so it runs to the end; the batches behind them are never sent.
+  it('passes on the error of a limiter that fails', async () => {
+    const { resolver } = resolverOver(
+      async (iris) => iris.map((iri) => [iri, { name: 'a place' }]),
+      {
+        limiter: {
+          run: () => Promise.reject(new Error('queue full')),
+          pause: () => undefined,
+        },
+      },
+    );
+
+    await expect(resolver.resolveAll([MAASTRICHT])).rejects.toThrow(
+      'queue full',
+    );
+  });
+
+  it('takes back no failure for a stall that was never counted', async () => {
+    const asked: string[] = [];
+    let stallAttempts = 0;
+    const host = 'https://sws.geonames.org';
+    const { resolver } = resolverOver(
+      async (iris, { signal }) => {
+        asked.push(...iris);
+        if (iris.some((iri) => iri.includes('/ok/'))) {
+          return iris.map((iri) => [iri, { name: 'a place' }]);
+        }
+        if (iris.includes(`${host}/stall/`) && stallAttempts++ === 0) {
+          return new Promise((_resolve, reject) =>
+            signal.addEventListener('abort', () => reject(signal.reason)),
+          );
+        }
+        if (iris.includes(`${host}/stall/`)) {
+          return iris.map((iri) => [iri, { name: 'a place' }]);
+        }
+        throw new Error('HTTP 502');
+      },
+      {
+        limiter: createHostLimiter(4, 2),
+        limits: { timeoutMs: 5, hostFailureThreshold: 2 },
+      },
+    );
+    // Earns the host two batches in flight.
+    await resolver.resolveAll([`${host}/ok/1/`, `${host}/ok/2/`]);
+
+    // Sent together: the 502 is counted, and the stall that times out after it
+    // is the same burst, so it is not. Its second attempt is answered, which
+    // must not take back the 502.
+    await resolver.resolveAll([`${host}/first/`, `${host}/stall/`]);
+    await resolver.resolveAll([`${host}/second/`]); // Two failures: written off.
+    await resolver.resolveAll([`${host}/never/`]);
+
+    expect(asked).not.toContain(`${host}/never/`);
+  });
+
+  it('counts a burst of failures once', async () => {
+    let failing = false;
     const asked: string[] = [];
     const { resolver } = resolverOver(
       async (iris) => {
+        if (!failing) {
+          return iris.map((iri) => [iri, { name: 'a place' }]);
+        }
         asked.push(...iris);
         throw new Error('HTTP 502');
       },
-      { limits: { perHostConcurrency: 2, hostFailureThreshold: 1 } },
+      {
+        limiter: createHostLimiter(4, 2),
+        limits: { hostFailureThreshold: 2 },
+      },
     );
+    // A host that kept up has earned two batches in flight.
+    await resolver.resolveAll(
+      [1, 2, 3].map((index) => `https://sws.geonames.org/warm/${index}/`),
+    );
+    failing = true;
 
-    const resolved = await resolver.resolveAll([
+    await resolver.resolveAll([
       MAASTRICHT,
       VENLO,
       'https://sws.geonames.org/1/',
       'https://sws.geonames.org/2/',
     ]);
 
-    expect(asked).toEqual([MAASTRICHT, VENLO]);
-    expect(resolved.get(VENLO)).toMatchObject({
-      reason: 'resolution failed after 1 attempt(s): HTTP 502',
-    });
+    // Maastricht and Venlo fail together: one failure, and the limit halves.
+    // The next failure is a second one, which writes the host off, so the
+    // last reference is never sent.
+    expect(asked).toEqual([MAASTRICHT, VENLO, 'https://sws.geonames.org/1/']);
   });
 
   it('gives a stall no second attempt once its host is written off, nor a refund', async () => {
@@ -1249,9 +1314,9 @@ describe('a host that is down', () => {
         return iris.map((iri) => [iri, { name: 'elsewhere' }]);
       },
       {
+        limiter: createHostLimiter(4, 1),
         limits: {
           timeoutMs: 5,
-          perHostConcurrency: 1,
           hostFailureThreshold: 2,
           fetchesPerResolver: 2,
         },
@@ -1279,9 +1344,9 @@ describe('a host that is down', () => {
         return new Promise(() => undefined);
       },
       {
+        limiter: createHostLimiter(4, 1),
         limits: {
           timeoutMs: 5,
-          perHostConcurrency: 1,
           hostFailureThreshold: 2,
         },
       },
@@ -1309,7 +1374,7 @@ describe('a host that is down', () => {
         }
         return iris.map((iri) => [iri, { name: 'a place' }]);
       },
-      { limits: { perHostConcurrency: 1, hostFailureThreshold: 2 } },
+      { limiter: createHostLimiter(4, 1), limits: { hostFailureThreshold: 2 } },
     );
 
     await resolver.resolveAll(
@@ -1331,9 +1396,9 @@ describe('a host that is down', () => {
         return iris.map((iri) => [iri, { name: 'elsewhere' }]);
       },
       {
+        limiter: createHostLimiter(4, 1),
         limits: {
           batchSize: 1,
-          perHostConcurrency: 1,
           hostFailureThreshold: 2,
         },
       },
@@ -1441,11 +1506,11 @@ describe('a host that is down', () => {
         throw new Error('connection refused');
       },
       {
-        // perHostConcurrency 1, so nothing else is already in flight when the
+        // One batch per host at a time, so nothing else is already in flight when the
         // first failure settles.
+        limiter: createHostLimiter(4, 1),
         limits: {
           batchSize: 1,
-          perHostConcurrency: 1,
           hostFailureThreshold: 1,
         },
       },
@@ -1532,7 +1597,7 @@ describe('batching and bounding', () => {
         inFlight--;
         return iris.map((iri) => [iri, { name: 'a place' }]);
       },
-      { limits: { batchSize: 1, perHostConcurrency: 1, concurrency: 10 } },
+      { limiter: createHostLimiter(10, 1), limits: { batchSize: 1 } },
     );
 
     await resolver.resolveAll([MAASTRICHT, VENLO]);
@@ -1553,7 +1618,7 @@ describe('batching and bounding', () => {
         inFlight--;
         return iris.map((iri) => [iri, { name: 'a place' }]);
       },
-      { limits: { perHostConcurrency: 2, concurrency: 10 } },
+      { limiter: createHostLimiter(10, 2) },
     );
 
     await Promise.all(
@@ -1579,7 +1644,7 @@ describe('batching and bounding', () => {
         inFlight--;
         return iris.map((iri) => [iri, { name: 'a place' }]);
       },
-      { limits: { perHostConcurrency: 2, concurrency: 3 } },
+      { limiter: createHostLimiter(3, 2) },
     );
 
     await Promise.all(
@@ -1607,7 +1672,7 @@ describe('batching and bounding', () => {
         inFlight--;
         return keys.map((key) => [key, { name: key }]);
       },
-      { limits: { batchSize: 1, perHostConcurrency: 1, concurrency: 10 } },
+      { limiter: createHostLimiter(10, 1), limits: { batchSize: 1 } },
     );
 
     // 'term:one' parses as a URL and buckets on its href; 'not a key at all'
@@ -1632,7 +1697,8 @@ describe('batching and bounding', () => {
         // Two hosts by their keys; one endpoint in fact, because the lookup goes
         // through an aggregator. The bound belongs to the host contacted.
         host: 'gateway.example.org',
-        limits: { batchSize: 10, perHostConcurrency: 1, concurrency: 10 },
+        limiter: createHostLimiter(10, 1),
+        limits: { batchSize: 10 },
       },
     );
 

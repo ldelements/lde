@@ -187,7 +187,7 @@ await pipeline.run();
 <tr><th colspan="2" align="left">Infrastructure – Manage SPARQL servers and run tasks</th></tr>
 <tr>
   <td><a href="packages/host-limiter">@lde/host-limiter</a><br><a href="https://www.npmjs.com/package/@lde/host-limiter"><img src="https://img.shields.io/npm/v/@lde/host-limiter" alt="npm"></a></td>
-  <td>Concurrent map bounded by a global and a per-host cap</td>
+  <td>Concurrent map bounded by a global cap and an adaptive per-host limit</td>
 </tr>
 <tr>
   <td><a href="packages/public-fetch">@lde/public-fetch</a><br><a href="https://www.npmjs.com/package/@lde/public-fetch"><img src="https://img.shields.io/npm/v/@lde/public-fetch" alt="npm"></a></td>
