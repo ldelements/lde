@@ -7,6 +7,7 @@ import {
 } from '@lde/search';
 import {
   displayFieldPattern,
+  facetsOf,
   ID_FIELD,
   isInlineReference,
   isInternalField,
@@ -135,6 +136,18 @@ export function buildCollectionDefinition(
       ),
     ),
   };
+  // A faceted leaf is faceted on its nested path, which Typesense flattens
+  // into one list per document – so a bucket counts documents, not entries.
+  const facetedPaths = new Set(
+    facetsOf(searchType, options.schema)
+      .filter((facet) => facet.reference !== undefined)
+      .map((facet) => facet.engineField),
+  );
+  for (const field of collection.fields as CollectionFieldSchema[]) {
+    if (facetedPaths.has(field.name)) {
+      field.facet = true;
+    }
+  }
   // Typesense rejects an `object`/`object[]` field unless nesting is enabled,
   // so the flag is a consequence of the declaration – never a knob.
   if (collection.fields?.some((field) => field.type.startsWith('object'))) {
@@ -795,7 +808,9 @@ function nestedLeafFields(
   }
   // A nested field can be `filterable` or `searchable`, never `facetable` or
   // `sortable` (`searchSchema`), so `filterable` is what indexes the value
-  // itself – its search companion below indexes on its own account.
+  // itself – its search companion below indexes on its own account. A leaf the
+  // root is faceted on is marked a facet field once the collection is built
+  // ({@link buildCollectionDefinition}), since only the root knows.
   const indexed = field.filterable === true;
   const valueType = typesenseValueType(field);
   // Two ways a list arrives: the field declares one, or an ancestor's

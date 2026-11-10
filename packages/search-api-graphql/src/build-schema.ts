@@ -40,7 +40,7 @@ import {
 import {
   AND_KEY,
   assertValidQuery,
-  facetableFields,
+  facetsOf,
   filterableFields,
   fieldNamed,
   labelSourceNamesOf,
@@ -62,6 +62,7 @@ import {
   pageForOffset,
   sortableFields,
   unixSecondsToIso,
+  type FacetDeclaration,
   type JoinGraph,
   type StoredDate,
 } from '@lde/search/adapter';
@@ -1504,9 +1505,9 @@ export function buildGraphQLSchema(
     // and skip-own-filter in the engine.
     // Like `where`, omitted entirely for a type with no facetable fields (a
     // GraphQL object type must have at least one field).
-    const facetable = facetableFields(searchType);
+    const facets = facetsOf(searchType, schema);
     const facetsType =
-      facetable.length === 0 ? undefined : facetsTypeFor(typeName, facetable);
+      facets.length === 0 ? undefined : facetsTypeFor(typeName, facets);
 
     const resultType = new GraphQLObjectType({
       name: `${typeName}SearchResult`,
@@ -1623,68 +1624,107 @@ export function buildGraphQLSchema(
     return field.kind === 'reference' ? iriBucket : valueBucket;
   }
 
-  /** The keyed facets object for one type (only called with ≥ 1 facetable field). */
+  /**
+   * The keyed facets object for one type (only called with ≥ 1 facet). A
+   * faceted leaf is served one level down, under the reference it is reached
+   * through – `facets { associatedMedia { license } }` – so a facet is named
+   * by the same path as the value it counts.
+   */
   function facetsTypeFor(
     typeName: string,
-    facetable: readonly SearchField[],
+    facets: readonly FacetDeclaration[],
   ): GraphQLObjectType {
+    const own: FacetDeclaration[] = [];
+    const byReference = new Map<string, FacetDeclaration[]>();
+    for (const facet of facets) {
+      if (facet.reference === undefined) {
+        own.push(facet);
+        continue;
+      }
+      const leaves = byReference.get(facet.reference.name) ?? [];
+      leaves.push(facet);
+      byReference.set(facet.reference.name, leaves);
+    }
+
     return new GraphQLObjectType({
       name: `${typeName}Facets`,
-      fields: () => {
-        const fields: Record<
-          string,
-          GraphQLFieldConfig<Source, SearchContext>
-        > = {};
-        // The keys share one engine round-trip, but each is its own facet
-        // calculation in it.
-        const facetCost = costExtensions(operationCost);
-        for (const field of facetable) {
-          // The batching into one engine dispatch and the degrade-to-empty
-          // error handling live in the loader (facet-batch.ts).
-          if (isRangeFacet(field)) {
-            fields[field.name] = {
-              type: new GraphQLNonNull(rangeFacetTypeFor(field)),
-              extensions: facetCost,
-              // Resolved synchronously, so the scopes its fields load land in
-              // the same batch as the sibling facets.
-              resolve: (source: Source) => ({
-                load: (scope: FacetScope) =>
-                  (source.loadFacet as FacetLoader)(field.name, scope),
-              }),
-            };
-            continue;
-          }
-          const bucketType = bucketTypeFor(field);
-          fields[field.name] = {
-            type: nonNullListOf(bucketType),
-            extensions: facetCost,
-            resolve: async (source: Source) => {
-              const { buckets } = await (source.loadFacet as FacetLoader)(
-                field.name,
-                'matching',
-              );
-              if (bucketType !== iriBucket) {
-                return buckets;
-              }
-              // A bucket keyed on something that is not an IRI is not a
-              // selection key – it cannot be sent back as the filter that
-              // selects it – so it is dropped rather than served under `IRI`.
-              // Dropping, not throwing: `value: IRI!` sits inside a chain of
-              // non-nulls up to the root field, so a raising coercion here
-              // would null the WHOLE response and take `items` with it, which
-              // is exactly what facet-batch.ts’s degradation contract forbids
-              // a supplementary sidebar count from doing.
-              return buckets.filter(
-                (bucket) =>
-                  typeof bucket.value === 'string' &&
-                  isAbsoluteIri(bucket.value),
-              );
+      fields: () => ({
+        ...facetFieldsFor(own),
+        ...Object.fromEntries(
+          [...byReference].map(([reference, leaves]) => [
+            reference,
+            {
+              type: new GraphQLNonNull(
+                new GraphQLObjectType({
+                  name: `${typeName}${reference.charAt(0).toUpperCase()}${reference.slice(1)}Facets`,
+                  fields: () => facetFieldsFor(leaves),
+                }),
+              ),
+              // The source carries the facet loader; the leaves read it.
+              resolve: (source: Source) => source,
             },
-          };
-        }
-        return fields;
-      },
+          ]),
+        ),
+      }),
     });
+  }
+
+  /** One GraphQL field per facet, keyed by its field’s name and loaded by the
+   *  facet’s logical name. */
+  function facetFieldsFor(
+    facets: readonly FacetDeclaration[],
+  ): Record<string, GraphQLFieldConfig<Source, SearchContext>> {
+    const fields: Record<
+      string,
+      GraphQLFieldConfig<Source, SearchContext>
+    > = {};
+    // The keys share one engine round-trip, but each is its own facet
+    // calculation in it.
+    const facetCost = costExtensions(operationCost);
+    for (const { name, field } of facets) {
+      // The batching into one engine dispatch and the degrade-to-empty
+      // error handling live in the loader (facet-batch.ts).
+      if (isRangeFacet(field)) {
+        fields[field.name] = {
+          type: new GraphQLNonNull(rangeFacetTypeFor(field)),
+          extensions: facetCost,
+          // Resolved synchronously, so the scopes its fields load land in
+          // the same batch as the sibling facets.
+          resolve: (source: Source) => ({
+            load: (scope: FacetScope) =>
+              (source.loadFacet as FacetLoader)(name, scope),
+          }),
+        };
+        continue;
+      }
+      const bucketType = bucketTypeFor(field);
+      fields[field.name] = {
+        type: nonNullListOf(bucketType),
+        extensions: facetCost,
+        resolve: async (source: Source) => {
+          const { buckets } = await (source.loadFacet as FacetLoader)(
+            name,
+            'matching',
+          );
+          if (bucketType !== iriBucket) {
+            return buckets;
+          }
+          // A bucket keyed on something that is not an IRI is not a
+          // selection key – it cannot be sent back as the filter that
+          // selects it – so it is dropped rather than served under `IRI`.
+          // Dropping, not throwing: `value: IRI!` sits inside a chain of
+          // non-nulls up to the root field, so a raising coercion here
+          // would null the WHOLE response and take `items` with it, which
+          // is exactly what facet-batch.ts’s degradation contract forbids
+          // a supplementary sidebar count from doing.
+          return buckets.filter(
+            (bucket) =>
+              typeof bucket.value === 'string' && isAbsoluteIri(bucket.value),
+          );
+        },
+      };
+    }
+    return fields;
   }
 
   const queryFields: Record<
