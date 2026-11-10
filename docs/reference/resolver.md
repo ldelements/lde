@@ -286,6 +286,30 @@ thing” – an empty page, a maintenance window, a partial response, an ambiguo
 instead of returning nothing. A failure ages a stored fact; an absence replaces
 it.
 
+## Counting a run
+
+`report` covers failures one key at a time. To see a run whole – how much came
+from the store, how much was fetched, what the budget deferred – pass `count` to
+`resolveAll`. It is called once per distinct key with what became of it:
+
+| Count         | The key                                                          |
+| ------------- | ---------------------------------------------------------------- |
+| `fetched`     | was answered by the source this run                              |
+| `absent`      | was answered by the source, which has nothing for it             |
+| `from store`  | was answered by the store, and was not due a fetch               |
+| `failed`      | failed to fetch                                                  |
+| `written off` | was not sent, because its host had failed its way out of the run |
+| `deferred`    | was due a fetch, but not sent because the fetch budget was spent |
+
+For the last three, a stored fact may still stand in.
+
+Inside a pipeline transform, pass the transform’s `context.count`, and the
+counts are added up per stage on its `stageComplete` event:
+
+```ts
+const resolved = await resolver.resolveAll(iris, { count: context.count });
+```
+
 ## Batching
 
 `batchSize` defaults to 1 – one reference, one call. Raise it only for a source
@@ -298,7 +322,7 @@ volume cap, not per-host concurrency, is what protects the store behind the API.
 | Export                      | Purpose                                                                      |
 | --------------------------- | ---------------------------------------------------------------------------- |
 | `createResolver(options)`   | Build a `Resolver` from `key`, `host`, `fetch`, `store`, `version`, `limits` |
-| `Resolver.resolveAll(refs)` | Resolve references, one `Resolution` per distinct key                        |
+| `Resolver.resolveAll(refs)` | Resolve references, one `Resolution` per distinct key; optionally `count`    |
 | `Resolver.check()`          | Fail a run at startup when the store cannot persist                          |
 | `Resolver.purge(keys)`      | Forget keys, so the next run resolves them afresh                            |
 | `urlHost(key)`              | The host of a key that is itself the URL fetched                             |

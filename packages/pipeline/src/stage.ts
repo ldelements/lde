@@ -7,7 +7,8 @@ import { batch } from './batch.js';
 import type { Validator } from './validator.js';
 import type { DatasetWriter } from './writer/writer.js';
 import { AsyncQueue } from './asyncQueue.js';
-import type { UnreadValue } from './pipelineEvent.js';
+import type { StageSummary, UnreadValue } from './pipelineEvent.js';
+import { StageTally } from './stageTally.js';
 
 /**
  * Transforms a quad stream, given the context of its extension point.
@@ -33,6 +34,13 @@ export interface ReaderContext {
   dataset: Dataset;
   distribution: Distribution;
   stage: string;
+  /**
+   * Add `amount` (1 when left out) to the count called `name`. The pipeline
+   * adds up each name over the stage and reports the totals when it completes
+   * (`stageComplete`’s `counts`) – how many images were fetched and how many
+   * came from a store, say.
+   */
+  count(name: string, amount?: number): void;
 }
 
 /**
@@ -90,6 +98,8 @@ export type StageReaders =
 interface NormalizedReader {
   reader: Reader;
   transforms: QuadTransform<ReaderContext>[];
+  /** The position of the reader’s first transform among all of the stage’s. */
+  firstTransform: number;
 }
 
 export interface StageOptions<Out = Quad> {
@@ -200,6 +210,9 @@ export interface RunOptions {
   /** Receives what a {@link BatchTransform} reports through
    *  {@link BatchContext.valueUnread}; dropped when absent. */
   valueUnread?: BatchContext['valueUnread'];
+  /** Receives where the stage spent its time and what it counted, once, when
+   *  it completes. Not called for a stage that is not supported or that fails. */
+  onComplete?: (summary: StageSummary) => void;
 }
 
 /** Options accepted by {@link ItemSelector.select}. */
@@ -277,22 +290,31 @@ export class Stage<Out = Quad> {
     const distribution = this.sourceFor
       ? this.sourceFor(dataset, resolved)
       : resolved;
+    const tally = new StageTally(this.transformNames);
     if (this.itemSelector) {
-      return this.runWithSelector(
-        this.itemSelector.select(distribution, this.batchSize, {
-          timeout,
-        }),
+      const result = await this.runWithSelector(
+        tally.selected(
+          this.itemSelector.select(distribution, this.batchSize, {
+            timeout,
+          }),
+        ),
         dataset,
         distribution,
         writer,
+        tally,
         options,
       );
+      if (!(result instanceof NotSupported)) {
+        options?.onComplete?.(tally.summary());
+      }
+      return result;
     }
 
-    const streams = await this.readAll(dataset, distribution, timeout);
-    if (streams instanceof NotSupported) {
-      return streams;
+    const chains = await this.readAll(dataset, distribution, timeout, tally);
+    if (chains instanceof NotSupported) {
+      return chains;
     }
+    const streams = chains.map(({ stream }) => stream);
 
     // The non-selector path has no batch, so `project` is forbidden here (the
     // constructor rejects `project` without an `itemSelector`). It therefore
@@ -303,6 +325,11 @@ export class Stage<Out = Quad> {
     // Quads the readers produced (before any validation filtering); used to
     // enforce `expectsOutput` below.
     let produced = 0;
+
+    const write = (quads: AsyncIterable<Quad>) =>
+      tally.written(quads, (timedQuads) =>
+        quadWriter.write(dataset, timedQuads),
+      );
 
     if (this.validation) {
       const buffer: Quad[] = [];
@@ -315,19 +342,19 @@ export class Stage<Out = Quad> {
       const onInvalid = this.validation.onInvalid ?? 'write';
       if (onInvalid === 'write') {
         await Promise.all([
-          quadWriter.write(
-            dataset,
+          write(
             (async function* () {
               yield* buffer;
             })(),
           ),
-          this.validation.validator.validate(buffer, dataset),
+          tally.validated(this.validation.validator.validate(buffer, dataset)),
         ]);
       } else {
-        const accepted = await this.validateBuffer(buffer, dataset);
+        const accepted = await tally.validated(
+          this.validateBuffer(buffer, dataset),
+        );
         if (accepted.length > 0) {
-          await quadWriter.write(
-            dataset,
+          await write(
             (async function* () {
               yield* accepted;
             })(),
@@ -336,18 +363,21 @@ export class Stage<Out = Quad> {
       }
     } else if (this.expectsOutput) {
       // Only thread the per-quad counter through when the count is actually
-      // needed; the default path stays a plain streaming write with no overhead.
-      await quadWriter.write(
-        dataset,
+      // needed.
+      await write(
         countQuads(mergeStreams(streams), (count) => {
           produced = count;
         }),
       );
     } else {
-      await quadWriter.write(dataset, mergeStreams(streams));
+      await write(mergeStreams(streams));
     }
 
+    for (const { settle } of chains) {
+      settle();
+    }
     this.assertProduced(produced);
+    options?.onComplete?.(tally.summary());
   }
 
   /**
@@ -366,6 +396,7 @@ export class Stage<Out = Quad> {
     dataset: Dataset,
     distribution: Distribution,
     writer: DatasetWriter<Out>,
+    tally: StageTally,
     options?: RunOptions,
   ): Promise<NotSupported | void> {
     // Peek the first batch to detect an empty selector before starting the
@@ -438,23 +469,21 @@ export class Stage<Out = Quad> {
             (async () => {
               // Run all readers for this batch in parallel.
               const readerOutputs = await Promise.all(
-                this.readers.map(async ({ reader, transforms }) => {
-                  const result = await reader.read(dataset, distribution, {
-                    bindings,
-                    timeout: options?.timeout,
-                  });
-                  if (result instanceof NotSupported) return [];
-                  hasResults = true;
-                  const stream = this.applyTransforms(
-                    transforms,
-                    result,
+                this.readers.map(async (normalized) => {
+                  const result = await this.read(
+                    normalized,
                     dataset,
                     distribution,
+                    { bindings, timeout: options?.timeout },
+                    tally,
                   );
+                  if (result instanceof NotSupported) return [];
+                  hasResults = true;
                   const quads: Quad[] = [];
-                  for await (const quad of stream) {
+                  for await (const quad of result.stream) {
                     quads.push(quad);
                   }
+                  result.settle();
                   return quads;
                 }),
               );
@@ -469,20 +498,26 @@ export class Stage<Out = Quad> {
                 batchQuads.length > 0 &&
                 onInvalid !== 'write'
               ) {
-                acceptedQuads = await this.validateBuffer(batchQuads, dataset);
+                acceptedQuads = await tally.validated(
+                  this.validateBuffer(batchQuads, dataset),
+                );
               }
 
               // The one type-changing seam: project the root-complete batch into
               // output items, or pass the quads through for a plain stage (`Out`
               // is `Quad` at runtime when there is no projection).
-              const items: Iterable<Out> | AsyncIterable<Out> = this.project
-                ? this.project(acceptedQuads, {
-                    dataset,
-                    distribution,
-                    stage: this.name,
-                    bindings,
-                    valueUnread: options?.valueUnread ?? ignoreUnreadValue,
-                  })
+              const project = this.project;
+              const items: Iterable<Out> | AsyncIterable<Out> = project
+                ? tally.projected(() =>
+                    project(acceptedQuads, {
+                      dataset,
+                      distribution,
+                      stage: this.name,
+                      bindings,
+                      count: countIn(tally),
+                      valueUnread: options?.valueUnread ?? ignoreUnreadValue,
+                    }),
+                  )
                 : (acceptedQuads as unknown as Out[]);
               for await (const item of items) {
                 await queue.push(item);
@@ -495,7 +530,9 @@ export class Stage<Out = Quad> {
                 onInvalid === 'write'
               ) {
                 pendingValidations.push(
-                  this.validation.validator.validate(batchQuads, dataset),
+                  tally.validated(
+                    this.validation.validator.validate(batchQuads, dataset),
+                  ),
                 );
               }
 
@@ -523,7 +560,7 @@ export class Stage<Out = Quad> {
     const dispatchPromise = dispatch();
     const writePromise = (async () => {
       try {
-        await writer.write(dataset, queue);
+        await tally.written(queue, (items) => writer.write(dataset, items));
       } catch (err) {
         queue.abort(err);
         throw err;
@@ -568,62 +605,85 @@ export class Stage<Out = Quad> {
     dataset: Dataset,
     distribution: Distribution,
     timeout: TimeoutPolicy | undefined,
-  ): Promise<AsyncIterable<Quad>[] | NotSupported> {
+    tally: StageTally,
+  ): Promise<TimedChain[] | NotSupported> {
     const results = await Promise.all(
-      this.readers.map(async ({ reader, transforms }) => {
-        const result = await reader.read(dataset, distribution, {
-          timeout,
-        });
-        if (result instanceof NotSupported) return result;
-        return this.applyTransforms(transforms, result, dataset, distribution);
-      }),
+      this.readers.map((normalized) =>
+        this.read(normalized, dataset, distribution, { timeout }, tally),
+      ),
     );
 
-    const streams: AsyncIterable<Quad>[] = [];
+    const chains: TimedChain[] = [];
     for (const result of results) {
       if (!(result instanceof NotSupported)) {
-        streams.push(result);
+        chains.push(result);
       }
     }
 
-    if (streams.length === 0) {
+    if (chains.length === 0) {
       return new NotSupported('All readers returned NotSupported');
     }
 
-    return streams;
+    return chains;
   }
 
   /**
-   * Fold a reader's attached transforms over its output stream, in order,
-   * supplying the {@link ReaderContext}. A transform sees one `read()`
-   * call's output (see {@link AttachedReader}); `NotSupported` is handled by
-   * the caller and never reaches a transform.
+   * Run one reader and fold its attached transforms over its output, in order,
+   * supplying the {@link ReaderContext}, each layer timed by `tally`. A
+   * transform sees one `read()` call's output (see {@link AttachedReader});
+   * `NotSupported` is returned as is and never reaches a transform.
    */
-  private applyTransforms(
-    transforms: QuadTransform<ReaderContext>[],
-    stream: AsyncIterable<Quad>,
+  private async read(
+    { reader, transforms, firstTransform }: NormalizedReader,
     dataset: Dataset,
     distribution: Distribution,
-  ): AsyncIterable<Quad> {
-    if (transforms.length === 0) return stream;
+    readOptions: Parameters<Reader['read']>[2],
+    tally: StageTally,
+  ): Promise<TimedChain | NotSupported> {
+    const started = performance.now();
+    const result = await reader.read(dataset, distribution, readOptions);
+    tally.addRead(performance.now() - started);
+    if (result instanceof NotSupported) return result;
     const context: ReaderContext = {
       dataset,
       distribution,
       stage: this.name,
+      count: countIn(tally),
     };
-    return transforms.reduce(
-      (quads, transform) => transform(quads, context),
-      stream,
+    return tally.chain(
+      result,
+      transforms.map(
+        (transform) => (quads: AsyncIterable<Quad>) =>
+          transform(quads, context),
+      ),
+      firstTransform,
     );
   }
+
+  /** Every attached transform’s name, readers in order, for the phase tally. */
+  private get transformNames(): string[] {
+    return this.readers.flatMap(({ transforms, firstTransform }) =>
+      transforms.map(
+        (transform, index) =>
+          transform.name || `transform ${firstTransform + index + 1}`,
+      ),
+    );
+  }
+}
+
+/** A reader’s timed output, and how to add its times once it is drained. */
+interface TimedChain {
+  stream: AsyncIterable<Quad>;
+  settle: () => void;
 }
 
 /** Normalise the {@link StageReaders} union to reader + transforms pairs. */
 function normalizeReaders(readers: StageReaders): NormalizedReader[] {
   const list = Array.isArray(readers) ? readers : [readers];
+  let firstTransform = 0;
   return list.map((entry) => {
     if ('read' in entry) {
-      return { reader: entry, transforms: [] };
+      return { reader: entry, transforms: [], firstTransform };
     }
     const { reader, transform } = entry;
     const transforms =
@@ -632,7 +692,9 @@ function normalizeReaders(readers: StageReaders): NormalizedReader[] {
         : Array.isArray(transform)
           ? [...transform]
           : [transform];
-    return { reader, transforms };
+    const normalized = { reader, transforms, firstTransform };
+    firstTransform += transforms.length;
+    return normalized;
   });
 }
 
@@ -672,6 +734,11 @@ export interface ItemSelector {
     batchSize?: number,
     options?: SelectOptions,
   ): AsyncIterable<VariableBindings>;
+}
+
+/** The {@link ReaderContext.count} that adds to `tally`. */
+function countIn(tally: StageTally): ReaderContext['count'] {
+  return (name, amount = 1) => tally.count(name, amount);
 }
 
 /** The {@link BatchContext.valueUnread} a stage run without a receiver hands

@@ -14,6 +14,7 @@ import type {
   SelectionEmptyEvent,
   StageCompleteEvent,
   StageFailedEvent,
+  StagePhases,
   StageProgressEvent,
   StageSkippedEvent,
   StageStartEvent,
@@ -294,7 +295,7 @@ export class ConsoleReporter implements Reporter {
       this.activeSpinner.suffixText = '';
       this.activeSpinner.text = `${this.activeSpinner.text}${counts} took ${chalk.bold(
         prettyMilliseconds(result.durationMs),
-      )}`;
+      )}${result.phases ? phasesSummary(result.phases) : ''}${countsSummary(result.counts)}`;
       this.activeSpinner.succeed();
       this.activeSpinner = undefined;
     }
@@ -428,6 +429,36 @@ export class ConsoleReporter implements Reporter {
       2,
     );
   }
+}
+
+/**
+ * Where a stage spent its time, as a dimmed suffix, leaving out phases it spent
+ * no time in. Labelled `busy` because the phases add up over batches running at
+ * once, so together they can exceed the stage’s duration.
+ */
+function phasesSummary(phases: StagePhases): string {
+  const parts = [
+    ['select', phases.selectMs],
+    ['read', phases.readMs],
+    ...phases.transforms.map(({ name, durationMs }) => [name, durationMs]),
+    ['validate', phases.validateMs],
+    ['project', phases.projectMs],
+    ['write', phases.writeMs],
+  ] as [string, number][];
+  const spent = parts
+    .filter(([, durationMs]) => durationMs > 0)
+    .map(([name, durationMs]) => `${name} ${prettyMilliseconds(durationMs)}`);
+  return spent.length === 0 ? '' : chalk.dim(` (busy: ${spent.join(', ')})`);
+}
+
+/** What a stage counted, as a dimmed suffix; nothing when it counted nothing. */
+function countsSummary(counts: StageCompleteEvent['counts']): string {
+  const entries = Object.entries(counts ?? {});
+  return entries.length === 0
+    ? ''
+    : chalk.dim(
+        ` (${entries.map(([name, count]) => `${name} ${compactNumber.format(count)}`).join(', ')})`,
+      );
 }
 
 /** Longest example value printed in full; a literal where a date belongs can

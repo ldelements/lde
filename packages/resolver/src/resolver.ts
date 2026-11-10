@@ -57,6 +57,26 @@ export type Resolution<Fact> =
     }
   | { readonly outcome: 'unresolved'; readonly reason: string };
 
+/**
+ * What {@link ResolveOptions.count} is called with, once per distinct key:
+ * `fetched` or `absent` when the source answered this run, `from store` when
+ * the store answered and the key was not due a fetch, `failed` when a fetch
+ * failed, `written off` when the key’s host had already failed its way out of
+ * the run, and `deferred` when the key was due a fetch but the budget was
+ * spent. A stored fact may still stand in for the last three.
+ */
+export type ResolutionCount =
+  'fetched' | 'absent' | 'from store' | 'failed' | 'written off' | 'deferred';
+
+/** Options for one {@link Resolver.resolveAll} call. */
+export interface ResolveOptions {
+  /**
+   * Called once per distinct key with what became of it, so a caller can add
+   * up a run – a pipeline transform passes its `context.count`.
+   */
+  count?: (name: ResolutionCount) => void;
+}
+
 /** One reference that did not resolve freshly, as {@link ResolverOptions.report} sees it. */
 export interface ResolutionFailure {
   /** The key of the reference that failed. */
@@ -302,6 +322,7 @@ export interface Resolver<Reference, Fact> {
    */
   resolveAll(
     references: readonly Reference[],
+    options?: ResolveOptions,
   ): Promise<Map<string, Resolution<Fact>>>;
   /** Verify the store can persist facts, throwing when it cannot. */
   check(): Promise<void>;
@@ -411,7 +432,8 @@ export function createResolver<Reference, Fact>(
     check: async () => store.check?.(),
     purge: (keys) => store.purge(keys),
 
-    async resolveAll(references) {
+    async resolveAll(references, resolveOptions) {
+      const count = resolveOptions?.count ?? (() => undefined);
       // One unit of work per key: two references sharing a key are one fetch
       // and one answer.
       const byKey = new Map<string, Keyed<Reference>>();
@@ -466,6 +488,8 @@ export function createResolver<Reference, Fact>(
           break; // Nothing refunded, so nothing more is affordable.
         }
       }
+      // Due a fetch, but the budget ran out before it was sent.
+      const deferred = new Set(queued.map(({ key }) => key));
 
       const resolutions = new Map<string, Resolution<Fact>>();
       const learned = new Map<string, FactOutcome<Fact>>();
@@ -473,6 +497,7 @@ export function createResolver<Reference, Fact>(
 
       for (const key of keys) {
         const outcome = fetched.get(key);
+        count(countOf(outcome, deferred.has(key)));
         if (outcome?.kind === 'present') {
           learned.set(key, { status: 'present', fact: outcome.fact });
           resolutions.set(key, {
@@ -645,6 +670,7 @@ export function createResolver<Reference, Fact>(
         skipped += batch.entries.length;
         return everyKey({
           kind: 'failed',
+          writtenOff: true,
           reason: `host ${batch.host} was written off after ${hostFailureThreshold} failures in its last ${failureWindow} batches; not contacted again this run`,
         });
       }
@@ -903,7 +929,28 @@ interface Keyed<Reference> {
 type FetchOutcome<Fact> =
   | { readonly kind: 'present'; readonly fact: Fact }
   | { readonly kind: 'absent' }
-  | { readonly kind: 'failed'; readonly reason: string };
+  | {
+      readonly kind: 'failed';
+      readonly reason: string;
+      /** Not sent: its host had already been written off. */
+      readonly writtenOff?: true;
+    };
+
+/**
+ * What to count a key as, from its fetch outcome – none when it was not
+ * fetched – and whether it was due a fetch the budget did not allow.
+ */
+function countOf<Fact>(
+  outcome: FetchOutcome<Fact> | undefined,
+  deferred: boolean,
+): ResolutionCount {
+  if (outcome === undefined) {
+    return deferred ? 'deferred' : 'from store';
+  }
+  if (outcome.kind === 'present') return 'fetched';
+  if (outcome.kind === 'absent') return 'absent';
+  return outcome.writtenOff ? 'written off' : 'failed';
+}
 
 /**
  * What one call to `fetch` came to: an answer per key, with whether every key

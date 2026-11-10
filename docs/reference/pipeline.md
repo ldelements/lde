@@ -461,7 +461,7 @@ In rough lifecycle order. Every event below the first four belongs to one datase
 | `distributionSelected`  | `info`                                    | `distribution`, `imported?` (`{ from, durationMs, tripleCount?, engine? }`)                                                                | When a dataset’s source is resolved; `imported` is set when it was imported from a dump.                                                                |
 | `stageStart`            | `debug`                                   | `stage`                                                                                                                                    | When a stage begins.                                                                                                                                    |
 | `stageProgress`         | `debug`                                   | `stage`, `itemsProcessed`, `quadsGenerated`, `memoryUsageBytes`, `heapUsedBytes`                                                           | After each batch a stage processes.                                                                                                                     |
-| `stageComplete`         | `info`                                    | `stage`, `itemsProcessed`, `quadsGenerated`, `durationMs`                                                                                  | When a stage finishes successfully.                                                                                                                     |
+| `stageComplete`         | `info`                                    | `stage`, `itemsProcessed`, `quadsGenerated`, `durationMs`, `phases`, `counts` (see [Stage phases and counts](#stage-phases-and-counts))    | When a stage finishes successfully.                                                                                                                     |
 | `stageSkipped`          | `info` for `noItemsSelected`, else `warn` | `stage`, `reason` (code `noItemsSelected` or `notSupported`)                                                                               | When a stage is [skipped](#skipped-stages): `noItemsSelected` for an empty selector, `notSupported` otherwise.                                          |
 | `stageFailed`           | `error`                                   | `stage`, `error`                                                                                                                           | When a stage hard-fails, or a per-dataset `write`, `provenance` or `reactive-dump-fallback` step fails; the run continues.                              |
 | `datasetValidated`      | `info` when conforming, else `warn`       | `report`                                                                                                                                   | Once per (dataset, validator) pair after all stages, even when nothing was validated – read `quadsValidated` to distinguish ‘not tested’.               |
@@ -471,6 +471,29 @@ In rough lifecycle order. Every event below the first four belongs to one datase
 | `datasetComplete`       | `info`                                    | `durationMs`, `memoryUsageBytes`, `heapUsedBytes`                                                                                          | When a dataset’s processing ends.                                                                                                                       |
 | `timeoutTightened`      | `warn`                                    | `endpoint`, `fromTimeoutMs`, `toTimeoutMs`, `consecutiveTimeouts`                                                                          | When a [timeout policy](#timeout-policies) tightens an endpoint’s budget after consecutive timeouts.                                                    |
 | `timeoutRelaxed`        | `info`                                    | `endpoint`, `fromTimeoutMs`, `toTimeoutMs`, `consecutiveTimeouts`                                                                          | When a timeout policy relaxes a previously-tightened endpoint back to the default budget.                                                               |
+
+#### Stage phases and counts
+
+A stage’s `durationMs` says how long it took, `phases` where that time went, in milliseconds:
+
+| Phase        | Time spent                                                                     |
+| ------------ | ------------------------------------------------------------------------------ |
+| `selectMs`   | Selecting the stage’s items, page by page.                                     |
+| `readMs`     | Running the readers’ queries and reading their results.                        |
+| `transforms` | In each transform attached to a [reader](#reader), as `{ name, durationMs }`.  |
+| `validateMs` | Validating the readers’ quads.                                                 |
+| `projectMs`  | Turning batches into items with [`project`](#projecting-batches-with-project). |
+| `writeMs`    | The writer’s own work, not counting the time it waited for items.              |
+
+A stage runs up to `maxConcurrency` batches at once, so each phase is added up over all of them, and together the phases can exceed `durationMs`. A phase that does is the one the batches were waiting on. Each phase counts only its own time: a transform waiting on the reader it pulls from adds to `readMs`, not to its own entry. A transform is named after its function, or `transform N` when the function has none.
+
+A transform or `project` can count things through its context’s `count(name, amount = 1)` – images fetched, terms served from a store. The stage adds up each name and reports the totals as `counts`, `{ name: total }`; [`@lde/resolver`](./resolver#counting-a-run) counts into it when handed `context.count`.
+
+The console reporter appends both to a stage’s line:
+
+```
+✔ Stage CreativeWork 729 items, 729 quads, took 24m 3s (busy: read 1m 40s, anyUriToIri 2s, enrich 41m 12s, project 3s, write 5s) (manifests fetched 249, manifests from store 480)
+```
 
 ### Provenance store
 
