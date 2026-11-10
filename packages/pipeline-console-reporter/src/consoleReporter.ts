@@ -6,6 +6,7 @@ import type {
   ProgressReporter,
   TimeoutTransitionEvent,
   ValidationReport,
+  ValuesUnread,
 } from '@lde/pipeline';
 import chalk from 'chalk';
 import logSymbols from 'log-symbols';
@@ -308,6 +309,23 @@ export class ConsoleReporter implements ProgressReporter {
       this.printLine(
         logSymbols.warning,
         `${compactNumber.format(count)} × ${reason} ${chalk.dim(`(e.g. ${examples.join(', ')})`)}`,
+        2,
+      );
+    }
+  }
+
+  valuesUnread(_dataset: Dataset, unread: ValuesUnread): void {
+    const { target, field, examples } = unread;
+    const count = compactNumber.format(unread.unread);
+    this.printLine(
+      logSymbols.warning,
+      `${chalk.bold(target)}: ${chalk.yellow(`${count} ${field} ${unread.unread === 1 ? 'value' : 'values'} unread`)}`,
+      1,
+    );
+    for (const { id, value } of examples) {
+      this.printLine(
+        logSymbols.warning,
+        `${JSON.stringify(value)} ${chalk.dim(`on ${id}`)}`,
         2,
       );
     }
