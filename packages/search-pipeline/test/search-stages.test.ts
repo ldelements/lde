@@ -203,6 +203,155 @@ describe('searchStages', () => {
     });
   });
 
+  it('runs the dataset type first and hands its document to every later stage', async () => {
+    const DATASET = 'https://example.org/Dataset';
+    const WORK = 'https://example.org/Work';
+    const PUBLISHER = 'https://example.org/publisher';
+    const withDatasetType = searchSchema(
+      {
+        name: 'Dataset',
+        class: DATASET,
+        fields: [
+          {
+            name: 'label',
+            kind: 'text',
+            locales: ['und'],
+            path: NAME,
+            output: true,
+            searchable: { weight: 1 },
+          },
+          {
+            name: 'publisher',
+            kind: 'reference',
+            path: PUBLISHER,
+            output: true,
+            ref: { strategy: 'idOnly', typeName: 'Publisher' },
+          },
+        ],
+      },
+      {
+        name: 'Work',
+        class: WORK,
+        fields: [
+          { name: 'name', kind: 'keyword', path: NAME, output: true },
+          {
+            name: 'dataset',
+            kind: 'reference',
+            from: 'dataset',
+            output: true,
+            ref: { strategy: 'lookup', target: 'Dataset' },
+          },
+          {
+            name: 'publisher',
+            kind: 'reference',
+            facetable: true,
+            ref: { strategy: 'idOnly', typeName: 'Publisher' },
+            derive: (_document, context) => context.datasetDocument?.publisher,
+          },
+        ],
+      },
+    );
+    const datasetType = withDatasetType.get(DATASET) as RootType;
+    const workType = withDatasetType.get(WORK) as RootType;
+    const datasetIri = dataset.iri.toString();
+    const publisherAlias = irAlias(datasetType, datasetType.fields[1]);
+    const datasetReader: Reader = {
+      read: () =>
+        Promise.resolve(
+          stream([
+            quad(
+              namedNode(datasetIri),
+              namedNode(publisherAlias),
+              namedNode('https://ex/publisher/1'),
+            ),
+          ]),
+        ),
+    };
+    const workReader: Reader = {
+      read: (_dataset, _distribution, options) =>
+        Promise.resolve(
+          stream(
+            (options?.bindings ?? []).map((binding) =>
+              quad(
+                namedNode(binding.root.value),
+                namedNode(irAlias(workType, workType.fields[0])),
+                literal('A work'),
+              ),
+            ),
+          ),
+        ),
+    };
+
+    // Listed work first: the order the stages run in is not the order given.
+    const types = [
+      {
+        searchType: workType,
+        rootVariable: 'root',
+        itemSelector: rootsSelector(['https://ex/w/1', 'https://ex/w/2']),
+        readers: workReader,
+      },
+      {
+        searchType: datasetType,
+        rootVariable: 'root',
+        itemSelector: rootsSelector([datasetIri]),
+        readers: datasetReader,
+      },
+    ];
+    const received: TypedSearchDocument[] = [];
+    const writer: DatasetWriter<TypedSearchDocument> = {
+      write: async (_dataset, items) => {
+        for await (const item of items) {
+          received.push(item);
+        }
+      },
+    };
+    const publishersOfWorks = () =>
+      received
+        .filter((item) => item.searchType === workType)
+        .map((item) => item.document.publisher);
+
+    const stages = searchStages({
+      schema: withDatasetType,
+      types,
+      datasetType: 'Dataset',
+    });
+    expect(stages.map((stage) => stage.name)).toEqual(['Dataset', 'Work']);
+    // A dataset’s stages run one after another, as the pipeline runs them.
+    for (const stage of stages) {
+      await stage.run(dataset, distribution, writer);
+    }
+    expect(publishersOfWorks()).toEqual([
+      'https://ex/publisher/1',
+      'https://ex/publisher/1',
+    ]);
+
+    // Another dataset’s works see that dataset’s document, not this one’s.
+    const other = new Dataset({
+      iri: new URL('http://example.org/dataset/2'),
+      distributions: [],
+    });
+    received.length = 0;
+    await stages[1].run(other, distribution, writer);
+    expect(publishersOfWorks()).toEqual([undefined, undefined]);
+
+    // Without the option, the order given stands and nothing is copied.
+    const unordered = searchStages({ schema: withDatasetType, types });
+    expect(unordered.map((stage) => stage.name)).toEqual(['Work', 'Dataset']);
+    received.length = 0;
+    for (const stage of [...unordered].reverse()) {
+      await stage.run(dataset, distribution, writer);
+    }
+    expect(publishersOfWorks()).toEqual([undefined, undefined]);
+
+    expect(() =>
+      searchStages({
+        schema: withDatasetType,
+        types: [types[0]],
+        datasetType: 'Dataset',
+      }),
+    ).toThrow(/Dataset type “Dataset” has no stage/);
+  });
+
   it('names each stage after its type and yields one stage per type', () => {
     const stages = searchStages({
       schema,

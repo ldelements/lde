@@ -26,7 +26,11 @@ The division of labour ([ADR 6](../decisions/0006-make-the-writer-transaction-aw
     CONSTRUCT that reads each field’s source `path` (a SPARQL property path) and
     emits it under the field’s IR Alias (`urn:lde:‹Type›/‹field›`) – the same key
     the projection reads back – so the reader and the projection cannot drift. A
-    stage without an explicit `readers` defaults to this generated reader;
+    stage without an explicit `readers` defaults to this generated reader.
+    With the `datasetType` option, that type’s stage runs first and the
+    dataset’s own document reaches every other stage’s projection as
+    `datasetDocument`, so a `derive` can copy a field of the dataset onto each
+    document ([Copy a field of the dataset](./search#copy-a-field-of-the-dataset));
   - `searchIndexWriter` is the pipeline’s single terminal: an engine-agnostic
     router that dispatches each document to the engine writer for **its**
     type’s collection ([ADR 9](../decisions/0009-route-a-whole-schema-projection-to-per-type-collections)).

@@ -1296,6 +1296,41 @@ so the console shows what each dataset lost and a publisher can be told which
 values to correct at the source. See
 [ADR 33](../decisions/0033-report-the-values-a-typed-field-could-not-read.md).
 
+### Copy a field of the dataset
+
+The context also carries `datasetDocument`: the projected document of the
+dataset being indexed. Name the type that describes the dataset with the
+`datasetType` option of `@lde/search-pipeline`’s `searchIndexerPipeline` (or
+`searchStages`): that type’s stage then runs first for each dataset, and the
+document it projects for the dataset itself – the one whose `id` is the dataset
+IRI – reaches every other stage.
+
+A `derive` uses it to copy a field of the dataset onto each document indexed
+from it. The copy is an ordinary stored field, so it filters, facets and counts
+per document:
+
+```ts
+{
+  name: 'publisher',
+  kind: 'reference',
+  output: true,
+  facetable: true,
+  ref: { strategy: 'lookup', target: 'Publisher' },
+  derive: (_document, context) => context.datasetDocument?.publisher,
+}
+```
+
+A facet on `publisher` then counts works per publisher of their dataset. A
+facet through a join cannot: Typesense counts the distinct _referenced_
+documents of a joined facet, so `$datasets(publisher)` on works counts
+datasets, not works (see
+[ADR 19](../decisions/0019-filter-across-collections-through-declared-joins#out-of-scope-deliberately)).
+
+`datasetDocument` is the dataset’s document as written, so the dataset type’s
+[internal fields](#field-model) are not in it: a field you copy must declare
+a role on the dataset type. It is absent without `datasetType`, when the
+dataset’s description is missing, and for documents of the dataset type itself.
+
 ## Locales
 
 `locales` declares the languages a `text` field wants **indexed** (`und` =

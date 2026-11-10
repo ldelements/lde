@@ -1,4 +1,4 @@
-import { Distribution } from '@lde/dataset';
+import { Distribution, type Dataset } from '@lde/dataset';
 import {
   SparqlConstructReader,
   SparqlItemSelector,
@@ -10,7 +10,12 @@ import {
   type StageOptions,
   type StageReaders,
 } from '@lde/pipeline';
-import { projectRoots, type RootType, type SearchSchema } from '@lde/search';
+import {
+  projectRoots,
+  type RootType,
+  type SearchDocument,
+  type SearchSchema,
+} from '@lde/search';
 import { extractionQueryString } from './extraction.js';
 import type { TypedSearchDocument } from './typed-search-document.js';
 
@@ -96,6 +101,15 @@ export interface SearchStagesOptions {
   schema: SearchSchema;
   /** One entry per root type to index, each its own stage. */
   types: readonly SearchStageType[];
+  /**
+   * The {@link SearchType.name} of the root type that describes the dataset
+   * being indexed. Its stage then runs first, and the document it projects
+   * for the dataset itself – the one whose `id` is the dataset IRI – reaches
+   * every other stage’s projection as `ProjectionContext.datasetDocument`, so
+   * a `derive` can copy a field of the dataset onto each document. Must name
+   * one of {@link types}.
+   */
+  datasetType?: string;
 }
 
 /**
@@ -108,6 +122,9 @@ export interface SearchStagesOptions {
  * by the dataset
  * ([ADR 13](https://github.com/ldelements/lde/blob/main/docs/decisions/0013-project-inside-the-batch-per-root-type.md)).
  *
+ * With {@link SearchStagesOptions.datasetType}, that type’s stage runs first
+ * and hands the dataset’s own document to every other stage’s projection.
+ *
  * Wire the result as `new Pipeline<TypedSearchDocument>({ datasetSelector,
  * stages: searchStages(...), writers: searchIndexWriter(...) })` – one terminal,
  * N stages.
@@ -115,8 +132,28 @@ export interface SearchStagesOptions {
 export function searchStages(
   options: SearchStagesOptions,
 ): Stage<TypedSearchDocument>[] {
-  const { schema, types } = options;
-  return types.map((type) => {
+  const { schema, types, datasetType } = options;
+  const isDatasetType = (type: SearchStageType) =>
+    type.searchType.name === datasetType;
+  if (datasetType !== undefined && !types.some(isDatasetType)) {
+    // Without its stage the document is never projected, and every copy of a
+    // dataset field would be silently absent.
+    throw new Error(
+      `Dataset type “${datasetType}” has no stage; name one of the types searchStages projects.`,
+    );
+  }
+  // The dataset being indexed and its own projected document, for the stages
+  // that run after its type’s. The pipeline processes datasets one at a time,
+  // so one slot holds one document, never one per dataset; it is read only for
+  // the dataset object it was written for.
+  let current: { dataset: Dataset; document: SearchDocument } | undefined;
+  // A dataset’s stages run one after another, in this order: the dataset
+  // type’s stage first, so its document is there for every other stage.
+  const ordered = [
+    ...types.filter(isDatasetType),
+    ...types.filter((type) => !isDatasetType(type)),
+  ];
+  return ordered.map((type) => {
     // Project with the schema’s OWN declaration object, whatever the caller
     // passed: `assertTypeInSchema` (inside `projectRoots`) is an identity check,
     // and re-resolving here makes a class-equal lookalike work too.
@@ -127,6 +164,7 @@ export function searchStages(
       );
     }
     const { rootVariable } = type;
+    const isDatasetStage = isDatasetType(type);
     if (type.readers !== undefined && type.transform !== undefined) {
       // Which of the caller’s readers the transform belongs to is knowable only
       // to that caller, so guessing (all of them? the first?) would be a silent
@@ -176,21 +214,31 @@ export function searchStages(
         // declared over, and what a `derive` reads to relate a projected value
         // to its provenance. The stage is where it is known: the writer sees it
         // only after projection, which is too late for either.
+        // The same `iri.toString()` the writer’s provenance bookkeeping and
+        // `selectedSources()` use, so a declared field, the membership sweep
+        // and the selection all compare one spelling of the IRI.
+        const datasetIri = context.dataset.iri.toString();
         for await (const document of projectRoots(
           quads,
           roots,
           schema,
           searchType,
-          // The same `iri.toString()` the writer’s provenance bookkeeping and
-          // `selectedSources()` use, so a declared field, the membership sweep
-          // and the selection all compare one spelling of the IRI.
           {
-            dataset: context.dataset.iri.toString(),
+            dataset: datasetIri,
+            // Only for other types: the dataset type’s own batches would
+            // otherwise see it or not depending on which batch ran first.
+            datasetDocument:
+              !isDatasetStage && current?.dataset === context.dataset
+                ? current.document
+                : undefined,
             // Tallied by the pipeline and reported when the dataset completes.
             onUnreadable: ({ field, id, value }) =>
               context.valueUnread(searchType.name, field, { id, value }),
           },
         )) {
+          if (isDatasetStage && document.id === datasetIri) {
+            current = { dataset: context.dataset, document };
+          }
           yield { searchType, document };
         }
       },
