@@ -59,6 +59,20 @@ describe('createSearchIndexer', () => {
     ).rejects.toThrowError(/Unknown registry root type\(s\) “Publisher”/);
   });
 
+  it('fails the boot on a restricted root type the schema does not declare', async () => {
+    // Proves RESTRICT_ROOTS reaches the pipeline: a misspelt name would
+    // otherwise restrict nothing and index every root.
+    await expect(
+      createSearchIndexer(
+        configFromEnvironment({
+          ...minimal,
+          SCHEMA_MODULE: fixture,
+          RESTRICT_ROOTS: '{"Publisher": "?root a ?type"}',
+        }),
+      ),
+    ).rejects.toThrowError(/Unknown restricted root type\(s\) “Publisher”/);
+  });
+
   it('attaches a deployment’s transform without giving up the wiring', async () => {
     // The whole cost of adding behaviour: one option. Everything
     // createSearchIndexer wires – provenance, the reporter, registry types,

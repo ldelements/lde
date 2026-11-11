@@ -16,7 +16,7 @@ const program = new Command()
   .version(version)
   .argument(
     '[datasets...]',
-    'dataset IRIs to index (overrides the DATASETS environment variable)',
+    'dataset IRIs and file: URLs to index (overrides the DATASETS environment variable)',
   )
   .option(
     '--check',

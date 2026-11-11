@@ -1,0 +1,25 @@
+@prefix ch: <https://w3id.org/lde/content-hash#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<https://w3id.org/lde/content-hash#>
+  a owl:Ontology ;
+  rdfs:label "LDE content hash vocabulary"@en ;
+  rdfs:comment "Bookkeeping that @lde/change-detection stores with a written RDF document, so a writer can tell whether the document changed since its last write."@en ;
+  rdfs:seeAlso <https://ldelements.org/reference/change-detection> .
+
+ch:contentHash
+  a owl:DatatypeProperty ;
+  rdfs:label "content hash"@en ;
+  rdfs:comment "A fingerprint of this document as it was written: the hashing method, a colon, and the digest of the document’s RDFC-1.0 canonical N-Quads, without the content hash triples themselves. Not a checksum of any source the document was converted from."@en ;
+  rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://w3id.org/lde/content-hash#> .
+
+ch:hashVersion
+  a owl:DatatypeProperty ;
+  rdfs:label "hash version"@en ;
+  rdfs:comment "The writer’s own conversion or pipeline version at the time the content hash was taken, compared for equality only."@en ;
+  rdfs:range xsd:string ;
+  rdfs:isDefinedBy <https://w3id.org/lde/content-hash#> .

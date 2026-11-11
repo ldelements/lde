@@ -111,6 +111,10 @@ await pipeline.run();
   <td>Probe distributions for availability and metadata</td>
 </tr>
 <tr>
+  <td><a href="packages/iiif-image">@lde/iiif-image</a><br><a href="https://www.npmjs.com/package/@lde/iiif-image"><img src="https://img.shields.io/npm/v/@lde/iiif-image" alt="npm"></a></td>
+  <td>Find a IIIF manifest’s painted images and read their image services’ dimensions, limits and sizes</td>
+</tr>
+<tr>
   <td><a href="packages/iiif-validator">@lde/iiif-validator</a><br><a href="https://www.npmjs.com/package/@lde/iiif-validator"><img src="https://img.shields.io/npm/v/@lde/iiif-validator" alt="npm"></a></td>
   <td>Validate that a URL resolves to a valid IIIF Presentation Manifest</td>
 </tr>
@@ -127,6 +131,10 @@ await pipeline.run();
   <td>Convert tabular and other non-RDF sources to RDF with the SPARQL Anything CLI</td>
 </tr>
 <tr><th colspan="2" align="left">Publication – Serve and document your data</th></tr>
+<tr>
+  <td><a href="packages/change-detection">@lde/change-detection</a><br><a href="https://www.npmjs.com/package/@lde/change-detection"><img src="https://img.shields.io/npm/v/@lde/change-detection" alt="npm"></a></td>
+  <td>Tell whether an RDF document changed since its last write, so writers can skip the unchanged ones</td>
+</tr>
 <tr>
   <td><a href="packages/fastify-rdf">@lde/fastify-rdf</a><br><a href="https://www.npmjs.com/package/@lde/fastify-rdf"><img src="https://img.shields.io/npm/v/@lde/fastify-rdf" alt="npm"></a></td>
   <td>Fastify plugin for RDF content negotiation and request body parsing</td>
@@ -172,10 +180,18 @@ await pipeline.run();
   <td><a href="packages/pipeline-console-reporter">@lde/pipeline-console-reporter</a><br><a href="https://www.npmjs.com/package/@lde/pipeline-console-reporter"><img src="https://img.shields.io/npm/v/@lde/pipeline-console-reporter" alt="npm"></a></td>
   <td>Console progress reporter for pipelines</td>
 </tr>
+<tr>
+  <td><a href="packages/pipeline-logger-reporter">@lde/pipeline-logger-reporter</a><br><a href="https://www.npmjs.com/package/@lde/pipeline-logger-reporter"><img src="https://img.shields.io/npm/v/@lde/pipeline-logger-reporter" alt="npm"></a></td>
+  <td>Reporter that logs pipeline events to a structured logger of your choice</td>
+</tr>
 <tr><th colspan="2" align="left">Infrastructure – Manage SPARQL servers and run tasks</th></tr>
 <tr>
   <td><a href="packages/host-limiter">@lde/host-limiter</a><br><a href="https://www.npmjs.com/package/@lde/host-limiter"><img src="https://img.shields.io/npm/v/@lde/host-limiter" alt="npm"></a></td>
-  <td>Concurrent map bounded by a global and a per-host cap</td>
+  <td>Concurrent map bounded by a global cap and an adaptive per-host limit</td>
+</tr>
+<tr>
+  <td><a href="packages/public-fetch">@lde/public-fetch</a><br><a href="https://www.npmjs.com/package/@lde/public-fetch"><img src="https://img.shields.io/npm/v/@lde/public-fetch" alt="npm"></a></td>
+  <td>Fetch URLs from other people’s data without reaching internal addresses</td>
 </tr>
 <tr>
   <td><a href="packages/local-sparql-endpoint">@lde/local-sparql-endpoint</a><br><a href="https://www.npmjs.com/package/@lde/local-sparql-endpoint"><img src="https://img.shields.io/npm/v/@lde/local-sparql-endpoint" alt="npm"></a></td>

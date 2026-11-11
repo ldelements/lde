@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   isoToUnixSeconds,
+  type StoredDate,
+  lastSecondOf,
   type SearchQuery,
+  type SearchField,
   type SearchType,
 } from '@lde/search';
 import { buildSearchParams } from '../src/query-compiler.js';
@@ -83,16 +86,20 @@ describe('buildSearchParams', () => {
       buildSearchParams({ ...base, text: 'Kaart', locale: 'nl' }, schema),
     ).toMatchObject({ q: 'kaart', query_by_weights: '5,4,1' });
     expect(
-      buildSearchParams({ ...base, text: 'Kaart', locale: 'en' }, schema)
-        .query_by_weights,
-    ).toBe('4,5,1');
+      buildSearchParams({ ...base, text: 'Kaart', locale: 'en' }, schema),
+    ).toMatchObject({
+      query_by: 'title_search_en,title_search_nl,keyword_search',
+      query_by_weights: '5,4,1',
+    });
   });
 
   it('boosts the declared locale a regional tag falls under', () => {
     expect(
-      buildSearchParams({ ...base, text: 'Kaart', locale: 'en-GB' }, schema)
-        .query_by_weights,
-    ).toBe('4,5,1');
+      buildSearchParams({ ...base, text: 'Kaart', locale: 'en-GB' }, schema),
+    ).toMatchObject({
+      query_by: 'title_search_en,title_search_nl,keyword_search',
+      query_by_weights: '5,4,1',
+    });
   });
 
   it('sorts a regional tag on its declared locale’s key', () => {
@@ -443,8 +450,9 @@ describe('buildSearchParams', () => {
   });
 
   it('converts a deep-time xsd:gYear bound to the stored Unix seconds', () => {
-    const min = isoToUnixSeconds('-318000000');
-    const max = isoToUnixSeconds('-316000000');
+    const min = isoToUnixSeconds('-318000000')?.seconds;
+    // An upper bound reaches through the year it names.
+    const max = lastSecondOf(isoToUnixSeconds('-316000000') as StoredDate);
     expect(
       buildSearchParams(
         {
@@ -463,6 +471,32 @@ describe('buildSearchParams', () => {
         schema,
       ).filter_by,
     ).toBe(`datePosted:[${min}..${max}]`);
+  });
+
+  it('reaches an upper bound through the end of the period it names', () => {
+    const compiled = (max: string) =>
+      buildSearchParams(
+        {
+          ...base,
+          where: [{ or: [{ field: 'datePosted', range: { max } }] }],
+        },
+        schema,
+      ).filter_by;
+    const before = (iso: string) => Date.parse(iso) / 1000 - 1;
+    expect(compiled('1999')).toBe(
+      `datePosted:<=${before('2000-01-01T00:00:00Z')}`,
+    );
+    // February of a leap year ends on the 29th.
+    expect(compiled('2000-02')).toBe(
+      `datePosted:<=${before('2000-03-01T00:00:00Z')}`,
+    );
+    expect(compiled('1999-12-31')).toBe(
+      `datePosted:<=${before('2000-01-01T00:00:00Z')}`,
+    );
+    // A date-time is its own last second.
+    expect(compiled('1999-12-31T12:00:00Z')).toBe(
+      `datePosted:<=${Date.parse('1999-12-31T12:00:00Z') / 1000}`,
+    );
   });
 
   it('drops a date bound the codec cannot read rather than compiling garbage', () => {
@@ -518,7 +552,8 @@ describe('buildSearchParams', () => {
 
   it('reads an unpadded BCE bound as a year, so the range is not inverted', () => {
     const min = Date.parse('-001100-01-01T00:00:00.000Z') / 1000;
-    const max = Date.parse('-000800-01-01T00:00:00.000Z') / 1000;
+    // Through the end of 801 BCE: the last second before -0799 begins.
+    const max = Date.parse('-000799-01-01T00:00:00.000Z') / 1000 - 1;
     expect(
       buildSearchParams(
         {
@@ -601,6 +636,30 @@ describe('buildSearchParams', () => {
     ).toBe('size(0:[1, 10], 1:[10, 100], 2:[100, ])');
   });
 
+  it('facets a date field into its ISO 8601 bins as Unix seconds', () => {
+    const binned: SearchType = {
+      ...schema,
+      fields: schema.fields.map((field): SearchField =>
+        field.name === 'datePosted'
+          ? {
+              name: 'datePosted',
+              kind: 'date',
+              facetable: true,
+              facetRanges: [
+                { key: 'older', max: '1969' },
+                { key: 'seventies', min: '1970', max: '1979' },
+              ],
+            }
+          : field,
+      ),
+    };
+    expect(
+      buildSearchParams({ ...base, facets: ['datePosted'] }, binned).facet_by,
+      // A bin reaches through the period its `max` names, so Typesense’s
+      // exclusive end is the first second after it.
+    ).toBe('datePosted(older:[, 0], seventies:[0, 315532800])');
+  });
+
   it('mixes range and plain facets in one facet_by clause', () => {
     expect(
       buildSearchParams({ ...base, facets: ['keyword', 'size'] }, schema)
@@ -637,11 +696,77 @@ describe('und locale', () => {
     ],
   };
 
+  const titleIn = (locales: string[]): SearchType => ({
+    ...undSchema,
+    fields: [
+      {
+        name: 'title',
+        kind: 'text',
+        locales,
+        output: true,
+        sortable: true,
+        searchable: { weight: 5 },
+      },
+    ],
+  });
+
   it('never demotes the language-neutral und search field', () => {
     const params = buildSearchParams({ ...base, locale: 'en' }, undSchema);
-    // Neither locale is active: nl is demoted, und keeps full weight.
+    // en is not declared, so nl leads; und keeps full weight.
     expect(params.query_by).toBe('title_search_nl,title_search_und');
-    expect(params.query_by_weights).toBe('4,5');
+    expect(params.query_by_weights).toBe('5,5');
+  });
+
+  // Typesense stems the query once, with the settings of the highest-weighted
+  // field (https://github.com/typesense/typesense/issues/1815): an unstemmed
+  // und companion in the lead leaves the query unstemmed, and every stemmed
+  // companion’s matches are lost.
+  it('leads with the first tagged locale for a request without a language', () => {
+    const params = buildSearchParams({ ...base, locale: 'und' }, undSchema);
+    expect(params.query_by).toBe('title_search_nl,title_search_und');
+    expect(params.query_by_weights).toBe('5,5');
+  });
+
+  it('puts the active locale ahead of an und declared before it', () => {
+    const params = buildSearchParams(
+      { ...base, locale: 'nl' },
+      titleIn(['und', 'nl']),
+    );
+    expect(params.query_by).toBe('title_search_nl,title_search_und');
+    expect(params.query_by_weights).toBe('5,5');
+  });
+
+  it('demotes no tagged locale for a request without a language', () => {
+    expect(
+      buildSearchParams({ ...base, text: 'Kaart', locale: 'und' }, schema),
+    ).toMatchObject({
+      query_by: 'title_search_nl,title_search_en,keyword_search',
+      query_by_weights: '5,5,1',
+    });
+  });
+
+  it('leads with a stemmed companion across fields of equal weight', () => {
+    const params = buildSearchParams(
+      { ...base, locale: 'nl' },
+      {
+        ...undSchema,
+        fields: [
+          { ...titleIn(['und']).fields[0], name: 'label' },
+          titleIn(['nl']).fields[0],
+        ],
+      },
+    );
+    expect(params.query_by).toBe('title_search_nl,label_search_und');
+    expect(params.query_by_weights).toBe('5,5');
+  });
+
+  it('searches an und-only field as before', () => {
+    const params = buildSearchParams(
+      { ...base, locale: 'und' },
+      titleIn(['und']),
+    );
+    expect(params.query_by).toBe('title_search_und');
+    expect(params.query_by_weights).toBe('5');
   });
 
   it('falls back to the first declared locale for sorting', () => {

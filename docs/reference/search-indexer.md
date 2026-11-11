@@ -41,7 +41,8 @@ Or without Docker (the same environment variables apply):
 npx @lde/search-indexer
 ```
 
-Dataset IRIs can also be passed as arguments, which override `DATASETS`:
+Dataset IRIs and `file:` URLs can also be passed as arguments, which override
+`DATASETS`:
 
 ```sh
 npx @lde/search-indexer https://example.org/id/dataset/1
@@ -64,27 +65,29 @@ images.
 
 ## Configuration
 
-| Variable              | Default                      | Meaning                                                                                                                                               |
-| --------------------- | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SCHEMA_MODULE`       | `/config/search-schema.mjs`  | Path of the mounted schema-declaration module                                                                                                         |
-| `REGISTRY_ENDPOINT`   | **required**                 | SPARQL endpoint of the DCAT dataset registry                                                                                                          |
-| `REGISTRY_ROOT_TYPES` | none                         | Root types extracted from the registry instead of the dataset’s distribution (see below), by schema type name                                         |
-| `DATASETS`            | all registry datasets        | Dataset IRIs to index (whitespace- or comma-separated)                                                                                                |
-| `DATASET_CRITERIA`    | all registry datasets        | Search criteria as a JSON object, in [`@lde/dataset-registry-client`](./dataset-registry-client)’s criteria format (mutually exclusive w/ `DATASETS`) |
-| `TYPESENSE_HOST`      | **required**                 | Typesense host                                                                                                                                        |
-| `TYPESENSE_PORT`      | `8108`                       | Typesense port                                                                                                                                        |
-| `TYPESENSE_PROTOCOL`  | `http`                       | `http` or `https`                                                                                                                                     |
-| `TYPESENSE_API_KEY`   | **required**                 | An admin key: the indexer creates, writes and swaps collections                                                                                       |
-| `REBUILD_MODE`        | `in-place`                   | `in-place` (update the live collection) or `blue-green` (swap on commit)                                                                              |
-| `COLLECTION_PREFIX`   | none                         | Prefix for every derived collection name (configure the read side to match)                                                                           |
-| `DEFAULT_LOCALE`      | none                         | Stemming language for untagged text, e.g. `nl`. Unset, untagged text is folded but **unstemmed** – `fietsen` will not match `fiets`                   |
-| `PROVENANCE_FILE`     | none                         | JSON file remembering per-dataset processing, to skip unchanged datasets                                                                              |
-| `PIPELINE_VERSION`    | none                         | Version keying the skip decisions; required with `PROVENANCE_FILE`                                                                                    |
-| `QLEVER_MODE`         | `docker` with `QLEVER_IMAGE` | `docker` (sibling containers over the Docker socket) or `remote` (a QLever sidecar in the pod); enables the QLever import path (see below)            |
-| `QLEVER_IMAGE`        | none                         | Image for `docker` mode, e.g. `adfreiburg/qlever:latest`; setting it alone enables `docker` mode. Rejected in `remote` mode                           |
-| `IMPORT_STRATEGY`     | `sparql`                     | `sparql`, `sparqlWithImportFallback` or `import`; requires the import path                                                                            |
-| `DATA_DIR`            | `/data`                      | Directory for downloaded dumps and QLever index caches                                                                                                |
-| `QLEVER_NETWORK`      | none                         | Docker network the spawned QLever joins; set when the indexer itself runs containerized (see below). `docker` mode only                               |
+| Variable                 | Default                      | Meaning                                                                                                                                               |
+| ------------------------ | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SCHEMA_MODULE`          | `/config/search-schema.mjs`  | Path of the mounted schema-declaration module                                                                                                         |
+| `REGISTRY_ENDPOINT`      | **required**                 | SPARQL endpoint of the DCAT dataset registry; not needed when `DATASETS` holds only `file:` URLs                                                      |
+| `REGISTRY_ROOT_TYPES`    | none                         | Root types extracted from the registry instead of the dataset’s distribution (see below), by schema type name                                         |
+| `DATASETS`               | all registry datasets        | Dataset IRIs and `file:` URLs of local data to index (whitespace- or comma-separated; see below)                                                      |
+| `DATASET_CRITERIA`       | all registry datasets        | Search criteria as a JSON object, in [`@lde/dataset-registry-client`](./dataset-registry-client)’s criteria format (mutually exclusive w/ `DATASETS`) |
+| `RESTRICT_ROOTS`         | none                         | JSON object mapping root type names to a SPARQL graph pattern over `?root`; only matching roots are indexed (see below)                               |
+| `TYPESENSE_HOST`         | **required**                 | Typesense host                                                                                                                                        |
+| `TYPESENSE_PORT`         | `8108`                       | Typesense port                                                                                                                                        |
+| `TYPESENSE_PROTOCOL`     | `http`                       | `http` or `https`                                                                                                                                     |
+| `TYPESENSE_API_KEY`      | **required**                 | An admin key: the indexer creates, writes and swaps collections                                                                                       |
+| `REBUILD_MODE`           | `in-place`                   | `in-place` (update the live collection) or `blue-green` (swap on commit)                                                                              |
+| `COLLECTION_PREFIX`      | none                         | Prefix for every derived collection name (configure the read side to match)                                                                           |
+| `DEFAULT_LOCALE`         | none                         | Stemming language for untagged text, e.g. `nl`. Unset, untagged text is folded but **unstemmed** – `fietsen` will not match `fiets`                   |
+| `PROVENANCE_FILE`        | none                         | JSON file remembering per-dataset processing, to skip unchanged datasets                                                                              |
+| `PIPELINE_VERSION`       | none                         | Version keying the skip decisions; required with `PROVENANCE_FILE`                                                                                    |
+| `QLEVER_MODE`            | `docker` with `QLEVER_IMAGE` | `docker` (sibling containers over the Docker socket) or `remote` (a QLever sidecar in the pod); enables the QLever import path (see below)            |
+| `QLEVER_IMAGE`           | none                         | Image for `docker` mode, e.g. `adfreiburg/qlever:latest`; setting it alone enables `docker` mode. Rejected in `remote` mode                           |
+| `IMPORT_STRATEGY`        | `sparql`                     | `sparql`, `sparqlWithImportFallback` or `import`; requires the import path                                                                            |
+| `DATA_DIR`               | `/data`                      | Directory for downloaded dumps and QLever index caches                                                                                                |
+| `QLEVER_NETWORK`         | none                         | Docker network the spawned QLever joins; set when the indexer itself runs containerized (see below). `docker` mode only                               |
+| `QLEVER_MEMORY_MAX_SIZE` | `4G`                         | Memory QLever may reserve for queries, e.g. `8G`; raise it when QLever refuses extraction queries (see below). Requires the import path               |
 
 A misconfigured boot reports **all** problems in one error, not one per crash
 loop. `PROVENANCE_FILE` must sit on a durable volume, and cannot be combined
@@ -94,6 +97,64 @@ image’s runtime user (uid 1000) – the image pre-creates `/provenance` with
 that ownership, so a named volume mounted there just works, while a bind
 mount must be `chown`ed on the host. A run fails at start when the file is
 not writable, instead of silently never skipping.
+
+## Local RDF files
+
+A registry is the primary way to select datasets. To add data that has no
+registration, name it in `DATASETS` by its `file:` URL, beside any registered
+datasets. Mount it into the indexer, read-only is enough, and enable the
+[QLever import path](#the-qlever-import-path):
+
+```sh
+docker run --rm \
+  --volume ./search-schema.mjs:/config/search-schema.mjs:ro \
+  --volume ./rdf:/rdf:ro \
+  --volume /srv/lde-data:/srv/lde-data \
+  --volume /var/run/docker.sock:/var/run/docker.sock \
+  --group-add "$(stat -c %g /var/run/docker.sock)" \
+  --network myproject_default \
+  --env REGISTRY_ENDPOINT=https://registry.example.org/sparql \
+  --env DATASETS="https://example.org/dataset/1 https://example.org/dataset/2 file:///rdf/extra.ttl file:///rdf/more/" \
+  --env QLEVER_IMAGE=adfreiburg/qlever:latest \
+  --env QLEVER_NETWORK=myproject_default \
+  --env DATA_DIR=/srv/lde-data \
+  --env TYPESENSE_HOST=typesense \
+  --env TYPESENSE_API_KEY=admin-key \
+  ghcr.io/ldelements/search-indexer
+```
+
+Registered and local datasets land in the same collections, so one search covers
+them all. A registry is only needed when `DATASETS` names a registered dataset:
+`DATASETS=file:///rdf/` on its own works without one. `DATASET_CRITERIA` cannot be
+combined with local data.
+
+A `file:` URL names one file, which is one dataset, or a directory if it ends in
+`/`, with one dataset per file directly inside it. Other files in a directory are
+skipped with a warning, and subdirectories are ignored. Listing a file twice, or
+beside its directory, fails at boot. The dataset’s IRI is the
+file’s URL inside the container (`file:///rdf/extra.ttl`), so moving the mount
+makes it a different dataset, and so does registering it later. The format follows
+from the extension: `.nt`, `.nq`, `.ttl`, `.trig`, `.jsonld` or `.rdf`, optionally
+followed by `.gz` or `.zip`. A dataset split over several files must be merged or
+zipped first.
+
+A local file holds data, not a registration, so a field reaches the index only if
+the file states it. A type in `REGISTRY_ROOT_TYPES` reads a local dataset’s own
+file: to appear as a `Dataset`, the file must describe itself as a `dcat:Dataset`.
+Register a dataset that needs a curated description or a stable identity.
+
+The indexer copies each file into `DATA_DIR`, and QLever reads that copy, so only
+the indexer needs the mount, in remote mode too. Budget disk space for the copy.
+An unchanged file keeps its copy and its index, and `PROVENANCE_FILE` skips it.
+
+**Each run replaces the collections it writes to.** It removes every dataset it
+did not select, so list everything a collection should hold in one `DATASETS`.
+Dropping a file from the list, or from a listed directory, removes its documents
+on the next run. A separate run that selects only local data deletes what a
+registry run wrote to the same collections, and the other way round, unless it has
+its own `COLLECTION_PREFIX`.
+[ADR 31](../decisions/0031-import-local-files-through-the-data-dump-path) explains
+the design.
 
 ## Registry-sourced root types
 
@@ -128,6 +189,32 @@ schema: a `SearchType` is defined by its `class`, never by where its triples
 come from, and the same declaration serves a deployment that sources it
 differently. A name that the mounted schema does not declare fails the boot,
 rather than shipping an empty collection.
+
+## Restricted root types
+
+By default every instance of a root type’s class is indexed. To index only part
+of the selected datasets, give `RESTRICT_ROOTS` a SPARQL graph pattern per type,
+keyed by the type’s name. The pattern is added to the type’s root selection, so
+`?root` binds each candidate:
+
+```sh
+--env RESTRICT_ROOTS='{"CreativeWork": "?root <https://schema.org/about> <http://vocab.getty.edu/aat/300000000>"}'
+```
+
+Write IRIs in full: the query declares no prefixes, so `schema:about` does not
+parse. The restriction applies to that type in every selected dataset. Other types are
+indexed whole. A root the pattern leaves out is never extracted, so the
+collection, and every facet count over it, holds only matching roots. A kept
+document may still reference a left-out root, such as a person who is the
+creator of a work.
+
+Restriction is deployment configuration: the same schema module serves a
+deployment that indexes everything and one that indexes a subset. A name the
+mounted schema does not declare, a type in `REGISTRY_ROOT_TYPES` (it describes
+the dataset, not its records), a pattern that does not mention `?root` or one
+that does not parse fails the boot. With `PROVENANCE_FILE`, changing a
+restriction re-indexes every dataset: the restrictions are part of the version
+skips are keyed by.
 
 ## The QLever import path
 
@@ -175,6 +262,21 @@ indexers sharing one would remove each other’s QLever.
 
 This mode does not work on container runtimes without a Docker socket, such
 as containerd-based Kubernetes. Use remote mode there.
+
+### Memory for queries
+
+`QLEVER_MEMORY_MAX_SIZE` sets QLever’s `--memory-max-size`: the memory it may
+reserve for answering queries, `4G` by default. QLever does not let a query
+run past it. It refuses the query with an HTTP 500, such as “Tried to allocate
+8 MB, but only 5.8 MB were available”, and the stage that sent it fails for
+that dataset.
+
+What a query reserves depends on how QLever plans it, not only on how much it
+returns. A plan that evaluates many operations lazily reserves memory for each
+of them, so a query can exhaust `4G` while the process uses a fraction of that.
+Raise the value when an import succeeds but its stages are refused this way.
+In remote mode, keep it below the sidecar’s memory limit, so that QLever
+refuses a query instead of being killed for it.
 
 ### Remote mode
 
@@ -323,7 +425,7 @@ directly. Adding a transform is **not** such a case; that is `transforms` above.
 The three pieces `createSearchIndexer` composes are exported, so this route
 costs the bespoke part rather than a copy of the wiring:
 
-- `datasetSelectorFrom(config)` – the registry-backed dataset selection;
+- `datasetSelectorFrom(config)` – the dataset selection, from a registry or a local directory;
 - `distributionResolverFrom(config, replaceJsonLdContext?)` – the QLever
   import path when `QLEVER_MODE` or `QLEVER_IMAGE` is set, `undefined`
   otherwise (the pipeline’s endpoint-only default);

@@ -1,6 +1,6 @@
 {
   "name": "@lde/task-runner-http",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Run tasks in another container of the same pod, such as a sidecar with its own memory limit, through a task agent on 127.0.0.1.",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
@@ -25,11 +25,11 @@
     "!**/*.tsbuildinfo"
   ],
   "dependencies": {
-    "@lde/task-runner": "^0.3.0",
+    "@lde/task-runner": "^0.4.0",
     "tslib": "^2.3.0"
   },
   "devDependencies": {
-    "@lde/task-runner-native": "^0.3.0",
+    "@lde/task-runner-native": "^0.4.0",
     "commander": "^15.0.0",
     "fastify": "^5.12.7"
   },

@@ -40,6 +40,10 @@ This is deliberately cheap: reading a body forces a slow, generate-on-the-fly en
 
 - **Content-Type is checked as a soft warning, not a hard failure.** If the server’s Content-Type disagrees with the distribution’s declared `mimeType`, a message is appended to `result.warnings` but `isSuccess()` stays `true`. Compression wrappers (`application/gzip`, `application/x-gzip`, `application/octet-stream`) are skipped so a gzipped Turtle file doesn’t trigger a warning. For a compressed distribution the check accepts both the declared compressed form (`Distribution.compressedMimeType`, e.g. `application/n-quads+gzip`) and the bare `mimeType` – a server that serves the uncompressed representation is not flagged, while a different base serialization still is.
 
+#### Local files
+
+A distribution from `Distribution.localFile()` gets the same probe, answered from the filesystem as a `DataDumpProbeResult` with status 200 and the file’s size and modification date. Content validation works the same way, a gzipped file included; a zipped one is reported as `application/zip` and not validated. A missing path, a directory or an unreadable file is a `NetworkError`. A `file:` URL from any other distribution is never read and also yields a `NetworkError`.
+
 #### Content validation (opt-in)
 
 Set `validateRdfContent: true` to additionally confirm that a dump actually carries RDF. It applies only to distributions whose **declared** `mimeType` is an RDF serialization (`text/turtle`, `application/n-triples`, `application/n-quads`, `application/trig`, `text/n3`, `application/ld+json`, `application/rdf+xml`); non-RDF and undeclared-type distributions stay reachability-only.

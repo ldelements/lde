@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest';
+import { DataFactory } from 'n3';
+import { injectValues } from '@lde/pipeline';
 import { Parser } from '@traqula/parser-sparql-1-1';
 import {
   AstFactory,
   type Path,
+  type Pattern,
   type PatternGroup,
+  type PatternValues,
   type QueryConstruct,
   type TripleNesting,
 } from '@traqula/rules-sparql-1-1';
@@ -19,6 +23,7 @@ import type { SearchSchema, SearchType } from '@lde/search';
 import { extractionQuery, extractionQueryString } from '../src/extraction.js';
 
 const SCHEMA = 'https://schema.org/';
+const RDF_TYPE = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
 const factory = new AstFactory();
 
 // A Drapo-shaped SCHEMA-AP-NDE schema: CreativeWork (two localized text fields
@@ -138,14 +143,53 @@ const roleWork = defineSearchType({
 
 const roleSchema = searchSchema(roleWork, agent, creatorRole);
 
-/** The template triples, each narrowed from the broader BGP element type. */
+/**
+ * The template triples, each narrowed from the broader BGP element type. A
+ * merged plain read’s `?s ?alias ?o` is expanded into one triple per alias its
+ * `VALUES` table emits, in table order – the triples the query actually mints.
+ */
 function templateTriples(query: QueryConstruct): TripleNesting[] {
-  return query.template.triples.map((triple) => {
+  return query.template.triples.flatMap((triple) => {
     if (!factory.isTriple(triple)) {
       throw new Error('expected a plain triple in the CONSTRUCT template');
     }
-    return triple;
+    const predicate = triple.predicate;
+    if (!factory.isTermVariable(predicate)) {
+      return [triple];
+    }
+    const table = valuesBinding(query.where, predicate.value);
+    if (table === undefined) {
+      throw new Error(`no VALUES table binds ?${predicate.value}`);
+    }
+    return table.values.map((row) => ({
+      ...triple,
+      predicate: row[predicate.value] as TripleNesting['predicate'],
+    }));
   });
+}
+
+/** The `VALUES` table anywhere in a WHERE that binds the given variable. */
+function valuesBinding(
+  pattern: Pattern,
+  variable: string,
+): PatternValues | undefined {
+  return valuesTables(pattern).find((table) =>
+    table.variables.some((candidate) => candidate.value === variable),
+  );
+}
+
+/** The first `VALUES` table in a pattern, depth first. */
+function firstValues(pattern: Pattern): PatternValues | undefined {
+  return valuesTables(pattern)[0];
+}
+
+/** Every `VALUES` table in a pattern, depth first. */
+function valuesTables(pattern: Pattern): PatternValues[] {
+  if (factory.isPatternValues(pattern)) {
+    return [pattern as PatternValues];
+  }
+  const children = (pattern as { patterns?: Pattern[] }).patterns ?? [];
+  return children.flatMap(valuesTables);
 }
 
 /** The predicate IRIs (the minted IR Aliases) a CONSTRUCT template emits. */
@@ -199,12 +243,27 @@ describe('extractionQuery', () => {
     }
   });
 
-  it('reads each field via its source path in a UNION branch, not a conjunction', () => {
-    // One branch per field – never one BGP conjoining all paths (that
-    // cross-product is what inflates a multi-valued result ~4×).
+  it('reads the plain fields in one branch through a VALUES table, not a conjunction', () => {
+    // One triple pattern, `?root ?p ?o`, joined with a table of the fields’
+    // predicates – never one BGP conjoining all paths (that cross-product is
+    // what inflates a multi-valued result ~4×). Each row binds one field.
+    const [branch, ...others] = unionBranches(
+      extractionQuery(creativeWork, drapoSchema),
+    );
+    expect(others).toHaveLength(0);
+    const [bgp, table] = branch.patterns;
+    expect(bgp).toMatchObject({ subType: 'bgp', triples: [{}] });
+    expect(table).toMatchObject({ subType: 'values' });
     expect(
-      unionBranches(extractionQuery(creativeWork, drapoSchema)),
-    ).toHaveLength(3);
+      (table as PatternValues).values.map((row) =>
+        Object.values(row).map((term) => term?.value),
+      ),
+    ).toEqual(
+      creativeWork.fields.map((field) => [
+        field.path?.slice(1, -1),
+        irAlias(creativeWork, field),
+      ]),
+    );
   });
 
   it('embeds a multi-hop path as a SPARQL property path (sequence)', () => {
@@ -258,7 +317,7 @@ describe('extractionQuery', () => {
   it('stringifies to a runnable CONSTRUCT the SPARQL parser round-trips', () => {
     const query = extractionQueryString(creativeWork, drapoSchema);
     expect(query).toContain('CONSTRUCT');
-    expect(query).toContain('UNION');
+    expect(query).toContain('VALUES');
     const reparsed = new Parser().parse(query);
     expect(reparsed).toMatchObject({ type: 'query', subType: 'construct' });
   });
@@ -378,6 +437,49 @@ describe('inline references (nested template)', () => {
       irAlias(withName, withName.fields[0]),
     ]);
   });
+
+  it('keeps a literal stated in place of the node through an empty branch', () => {
+    // A literal has no values of its own, so without a branch of its own it
+    // would drop out of the nested union and never reach the projection.
+    const propertyValue = defineSearchType({
+      name: 'PropertyValue',
+      literalField: 'value',
+      fields: [{ name: 'value', kind: 'keyword', path: `<${SCHEMA}value>` }],
+    });
+    const work = defineSearchType({
+      name: 'Work',
+      class: `${SCHEMA}CreativeWork`,
+      fields: [
+        {
+          name: 'identifier',
+          kind: 'reference',
+          array: true,
+          path: `<${SCHEMA}identifier>`,
+          ref: { typeName: 'PropertyValue', strategy: 'inline' },
+        },
+      ],
+    });
+    const plain = defineSearchType({
+      name: 'PropertyValue',
+      fields: propertyValue.fields,
+    });
+
+    /** Whether the reference’s nested union has a branch reading nothing. */
+    const hasEmptyBranch = (forSchema: SearchSchema): boolean => {
+      const [group] = unionBranches(extractionQuery(work, forSchema));
+      const nested = group.patterns.find((pattern) =>
+        factory.isPatternUnion(pattern),
+      );
+      return (
+        nested !== undefined &&
+        factory.isPatternUnion(nested) &&
+        nested.patterns.some((branch) => branch.patterns.length === 0)
+      );
+    };
+
+    expect(hasEmptyBranch(searchSchema(work, propertyValue))).toBe(true);
+    expect(hasEmptyBranch(searchSchema(work, plain))).toBe(false);
+  });
 });
 
 describe('references into a keyed type', () => {
@@ -443,13 +545,14 @@ describe('references into a keyed type', () => {
   });
 
   it('leaves the keyed type’s own extraction unchanged', () => {
-    // The key field is an ordinary declared field, so its branch and template
-    // triple are already there; keying adds nothing on the root side.
+    // The key field is an ordinary declared field, so its read and template
+    // triple are already there; keying adds nothing on the root side. Both are
+    // plain reads, so they share one branch.
     expect(templatePredicates(extractionQuery(place, keyedSchema))).toEqual([
       irAlias(place, place.fields[0]),
       irAlias(place, place.fields[1]),
     ]);
-    expect(unionBranches(extractionQuery(place, keyedSchema))).toHaveLength(2);
+    expect(unionBranches(extractionQuery(place, keyedSchema))).toHaveLength(1);
   });
 
   it('adds no hop for a reference that names no target', () => {
@@ -489,9 +592,28 @@ describe('references into a keyed type', () => {
   });
 
   it('adds no hop for a reference into a target that declares no key', () => {
+    // The creator is then a plain read, merged with the other fields: a row of
+    // their table, with no hop, so nothing optional and no triple read off the
+    // referent.
     const query = extractionQuery(creativeWork, drapoSchema);
-    const [, , creatorBranch] = unionBranches(query);
-    expect(creatorBranch.patterns).toHaveLength(1);
+    const [branch] = unionBranches(query);
+    const table = firstValues(branch);
+    expect(
+      table?.values.map((row) => Object.values(row).map((term) => term?.value)),
+    ).toContainEqual([
+      `${SCHEMA}creator`,
+      irAlias(creativeWork, creativeWork.fields[2]),
+    ]);
+    expect(extractionQueryString(creativeWork, drapoSchema)).not.toContain(
+      'OPTIONAL',
+    );
+    expect(
+      templateTriples(query).every(
+        (triple) =>
+          factory.isTermVariable(triple.subject) &&
+          triple.subject.value === 'root',
+      ),
+    ).toBe(true);
   });
 });
 
@@ -825,5 +947,104 @@ describe('extraction ⟷ projection contract', () => {
     const schema = searchSchema(work, place);
     const minted = new Set(templatePredicates(extractionQuery(work, schema)));
     expect(minted).toEqual(projectionReads(work, schema));
+  });
+});
+
+describe('plain reads', () => {
+  const organization = defineSearchType({
+    name: 'Organization',
+    class: `${SCHEMA}Organization`,
+    labelField: 'name',
+    fields: [
+      {
+        name: 'name',
+        kind: 'text',
+        path: `<${SCHEMA}name>`,
+        locales: ['und'],
+        output: true,
+        searchable: { weight: 5 },
+      },
+    ],
+  });
+  const work = defineSearchType({
+    name: 'Work',
+    class: `${SCHEMA}CreativeWork`,
+    fields: [
+      {
+        name: 'creator',
+        kind: 'reference',
+        array: true,
+        output: true,
+        path: `<${SCHEMA}creator>`,
+        ref: {
+          strategy: 'lookup',
+          target: ['Agent', 'Organization'],
+          local: true,
+        },
+      },
+    ],
+  });
+  const schema = searchSchema(work, agent, organization);
+
+  /** The rows of the VALUES table under a reference’s OPTIONAL. */
+  function referentReads(query: QueryConstruct): string[][] {
+    const [branch] = unionBranches(query);
+    const optional = branch.patterns[1];
+    if (optional === undefined || !factory.isPatternOptional(optional)) {
+      throw new Error('expected the referent’s reads in an OPTIONAL');
+    }
+    const table = firstValues(optional);
+    if (table === undefined) {
+      throw new Error('expected the referent’s plain reads in a VALUES table');
+    }
+    return table.values.map((row) =>
+      Object.values(row).map((term) => term?.value ?? ''),
+    );
+  }
+
+  it('reads a predicate several targets share once, emitting it for each', () => {
+    // `name` is Agent’s and Organization’s: one row each, off the one scan.
+    expect(referentReads(extractionQuery(work, schema))).toEqual([
+      [RDF_TYPE, RDF_TYPE],
+      [`${SCHEMA}name`, irAlias(agent, agent.fields[0])],
+      [`${SCHEMA}birthDate`, irAlias(agent, agent.fields[1])],
+      [`${SCHEMA}name`, irAlias(organization, organization.fields[0])],
+    ]);
+  });
+
+  it('leaves a subject’s only plain read a branch of its own', () => {
+    const single = defineSearchType({
+      name: 'Single',
+      class: `${SCHEMA}CreativeWork`,
+      fields: [
+        {
+          name: 'name',
+          kind: 'text',
+          path: `<${SCHEMA}name>`,
+          locales: ['und'],
+          output: true,
+        },
+      ],
+    });
+    const query = extractionQueryString(single, searchSchema(single));
+    expect(query).not.toContain('VALUES');
+    expect(query).toContain(`?root <${SCHEMA}name>`);
+  });
+
+  it('keeps the roots injectable into every branch, the merged one included', () => {
+    // `injectValues` puts the roots into each top-level branch only if every
+    // branch binds ?root in a leading triple pattern.
+    const injected = injectValues(extractionQuery(creativeWork, drapoSchema), [
+      { root: DataFactory.namedNode('https://example.org/work') },
+    ]);
+    for (const branch of unionBranches(injected)) {
+      expect(
+        branch.patterns.some(
+          (pattern) =>
+            factory.isPatternValues(pattern) &&
+            pattern.variables.some((variable) => variable.value === 'root'),
+        ),
+      ).toBe(true);
+    }
   });
 });

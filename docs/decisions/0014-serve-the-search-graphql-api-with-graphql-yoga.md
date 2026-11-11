@@ -47,6 +47,8 @@ executable schema, and brings introspection, error shaping and a plugin system.
   Apollo’s CDN and ships schema and queries to Apollo.
 - **Limits**: graphql-armor’s max-depth and cost-limit validation plugins guard
   the public endpoint; introspection is exempt so the playground keeps working.
+  [ADR 31](./0031-count-a-querys-cost-in-engine-operations.md) replaces the
+  cost limit with one that counts engine operations.
 - **Composability**: the handler takes either a `searchSchema` (it builds the
   GraphQL schema itself) or a ready `GraphQLSchema` – a consumer merges custom
   fields into `buildGraphQLSchema()`’s output and serves the union through the

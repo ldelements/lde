@@ -1,6 +1,6 @@
 {
   "name": "@lde/iiif-validator",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
     "directory": "packages/iiif-validator"
@@ -24,7 +24,8 @@
     "!**/*.tsbuildinfo"
   ],
   "dependencies": {
-    "@iiif/parser": "^4.0.3",
+    "@iiif/parser": "^4.0.5",
+    "@lde/public-fetch": "^0.1.0",
     "tslib": "^2.3.0"
   }
 }

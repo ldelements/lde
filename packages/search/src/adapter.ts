@@ -26,11 +26,15 @@ export {
   referencedTargetsOf,
   storedTargetOf,
   TARGET_FIELD,
+  facetNamed,
+  facetsOf,
+  holdsNoIds,
   identityFieldOf,
   identityFieldName,
   inheritedFacetPolicies,
   referenceFields,
   referenceTypeNamed,
+  endpointFieldOf,
   rootTypeNamed,
   inlineFramingDepth,
   fieldNamed,
@@ -42,15 +46,25 @@ export {
   labelFieldNameOf,
   labelSourceNamesOf,
   labelTargetNamesOf,
+  literalKindOf,
   documentKeyOf,
   DEFAULT_LABEL_FIELD,
   isRangeFacet,
   isBinnedRangeFacet,
+  storedFacetRanges,
   isAbsoluteIri,
   isoToUnixSeconds,
+  storedRangeBound,
+  lastSecondOf,
   unixSecondsToIso,
+  isDatePrecision,
 } from './schema.js';
-export type { PhysicalFields } from './schema.js';
+export type {
+  FacetDeclaration,
+  PhysicalFields,
+  DatePrecision,
+  StoredDate,
+} from './schema.js';
 export { missingRequiredFields } from './project.js';
 export { physicalNameTokens } from './physical-name.js';
 export { matchLanguage } from './language.js';
@@ -60,6 +74,7 @@ export {
   filterOperatorFor,
   filterOperator,
   filterOn,
+  selectionOf,
   isWelded,
   isUnsatisfiable,
   facetSearches,

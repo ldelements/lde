@@ -58,7 +58,7 @@ A **Pipeline** consists of:
 
 ### Dataset Selector
 
-Selects datasets, either manually or by querying a DCAT Dataset Registry:
+Selects datasets. A DCAT Dataset Registry is the primary way in; a local directory or a manual list serves data that has no registration:
 
 ```typescript
 // From a registry
@@ -66,8 +66,14 @@ const selector = new RegistrySelector({
   registry: new Client(new URL('https://example.com/sparql')),
 });
 
+// One dataset per RDF file in a local directory
+const selector = new DirectorySelector('./rdf');
+
 // Manual
 const selector = new ManualDatasetSelection([dataset]);
+
+// Several of these in one run, in the order given
+const selector = new CombinedSelector([registrySelector, directorySelector]);
 ```
 
 ### Distribution Resolver
@@ -96,10 +102,10 @@ For custom resolution, implement the `DistributionResolver` interface. It works 
 
 A run degrades per dataset rather than failing as a whole:
 
-- A stage failure is caught and reported (`stageFailed`); the dataset is marked failed – its `flush` outcome and provenance record say `'failed'` – and the run continues with the next dataset, after the [reactive dump fallback](#distribution-resolver) has had its chance, when configured.
-- A probe or resolve failure skips the dataset (`datasetSkipped`); the run continues.
+- A stage failure is caught and reported (a `stageFailed` event); the dataset is marked failed – its `flush` outcome and provenance record say `'failed'` – and the run continues with the next dataset, after the [reactive dump fallback](#distribution-resolver) has had its chance, when configured.
+- A probe or resolve failure skips the dataset (a `datasetSkipped` event); the run continues.
 - A per-dataset writer `flush` failure is likewise isolated to that dataset.
-- A writer may leave some of a dataset’s items out rather than fail it – a search index refusing a document – and reports them through `RunContext.itemsRejected`, which the pipeline passes to the reporter (`itemsRejected`).
+- A writer may leave some of a dataset’s items out rather than fail it – a search index refusing a document – and reports them through `RunContext.itemsRejected`, which the pipeline reports as an `itemsRejected` event.
 - Only failures outside per-dataset processing abort the run – the dataset selector’s iteration and the writer’s `commit` – in which case the pipeline calls `writer.abort(error)` and rethrows.
 - An [empty selection](#empty-selections) also aborts the run, but does **not** rethrow: the run is abandoned rather than failed.
 
@@ -168,7 +174,7 @@ Set it for scalar aggregates such as `SELECT (COUNT(*) AS ?n)`, which always ret
 
 #### Projecting batches with `project`
 
-`project` (a `BatchTransform<Out>`) is the pipeline’s one type-changing seam: it turns each root-complete batch of quads into the stage’s output items, changing the item type `Out` of `Stage`, `Pipeline` and the [writers](#writer) from `Quad` to, say, a search document (see [ADR 13](../decisions/0013-project-inside-the-batch-per-root-type)). The transform receives the batch’s quads plus a `BatchContext`: the dataset, distribution, stage name and the item-selector `bindings` the readers were given as a `VALUES` block – so the batch is root-complete by construction.
+`project` (a `BatchTransform<Out>`) is the pipeline’s one type-changing seam: it turns each root-complete batch of quads into the stage’s output items, changing the item type `Out` of `Stage`, `Pipeline` and the [writers](#writer) from `Quad` to, say, a search document (see [ADR 13](../decisions/0013-project-inside-the-batch-per-root-type)). The transform receives the batch’s quads plus a `BatchContext`: the dataset, distribution, stage name and the item-selector `bindings` the readers were given as a `VALUES` block – so the batch is root-complete by construction. A transform that cannot read a value and leaves it out of its item reports it through `context.valueUnread(target, field, { id, value })`; the pipeline tallies these per field – a count and at most 5 distinct examples – and passes them to the reporter (`valuesUnread`) when the dataset completes.
 
 `project` requires an `itemSelector` (without one there is no batch, only the readers’ whole output) and cannot combine with chained `stages` (scratch files are N-Triples, which a projected item cannot serialize to). A projecting pipeline also cannot use quad-level [plugins](#plugins); reader-attached quad transforms are unaffected, since they run before the projection. [@lde/search-pipeline](./search-pipeline) is the flagship user, projecting each batch into search documents.
 
@@ -324,7 +330,7 @@ Outcomes are classified as:
 | `timeout` | client-side `AbortSignal.timeout()` fired, or upstream returned HTTP 504 |
 | `error`   | anything else (other HTTP errors, parse errors, …) – neutral             |
 
-Transitions are forwarded to the `ProgressReporter` via `timeoutTightened` / `timeoutRelaxed`; `ConsoleReporter` prints them as `↘ Tightened` / `↗ Relaxed` lines so operators can tell a fast-failed stage from an unexpected speedup.
+Transitions are reported as `timeoutTightened` / `timeoutRelaxed` events; `ConsoleReporter` prints them as `↘ Tightened` / `↗ Relaxed` lines so operators can tell a fast-failed stage from an unexpected speedup.
 
 Implement `TimeoutPolicy` directly for custom strategies (closing over shared state in the factory if you want it to span datasets).
 
@@ -405,44 +411,89 @@ async openRun(): Promise<RunWriter> {
 
 ### Reporter
 
-A `ProgressReporter` observes the run, receiving lifecycle events such as `pipelineStart`, `stageComplete`, `datasetValidated` and `pipelineComplete`. Every method is optional, so a reporter implements only the events it cares about.
-
-Pass a single reporter, or an array to have several observe the same run – for example a console reporter alongside one that collects validation verdicts:
+The pipeline reports everything it does as `PipelineEvent`s: plain objects of a discriminated union, each carrying a `type`, a severity `defaultLevel` (`debug`, `info`, `warn` or `error`), a `timestamp`, the `runId` shared by every event of a run, and its own payload. A reporter is any object with an `onEvent` method:
 
 ```typescript
+interface Reporter {
+  onEvent(event: PipelineEvent): void;
+}
+```
+
+Pass a single reporter, or an array to have several observe the same run – for example a console reporter for a terminal alongside a structured log file:
+
+```typescript
+import { Pipeline } from '@lde/pipeline';
+import { ConsoleReporter } from '@lde/pipeline-console-reporter';
+import { LoggerReporter } from '@lde/pipeline-logger-reporter';
+
 new Pipeline({
   // …
-  reporter: [new ConsoleReporter(), verdictCollector],
+  reporter: [
+    new ConsoleReporter(),
+    new LoggerReporter(logger), // your application’s structured logger
+  ],
 });
 ```
 
-Each reporter receives every event, in array order; a reporter that does not implement a given event is skipped for it. See the how-to guide [Observe a run with a reporter](../guide/observe-a-run-with-a-reporter).
+Each reporter receives every event, synchronously and in array order, and decides itself what to do with `defaultLevel`. A reporter cannot break a run: if one throws, the others still get the event, the run carries on, and the error is emitted as a `ReporterWarning` process warning. See the how-to guide [Observe a run with a reporter](../guide/observe-a-run-with-a-reporter).
 
-The full event set, in rough lifecycle order:
+Two reporters ship as their own packages: [@lde/pipeline-console-reporter](./pipeline-console-reporter) for a terminal and [@lde/pipeline-logger-reporter](./pipeline-logger-reporter) for a structured logger of your choice.
 
-| Event                                                                                | Fired                                                                                                                                     |
-| ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `pipelineStart(name)`                                                                | Once, when the run starts.                                                                                                                |
-| `datasetsSelected(count, duration)`                                                  | After the dataset selector returns, with the selection size and duration (ms).                                                            |
-| `selectionEmpty(reason)`                                                             | When the run is abandoned because the selection was empty – no commit, destination unchanged (see [Empty selections](#empty-selections)). |
-| `datasetStart(dataset)`                                                              | When a dataset’s processing begins; datasets are processed one at a time, so it precedes all of that dataset’s later events.              |
-| `distributionProbed(result)`                                                         | Each time a single distribution probe completes, with a `DistributionAnalysisResult`.                                                     |
-| `importStarted()`                                                                    | When a data-dump import begins.                                                                                                           |
-| `importFailed(distribution, error)`                                                  | When importing a distribution fails.                                                                                                      |
-| `distributionValidated(distribution, verdict)`                                       | With the RDF-validity verdict for each distribution the pipeline attempted – even when the dataset is otherwise skipped.                  |
-| `distributionSelected(dataset, distribution, imported?)`                             | When a dataset’s source is resolved; `imported` (`{ from, duration, tripleCount?, engine? }`) is set when it was imported from a dump.    |
-| `stageStart(stage)`                                                                  | When a stage begins.                                                                                                                      |
-| `stageProgress({ itemsProcessed, quadsGenerated, memoryUsageBytes, heapUsedBytes })` | After each batch a stage processes.                                                                                                       |
-| `stageComplete(stage, { itemsProcessed, quadsGenerated, duration })`                 | When a stage finishes successfully.                                                                                                       |
-| `stageSkipped(stage, reason)`                                                        | When a stage is [skipped](#skipped-stages) (`NotSupported` or an empty selector).                                                         |
-| `stageFailed(stage, error)`                                                          | When a stage hard-fails; the run continues (see [Failure isolation](#failure-isolation)).                                                 |
-| `datasetValidated(dataset, report)`                                                  | Once per (dataset, validator) pair after all stages, even when nothing was validated – read `quadsValidated` to distinguish ‘not tested’. |
-| `datasetSkipped(dataset, reason)`                                                    | When a dataset is skipped: probe/resolve failure, no distribution available, or unchanged since the last run.                             |
-| `itemsRejected(dataset, { target, written, rejected, reasons })`                     | When a writer finalizes a dataset it left items out of; `reasons` counts each reason, with a few example ids.                             |
-| `datasetComplete(dataset, { memoryUsageBytes, heapUsedBytes })`                      | When a dataset’s processing ends.                                                                                                         |
-| `pipelineComplete({ duration, memoryUsageBytes, heapUsedBytes })`                    | Once, when the run ends.                                                                                                                  |
-| `timeoutTightened(event)`                                                            | When a [timeout policy](#timeout-policies) tightens an endpoint’s budget after consecutive timeouts.                                      |
-| `timeoutRelaxed(event)`                                                              | When a timeout policy relaxes a previously-tightened endpoint back to the default budget.                                                 |
+#### Levels
+
+The `defaultLevel` is the pipeline’s default, decided in one place (`levelOf`), not a verdict: a reporter that wants a skipped dataset to page someone can remap on `type` and the payload. Skip reasons are `{ code, message }` objects and failures carry `Error` values, so a reporter never matches on message strings. The library has no `fatal`: it never ends the process, and an unrecoverable failure rejects `run()`.
+
+#### Events
+
+In rough lifecycle order. Every event below the first four belongs to one dataset: it extends `DatasetEventEnvelope`, so it always carries that `dataset` and a reporter can find it with `'dataset' in event`. Stage events also carry the `stage` name.
+
+| `type`                  | Level                                     | Payload                                                                                                                                    | Reported                                                                                                                                                |
+| ----------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pipelineStart`         | `info`                                    | `name`                                                                                                                                     | Once, when the run starts.                                                                                                                              |
+| `datasetsSelected`      | `info`                                    | `count`, `durationMs`                                                                                                                      | After the dataset selector returns.                                                                                                                     |
+| `selectionEmpty`        | `warn`                                    | `message`                                                                                                                                  | When the run is abandoned because the selection was empty – no commit, destination unchanged (see [Empty selections](#empty-selections)).               |
+| `pipelineComplete`      | `info`                                    | `durationMs`, `memoryUsageBytes`, `heapUsedBytes`                                                                                          | Once, when the run ends.                                                                                                                                |
+| `datasetStart`          | `info`                                    | –                                                                                                                                          | When a dataset’s processing begins.                                                                                                                     |
+| `distributionProbed`    | `debug`                                   | `distribution`, `result` (a `DistributionAnalysisResult`)                                                                                  | Each time a single distribution probe completes.                                                                                                        |
+| `distributionValidated` | `info` when valid, else `warn`            | `distribution`, `verdict`                                                                                                                  | With the RDF-validity verdict for each distribution the pipeline attempted – even when the dataset is otherwise skipped.                                |
+| `importStarted`         | `debug`                                   | –                                                                                                                                          | When a data-dump import begins.                                                                                                                         |
+| `importFailed`          | `warn`                                    | `distribution`, `error`                                                                                                                    | When importing a distribution fails.                                                                                                                    |
+| `distributionSelected`  | `info`                                    | `distribution`, `imported?` (`{ from, durationMs, tripleCount?, engine? }`)                                                                | When a dataset’s source is resolved; `imported` is set when it was imported from a dump.                                                                |
+| `stageStart`            | `debug`                                   | `stage`                                                                                                                                    | When a stage begins.                                                                                                                                    |
+| `stageProgress`         | `debug`                                   | `stage`, `itemsProcessed`, `quadsGenerated`, `memoryUsageBytes`, `heapUsedBytes`                                                           | After each batch a stage processes.                                                                                                                     |
+| `stageComplete`         | `info`                                    | `stage`, `itemsProcessed`, `quadsGenerated`, `durationMs`, `phases`, `counts` (see [Stage phases and counts](#stage-phases-and-counts))    | When a stage finishes successfully.                                                                                                                     |
+| `stageSkipped`          | `info` for `noItemsSelected`, else `warn` | `stage`, `reason` (code `noItemsSelected` or `notSupported`)                                                                               | When a stage is [skipped](#skipped-stages): `noItemsSelected` for an empty selector, `notSupported` otherwise.                                          |
+| `stageFailed`           | `error`                                   | `stage`, `error`                                                                                                                           | When a stage hard-fails, or a per-dataset `write`, `provenance` or `reactive-dump-fallback` step fails; the run continues.                              |
+| `datasetValidated`      | `info` when conforming, else `warn`       | `report`                                                                                                                                   | Once per (dataset, validator) pair after all stages, even when nothing was validated – read `quadsValidated` to distinguish ‘not tested’.               |
+| `datasetSkipped`        | `info` for `unchanged`, else `warn`       | `reason` (code `unchanged`, `probeFailed`, `resolveFailed` or `noDistributionAvailable`), `error?` (for `probeFailed` and `resolveFailed`) | When a dataset is skipped without running its stages.                                                                                                   |
+| `itemsRejected`         | `warn`                                    | `rejection` (`{ target, written, rejected, reasons }`)                                                                                     | When a writer finalizes a dataset it left items out of; `reasons` counts each reason, with a few example ids.                                           |
+| `valuesUnread`          | `warn`                                    | `unread` (`{ target, field, unread, examples }`)                                                                                           | Once per field a `project` [could not read values for](#projecting-batches-with-project), just before `datasetComplete`; not for a dataset that failed. |
+| `datasetComplete`       | `info`                                    | `durationMs`, `memoryUsageBytes`, `heapUsedBytes`                                                                                          | When a dataset’s processing ends.                                                                                                                       |
+| `timeoutTightened`      | `warn`                                    | `endpoint`, `fromTimeoutMs`, `toTimeoutMs`, `consecutiveTimeouts`                                                                          | When a [timeout policy](#timeout-policies) tightens an endpoint’s budget after consecutive timeouts.                                                    |
+| `timeoutRelaxed`        | `info`                                    | `endpoint`, `fromTimeoutMs`, `toTimeoutMs`, `consecutiveTimeouts`                                                                          | When a timeout policy relaxes a previously-tightened endpoint back to the default budget.                                                               |
+
+#### Stage phases and counts
+
+A stage’s `durationMs` says how long it took, `phases` where that time went, in milliseconds:
+
+| Phase        | Time spent                                                                     |
+| ------------ | ------------------------------------------------------------------------------ |
+| `selectMs`   | Selecting the stage’s items, page by page.                                     |
+| `readMs`     | Running the readers’ queries and reading their results.                        |
+| `transforms` | In each transform attached to a [reader](#reader), as `{ name, durationMs }`.  |
+| `validateMs` | Validating the readers’ quads.                                                 |
+| `projectMs`  | Turning batches into items with [`project`](#projecting-batches-with-project). |
+| `writeMs`    | The writer’s own work, not counting the time it waited for items.              |
+
+A stage runs up to `maxConcurrency` batches at once, so each phase is added up over all of them, and together the phases can exceed `durationMs`. A phase that does is the one the batches were waiting on. Each phase counts only its own time: a transform waiting on the reader it pulls from adds to `readMs`, not to its own entry. A transform is named after its function, or `transform N` when the function has none.
+
+A transform or `project` can count things through its context’s `count(name, amount = 1)` – images fetched, terms served from a store. The stage adds up each name and reports the totals as `counts`, `{ name: total }`; [`@lde/resolver`](./resolver#counting-a-run) counts into it when handed `context.count`.
+
+The console reporter appends both to a stage’s line:
+
+```
+✔ Stage CreativeWork 729 items, 729 quads, took 24m 3s (busy: read 1m 40s, anyUriToIri 2s, enrich 41m 12s, project 3s, write 5s) (manifests fetched 249, manifests from store 480)
+```
 
 ### Provenance store
 

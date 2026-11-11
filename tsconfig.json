@@ -100,6 +100,18 @@
     },
     {
       "path": "./packages/task-runner-http"
+    },
+    {
+      "path": "./packages/public-fetch"
+    },
+    {
+      "path": "./packages/iiif-image"
+    },
+    {
+      "path": "./packages/pipeline-logger-reporter"
+    },
+    {
+      "path": "./packages/change-detection"
     }
   ],
   "compilerOptions": {

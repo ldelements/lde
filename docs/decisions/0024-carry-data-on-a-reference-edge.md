@@ -166,6 +166,10 @@ filter and what a facet policy is inherited through. Both directions are
 enforced: `filterable`/`facetable` without an `identity` has nothing to filter,
 and an `identity` without either is a companion nothing reads.
 
+> Amended: a reference type made of literals alone may be `filterable` without
+> an `identity`, filtered only by conditions welded to one entry on its own
+> filterable fields. `facetable` still needs one.
+
 The ids are harvested from the entries rather than read from a second path.
 A path that reaches the endpoint through the edge (`<…/creator>/<…/creator>`)
 also matches the **edge itself** wherever the edge is a named node, which would

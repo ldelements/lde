@@ -111,26 +111,34 @@ fails this – accepts. The endpoint path defaults to `/graphql`
 - **SDL**: `GET /graphql?sdl` returns the schema contract as SDL – publish it
   or generate static docs in CI without a running introspection query.
 - **CORS** for cross-origin browser clients (configurable via `cors`).
-- **Depth and cost limits** ([graphql-armor](https://escape.tech/graphql-armor/);
-  `maxDepth`, default 15, and `maxCost`, default 5000) guard the public
-  endpoint against arbitrarily expensive queries; introspection stays exempt.
-  Fragments are flattened, so a fragment adds no depth and, nested in a
-  field, no longer multiplies the cost of what it contains: it adds a fixed
-  cost instead – 2 for an inline fragment, 3 for a named spread – scaled like
-  any field by the levels above it. Two cases still cost more than the inlined
-  form. A named spread directly at the operation root (`{ ...Q }`) costs its
-  contents 1.5×. And every repeat of a named fragment costs 1 plus 1.5× what
-  its first spread scored, even in another operation of the same document.
-  The cost limit bounds a query’s shape, not how much searching it causes:
-  `perPage` does not enter the cost, so a page of 100 scores like a page of 1,
-  and every alias of a search field runs its own search for a few points.
-  Two other limits bound that work. `maxPerPage` (a `buildGraphQLSchema`
-  option, default 100) rejects any larger `perPage`, and `maxSearches`
-  (default 10) rejects an operation that selects more root fields – each
-  alias counts, as does a custom field merged in; fragments are flattened,
-  and introspection is exempt. Together they cap the generated search fields
-  at `maxSearches` searches of `maxPerPage` results per request, each plus
-  one facet round-trip when facets are selected.
+- **Depth limit** ([graphql-armor](https://escape.tech/graphql-armor/);
+  `maxDepth`, default 15) rejects deeply nested queries. Fragments are
+  flattened, so a fragment adds no depth; introspection is exempt.
+- **Cost limit** (`maxCost`, default 100) counts the engine operations a query
+  asks for, measured with
+  [graphql-query-complexity](https://github.com/slicknode/graphql-query-complexity):
+
+  | Selection                                   | Cost              |
+  | ------------------------------------------- | ----------------- |
+  | A search field (each alias counts)          | 1                 |
+  | A joined reference (`lookup`), at any depth | 1 per target type |
+  | A facet key                                 | 1                 |
+  | A range facet’s `all` extent                | 1 more            |
+  | A plain stored field or an inline reference | 0, at any depth   |
+
+  A lookup fetches the referents of a whole page in one request, and the facet
+  keys of a search share one request, so `perPage` does not enter the cost.
+  Fragments cost what their contents cost, a selection under `@skip` or
+  `@include` counts whatever its condition, because the engine fetches skipped
+  lookups too, and introspection and custom fields merged in cost nothing. Below a reference with several target types, only the costliest
+  target’s nested lookups count, although the engine runs those of every
+  target. A query over the limit is rejected before any search runs, with an
+  error such as `Query costs 112; at most 100 is allowed.`
+
+- **Result limits**: `maxPerPage` (a `buildGraphQLSchema` option, default 100)
+  rejects a larger `perPage`, and `maxSearches` (default 10) rejects an
+  operation that selects more root fields – each alias counts, as does a custom
+  field merged in; fragments are flattened, and introspection is exempt.
 
 To serve **custom fields next to the generated search API**, merge your own
 schema with `buildGraphQLSchema()`’s output (e.g. `@graphql-tools/schema`’s
@@ -196,8 +204,8 @@ editor.
   IRI no collection holds – dangling, or its lookup failed – has no kind to
   report and is served as `PersonOrOrganizationUnresolvedReference`, carrying
   only its `id`; scalars/booleans
-  per kind; `date` → ISO 8601 string, or an `xsd:gYear` in deep time; nullability from `required` / `array` /
-  `kind`.
+  per kind; `date` → an [`ISO8601Date`](#dates) at the precision its record
+  gave; `period` → an [`EDTF`](#periods) as its record stated it; nullability from `required` / `array` / `kind`.
 - **`where`** one input per `filterable` field, typed by what the field keys on:
   a `keyword` holds literals (`KeywordFilter`), a `reference` holds identity
   (`‹Target›Filter`, or `IRIFilter` when it names no target, or a filter named
@@ -271,16 +279,19 @@ role: { in: ["etser"] } } }` asks for _this person in this role_, where the
     so it never reaches documents no query can return; its `matching` is the extent with
     every filter applied except the field’s own range, so a user can always
     widen a selection again. Both are `{ min max }` in the type the field’s
-    range filter takes (`IntExtent`, `FloatExtent`, `DateExtent` with ISO 8601
-    strings, BCE years included), so a bound feeds straight back into
-    `where`, and either is `null` when no document holds a value. Its
-    `buckets: [ValueBucket!]!` count each distinct value over the same
-    documents as `matching` (a date’s in ISO 8601). A field with
+    range filter takes (`IntExtent`, `FloatExtent`, `DateExtent`), so a bound
+    feeds straight back into `where`, and either is `null` when no document
+    holds a value. Its `buckets` count each distinct value over the same
+    documents as `matching`: `[ValueBucket!]!` for a number, `[DateBucket!]!`
+    for a date. A date facet spans records of mixed precision, so its extent
+    and buckets are always [date-times](#dates) and the client picks the grain
+    it draws at. A field with
     [`facetRanges`](./search#range-facets) returns the
-    `‹Kind›BinnedRangeFacet` variant instead, whose `buckets:
-[RangeBucket!]!` hold one bucket per declared half-open `[min, max)` bin,
-    carrying `min`/`max` (null on an open end) and `count`, with no `value`
-    or `label`;
+    `‹Kind›BinnedRangeFacet` variant instead, whose buckets hold one bucket
+    per declared half-open `[min, max)` bin, carrying `min`/`max` (null on an
+    open end) and `count`, with no `value` or `label`: `[RangeBucket!]!` for a
+    number, `[DateRangeBucket!]!` for a date, whose bounds are served at the
+    precision they were declared in (`1900`, not `1900-01-01T00:00:00Z`);
   - a `boolean` field returns `[BooleanBucket!]!` – `value: Boolean!` +
     `count`, and **no `label` field at all**. The value is a real boolean, so
     the bucket a client selects is exactly the term the `where` filter takes
@@ -292,6 +303,10 @@ role: { in: ["etser"] } } }` asks for _this person in this role_, where the
     rendering – no field-name matching needed. A bucket is present only if
     the engine counted documents for it, so a uniform result set yields one
     bucket, not two.
+
+  An inline reference’s [faceted leaves](./search#faceting-on-an-entry-s-leaf)
+  are served one level down, under the reference: `facets { associatedMedia {
+license { value count } } }`, typed `‹Type›‹Reference›Facets`.
 
   Selecting facet fields IS
   the request, and the whole selection is **batched per request**: one
@@ -401,6 +416,95 @@ the value is not an IRI, instead of a silently empty result, while the same valu
 is perfectly valid on a `KeywordFilter` beside it. Passed through a variable it
 also carries the offending path (`where.material.in[0]`); written inline, GraphQL
 reports a source location instead.
+
+## Dates
+
+Every date in the API – a `date` field, a `DateExtent` bound, a `DateBucket`
+value, a `DateRangeBucket` bound and a `DateRange` bound – is an `ISO8601Date`: an ISO 8601 date written as
+a string, in one of four forms.
+
+| Precision | Form                   | Example                |
+| --------- | ---------------------- | ---------------------- |
+| year      | `YYYY`                 | `1999`                 |
+| month     | `YYYY-MM`              | `1999-05`              |
+| day       | `YYYY-MM-DD`           | `1999-05-03`           |
+| date-time | `YYYY-MM-DDThh:mm:ssZ` | `1999-05-03T12:30:00Z` |
+
+ISO 8601 leaves years beyond four digits and dates at reduced precision to an
+agreement between the parties exchanging them. This is ours, and it is the
+lexical space of `xsd:gYear`, `xsd:gYearMonth`, `xsd:date` and `xsd:dateTime`
+in [XML Schema 1.1 Part 2](https://www.w3.org/TR/xmlschema11-2/#dateTime):
+
+- A **year** has at least four digits, more where the year needs them, and a
+  `-` sign before the common era. Year `0000` is 1 BCE, so `-1100` is 1101 BCE.
+  There is no `+` sign.
+- A value is served at **the precision its record gave**: a source that said
+  `1999` is served `1999`, not 1 January. A list of dates can therefore mix
+  precisions.
+- A **date-time** is in UTC, written with `Z`, and has whole seconds.
+- Beyond ±271,821 years around 1970 lies **deep time**, where only a year is
+  served (`-318000000`). Neither a JavaScript `Date` nor Temporal can hold such
+  a value, so the scalar is not called `Date`: a client that maps `Date` to its
+  language’s date type would get `Invalid Date` back.
+- A range facet’s extent and buckets span records of mixed precision, so they
+  are always date-times (a bare year in deep time).
+
+As input, a `DateRange` bound may take any of the four forms, and also accepts
+an offset (`+02:00`) and fractional seconds. A bound that is none of these is
+rejected when the query is coerced, with `BAD_USER_INPUT`. Both bounds include
+the whole period they name, so `{ min: "1900", max: "1999" }` is the years 1900
+to 1999, and a `DateRangeBucket`’s bounds select exactly the documents it
+counts. How each source literal is read is in
+[the field model](./search#field-model).
+
+## Periods
+
+A `period` field is served as an `EDTF`: the value its record stated, unchanged –
+`1935`, `1935/1955`, `1620~`, `162X`, `1440/..`. Turning it into words (“c.
+1620”, “the 1620s”) is the client’s job, since the words depend on the
+reader’s language.
+
+It is filtered under the same name, with a `DateRange`, and matches every
+period that **overlaps** the range:
+
+```graphql
+{
+  creativeWorks(where: { dateCreated: { min: "1940", max: "1950" } }) {
+    items {
+      dateCreated # ["1935/1955"]
+    }
+  }
+}
+```
+
+Sorting on it ascending orders by where each period starts, descending by where
+it ends. A value read back is not always a valid `DateRange` bound:
+`1935/1955` is a period, not a date. What each value covers is in
+[the field model](./search#field-model).
+
+A lookup declaring `literal: 'period'` holds periods and references in one
+list, and is served as `‹Target›OrPeriod` entries, each setting either `value`
+(the `EDTF` its record stated) or `reference` (the resolved `‹Target›Reference`).
+Its filter is a `DateRange` on the periods alone, so an entry that is only a
+reference matches no range:
+
+```graphql
+{
+  creativeWorks(where: { temporalCoverage: { min: "1940", max: "1950" } }) {
+    items {
+      temporalCoverage {
+        value # "1935/1955", or null
+        reference {
+          id
+          label {
+            value
+          }
+        }
+      }
+    }
+  }
+}
+```
 
 ## Pagination
 

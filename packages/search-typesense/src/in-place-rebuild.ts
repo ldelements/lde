@@ -1,7 +1,7 @@
 import type { Client } from 'typesense';
 import type { CollectionFieldSchema } from 'typesense/lib/Typesense/Collection.js';
 import type { SearchSchema, SearchType } from '@lde/search';
-import { facetableFields, physicalFields } from '@lde/search/adapter';
+import { facetsOf } from '@lde/search/adapter';
 import type { Dataset } from '@lde/dataset';
 import type {
   DatasetOutcome,
@@ -258,21 +258,19 @@ function assertReferencesAndFacetCompanionsPresent(
         .map((companion) => `“${companion}”`)
         .join(
           ', ',
-        )} its search type facets on – the companion of a reference to a type that declares a facet policy (“facetKeys”). A facet field cannot be added to a live collection here: drop “${name}” (and the collections that join to it) and let the next run rebuild them.`,
+        )} its search type facets on in place of the field itself – an identity companion, one narrowed by a facet policy (“facetKeys”), or the nested path of a faceted leaf. A facet field cannot be added to a live collection here: drop “${name}” (and the collections that join to it) and let the next run rebuild them.`,
     );
   }
 }
 
-/** The `${name}_facet` companions a type’s facets read instead of the fields
- *  themselves – one per facetable reference inheriting a facet policy
- *  ({@link physicalFields}). */
+/** The fields a type’s facets read instead of the fields themselves – one per
+ *  facetable reference that stores a nested object or inherits a facet policy
+ *  ({@link facetsOf}), and the nested path of each faceted leaf. */
 function facetCompanionsOf(
   searchType: SearchType,
   schema: SearchSchema | undefined,
 ): readonly string[] {
-  return facetableFields(searchType).flatMap((field) => {
-    // A facetable field always has a facet field.
-    const facet = physicalFields(field, schema).facet as string;
-    return facet === field.name ? [] : [facet];
-  });
+  return facetsOf(searchType, schema)
+    .filter((facet) => facet.engineField !== facet.field.name)
+    .map((facet) => facet.engineField);
 }

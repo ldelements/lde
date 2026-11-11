@@ -109,6 +109,8 @@ const response = {
         title_nl: 'Andere',
         keyword: ['atlas', 'kaart'],
         publisher: ['https://org/2', 'https://org/3'],
+        datePosted: 915_148_800,
+        datePosted_precision: 'year',
       },
     },
   ],
@@ -237,8 +239,21 @@ describe('parseSearchResponse', () => {
   it('passes keyword arrays and numeric scalars through, and omits absent fields', () => {
     expect(result.hits[0].document.keyword).toEqual(['kaarten']);
     expect(result.hits[0].document.size).toBe(1234);
-    expect(result.hits[0].document.datePosted).toBe(1_700_000_000);
     expect(result.hits[1].document.size).toBeUndefined();
+  });
+
+  it('reconstructs a date with the precision stored beside it', () => {
+    expect(result.hits[1].document.datePosted).toEqual({
+      seconds: 915_148_800,
+      precision: 'year',
+    });
+  });
+
+  it('reads a date as a date-time where an index predates its precision', () => {
+    expect(result.hits[0].document.datePosted).toEqual({
+      seconds: 1_700_000_000,
+      precision: 'dateTime',
+    });
   });
 
   it('defaults an absent boolean to false and never reconstructs non-output fields', () => {
@@ -427,6 +442,36 @@ describe('parseSearchResponse range facets', () => {
       { value: '0', count: 2, max: 10 },
       { value: '1', count: 1, min: 10, max: 100 },
       { value: '2', count: 2, min: 100 },
+    ]);
+  });
+
+  it('echoes a date bin’s bounds in stored seconds', () => {
+    const dateSchema: SearchType = {
+      ...rangeSchema,
+      fields: [
+        {
+          name: 'created',
+          kind: 'date',
+          facetable: true,
+          output: true,
+          facetRanges: [{ key: 'seventies', min: '1970', max: '1979' }],
+        },
+      ],
+    };
+    const result = parseSearchResponse(
+      {
+        found: 1,
+        hits: [],
+        facet_counts: [
+          { field_name: 'created', counts: [{ value: 'seventies', count: 1 }] },
+        ],
+      },
+      dateSchema,
+      new Map(),
+      searchSchema(dateSchema),
+    );
+    expect(result.facets.created?.buckets).toEqual([
+      { value: 'seventies', count: 1, min: 0, max: 315_532_800 },
     ]);
   });
 

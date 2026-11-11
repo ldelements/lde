@@ -34,13 +34,23 @@ describe('filterOn', () => {
 
 describe('filterOperatorFor', () => {
   it('maps each field kind to its `where` operator', () => {
-    expect(filterOperatorFor('text')).toBeUndefined();
-    expect(filterOperatorFor('keyword')).toBe('in');
-    expect(filterOperatorFor('reference')).toBe('in');
-    expect(filterOperatorFor('integer')).toBe('range');
-    expect(filterOperatorFor('number')).toBe('range');
-    expect(filterOperatorFor('date')).toBe('range');
-    expect(filterOperatorFor('boolean')).toBe('is');
+    expect(filterOperatorFor({ kind: 'text' })).toBeUndefined();
+    expect(filterOperatorFor({ kind: 'keyword' })).toBe('in');
+    expect(filterOperatorFor({ kind: 'reference' })).toBe('in');
+    expect(filterOperatorFor({ kind: 'integer' })).toBe('range');
+    expect(filterOperatorFor({ kind: 'number' })).toBe('range');
+    expect(filterOperatorFor({ kind: 'date' })).toBe('range');
+    expect(filterOperatorFor({ kind: 'period' })).toBe('range');
+    expect(filterOperatorFor({ kind: 'boolean' })).toBe('is');
+  });
+
+  it('gives a lookup reading its literals as periods a period’s `range`', () => {
+    expect(
+      filterOperatorFor({
+        kind: 'reference',
+        ref: { strategy: 'lookup', target: 'Term', literal: 'period' },
+      }),
+    ).toBe('range');
   });
 });
 

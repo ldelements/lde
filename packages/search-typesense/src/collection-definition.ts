@@ -7,6 +7,7 @@ import {
 } from '@lde/search';
 import {
   displayFieldPattern,
+  facetsOf,
   ID_FIELD,
   isInlineReference,
   isInternalField,
@@ -135,12 +136,25 @@ export function buildCollectionDefinition(
       ),
     ),
   };
+  // A faceted leaf is faceted on its nested path, which Typesense flattens
+  // into one list per document – so a bucket counts documents, not entries.
+  const facetedPaths = new Set(
+    facetsOf(searchType, options.schema)
+      .filter((facet) => facet.reference !== undefined)
+      .map((facet) => facet.engineField),
+  );
+  for (const field of collection.fields as CollectionFieldSchema[]) {
+    if (facetedPaths.has(field.name)) {
+      field.facet = true;
+    }
+  }
   // Typesense rejects an `object`/`object[]` field unless nesting is enabled,
   // so the flag is a consequence of the declaration – never a knob.
   if (collection.fields?.some((field) => field.type.startsWith('object'))) {
     collection.enable_nested_fields = true;
   }
   if (options.defaultSortingField !== undefined) {
+    assertSortableByDefault(searchType, options.defaultSortingField);
     collection.default_sorting_field = options.defaultSortingField;
   }
   if (options.synonymSets !== undefined) {
@@ -231,6 +245,18 @@ function referenceDeclaration(
   };
 }
 
+/** Refuse a default sorting field that stores periods: Typesense sorts a
+ *  collection by default on one stored number, and a period is stored as two
+ *  bounds. */
+function assertSortableByDefault(searchType: SearchType, name: string): void {
+  const field = searchType.fields.find((declared) => declared.name === name);
+  if (field !== undefined && physicalFields(field).period !== undefined) {
+    throw new Error(
+      `The default sorting field “${name}” of “${searchType.name}” stores periods, which Typesense cannot sort a collection on by default: a period is stored as two bounds, not one number. Name a numeric field instead.`,
+    );
+  }
+}
+
 /** The physical Typesense fields one declaration produces. */
 function typesenseFields(
   searchType: SearchType,
@@ -311,6 +337,9 @@ function typesenseFields(
     ];
   }
 
+  if (field.kind === 'period') {
+    return periodFields(field, names);
+  }
   const valueType = typesenseValueType(field);
   const fields: CollectionFieldSchema[] = [
     {
@@ -321,13 +350,19 @@ function typesenseFields(
       // a membership filter on it exact (`compileMembership`).
       facet: names.facet === field.name,
       // Typesense answers a binned facet only on a field indexed for
-      // sorting, so a field declaring bins is, sortable or not.
+      // sorting, so a field declaring bins is, sortable or not. A lookup
+      // reading its literals as periods sorts on their bounds instead.
       sort:
-        field.sortable === true ||
-        (field.facetable === true && isBinnedRangeFacet(field)),
+        names.period === undefined &&
+        (field.sortable === true ||
+          (field.facetable === true && isBinnedRangeFacet(field))),
       // A `required` field is non-optional; so is the `default_sorting_field`,
-      // which Typesense requires to be present. Everything else may be absent.
-      optional: field.required !== true && field.name !== defaultSortingField,
+      // which Typesense requires to be present. Everything else may be absent
+      // – a required lookup reading its literals as periods too, since its
+      // value may be a period alone, stored in a companion.
+      optional:
+        (field.required !== true || names.period !== undefined) &&
+        field.name !== defaultSortingField,
       ...referenceDeclaration(searchType, field, schema, collectionNameFor),
     },
   ];
@@ -356,7 +391,56 @@ function typesenseFields(
       optional: true,
     });
   }
+  if (names.precision !== undefined) {
+    fields.push(precisionField(names.precision));
+  }
+  // A lookup reading its literals as periods stores them as a `period` does.
+  if (names.period !== undefined) {
+    fields.push(...periodFields(field, names));
+  }
   return fields;
+}
+
+/**
+ * A `period` field – or the periods a lookup reads its literals as: its values
+ * as stated, stored for output but never indexed –
+ * nothing filters or sorts on the text – and the two int64 bound companions
+ * ({@link physicalFields}) that filters and sorts read instead. The bounds are
+ * indexed for sorting whatever the field declares: a deployment may sort on a
+ * field it does not expose as sortable, and one more sort index on a numeric
+ * field costs little next to a collection rebuilt the day it becomes so.
+ */
+function periodFields(
+  field: SearchField,
+  names: ReturnType<typeof physicalFields>,
+): CollectionFieldSchema[] {
+  // Every period has bounds; `physicalFields` names them for no other field.
+  const { values, start, end } = names.period as NonNullable<
+    typeof names.period
+  >;
+  return [
+    {
+      name: values,
+      type: typesenseValueType(field),
+      index: false,
+      // A lookup’s periods are optional however `required` it is: its value
+      // may be a referent instead.
+      optional: field.required !== true || field.kind !== 'period',
+    },
+    ...[start, end].map((name): CollectionFieldSchema => ({
+      name,
+      type: 'int64',
+      sort: true,
+      optional: true,
+    })),
+  ];
+}
+
+/** A `date` field’s precision companion ({@link physicalFields}): read back
+ *  with the hit to format the value, never queried, so stored but not
+ *  indexed – it costs disk, not RAM. */
+function precisionField(name: string): CollectionFieldSchema {
+  return { name, type: 'string', index: false, optional: true };
 }
 
 /**
@@ -710,9 +794,23 @@ function nestedLeafFields(
     );
     return fields;
   }
+  if (names.period !== undefined) {
+    // No filter or sort reaches a nested period, so an entry stores its values
+    // alone, for output, and no bounds (`storePeriods`).
+    return [
+      {
+        name: nestedFieldName(prefix, names.period.values),
+        type: typesenseValueType(field),
+        index: false,
+        optional: true,
+      },
+    ];
+  }
   // A nested field can be `filterable` or `searchable`, never `facetable` or
   // `sortable` (`searchSchema`), so `filterable` is what indexes the value
-  // itself – its search companion below indexes on its own account.
+  // itself – its search companion below indexes on its own account. A leaf the
+  // root is faceted on is marked a facet field once the collection is built
+  // ({@link buildCollectionDefinition}), since only the root knows.
   const indexed = field.filterable === true;
   const valueType = typesenseValueType(field);
   // Two ways a list arrives: the field declares one, or an ancestor's
@@ -740,6 +838,9 @@ function nestedLeafFields(
       type: searchString,
       optional: true,
     });
+  }
+  if (names.precision !== undefined) {
+    fields.push(precisionField(nestedFieldName(prefix, names.precision)));
   }
   return fields;
 }
@@ -794,6 +895,7 @@ function typesenseValueType(field: SearchField): ValueType {
     case 'keyword':
     case 'reference':
     case 'text':
+    case 'period':
       return field.array === true ? 'string[]' : 'string';
   }
 }

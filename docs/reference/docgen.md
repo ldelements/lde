@@ -38,9 +38,10 @@ npx @lde/docgen@latest from-shacl <shacl-file> <template-file> [options]
 
 ### Options
 
-| Option               | Description                                                                                                                                                 | Default                              |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
-| `-f, --frame <file>` | Path to a JSON-LD Frame file. Deep-merged on top of the built-in default frame, so it only needs to contain your additions (e.g. extra `@context` entries). | Built-in `frames/shacl.frame.jsonld` |
+| Option                     | Description                                                                                                                                                    | Default                              |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| `-f, --frame <file>`       | Path to a JSON-LD Frame file. Deep-merged on top of the built-in default frame, so it only needs to contain your additions (e.g. extra `@context` entries).    | Built-in `frames/shacl.frame.jsonld` |
+| `-c, --context <url=file>` | Read the JSON-LD context at `<url>` from `<file>` instead of the web, for the [`jsonLdToTurtle`](#json-ld-examples-as-turtle) filter. Repeat for each context. | Contexts are fetched                 |
 
 ### Example
 
@@ -96,6 +97,7 @@ const output = await generateDocumentation(
   'shapes.ttl',
   'spec.md.liquid',
   'frames/shacl.frame.jsonld', // optional: path to custom frame
+  { contexts: { 'https://schema.org': 'context.jsonld' } }, // optional
 );
 ```
 
@@ -121,8 +123,23 @@ Property shapes with the same `sh:path` are common in SHACL (e.g. one for cardin
 | `lang`                  | Select a value by language tag                      | <code v-pre>{{ property.description \| lang: "en" }}</code>         |
 | `mergePropertiesByPath` | Merge property shapes that share the same `sh:path` | `{% assign merged = nodeShape.property \| mergePropertiesByPath %}` |
 | `expandIri`             | Expand a compact IRI with a prefix from the frame   | <code v-pre>{{ property.path \| expandIri }}</code>                 |
+| `jsonLdToTurtle`        | Print a JSON-LD file as Turtle                      | <code v-pre>{{ 'examples/book.jsonld' \| jsonLdToTurtle }}</code>   |
 
 `lang` returns the **first** value matching the language tag, and an empty string when none matches. `mergePropertiesByPath` resolves key conflicts first-value-wins: when merged property shapes both define a key, the first shape’s value is kept. `expandIri` uses the prefixes in the frame’s `@context`, including those added by a custom frame, and returns an absolute IRI or a name with an unknown prefix unchanged – so a template can link `schema:name` to `https://schema.org/name`.
+
+### JSON-LD examples as Turtle
+
+`jsonLdToTurtle` reads a JSON-LD file, with a path relative to the template’s folder, and prints its triples as Turtle. A specification can then show each example in both syntaxes from one checked file, so the two cannot drift apart:
+
+```liquid
+<pre>{{ 'examples/book.jsonld' | jsonLdToTurtle | escape }}</pre>
+```
+
+The filter fails rather than drop data: on a term that the context does not map, on a relative IRI and on a named graph.
+
+A JSON-LD file that cites a remote context, such as `"@context": "https://schema.org"`, gets the triples of whatever that context says today. To pin the triples, read the context from a local file with `--context https://schema.org=context.jsonld`, or the `contexts` option. The file path is relative to the working directory, and a trailing slash on either URL is ignored. A context that has no file is fetched, following a `Link` header to an alternate JSON-LD document, as schema.org has.
+
+The Turtle uses prefixes for common vocabularies (`dcat`, `dct`, `foaf`, `owl`, `prov`, `rdf`, `rdfs`, `schema` for `https://schema.org/`, `sh`, `skos`, `vcard` and `xsd`), plus any other prefix in the frame’s `@context` that neither renames nor redefines one of these. It declares only the prefixes it uses, and writes an IRI in full where a prefixed name would not be valid Turtle, such as `ex:id/1`.
 
 ## Custom frames
 

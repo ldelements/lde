@@ -1,4 +1,7 @@
+import { Dataset } from '@lde/dataset';
 import type { SearchCriteria } from '@lde/dataset-registry-client';
+import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /**
  * The indexer’s complete runtime configuration, read from environment
@@ -10,8 +13,9 @@ export interface IndexerConfig {
   /** Path of the mounted schema-declaration module (`SCHEMA_MODULE`). */
   readonly schemaModulePath: string;
   /** SPARQL endpoint of the DCAT dataset registry the selection queries
-   *  (`REGISTRY_ENDPOINT`). */
-  readonly registryEndpoint: URL;
+   *  (`REGISTRY_ENDPOINT`). Undefined when `DATASETS` names only local data, so
+   *  the run has no registry to read. */
+  readonly registryEndpoint?: URL;
   /**
    * Root types extracted from {@link registryEndpoint} instead of from each
    * dataset’s own distribution (`REGISTRY_ROOT_TYPES`, whitespace- or
@@ -25,6 +29,18 @@ export interface IndexerConfig {
    *  search criteria (`DATASET_CRITERIA`), or every dataset when neither is
    *  set. */
   readonly datasetCriteria: SearchCriteria;
+  /**
+   * A SPARQL graph pattern over `?root` per root type, keyed by
+   * {@link SearchType.name}, that restricts which instances of the type are
+   * indexed, in every dataset (`RESTRICT_ROOTS`, a JSON object). Empty when
+   * unset: every root is indexed. The names and patterns are validated against
+   * the mounted schema when the pipeline is wired.
+   */
+  readonly restrictRoots: Readonly<Record<string, string>>;
+  /** Local data to index besides what the registry selects, from the `file:`
+   *  URLs in `DATASETS`: paths of files, each one dataset, and of directories,
+   *  which end in `/`, with one dataset per RDF file. */
+  readonly localSources: readonly string[];
   /** Where the Typesense engine writes (`TYPESENSE_*`). */
   readonly typesense: TypesenseConnection;
   /** How each type’s collection is rebuilt (`REBUILD_MODE`): update the live
@@ -44,7 +60,7 @@ export interface IndexerConfig {
    *  (`PROVENANCE_FILE` + `PIPELINE_VERSION`). */
   readonly provenance?: ProvenanceConfig;
   /** The QLever import path (`QLEVER_MODE` + `QLEVER_IMAGE` +
-   *  `IMPORT_STRATEGY` + `DATA_DIR`): import data dumps into a
+   *  `IMPORT_STRATEGY` + `DATA_DIR` + `QLEVER_MEMORY_MAX_SIZE`): import data dumps into a
    *  pipeline-controlled QLever instead of relying on live SPARQL endpoints
    *  alone. */
   readonly qlever?: QleverConfig;
@@ -77,6 +93,14 @@ export type QleverConfig = {
   readonly strategy: 'sparql' | 'sparqlWithImportFallback' | 'import';
   /** Directory for downloaded dumps and QLever index caches. */
   readonly dataDir: string;
+  /**
+   * The memory QLever may reserve for answering queries
+   * (`QLEVER_MEMORY_MAX_SIZE`, QLever’s `--memory-max-size`), e.g. `8G`.
+   * QLever refuses a query that would exceed it, with an HTTP 500 such as
+   * “Tried to allocate 8 MB, but only 5.8 MB were available”. Unset, the
+   * `@lde/sparql-qlever` default applies.
+   */
+  readonly memoryMaxSize?: string;
 } & (
   | {
       /** A sibling container the indexer starts over the Docker socket. */
@@ -97,6 +121,10 @@ export type QleverConfig = {
 );
 
 const QLEVER_MODES = ['docker', 'remote'] as const;
+
+/** A size QLever’s `--memory-max-size` reads: a number and a unit, such as
+ *  `8G`, `8 GB` or `512M`. */
+const MEMORY_SIZE = /^\d+(\.\d+)?\s?[kmgt]b?$/i;
 
 const IMPORT_STRATEGIES = [
   'sparql',
@@ -146,10 +174,16 @@ export function configFromEnvironment(
     }
   };
 
-  const registryEndpoint = url(
-    'REGISTRY_ENDPOINT',
-    required('REGISTRY_ENDPOINT'),
-  );
+  const datasets = names(environment['DATASETS']);
+  const registryEndpoint =
+    datasets.length > 0 && datasets.every(isLocal)
+      ? undefined
+      : url('REGISTRY_ENDPOINT', required('REGISTRY_ENDPOINT'));
+  if (registryEndpoint?.protocol === 'file:') {
+    problems.push(
+      'REGISTRY_ENDPOINT must be a SPARQL endpoint: name local files and directories in DATASETS',
+    );
+  }
 
   const protocol = environment['TYPESENSE_PROTOCOL'] ?? 'http';
   if (protocol !== 'http' && protocol !== 'https') {
@@ -165,13 +199,18 @@ export function configFromEnvironment(
     );
   }
 
-  const datasetCriteria = criteriaFromEnvironment(environment, problems);
+  const datasetCriteria = criteriaFromEnvironment(
+    environment,
+    datasets,
+    problems,
+  );
   const provenance = provenanceFromEnvironment(
     environment,
     rebuildMode,
     problems,
   );
   const qlever = qleverFromEnvironment(environment, problems);
+  const localSources = localSourcesFrom(datasets, qlever, problems);
 
   const config: IndexerConfig = {
     schemaModulePath:
@@ -179,6 +218,8 @@ export function configFromEnvironment(
     registryEndpoint,
     registryRootTypes: names(environment['REGISTRY_ROOT_TYPES']),
     datasetCriteria,
+    restrictRoots: restrictRootsFromEnvironment(environment, problems),
+    localSources,
     typesense: {
       host: required('TYPESENSE_HOST'),
       port: integer('TYPESENSE_PORT', 8108),
@@ -210,22 +251,69 @@ function names(value: string | undefined): readonly string[] {
     : value.split(/[\s,]+/).filter((name) => name.length > 0);
 }
 
-/** `DATASETS` (whitespace-separated IRIs) or `DATASET_CRITERIA` (a JSON
- *  object) – never both; neither selects the whole registry. */
+/** Whether a `DATASETS` entry names local data rather than a registered dataset.
+ *  Parsed, because a URL scheme is case-insensitive. */
+function isLocal(entry: string): boolean {
+  return URL.parse(entry)?.protocol === 'file:';
+}
+
+/** The paths of the `file:` URLs in `DATASETS`. Only QLever can read a file, so
+ *  they require the import path. */
+function localSourcesFrom(
+  datasets: readonly string[],
+  qlever: QleverConfig | undefined,
+  problems: string[],
+): readonly string[] {
+  const entries = datasets.filter(isLocal);
+  if (entries.length > 0 && !qlever) {
+    problems.push(
+      'A file: URL in DATASETS requires QLEVER_IMAGE or QLEVER_MODE=remote: a file must be imported before it can be queried',
+    );
+  }
+  const paths = entries.flatMap((entry) => {
+    try {
+      const path = fileURLToPath(entry);
+      if (!path.endsWith('/')) {
+        Dataset.localFile(path);
+      }
+      return [path];
+    } catch (error) {
+      problems.push(
+        `DATASETS contains “${entry}”, which is not a local RDF file or a directory ending in /: ${(error as Error).message}`,
+      );
+      return [];
+    }
+  });
+  const directories = new Set(paths.filter((path) => path.endsWith('/')));
+  paths.forEach((path, index) => {
+    if (paths.indexOf(path) !== index) {
+      problems.push(`DATASETS lists “${path}” twice`);
+    } else if (!path.endsWith('/') && directories.has(`${dirname(path)}/`)) {
+      problems.push(
+        `DATASETS lists “${path}” and its directory, which already selects it`,
+      );
+    }
+  });
+  return paths;
+}
+
+/** `DATASETS` (whitespace-separated IRIs, of which `file:` URLs are local data
+ *  rather than registered datasets) or `DATASET_CRITERIA` (a JSON object) –
+ *  never both; neither selects the whole registry. */
 function criteriaFromEnvironment(
   environment: Readonly<Record<string, string | undefined>>,
+  datasets: readonly string[],
   problems: string[],
 ): SearchCriteria {
-  const datasets = environment['DATASETS'];
   const criteriaJson = environment['DATASET_CRITERIA'];
-  if (datasets && criteriaJson) {
+  if (environment['DATASETS'] && criteriaJson) {
     problems.push(
       'DATASETS and DATASET_CRITERIA are mutually exclusive; set at most one',
     );
     return {};
   }
-  if (datasets) {
-    const iris = datasets.split(/[\s,]+/).filter((iri) => iri.length > 0);
+  if (environment['DATASETS']) {
+    const iris = datasets.filter((iri) => !isLocal(iri));
     for (const iri of iris) {
       try {
         new URL(iri);
@@ -253,6 +341,35 @@ function criteriaFromEnvironment(
     }
   }
   return {};
+}
+
+/** `RESTRICT_ROOTS`: a JSON object mapping root type names to SPARQL graph
+ *  patterns; empty when unset. */
+function restrictRootsFromEnvironment(
+  environment: Readonly<Record<string, string | undefined>>,
+  problems: string[],
+): Readonly<Record<string, string>> {
+  const json = environment['RESTRICT_ROOTS'];
+  if (!json) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    problems.push('RESTRICT_ROOTS must be valid JSON');
+    return {};
+  }
+  if (
+    typeof parsed !== 'object' ||
+    parsed === null ||
+    Array.isArray(parsed) ||
+    !Object.values(parsed).every((pattern) => typeof pattern === 'string')
+  ) {
+    problems.push(
+      'RESTRICT_ROOTS must be a JSON object mapping type names to graph patterns',
+    );
+    return {};
+  }
+  return parsed as Record<string, string>;
 }
 
 function provenanceFromEnvironment(
@@ -287,6 +404,7 @@ function qleverFromEnvironment(
   const image = environment['QLEVER_IMAGE'];
   const strategy = environment['IMPORT_STRATEGY'];
   const network = environment['QLEVER_NETWORK'];
+  const memoryMaxSize = environment['QLEVER_MEMORY_MAX_SIZE'];
   // QLEVER_IMAGE alone is how the Docker mode has always been enabled. An
   // empty QLEVER_MODE, as a template renders an unset one, counts as unset.
   const mode = environment['QLEVER_MODE'] || (image ? 'docker' : undefined);
@@ -299,6 +417,11 @@ function qleverFromEnvironment(
     if (network) {
       problems.push(
         'QLEVER_NETWORK requires QLEVER_IMAGE: without an import engine there is no QLever container to attach',
+      );
+    }
+    if (memoryMaxSize) {
+      problems.push(
+        'QLEVER_MEMORY_MAX_SIZE requires QLEVER_IMAGE or QLEVER_MODE=remote: without an import engine there is no QLever to size',
       );
     }
     return undefined;
@@ -317,9 +440,15 @@ function qleverFromEnvironment(
       `IMPORT_STRATEGY must be one of ${IMPORT_STRATEGIES.map((name) => `“${name}”`).join(', ')}, got “${strategy}”`,
     );
   }
+  if (memoryMaxSize && !MEMORY_SIZE.test(memoryMaxSize)) {
+    problems.push(
+      `QLEVER_MEMORY_MAX_SIZE must be a size such as “8G” or “8 GB”, got “${memoryMaxSize}”`,
+    );
+  }
   const common = {
     strategy: (strategy ?? 'sparql') as QleverConfig['strategy'],
     dataDir: environment['DATA_DIR'] ?? '/data',
+    ...(memoryMaxSize ? { memoryMaxSize } : {}),
   };
   if (mode === 'remote') {
     if (image) {

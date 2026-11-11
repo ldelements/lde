@@ -122,7 +122,7 @@ export function describeSearchEngineContract(
         if (filterable === undefined) {
           continue; // Nothing filterable to mismatch against.
         }
-        const operator = filterOperatorFor(filterable.kind);
+        const operator = filterOperatorFor(filterable);
         const query: SearchQuery = {
           ...browse(searchType),
           where: [mismatchedFilter(filterable.name, operator)],
@@ -239,7 +239,7 @@ export function describeSearchEngineContract(
         const field = facetableFields(searchType).find(
           (candidate) =>
             candidate.filterable === true &&
-            filterOperatorFor(candidate.kind) === 'in',
+            filterOperatorFor(candidate) === 'in',
         );
         if (field === undefined) {
           continue;

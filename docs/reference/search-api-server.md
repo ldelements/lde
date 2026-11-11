@@ -119,7 +119,7 @@ an additional source for the same schema.
 | `GRAPHQL_ENDPOINT`   | `/graphql`                  | Path serving GraphQL, the playground and the SDL   |
 | `PLAYGROUND`         | `true`                      | Serve the playground on GET (`false`/`0` disables) |
 | `MAX_DEPTH`          | handler default (15)        | Query depth cap                                    |
-| `MAX_COST`           | handler default (5000)      | Query cost cap                                     |
+| `MAX_COST`           | handler default (100)       | Engine operations per request (query cost cap)     |
 | `MAX_SEARCHES`       | handler default (10)        | Root fields (searches) per operation               |
 | `TYPESENSE_HOST`     | **required**                | Typesense host                                     |
 | `TYPESENSE_PORT`     | `8108`                      | Typesense port                                     |

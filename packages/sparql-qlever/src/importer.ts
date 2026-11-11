@@ -1,10 +1,10 @@
-import {
-  type Engine,
+import type {
+  Engine,
   Importer as ImporterInterface,
   ImporterOptions,
   ImportFailed,
+  ImportResult,
   ImportSuccessful,
-  NotSupported,
 } from '@lde/sparql-importer';
 import { compressionMediaTypes, Distribution } from '@lde/dataset';
 import { LastModifiedDownloader } from '@lde/distribution-downloader';
@@ -69,9 +69,7 @@ export class Importer implements ImporterInterface {
     };
   }
 
-  public async import(
-    distributions: Distribution[],
-  ): Promise<NotSupported | ImportSuccessful | ImportFailed> {
+  public async import(distributions: Distribution[]): Promise<ImportResult> {
     const downloadDistributions = distributions
       .filter(
         (distribution): distribution is Distribution & { mimeType: string } =>
@@ -84,14 +82,14 @@ export class Importer implements ImporterInterface {
           acceptedMediaTypes.indexOf(b.mimeType),
       );
     if (downloadDistributions.length === 0) {
-      return new NotSupported();
+      return { type: 'not-supported' };
     }
 
     let result!: ImportSuccessful | ImportFailed;
     for (const downloadDistribution of downloadDistributions) {
       try {
         result = await this.doImport(downloadDistribution);
-        if (result instanceof ImportSuccessful) {
+        if (result.type === 'successful') {
           return result;
         }
       } catch (error) {
@@ -101,7 +99,11 @@ export class Importer implements ImporterInterface {
         } else {
           errorMessage = (error as Error).message;
         }
-        result = new ImportFailed(downloadDistribution, errorMessage);
+        result = {
+          type: 'failed',
+          distribution: downloadDistribution,
+          error: errorMessage,
+        };
       }
     }
 
@@ -118,18 +120,19 @@ export class Importer implements ImporterInterface {
       const metadata = await this.readMetadata(localFile);
       const tripleCount = this.parseTripleCount(metadata);
       if (tripleCount === 0) {
-        return new ImportFailed(
+        return {
+          type: 'failed',
           distribution,
-          'Index is cached but contains 0 triples',
-        );
+          error: 'Index is cached but contains 0 triples',
+        };
       }
-      return new ImportSuccessful(
+      return {
+        type: 'successful',
         distribution,
-        undefined,
         tripleCount,
-        [],
-        this.parseEngine(metadata),
-      );
+        warnings: [],
+        engine: this.parseEngine(metadata),
+      };
     }
 
     let indexFile = localFile;
@@ -169,21 +172,22 @@ export class Importer implements ImporterInterface {
     const tripleCount = this.parseTripleCount(logs);
 
     if (tripleCount === 0) {
-      return new ImportFailed(
+      return {
+        type: 'failed',
         distribution,
-        'Indexed 0 triples from distribution',
-      );
+        error: 'Indexed 0 triples from distribution',
+      };
     }
 
     await this.writeCacheInfo(localFile);
 
-    return new ImportSuccessful(
+    return {
+      type: 'successful',
       distribution,
-      undefined,
       tripleCount,
       warnings,
-      this.parseEngine(logs),
-    );
+      engine: this.parseEngine(logs),
+    };
   }
 
   private parseTripleCount(logs: string): number | undefined {

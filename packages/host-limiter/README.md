@@ -1,9 +1,10 @@
 # @lde/host-limiter
 
 Zero-dependency scheduling primitive for outbound work: a concurrent map bounded
-by a global cap and a per-host cap, with results in input order and no
-head-of-line blocking – a saturated host yields to items on other hosts rather
-than stalling the queue.
+by a global cap and an adaptive per-host limit, with results in input order and
+no head-of-line blocking. Each host’s limit starts at one, rises while the host
+keeps up and halves when it fails, as TCP’s congestion window does. Use `createHostLimiter` when tasks arrive from several
+callers that must share one set of caps.
 
 ## Installation
 
@@ -18,7 +19,7 @@ const responses = await mapHostLimited(
   urls,
   urls.map(hostKeyOf),
   8, // at most 8 requests in flight overall
-  2, // at most 2 against any one host
+  2, // at most 2 against any one host, starting at 1
   async (url) => fetch(url).catch((error) => error),
 );
 ```

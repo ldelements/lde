@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { copyFile, mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir, userInfo } from 'node:os';
 import { join, resolve } from 'node:path';
-import { ImportSuccessful } from '@lde/sparql-importer';
+import type { ImportSuccessful } from '@lde/sparql-importer';
 import { Distribution } from '@lde/dataset';
 import { HttpTaskRunner } from '@lde/task-runner-http';
 import { createQlever } from '../src/createQlever.js';
@@ -119,7 +119,7 @@ describe('createQlever in remote mode', () => {
         'text/turtle',
       ),
     ]);
-    expect(result).toBeInstanceOf(ImportSuccessful);
+    expect(result.type).toBe('successful');
     expect((result as ImportSuccessful).tripleCount).toBeGreaterThan(0);
 
     await server.start();

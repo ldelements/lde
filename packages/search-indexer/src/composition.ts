@@ -1,9 +1,13 @@
 // The composition pieces of createSearchIndexer, each usable on its own so a
 // deployment that needs one bespoke stage keeps the rest of the wiring
 // (Pipeline keeps its own wiring private).
+import { Dataset } from '@lde/dataset';
 import { Client as RegistryClient } from '@lde/dataset-registry-client';
 import {
+  CombinedSelector,
+  DirectorySelector,
   ImportResolver,
+  ManualDatasetSelection,
   RegistrySelector,
   SparqlDistributionResolver,
   type DatasetSelector,
@@ -25,12 +29,27 @@ import { createQlever, type QleverOptions } from '@lde/sparql-qlever';
 import type { Client } from 'typesense';
 import type { IndexerConfig } from './config.js';
 
-/** The registry-backed dataset selection the configuration describes. */
+/**
+ * The dataset selection the configuration describes: what the registry selects,
+ * followed by the local files and directories it names.
+ */
 export function datasetSelectorFrom(config: IndexerConfig): DatasetSelector {
-  return new RegistrySelector({
-    registry: new RegistryClient(config.registryEndpoint),
-    criteria: config.datasetCriteria,
-  });
+  const selectors: DatasetSelector[] = config.localSources.map((path) =>
+    path.endsWith('/')
+      ? new DirectorySelector(path)
+      : new ManualDatasetSelection([Dataset.localFile(path)]),
+  );
+  if (config.registryEndpoint) {
+    selectors.unshift(
+      new RegistrySelector({
+        registry: new RegistryClient(config.registryEndpoint),
+        criteria: config.datasetCriteria,
+      }),
+    );
+  }
+  return selectors.length === 1
+    ? selectors[0]!
+    : new CombinedSelector(selectors);
 }
 
 /**
@@ -86,12 +105,17 @@ export function distributionResolverFrom(
   if (!config.qlever) {
     return undefined;
   }
+  const serverOptions =
+    config.qlever.memoryMaxSize === undefined
+      ? undefined
+      : { 'memory-max-size': config.qlever.memoryMaxSize };
   const { importer, server } =
     config.qlever.mode === 'remote'
       ? createQlever({
           mode: 'remote',
           dataDir: config.qlever.dataDir,
           replaceJsonLdContext,
+          serverOptions,
         })
       : config.qlever.network
         ? createQlever({
@@ -105,12 +129,14 @@ export function distributionResolverFrom(
             // one indexer per network.
             containerName: `qlever-${config.qlever.network}`,
             replaceJsonLdContext,
+            serverOptions,
           })
         : createQlever({
             mode: 'docker',
             image: config.qlever.image,
             dataDir: config.qlever.dataDir,
             replaceJsonLdContext,
+            serverOptions,
           });
   return new ImportResolver(new SparqlDistributionResolver(), {
     importer,

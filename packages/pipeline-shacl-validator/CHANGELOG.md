@@ -1,3 +1,64 @@
+## 0.29.0 (2026-11-10)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.46.0
+
+## 0.28.0 (2026-11-10)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.45.0
+
+## 0.27.0 (2026-11-10)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.44.0
+
+## 0.26.0 (2026-11-10)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.43.0
+
+## 0.25.1 (2026-11-09)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.42.1
+- Updated @lde/dataset to 0.10.1
+
+## 0.25.0 (2026-11-05)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.42.0
+
+## 0.24.1 (2026-11-05)
+
+This was a version bump only for @lde/pipeline-shacl-validator to align it with other projects, there were no code changes.
+
+## 0.24.0 (2026-11-03)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.41.0
+- Updated @lde/dataset to 0.10.0
+
+## 0.23.1 (2026-10-31)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.40.1
+
+## 0.23.0 (2026-10-30)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.40.0
+- Updated @lde/dataset to 0.9.0
+
 ## 0.22.3 (2026-10-28)
 
 ### 🧱 Updated Dependencies

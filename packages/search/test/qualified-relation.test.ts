@@ -246,6 +246,39 @@ describe('fanning an edge out into one entry per tuple', () => {
     ).toEqual([RKD, RKD]);
   });
 
+  it('reports an unreadable value on a fanned-out edge once, not once per entry', () => {
+    const datedEdge = defineSearchType({
+      ...weldableEdge,
+      fields: [
+        ...weldableEdge.fields,
+        {
+          name: 'year',
+          kind: 'date',
+          path: `${SCHEMA_ORG}startDate`,
+          output: true,
+        },
+      ],
+    });
+    const node = {
+      ...twoRoles,
+      [workKey('creator')]: [
+        {
+          ...(twoRoles[workKey('creator')] as Record<string, unknown>[])[0],
+          [edgeKey('year')]: [{ '@value': 'Z.j' }],
+        },
+      ],
+    };
+    const unread: unknown[] = [];
+
+    projectDocument(node, work, searchSchema(work, person, datedEdge), {
+      onUnreadable: (value) => unread.push(value),
+    });
+
+    expect(unread).toEqual([
+      { field: 'creator.year', value: 'Z.j', id: 'https://ex/work/2' },
+    ]);
+  });
+
   it('takes the product where two weldable leaves are multi-valued', () => {
     const twoOfEach = {
       '@id': 'https://ex/work/3',
@@ -1173,11 +1206,9 @@ describe('a local lookup is held to the Roles a nested object can serve', () => 
   it.each([
     ['searchable', { searchable: { weight: 1 } }],
     ['sortable', { sortable: true }],
-    ['facetable', { facetable: true }],
   ])('rejects %s', (role, declaration) => {
-    // It stores the referent’s own document, not an id. Unrefused, each fails
-    // differently and late: a facet names a field the collection never
-    // declares, a join emits an engine reference over a field holding objects.
+    // It stores the referent’s own document, not an id, and no companion can
+    // stand in for an object to tokenize or order by.
     expect(() => searchSchema(localReference(declaration), person)).toThrow(
       new RegExp(`declares “${role}”`),
     );
@@ -1206,6 +1237,17 @@ describe('a local lookup is held to the Roles a nested object can serve', () => 
     expect(
       physicalFields(filterable.fields[0], filterableSchema).identity,
     ).toBe('creator_id');
+  });
+
+  it('accepts facetable, which it facets through the same companion', () => {
+    // The companion holds the endpoints’ document keys, which is what a facet
+    // over the referents counts – so `facetable` alone earns it too.
+    const facetable = localReference({ facetable: true }) as SearchType;
+    const facetableSchema = searchSchema(facetable, person);
+    const names = physicalFields(facetable.fields[0], facetableSchema);
+
+    expect(names.identity).toBe('creator_id');
+    expect(names.facet).toBe('creator_id');
   });
 
   it('accepts it as an output-only nesting', () => {
@@ -1243,12 +1285,6 @@ describe('declaring the companion', () => {
     expect(() =>
       searchSchema(workWith({ identity: 'role' }), person, creatorEdge),
     ).toThrow(/names no target/);
-  });
-
-  it('rejects filterable without an identity to filter through', () => {
-    expect(() => searchSchema(workWith({}), person, creatorEdge)).toThrow(
-      /without an “identity”/,
-    );
   });
 
   it('rejects an identity declared inside a reference type', () => {
@@ -1629,5 +1665,319 @@ describe('what the companion may harvest', () => {
 
     expect(document.creator).not.toBeInstanceOf(Array);
     expect(document.creator_id).toEqual([RKD]);
+  });
+});
+
+describe('an edge the graph may leave out', () => {
+  const ROLE = `${SCHEMA_ORG}Role`;
+  const RKD_OTHER = 'https://rkd.example/1';
+  /** The same edge, now telling its own nodes apart from a bare endpoint. */
+  const optionalEdge = defineSearchType({
+    ...creatorEdge,
+    name: 'OptionalEdge',
+    edgeClass: ROLE,
+  });
+  const optionalWork = defineSearchType({
+    name: 'OptionalWork',
+    class: `${SCHEMA_ORG}Painting`,
+    fields: [
+      {
+        ...work.fields[0],
+        ref: {
+          strategy: 'inline',
+          typeName: 'OptionalEdge',
+          identity: 'creator',
+        },
+      },
+    ],
+  });
+  const optionalSchema = searchSchema(optionalWork, person, optionalEdge);
+  const optionalKey = (field: string) => alias('OptionalEdge', field);
+  const document = projectDocument(
+    {
+      '@id': 'https://ex/work/30',
+      [alias('OptionalWork', 'creator')]: [
+        {
+          '@type': ROLE,
+          [optionalKey('role')]: [{ '@value': 'etser' }],
+          [optionalKey('creator')]: [
+            {
+              '@id': 'https://id.example/person/rembrandt',
+              [personKey('label')]: [{ '@value': 'Rembrandt van Rijn' }],
+              [personKey('sameAs')]: [{ '@id': RKD }],
+            },
+          ],
+        },
+        {
+          // Stated flat: the work points at the agent itself. Its name reaches
+          // the edge’s `role` too, because both read `schema:name` off the
+          // node the work points at – and must not become a role.
+          '@id': 'https://id.example/person/ceramique',
+          '@type': `${SCHEMA_ORG}Person`,
+          [optionalKey('role')]: [{ '@value': 'Société Céramique' }],
+          [personKey('label')]: [{ '@value': 'Société Céramique' }],
+          [personKey('sameAs')]: [{ '@id': RKD_OTHER }],
+        },
+        {
+          // A Role naming no agent: an edge with no endpoint, not an agent
+          // called “fabrikant”.
+          '@type': [ROLE],
+          [optionalKey('role')]: [{ '@value': 'fabrikant' }],
+        },
+      ],
+    },
+    optionalWork,
+    optionalSchema,
+  );
+  const entries = entriesOf(document);
+
+  it('reads a node of the edge class as the edge', () => {
+    expect(entries[0]).toMatchObject({
+      role: 'etser',
+      creator: { id: RKD, label_und: 'Rembrandt van Rijn' },
+    });
+  });
+
+  it('reads any other node as the endpoint, re-keyed, in an entry of its own', () => {
+    expect(entries[1]).toMatchObject({
+      creator: { id: RKD_OTHER, label_und: 'Société Céramique' },
+    });
+    expect(entries[1]).not.toHaveProperty('role');
+  });
+
+  it('keeps an edge naming no endpoint as an edge', () => {
+    expect(entries[2]).toEqual({ role: 'fabrikant' });
+  });
+
+  it('harvests both endpoints into the identity companion', () => {
+    expect(document.creator_id).toEqual([RKD, RKD_OTHER]);
+  });
+
+  it('requires an identity on every reference nesting the type', () => {
+    // A bare endpoint goes into the entry’s identity field; a reference that
+    // names none would have nowhere to put it.
+    const unnamed = defineSearchType({
+      name: 'UnnamedWork',
+      class: `${SCHEMA_ORG}Drawing`,
+      fields: [
+        {
+          name: 'creator',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}creator`,
+          array: true,
+          output: true,
+          ref: { strategy: 'inline', typeName: 'OptionalEdge' },
+        },
+      ],
+    });
+
+    expect(() => searchSchema(unnamed, person, optionalEdge)).toThrow(
+      /nests “OptionalEdge”, which declares an “edgeClass”, but names no “identity”/,
+    );
+  });
+
+  it('leaves a value that is no node for the projection to discard', () => {
+    // Dirty source data: a literal or a bare string under the alias is no
+    // endpoint, with an edge class or without.
+    const dirty = projectDocument(
+      {
+        '@id': 'https://ex/work/32',
+        [alias('OptionalWork', 'creator')]: [
+          { '@value': 'Rembrandt' },
+          'https://id.example/person/rembrandt',
+        ],
+      },
+      optionalWork,
+      optionalSchema,
+    );
+
+    expect(dirty).not.toHaveProperty('creator');
+    expect(dirty).not.toHaveProperty('creator_id');
+  });
+
+  it('refuses a required edge field, which a flat endpoint never carries', () => {
+    const strictEdge = defineSearchType({
+      ...optionalEdge,
+      fields: [
+        { ...creatorEdge.fields[0], required: true },
+        creatorEdge.fields[1],
+      ],
+    });
+
+    expect(() => searchSchema(optionalWork, person, strictEdge)).toThrow(
+      /declares an “edgeClass” and requires “role”/,
+    );
+  });
+});
+
+describe('filtering an inline reference without an identity', () => {
+  /** An entry made of literals alone: nothing in it names another document. */
+  const propertyValue = defineSearchType({
+    name: 'PropertyValue',
+    fields: [
+      {
+        name: 'value',
+        kind: 'keyword',
+        path: `${SCHEMA_ORG}value`,
+        output: true,
+        filterable: true,
+      },
+      {
+        name: 'propertyID',
+        kind: 'keyword',
+        path: `${SCHEMA_ORG}propertyID`,
+        output: true,
+        filterable: true,
+      },
+    ],
+  });
+  const workWithIdentifier = (roles: Record<string, boolean>) =>
+    defineSearchType({
+      name: 'Work',
+      class: `${SCHEMA_ORG}CreativeWork`,
+      fields: [
+        {
+          name: 'identifier',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}identifier`,
+          array: true,
+          output: true,
+          ...roles,
+          ref: { strategy: 'inline', typeName: 'PropertyValue' },
+        },
+      ],
+    });
+  const filterable = workWithIdentifier({ filterable: true });
+  const schemaOf = (type: SearchType) => searchSchema(type, propertyValue);
+  const base: SearchQuery = {
+    where: [],
+    orderBy: [],
+    limit: 10,
+    offset: 0,
+    facets: [],
+    locale: 'nl',
+  };
+
+  it('accepts filterable, which it serves by welding', () => {
+    expect(() => schemaOf(filterable)).not.toThrow();
+    expect(
+      physicalFields(filterable.fields[0], schemaOf(filterable)).identity,
+    ).toBeUndefined();
+  });
+
+  it('still rejects facetable, which needs ids to count', () => {
+    expect(() => schemaOf(workWithIdentifier({ facetable: true }))).toThrow(
+      /“facetable” without an “identity”/,
+    );
+  });
+
+  it('rejects filterable when no entry field can be filtered', () => {
+    const literalsOnly = defineSearchType({
+      name: 'PropertyValue',
+      fields: [
+        {
+          name: 'value',
+          kind: 'keyword',
+          path: `${SCHEMA_ORG}value`,
+          output: true,
+        },
+      ],
+    });
+    expect(() => searchSchema(filterable, literalsOnly)).toThrow(
+      /declares no “filterable” field/,
+    );
+  });
+
+  it('rejects filterable on a reference nested inside another entry', () => {
+    // A weld is one level: a condition on one entry cannot itself be welded
+    // inside another entry.
+    const edge = defineSearchType({
+      name: 'Edge',
+      fields: [
+        {
+          name: 'ids',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}identifier`,
+          output: true,
+          filterable: true,
+          ref: { strategy: 'inline', typeName: 'PropertyValue' },
+        },
+      ],
+    });
+    const root = defineSearchType({
+      name: 'Work',
+      class: `${SCHEMA_ORG}CreativeWork`,
+      fields: [
+        {
+          name: 'creator',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}creator`,
+          array: true,
+          output: true,
+          ref: { strategy: 'inline', typeName: 'Edge' },
+        },
+      ],
+    });
+    expect(() => searchSchema(root, edge, propertyValue)).toThrow(
+      /“Edge” is a reference type: a condition on one entry cannot be welded/,
+    );
+  });
+
+  it('refuses membership on a non-filterable one as not filterable', () => {
+    const displayOnly = workWithIdentifier({});
+    expect(
+      validateQuery(
+        {
+          ...base,
+          where: [{ or: [{ field: 'identifier', in: ['x'] }] }],
+        },
+        displayOnly,
+        schemaOf(displayOnly),
+      ),
+    ).toEqual([
+      { part: 'where', field: 'identifier', reason: 'not-filterable' },
+    ]);
+  });
+
+  it('accepts a condition on one entry', () => {
+    expect(
+      validateQuery(
+        {
+          ...base,
+          where: [
+            {
+              or: [
+                {
+                  field: 'identifier',
+                  entry: [
+                    { field: 'value', in: ['G11125-19'] },
+                    { field: 'propertyID', in: ['https://example.org/id'] },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+        filterable,
+        schemaOf(filterable),
+      ),
+    ).toEqual([]);
+  });
+
+  it('refuses membership, since the entries hold no ids', () => {
+    // Without an identity there is no companion to hold ids, so `in` would
+    // compile against the nested object itself, which no engine filters.
+    expect(
+      validateQuery(
+        {
+          ...base,
+          where: [{ or: [{ field: 'identifier', in: ['G11125-19'] }] }],
+        },
+        filterable,
+        schemaOf(filterable),
+      ),
+    ).toEqual([
+      { part: 'where', field: 'identifier', reason: 'operator-mismatch' },
+    ]);
   });
 });

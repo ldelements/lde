@@ -10,6 +10,7 @@ import {
   fieldNamed,
   labelFieldOf,
   nestedReferenceType,
+  physicalFields,
   referencedTargetsOf,
 } from '@lde/search/adapter';
 import { escapeFilterValue } from './query-compiler.js';
@@ -274,6 +275,14 @@ function includeFields(
       }
     } else {
       physical.add(field.name);
+      // A date is served at the precision its source gave, kept beside it,
+      // and a lookup with the periods it reads its literals as.
+      const { precision, period } = physicalFields(field);
+      for (const companion of [precision, period?.values]) {
+        if (companion !== undefined) {
+          physical.add(companion);
+        }
+      }
     }
   }
   // With several targets the level below merges every target’s selection,

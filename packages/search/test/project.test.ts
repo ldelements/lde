@@ -630,12 +630,13 @@ describe('projectDocument', () => {
             sortable: true,
             derive: () => '2024-01-01T00:00:00.000Z',
           },
-          // A derive that already computed seconds passes through untouched.
+          // A derive that already computed seconds passes through, truncated
+          // to the whole seconds an int64 field holds.
           {
             name: 'modified',
             kind: 'date',
             sortable: true,
-            derive: () => 1_704_067_200,
+            derive: () => 1_704_067_200.75,
           },
           // An unparseable string leaves the field absent, exactly as a derive
           // returning `undefined` does.
@@ -655,14 +656,47 @@ describe('projectDocument', () => {
             kind: 'date',
             derive: () => -(2 ** 63),
           },
+          // A derived string keeps the precision it states, like a read one.
+          {
+            name: 'published',
+            kind: 'date',
+            sortable: true,
+            derive: () => '1999+02:00',
+          },
+          // Returning undefined leaves a date absent, as it does any field.
+          {
+            name: 'valid',
+            kind: 'date',
+            sortable: true,
+            derive: () => undefined,
+          },
+          // NaN is no value for any numeric kind.
+          {
+            name: 'size',
+            kind: 'integer',
+            sortable: true,
+            derive: () => Number.NaN,
+          },
         ],
       },
     );
     expect(document.issued).toBe(1_704_067_200);
+    expect(document.issued_precision).toBe('dateTime');
     expect(document.modified).toBe(1_704_067_200);
-    expect(document).not.toHaveProperty('created');
-    expect(document).not.toHaveProperty('available');
-    expect(document).not.toHaveProperty('temporal');
+    // Seconds state no precision, so they are stored as a date-time.
+    expect(document.modified_precision).toBe('dateTime');
+    expect(document.published).toBe(Date.parse('1999-01-01T00:00:00Z') / 1000);
+    expect(document.published_precision).toBe('year');
+    for (const absent of [
+      'created',
+      'available',
+      'temporal',
+      'valid',
+      'size',
+    ]) {
+      expect(document).not.toHaveProperty(absent);
+      expect(document).not.toHaveProperty(`${absent}_precision`);
+    }
   });
 
   it('holds a reference to absolute IRIs on every route a value can arrive by', () => {

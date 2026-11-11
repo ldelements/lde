@@ -31,6 +31,7 @@ const dataset: SearchType = {
       searchable: { weight: 1 },
     },
     { name: 'license', kind: 'keyword', output: true },
+    { name: 'datePublished', kind: 'date', output: true },
     {
       name: 'publisher',
       kind: 'reference',
@@ -96,6 +97,8 @@ const documents: Record<string, Record<string, unknown>> = {
     id: 'https://d/1',
     label_nl: 'Erfgoeddataset',
     license: 'https://licence/cc0',
+    datePublished: 915_148_800,
+    datePublished_precision: 'year',
     publisher: 'https://org/1',
   },
   'https://org/1': { id: 'https://org/1', label_nl: 'Het Utrechts Archief' },
@@ -191,6 +194,28 @@ describe('a projected lookup', () => {
       'id',
       'license',
     ]);
+  });
+
+  it('fetches a date’s precision with it, so the referent serves it as stored', async () => {
+    const { fake, lookups } = client();
+    const engine = createTypesenseSearchEngine(fake.client, schema, {
+      collections,
+    });
+
+    const result = await engine.search(work as never, {
+      ...base,
+      resolve: { dataset: { fields: ['datePublished'] } },
+    });
+
+    expect(String(lookups[0].include_fields).split(',').sort()).toEqual([
+      'datePublished',
+      'datePublished_precision',
+      'id',
+    ]);
+    expect(datasetOf(result.hits[0])).toEqual({
+      id: 'https://d/1',
+      datePublished: { seconds: 915_148_800, precision: 'year' },
+    });
   });
 
   it('carries the label alone when a level names no fields', async () => {

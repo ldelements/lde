@@ -54,11 +54,22 @@ crashed at startup (dataset-register#2128/#2130). We adopt its end state.
   `docker:build` (inferred by `@nx/docker`) depends on a staging chain –
   `docker:stage` (compiled package), `@nx/js:copy-workspace-modules`
   (same-commit builds of the `@lde/*` dependencies), `@nx/js:prune-lockfile`
-  plus a `npm install --package-lock-only` repair step (`docker:lockfile`,
-  needed because Nx’s lockfile pruning cannot map this workspace’s graph and
-  falls back to the root lockfile) – and the Dockerfile is a plain
+  and a repair step, `docker:lockfile` – and the Dockerfile is a plain
   `npm ci --omit=dev` + `COPY`. No bundling: the image keeps real modules, so
   a missing dependency fails loudly instead of being silently inlined away.
+  - **Why the repair step.** Nx’s pruning cannot map a dependency that npm
+    installed nested inside a workspace package, which it does whenever the
+    root needs another version (`packages/pipeline/node_modules/n3@2` beside
+    the root’s `n3@1`). Pruning then falls back to the full root lockfile.
+  - **The repair step does the pruning.** `npm install --package-lock-only`
+    writes the lockfile without installing anything: it resolves the staged
+    `package.json` against the fallback lockfile and drops every entry the
+    app’s dependencies do not reach – from 3116 entries to 327 for this
+    image. `npm ci` in the Dockerfile then installs exactly that lockfile.
+  - **It drops dev dependencies first.** The image never installs them, but
+    npm resolves them for a `file:` dependency, so a copied module’s test
+    dependency on a package bumped in the same release would be looked up on
+    npm before it is published.
 - **`docker:smoke` gates CI**: the built image is booted with a fixture
   schema and probed over HTTP (`/health`, `/graphql?sdl`) in `nx affected`,
   so both build-time and runtime-only failures (the
@@ -91,4 +102,5 @@ crashed at startup (dataset-register#2128/#2130). We adopt its end state.
   for catching pruned-image runtime failures before merge.
 - The `docker:lockfile` repair step is a workaround for the Nx pruning
   fallback; when Nx learns to prune this workspace’s lockfile it can be
-  dropped.
+  dropped, as long as the staged dev dependencies are still dropped
+  somewhere.

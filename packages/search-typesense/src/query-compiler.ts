@@ -18,9 +18,12 @@ import {
   filterOperator,
   filterOperatorFor,
   ID_FIELD,
-  isoToUnixSeconds,
+  storedFacetRanges,
+  storedRangeBound,
   isInternalField,
   isBinnedRangeFacet,
+  facetNamed,
+  holdsNoIds,
   isWelded,
   joinGraph,
   localLookupTargetsOf,
@@ -169,13 +172,13 @@ function compileFacetBy(
 ): string {
   return facets
     .map((name) => {
-      const field = fieldNamed(searchType, name);
-      if (field === undefined) {
+      const facet = facetNamed(searchType, name, schema);
+      if (facet === undefined) {
         return name;
       }
-      return isBinnedRangeFacet(field)
-        ? compileRangeFacet(field.name, field.facetRanges)
-        : (physicalFields(field, schema).facet ?? name);
+      return isBinnedRangeFacet(facet.field)
+        ? compileRangeFacet(facet.engineField, storedFacetRanges(facet.field))
+        : facet.engineField;
     })
     .join(',');
 }
@@ -196,17 +199,39 @@ function compileRangeFacet(
  * folded `*_search` companion(s); a localized field’s active-locale companion
  * keeps its full weight while the other locale is gently demoted (−1, floored at
  * 1), so a match in the user’s language ranks higher while cross-language matches
- * still surface.
+ * still surface. A request with no language preference demotes nothing.
+ *
+ * The fields are ordered by weight, heaviest first, and among equal weights a
+ * leading companion – the request’s language, or the first tagged locale –
+ * comes first. Typesense stems the
+ * query once, with the settings of the highest-weighted field – the first one
+ * on a tie (https://github.com/typesense/typesense/issues/1815) – so an
+ * unstemmed companion in the lead leaves the query unstemmed, and the stemmed
+ * companions match only where the stem happens to equal the word. The order
+ * changes nothing else: every field carries an explicit weight.
  */
 function queryFields(
   searchType: SearchType,
   locale: string,
   schema: SearchSchema | undefined,
 ): { readonly names: string[]; readonly weights: number[] } {
-  const names: string[] = [];
-  const weights: number[] = [];
-  collectSearchable(searchType, locale, schema, '', new Set(), names, weights);
-  return { names, weights };
+  const fields: QueryField[] = [];
+  collectSearchable(searchType, locale, schema, '', new Set(), fields);
+  fields.sort(
+    (left, right) =>
+      right.weight - left.weight || Number(right.leads) - Number(left.leads),
+  );
+  return {
+    names: fields.map((field) => field.name),
+    weights: fields.map((field) => field.weight),
+  };
+}
+
+interface QueryField {
+  readonly name: string;
+  readonly weight: number;
+  /** The companion of the locale that should stem the query. */
+  readonly leads: boolean;
 }
 
 /**
@@ -234,8 +259,7 @@ function collectSearchable(
   schema: SearchSchema | undefined,
   prefix: string,
   onPath: ReadonlySet<string>,
-  names: string[],
-  weights: number[],
+  fields: QueryField[],
 ): void {
   const walked = new Set(onPath).add(searchType.name);
   for (const field of searchableFields(searchType)) {
@@ -244,21 +268,34 @@ function collectSearchable(
     if (field.kind === 'text') {
       const locales = field.locales;
       const activeLocale = matchLanguage(locale, locales)[0];
+      const noPreference = activeLocale === undefined || activeLocale === 'und';
+      // Without a preference the first tagged locale stems the query; only an
+      // `und`-only field leads with `und`.
+      const leading = noPreference
+        ? (locales.find((candidate) => candidate !== 'und') ?? activeLocale)
+        : activeLocale;
       search.forEach((name, index) => {
-        names.push(qualify(prefix, name));
-        // The active locale keeps full weight; `und` is language-neutral, so
-        // it is never demoted (an untagged-only field would otherwise always
-        // rank below its declared weight).
-        weights.push(
-          locales[index] === activeLocale || locales[index] === 'und'
-            ? baseWeight
-            : Math.max(1, baseWeight - 1),
-        );
+        fields.push({
+          name: qualify(prefix, name),
+          // The active locale keeps full weight; `und` is language-neutral, so
+          // it is never demoted (an untagged-only field would otherwise always
+          // rank below its declared weight).
+          weight:
+            noPreference ||
+            locales[index] === activeLocale ||
+            locales[index] === 'und'
+              ? baseWeight
+              : Math.max(1, baseWeight - 1),
+          leads: locales[index] === leading,
+        });
       });
     } else {
       for (const name of search) {
-        names.push(qualify(prefix, name));
-        weights.push(baseWeight);
+        fields.push({
+          name: qualify(prefix, name),
+          weight: baseWeight,
+          leads: false,
+        });
       }
     }
   }
@@ -294,8 +331,7 @@ function collectSearchable(
         schema,
         qualify(prefix, field.name),
         walked,
-        names,
-        weights,
+        fields,
       );
     }
   }
@@ -505,7 +541,12 @@ function compileLeaf(
   }
   // A criterion whose operator does not match the field's kind (e.g. `range` on
   // a keyword) would reach the engine as garbage syntax – skip it instead.
-  if (filterOperatorFor(field.kind) !== filterOperator(criterion)) {
+  // Nor can membership on entries that hold no ids, which would test the
+  // nested object itself. `assertValidQuery` rejects both first.
+  if (
+    holdsNoIds(field, schema) ||
+    filterOperatorFor(field) !== filterOperator(criterion)
+  ) {
     return UNUSABLE;
   }
   if ('in' in criterion) {
@@ -600,7 +641,8 @@ function compileMembership(
   return names.facet === name ? `${name}:${list}` : `${name}:=${list}`;
 }
 
-/** An inclusive Typesense range clause, or `undefined` when neither bound is
+/** An inclusive Typesense range clause; `UNUSABLE` for a range that ends
+ *  before it starts, which holds no value; or `undefined` when neither bound is
  *  usable. Which of the two readings that is – the caller set no bounds, or the
  *  codec rejected the ones they set – is deliberately NOT decided here: a
  *  criterion dropped from a clause narrows the query while a clause dropped
@@ -611,14 +653,34 @@ function compileRange(
   field: SearchField,
   range: { readonly min?: number | string; readonly max?: number | string },
   prefix = '',
-): string | undefined {
-  const name = qualify(prefix, field.name);
+): string | typeof UNUSABLE | undefined {
   // A bound a caller sent as `null` – a GraphQL variable left unfilled, which
   // the surface passes through – is a bound NOT SET, not a bound of `null`.
   // Read literally it reaches the engine as `datePosted:[null..…]`, which
   // Typesense rejects outright.
-  const min = storedBound(field, range.min ?? undefined);
-  const max = storedBound(field, range.max ?? undefined);
+  const min = storedRangeBound(field, range.min ?? undefined, 'min');
+  const max = storedRangeBound(field, range.max ?? undefined, 'max');
+  // A range that ends before it starts holds no value. Compiled, a period’s
+  // overlap would match everything spanning the gap instead.
+  if (min !== undefined && max !== undefined && min > max) {
+    return UNUSABLE;
+  }
+  const period = physicalFields(field).period;
+  if (period !== undefined) {
+    // Overlap: the period starts no later than the range ends, and ends no
+    // earlier than it starts – so `1935/1955` matches 1940–1950.
+    const startsBefore =
+      max === undefined
+        ? undefined
+        : `${qualify(prefix, period.start)}:<=${max}`;
+    const endsAfter =
+      min === undefined ? undefined : `${qualify(prefix, period.end)}:>=${min}`;
+    // Parenthesised, because the clause may stand beside others in an `||`.
+    return startsBefore !== undefined && endsAfter !== undefined
+      ? `(${startsBefore} && ${endsAfter})`
+      : (startsBefore ?? endsAfter);
+  }
+  const name = qualify(prefix, field.name);
   if (min !== undefined && max !== undefined) {
     return `${name}:[${min}..${max}]`;
   }
@@ -629,17 +691,6 @@ function compileRange(
     return `${name}:<=${max}`;
   }
   return undefined;
-}
-
-/** A range bound as stored: a `date` field’s ISO 8601 bound becomes the indexed
- *  Unix seconds ({@link isoToUnixSeconds}); an unparseable bound is dropped. */
-function storedBound(
-  field: SearchField,
-  bound: number | string | undefined,
-): number | string | undefined {
-  return field.kind === 'date' && typeof bound === 'string'
-    ? isoToUnixSeconds(bound)
-    : bound;
 }
 
 /**
@@ -667,6 +718,13 @@ function compileSort(
     if (sortName !== undefined) {
       return `${sortName}:${sort.direction}`;
     }
+  }
+  const period = field === undefined ? undefined : physicalFields(field).period;
+  if (period !== undefined) {
+    // Earliest first orders on where a period begins, latest first on where it
+    // ends, so each direction ranks a period by the end of it that direction
+    // reaches first.
+    return `${sort.direction === 'asc' ? period.start : period.end}:${sort.direction}`;
   }
   return `${sort.field}:${sort.direction}`;
 }

@@ -1,0 +1,5 @@
+{
+  "@context": "https://example.org/remote",
+  "@id": "https://example.org/painting",
+  "name": "De Nachtwacht"
+}

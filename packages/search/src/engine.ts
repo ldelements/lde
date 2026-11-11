@@ -4,6 +4,7 @@ import type {
   RootTypeOf,
   SearchSchema,
   SearchType,
+  StoredDate,
 } from './schema.js';
 
 /**
@@ -150,7 +151,19 @@ export interface FacetExtent {
  */
 export type FacetFieldsOf<Type extends SearchType> = RootType extends Type
   ? string
-  : Extract<Type['fields'][number], { readonly facetable: true }>['name'];
+  : | Extract<Type['fields'][number], { readonly facetable: true }>['name']
+    | FacetedLeavesOf<Type['fields'][number]>;
+
+/** The `‹reference›.‹leaf›` facet names an inline reference declares through
+ *  its faceted leaves (`ref.facetedLeaves`). */
+type FacetedLeavesOf<Field> = Field extends {
+  readonly name: infer Name extends string;
+  readonly ref: {
+    readonly facetedLeaves: readonly (infer Leaf extends string)[];
+  };
+}
+  ? `${Name}.${Leaf}`
+  : never;
 
 /**
  * The output-field-name union of a search type – the keys a {@link ResultDocument}
@@ -185,17 +198,29 @@ export type ResultDocument<OutputField extends string = string> = Readonly<
   Partial<Record<OutputField, SearchValue>>
 >;
 
-/** A logical field value. */
+/**
+ * A logical field value. A `date` is a {@link StoredDate} – stored terms like
+ * every other value at this seam: the Unix seconds the index sorts and filters
+ * on, plus the precision its source gave, which a surface needs to serve it in
+ * that precision’s canonical form. An index built before precision was stored
+ * reports `dateTime`, the one form the seconds alone can always be read as.
+ *
+ * A lookup reading its literals as periods (one declaring `literal: 'period'`)
+ * mixes the two forms its source states: each entry is a period, as a string,
+ * or a referent, as an object – a single-valued one is either.
+ */
 export type SearchValue =
   | string
   | number
+  | StoredDate
   | boolean
   | readonly string[]
   | LocalizedValue
   | Reference
   | readonly Reference[]
   | NestedDocument
-  | readonly NestedDocument[];
+  | readonly NestedDocument[]
+  | readonly (string | Reference | NestedDocument)[];
 
 /**
  * A **nested Search Document**: the referent of a surfaced (`output`) inline

@@ -1,3 +1,266 @@
+## 0.46.0 (2026-11-10)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-health to 0.8.0
+- Updated @lde/distribution-probe to 0.6.0
+
+## 0.45.0 (2026-11-10)
+
+### 🚀 Features
+
+- ⚠️  **pipeline:** report where a stage spent its time and what it counted ([#1041](https://github.com/ldelements/lde/pull/1041))
+
+### ⚠️  Breaking Changes
+
+- **pipeline:** report where a stage spent its time and what it counted  ([#1041](https://github.com/ldelements/lde/pull/1041))
+  ReaderContext.count is a required member. Code that
+  builds a ReaderContext or BatchContext by hand, such as a transform
+  test, must add it, e.g. count: () => undefined."
+  M	docs/reference/pipeline.md
+  M	docs/reference/resolver.md
+  M	packages/pipeline-console-reporter/src/consoleReporter.ts
+  M	packages/pipeline-console-reporter/test/consoleReporter.test.ts
+  M	packages/pipeline-console-reporter/vite.config.ts
+  M	packages/pipeline-void/test/uriSpaceTransform.test.ts
+  M	packages/pipeline-void/test/vocabularyTransform.test.ts
+  M	packages/pipeline/src/pipeline.ts
+  M	packages/pipeline/src/pipelineEvent.ts
+  M	packages/pipeline/src/stage.ts
+  A	packages/pipeline/src/stageTally.ts
+  M	packages/pipeline/test/pipeline.test.ts
+  M	packages/pipeline/test/stage.test.ts
+  M	packages/pipeline/vite.config.ts
+  M	packages/resolver/src/index.ts
+  M	packages/resolver/src/resolver.ts
+  M	packages/resolver/test/resolver.test.ts
+
+## 0.44.0 (2026-11-10)
+
+### 🚀 Features
+
+- ⚠️  **pipeline:** support structured event by reworking event logging ([df86a6de3](https://github.com/ldelements/lde/commit/df86a6de3))
+
+### ⚠️  Breaking Changes
+
+- **pipeline:** support structured event by reworking event logging  ([df86a6de3](https://github.com/ldelements/lde/commit/df86a6de3))
+  ProgressReporter and combineReporters are replaced by
+  Reporter, whose onEvent receives a PipelineEvent. Durations are renamed to
+  durationMs, including ImportDetails.durationMs, and
+  ResolveCallbacks.onImportFailed now receives an Error instead of a string."
+  M	README.md
+  M	docs/.vitepress/config.mts
+  A	docs/decisions/0034-emit-pipeline-events-as-one-levelled-union.md
+  M	docs/guide/architecture.md
+  M	docs/guide/core-concepts.md
+  M	docs/guide/observe-a-run-with-a-reporter.md
+  M	docs/guide/validate-pipeline-output.md
+  M	docs/reference/packages.md
+  M	docs/reference/pipeline-console-reporter.md
+  A	docs/reference/pipeline-logger-reporter.md
+  M	docs/reference/pipeline.md
+  M	docs/reference/search-typesense.md
+  M	package-lock.json
+  M	packages/pipeline-console-reporter/package.json
+  M	packages/pipeline-console-reporter/src/consoleReporter.ts
+  M	packages/pipeline-console-reporter/test/consoleReporter.test.ts
+  M	packages/pipeline-console-reporter/vite.config.ts
+  A	packages/pipeline-logger-reporter/README.md
+  A	packages/pipeline-logger-reporter/eslint.config.mjs
+  A	packages/pipeline-logger-reporter/package.json
+  A	packages/pipeline-logger-reporter/src/index.ts
+  A	packages/pipeline-logger-reporter/src/loggerReporter.ts
+  A	packages/pipeline-logger-reporter/test/loggerReporter.test.ts
+  A	packages/pipeline-logger-reporter/tsconfig.json
+  A	packages/pipeline-logger-reporter/tsconfig.lib.json
+  A	packages/pipeline-logger-reporter/tsconfig.spec.json
+  A	packages/pipeline-logger-reporter/vite.config.ts
+  D	packages/pipeline/src/combineReporters.ts
+  M	packages/pipeline/src/distribution/importResolver.ts
+  M	packages/pipeline/src/distribution/resolver.ts
+  M	packages/pipeline/src/index.ts
+  M	packages/pipeline/src/pipeline.ts
+  A	packages/pipeline/src/pipelineEvent.ts
+  D	packages/pipeline/src/progressReporter.ts
+  A	packages/pipeline/src/reporter.ts
+  M	packages/pipeline/src/sparql/reader.ts
+  M	packages/pipeline/src/stage.ts
+  M	packages/pipeline/src/unreadValueTally.ts
+  M	packages/pipeline/src/writer/writer.ts
+  D	packages/pipeline/test/combineReporters.test.ts
+  M	packages/pipeline/test/distribution/importResolver.test.ts
+  M	packages/pipeline/test/pipeline.test.ts
+  A	packages/pipeline/test/pipelineEvent.test.ts
+  M	packages/pipeline/vite.config.ts
+  M	packages/search-pipeline/src/search-indexer-pipeline.ts
+  M	packages/search-pipeline/test/joins.integration.test.ts
+  M	packages/search-pipeline/test/search-indexer-pipeline.integration.test.ts
+  M	tsconfig.json
+
+## 0.43.0 (2026-11-10)
+
+### 🚀 Features
+
+- ⚠️  **search:** report and drop the values a typed field cannot read ([#1028](https://github.com/ldelements/lde/pull/1028))
+
+### ⚠️  Breaking Changes
+
+- **search:** report and drop the values a typed field cannot read  ([#1028](https://github.com/ldelements/lde/pull/1028))
+  a period field no longer stores a value that states no
+  period. To display such values, declare a keyword field over the same path.
+  Reindex to drop the values already stored.
+  * fix(search)!: leave out a boolean value outside true/false/1/0
+  - A boolean field over ja or yes stored false; it now leaves the value out
+    and reports it, as every other typed field does
+  BREAKING CHANGE: a boolean field no longer stores false for a value outside
+  the xsd:boolean lexical space. The API still serves such a document as false,
+  but it no longer matches an is: false filter or counts in the false facet
+  bucket. Reindex to apply.
+  * fix(search): report each unreadable value once, and no blank ones
+  - Report a value on a fanned-out referent once per node, not once per entry
+    it was copied into
+  - Skip a blank value: it states nothing to correct at the source
+  - Collapse whitespace around a boolean literal, as xsd:boolean does
+  - Say what UnreadValue.id names: the node read from, not the document key
+  * fix(pipeline-console-reporter): shorten a long unread example
+  - Cut an example value at 80 characters, so a literal where a date belongs
+    cannot flood the run log
+  * refactor(search): simplify the unread-value plumbing
+  - Let runStages own each attempt’s tally and return it, so the dump fallback
+    needs no second reset beside the writer’s
+  - Read the document key once, drop the periodCovering cast, name the Unread
+    callback type, and create a referent’s dedupe set only on its first report
+  - Keep UnreadableValue off the package index: no caller imports it there"
+  M	docs/decisions/0032-index-a-period-as-the-stretch-it-covers.md
+  A	docs/decisions/0033-report-the-values-a-typed-field-could-not-read.md
+  M	docs/reference/pipeline.md
+  M	docs/reference/search.md
+  M	packages/pipeline-console-reporter/src/consoleReporter.ts
+  M	packages/pipeline-console-reporter/test/consoleReporter.test.ts
+  M	packages/pipeline-console-reporter/vite.config.ts
+  M	packages/pipeline/src/combineReporters.ts
+  M	packages/pipeline/src/pipeline.ts
+  M	packages/pipeline/src/progressReporter.ts
+  M	packages/pipeline/src/stage.ts
+  A	packages/pipeline/src/unreadValueTally.ts
+  M	packages/pipeline/test/combineReporters.test.ts
+  M	packages/pipeline/test/pipeline.test.ts
+  M	packages/pipeline/test/stage.test.ts
+  M	packages/pipeline/vite.config.ts
+  M	packages/search-pipeline/src/search-stages.ts
+  M	packages/search-pipeline/test/search-stages.test.ts
+  M	packages/search-typesense/test/period.integration.test.ts
+  M	packages/search/src/period.ts
+  M	packages/search/src/project.ts
+  M	packages/search/test/period.test.ts
+  M	packages/search/test/qualified-relation.test.ts
+  A	packages/search/test/unreadable.test.ts
+  M	packages/search/vite.config.ts
+
+## 0.42.1 (2026-11-09)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset-registry-client to 0.12.1
+- Updated @lde/distribution-health to 0.7.1
+- Updated @lde/distribution-probe to 0.5.1
+- Updated @lde/sparql-importer to 0.11.1
+- Updated @lde/dataset to 0.10.1
+
+## 0.42.0 (2026-11-05)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-health to 0.7.0
+- Updated @lde/sparql-importer to 0.11.0
+
+## 0.41.0 (2026-11-03)
+
+### 🚀 Features
+
+- ⚠️  **search-indexer:** index local RDF files beside registered datasets ([#985](https://github.com/ldelements/lde/pull/985))
+
+### ⚠️  Breaking Changes
+
+- **search-indexer:** index local RDF files beside registered datasets  ([#985](https://github.com/ldelements/lde/pull/985))
+  IndexerConfig.registryEndpoint is optional, undefined
+  when DATASETS names only local data. Code reading it must handle
+  undefined.
+  * fix: re-copy restored local files and isolate combined selections
+  - Record a local file’s size and modification time beside its copy and
+    copy again whenever either changes, so a same-size replacement restored
+    with an older time reaches the index
+  - Cancel a local copy when the download signal aborts
+  - Give each iteration of a CombinedSelector selection its own stream, so
+    overlapping or restarted loops never skip or repeat datasets
+  - Stop Dataset.localFile sharing one URL object between the IRI and the
+    access URL
+  - Test RegistrySelector
+  - Argue the full directory listing against ADR 12 in ADR 31, and note
+    that an own IRI counts as registered for registry-sourced types"
+  A	docs/decisions/0031-import-local-files-through-the-data-dump-path.md
+  M	docs/guide/import-data-dumps.md
+  M	docs/guide/what-is-lde.md
+  M	docs/reference/dataset.md
+  M	docs/reference/distribution-downloader.md
+  M	docs/reference/distribution-probe.md
+  M	docs/reference/pipeline.md
+  M	docs/reference/search-indexer.md
+  M	docs/reference/search-pipeline.md
+  M	package-lock.json
+  M	packages/dataset/src/dataset.ts
+  M	packages/dataset/src/distribution.ts
+  A	packages/dataset/test/dataset.test.ts
+  M	packages/dataset/test/distribution.test.ts
+  M	packages/distribution-downloader/src/download.ts
+  A	packages/distribution-downloader/test/localFile.test.ts
+  M	packages/distribution-downloader/vite.config.ts
+  M	packages/distribution-probe/src/probe.ts
+  A	packages/distribution-probe/test/localFile.test.ts
+  M	packages/distribution-probe/vite.config.ts
+  M	packages/pipeline/src/selector.ts
+  A	packages/pipeline/test/directorySelector.test.ts
+  A	packages/pipeline/test/distribution/localFile.test.ts
+  A	packages/pipeline/test/selector.test.ts
+  M	packages/pipeline/vite.config.ts
+  M	packages/search-indexer/package.json
+  M	packages/search-indexer/src/cli.ts
+  M	packages/search-indexer/src/composition.ts
+  M	packages/search-indexer/src/config.ts
+  M	packages/search-indexer/src/indexer.ts
+  M	packages/search-indexer/test/composition.test.ts
+  M	packages/search-indexer/test/config.test.ts
+  M	packages/search-indexer/tsconfig.lib.json
+  M	packages/search-pipeline/src/search-stages.ts
+  M	packages/search-pipeline/test/search-stages.test.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset-registry-client to 0.12.0
+- Updated @lde/distribution-health to 0.6.0
+- Updated @lde/distribution-probe to 0.5.0
+- Updated @lde/sparql-importer to 0.10.0
+- Updated @lde/dataset to 0.10.0
+
+## 0.40.1 (2026-10-31)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-health to 0.5.1
+- Updated @lde/distribution-probe to 0.4.1
+
+## 0.40.0 (2026-10-30)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/dataset-registry-client to 0.11.0
+- Updated @lde/local-sparql-endpoint to 0.4.0
+- Updated @lde/distribution-health to 0.5.0
+- Updated @lde/distribution-probe to 0.4.0
+- Updated @lde/sparql-importer to 0.9.0
+- Updated @lde/sparql-server to 0.6.0
+- Updated @lde/dataset to 0.9.0
+
 ## 0.39.3 (2026-10-28)
 
 ### 🧱 Updated Dependencies

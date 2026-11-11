@@ -9,9 +9,9 @@ import type { Plugin } from 'graphql-yoga';
 
 /**
  * Rejects an operation that selects more than `maxSearches` root fields. Each
- * root field runs its own engine search (plus a facet round-trip), and
- * graphql-armor’s cost limit cannot see that: it scales only with `first` and
- * `last`, so aliases of one search field cost little while each searches anew.
+ * root field runs its own engine search and fetches up to a page of results;
+ * the query cost counts each search once, whatever its page size, so this is
+ * what bounds the results an operation fetches.
  */
 export function maxSearchesPlugin(maxSearches: number): Plugin {
   if (!Number.isInteger(maxSearches) || maxSearches < 1) {

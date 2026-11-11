@@ -1,3 +1,273 @@
+## 0.45.3 (2026-11-11)
+
+### 🚀 Features
+
+- **search:** facet a root document on its entries’ leaves ([#1049](https://github.com/ldelements/lde/pull/1049))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.41.3
+
+## 0.45.2 (2026-11-11)
+
+### 🚀 Features
+
+- **search:** filter an inline reference on its own literal fields ([#1048](https://github.com/ldelements/lde/pull/1048))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.41.2
+
+## 0.45.1 (2026-11-10)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.41.1
+
+## 0.45.0 (2026-11-10)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.41.0
+
+## 0.44.0 (2026-11-10)
+
+### 🚀 Features
+
+- ⚠️  **search:** let a lookup read its literals as periods ([#1035](https://github.com/ldelements/lde/pull/1035))
+
+### ⚠️  Breaking Changes
+
+- **search:** let a lookup read its literals as periods  ([#1035](https://github.com/ldelements/lde/pull/1035))
+  filterOperatorFor takes the field instead of its kind. Replace
+  filterOperatorFor(field.kind) with filterOperatorFor(field)."
+  A	docs/decisions/0035-serve-a-propertys-literals-and-references-in-one-field.md
+  M	docs/reference/search-api-graphql.md
+  M	docs/reference/search.md
+  M	packages/search-api-graphql/src/build-schema.ts
+  M	packages/search-api-graphql/src/projection.ts
+  A	packages/search-api-graphql/test/referent-or-period.test.ts
+  M	packages/search-api-graphql/vite.config.ts
+  M	packages/search-typesense/src/collection-definition.ts
+  M	packages/search-typesense/src/lookup.ts
+  M	packages/search-typesense/src/query-compiler.ts
+  M	packages/search-typesense/src/search.ts
+  A	packages/search-typesense/test/referent-or-period.integration.test.ts
+  A	packages/search-typesense/test/referent-or-period.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/src/adapter.ts
+  M	packages/search/src/engine.ts
+  M	packages/search/src/index.ts
+  M	packages/search/src/project.ts
+  M	packages/search/src/query.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/src/testing.ts
+  M	packages/search/test/period.test.ts
+  M	packages/search/test/query.test.ts
+  A	packages/search/test/referent-or-period.test.ts
+  M	packages/search/test/schema.test.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.40.0
+
+## 0.43.1 (2026-11-10)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.39.1
+
+## 0.43.0 (2026-11-10)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.39.0
+
+## 0.42.0 (2026-11-10)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.38.0
+
+## 0.41.0 (2026-11-09)
+
+### 🚀 Features
+
+- ⚠️  **search:** add a period field kind for EDTF dates and intervals ([#1016](https://github.com/ldelements/lde/pull/1016))
+
+### ⚠️  Breaking Changes
+
+- **search:** add a period field kind for EDTF dates and intervals  ([#1016](https://github.com/ldelements/lde/pull/1016))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.37.0
+
+## 0.40.4 (2026-11-09)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.36.4
+
+## 0.40.3 (2026-11-05)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.36.3
+
+## 0.40.2 (2026-11-05)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.36.2
+
+## 0.40.1 (2026-11-05)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.36.1
+
+## 0.40.0 (2026-11-05)
+
+### 🚀 Features
+
+- ⚠️  **search:** declare date facet bins in ISO 8601, with max covering its whole period ([#991](https://github.com/ldelements/lde/pull/991))
+
+### ⚠️  Breaking Changes
+
+- **search:** declare date facet bins in ISO 8601, with max covering its whole period  ([#991](https://github.com/ldelements/lde/pull/991))
+  a date field's facetRanges take ISO 8601 strings
+  instead of Unix seconds ({ min: '1900', max: '2000' }), and its
+  binned buckets are DateRangeBucket instead of RangeBucket.
+  NumericField is now a union of NumberField and DateField.
+  * feat(search)!: include the whole period a date's max names
+  - Add lastSecondOf, the last stored second of a date's period
+  - Compile a date range filter's max to the end of its period, so
+    max: '1999' runs through 1999
+  - Make a date bin inclusive at both ends, like the filter; its stored
+    max is the first second after its period, so bins and the filter
+    that selects them count the same documents
+  BREAKING CHANGE: a date range filter's max, and a date bin's max, now
+  include the whole period they name. max: '2000' used to stop at the
+  first second of 2000 and now runs through its end; write max: '1999'
+  for a range that ends with 1999."
+  M	docs/reference/search-api-graphql.md
+  M	docs/reference/search.md
+  M	packages/search-api-graphql/src/build-schema.ts
+  M	packages/search-api-graphql/test/build-schema.test.ts
+  M	packages/search-api-graphql/vite.config.ts
+  M	packages/search-typesense/src/query-compiler.ts
+  M	packages/search-typesense/src/search.ts
+  M	packages/search-typesense/test/parse-response.test.ts
+  M	packages/search-typesense/test/query-compiler.test.ts
+  M	packages/search-typesense/test/search-engine.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/src/adapter.ts
+  M	packages/search/src/index.ts
+  M	packages/search/src/query.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/test/schema.test.ts
+  M	packages/search/vite.config.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.36.0
+
+## 0.39.0 (2026-11-04)
+
+### 🚀 Features
+
+- ⚠️  **search:** serve dates at their source precision, typed as ISO8601Date ([#987](https://github.com/ldelements/lde/pull/987))
+
+### ⚠️  Breaking Changes
+
+- **search:** serve dates at their source precision, typed as ISO8601Date  ([#987](https://github.com/ldelements/lde/pull/987))
+  GraphQL date fields come back at their source’s precision
+  rather than as a millisecond timestamp: 1999 instead of
+  1999-01-01T00:00:00.000Z, and date-times as 1999-05-03T12:30:00Z.
+  isoToUnixSeconds returns { seconds, precision } instead of a number,
+  unixSecondsToIso takes a required precision, and a date’s SearchValue is a
+  StoredDate instead of a number. Reindex to fill the companion; until then
+  dates are served as date-times.
+  * feat(search-api-graphql)!: type dates with an ISO8601Date scalar
+  - Type date fields, DateExtent bounds and DateRange bounds as
+    ISO8601Date, specified by the dates section of the docs
+  - Serve an unbinned date facet's buckets as DateBucket, so a bucket
+    value feeds straight into DateRange
+  - Reject an unreadable date bound at coercion with BAD_USER_INPUT
+  - Document the ISO 8601 agreement the scalar follows
+  BREAKING CHANGE: date fields, DateExtent, DateRange bounds and date
+  facet buckets are typed ISO8601Date instead of String, and date
+  buckets are DateBucket instead of ValueBucket. Declare variables as
+  ISO8601Date and select DateBucket where you selected ValueBucket."
+  M	docs/reference/search-api-graphql.md
+  M	docs/reference/search.md
+  M	packages/search-api-graphql/src/build-schema.ts
+  M	packages/search-api-graphql/test/__snapshots__/generator-stability.test.ts.snap
+  M	packages/search-api-graphql/test/build-schema.test.ts
+  M	packages/search-api-graphql/vite.config.ts
+  M	packages/search-typesense/src/collection-definition.ts
+  M	packages/search-typesense/src/lookup.ts
+  M	packages/search-typesense/src/query-compiler.ts
+  M	packages/search-typesense/src/search.ts
+  M	packages/search-typesense/test/__snapshots__/generator-stability.test.ts.snap
+  M	packages/search-typesense/test/parse-response.test.ts
+  M	packages/search-typesense/test/projected-lookup.test.ts
+  M	packages/search-typesense/test/query-compiler.test.ts
+  M	packages/search-typesense/test/search-engine.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/src/adapter.ts
+  M	packages/search/src/engine.ts
+  M	packages/search/src/index.ts
+  M	packages/search/src/project.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/test/project.test.ts
+  M	packages/search/test/schema.test.ts
+  M	packages/search/vite.config.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.35.0
+
+## 0.38.0 (2026-10-30)
+
+### 🚀 Features
+
+- ⚠️  **search-api-graphql:** count a query’s cost in engine operations ([#971](https://github.com/ldelements/lde/pull/971))
+
+### ⚠️  Breaking Changes
+
+- **search-api-graphql:** count a query’s cost in engine operations  ([#971](https://github.com/ldelements/lde/pull/971))
+  maxCost and MAX_COST now count engine operations instead of
+  graphql-armor shape points, and the default drops from 5000 to 100. Re-tune any
+  configured value: 5000 no longer limits anything. A query over the limit now fails
+  with an execution error (HTTP 200) instead of a validation error (HTTP 400).
+  * docs: ground the maxCost default in measured query costs
+  - Record that LOL’s costliest creativeWorks query costs 48 and the Dataset Register
+    browser’s listing query 9, against the default of 100
+  * fix(search-api-graphql): count skipped selections in the query cost
+  - Charge a selection under @skip or @include whatever its condition: the projection does not
+    evaluate those directives, so the engine fetches skipped lookups too
+  - Name the per-target lookup cost in the rejection message
+  - Correct the comment on how yoga masks a failed measurement"
+  M	docs/decisions/0014-serve-the-search-graphql-api-with-graphql-yoga.md
+  A	docs/decisions/0031-count-a-querys-cost-in-engine-operations.md
+  M	docs/reference/search-api-graphql.md
+  M	docs/reference/search-api-server.md
+  M	package-lock.json
+  M	packages/search-api-graphql/package.json
+  M	packages/search-api-graphql/src/build-schema.ts
+  M	packages/search-api-graphql/src/handler.ts
+  M	packages/search-api-graphql/src/max-searches.ts
+  A	packages/search-api-graphql/src/query-cost.ts
+  M	packages/search-api-graphql/test/handler.test.ts
+  A	packages/search-api-graphql/test/query-cost.test.ts
+  M	packages/search-api-graphql/vite.config.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.34.0
+
 ## 0.37.0 (2026-10-28)
 
 ### 🧱 Updated Dependencies

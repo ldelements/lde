@@ -1,28 +1,28 @@
 import {
+  createHostLimiter,
   hostKeyOf,
-  mapHostLimited,
   positiveIntOrDefault,
+  type HostLimiter,
 } from '@lde/host-limiter';
+import { ReferenceFailure, RetryableError } from './failures.js';
 import { memoryFactStore } from './memoryFactStore.js';
 import type { FactOutcome, FactStore } from './store.js';
 
-/** At most this many resolutions in flight across all hosts. */
+/** The caps of the limiter a resolver builds when it is given none. */
 const DEFAULT_CONCURRENCY = 4;
-/** At most this many in flight against any one host. */
-const DEFAULT_PER_HOST_CONCURRENCY = 2;
 /** References per outbound call – one, until a source says it takes a list. */
 const DEFAULT_BATCH_SIZE = 1;
 /** References a single resolver may fetch, so a cold store warms over runs. */
 const DEFAULT_FETCHES_PER_RESOLVER = 500;
-/** Retries of a failed call, on top of the first attempt. */
-const DEFAULT_RETRIES = 2;
-/** Delay before the first retry; doubled for each one after it. */
-const DEFAULT_RETRY_DELAY_MS = 500;
+/** Retries of a {@link RetryableError}, on top of the first attempt. */
+const RETRIES = 2;
+/** Delay before the first such retry when the source names none; doubled after. */
+const RETRY_DELAY_MS = 500;
 /** How long one attempt may take before it is abandoned as failed. */
-const DEFAULT_TIMEOUT_MS = 30_000;
+const DEFAULT_TIMEOUT_MS = 10_000;
 /** How long an absence is believed when no TTL says otherwise: a week. */
 const DEFAULT_ABSENCE_TTL_MS = 7 * 24 * 3_600_000;
-/** Consecutive failed batches after which a host is written off. */
+/** Failed batches, among a host’s last twice as many, that write it off. */
 const DEFAULT_HOST_FAILURE_THRESHOLD = 5;
 /** The version stamped on rows when a caller declares none. */
 const DEFAULT_VERSION = '1';
@@ -56,6 +56,26 @@ export type Resolution<Fact> =
     }
   | { readonly outcome: 'unresolved'; readonly reason: string };
 
+/**
+ * What {@link ResolveOptions.count} is called with, once per distinct key:
+ * `fetched` or `absent` when the source answered this run, `from store` when
+ * the store answered and the key was not due a fetch, `failed` when a fetch
+ * failed, `written off` when the key’s host had already failed its way out of
+ * the run, and `deferred` when the key was due a fetch but the budget was
+ * spent. A stored fact may still stand in for the last three.
+ */
+export type ResolutionCount =
+  'fetched' | 'absent' | 'from store' | 'failed' | 'written off' | 'deferred';
+
+/** Options for one {@link Resolver.resolveAll} call. */
+export interface ResolveOptions {
+  /**
+   * Called once per distinct key with what became of it, so a caller can add
+   * up a run – a pipeline transform passes its `context.count`.
+   */
+  count?: (name: ResolutionCount) => void;
+}
+
 /** One reference that did not resolve freshly, as {@link ResolverOptions.report} sees it. */
 export interface ResolutionFailure {
   /** The key of the reference that failed. */
@@ -72,23 +92,17 @@ export interface ResolutionFailure {
 
 /** The bounds a run resolves within. Every one is optional and defaulted. */
 export interface ResolverLimits {
-  /** Resolutions in flight across all hosts. Default 4. */
-  concurrency?: number;
-  /**
-   * Resolutions in flight against any one host, so a batch never arrives as
-   * the burst that trips a rate limiter. Default 2.
-   */
-  perHostConcurrency?: number;
   /**
    * References per call to {@link ResolverOptions.fetch}. Default 1 – raise it
    * only for a source that takes a list, where a batch of references is one
-   * request. A batch never mixes hosts, so the per-host cap keeps meaning it.
+   * request. A batch never mixes hosts, so the per-host limit keeps meaning it.
    *
    * Note what it costs: a failing call degrades **every** reference in its
    * batch, so `batchSize` trades throughput against the blast radius of one
    * bad response. The failures are transient and unpersisted – the whole batch
    * is retried next run – but a source that rejects a batch for one malformed
-   * member takes the rest of that batch down with it, every run.
+   * member takes the rest of that batch down with it, every run. Answer a
+   * {@link referenceFailure} for that member instead of throwing.
    */
   batchSize?: number;
   /**
@@ -106,15 +120,20 @@ export interface ResolverLimits {
    *
    * References written off with a failed host cost no outbound call and are
    * refunded, so a dead host cannot spend a budget it never sent a packet for.
+   * The budget counts references, not requests: a second attempt after a
+   * timeout, or a retry the source asked for, costs nothing more.
    */
   fetchesPerResolver?: number;
-  /** Retries of a failed call, on top of the first attempt. Default 2. */
-  retries?: number;
-  /** Delay before the first retry, doubled for each one after. Default 500. */
-  retryDelayMs?: number;
   /**
    * How long one attempt may take before it is abandoned and treated as a
-   * failure. Default 30 000.
+   * failure. Default 10 000 – six times what a slow IIIF manifest took when
+   * measured, and what `ky` and OkHttp default to.
+   *
+   * It bounds a whole call to {@link ResolverOptions.fetch}, so a caller with a
+   * large {@link ResolverLimits.batchSize} may need to raise it. A timed-out
+   * reference queues again behind the batches waiting for its host, for one
+   * more attempt in case the stall has passed; a second timeout fails it for
+   * this run.
    *
    * Owned here rather than left to the caller’s client, for the reason the
    * per-host cap is: a client that does not bound this is common, and an
@@ -143,22 +162,36 @@ export interface ResolverLimits {
    */
   absenceTtlMs?: number;
   /**
-   * Consecutive failed batches after which a host is written off for the rest
-   * of the resolver’s life. Default 5.
+   * Failed batches, among a host’s last `2 × hostFailureThreshold`, after which
+   * the host is written off for the rest of the resolver’s life. Default 5, so
+   * 5 of the last 10.
    *
-   * The breaker cannot see *why* a batch failed – a source that answers 400 to
-   * one malformed IRI throws exactly as a dead host does. At the default
-   * `batchSize` of 1 a batch is one reference, so a low threshold lets a couple
-   * of bad references in a row write off a host that is perfectly healthy, and
-   * a run of 50 000 references then stops resolving after two of them. Five
-   * consecutive failures, each already past its retries, is evidence from five
-   * different keys; against a genuinely dead host it costs fifteen requests
-   * before the breaker saves the rest.
+   * **A burst of failures counts once.** When a host goes down, every batch in
+   * flight fails together, so a failure counts only if none of the host’s
+   * failures was counted after its batch started. One bad moment at a high
+   * limit therefore costs one failure, and halves the host’s limit in
+   * {@link ResolverOptions.limiter}; a host that keeps failing, burst after
+   * burst, is written off.
    *
-   * Raise it for a source whose per-reference errors are common, lower it for
-   * one that only ever fails wholesale. The count is of failures that have
-   * *settled*, so up to {@link ResolverLimits.perHostConcurrency} batches may
-   * already be in flight when a host is written off; those still run.
+   * A window rather than a run of consecutive failures, so a host where most
+   * references fail is written off even when a few succeed in between. A dead
+   * host costs the threshold in batches before the breaker saves the rest, plus
+   * whatever was already in flight (see below).
+   *
+   * Only **systemic** failures count – a throw from
+   * {@link ResolverOptions.fetch}, after any retry. A timeout or broken
+   * connection counts when it first fails, not after its second attempt, so a
+   * host that times out on everything is written off without every reference
+   * paying a timeout first. A second attempt that is answered takes that
+   * failure back, so a host that recovers from a slow moment is not written
+   * off; one that fails is not counted again. A batch
+   * whose every key came back as a {@link referenceFailure} does not enter the
+   * window at all, so broken references never write off a host whose other
+   * references resolve. A batch with at least one fact or absence counts as a
+   * success.
+   *
+   * Batches of the burst that writes a host off, already in flight then,
+   * still run.
    */
   hostFailureThreshold?: number;
 }
@@ -173,28 +206,49 @@ export interface ResolverOptions<Reference, Fact> {
   /**
    * Fetch a batch of references, answering with the facts found, by key.
    *
-   * A key the source has nothing for is simply **left out** – that is an
-   * absence, which is remembered like any other answer, and it is not retried.
-   * A **throw** is a failure: the batch is retried with backoff, and if it
-   * still throws, every key in it degrades to its stored fact or is reported
-   * unresolved. Failures are never remembered, so the next run tries again.
+   * Four answers per key, and the caller picks the one that says what went
+   * wrong, because only the caller sees the response:
    *
-   * Which makes omission the **stronger** claim of the two, and the caller owns
+   * - **A fact.** Stored and served.
+   * - **Left out.** An absence, remembered like any other answer and not
+   *   retried.
+   * - **`[key, referenceFailure(reason)]`.** This reference failed while the
+   *   call went fine – a document that will not parse, a 500 on one image among
+   *   many. Not retried this run, never held against the host.
+   * - **A throw.** The call failed: every key in the batch degrades to its
+   *   stored fact or is reported unresolved, and the failure counts towards
+   *   writing the host off. It is not retried this run, with two exceptions.
+   *   Throw a {@link RetryableError} when the source said to come back later –
+   *   a 429, a 503 with `Retry-After` – and it is retried at most twice. And a
+   *   timeout or a broken connection gets one more attempt, queued behind the
+   *   batches waiting for its host: the resolver’s own timeout, or one of the codes
+   *   `ECONNRESET`, `ECONNREFUSED`, `ETIMEDOUT`, `EAI_AGAIN`, `UND_ERR_SOCKET`
+   *   or `UND_ERR_CONNECT_TIMEOUT` on the error or its `cause`, where Node’s
+   *   `fetch` puts it. Such an error needs no wrapping.
+   *
+   * Failures of either kind are never remembered, so the next run tries again.
+   *
+   * Which makes omission the **stronger** claim, and the caller owns
    * it: an absence overwrites a stored fact and is then believed for
    * `absenceTtlMs`, so a source that answers 200 with an empty result while it
    * reindexes will erase what it previously told us. If a source can be empty
    * for reasons other than “no such thing” – an empty page, a maintenance
-   * window, a partial response – detect that here and **throw** instead of
-   * returning nothing. A failure ages a stored fact; an absence replaces it.
+   * window, a partial response – detect that here and **throw**, or answer a
+   * {@link referenceFailure} for the one key, instead of returning nothing. A
+   * failure ages a stored fact; an absence replaces it.
    *
    * `signal` aborts when the attempt outruns
    * {@link ResolverLimits.timeoutMs}; pass it to `fetch()` or your client so
    * the request is cancelled rather than left running.
+   *
+   * Do not await `resolveAll` on the same resolver from here: an attempt holds
+   * its concurrency slot while it runs, so the nested call can wait on a slot
+   * only the attempt can free, and the attempt then fails on its timeout.
    */
   fetch: (
     references: readonly Reference[],
     options: { signal: AbortSignal },
-  ) => Promise<Iterable<readonly [string, Fact]>>;
+  ) => Promise<Iterable<readonly [string, Fact | ReferenceFailure]>>;
   /**
    * The host this resolver contends on: a constant for a single endpoint, or a
    * function when references are fetched from the hosts they name.
@@ -227,6 +281,21 @@ export interface ResolverOptions<Reference, Fact> {
   version?: string;
   /** The bounds this resolver works within. */
   limits?: ResolverLimits;
+  /**
+   * The concurrency limits this resolver’s batches run under, keyed by
+   * {@link ResolverOptions.host}. Default: a limiter of its own, with at most
+   * 4 batches in flight and at most 4 against any one host.
+   *
+   * Each host’s limit adapts: it starts at one batch in flight and rises while
+   * the host keeps up. A throw from {@link ResolverOptions.fetch} counts as
+   * overload and halves it; an answer, a {@link referenceFailure} included, does
+   * not. A {@link RetryableError} with a delay pauses the host for that long.
+   *
+   * Pass one limiter to every resolver that loads the same backend, with host
+   * keys that name that backend, so their limits are one: a backend slowed down
+   * by one of them is slowed down for all.
+   */
+  limiter?: HostLimiter;
   /**
    * Called once per reference that failed or degraded: a fetch that threw,
    * timed out or was written off with its host. Not called for a key the
@@ -262,6 +331,7 @@ export interface Resolver<Reference, Fact> {
    */
   resolveAll(
     references: readonly Reference[],
+    options?: ResolveOptions,
   ): Promise<Map<string, Resolution<Fact>>>;
   /** Verify the store can persist facts, throwing when it cannot. */
   check(): Promise<void>;
@@ -321,20 +391,13 @@ export function createResolver<Reference, Fact>(
   const now = options.now ?? (() => new Date());
   const version = options.version ?? DEFAULT_VERSION;
   const limits = options.limits ?? {};
-  const concurrency = positiveIntOrDefault(
-    limits.concurrency,
-    DEFAULT_CONCURRENCY,
-  );
-  const perHostConcurrency = positiveIntOrDefault(
-    limits.perHostConcurrency,
-    DEFAULT_PER_HOST_CONCURRENCY,
-  );
+  // At least one limiter per resolver, for the reason the budget below is: a
+  // stage calls resolveAll from batches running in parallel, and the caps bound
+  // them together.
+  const limiter =
+    options.limiter ??
+    createHostLimiter(DEFAULT_CONCURRENCY, DEFAULT_CONCURRENCY);
   const batchSize = positiveIntOrDefault(limits.batchSize, DEFAULT_BATCH_SIZE);
-  const retries = nonNegativeIntOrDefault(limits.retries, DEFAULT_RETRIES);
-  const retryDelayMs = nonNegativeIntOrDefault(
-    limits.retryDelayMs,
-    DEFAULT_RETRY_DELAY_MS,
-  );
   const timeoutMs = positiveIntOrDefault(limits.timeoutMs, DEFAULT_TIMEOUT_MS);
   const ttlMs = limits.ttlMs;
   const absenceTtlMs = positiveIntOrDefault(
@@ -345,18 +408,27 @@ export function createResolver<Reference, Fact>(
     limits.hostFailureThreshold,
     DEFAULT_HOST_FAILURE_THRESHOLD,
   );
+  // How many of a host’s latest batches the breaker looks at.
+  const failureWindow = 2 * hostFailureThreshold;
   // The budget spans the resolver, not one resolveAll: a caller passing many
   // batches is one run, and the cap exists to bound the run.
   let fetchesLeft = positiveIntOrDefault(
     limits.fetchesPerResolver,
     DEFAULT_FETCHES_PER_RESOLVER,
   );
-  // Hosts written off for the rest of this resolver’s life, and the consecutive
-  // failures each has to its name. Kept per resolver rather than per call: a
-  // host down at the start of a run is down forty minutes later, and re-probing
-  // it once per passed batch would be the stampede this exists to stop.
-  const consecutiveFailures = new Map<string, number>();
+  // Hosts written off for the rest of this resolver’s life, and whether each of
+  // a host’s recent batches failed, newest last – at most
+  // `2 × hostFailureThreshold` of them. Kept per resolver rather than per call:
+  // a host down at the start of a run is down forty minutes later, and
+  // re-probing it once per passed batch would be the stampede this exists to
+  // stop.
+  const recentFailures = new Map<string, boolean[]>();
   const writtenOff = new Set<string>();
+  // Orders attempts and counted failures, so a failure can tell whether one of
+  // its host’s failures was counted after its own attempt started; kept per
+  // host only while the host has a failure in its window.
+  let tick = 0;
+  const lastCountedAt = new Map<string, number>();
 
   const hostOf =
     typeof options.host === 'string'
@@ -367,7 +439,8 @@ export function createResolver<Reference, Fact>(
     check: async () => store.check?.(),
     purge: (keys) => store.purge(keys),
 
-    async resolveAll(references) {
+    async resolveAll(references, resolveOptions) {
+      const count = resolveOptions?.count ?? (() => undefined);
       // One unit of work per key: two references sharing a key are one fetch
       // and one answer.
       const byKey = new Map<string, Keyed<Reference>>();
@@ -422,6 +495,8 @@ export function createResolver<Reference, Fact>(
           break; // Nothing refunded, so nothing more is affordable.
         }
       }
+      // Due a fetch, but the budget ran out before it was sent.
+      const deferred = new Set(queued.map(({ key }) => key));
 
       const resolutions = new Map<string, Resolution<Fact>>();
       const learned = new Map<string, FactOutcome<Fact>>();
@@ -429,6 +504,7 @@ export function createResolver<Reference, Fact>(
 
       for (const key of keys) {
         const outcome = fetched.get(key);
+        count(countOf(outcome, deferred.has(key)));
         if (outcome?.kind === 'present') {
           learned.set(key, { status: 'present', fact: outcome.fact });
           resolutions.set(key, {
@@ -542,92 +618,255 @@ export function createResolver<Reference, Fact>(
     }
 
     let skipped = 0;
-    const results = await mapHostLimited(
-      batches,
-      batches.map((batch) => batch.host),
-      concurrency,
-      perHostConcurrency,
-      async (batch) => {
-        if (writtenOff.has(batch.host)) {
-          // The host has already failed its way out of this run. Answering
-          // without a request is the whole point: retrying every reference
-          // against a host that is down is the stampede, not the remedy.
-          skipped += batch.entries.length;
-          return batch.entries.map(
-            ({ key }) =>
-              [
-                key,
-                {
-                  kind: 'failed',
-                  reason: `host ${batch.host} was written off after ${hostFailureThreshold} consecutive failures; not contacted again this run`,
-                },
-              ] as const,
-          );
-        }
-        const answered = await attempt(batch.entries);
-        noteHostOutcome(
-          batch.host,
-          answered.some(([, outcome]) => outcome.kind !== 'failed'),
-        );
-        return answered;
-      },
-    );
-    for (const result of results) {
-      for (const [key, outcome] of result) {
+    const results = await Promise.all(batches.map(runBatch));
+    for (const answered of results) {
+      for (const [key, outcome] of answered) {
         outcomes.set(key, outcome);
       }
     }
     return { outcomes, skipped };
+
+    /**
+     * One batch to its end: answered, failed, or written off with its host.
+     *
+     * What an attempt means – for the breaker, for a pause, for the host’s
+     * limit – is settled inside the slot, before the next queued batch can
+     * start; every wait happens outside it, so a waiting host never holds a
+     * slot another host could use. A further attempt queues again behind the
+     * batches already waiting for its host. The breaker hears of each batch
+     * once.
+     */
+    async function runBatch(
+      batch: (typeof batches)[number],
+    ): Promise<Array<readonly [string, FetchOutcome<Fact>]>> {
+      let attempts = 0;
+      let retries = 0;
+      // Set once a stall has been counted and sent to the back of the queue.
+      let stalled: FetchOutcome<Fact> | undefined;
+      // Why the latest attempt failed, for a batch that is waiting to try again.
+      let lastFailure: FetchOutcome<Fact> | undefined;
+      // When the latest attempt started, in `tick`s.
+      let startedAt = 0;
+      // Whether the stall’s first failure was counted, so only then is it
+      // taken back.
+      let stallCounted = false;
+      for (;;) {
+        // Checked before queueing too, so a written-off host’s batches take no
+        // slot.
+        if (writtenOff.has(batch.host)) {
+          return writtenOffStep().done;
+        }
+        const step = await limiter.run(batch.host, async (slot) => {
+          // Queued before the host was written off: no request goes out, so the
+          // slot says nothing about the host’s limit either way.
+          if (writtenOff.has(batch.host)) {
+            slot.ignore();
+            return writtenOffStep();
+          }
+          attempts++;
+          startedAt = ++tick;
+          const result = await attempt(batch.entries);
+          if (result.kind === 'threw') {
+            slot.overloaded();
+          }
+          return settle(result);
+        });
+        if ('done' in step) {
+          return step.done;
+        }
+        await delay(step.waitMs);
+      }
+
+      function writtenOffStep(): Done<Fact> {
+        if (lastFailure !== undefined) {
+          // Contacted already, and waiting to try again – after a stall or a
+          // request to come back later: it keeps its charge and the reason it
+          // actually failed for.
+          return everyKey(lastFailure);
+        }
+        // The host has already failed its way out of this run. Answering
+        // without a request is the whole point: retrying every reference
+        // against a host that is down is the stampede, not the remedy. It sent
+        // nothing, so it is refunded.
+        skipped += batch.entries.length;
+        return everyKey({
+          kind: 'failed',
+          writtenOff: true,
+          reason: `host ${batch.host} was written off after ${hostFailureThreshold} failures in its last ${failureWindow} batches; not contacted again this run`,
+        });
+      }
+
+      function settle(result: BatchResult<Fact>): Step<Fact> {
+        if (result.kind === 'answered') {
+          // A batch of nothing but individual failures says nothing about the
+          // host: as a success it would hide a host that serves only broken
+          // documents, as a failure it would write off one whose other
+          // references are fine.
+          if (stalled !== undefined) {
+            // The host answered after all: the stall was a slow moment, not a
+            // dead host, so the failure counted for it is taken back.
+            if (stallCounted) {
+              forgiveStall(batch.host);
+            }
+          } else if (!result.individualOnly) {
+            noteHostOutcome(batch.host, true);
+          }
+          return { done: result.outcomes };
+        }
+
+        const { error } = result;
+        if (error instanceof RetryableError) {
+          // A wait longer than an attempt may take is not waited out: the
+          // source will not answer within this run’s patience, so the next run
+          // asks instead.
+          const tooLong =
+            error.retryAfterMs !== undefined && error.retryAfterMs > timeoutMs;
+          if (retries < RETRIES && !tooLong) {
+            const backoffMs = RETRY_DELAY_MS * 2 ** retries;
+            retries++;
+            lastFailure = failedOutcome(error, attempts, '');
+            // `Retry-After: 0`, or a date skewed into the past, names no real
+            // delay, so it gets our own backoff rather than an instant burst.
+            if (error.retryAfterMs === undefined || error.retryAfterMs <= 0) {
+              return { waitMs: backoffMs };
+            }
+            // A rate limit is about this client, so every batch for the host
+            // waits, not just the one that was told.
+            limiter.pause(batch.host, Date.now() + error.retryAfterMs);
+            return { waitMs: 0 };
+          }
+          return failed(
+            error,
+            tooLong
+              ? `; asked to retry after ${error.retryAfterMs}ms, longer than the ${timeoutMs}ms timeout`
+              : '',
+          );
+        }
+        if (stalled === undefined && isPassing(error)) {
+          // A stall that may pass gets one more attempt at the back of the
+          // queue, at no second unit of the budget, which counts references,
+          // not requests. It counts against the host now, not after that
+          // attempt, or a host that times out on everything would cost every
+          // reference a full timeout before the breaker could see it.
+          stallCounted = noteFailure();
+          stalled = failedOutcome(error, attempts, '');
+          lastFailure = stalled;
+          return { waitMs: 0 };
+        }
+        return failed(error, '');
+      }
+
+      function failed(error: unknown, suffix: string): Step<Fact> {
+        // A stall was counted when it first failed; its second attempt is not
+        // counted again.
+        if (stalled === undefined) {
+          noteFailure();
+        }
+        return everyKey(failedOutcome<Fact>(error, attempts, suffix));
+      }
+
+      /**
+       * Count a failure against the host, once per burst, and answer whether it
+       * was counted. When a host goes down, everything in flight fails
+       * together: that is one signal, so a failure of an attempt that started
+       * before the host’s last counted failure is not counted again.
+       */
+      function noteFailure(): boolean {
+        // The rest of the burst that wrote its host off has nothing left to
+        // tell the breaker.
+        if (
+          writtenOff.has(batch.host) ||
+          (lastCountedAt.get(batch.host) ?? 0) > startedAt
+        ) {
+          return false;
+        }
+        lastCountedAt.set(batch.host, ++tick);
+        noteHostOutcome(batch.host, false);
+        return true;
+      }
+
+      function everyKey(outcome: FetchOutcome<Fact>): Done<Fact> {
+        return {
+          done: batch.entries.map(({ key }) => [key, outcome] as const),
+        };
+      }
+    }
   }
 
   /**
-   * Count a host’s consecutive failures and write it off once they reach the
-   * threshold. Any success clears the count: the breaker is for a host that is
-   * down, not for one that is merely imperfect.
+   * Take back the failure a stall was counted for, now that its second attempt
+   * was answered: turn the host’s latest failure in the window into a success.
+   * Nothing to take back once the host is written off, or when the failure has
+   * already slid out of the window.
    */
-  function noteHostOutcome(host: string, succeeded: boolean): void {
-    if (succeeded) {
-      consecutiveFailures.delete(host);
+  function forgiveStall(host: string): void {
+    const window = recentFailures.get(host);
+    if (window === undefined) {
       return;
     }
-    const failures = (consecutiveFailures.get(host) ?? 0) + 1;
-    consecutiveFailures.set(host, failures);
-    if (failures >= hostFailureThreshold) {
-      writtenOff.add(host);
+    window[window.lastIndexOf(true)] = false;
+    // The burst the stall belonged to may still be in flight, so its marker in
+    // `lastCountedAt` stays.
+    if (!window.includes(true)) {
+      recentFailures.delete(host);
     }
   }
 
   /**
-   * One batch, bounded in time, retried with doubling backoff, and isolated
-   * from every other batch: a throw becomes a per-key reason rather than a
-   * rejection, so one failing call degrades its own references and nothing
-   * else.
+   * Record a batch against its host, and write the host off once the threshold
+   * of failures is reached among its last `2 × threshold` batches. A window
+   * rather than a run of consecutive failures, so a host where most references
+   * fail is cut off even when a few succeed in between.
+   */
+  function noteHostOutcome(host: string, succeeded: boolean): void {
+    const window = recentFailures.get(host) ?? [];
+    window.push(!succeeded);
+    if (window.length > failureWindow) {
+      window.shift();
+    }
+    const failures = window.filter(Boolean).length;
+    if (failures >= hostFailureThreshold) {
+      writtenOff.add(host);
+      recentFailures.delete(host); // Nothing reads it once written off.
+      lastCountedAt.delete(host);
+    } else if (failures === 0) {
+      // A window of successes counts the same as no window at all, so a
+      // healthy host holds no memory.
+      recentFailures.delete(host);
+      lastCountedAt.delete(host);
+    } else {
+      recentFailures.set(host, window);
+    }
+  }
+
+  /**
+   * One call to `fetch` for a batch, bounded in time. A throw is caught and
+   * handed back, so one failing call degrades its own references and nothing
+   * else; what to make of it is {@link runBatch}’s to decide.
    */
   async function attempt(
     entries: readonly Keyed<Reference>[],
-  ): Promise<Array<readonly [string, FetchOutcome<Fact>]>> {
-    const references = entries.map((entry) => entry.reference);
-    for (let attemptIndex = 0; ; attemptIndex++) {
-      try {
-        const found = new Map(await fetchWithin(references));
-        return entries.map(({ key }) => {
+  ): Promise<BatchResult<Fact>> {
+    try {
+      const found = new Map(
+        await fetchWithin(entries.map((entry) => entry.reference)),
+      );
+      let individualOnly = true;
+      const outcomes = entries.map(
+        ({ key }): readonly [string, FetchOutcome<Fact>] => {
           const fact = found.get(key);
-          return [
-            key,
-            fact === undefined
-              ? ({ kind: 'absent' } as const)
-              : ({ kind: 'present', fact } as const),
-          ] as const;
-        });
-      } catch (error) {
-        if (attemptIndex >= retries) {
-          const reason = `resolution failed after ${attemptIndex + 1} attempt(s): ${describe(error)}`;
-          return entries.map(
-            ({ key }) => [key, { kind: 'failed', reason }] as const,
-          );
-        }
-        await delay(retryDelayMs * 2 ** attemptIndex);
-      }
+          if (fact instanceof ReferenceFailure) {
+            return [key, { kind: 'failed', reason: fact.reason }];
+          }
+          individualOnly = false;
+          return fact === undefined
+            ? [key, { kind: 'absent' }]
+            : [key, { kind: 'present', fact }];
+        },
+      );
+      return { kind: 'answered', outcomes, individualOnly };
+    } catch (error) {
+      return { kind: 'threw', error };
     }
   }
 
@@ -638,32 +877,76 @@ export function createResolver<Reference, Fact>(
    */
   async function fetchWithin(
     references: readonly Reference[],
-  ): Promise<Iterable<readonly [string, Fact]>> {
+  ): Promise<Iterable<readonly [string, Fact | ReferenceFailure]>> {
     const controller = new AbortController();
     const expiry = setTimeout(() => controller.abort(), timeoutMs);
     try {
       return await Promise.race([
         options.fetch(references, { signal: controller.signal }),
-        rejectWhenAborted<Iterable<readonly [string, Fact]>>(
-          controller.signal,
-          timeoutMs,
-        ),
+        rejectWhenAborted(controller.signal, timeoutMs),
       ]);
+    } catch (error) {
+      // Our deadline passed, whichever rejection won the race: a `fetch` that
+      // rejects on the abort with its own error must still read as a timeout.
+      if (controller.signal.aborted) {
+        throw new AttemptTimeout(`timed out after ${timeoutMs}ms`);
+      }
+      throw error;
     } finally {
       clearTimeout(expiry);
     }
   }
 }
 
+/** An attempt that outran {@link ResolverLimits.timeoutMs}. */
+class AttemptTimeout extends Error {}
+
+/**
+ * Network error codes that may pass within the run: a dropped or refused
+ * connection, a connect that timed out, a temporary DNS failure. `ENOTFOUND` is
+ * left out – a name that does not resolve will not a few seconds later either.
+ */
+const PASSING_CODES = new Set([
+  'ECONNRESET',
+  'ECONNREFUSED',
+  'ETIMEDOUT',
+  'EAI_AGAIN',
+  'UND_ERR_SOCKET',
+  'UND_ERR_CONNECT_TIMEOUT',
+]);
+
+/**
+ * Whether a failure may pass on its own within the run – a stall rather than an
+ * answer – and so earns one more attempt at the back of the queue: our own
+ * timeout, or a network error code on the error or on its `cause`, which is
+ * where Node’s `fetch` puts it.
+ */
+function isPassing(error: unknown): boolean {
+  return (
+    error instanceof AttemptTimeout ||
+    PASSING_CODES.has(codeOf(error)) ||
+    (error instanceof Error && PASSING_CODES.has(codeOf(error.cause)))
+  );
+}
+
+function codeOf(error: unknown): string {
+  return typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    typeof error.code === 'string'
+    ? error.code
+    : '';
+}
+
 /** Reject as soon as the attempt’s deadline passes, whatever `fetch` is doing. */
-function rejectWhenAborted<T>(
+function rejectWhenAborted(
   signal: AbortSignal,
   timeoutMs: number,
-): Promise<T> {
-  return new Promise<T>((_resolve, reject) => {
+): Promise<never> {
+  return new Promise<never>((_resolve, reject) => {
     signal.addEventListener(
       'abort',
-      () => reject(new Error(`timed out after ${timeoutMs}ms`)),
+      () => reject(new AttemptTimeout(`timed out after ${timeoutMs}ms`)),
       { once: true },
     );
   });
@@ -679,7 +962,63 @@ interface Keyed<Reference> {
 type FetchOutcome<Fact> =
   | { readonly kind: 'present'; readonly fact: Fact }
   | { readonly kind: 'absent' }
-  | { readonly kind: 'failed'; readonly reason: string };
+  | {
+      readonly kind: 'failed';
+      readonly reason: string;
+      /** Not sent: its host had already been written off. */
+      readonly writtenOff?: true;
+    };
+
+/**
+ * What to count a key as, from its fetch outcome – none when it was not
+ * fetched – and whether it was due a fetch the budget did not allow.
+ */
+function countOf<Fact>(
+  outcome: FetchOutcome<Fact> | undefined,
+  deferred: boolean,
+): ResolutionCount {
+  if (outcome === undefined) {
+    return deferred ? 'deferred' : 'from store';
+  }
+  if (outcome.kind === 'present') return 'fetched';
+  if (outcome.kind === 'absent') return 'absent';
+  return outcome.writtenOff ? 'written off' : 'failed';
+}
+
+/**
+ * What one call to `fetch` came to: an answer per key, with whether every key
+ * in it was a {@link ReferenceFailure}, or the throw that failed the call.
+ */
+type BatchResult<Fact> =
+  | {
+      readonly kind: 'answered';
+      readonly outcomes: Array<readonly [string, FetchOutcome<Fact>]>;
+      readonly individualOnly: boolean;
+    }
+  | { readonly kind: 'threw'; readonly error: unknown };
+
+/**
+ * Where a batch stands after one turn in its slot: done, with an outcome per
+ * key, or to queue again after waiting this long outside the slot.
+ */
+type Step<Fact> = Done<Fact> | { readonly waitMs: number };
+
+/** A batch’s answer, per key. */
+interface Done<Fact> {
+  readonly done: Array<readonly [string, FetchOutcome<Fact>]>;
+}
+
+/** A batch’s failure, as every key in it reports it. */
+function failedOutcome<Fact>(
+  error: unknown,
+  attempts: number,
+  suffix: string,
+): FetchOutcome<Fact> {
+  return {
+    kind: 'failed',
+    reason: `resolution failed after ${attempts} attempt(s): ${describe(error)}${suffix}`,
+  };
+}
 
 /** Whether a stored row has outlived its TTL. No TTL means never. */
 function isStale(
@@ -696,20 +1035,14 @@ function isStale(
   return Number.isNaN(stampedAt) || at.getTime() - stampedAt > ttlMs;
 }
 
-/** Coerce a count that may legitimately be zero – retries, delays. */
-function nonNegativeIntOrDefault(
-  value: number | undefined,
-  fallback: number,
-): number {
-  return value !== undefined && Number.isInteger(value) && value >= 0
-    ? value
-    : fallback;
-}
-
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** Wait this long; a moment already past resolves at once. */
 function delay(milliseconds: number): Promise<void> {
+  if (milliseconds <= 0) {
+    return Promise.resolve();
+  }
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }

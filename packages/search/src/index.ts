@@ -31,7 +31,9 @@ export {
   // ISO string – so it belongs on the authoring surface, not only the adapter
   // one.
   isoToUnixSeconds,
+  lastSecondOf,
   unixSecondsToIso,
+  isDatePrecision,
 } from './schema.js';
 export type {
   FieldKind,
@@ -41,7 +43,11 @@ export type {
   KeywordField,
   ReferenceField,
   ReferenceStrategy,
+  LiteralKind,
   NumericField,
+  NumberField,
+  DateField,
+  PeriodField,
   BooleanField,
   SearchType,
   SearchTypeBase,
@@ -53,7 +59,10 @@ export type {
   FacetKeys,
   SearchSchema,
   FacetRange,
+  DateFacetRange,
   ProjectionValue,
+  DatePrecision,
+  StoredDate,
 } from './schema.js';
 
 // The declared join edges between root types: which types a query can filter

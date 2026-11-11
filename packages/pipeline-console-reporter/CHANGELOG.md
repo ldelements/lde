@@ -1,3 +1,206 @@
+## 0.37.0 (2026-11-10)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.46.0
+
+## 0.36.0 (2026-11-10)
+
+### 🚀 Features
+
+- ⚠️  **pipeline:** report where a stage spent its time and what it counted ([#1041](https://github.com/ldelements/lde/pull/1041))
+
+### ⚠️  Breaking Changes
+
+- **pipeline:** report where a stage spent its time and what it counted  ([#1041](https://github.com/ldelements/lde/pull/1041))
+  ReaderContext.count is a required member. Code that
+  builds a ReaderContext or BatchContext by hand, such as a transform
+  test, must add it, e.g. count: () => undefined."
+  M	docs/reference/pipeline.md
+  M	docs/reference/resolver.md
+  M	packages/pipeline-console-reporter/src/consoleReporter.ts
+  M	packages/pipeline-console-reporter/test/consoleReporter.test.ts
+  M	packages/pipeline-console-reporter/vite.config.ts
+  M	packages/pipeline-void/test/uriSpaceTransform.test.ts
+  M	packages/pipeline-void/test/vocabularyTransform.test.ts
+  M	packages/pipeline/src/pipeline.ts
+  M	packages/pipeline/src/pipelineEvent.ts
+  M	packages/pipeline/src/stage.ts
+  A	packages/pipeline/src/stageTally.ts
+  M	packages/pipeline/test/pipeline.test.ts
+  M	packages/pipeline/test/stage.test.ts
+  M	packages/pipeline/vite.config.ts
+  M	packages/resolver/src/index.ts
+  M	packages/resolver/src/resolver.ts
+  M	packages/resolver/test/resolver.test.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.45.0
+
+## 0.35.0 (2026-11-10)
+
+### 🚀 Features
+
+- ⚠️  **pipeline:** support structured event by reworking event logging ([df86a6de3](https://github.com/ldelements/lde/commit/df86a6de3))
+
+### ⚠️  Breaking Changes
+
+- **pipeline:** support structured event by reworking event logging  ([df86a6de3](https://github.com/ldelements/lde/commit/df86a6de3))
+  ProgressReporter and combineReporters are replaced by
+  Reporter, whose onEvent receives a PipelineEvent. Durations are renamed to
+  durationMs, including ImportDetails.durationMs, and
+  ResolveCallbacks.onImportFailed now receives an Error instead of a string."
+  M	README.md
+  M	docs/.vitepress/config.mts
+  A	docs/decisions/0034-emit-pipeline-events-as-one-levelled-union.md
+  M	docs/guide/architecture.md
+  M	docs/guide/core-concepts.md
+  M	docs/guide/observe-a-run-with-a-reporter.md
+  M	docs/guide/validate-pipeline-output.md
+  M	docs/reference/packages.md
+  M	docs/reference/pipeline-console-reporter.md
+  A	docs/reference/pipeline-logger-reporter.md
+  M	docs/reference/pipeline.md
+  M	docs/reference/search-typesense.md
+  M	package-lock.json
+  M	packages/pipeline-console-reporter/package.json
+  M	packages/pipeline-console-reporter/src/consoleReporter.ts
+  M	packages/pipeline-console-reporter/test/consoleReporter.test.ts
+  M	packages/pipeline-console-reporter/vite.config.ts
+  A	packages/pipeline-logger-reporter/README.md
+  A	packages/pipeline-logger-reporter/eslint.config.mjs
+  A	packages/pipeline-logger-reporter/package.json
+  A	packages/pipeline-logger-reporter/src/index.ts
+  A	packages/pipeline-logger-reporter/src/loggerReporter.ts
+  A	packages/pipeline-logger-reporter/test/loggerReporter.test.ts
+  A	packages/pipeline-logger-reporter/tsconfig.json
+  A	packages/pipeline-logger-reporter/tsconfig.lib.json
+  A	packages/pipeline-logger-reporter/tsconfig.spec.json
+  A	packages/pipeline-logger-reporter/vite.config.ts
+  D	packages/pipeline/src/combineReporters.ts
+  M	packages/pipeline/src/distribution/importResolver.ts
+  M	packages/pipeline/src/distribution/resolver.ts
+  M	packages/pipeline/src/index.ts
+  M	packages/pipeline/src/pipeline.ts
+  A	packages/pipeline/src/pipelineEvent.ts
+  D	packages/pipeline/src/progressReporter.ts
+  A	packages/pipeline/src/reporter.ts
+  M	packages/pipeline/src/sparql/reader.ts
+  M	packages/pipeline/src/stage.ts
+  M	packages/pipeline/src/unreadValueTally.ts
+  M	packages/pipeline/src/writer/writer.ts
+  D	packages/pipeline/test/combineReporters.test.ts
+  M	packages/pipeline/test/distribution/importResolver.test.ts
+  M	packages/pipeline/test/pipeline.test.ts
+  A	packages/pipeline/test/pipelineEvent.test.ts
+  M	packages/pipeline/vite.config.ts
+  M	packages/search-pipeline/src/search-indexer-pipeline.ts
+  M	packages/search-pipeline/test/joins.integration.test.ts
+  M	packages/search-pipeline/test/search-indexer-pipeline.integration.test.ts
+  M	tsconfig.json
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.44.0
+
+## 0.34.0 (2026-11-10)
+
+### 🚀 Features
+
+- ⚠️  **search:** report and drop the values a typed field cannot read ([#1028](https://github.com/ldelements/lde/pull/1028))
+
+### ⚠️  Breaking Changes
+
+- **search:** report and drop the values a typed field cannot read  ([#1028](https://github.com/ldelements/lde/pull/1028))
+  a period field no longer stores a value that states no
+  period. To display such values, declare a keyword field over the same path.
+  Reindex to drop the values already stored.
+  * fix(search)!: leave out a boolean value outside true/false/1/0
+  - A boolean field over ja or yes stored false; it now leaves the value out
+    and reports it, as every other typed field does
+  BREAKING CHANGE: a boolean field no longer stores false for a value outside
+  the xsd:boolean lexical space. The API still serves such a document as false,
+  but it no longer matches an is: false filter or counts in the false facet
+  bucket. Reindex to apply.
+  * fix(search): report each unreadable value once, and no blank ones
+  - Report a value on a fanned-out referent once per node, not once per entry
+    it was copied into
+  - Skip a blank value: it states nothing to correct at the source
+  - Collapse whitespace around a boolean literal, as xsd:boolean does
+  - Say what UnreadValue.id names: the node read from, not the document key
+  * fix(pipeline-console-reporter): shorten a long unread example
+  - Cut an example value at 80 characters, so a literal where a date belongs
+    cannot flood the run log
+  * refactor(search): simplify the unread-value plumbing
+  - Let runStages own each attempt’s tally and return it, so the dump fallback
+    needs no second reset beside the writer’s
+  - Read the document key once, drop the periodCovering cast, name the Unread
+    callback type, and create a referent’s dedupe set only on its first report
+  - Keep UnreadableValue off the package index: no caller imports it there"
+  M	docs/decisions/0032-index-a-period-as-the-stretch-it-covers.md
+  A	docs/decisions/0033-report-the-values-a-typed-field-could-not-read.md
+  M	docs/reference/pipeline.md
+  M	docs/reference/search.md
+  M	packages/pipeline-console-reporter/src/consoleReporter.ts
+  M	packages/pipeline-console-reporter/test/consoleReporter.test.ts
+  M	packages/pipeline-console-reporter/vite.config.ts
+  M	packages/pipeline/src/combineReporters.ts
+  M	packages/pipeline/src/pipeline.ts
+  M	packages/pipeline/src/progressReporter.ts
+  M	packages/pipeline/src/stage.ts
+  A	packages/pipeline/src/unreadValueTally.ts
+  M	packages/pipeline/test/combineReporters.test.ts
+  M	packages/pipeline/test/pipeline.test.ts
+  M	packages/pipeline/test/stage.test.ts
+  M	packages/pipeline/vite.config.ts
+  M	packages/search-pipeline/src/search-stages.ts
+  M	packages/search-pipeline/test/search-stages.test.ts
+  M	packages/search-typesense/test/period.integration.test.ts
+  M	packages/search/src/period.ts
+  M	packages/search/src/project.ts
+  M	packages/search/test/period.test.ts
+  M	packages/search/test/qualified-relation.test.ts
+  A	packages/search/test/unreadable.test.ts
+  M	packages/search/vite.config.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.43.0
+
+## 0.33.1 (2026-11-09)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.42.1
+- Updated @lde/dataset to 0.10.1
+
+## 0.33.0 (2026-11-05)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.42.0
+
+## 0.32.0 (2026-11-03)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.41.0
+- Updated @lde/dataset to 0.10.0
+
+## 0.31.1 (2026-10-31)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.40.1
+
+## 0.31.0 (2026-10-30)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.40.0
+- Updated @lde/dataset to 0.9.0
+
 ## 0.30.3 (2026-10-28)
 
 ### 🧱 Updated Dependencies

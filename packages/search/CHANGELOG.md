@@ -1,3 +1,309 @@
+## 0.41.3 (2026-11-11)
+
+### 🚀 Features
+
+- **search:** facet a root document on its entries’ leaves ([#1049](https://github.com/ldelements/lde/pull/1049))
+
+## 0.41.2 (2026-11-11)
+
+### 🚀 Features
+
+- **search:** filter an inline reference on its own literal fields ([#1048](https://github.com/ldelements/lde/pull/1048))
+
+## 0.41.1 (2026-11-10)
+
+### 🩹 Fixes
+
+- **search:** store open period bounds at the codec’s edge, nested periods without ([#1038](https://github.com/ldelements/lde/pull/1038))
+
+## 0.41.0 (2026-11-10)
+
+### 🚀 Features
+
+- ⚠️  **search-pipeline:** infer the dataset type from its dcat:Dataset class ([#1036](https://github.com/ldelements/lde/pull/1036))
+
+### ⚠️  Breaking Changes
+
+- **search-pipeline:** infer the dataset type from its dcat:Dataset class  ([#1036](https://github.com/ldelements/lde/pull/1036))
+  searchStages and searchIndexerPipeline no longer take
+  datasetType; a schema with a dcat:Dataset root type gets the handover without it."
+  M	docs/reference/search-pipeline.md
+  M	docs/reference/search.md
+  M	packages/search-pipeline/src/search-indexer-pipeline.ts
+  M	packages/search-pipeline/src/search-stages.ts
+  M	packages/search-pipeline/test/search-stages.test.ts
+  M	packages/search/src/project.ts
+
+## 0.40.0 (2026-11-10)
+
+### 🚀 Features
+
+- ⚠️  **search:** let a lookup read its literals as periods ([#1035](https://github.com/ldelements/lde/pull/1035))
+
+### ⚠️  Breaking Changes
+
+- **search:** let a lookup read its literals as periods  ([#1035](https://github.com/ldelements/lde/pull/1035))
+  filterOperatorFor takes the field instead of its kind. Replace
+  filterOperatorFor(field.kind) with filterOperatorFor(field)."
+  A	docs/decisions/0035-serve-a-propertys-literals-and-references-in-one-field.md
+  M	docs/reference/search-api-graphql.md
+  M	docs/reference/search.md
+  M	packages/search-api-graphql/src/build-schema.ts
+  M	packages/search-api-graphql/src/projection.ts
+  A	packages/search-api-graphql/test/referent-or-period.test.ts
+  M	packages/search-api-graphql/vite.config.ts
+  M	packages/search-typesense/src/collection-definition.ts
+  M	packages/search-typesense/src/lookup.ts
+  M	packages/search-typesense/src/query-compiler.ts
+  M	packages/search-typesense/src/search.ts
+  A	packages/search-typesense/test/referent-or-period.integration.test.ts
+  A	packages/search-typesense/test/referent-or-period.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/src/adapter.ts
+  M	packages/search/src/engine.ts
+  M	packages/search/src/index.ts
+  M	packages/search/src/project.ts
+  M	packages/search/src/query.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/src/testing.ts
+  M	packages/search/test/period.test.ts
+  M	packages/search/test/query.test.ts
+  A	packages/search/test/referent-or-period.test.ts
+  M	packages/search/test/schema.test.ts
+
+## 0.39.1 (2026-11-10)
+
+### 🚀 Features
+
+- **search-pipeline:** copy fields of the dataset onto the documents indexed from it ([#1031](https://github.com/ldelements/lde/pull/1031))
+
+## 0.39.0 (2026-11-10)
+
+### 🩹 Fixes
+
+- ⚠️  **search:** read each typed kind in one place, on both value routes ([#1033](https://github.com/ldelements/lde/pull/1033))
+
+### ⚠️  Breaking Changes
+
+- **search:** read each typed kind in one place, on both value routes  ([#1033](https://github.com/ldelements/lde/pull/1033))
+  a derived integer, number, boolean, date or reference value
+  is now read as its kind: a derived 12.7 for an integer stores 12, a derived
+  '12' stores 12, and a value the kind cannot read is left out. A blank integer
+  or number literal no longer stores 0. Reindex to apply.
+  * fix(search)!: keep a single-valued field’s first readable value
+  - Read every literal on the path route, as the derive route does, so an
+    unreadable or blank first value cannot cost an integer, number, boolean or
+    date field the readable one behind it
+  - Store a list only for an array reference: the other read kinds are
+    scalars in the engine, whatever shape a derive returned
+  - Refuse an integer beyond ±2^53, report a keyword or text derive’s NaN
+    again, read a period derive’s null as no value, and describe a value with
+    no string form by its type instead of throwing
+  BREAKING CHANGE: a single-valued integer, number, boolean or date field now
+  stores its first readable value instead of its first value, and a derive
+  returning a list for a non-array field stores its first readable value
+  instead of the list. Reindex to apply.
+  * refactor(search): keep Reading and READ_KINDS module-private
+  - Nothing outside read-value.ts uses them"
+  M	docs/reference/search.md
+  M	packages/search/src/project.ts
+  A	packages/search/src/read-value.ts
+  M	packages/search/test/unreadable.test.ts
+
+## 0.38.0 (2026-11-10)
+
+### 🚀 Features
+
+- ⚠️  **search:** report and drop the values a typed field cannot read ([#1028](https://github.com/ldelements/lde/pull/1028))
+
+### ⚠️  Breaking Changes
+
+- **search:** report and drop the values a typed field cannot read  ([#1028](https://github.com/ldelements/lde/pull/1028))
+  a period field no longer stores a value that states no
+  period. To display such values, declare a keyword field over the same path.
+  Reindex to drop the values already stored.
+  * fix(search)!: leave out a boolean value outside true/false/1/0
+  - A boolean field over ja or yes stored false; it now leaves the value out
+    and reports it, as every other typed field does
+  BREAKING CHANGE: a boolean field no longer stores false for a value outside
+  the xsd:boolean lexical space. The API still serves such a document as false,
+  but it no longer matches an is: false filter or counts in the false facet
+  bucket. Reindex to apply.
+  * fix(search): report each unreadable value once, and no blank ones
+  - Report a value on a fanned-out referent once per node, not once per entry
+    it was copied into
+  - Skip a blank value: it states nothing to correct at the source
+  - Collapse whitespace around a boolean literal, as xsd:boolean does
+  - Say what UnreadValue.id names: the node read from, not the document key
+  * fix(pipeline-console-reporter): shorten a long unread example
+  - Cut an example value at 80 characters, so a literal where a date belongs
+    cannot flood the run log
+  * refactor(search): simplify the unread-value plumbing
+  - Let runStages own each attempt’s tally and return it, so the dump fallback
+    needs no second reset beside the writer’s
+  - Read the document key once, drop the periodCovering cast, name the Unread
+    callback type, and create a referent’s dedupe set only on its first report
+  - Keep UnreadableValue off the package index: no caller imports it there"
+  M	docs/decisions/0032-index-a-period-as-the-stretch-it-covers.md
+  A	docs/decisions/0033-report-the-values-a-typed-field-could-not-read.md
+  M	docs/reference/pipeline.md
+  M	docs/reference/search.md
+  M	packages/pipeline-console-reporter/src/consoleReporter.ts
+  M	packages/pipeline-console-reporter/test/consoleReporter.test.ts
+  M	packages/pipeline-console-reporter/vite.config.ts
+  M	packages/pipeline/src/combineReporters.ts
+  M	packages/pipeline/src/pipeline.ts
+  M	packages/pipeline/src/progressReporter.ts
+  M	packages/pipeline/src/stage.ts
+  A	packages/pipeline/src/unreadValueTally.ts
+  M	packages/pipeline/test/combineReporters.test.ts
+  M	packages/pipeline/test/pipeline.test.ts
+  M	packages/pipeline/test/stage.test.ts
+  M	packages/pipeline/vite.config.ts
+  M	packages/search-pipeline/src/search-stages.ts
+  M	packages/search-pipeline/test/search-stages.test.ts
+  M	packages/search-typesense/test/period.integration.test.ts
+  M	packages/search/src/period.ts
+  M	packages/search/src/project.ts
+  M	packages/search/test/period.test.ts
+  M	packages/search/test/qualified-relation.test.ts
+  A	packages/search/test/unreadable.test.ts
+  M	packages/search/vite.config.ts
+
+## 0.37.0 (2026-11-09)
+
+### 🚀 Features
+
+- ⚠️  **search:** add a period field kind for EDTF dates and intervals ([#1016](https://github.com/ldelements/lde/pull/1016))
+
+### ⚠️  Breaking Changes
+
+- **search:** add a period field kind for EDTF dates and intervals  ([#1016](https://github.com/ldelements/lde/pull/1016))
+
+## 0.36.4 (2026-11-09)
+
+### 🚀 Features
+
+- **search:** read a literal stated in place of a nested node ([#1013](https://github.com/ldelements/lde/pull/1013))
+
+## 0.36.3 (2026-11-05)
+
+### 🚀 Features
+
+- **search:** read an edge the graph may leave out ([#996](https://github.com/ldelements/lde/pull/996))
+
+## 0.36.2 (2026-11-05)
+
+### 🩹 Fixes
+
+- **search:** write no facet companion inside a nested entry ([#995](https://github.com/ldelements/lde/pull/995))
+
+## 0.36.1 (2026-11-05)
+
+### 🚀 Features
+
+- **search:** facet a local lookup through its identity companion ([#993](https://github.com/ldelements/lde/pull/993))
+
+## 0.36.0 (2026-11-05)
+
+### 🚀 Features
+
+- ⚠️  **search:** declare date facet bins in ISO 8601, with max covering its whole period ([#991](https://github.com/ldelements/lde/pull/991))
+
+### ⚠️  Breaking Changes
+
+- **search:** declare date facet bins in ISO 8601, with max covering its whole period  ([#991](https://github.com/ldelements/lde/pull/991))
+  a date field's facetRanges take ISO 8601 strings
+  instead of Unix seconds ({ min: '1900', max: '2000' }), and its
+  binned buckets are DateRangeBucket instead of RangeBucket.
+  NumericField is now a union of NumberField and DateField.
+  * feat(search)!: include the whole period a date's max names
+  - Add lastSecondOf, the last stored second of a date's period
+  - Compile a date range filter's max to the end of its period, so
+    max: '1999' runs through 1999
+  - Make a date bin inclusive at both ends, like the filter; its stored
+    max is the first second after its period, so bins and the filter
+    that selects them count the same documents
+  BREAKING CHANGE: a date range filter's max, and a date bin's max, now
+  include the whole period they name. max: '2000' used to stop at the
+  first second of 2000 and now runs through its end; write max: '1999'
+  for a range that ends with 1999."
+  M	docs/reference/search-api-graphql.md
+  M	docs/reference/search.md
+  M	packages/search-api-graphql/src/build-schema.ts
+  M	packages/search-api-graphql/test/build-schema.test.ts
+  M	packages/search-api-graphql/vite.config.ts
+  M	packages/search-typesense/src/query-compiler.ts
+  M	packages/search-typesense/src/search.ts
+  M	packages/search-typesense/test/parse-response.test.ts
+  M	packages/search-typesense/test/query-compiler.test.ts
+  M	packages/search-typesense/test/search-engine.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/src/adapter.ts
+  M	packages/search/src/index.ts
+  M	packages/search/src/query.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/test/schema.test.ts
+  M	packages/search/vite.config.ts
+
+## 0.35.0 (2026-11-04)
+
+### 🚀 Features
+
+- ⚠️  **search:** serve dates at their source precision, typed as ISO8601Date ([#987](https://github.com/ldelements/lde/pull/987))
+
+### ⚠️  Breaking Changes
+
+- **search:** serve dates at their source precision, typed as ISO8601Date  ([#987](https://github.com/ldelements/lde/pull/987))
+  GraphQL date fields come back at their source’s precision
+  rather than as a millisecond timestamp: 1999 instead of
+  1999-01-01T00:00:00.000Z, and date-times as 1999-05-03T12:30:00Z.
+  isoToUnixSeconds returns { seconds, precision } instead of a number,
+  unixSecondsToIso takes a required precision, and a date’s SearchValue is a
+  StoredDate instead of a number. Reindex to fill the companion; until then
+  dates are served as date-times.
+  * feat(search-api-graphql)!: type dates with an ISO8601Date scalar
+  - Type date fields, DateExtent bounds and DateRange bounds as
+    ISO8601Date, specified by the dates section of the docs
+  - Serve an unbinned date facet's buckets as DateBucket, so a bucket
+    value feeds straight into DateRange
+  - Reject an unreadable date bound at coercion with BAD_USER_INPUT
+  - Document the ISO 8601 agreement the scalar follows
+  BREAKING CHANGE: date fields, DateExtent, DateRange bounds and date
+  facet buckets are typed ISO8601Date instead of String, and date
+  buckets are DateBucket instead of ValueBucket. Declare variables as
+  ISO8601Date and select DateBucket where you selected ValueBucket."
+  M	docs/reference/search-api-graphql.md
+  M	docs/reference/search.md
+  M	packages/search-api-graphql/src/build-schema.ts
+  M	packages/search-api-graphql/test/__snapshots__/generator-stability.test.ts.snap
+  M	packages/search-api-graphql/test/build-schema.test.ts
+  M	packages/search-api-graphql/vite.config.ts
+  M	packages/search-typesense/src/collection-definition.ts
+  M	packages/search-typesense/src/lookup.ts
+  M	packages/search-typesense/src/query-compiler.ts
+  M	packages/search-typesense/src/search.ts
+  M	packages/search-typesense/test/__snapshots__/generator-stability.test.ts.snap
+  M	packages/search-typesense/test/parse-response.test.ts
+  M	packages/search-typesense/test/projected-lookup.test.ts
+  M	packages/search-typesense/test/query-compiler.test.ts
+  M	packages/search-typesense/test/search-engine.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/src/adapter.ts
+  M	packages/search/src/engine.ts
+  M	packages/search/src/index.ts
+  M	packages/search/src/project.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/test/project.test.ts
+  M	packages/search/test/schema.test.ts
+  M	packages/search/vite.config.ts
+
+## 0.34.0 (2026-10-30)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/text-normalization to 0.3.0
+
 ## 0.33.0 (2026-10-28)
 
 ### 🚀 Features

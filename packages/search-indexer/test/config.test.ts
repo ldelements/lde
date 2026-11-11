@@ -15,6 +15,8 @@ describe('configFromEnvironment', () => {
       registryEndpoint: new URL('https://registry.example.org/sparql'),
       registryRootTypes: [],
       datasetCriteria: {},
+      restrictRoots: {},
+      localSources: [],
       typesense: {
         host: 'typesense.internal',
         port: 8108,
@@ -42,12 +44,15 @@ describe('configFromEnvironment', () => {
       QLEVER_IMAGE: 'adfreiburg/qlever:latest',
       IMPORT_STRATEGY: 'import',
       DATA_DIR: '/mnt/data',
+      RESTRICT_ROOTS: '{"CreativeWork": "?root a ?type"}',
     });
     expect(config).toEqual({
       schemaModulePath: '/mnt/schema.mjs',
       registryEndpoint: new URL('https://registry.example.org/sparql'),
       registryRootTypes: ['Dataset', 'Publisher'],
       datasetCriteria: {},
+      restrictRoots: { CreativeWork: '?root a ?type' },
+      localSources: [],
       typesense: {
         host: 'typesense.internal',
         port: 443,
@@ -138,6 +143,22 @@ describe('configFromEnvironment', () => {
       ).toThrowError(/DATASET_CRITERIA must be a JSON object/);
     });
 
+    it('rejects RESTRICT_ROOTS that is not valid JSON', () => {
+      expect(() =>
+        configFromEnvironment({ ...minimal, RESTRICT_ROOTS: '{oops' }),
+      ).toThrowError(/RESTRICT_ROOTS must be valid JSON/);
+    });
+
+    it('rejects RESTRICT_ROOTS that is not an object of strings', () => {
+      for (const value of ['["a"]', '{"CreativeWork": 1}', 'null']) {
+        expect(() =>
+          configFromEnvironment({ ...minimal, RESTRICT_ROOTS: value }),
+        ).toThrowError(
+          /RESTRICT_ROOTS must be a JSON object mapping type names to graph patterns/,
+        );
+      }
+    });
+
     it('rejects DATASETS combined with DATASET_CRITERIA', () => {
       expect(() =>
         configFromEnvironment({
@@ -146,6 +167,123 @@ describe('configFromEnvironment', () => {
           DATASET_CRITERIA: '{}',
         }),
       ).toThrowError(/mutually exclusive/);
+    });
+  });
+
+  describe('local data in DATASETS', () => {
+    const local = { ...minimal, QLEVER_IMAGE: 'adfreiburg/qlever:latest' };
+    const typesenseOnly = {
+      TYPESENSE_HOST: 'typesense.internal',
+      TYPESENSE_API_KEY: 'admin-key',
+      QLEVER_IMAGE: 'adfreiburg/qlever:latest',
+    };
+
+    it('splits registered datasets from local data', () => {
+      const config = configFromEnvironment({
+        ...local,
+        DATASETS:
+          'https://example.org/dataset/1 file:///rdf/extra.ttl file:///rdf/more/',
+      });
+      expect(config.datasetCriteria).toEqual({
+        $id: ['https://example.org/dataset/1'],
+      });
+      expect(config.localSources).toEqual(['/rdf/extra.ttl', '/rdf/more/']);
+      expect(config.registryEndpoint).toEqual(
+        new URL('https://registry.example.org/sparql'),
+      );
+    });
+
+    it('decodes a path, so it may hold what separates the list', () => {
+      const config = configFromEnvironment({
+        ...local,
+        DATASETS: 'file:///rdf/with%20space.ttl',
+      });
+      expect(config.localSources).toEqual(['/rdf/with space.ttl']);
+    });
+
+    it('needs no registry for local data alone', () => {
+      const config = configFromEnvironment({
+        ...typesenseOnly,
+        DATASETS: 'file:///rdf/extra.ttl',
+      });
+      expect(config.registryEndpoint).toBeUndefined();
+    });
+
+    it('ignores a configured registry for local data alone', () => {
+      const config = configFromEnvironment({
+        ...local,
+        DATASETS: 'file:///rdf/extra.ttl',
+      });
+      expect(config.registryEndpoint).toBeUndefined();
+    });
+
+    it('still requires a registry beside local data', () => {
+      expect(() =>
+        configFromEnvironment({
+          ...typesenseOnly,
+          DATASETS: 'https://example.org/dataset/1 file:///rdf/extra.ttl',
+        }),
+      ).toThrowError(/REGISTRY_ENDPOINT is required/);
+    });
+
+    it('requires QLever', () => {
+      expect(() =>
+        configFromEnvironment({ ...minimal, DATASETS: 'file:///rdf/a.ttl' }),
+      ).toThrowError(/requires QLEVER_IMAGE or QLEVER_MODE=remote/);
+    });
+
+    it('rejects a file whose format it cannot tell', () => {
+      expect(() =>
+        configFromEnvironment({ ...local, DATASETS: 'file:///rdf/notes.txt' }),
+      ).toThrowError(/DATASETS contains “file:\/\/\/rdf\/notes\.txt”/);
+    });
+
+    it('rejects a URL with a host, the usual typo for a path', () => {
+      expect(() =>
+        configFromEnvironment({ ...local, DATASETS: 'file://rdf/a.ttl' }),
+      ).toThrowError(/DATASETS contains “file:\/\/rdf\/a\.ttl”/);
+    });
+
+    it('reads a file: URL whatever the case of its scheme', () => {
+      const config = configFromEnvironment({
+        ...local,
+        DATASETS: 'FILE:///rdf/a.ttl',
+      });
+      expect(config.localSources).toEqual(['/rdf/a.ttl']);
+      expect(config.registryEndpoint).toBeUndefined();
+    });
+
+    it('rejects a file listed twice, or beside its directory', () => {
+      let message = '';
+      try {
+        configFromEnvironment({
+          ...local,
+          DATASETS:
+            'file:///rdf/a.ttl file:///rdf/a.ttl file:///rdf/more/b.ttl file:///rdf/more/',
+        });
+      } catch (error) {
+        message = (error as Error).message;
+      }
+      expect(message).toContain('DATASETS lists “/rdf/a.ttl” twice');
+      expect(message).toContain(
+        'DATASETS lists “/rdf/more/b.ttl” and its directory',
+      );
+    });
+
+    it('rejects local data with DATASET_CRITERIA', () => {
+      expect(() =>
+        configFromEnvironment({
+          ...local,
+          DATASETS: 'file:///rdf/a.ttl',
+          DATASET_CRITERIA: '{}',
+        }),
+      ).toThrowError(/mutually exclusive/);
+    });
+
+    it('rejects a file: registry, which has no SPARQL to query', () => {
+      expect(() =>
+        configFromEnvironment({ ...local, REGISTRY_ENDPOINT: 'file:///rdf/' }),
+      ).toThrowError(/REGISTRY_ENDPOINT must be a SPARQL endpoint/);
     });
   });
 
@@ -219,6 +357,42 @@ describe('configFromEnvironment', () => {
         configFromEnvironment({ ...minimal, IMPORT_STRATEGY: 'import' }),
       ).toThrowError(
         /IMPORT_STRATEGY requires QLEVER_IMAGE or QLEVER_MODE=remote/,
+      );
+    });
+
+    it('reads the memory cap for QLever’s queries', () => {
+      const config = configFromEnvironment({
+        ...minimal,
+        QLEVER_IMAGE: 'adfreiburg/qlever:latest',
+        QLEVER_MEMORY_MAX_SIZE: '8G',
+      });
+      expect(config.qlever).toMatchObject({ memoryMaxSize: '8G' });
+    });
+
+    it('reads the memory cap for a sidecar too', () => {
+      const config = configFromEnvironment({
+        ...minimal,
+        QLEVER_MODE: 'remote',
+        QLEVER_MEMORY_MAX_SIZE: '6 GB',
+      });
+      expect(config.qlever).toMatchObject({ memoryMaxSize: '6 GB' });
+    });
+
+    it('rejects a memory cap QLever cannot read', () => {
+      expect(() =>
+        configFromEnvironment({
+          ...minimal,
+          QLEVER_IMAGE: 'adfreiburg/qlever:latest',
+          QLEVER_MEMORY_MAX_SIZE: 'plenty',
+        }),
+      ).toThrowError(/QLEVER_MEMORY_MAX_SIZE must be a size/);
+    });
+
+    it('rejects a memory cap without an import path', () => {
+      expect(() =>
+        configFromEnvironment({ ...minimal, QLEVER_MEMORY_MAX_SIZE: '8G' }),
+      ).toThrowError(
+        /QLEVER_MEMORY_MAX_SIZE requires QLEVER_IMAGE or QLEVER_MODE=remote/,
       );
     });
 
