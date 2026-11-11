@@ -22,6 +22,7 @@ import {
   storedRangeBound,
   isInternalField,
   isBinnedRangeFacet,
+  facetNamed,
   holdsNoIds,
   isWelded,
   joinGraph,
@@ -171,13 +172,13 @@ function compileFacetBy(
 ): string {
   return facets
     .map((name) => {
-      const field = fieldNamed(searchType, name);
-      if (field === undefined) {
+      const facet = facetNamed(searchType, name, schema);
+      if (facet === undefined) {
         return name;
       }
-      return isBinnedRangeFacet(field)
-        ? compileRangeFacet(field.name, storedFacetRanges(field))
-        : (physicalFields(field, schema).facet ?? name);
+      return isBinnedRangeFacet(facet.field)
+        ? compileRangeFacet(facet.engineField, storedFacetRanges(facet.field))
+        : facet.engineField;
     })
     .join(',');
 }

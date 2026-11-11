@@ -151,7 +151,19 @@ export interface FacetExtent {
  */
 export type FacetFieldsOf<Type extends SearchType> = RootType extends Type
   ? string
-  : Extract<Type['fields'][number], { readonly facetable: true }>['name'];
+  : | Extract<Type['fields'][number], { readonly facetable: true }>['name']
+    | FacetedLeavesOf<Type['fields'][number]>;
+
+/** The `‹reference›.‹leaf›` facet names an inline reference declares through
+ *  its faceted leaves (`ref.facetedLeaves`). */
+type FacetedLeavesOf<Field> = Field extends {
+  readonly name: infer Name extends string;
+  readonly ref: {
+    readonly facetedLeaves: readonly (infer Leaf extends string)[];
+  };
+}
+  ? `${Name}.${Leaf}`
+  : never;
 
 /**
  * The output-field-name union of a search type – the keys a {@link ResultDocument}

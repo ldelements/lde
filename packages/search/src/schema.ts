@@ -253,6 +253,7 @@ export type ReferenceStrategy =
       readonly typeName?: string;
       readonly target?: never;
       readonly identity?: never;
+      readonly facetedLeaves?: never;
     }
   | {
       readonly strategy: 'lookup';
@@ -319,6 +320,7 @@ export type ReferenceStrategy =
        */
       readonly literal?: LiteralKind;
       readonly identity?: never;
+      readonly facetedLeaves?: never;
     }
   | {
       readonly strategy: 'inline';
@@ -352,6 +354,25 @@ export type ReferenceStrategy =
        * keyed on a label, so two endpoints that share a label are never merged.
        */
       readonly identity?: string;
+      /**
+       * The `name`s of **leaf fields** of this reference type that the root
+       * document is faceted on, each served as the facet
+       * `‹reference›.‹leaf›` (GraphQL: `facets { ‹reference› { ‹leaf› } }`).
+       *
+       * A bucket counts **root documents**, not entries: a work with three
+       * reproductions, two under one licence, counts once under that licence.
+       * That is the question such a facet answers – *which works have a
+       * reproduction I may reuse?* – and it is how an engine counts a value
+       * stored under every entry, so the facet reads the nested path itself
+       * and needs no companion.
+       *
+       * Declared on the reference rather than on the leaf because the count
+       * is a fact about the root, and a reference type nested from several
+       * places may be faceted from one and not another. Each leaf must be
+       * `filterable`, so a bucket selects through a condition on one entry
+       * ({@link searchSchema} enforces it), and the reference must be too.
+       */
+      readonly facetedLeaves?: readonly string[];
     };
 
 /** The `literal` kinds a declaration may name, checked at runtime for one
@@ -898,6 +919,7 @@ export function searchSchema<const Types extends readonly SearchType[]>(
     new Map(rootTypes.map((searchType) => [searchType.name, searchType])),
   );
   assertResolvableLabelSources(types, schema);
+  assertUnnarrowedFacetedLeaves(rootTypes, schema);
   // Build the join graph eagerly and discard it: it is cached per schema, and
   // building it is what enforces the schema-wide join rules (one joinable
   // reference per target, every target an indexed Root Type, no cycles). A
@@ -1215,6 +1237,7 @@ function assertResolvableInlineReferences(
         );
       }
       assertIdentityCompanion(searchType, field, referenceType);
+      assertFacetedLeaves(searchType, field, referenceType);
     }
   }
   for (const searchType of types) {
@@ -1372,6 +1395,107 @@ function assertIdentityCompanion(
     throw new Error(
       `${where} nests “${field.ref.typeName}”, which declares an “edgeClass” and requires “${requiredOnEdge.name}”: an endpoint the graph states without its edge carries only “${identity}”, so it would never have “${requiredOnEdge.name}”. Drop “required” from “${requiredOnEdge.name}”.`,
     );
+  }
+}
+
+/** The leaf kinds a root document may be faceted on: values a bucket can key
+ *  on, with no range bins ({@link ReferenceStrategy.facetedLeaves}). */
+const FACETABLE_LEAF_KINDS: ReadonlySet<FieldKind> = new Set([
+  'keyword',
+  'boolean',
+  'reference',
+]);
+
+/**
+ * An inline reference’s {@link ReferenceStrategy.facetedLeaves faceted leaves}
+ * each name a single-valued leaf of the type it nests that a condition on one
+ * entry can select, so every bucket round-trips into a filter. Only a Root
+ * Type’s reference may declare them: the facet is a count of root documents,
+ * and a reference type has none.
+ */
+function assertFacetedLeaves(
+  searchType: SearchType,
+  field: ReferenceField & { readonly ref: { readonly typeName: string } },
+  referenceType: ReferenceType,
+): void {
+  const leaves = facetedLeavesOf(field);
+  if (leaves.length === 0) {
+    return;
+  }
+  const where = `Inline reference “${searchType.name}.${field.name}”`;
+  if (searchType.class === undefined) {
+    throw new Error(
+      `${where} declares “facetedLeaves”, but “${searchType.name}” is a reference type: a faceted leaf counts root documents, and an entry is not one. Declare it on the Root Type’s reference instead.`,
+    );
+  }
+  if (field.facetable === true) {
+    throw new Error(
+      `${where} is “facetable” and declares “facetedLeaves”: its facet and its leaves’ facets would both be named after “${field.name}”. Facet the reference or its leaves, not both.`,
+    );
+  }
+  if (field.filterable !== true) {
+    throw new Error(
+      `${where} declares “facetedLeaves” without “filterable”: a bucket is selected by a condition on one entry, which the reference must accept. Declare “filterable” on it.`,
+    );
+  }
+  const seen = new Set<string>();
+  for (const name of leaves) {
+    if (seen.has(name)) {
+      throw new Error(`${where} names faceted leaf “${name}” twice.`);
+    }
+    seen.add(name);
+    const leaf = fieldNamed(referenceType, name);
+    if (leaf === undefined) {
+      throw new Error(
+        `${where} names faceted leaf “${name}”, which “${field.ref.typeName}” does not declare.`,
+      );
+    }
+    const storesObject =
+      isInlineReference(leaf) ||
+      (leaf.kind === 'reference' &&
+        leaf.ref?.strategy === 'lookup' &&
+        leaf.ref.local === true);
+    if (
+      !FACETABLE_LEAF_KINDS.has(leaf.kind) ||
+      storesObject ||
+      literalKindOf(leaf) !== undefined
+    ) {
+      throw new Error(
+        `${where} names faceted leaf “${name}”, ${storesObject ? 'which stores a nested object' : `a “${leaf.kind}”`}: only a “keyword”, “boolean” or “reference” leaf holding ids keys a bucket.`,
+      );
+    }
+    if (leaf.filterable !== true) {
+      throw new Error(
+        `${where} names faceted leaf “${name}”, which is not “filterable”: a bucket selects through a condition on that leaf. Declare “filterable” on “${field.ref.typeName}.${name}”.`,
+      );
+    }
+  }
+}
+
+/**
+ * A faceted leaf facets its nested path as stored, so a facet policy on the
+ * leaf’s target ({@link RootType.facetKeys}) would go unapplied: the buckets
+ * would offer ids the policy excludes. Refused until a narrowed companion is
+ * written inside each entry.
+ */
+function assertUnnarrowedFacetedLeaves(
+  rootTypes: readonly RootType[],
+  schema: SearchSchema,
+): void {
+  for (const searchType of rootTypes) {
+    for (const facet of facetsOf(searchType, schema)) {
+      if (facet.reference === undefined) {
+        continue;
+      }
+      const narrowing = referencedTargetsOf(facet.field, schema).find(
+        (target) => target.facetKeys !== undefined,
+      );
+      if (narrowing !== undefined) {
+        throw new Error(
+          `Inline reference “${searchType.name}.${facet.reference.name}” names faceted leaf “${facet.field.name}”, whose target “${narrowing.name}” declares “facetKeys”: a faceted leaf cannot be narrowed by a facet policy yet, so its buckets would offer ids the policy excludes.`,
+        );
+      }
+    }
   }
 }
 
@@ -1536,7 +1660,7 @@ function assertServiceableNestedFields(
             .map((role) => `“${role}”`)
             .join(
               ', ',
-            )}, which nesting cannot serve: an engine facets a nested field per document rather than per entry, sorts on one value rather than into an array, and has no collection to join to from inside an entry. Facet the edge through the inline reference’s “identity” companion instead.`,
+            )}, which nesting cannot serve: an engine facets a nested field per document rather than per entry, sorts on one value rather than into an array, and has no collection to join to from inside an entry. Facet the edge through the inline reference’s “identity” companion, or the root document on this leaf through the reference’s “facetedLeaves”, instead.`,
         );
       }
       if (
@@ -2607,6 +2731,119 @@ export function facetableFields(
   searchType: SearchType,
 ): readonly SearchField[] {
   return searchType.fields.filter((field) => field.facetable === true);
+}
+
+/**
+ * One facet a Root Type serves: a facetable field of its own, or a leaf of an
+ * inline reference the type is faceted on
+ * ({@link ReferenceStrategy.facetedLeaves}).
+ */
+export interface FacetDeclaration {
+  /** The logical name a query asks for and a result files buckets under: the
+   *  field’s own name, or `‹reference›.‹leaf›`. */
+  readonly name: string;
+  /** The field whose values the buckets are – the facetable field, or the
+   *  faceted leaf. Its kind types the buckets, and its label source labels
+   *  them. */
+  readonly field: SearchField;
+  /** The inline reference a faceted leaf is reached through; absent for a
+   *  field of the type’s own. */
+  readonly reference?: SearchField;
+  /** The physical field the engine facets ({@link physicalFields}): the field
+   *  itself or one of its companions, or the nested path of a leaf. */
+  readonly engineField: string;
+}
+
+/**
+ * Every facet a Root Type serves, in declaration order: each facetable field,
+ * then each reference’s faceted leaves after it. The one place a logical facet
+ * name is mapped to what an engine facets, so a surface, a validator and an
+ * adapter enumerate the same facets.
+ */
+export function facetsOf(
+  searchType: SearchType,
+  schema?: SearchSchema,
+): readonly FacetDeclaration[] {
+  if (schema === undefined) {
+    return declaredFacets(searchType, schema);
+  }
+  // Read per facet a query names, on every search: derived once per type.
+  let bySchema = facetsBySchema.get(schema);
+  if (bySchema === undefined) {
+    bySchema = new WeakMap();
+    facetsBySchema.set(schema, bySchema);
+  }
+  const cached = bySchema.get(searchType);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const facets = declaredFacets(searchType, schema);
+  bySchema.set(searchType, facets);
+  return facets;
+}
+
+/** The {@link ReferenceStrategy.facetedLeaves faceted leaves} an inline
+ *  reference declares, or none. */
+function facetedLeavesOf(inlineReference: SearchField): readonly string[] {
+  return (
+    (
+      inlineReference as {
+        readonly ref: { readonly facetedLeaves?: readonly string[] };
+      }
+    ).ref.facetedLeaves ?? []
+  );
+}
+
+const facetsBySchema = new WeakMap<
+  SearchSchema,
+  WeakMap<SearchType, readonly FacetDeclaration[]>
+>();
+
+function declaredFacets(
+  searchType: SearchType,
+  schema: SearchSchema | undefined,
+): readonly FacetDeclaration[] {
+  return searchType.fields.flatMap((field): FacetDeclaration[] => {
+    const own: FacetDeclaration[] =
+      field.facetable === true
+        ? [
+            {
+              name: field.name,
+              field,
+              engineField: physicalFields(field, schema).facet as string,
+            },
+          ]
+        : [];
+    const referenceType =
+      schema === undefined ? undefined : nestedReferenceType(schema, field);
+    if (referenceType === undefined) {
+      return own;
+    }
+    // Only an inline reference nests a reference type, and `searchSchema`
+    // has resolved every faceted leaf against it.
+    const leaves = facetedLeavesOf(field);
+    return [
+      ...own,
+      ...leaves.map((leafName): FacetDeclaration => {
+        const path = nestedFieldName(field.name, leafName);
+        return {
+          name: path,
+          field: fieldNamed(referenceType, leafName) as SearchField,
+          reference: field,
+          engineField: path,
+        };
+      }),
+    ];
+  });
+}
+
+/** The facet a Root Type serves under `name`, or `undefined`. */
+export function facetNamed(
+  searchType: SearchType,
+  name: string,
+  schema?: SearchSchema,
+): FacetDeclaration | undefined {
+  return facetsOf(searchType, schema).find((facet) => facet.name === name);
 }
 
 /** Fields usable in `where`, in declaration order. */

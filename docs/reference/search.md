@@ -1126,6 +1126,47 @@ later:
   straight into the `is` filter that selects it;
 - a range-facet bin carries `min`/`max` instead – see below.
 
+### Faceting on an entry’s leaf
+
+A root document can be faceted on a leaf of the entries an inline reference
+holds. List the leaves in `ref.facetedLeaves`:
+
+```ts
+{
+  name: 'associatedMedia',
+  kind: 'reference',
+  array: true,
+  output: true,
+  filterable: true,
+  ref: { strategy: 'inline', typeName: 'MediaObject', facetedLeaves: ['license'] },
+}
+```
+
+The facet is named by its path, `associatedMedia.license`, in
+`SearchQuery.facets` and in the result, and GraphQL serves it as
+`facets { associatedMedia { license { value count } } }`. A bucket counts
+**root documents**: a work with three reproductions, two under CC BY, counts
+once under CC BY. That answers “which works have a reproduction under this
+licence?”, and it is how the engine counts a value stored under every entry,
+so no companion is written.
+
+A bucket is selected by a condition on one entry,
+`where: { associatedMedia: { where: { license: { in: […] } } } }`, which is the
+facet’s own clause: the facet counts without it and reports its value as
+selected. A clause welding a condition on another leaf to the same entry is
+nobody’s own, as a clause spanning two fields is not
+([ADR 36](../decisions/0036-facet-a-root-document-on-its-entries-leaves.md)).
+
+`searchSchema` holds each leaf to what that round trip needs: it is declared
+on the reference type, `filterable`, and a `keyword`, `boolean` or `reference`;
+the reference is `filterable`, not `facetable` itself (both facets would be
+named after it), and sits on a Root Type. A `lookup` leaf whose target declares
+a [facet policy](#facet-policy) is refused for now.
+
+A condition welded to one entry is owned by a faceted leaf, never by an
+`identity` facet: select an identity facet’s bucket through the reference’s
+`in` arm, `where: { contributor: { in: […] } }`.
+
 ### Facet policy
 
 A Root Type may declare **`facetKeys`**: which of its documents get a facet

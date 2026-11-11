@@ -304,6 +304,10 @@ role: { in: ["etser"] } } }` asks for _this person in this role_, where the
     the engine counted documents for it, so a uniform result set yields one
     bucket, not two.
 
+  An inline reference’s [faceted leaves](./search#faceting-on-an-entry-s-leaf)
+  are served one level down, under the reference: `facets { associatedMedia {
+license { value count } } }`, typed `‹Type›‹Reference›Facets`.
+
   Selecting facet fields IS
   the request, and the whole selection is **batched per request**: one
   facet query over the listing’s filters, plus one unfiltered query when an
