@@ -1,4 +1,5 @@
 import { NativeTaskRunner } from '@lde/task-runner-native';
+import assert from 'node:assert';
 import { randomUUID } from 'node:crypto';
 import { ChildProcess } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
@@ -123,8 +124,12 @@ export async function startTaskAgent(
     port: options?.port ?? defaultPort,
   });
 
+  // A string address is a Unix socket path, which a TCP listen never yields.
+  const [address] = server.addresses();
+  assert(typeof address !== 'string', 'Expected a TCP address');
+
   return {
-    port: server.addresses()[0].port,
+    port: address.port,
     close: () => server.close(),
   };
 }
