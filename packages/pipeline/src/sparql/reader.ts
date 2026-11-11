@@ -15,7 +15,12 @@ import {
 } from '@lde/host-limiter';
 import { quadToStringQuad } from 'rdf-string';
 import { withDefaultGraph } from './graph.js';
-import { injectDatasetBindings, injectValues } from './values.js';
+import {
+  identifyDatasetBindings,
+  injectDatasetBindings,
+  injectValues,
+  type DatasetBindingTargets,
+} from './values.js';
 import type { DatasetBindings } from './datasetBindings.js';
 import { ConstantTimeoutPolicy, type TimeoutPolicy } from './timeoutPolicy.js';
 import { classifyOutcome, isTransientError, statusOf } from './failure.js';
@@ -61,7 +66,8 @@ export interface ReadOptions {
 
   /**
    * Dataset-level bindings, injected at the outermost scope for the variables
-   * the query references – see {@link injectDatasetBindings}. A {@link Stage}
+   * the query references – see {@link injectDatasetBindings}. A variable that
+   * {@link bindings} also binds keeps the item's value. A {@link Stage}
    * passes these. Without them nothing is bound, not even `?dataset`: outside a
    * stage, pass {@link predefinedDatasetBindings} to bind the DCAT variables.
    */
@@ -188,7 +194,8 @@ export interface SparqlConstructReaderOptions {
  * 3. Per-item (selector) bindings – injected at the innermost sub-SELECT
  *    (see {@link injectValues}).
  * 4. Dataset-level bindings passed in {@link ReadOptions.datasetBindings} –
- *    injected at the outermost scope for the variables the query references
+ *    injected at the outermost scope for the variables the query references,
+ *    except those the item bindings bind: the item's value takes precedence
  *    (see {@link injectDatasetBindings}).
  *
  * @example
@@ -211,6 +218,7 @@ export interface SparqlConstructReaderOptions {
 export class SparqlConstructReader implements Reader {
   private readonly rawQuery: string;
   private readonly preParsed?: QueryConstruct;
+  private readonly preParsedTargets?: DatasetBindingTargets;
   private readonly userFetcher?: SparqlEndpointFetcher;
   private readonly lineBuffer: boolean;
   private readonly deduplicate: boolean;
@@ -227,6 +235,7 @@ export class SparqlConstructReader implements Reader {
         throw new Error('Query must be a CONSTRUCT query');
       }
       this.preParsed = parsed as QueryConstruct;
+      this.preParsedTargets = identifyDatasetBindings(this.preParsed);
     }
 
     this.userFetcher = options.fetcher;
@@ -267,16 +276,29 @@ export class SparqlConstructReader implements Reader {
       withDefaultGraph(ast, distribution.namedGraph);
     }
 
+    const targets = this.preParsedTargets ?? identifyDatasetBindings(ast);
+
+    const bindings = options?.bindings ?? [];
     const datasetBindings = options?.datasetBindings;
-    const query = (bindings: VariableBindings[]) => {
-      let bound = bindings.length > 0 ? injectValues(ast, bindings) : ast;
+    // An item binding is more specific than a dataset binding of the same
+    // name, so it takes precedence instead of being joined with it.
+    const itemVariables = new Set(bindings.flatMap(Object.keys));
+    const datasetTargets: DatasetBindingTargets = {
+      ...targets,
+      variables: new Set(
+        [...targets.variables].filter(
+          (variable) => !itemVariables.has(variable),
+        ),
+      ),
+    };
+    const query = (batch: VariableBindings[]) => {
+      let bound = batch.length > 0 ? injectValues(ast, batch) : ast;
       if (datasetBindings) {
-        bound = injectDatasetBindings(bound, datasetBindings);
+        bound = injectDatasetBindings(bound, datasetBindings, datasetTargets);
       }
       return this.generator.generate(bound);
     };
 
-    const bindings = options?.bindings ?? [];
     let skipped = 0;
     const quads = await this.readBatch(bindings, query, {
       endpoint,

@@ -13,6 +13,7 @@ import type {
 import type { DatasetBindings } from '../../src/sparql/datasetBindings.js';
 import {
   findSubSelect,
+  identifyDatasetBindings,
   injectValues,
   injectDatasetBindings,
 } from '../../src/sparql/values.js';
@@ -676,5 +677,133 @@ describe('injectDatasetBindings', () => {
     expect(
       hasValues(findSubSelect(result.where.patterns)!.where.patterns),
     ).toBe(false);
+  });
+});
+
+describe('identifyDatasetBindings', () => {
+  function targetsOf(sparql: string) {
+    return identifyDatasetBindings(
+      parser.parse(sparql) as QueryConstruct | QuerySelect,
+    );
+  }
+
+  it('separates template-only variables from those used elsewhere', () => {
+    const targets = targetsOf(
+      'CONSTRUCT { ?s <urn:a> ?a ; <urn:b> ?b } WHERE { ?s a ?b }',
+    );
+
+    expect(targets.variables).toEqual(new Set(['s', 'a', 'b']));
+    expect(targets.usedOutsideTemplate).toEqual(new Set(['s', 'b']));
+    expect(targets.templateTriples).toEqual([
+      new Set(['s', 'a']),
+      new Set(['s', 'b']),
+    ]);
+  });
+
+  it.each([
+    [
+      'a BIND',
+      'CONSTRUCT { ?s <urn:l> ?x } WHERE { ?s a ?c BIND(<urn:x> AS ?x) }',
+    ],
+    [
+      'a BIND in a nested group',
+      'CONSTRUCT { ?s <urn:l> ?x } WHERE { ?s a ?c { BIND(<urn:x> AS ?x) } }',
+    ],
+    [
+      'an AS in a sub-SELECT projection',
+      'CONSTRUCT { ?s <urn:l> ?x } WHERE { { SELECT ?s (COUNT(?c) AS ?x) { ?s a ?c } GROUP BY ?s } }',
+    ],
+    [
+      'a BIND a sub-SELECT * exposes',
+      'CONSTRUCT { ?s <urn:l> ?x } WHERE { { SELECT * { ?s a ?c BIND(<urn:x> AS ?x) } } }',
+    ],
+    [
+      'a VALUES',
+      'CONSTRUCT { ?s <urn:l> ?x } WHERE { VALUES ?x { <urn:x> } ?s a ?c }',
+    ],
+    [
+      'a trailing VALUES',
+      'CONSTRUCT { ?s <urn:l> ?x } WHERE { ?s a ?c } VALUES ?x { <urn:x> }',
+    ],
+    [
+      'a GROUP BY',
+      'SELECT ?s ?x WHERE { ?s a ?c } GROUP BY ?s (STR(?c) AS ?x)',
+    ],
+    [
+      'a GROUP BY of a sub-SELECT that projects it',
+      'CONSTRUCT { ?s <urn:l> ?x } WHERE { { SELECT ?s ?x { ?s a ?c } GROUP BY ?s (STR(?c) AS ?x) } }',
+    ],
+    [
+      'an AS in the SELECT projection',
+      'SELECT ?s (<urn:x> AS ?x) WHERE { ?s a ?c }',
+    ],
+  ])('leaves out a variable the query assigns in %s', (_where, sparql) => {
+    const targets = targetsOf(sparql);
+
+    expect(targets.variables.has('x')).toBe(false);
+    expect(targets.variables.has('s')).toBe(true);
+  });
+
+  it('counts a variable a sub-SELECT assigns but does not expose as unreferenced', () => {
+    const targets = targetsOf(
+      'CONSTRUCT { ?s a ?c } WHERE { { SELECT ?s ?c { ?s a ?c BIND(<urn:x> AS ?x) } } }',
+    );
+
+    expect(targets.variables).toEqual(new Set(['s', 'c']));
+  });
+});
+
+describe('injectDatasetBindings with variables the query assigns', () => {
+  const bindings = [
+    [
+      {
+        dataset: namedNode('http://example.org/dataset'),
+        datasetLicense: namedNode('http://example.org/license'),
+      },
+    ],
+  ];
+
+  it('lets the query’s own BIND take precedence and stays valid SPARQL', () => {
+    const generated = generator.generate(
+      injectDatasetBindings(
+        parseConstruct(
+          'CONSTRUCT { ?dataset <urn:license> ?datasetLicense } WHERE { BIND(<urn:own> AS ?datasetLicense) }',
+        ),
+        bindings,
+      ),
+    );
+
+    expect(generated).toContain('<http://example.org/dataset>');
+    expect(generated).not.toContain('<http://example.org/license>');
+    expect(() => parser.parse(generated)).not.toThrow();
+  });
+
+  it('lets a selector’s own projection take precedence', () => {
+    const select = parser.parse(
+      'SELECT ?s (<urn:own> AS ?datasetLicense) WHERE { ?s <urn:in> ?dataset }',
+    ) as QuerySelect;
+
+    const generated = generator.generate(
+      injectDatasetBindings(select, bindings),
+    );
+
+    expect(generated).not.toContain('<http://example.org/license>');
+    expect(() => parser.parse(generated)).not.toThrow();
+  });
+
+  it('uses the targets it is given instead of identifying them again', () => {
+    const query = parseConstruct(
+      'CONSTRUCT { ?dataset <urn:license> ?datasetLicense } WHERE { }',
+    );
+
+    const result = injectDatasetBindings(query, bindings, {
+      variables: new Set(['dataset']),
+      usedOutsideTemplate: new Set(),
+      templateTriples: [new Set(['dataset'])],
+    });
+
+    expect(generator.generate(result)).not.toContain(
+      '<http://example.org/license>',
+    );
   });
 });

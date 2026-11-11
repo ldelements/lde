@@ -1,11 +1,13 @@
 import {
   AstFactory,
   type Pattern,
+  type PatternBind,
   type PatternGroup,
   type PatternUnion,
   type PatternValues,
   type QueryConstruct,
   type QuerySelect,
+  type SolutionModifierGroup,
   type TermIri,
   type TermLiteral,
   type TermVariable,
@@ -219,6 +221,40 @@ function projectedVariables(subSelect: QuerySelect): string[] {
   });
 }
 
+/**
+ * The variables in an AST node that the query assigns itself where a binding at
+ * the outermost scope can reach them: with `BIND(… AS ?x)`, `(… AS ?x)` in a
+ * projection or `GROUP BY`, or `VALUES`. Of a sub-SELECT only the variables it
+ * projects count, as for {@link visibleVariables}.
+ */
+function assignedVariables(node: unknown): string[] {
+  if (Array.isArray(node)) return node.flatMap(assignedVariables);
+  if (typeof node !== 'object' || node === null) return [];
+  if (F.isQuerySelect(node)) {
+    const subSelect = node as QuerySelect;
+    const assigned = new Set(assignedVariables(Object.values(subSelect)));
+    return projectedVariables(subSelect).filter((variable) =>
+      assigned.has(variable),
+    );
+  }
+  if (F.isPatternBind(node)) {
+    const bind = node as PatternBind;
+    return [bind.variable.value, ...assignedVariables(bind.expression)];
+  }
+  if (F.isPatternValues(node)) {
+    return (node as PatternValues).variables.map((variable) => variable.value);
+  }
+  if (F.isSolutionModifierGroup(node)) {
+    return (node as SolutionModifierGroup).groupings.flatMap((grouping) =>
+      'variable' in grouping
+        ? [grouping.variable.value, ...assignedVariables(grouping.value)]
+        : assignedVariables(grouping),
+    );
+  }
+
+  return assignedVariables(Object.values(node));
+}
+
 /** A key that is equal for rows binding the same variables to the same terms. */
 function rowKey(row: VariableBindings): string {
   return JSON.stringify(
@@ -235,7 +271,7 @@ function rowKey(row: VariableBindings): string {
  */
 function narrowRows(
   rows: VariableBindings[],
-  variables: Set<string>,
+  variables: ReadonlySet<string>,
 ): VariableBindings[] {
   const narrowed = rows.map((row) =>
     Object.fromEntries(
@@ -247,7 +283,7 @@ function narrowRows(
   return [...new Map(narrowed.map((row) => [rowKey(row), row])).values()];
 }
 
-function overlaps(a: Set<string>, b: Set<string>): boolean {
+function overlaps(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
   return [...a].some((variable) => b.has(variable));
 }
 
@@ -258,8 +294,8 @@ function overlaps(a: Set<string>, b: Set<string>): boolean {
 function canBranch(
   rows: VariableBindings[],
   multiRowGroups: VariableBindings[][],
-  usedOutsideTemplate: Set<string>,
-  templateTriples: Set<string>[],
+  usedOutsideTemplate: ReadonlySet<string>,
+  templateTriples: readonly ReadonlySet<string>[],
 ): boolean {
   const own = new Set(rows.flatMap(Object.keys));
   const others = new Set(
@@ -293,30 +329,76 @@ function buildBranchPatterns(branches: VariableBindings[][]): Pattern[] {
 }
 
 /**
+ * Where a query can take dataset-level bindings – see
+ * {@link identifyDatasetBindings}.
+ */
+export interface DatasetBindingTargets {
+  /** The variables the query references and doesn't assign itself. */
+  readonly variables: ReadonlySet<string>;
+  /** Of those, the ones used outside the `CONSTRUCT` template. */
+  readonly usedOutsideTemplate: ReadonlySet<string>;
+  /** The variables of each `CONSTRUCT` template triple. */
+  readonly templateTriples: readonly ReadonlySet<string>[];
+}
+
+/**
+ * Identifies which variables of a query {@link injectDatasetBindings} can bind,
+ * and how the query uses them. It depends only on the query, so a caller that
+ * injects into the same query repeatedly can identify them once.
+ *
+ * A variable the query assigns itself, with `BIND(… AS ?x)` or `(… AS ?x)`, is
+ * left out: the query's own value takes precedence, and an outer binding would
+ * make the assignment invalid SPARQL.
+ */
+export function identifyDatasetBindings(
+  query: QueryConstruct | QuerySelect,
+): DatasetBindingTargets {
+  const { template, ...clauses } = query as typeof query &
+    Partial<QueryConstruct>;
+  const assigned = new Set(assignedVariables(Object.values(clauses)));
+  const bindable = (variables: string[]) =>
+    new Set(variables.filter((variable) => !assigned.has(variable)));
+
+  const templateTriples = (template?.triples ?? []).map((triple) =>
+    bindable(visibleVariables(triple)),
+  );
+  const usedOutsideTemplate = bindable(
+    visibleVariables(Object.values(clauses)),
+  );
+
+  return {
+    variables: new Set([
+      ...usedOutsideTemplate,
+      ...templateTriples.flatMap((variables) => [...variables]),
+    ]),
+    usedOutsideTemplate,
+    templateTriples,
+  };
+}
+
+/**
  * Injects dataset-level bindings at the outermost WHERE scope, for the variables
- * the query references. A query that references none is returned unchanged.
+ * the query references and doesn't assign itself (see
+ * {@link identifyDatasetBindings}). A query that references none is returned
+ * unchanged.
  *
  * Multi-row groups the query only outputs go in separate `UNION` branches, so
  * L languages and N names make L + N rows instead of L × N. Other multi-row
  * groups are joined: in another group's branch their variables would be unbound,
  * making patterns on them match too much and filters on them remove solutions.
+ *
+ * @param targets The query's {@link identifyDatasetBindings} result, when the
+ *   caller has it already.
  */
 export function injectDatasetBindings<Q extends QueryConstruct | QuerySelect>(
   query: Q,
   bindings: DatasetBindings,
+  targets: DatasetBindingTargets = identifyDatasetBindings(query),
 ): Q {
-  const { template, ...clauses } = query as Q & Partial<QueryConstruct>;
-  const templateTriples = (template?.triples ?? []).map(
-    (triple) => new Set(visibleVariables(triple)),
-  );
-  const usedOutsideTemplate = new Set(visibleVariables(Object.values(clauses)));
-  const referenced = new Set([
-    ...usedOutsideTemplate,
-    ...templateTriples.flatMap((variables) => [...variables]),
-  ]);
+  const { variables, usedOutsideTemplate, templateTriples } = targets;
 
   const groups = bindings
-    .map((rows) => narrowRows(rows, referenced))
+    .map((rows) => narrowRows(rows, variables))
     .filter((rows) => rows.length > 0);
   if (groups.length === 0) return query;
 

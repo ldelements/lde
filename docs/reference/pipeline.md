@@ -343,7 +343,7 @@ A property absent for a given dataset (no `publisher`, no `license`) leaves its 
 
 As in DCAT-AP, `?datasetLanguage` is an IRI, such as `<http://publications.europa.eu/resource/authority/language/NLD>`, not a language tag, so compare it with `dct:language` values, not with `LANG()`. A language that isn't an IRI, such as nl, is bound as a relative IRI and won't match DCAT-AP data.
 
-Use these like any other variable: the pipeline binds the ones your query references, and a query that references none runs unchanged. Bindings don't reach inside a sub-SELECT, so a variable used only there stays unbound.
+Use these like any other variable: the pipeline binds the ones your query references, and a query that references none runs unchanged. A variable your query assigns itself, with `BIND`, `VALUES` or `AS`, keeps the query's value. A variable the item selector also binds keeps the item's value. Bindings don't reach inside a sub-SELECT, so a variable used only there stays unbound.
 
 A multi-valued variable takes each of its values:
 

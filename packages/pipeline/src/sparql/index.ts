@@ -14,7 +14,12 @@ export {
   type SparqlItemSelectorOptions,
 } from './selector.js';
 
-export { injectValues, injectDatasetBindings } from './values.js';
+export {
+  injectValues,
+  injectDatasetBindings,
+  identifyDatasetBindings,
+  type DatasetBindingTargets,
+} from './values.js';
 
 export {
   predefinedDatasetBindings,

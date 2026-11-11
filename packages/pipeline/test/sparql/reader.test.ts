@@ -210,6 +210,35 @@ describe('SparqlConstructReader', () => {
       );
     });
 
+    it('identifies dataset binding targets after substituting #subjectFilter#', async () => {
+      const fetcher = new SparqlEndpointFetcher();
+      const querySpy = vi.spyOn(fetcher, 'fetchTriples');
+
+      const reader = new SparqlConstructReader({
+        query: `CONSTRUCT { ?s <urn:license> ?datasetLicense } WHERE { #subjectFilter# ?s ?p ?o }`,
+        fetcher,
+      });
+
+      const distribution = Distribution.sparql(
+        new URL(`http://localhost:${port}/sparql`),
+      );
+      distribution.subjectFilter = 'BIND(<urn:own> AS ?datasetLicense)';
+
+      const dataset = new Dataset({
+        iri: new URL('http://example.org/dataset'),
+        distributions: [distribution],
+        license: new URL('http://example.org/license'),
+      });
+
+      await reader.read(dataset, distribution, {
+        datasetBindings: predefinedDatasetBindings(dataset),
+      });
+
+      const query = querySpy.mock.calls[0][1];
+      expect(query).toContain('<urn:own>');
+      expect(query).not.toContain('<http://example.org/license>');
+    });
+
     it('substitutes all occurrences of #subjectFilter#', async () => {
       const fetcher = new SparqlEndpointFetcher();
       const querySpy = vi.spyOn(fetcher, 'fetchTriples');
@@ -398,6 +427,29 @@ describe('SparqlConstructReader', () => {
           'urn:A urn:lang:en',
         ]),
       );
+    });
+
+    it('lets an item binding take precedence over a dataset binding of the same name', async () => {
+      const fetcher = new SparqlEndpointFetcher();
+      const querySpy = vi.spyOn(fetcher, 'fetchTriples');
+      const reader = new SparqlConstructReader({
+        query: 'CONSTRUCT { ?s a ?type } WHERE { ?s ?p ?o }',
+        fetcher,
+      });
+
+      await reader.read(dataset(), distribution(), {
+        bindings: [
+          { s: namedNode('urn:a'), type: namedNode('urn:X') },
+          { s: namedNode('urn:b'), type: namedNode('urn:Y') },
+        ],
+        datasetBindings: datasetBindingsFor(dataset(), [
+          { type: namedNode('urn:Y') },
+        ]),
+      });
+
+      const query = querySpy.mock.calls[0][1];
+      expect(query).toContain('<urn:X>');
+      expect(query.match(/<urn:Y>/g)).toHaveLength(1);
     });
 
     it('binds nothing when no dataset bindings are passed', async () => {
