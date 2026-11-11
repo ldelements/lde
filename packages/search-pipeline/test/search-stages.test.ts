@@ -513,8 +513,9 @@ describe('selectByClass', () => {
       .post('/sparql')
       .reply(
         200,
-        (_uri, requestBody) => {
-          query = decodeURIComponent(String(requestBody).replace(/\+/g, ' '));
+        async (request: Request) => {
+          const requestBody = await request.text();
+          query = decodeURIComponent(requestBody.replace(/\+/g, ' '));
           return { head: { vars: ['root'] }, results: { bindings: [] } };
         },
         { 'Content-Type': 'application/sparql-results+json' },
