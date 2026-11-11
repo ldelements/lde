@@ -1,3 +1,46 @@
+## 0.38.0 (2026-11-11)
+
+### 🚀 Features
+
+- ⚠️  **pipeline:** run reader queries on a shared, adaptive host limiter ([#1052](https://github.com/ldelements/lde/pull/1052))
+
+### ⚠️  Breaking Changes
+
+- **pipeline:** run reader queries on a shared, adaptive host limiter  ([#1052](https://github.com/ldelements/lde/pull/1052))
+  SparqlConstructReaderOptions.retries is removed; the reader’s backoff is
+  fixed. Pass a limiter to Pipeline to set how many queries reach an endpoint at once."
+  M	docs/reference/host-limiter.md
+  M	docs/reference/pipeline.md
+  M	docs/reference/resolver.md
+  M	package-lock.json
+  M	packages/host-limiter/src/index.ts
+  A	packages/host-limiter/src/retryAfter.ts
+  A	packages/host-limiter/test/retryAfter.test.ts
+  M	packages/pipeline-console-reporter/src/consoleReporter.ts
+  M	packages/pipeline-console-reporter/test/consoleReporter.test.ts
+  M	packages/pipeline-console-reporter/vite.config.ts
+  M	packages/pipeline/package.json
+  M	packages/pipeline/src/pipeline.ts
+  M	packages/pipeline/src/pipelineEvent.ts
+  A	packages/pipeline/src/sparql/failure.ts
+  M	packages/pipeline/src/sparql/reader.ts
+  M	packages/pipeline/src/sparql/selector.ts
+  M	packages/pipeline/src/sparql/timeoutPolicy.ts
+  M	packages/pipeline/src/stage.ts
+  M	packages/pipeline/test/pipeline.test.ts
+  M	packages/pipeline/test/sparql/reader.test.ts
+  M	packages/pipeline/test/stage.test.ts
+  M	packages/pipeline/tsconfig.lib.json
+  M	packages/pipeline/vite.config.ts
+  M	packages/resolver/src/failures.ts
+  M	packages/resolver/src/index.ts
+  M	packages/resolver/src/resolver.ts
+  M	packages/resolver/test/resolver.test.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.47.0
+
 ## 0.37.0 (2026-11-10)
 
 ### 🧱 Updated Dependencies
