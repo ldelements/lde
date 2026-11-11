@@ -211,7 +211,11 @@ new Pipeline({
 });
 ```
 
-Because the scratch files are N-Triples, chains are quad-only: a stage with `stages` cannot `project`. A chained stage that returns `NotSupported` fails the chain rather than being skipped. See the how-to guide [Chain stage outputs](../guide/chain-stage-outputs).
+Because the scratch files are N-Triples, chains are quad-only: a stage with `stages` cannot `project`. A chained stage that returns `NotSupported` fails the chain rather than being skipped.
+
+Set `emitOutput: false` on a stage whose output should only feed the next stage in the chain – a working graph a child queries, say. The stage still writes its scratch file for the next stage to query, but the chain leaves it out of what it writes to the pipeline’s writers. Because nothing would read the output otherwise, the last chained stage and a top-level stage without `stages` cannot set it; their constructors throw.
+
+See the how-to guide [Chain stage outputs](../guide/chain-stage-outputs).
 
 ### Item Selector
 
