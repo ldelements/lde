@@ -187,10 +187,10 @@ function buildValuesPattern(bindings: VariableBindings[]): PatternValues {
  * sub-SELECT doesn't inherit outer bindings, so injecting them here would
  * leave an outer `BIND`/`FILTER` referencing them unbound.
  */
-export function injectValues<Q extends QueryConstruct | QuerySelect>(
-  query: Q,
+export function injectValues(
+  query: QueryConstruct,
   bindings: VariableBindings[],
-): Q {
+): QueryConstruct {
   return {
     ...query,
     where: injectIntoInnermost(query.where, buildValuesPattern(bindings)),
@@ -228,18 +228,22 @@ function rowKey(row: VariableBindings): string {
   );
 }
 
-/** Narrows rows to the given variables, dropping rows that become equal or empty. */
+/**
+ * Narrows rows to the given variables, dropping rows that become equal. A row
+ * that becomes empty stays (as UNDEF), so the group still allows its variables
+ * to be unbound, unless every row does: then the query doesn't use the group.
+ */
 function narrowRows(
   rows: VariableBindings[],
   variables: Set<string>,
 ): VariableBindings[] {
-  const narrowed = rows
-    .map((row) =>
-      Object.fromEntries(
-        Object.entries(row).filter(([name]) => variables.has(name)),
-      ),
-    )
-    .filter((row) => Object.keys(row).length > 0);
+  const narrowed = rows.map((row) =>
+    Object.fromEntries(
+      Object.entries(row).filter(([name]) => variables.has(name)),
+    ),
+  );
+  if (narrowed.every((row) => Object.keys(row).length === 0)) return [];
+
   return [...new Map(narrowed.map((row) => [rowKey(row), row])).values()];
 }
 

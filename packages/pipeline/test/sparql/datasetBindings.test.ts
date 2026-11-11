@@ -9,6 +9,8 @@ import {
 const { namedNode, literal } = DataFactory;
 
 const dataset = namedNode('http://example.org/dataset');
+const nld = 'http://publications.europa.eu/resource/authority/language/NLD';
+const eng = 'http://publications.europa.eu/resource/authority/language/ENG';
 const publisher = {
   iri: new URL('http://example.org/publisher'),
   name: { nl: 'Naam', en: 'Name' },
@@ -61,17 +63,28 @@ describe('predefinedDatasetBindings', () => {
 
   it('keeps languages and publisher names in independent groups', () => {
     const groups = predefinedDatasetBindings(
-      makeDataset({ language: ['nl', 'en'], publisher }),
+      makeDataset({ language: [nld, eng], publisher }),
     );
 
     expect(groups).toEqual([
       [{ dataset, datasetPublisher }],
-      [{ datasetLanguage: literal('nl') }, { datasetLanguage: literal('en') }],
+      [
+        { datasetLanguage: namedNode(nld) },
+        { datasetLanguage: namedNode(eng) },
+      ],
       [
         { datasetPublisherName: literal('Naam', 'nl') },
         { datasetPublisherName: literal('Name', 'en') },
       ],
     ]);
+  });
+
+  it('binds an untagged publisher name as a plain literal', () => {
+    const groups = predefinedDatasetBindings(
+      makeDataset({ publisher: { ...publisher, name: { '': 'Naam' } } }),
+    );
+
+    expect(groups[2]).toEqual([{ datasetPublisherName: literal('Naam') }]);
   });
 });
 
@@ -91,7 +104,7 @@ describe('datasetBindingsFor', () => {
     const other = namedNode('urn:other');
 
     expect(
-      datasetBindingsFor(makeDataset({ language: ['nl'] }), [
+      datasetBindingsFor(makeDataset({ language: [nld] }), [
         { datasetLanguage: other },
       ]),
     ).toEqual([[{ dataset }], [{}], [], [{ datasetLanguage: other }]]);

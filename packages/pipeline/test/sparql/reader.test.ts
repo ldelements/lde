@@ -361,7 +361,7 @@ describe('SparqlConstructReader', () => {
       new Dataset({
         iri: new URL(datasetIri),
         distributions: [distribution()],
-        language: ['nl', 'en'],
+        language: ['urn:lang:nl', 'urn:lang:en'],
       });
 
     async function read(query: string, options: ReadOptions) {
@@ -392,7 +392,11 @@ describe('SparqlConstructReader', () => {
       );
 
       expect(new Set(triples)).toEqual(
-        new Set([`${datasetIri} urn:A`, 'urn:A nl', 'urn:A en']),
+        new Set([
+          `${datasetIri} urn:A`,
+          'urn:A urn:lang:nl',
+          'urn:A urn:lang:en',
+        ]),
       );
     });
 

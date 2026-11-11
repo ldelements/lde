@@ -391,8 +391,8 @@ describe('unsafe IRIs', () => {
 describe('injectDatasetBindings', () => {
   const dataset = { dataset: namedNode('http://example.org/dataset') };
   const languages = [
-    { datasetLanguage: literal('nl') },
-    { datasetLanguage: literal('en') },
+    { datasetLanguage: namedNode('urn:lang:nl') },
+    { datasetLanguage: namedNode('urn:lang:en') },
   ];
   const publisherNames = [
     { datasetPublisherName: literal('Naam', 'nl') },
@@ -427,7 +427,7 @@ describe('injectDatasetBindings', () => {
       'CONSTRUCT { ?s a ?c } WHERE { ?s a ?c ; <urn:lang> ?l FILTER(?l = ?datasetLanguage) }',
     );
 
-    expect(generated).toContain('"nl"');
+    expect(generated).toContain('<urn:lang:nl>');
     expect(generated).not.toContain('UNION');
     expect(generated).not.toContain('<http://example.org/dataset>');
   });
@@ -468,7 +468,7 @@ describe('injectDatasetBindings', () => {
       'CONSTRUCT { ?s a ?c } WHERE { { SELECT * { ?s a ?c ; <urn:lang> ?datasetLanguage } } }',
     );
 
-    expect(generated).toContain('"nl"');
+    expect(generated).toContain('<urn:lang:nl>');
   });
 
   it('does not bind a variable a sub-SELECT only aggregates', () => {
@@ -516,7 +516,7 @@ describe('injectDatasetBindings', () => {
       );
 
       expect(generated).not.toContain('UNION');
-      expect(generated).toContain('"nl"');
+      expect(generated).toContain('<urn:lang:nl>');
       expect(generated).toContain('"Naam"@nl');
     });
 
@@ -526,7 +526,7 @@ describe('injectDatasetBindings', () => {
       );
 
       expect(generated).not.toContain('UNION');
-      expect(generated).toContain('"nl"');
+      expect(generated).toContain('<urn:lang:nl>');
       expect(generated).toContain('"Naam"@nl');
     });
 
@@ -536,7 +536,7 @@ describe('injectDatasetBindings', () => {
       );
 
       expect(generated).not.toContain('UNION');
-      expect(generated).toContain('"nl"');
+      expect(generated).toContain('<urn:lang:nl>');
       expect(generated).toContain('"Naam"@nl');
     });
 
@@ -550,7 +550,7 @@ describe('injectDatasetBindings', () => {
       );
 
       expect(generated).not.toContain('UNION');
-      expect(generated).toContain('"nl"');
+      expect(generated).toContain('<urn:lang:nl>');
       expect(generated).toContain('"Naam"@nl');
     });
 
@@ -631,6 +631,30 @@ describe('injectDatasetBindings', () => {
       ),
     ).toEqual(['a', 'b']);
     expect(() => parser.parse(generator.generate(result))).not.toThrow();
+  });
+
+  it('keeps a row that binds none of the referenced variables as UNDEF', () => {
+    const result = injectDatasetBindings(
+      parseConstruct('CONSTRUCT { ?s <urn:a> ?a } WHERE { ?s a ?c }'),
+      [[{ a: literal('1') }, { b: literal('2') }]],
+    );
+
+    const values = result.where.patterns[0] as PatternValues;
+    expect(values.variables.map((variable) => variable.value)).toEqual(['a']);
+    expect(values.values).toHaveLength(2);
+    expect(generator.generate(result)).toContain('UNDEF');
+  });
+
+  it('drops a group when none of its rows bind a referenced variable', () => {
+    const query = parseConstruct(
+      'CONSTRUCT { ?s <urn:a> ?a } WHERE { ?s a ?c }',
+    );
+
+    expect(
+      injectDatasetBindings(query, [
+        [{ b: literal('1') }, { b: literal('2') }],
+      ]),
+    ).toBe(query);
   });
 
   it('generates valid SPARQL when the WHERE clause is a bare sub-SELECT', () => {

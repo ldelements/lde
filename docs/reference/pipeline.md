@@ -337,9 +337,11 @@ Beyond `?dataset`, a reader or `SparqlItemSelector` can reach a handful of DCAT 
 | `?datasetPublisher`     | `dataset.publisher.iri`                      | No                           |
 | `?datasetPublisherName` | `dataset.publisher.name` (language → string) | Yes, one row per translation |
 | `?datasetLicense`       | `dataset.license`                            | No                           |
-| `?datasetLanguage`      | `dataset.language`                           | Yes, one row per language    |
+| `?datasetLanguage`      | `dataset.language` (IRIs)                    | Yes, one row per language    |
 
 A property absent for a given dataset (no `publisher`, no `license`) leaves its variable unbound rather than `UNDEF`.
+
+As in DCAT-AP, `?datasetLanguage` is an IRI, such as `<http://publications.europa.eu/resource/authority/language/NLD>`, not a language tag, so compare it with `dct:language` values, not with `LANG()`. A language that isn't an IRI, such as nl, is bound as a relative IRI and won't match DCAT-AP data.
 
 Use these like any other variable: the pipeline binds the ones your query references, and a query that references none runs unchanged. Bindings don't reach inside a sub-SELECT, so a variable used only there stays unbound.
 
@@ -367,6 +369,8 @@ new Stage({
 ```
 
 A provider's rows go to every reader and, when configured, the item selector. They follow the same rules, with several rows acting as one multi-valued variable. Values that must appear in one solution together, such as a language and a name in that language, belong in the same row. A variable the rows bind replaces the predefined binding of that name. It may return a `Promise`.
+
+The pipeline calls `bindings()` once per stage for each dataset, so a provider shared by several stages should cache expensive lookups, such as reading a file or calling a service, itself.
 
 ### Timeout policies
 

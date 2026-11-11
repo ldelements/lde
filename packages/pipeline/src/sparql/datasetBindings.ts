@@ -38,10 +38,13 @@ export function predefinedDatasetBindings(dataset: Dataset): DatasetBindings {
   }
 
   const languages = dataset.language.map((language) => ({
-    datasetLanguage: literal(language),
+    datasetLanguage: namedNode(language),
   }));
   const publisherNames = Object.entries(dataset.publisher?.name ?? {}).map(
-    ([language, name]) => ({ datasetPublisherName: literal(name, language) }),
+    ([language, name]) => ({
+      datasetPublisherName:
+        language === '' ? literal(name) : literal(name, language),
+    }),
   );
 
   return [[base], languages, publisherNames];
@@ -72,6 +75,10 @@ export function datasetBindingsFor(
  * (e.g. a caller-local `rdf:type` read from a side file). Mirrors
  * {@link Reader} and {@link ItemSelector}. The returned rows form one group:
  * return values that must appear in one solution together in the same row.
+ *
+ * {@link bindings} is called once per stage per dataset, so a provider shared
+ * by several stages should cache expensive lookups (a file read, a service
+ * call) itself.
  */
 export interface DatasetBindingsProvider {
   bindings(
