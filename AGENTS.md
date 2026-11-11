@@ -142,7 +142,7 @@ npm trust github --repo ldelements/lde --file release.yml --allow-publish
 npm access set mfa=publish
 ```
 
-Do not re-run the failed release action afterwards – the next push to main releases normally (nx skips already-published versions).
+Do not re-run the failed release action afterwards: the version you published by hand is the one it failed on, and the next push to main releases normally. For any other version a release run tagged but failed to publish, run the Release workflow manually with “publish only” checked; a later push does not retry it, because a run publishes only the versions it creates.
 
 <!-- nx configuration start-->
 <!-- Leave the start & end comments to automatically receive updates. -->
