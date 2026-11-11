@@ -35,8 +35,12 @@ describe('PostgresObservationStore', () => {
     it('applies lock and statement timeouts to its connection', async () => {
       // Read the GUCs back off the store's own pooled connection.
       const db = (store as unknown as { db: PostgresJsDatabase }).db;
-      const [lock] = await db.execute(sql`SHOW lock_timeout`);
-      const [statement] = await db.execute(sql`SHOW statement_timeout`);
+      const [lock] = await db.execute<{ lock_timeout: string }>(
+        sql`SHOW lock_timeout`,
+      );
+      const [statement] = await db.execute<{ statement_timeout: string }>(
+        sql`SHOW statement_timeout`,
+      );
       expect(lock.lock_timeout).toBe('30s');
       expect(statement.statement_timeout).toBe('1min');
     });
