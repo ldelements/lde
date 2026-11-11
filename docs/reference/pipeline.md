@@ -370,7 +370,7 @@ new Stage({
 
 A provider's rows go to every reader and, when configured, the item selector. They follow the same rules, with several rows acting as one multi-valued variable. Values that must appear in one solution together, such as a language and a name in that language, belong in the same row. A variable the rows bind replaces the predefined binding of that name. It may return a `Promise`.
 
-The pipeline calls `bindings()` once per stage for each dataset, so a provider shared by several stages should cache expensive lookups, such as reading a file or calling a service, itself.
+The pipeline calls `bindings()` once per stage for each dataset, so a provider shared by several stages should cache expensive lookups itself, such as reading a file or calling a service.
 
 ### Timeout policies
 
