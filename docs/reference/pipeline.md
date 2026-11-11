@@ -162,6 +162,19 @@ new Stage({
 
 `maxConcurrency` (default: 10) limits the total number of concurrent SPARQL queries. Within each batch, all readers run in parallel; the number of concurrent batches is automatically reduced to `⌊maxConcurrency / readerCount⌋` so the total query pressure stays within the limit. For example, with `maxConcurrency: 10` and two readers per stage, up to 5 batches run concurrently (10 SPARQL queries total).
 
+How many of those queries reach the endpoint at once is up to the pipeline’s `limiter`, a [`HostLimiter`](host-limiter) keyed on the dataset’s IRI. Each dataset starts at one query in flight, and its limit then adapts to how the endpoint responds, up to the limiter’s per-host ceiling; see [the adaptive limit](host-limiter#an-adaptive-per-host-limit). Without one, every reader shares a default `createHostLimiter(10, 10)`, so a `maxConcurrency` above 10 needs a limiter with a higher ceiling to make a difference. A weak endpoint that falls over at two queries is therefore asked one at a time, while a strong one climbs to the ceiling within a few batches.
+
+To share one limit with a [resolver](resolver) that loads the same backend – IIIF manifests served by the endpoint’s own server, say – create the limiter once and pass it to both, and key the resolver on the dataset too:
+
+```typescript
+const limiter = createHostLimiter(10, 8);
+const pipeline = new Pipeline({ /* … */ limiter });
+const manifests = createResolver({
+  /* … */ limiter,
+  host: (reference) => reference.dataset,
+});
+```
+
 #### Queue capacity
 
 `queueCapacity` (default: 128) bounds the queue that funnels the concurrent batches’ output items into the single write. Producers block once that many items are pending, so it bounds stage memory in items rather than in input size. Lower it when each item is heavy – a [projected](#projecting-batches-with-project) document weighs far more than a quad. Only meaningful with an item selector.
@@ -274,7 +287,22 @@ The query is templated per dataset and distribution, in order:
 2. When the distribution has a `namedGraph`, a `FROM <graph>` clause is injected for it.
 3. Every literal `?dataset` occurrence is replaced with the dataset’s IRI. This includes a genuine `?dataset` variable, which gets rewritten too – don’t name an ordinary query variable `?dataset`.
 
-Transient failures – network errors and HTTP 502/503/504 – are retried; `retries` (default: 3) sets how many times. `SparqlConstructReaderOptions.fetcher` injects a custom `SparqlEndpointFetcher`, intended for tests; the reader then uses it as-is, so the per-request budget from the [timeout policy](#timeout-policies) is not enforced (the policy’s hooks still fire, but its own `timeout` governs).
+`SparqlConstructReaderOptions.fetcher` injects a custom `SparqlEndpointFetcher`, intended for tests; the reader then uses it as-is, so the per-request budget from the [timeout policy](#timeout-policies) is not enforced (the policy’s hooks still fire, but its own `timeout` governs), and a `Retry-After` header goes unread.
+
+#### When the endpoint fails
+
+Each query waits for a slot in the [pipeline’s limiter](#concurrency) and holds it until the endpoint starts answering. What the reader does then depends on the answer:
+
+| Answer                                       | Means                                 | Limit      | Then                                                                                                                   |
+| -------------------------------------------- | ------------------------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------- |
+| HTTP 502, 503 or 504, or a network error     | The endpoint is down or struggling    | Lowered    | Pause the dataset and try again, at most five times: 5, 15, 45, 135 and 405 s, or what `Retry-After` says, up to 405 s |
+| A timeout                                    | The query took longer than its budget | Lowered    | Fail the read                                                                                                          |
+| HTTP 500                                     | This query failed, not the endpoint   | Left alone | Split the batch, down to one root, which is reported as `rootSkipped` and left out                                     |
+| Anything else, such as a 400 for a bad query | The query is wrong                    | Left alone | Fail the read                                                                                                          |
+
+The backoff adds up to about 10 minutes, long enough to outlast a backend restart; a failed read then fails its stage, and the [reactive dump fallback](#distribution-resolver) takes over if configured. A pause drops the dataset’s limit to 1, so after it only one query goes out, and that query is the probe: if it is answered, the limit climbs back; if not, the next, longer pause follows.
+
+A 500 that keeps coming back usually means the query does not fit in the endpoint’s memory for these roots, at any load. The reader reads each half of the batch, one after the other, splitting again where a half still fails, so a single root that will not extract does not cost the rest of its batch. A batch of 10 with one such root costs at most 19 queries. Each half is asked for only once the one before it has been read, so a split adds no load of its own. When not one root of the batch answers, the endpoint fails this query whatever the roots, and the read fails rather than coming out empty. A read without bindings has nothing to split, and fails.
 
 When querying endpoints that return line-oriented formats like N-Triples (e.g. QLever), enable `lineBuffer` to work around an [N3.js chunk-splitting bug](https://github.com/rdfjs/N3.js/issues/578) that causes intermittent parse errors on large responses:
 
@@ -463,6 +491,7 @@ In rough lifecycle order. Every event below the first four belongs to one datase
 | `stageProgress`         | `debug`                                   | `stage`, `itemsProcessed`, `quadsGenerated`, `memoryUsageBytes`, `heapUsedBytes`                                                           | After each batch a stage processes.                                                                                                                     |
 | `stageComplete`         | `info`                                    | `stage`, `itemsProcessed`, `quadsGenerated`, `durationMs`, `phases`, `counts` (see [Stage phases and counts](#stage-phases-and-counts))    | When a stage finishes successfully.                                                                                                                     |
 | `stageSkipped`          | `info` for `noItemsSelected`, else `warn` | `stage`, `reason` (code `noItemsSelected` or `notSupported`)                                                                               | When a stage is [skipped](#skipped-stages): `noItemsSelected` for an empty selector, `notSupported` otherwise.                                          |
+| `rootSkipped`           | `warn`                                    | `stage`, `root` (the selector’s bindings for it), `error`                                                                                  | When a reader [leaves a root out](#when-the-endpoint-fails) because the endpoint answered HTTP 500 to a query for that root alone.                      |
 | `stageFailed`           | `error`                                   | `stage`, `error`                                                                                                                           | When a stage hard-fails, or a per-dataset `write`, `provenance` or `reactive-dump-fallback` step fails; the run continues.                              |
 | `datasetValidated`      | `info` when conforming, else `warn`       | `report`                                                                                                                                   | Once per (dataset, validator) pair after all stages, even when nothing was validated – read `quadsValidated` to distinguish ‘not tested’.               |
 | `datasetSkipped`        | `info` for `unchanged`, else `warn`       | `reason` (code `unchanged`, `probeFailed`, `resolveFailed` or `noDistributionAvailable`), `error?` (for `probeFailed` and `resolveFailed`) | When a dataset is skipped without running its stages.                                                                                                   |

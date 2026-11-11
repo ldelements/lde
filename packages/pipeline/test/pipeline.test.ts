@@ -8,6 +8,7 @@ import {
   type PipelinePlugin,
 } from '../src/pipeline.js';
 import { Dataset, Distribution } from '@lde/dataset';
+import { createHostLimiter } from '@lde/host-limiter';
 import { Stage } from '../src/stage.js';
 import { NoItemsSelected, NotSupported } from '../src/sparql/reader.js';
 import {
@@ -119,6 +120,7 @@ const eventTypes = [
   'stageComplete',
   'stageFailed',
   'stageSkipped',
+  'rootSkipped',
   'datasetValidated',
   'datasetComplete',
   'datasetSkipped',
@@ -2726,6 +2728,77 @@ describe('Pipeline', () => {
       });
 
       await expect(pipeline.run()).resolves.toBeUndefined();
+    });
+  });
+
+  describe('limiter', () => {
+    it('hands every stage the limiter it was given', async () => {
+      const limiter = createHostLimiter(4, 2);
+      const first = makeStage('first');
+      const second = makeStage('second');
+
+      await new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [first, second],
+        writers: writer,
+        distributionResolver: makeResolver(makeResolvedDistribution()),
+        limiter,
+      }).run();
+
+      for (const stage of [first, second]) {
+        const options = (stage.run as ReturnType<typeof vi.fn>).mock
+          .calls[0][3];
+        expect(options.limiter).toBe(limiter);
+      }
+    });
+
+    it('leaves the limiter to the readers when given none', async () => {
+      const stage = makeStage('stage1');
+
+      await new Pipeline({
+        datasetSelector: makeDatasetSelector(
+          makeDataset('http://example.org/dataset-a'),
+          makeDataset('http://example.org/dataset-b'),
+        ),
+        stages: [stage],
+        writers: writer,
+        distributionResolver: makeResolver(makeResolvedDistribution()),
+      }).run();
+
+      const limiters = (stage.run as ReturnType<typeof vi.fn>).mock.calls.map(
+        (call) => call[3].limiter,
+      );
+      expect(limiters).toEqual([undefined, undefined]);
+    });
+
+    it('reports a root a stage skipped', async () => {
+      const stage = makeStage('works');
+      const root = { item: DataFactory.namedNode('http://example.org/work') };
+      const error = new Error('HTTP status 500');
+      vi.mocked(stage.run).mockImplementation(
+        async (_dataset, _distribution, _writer, options) => {
+          options?.onRootSkipped?.(root, error);
+        },
+      );
+      const reporter = makeReporter();
+
+      await new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [stage],
+        writers: writer,
+        distributionResolver: makeResolver(makeResolvedDistribution()),
+        reporter,
+      }).run();
+
+      expect(reporter.rootSkipped).toHaveBeenCalledWith(
+        expect.objectContaining({
+          dataset,
+          stage: 'works',
+          root,
+          error,
+          defaultLevel: 'warn',
+        }),
+      );
     });
   });
 

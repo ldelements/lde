@@ -109,10 +109,14 @@ tasks, none of them can finish.
 - Every task is handed a `slot`, for when how it settles would say the wrong
   thing: `slot.overloaded()` halves the limit though the task resolves – for a
   caller that answers failures as values – and `slot.ignore()` leaves the limit
-  alone, for a task that sent no request.
+  alone, for a task whose outcome says nothing about load: one that sent no
+  request, or got an answer such as a 404.
 - `hostKeyOf(url)` is the host, falling back to the full href when the URL has no
   authority, so a `urn:` or `file:` URL gets its own budget rather than sharing a
   single empty-string bucket.
+- `parseRetryAfter(header)` reads a `Retry-After` header – seconds or an HTTP
+  date – as milliseconds to wait, for `pause`, and `undefined` when it is missing
+  or unreadable.
 - `positiveIntOrDefault(value, fallback)` clamps a caller-supplied limit: zero,
   negative, fractional and `NaN` would stall the scheduler or overrun the cap, so
   they fall back rather than being trusted.
@@ -123,3 +127,5 @@ tasks, none of them can finish.
 [@lde/resolver](./resolver) runs every batch on one limiter, its own or one it is
 given to share, turns a failed call into a rejection so the host’s limit comes
 down, and pauses a host that asked it to come back later.
+[@lde/pipeline](./pipeline) runs every reader query on one, keyed on the dataset,
+and pauses the dataset while its endpoint is down.

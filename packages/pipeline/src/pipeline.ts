@@ -1,6 +1,7 @@
 import { createReadStream } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { Dataset, Distribution } from '@lde/dataset';
+import type { HostLimiter } from '@lde/host-limiter';
 import type { Quad } from '@rdfjs/types';
 import { StreamParser } from 'n3';
 import type { DatasetSelector } from './selector.js';
@@ -172,6 +173,17 @@ export interface PipelineOptions<Out = Quad> {
    * once per dataset so state resets between datasets.
    */
   timeout?: () => TimeoutPolicy;
+  /**
+   * The limiter every stage’s readers run their queries on, keyed on the
+   * dataset’s IRI. Each dataset’s limit adapts to how its endpoint responds,
+   * up to the limiter’s per-host ceiling; see {@link SparqlConstructReader}.
+   *
+   * Pass the limiter you also give a resolver that loads the same backend –
+   * keyed on the dataset too – so the two share one limit.
+   *
+   * Left out, the readers share a default: `createHostLimiter(10, 10)`.
+   */
+  limiter?: HostLimiter;
 }
 
 /**
@@ -417,6 +429,7 @@ export class Pipeline<Out = Quad> {
   private readonly chaining?: PipelineOptions<Out>['chaining'];
   private readonly reporters: readonly Reporter[];
   private readonly timeoutFactory: () => TimeoutPolicy;
+  private readonly limiter?: HostLimiter;
   private readonly provenanceStore?: ProvenanceStore;
   private readonly pipelineVersion?: string;
 
@@ -473,6 +486,7 @@ export class Pipeline<Out = Quad> {
     this.reporters = [options.reporter ?? []].flat();
     this.timeoutFactory =
       options.timeout ?? (() => new ConstantTimeoutPolicy(300_000));
+    this.limiter = options.limiter;
     this.provenanceStore = options.provenanceStore;
     this.pipelineVersion = options.pipelineVersion;
   }
@@ -1084,6 +1098,15 @@ export class Pipeline<Out = Quad> {
         });
       },
       timeout,
+      limiter: this.limiter,
+      onRootSkipped: (root, error) =>
+        this.report(runId, {
+          type: 'rootSkipped',
+          dataset,
+          stage: stage.name,
+          root,
+          error,
+        }),
       valueUnread:
         unread && ((target, field, value) => unread.add(target, field, value)),
       onComplete: (stageSummary) => {

@@ -11,6 +11,7 @@ import type {
   PipelineCompleteEvent,
   PipelineEvent,
   Reporter,
+  RootSkippedEvent,
   SelectionEmptyEvent,
   StageCompleteEvent,
   StageFailedEvent,
@@ -80,6 +81,8 @@ export class ConsoleReporter implements Reporter {
         return this.stageFailed(event);
       case 'stageSkipped':
         return this.stageSkipped(event);
+      case 'rootSkipped':
+        return this.rootSkipped(event);
       case 'datasetValidated':
         return this.datasetValidated(event);
       case 'datasetComplete':
@@ -347,6 +350,17 @@ export class ConsoleReporter implements Reporter {
       }
       this.activeSpinner = undefined;
     }
+  }
+
+  private rootSkipped({ stage, root, error }: RootSkippedEvent): void {
+    const names = Object.values(root)
+      .map((term) => term.value)
+      .join(', ');
+    this.printLine(
+      logSymbols.warning,
+      `${chalk.bold(stage)}: skipped ${names} ${chalk.dim(`(${error.message.split('\n')[0]})`)}`,
+      2,
+    );
   }
 
   private datasetComplete(result: DatasetCompleteEvent): void {

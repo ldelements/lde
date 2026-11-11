@@ -3,6 +3,7 @@ import type { ValidityVerdict } from '@lde/distribution-health';
 import type { ValidationReport } from './validator.js';
 import type { ImportDetails } from './distribution/resolver.js';
 import type { TimeoutTransitionEvent } from './sparql/timeoutPolicy.js';
+import type { VariableBindings } from './sparql/reader.js';
 
 /**
  * Deliberately without `fatal`: the pipeline never ends the process; an
@@ -256,6 +257,17 @@ export interface StageFailedEvent extends DatasetEventEnvelope<'stageFailed'> {
   error: Error;
 }
 
+/**
+ * A stage left one root out: the endpoint still answered HTTP 500 to a query
+ * for that root alone, so the rest of its batch was read without it.
+ */
+export interface RootSkippedEvent extends DatasetEventEnvelope<'rootSkipped'> {
+  stage: string;
+  /** The root, as the stage’s item selector selected it. */
+  root: VariableBindings;
+  error: Error;
+}
+
 /** A stage was skipped for a dataset. */
 export interface StageSkippedEvent extends DatasetEventEnvelope<'stageSkipped'> {
   stage: string;
@@ -326,6 +338,7 @@ export type PipelineEvent =
   | StageCompleteEvent
   | StageFailedEvent
   | StageSkippedEvent
+  | RootSkippedEvent
   | DatasetValidatedEvent
   | DatasetCompleteEvent
   | DatasetSkippedEvent
@@ -371,6 +384,7 @@ export function levelOf(event: PipelineEventPayload): Level {
     case 'itemsRejected':
     case 'valuesUnread':
     case 'timeoutTightened':
+    case 'rootSkipped':
       return 'warn';
     case 'stageFailed':
       return 'error';

@@ -10,6 +10,7 @@ import {
   teardownSparqlEndpoint,
 } from '@lde/local-sparql-endpoint';
 import { DataFactory } from 'n3';
+import type { HostLimiter } from '@lde/host-limiter';
 import { SparqlEndpointFetcher } from 'fetch-sparql-endpoint';
 import { Readable } from 'node:stream';
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
@@ -338,149 +339,256 @@ describe('SparqlConstructReader', () => {
     });
   });
 
-  describe('retry', () => {
-    it('retries on 504 and succeeds on second attempt', async () => {
-      const fetcher = new SparqlEndpointFetcher();
-      const spy = vi
-        .spyOn(fetcher, 'fetchTriples')
-        .mockRejectedValueOnce(
-          new Error(
-            'Invalid SPARQL endpoint response from http://example.org/sparql (HTTP status 504):\nGateway Timeout',
-          ),
-        )
-        .mockResolvedValueOnce(
-          // Resolved value is consumed as AsyncIterable<Quad>.
-          [] as never,
+  describe('when the endpoint fails', () => {
+    const endpoint = 'http://example.org/sparql';
+    const distribution = Distribution.sparql(new URL(endpoint));
+    const dataset = new Dataset({
+      iri: new URL('http://example.org/dataset'),
+      distributions: [distribution],
+    });
+    const query = 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }';
+    const httpError = (status: number) =>
+      new Error(
+        `Invalid SPARQL endpoint response from ${endpoint} (HTTP status ${status}):\nbody`,
+      );
+    const connectionReset = () =>
+      Object.assign(new TypeError('fetch failed'), {
+        cause: Object.assign(new Error('read ECONNRESET'), {
+          code: 'ECONNRESET',
+        }),
+      });
+    const secondsUntil = (untilMs: number) =>
+      Math.round((untilMs - Date.now()) / 1000);
+
+    it.each([
+      ['HTTP 502', () => httpError(502)],
+      ['HTTP 503', () => httpError(503)],
+      ['HTTP 504', () => httpError(504)],
+      ['a network error', () => new TypeError('fetch failed')],
+      ['a reset connection', connectionReset],
+    ])(
+      'pauses the dataset on %s, lowers its limit and tries again',
+      async (_name, failure) => {
+        const fetcher = new SparqlEndpointFetcher();
+        const spy = vi
+          .spyOn(fetcher, 'fetchTriples')
+          .mockRejectedValueOnce(failure())
+          .mockResolvedValueOnce([] as never);
+        const { limiter, pauses, log } = recordingLimiter();
+
+        await new SparqlConstructReader({ query, fetcher }).read(
+          dataset,
+          distribution,
+          { limiter },
         );
 
-      const reader = new SparqlConstructReader({
-        query: 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }',
-        fetcher,
-      });
+        expect(spy).toHaveBeenCalledTimes(2);
+        // Paused before the failed query frees its slot.
+        expect(log).toEqual(['pause', 'overloaded', 'success']);
+        expect(pauses).toHaveLength(1);
+        expect(pauses[0].host).toBe('http://example.org/dataset');
+        expect(secondsUntil(pauses[0].untilMs)).toBe(5);
+      },
+    );
 
-      const distribution = Distribution.sparql(
-        new URL('http://example.org/sparql'),
-      );
-      const dataset = new Dataset({
-        iri: new URL('http://example.org/dataset'),
-        distributions: [distribution],
-      });
+    it('backs off 5, 15, 45, 135 and 405 s, then fails the read', async () => {
+      const fetcher = new SparqlEndpointFetcher();
+      vi.spyOn(fetcher, 'fetchTriples').mockRejectedValue(httpError(502));
+      const { limiter, pauses } = recordingLimiter();
 
-      await reader.read(dataset, distribution);
+      await expect(
+        new SparqlConstructReader({ query, fetcher }).read(
+          dataset,
+          distribution,
+          { limiter },
+        ),
+      ).rejects.toThrow('HTTP status 502');
 
-      expect(spy).toHaveBeenCalledTimes(2);
+      expect(fetcher.fetchTriples).toHaveBeenCalledTimes(6);
+      expect(pauses.map(({ untilMs }) => secondsUntil(untilMs))).toEqual([
+        5, 15, 45, 135, 405,
+      ]);
     });
 
-    it('does not retry on 400 error', async () => {
+    it.each([
+      ['30', 30],
+      ['0', 5],
+      ['86400', 405],
+    ])('pauses for Retry-After: %s as %i s', async (retryAfter, seconds) => {
+      const answers = [
+        new Response('down', {
+          status: 503,
+          headers: { 'Retry-After': retryAfter },
+        }),
+        new Response('<http://a> <http://b> <http://c> .\n', {
+          headers: { 'Content-Type': 'application/n-triples' },
+        }),
+      ];
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => answers.shift()),
+      );
+      const { limiter, pauses } = recordingLimiter();
+
+      try {
+        const quads = await new SparqlConstructReader({ query }).read(
+          dataset,
+          distribution,
+          { limiter },
+        );
+        expect(await collect(quads)).toHaveLength(1);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+
+      expect(pauses.map(({ untilMs }) => secondsUntil(untilMs))).toEqual([
+        seconds,
+      ]);
+    });
+
+    it('lowers the limit on a timeout, without trying again', async () => {
       const fetcher = new SparqlEndpointFetcher();
-      vi.spyOn(fetcher, 'fetchTriples').mockRejectedValue(
-        new Error(
-          'Invalid SPARQL endpoint response from http://example.org/sparql (HTTP status 400):\nBad Request',
+      const timeout = Object.assign(new Error('The operation timed out'), {
+        name: 'TimeoutError',
+      });
+      vi.spyOn(fetcher, 'fetchTriples').mockRejectedValue(timeout);
+      const { limiter, pauses, outcomes } = recordingLimiter();
+
+      await expect(
+        new SparqlConstructReader({ query, fetcher }).read(
+          dataset,
+          distribution,
+          { limiter },
         ),
-      );
+      ).rejects.toThrow('timed out');
 
-      const reader = new SparqlConstructReader({
-        query: 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }',
+      expect(outcomes).toEqual(['overloaded']);
+      expect(pauses).toEqual([]);
+    });
+
+    it('fails on HTTP 400 at once, leaving the limit alone', async () => {
+      const fetcher = new SparqlEndpointFetcher();
+      vi.spyOn(fetcher, 'fetchTriples').mockRejectedValue(httpError(400));
+      const { limiter, pauses, outcomes } = recordingLimiter();
+
+      await expect(
+        new SparqlConstructReader({ query, fetcher }).read(
+          dataset,
+          distribution,
+          { limiter },
+        ),
+      ).rejects.toThrow('HTTP status 400');
+
+      expect(fetcher.fetchTriples).toHaveBeenCalledTimes(1);
+      expect(outcomes).toEqual(['ignored']);
+      expect(pauses).toEqual([]);
+    });
+
+    it('splits a batch on HTTP 500 and skips the root that fails by itself', async () => {
+      const names = ['a', 'b', 'c', 'd'];
+      const iri = (name: string) => `http://example.org/${name}`;
+      const asked: string[] = [];
+      const fetcher = new SparqlEndpointFetcher();
+      vi.spyOn(fetcher, 'fetchTriples').mockImplementation(
+        async (_endpoint, sparql) => {
+          const named = names.filter((name) =>
+            sparql.includes(`${iri(name)}>`),
+          );
+          asked.push(named.join(''));
+          if (named.includes('b')) throw httpError(500);
+          return named.map((name) =>
+            DataFactory.quad(
+              namedNode(iri(name)),
+              namedNode('http://example.org/p'),
+              namedNode('http://example.org/o'),
+            ),
+          ) as never;
+        },
+      );
+      const { limiter, outcomes } = recordingLimiter();
+      const skipped: string[] = [];
+
+      const quads = await new SparqlConstructReader({
+        query: 'CONSTRUCT { ?item ?p ?o } WHERE { ?item ?p ?o }',
         fetcher,
+      }).read(dataset, distribution, {
+        bindings: names.map((name) => ({ item: namedNode(iri(name)) })),
+        limiter,
+        onRootSkipped: (root, error) => {
+          skipped.push(`${root.item.value}: ${statusLine(error)}`);
+        },
       });
 
-      const distribution = Distribution.sparql(
-        new URL('http://example.org/sparql'),
-      );
-      const dataset = new Dataset({
-        iri: new URL('http://example.org/dataset'),
-        distributions: [distribution],
+      // The halves are asked for as the batch is read, not before.
+      expect(asked).toEqual(['abcd']);
+      expect((await collect(quads)).map((quad) => quad.subject.value)).toEqual([
+        iri('a'),
+        iri('c'),
+        iri('d'),
+      ]);
+      expect(asked).toEqual(['abcd', 'ab', 'a', 'b', 'cd']);
+      expect(skipped).toEqual([`${iri('b')}: HTTP status 500`]);
+      expect(outcomes).toEqual([
+        'ignored',
+        'ignored',
+        'success',
+        'ignored',
+        'success',
+      ]);
+    });
+
+    it('fails a split batch in which no root answers', async () => {
+      const fetcher = new SparqlEndpointFetcher();
+      vi.spyOn(fetcher, 'fetchTriples').mockRejectedValue(httpError(500));
+      const skipped: string[] = [];
+
+      const quads = await new SparqlConstructReader({
+        query: 'CONSTRUCT { ?item ?p ?o } WHERE { ?item ?p ?o }',
+        fetcher,
+      }).read(dataset, distribution, {
+        bindings: ['a', 'b'].map((name) => ({
+          item: namedNode(`http://example.org/${name}`),
+        })),
+        limiter: recordingLimiter().limiter,
+        onRootSkipped: (root) => skipped.push(root.item.value),
       });
 
-      await expect(reader.read(dataset, distribution)).rejects.toThrow(
-        'HTTP status 400',
-      );
+      await expect(collect(quads)).rejects.toThrow('HTTP status 500');
+      expect(fetcher.fetchTriples).toHaveBeenCalledTimes(3);
+      expect(skipped).toHaveLength(2);
+    });
+
+    it('fails on HTTP 500 when there is no batch to split', async () => {
+      const fetcher = new SparqlEndpointFetcher();
+      vi.spyOn(fetcher, 'fetchTriples').mockRejectedValue(httpError(500));
+
+      await expect(
+        new SparqlConstructReader({ query, fetcher }).read(
+          dataset,
+          distribution,
+          { limiter: recordingLimiter().limiter },
+        ),
+      ).rejects.toThrow('HTTP status 500');
       expect(fetcher.fetchTriples).toHaveBeenCalledTimes(1);
     });
 
-    it('retries on network error (fetch failed) and succeeds on second attempt', async () => {
+    it('runs on a limiter of its own when given none', async () => {
       const fetcher = new SparqlEndpointFetcher();
-      const spy = vi
-        .spyOn(fetcher, 'fetchTriples')
-        .mockRejectedValueOnce(new TypeError('fetch failed'))
-        .mockResolvedValueOnce([] as never);
+      vi.spyOn(fetcher, 'fetchTriples').mockRejectedValue(httpError(400));
 
-      const reader = new SparqlConstructReader({
-        query: 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }',
-        fetcher,
-      });
-
-      const distribution = Distribution.sparql(
-        new URL('http://example.org/sparql'),
-      );
-      const dataset = new Dataset({
-        iri: new URL('http://example.org/dataset'),
-        distributions: [distribution],
-      });
-
-      await reader.read(dataset, distribution);
-
-      expect(spy).toHaveBeenCalledTimes(2);
-    });
-
-    it('retries on ECONNRESET', async () => {
-      const fetcher = new SparqlEndpointFetcher();
-      const connectionError = new TypeError('fetch failed');
-      connectionError.cause = Object.assign(new Error('read ECONNRESET'), {
-        code: 'ECONNRESET',
-      });
-      const spy = vi
-        .spyOn(fetcher, 'fetchTriples')
-        .mockRejectedValueOnce(connectionError)
-        .mockResolvedValueOnce([] as never);
-
-      const reader = new SparqlConstructReader({
-        query: 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }',
-        fetcher,
-      });
-
-      const distribution = Distribution.sparql(
-        new URL('http://example.org/sparql'),
-      );
-      const dataset = new Dataset({
-        iri: new URL('http://example.org/dataset'),
-        distributions: [distribution],
-      });
-
-      await reader.read(dataset, distribution);
-
-      expect(spy).toHaveBeenCalledTimes(2);
-    });
-
-    it('propagates error when retries are exhausted', async () => {
-      const fetcher = new SparqlEndpointFetcher();
-      vi.spyOn(fetcher, 'fetchTriples').mockRejectedValue(
-        new Error(
-          'Invalid SPARQL endpoint response from http://example.org/sparql (HTTP status 502):\nBad Gateway',
+      await expect(
+        new SparqlConstructReader({ query, fetcher }).read(
+          dataset,
+          distribution,
         ),
-      );
-
-      const reader = new SparqlConstructReader({
-        query: 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }',
-        retries: 2,
-        fetcher,
-      });
-
-      const distribution = Distribution.sparql(
-        new URL('http://example.org/sparql'),
-      );
-      const dataset = new Dataset({
-        iri: new URL('http://example.org/dataset'),
-        distributions: [distribution],
-      });
-
-      await expect(reader.read(dataset, distribution)).rejects.toThrow(
-        'HTTP status 502',
-      );
-      // 1 initial attempt + 2 retries = 3 calls.
-      expect(fetcher.fetchTriples).toHaveBeenCalledTimes(3);
+      ).rejects.toThrow('HTTP status 400');
     });
   });
+
+  /** The `HTTP status …` part of a fetcher error. */
+  function statusLine(error: Error): string | undefined {
+    return error.message.match(/HTTP status \d+/)?.[0];
+  }
 
   describe('lineBuffer', () => {
     it('returns quads when lineBuffer is enabled', async () => {
@@ -689,13 +797,13 @@ describe('SparqlConstructReader', () => {
       const reader = new SparqlConstructReader({
         query: 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }',
         fetcher,
-        retries: 0,
       });
       const distribution = makeDistribution();
 
       await expect(
         reader.read(makeDataset(distribution), distribution, {
           timeout: policy,
+          limiter: recordingLimiter().limiter,
         }),
       ).rejects.toThrow('504');
 
@@ -714,7 +822,6 @@ describe('SparqlConstructReader', () => {
       const reader = new SparqlConstructReader({
         query: 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }',
         fetcher,
-        retries: 0,
       });
       const distribution = makeDistribution();
 
@@ -739,7 +846,6 @@ describe('SparqlConstructReader', () => {
       const reader = new SparqlConstructReader({
         query: 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }',
         fetcher,
-        retries: 0,
       });
       const distribution = makeDistribution();
 
@@ -766,7 +872,6 @@ describe('SparqlConstructReader', () => {
       const reader = new SparqlConstructReader({
         query: 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }',
         fetcher,
-        retries: 0,
       });
       const distribution = makeDistribution();
 
@@ -781,7 +886,7 @@ describe('SparqlConstructReader', () => {
       );
     });
 
-    it('invokes the policy per attempt inside pRetry', async () => {
+    it('invokes the policy per attempt, retries included', async () => {
       const fetcher = new SparqlEndpointFetcher();
       vi.spyOn(fetcher, 'fetchTriples')
         .mockRejectedValueOnce(
@@ -800,6 +905,7 @@ describe('SparqlConstructReader', () => {
 
       await reader.read(makeDataset(distribution), distribution, {
         timeout: policy,
+        limiter: recordingLimiter().limiter,
       });
 
       expect(policy.beforeRequest).toHaveBeenCalledTimes(2);
@@ -824,7 +930,7 @@ describe('SparqlConstructReader', () => {
       });
       const distribution = makeDistribution();
 
-      // No policy supplied at construction or per call — the reader falls
+      // No policy supplied at construction or per call – the reader falls
       // back to its module-level default and the request still completes.
       await expect(
         reader.read(makeDataset(distribution), distribution),
@@ -857,7 +963,6 @@ describe('SparqlConstructReader', () => {
       const reader = new SparqlConstructReader({
         query: 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }',
         fetcher,
-        retries: 0,
       });
       const distribution = makeDistribution();
 
@@ -876,6 +981,56 @@ describe('SparqlConstructReader', () => {
     });
   });
 });
+
+async function collect<T>(iterable: AsyncIterable<T>): Promise<T[]> {
+  const items: T[] = [];
+  for await (const item of iterable) {
+    items.push(item);
+  }
+  return items;
+}
+
+/**
+ * A limiter that runs every task at once, ignoring pauses, and records the
+ * pauses and what each task said about its host.
+ */
+function recordingLimiter() {
+  const pauses: { host: string; untilMs: number }[] = [];
+  const outcomes: ('success' | 'overloaded' | 'ignored')[] = [];
+  /** Pauses and settled tasks, in the order they happened. */
+  const log: string[] = [];
+  const limiter: HostLimiter = {
+    async run(_host, task) {
+      // As the real limiter reads it: a rejection is overload, and `ignore`
+      // wins over both.
+      let said: 'overloaded' | 'ignored' | undefined;
+      const settle = (outcome: (typeof outcomes)[number]) => {
+        outcomes.push(outcome);
+        log.push(outcome);
+      };
+      try {
+        const result = await task({
+          overloaded: () => {
+            said ??= 'overloaded';
+          },
+          ignore: () => {
+            said = 'ignored';
+          },
+        });
+        settle(said ?? 'success');
+        return result;
+      } catch (error) {
+        settle(said === 'ignored' ? 'ignored' : 'overloaded');
+        throw error;
+      }
+    },
+    pause(host, untilMs) {
+      pauses.push({ host, untilMs });
+      log.push('pause');
+    },
+  };
+  return { limiter, pauses, outcomes, log };
+}
 
 describe('LineBufferTransform', () => {
   async function collect(stream: Readable): Promise<string> {
@@ -924,14 +1079,6 @@ describe('LineBufferTransform', () => {
 
 describe('deduplicateQuads', () => {
   const { namedNode, literal, blankNode, quad } = DataFactory;
-
-  async function collect<T>(iterable: AsyncIterable<T>): Promise<T[]> {
-    const items: T[] = [];
-    for await (const item of iterable) {
-      items.push(item);
-    }
-    return items;
-  }
 
   it('removes duplicate quads', async () => {
     const q1 = quad(

@@ -116,6 +116,36 @@ describe('ConsoleReporter', () => {
     });
   });
 
+  describe('rootSkipped', () => {
+    it('prints the root a stage left out, and the first line of why', () => {
+      const reporter = new ConsoleReporter();
+      const spy = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+
+      reporter.onEvent(
+        event({
+          type: 'rootSkipped',
+          dataset,
+          stage: 'CreativeWork',
+          root: {
+            item: {
+              termType: 'NamedNode',
+              value: 'https://example.org/work/1',
+            },
+          } as never,
+          error: new Error(
+            'Invalid SPARQL endpoint response (HTTP status 500):\nTried to allocate 8 MB',
+          ),
+        }),
+      );
+
+      const output = spy.mock.calls.map((call) => String(call[0])).join('');
+      expect(output).toContain('CreativeWork');
+      expect(output).toContain('skipped https://example.org/work/1');
+      expect(output).toContain('HTTP status 500');
+      expect(output).not.toContain('Tried to allocate');
+    });
+  });
+
   describe('valuesUnread', () => {
     it('prints how many values a field could not read, and a few of them', () => {
       const reporter = new ConsoleReporter();

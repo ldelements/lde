@@ -725,8 +725,8 @@ export function createResolver<Reference, Fact>(
             const backoffMs = RETRY_DELAY_MS * 2 ** retries;
             retries++;
             lastFailure = failedOutcome(error, attempts, '');
-            // `Retry-After: 0`, or a date skewed into the past, names no real
-            // delay, so it gets our own backoff rather than an instant burst.
+            // A delay of 0 names no real delay, so it gets our own backoff
+            // rather than an instant burst.
             if (error.retryAfterMs === undefined || error.retryAfterMs <= 0) {
               return { waitMs: backoffMs };
             }

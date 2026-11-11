@@ -263,8 +263,8 @@ until it has passed, because a rate limit is about this client. The limiter
 pauses the host, so the pause holds for everything sharing that limiter, and
 afterwards lets one batch through before slowly opening up again. Attempts
 already in flight finish, and the wait holds no concurrency slot, so other hosts
-carry on. Without a delay – or with a delay of 0, which `Retry-After: 0` and a date
-skewed into the past both give and which names no real wait – only that batch
+carry on. Without a delay – `parseRetryAfter` gives none for `Retry-After: 0` or
+a date already past – or with a delay of 0, which names no real wait, only that batch
 backs off, 500 ms and then 1 s. After two retries, or for a delay longer than
 `timeoutMs`, which is not waited out, the call fails for this run and counts
 against the host like any other throw. If the host is written off while the

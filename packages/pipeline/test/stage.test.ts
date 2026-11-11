@@ -11,6 +11,7 @@ import type {
 import type { Reader, ReadOptions } from '../src/sparql/reader.js';
 import { NotSupported } from '../src/sparql/reader.js';
 import { Dataset, Distribution } from '@lde/dataset';
+import { createHostLimiter } from '@lde/host-limiter';
 import type { DatasetWriter } from '../src/writer/writer.js';
 import type { StagePhases } from '../src/pipelineEvent.js';
 import type {
@@ -342,6 +343,39 @@ describe('Stage', () => {
       expect.objectContaining({ bindings }),
     );
   });
+
+  it.each([
+    ['with an item selector', true],
+    ['without an item selector', false],
+  ])(
+    'hands its readers the limiter and skipped-root receiver it runs with, %s',
+    async (_name, selects) => {
+      const reader = capturingExecutor([q1]);
+      const limiter = createHostLimiter(4, 2);
+      const onRootSkipped = vi.fn();
+
+      await new Stage({
+        name: 'test',
+        readers: reader,
+        itemSelector: selects
+          ? {
+              select: async function* () {
+                yield { class: namedNode('http://example.org/Person') };
+              },
+            }
+          : undefined,
+      }).run(dataset, distribution, collectingWriter(), {
+        limiter,
+        onRootSkipped,
+      });
+
+      expect(reader.read).toHaveBeenCalledWith(
+        dataset,
+        distribution,
+        expect.objectContaining({ limiter, onRootSkipped }),
+      );
+    },
+  );
 
   it('passes batchSize to item selector', async () => {
     const reader = capturingExecutor([q1]);
