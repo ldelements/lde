@@ -20,10 +20,13 @@
       "path": "../sparql-importer/tsconfig.lib.json"
     },
     {
-      "path": "../distribution-health/tsconfig.lib.json"
+      "path": "../host-limiter/tsconfig.lib.json"
     },
     {
       "path": "../distribution-probe/tsconfig.lib.json"
+    },
+    {
+      "path": "../distribution-health/tsconfig.lib.json"
     },
     {
       "path": "../dataset-registry-client/tsconfig.lib.json"

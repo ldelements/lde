@@ -1,6 +1,6 @@
 import { Dataset, Distribution } from '@lde/dataset';
 import type { Quad } from '@rdfjs/types';
-import type { Reader, VariableBindings } from './sparql/reader.js';
+import type { ReadOptions, Reader, VariableBindings } from './sparql/reader.js';
 import { NoItemsSelected, NotSupported } from './sparql/reader.js';
 import type { TimeoutPolicy } from './sparql/timeoutPolicy.js';
 import { batch } from './batch.js';
@@ -198,7 +198,10 @@ export interface StageOptions<Out = Quad> {
   };
 }
 
-export interface RunOptions {
+export interface RunOptions extends Pick<
+  ReadOptions,
+  'limiter' | 'onRootSkipped'
+> {
   onProgress?: (itemsProcessed: number, quadsGenerated: number) => void;
   /**
    * Per-dataset {@link TimeoutPolicy} threaded through to readers and
@@ -285,6 +288,11 @@ export class Stage<Out = Quad> {
     options?: RunOptions,
   ): Promise<NotSupported | void> {
     const timeout = options?.timeout;
+    const readOptions: ReadOptions = {
+      timeout,
+      limiter: options?.limiter,
+      onRootSkipped: options?.onRootSkipped,
+    };
     // Substituted once, before anything reads: the selector and the readers
     // must agree on where this stage's data comes from.
     const distribution = this.sourceFor
@@ -302,6 +310,7 @@ export class Stage<Out = Quad> {
         distribution,
         writer,
         tally,
+        readOptions,
         options,
       );
       if (!(result instanceof NotSupported)) {
@@ -310,7 +319,12 @@ export class Stage<Out = Quad> {
       return result;
     }
 
-    const chains = await this.readAll(dataset, distribution, timeout, tally);
+    const chains = await this.readAll(
+      dataset,
+      distribution,
+      readOptions,
+      tally,
+    );
     if (chains instanceof NotSupported) {
       return chains;
     }
@@ -397,6 +411,7 @@ export class Stage<Out = Quad> {
     distribution: Distribution,
     writer: DatasetWriter<Out>,
     tally: StageTally,
+    readOptions: ReadOptions,
     options?: RunOptions,
   ): Promise<NotSupported | void> {
     // Peek the first batch to detect an empty selector before starting the
@@ -474,7 +489,7 @@ export class Stage<Out = Quad> {
                     normalized,
                     dataset,
                     distribution,
-                    { bindings, timeout: options?.timeout },
+                    { ...readOptions, bindings },
                     tally,
                   );
                   if (result instanceof NotSupported) return [];
@@ -604,12 +619,12 @@ export class Stage<Out = Quad> {
   private async readAll(
     dataset: Dataset,
     distribution: Distribution,
-    timeout: TimeoutPolicy | undefined,
+    readOptions: ReadOptions,
     tally: StageTally,
   ): Promise<TimedChain[] | NotSupported> {
     const results = await Promise.all(
       this.readers.map((normalized) =>
-        this.read(normalized, dataset, distribution, { timeout }, tally),
+        this.read(normalized, dataset, distribution, readOptions, tally),
       ),
     );
 
@@ -637,7 +652,7 @@ export class Stage<Out = Quad> {
     { reader, transforms, firstTransform }: NormalizedReader,
     dataset: Dataset,
     distribution: Distribution,
-    readOptions: Parameters<Reader['read']>[2],
+    readOptions: ReadOptions,
     tally: StageTally,
   ): Promise<TimedChain | NotSupported> {
     const started = performance.now();

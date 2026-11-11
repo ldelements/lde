@@ -9,15 +9,10 @@ import {
   type TermVariable,
 } from '@traqula/rules-sparql-1-1';
 import type { ItemSelector, SelectOptions } from '../stage.js';
+import { classifyOutcome } from './failure.js';
 import { withDefaultGraph } from './graph.js';
 import type { VariableBindings } from './reader.js';
-import {
-  ConstantTimeoutPolicy,
-  type TimeoutOutcome,
-  type TimeoutPolicy,
-} from './timeoutPolicy.js';
-
-const transientStatusPattern = /HTTP status (\d+)/;
+import { ConstantTimeoutPolicy, type TimeoutPolicy } from './timeoutPolicy.js';
 
 /**
  * Fallback policy when no per-call `TimeoutPolicy` is supplied via
@@ -238,27 +233,6 @@ export class SparqlItemSelector implements ItemSelector {
       throw error;
     }
   }
-}
-
-function classifyOutcome(error: unknown): TimeoutOutcome {
-  if (error instanceof Error) {
-    if (error.name === 'AbortError' || error.name === 'TimeoutError') {
-      return 'timeout';
-    }
-    if (error.cause instanceof Error) {
-      if (
-        error.cause.name === 'AbortError' ||
-        error.cause.name === 'TimeoutError'
-      ) {
-        return 'timeout';
-      }
-    }
-    const match = error.message.match(transientStatusPattern);
-    if (match && Number(match[1]) === 504) {
-      return 'timeout';
-    }
-  }
-  return 'error';
 }
 
 function isVariableTerm(v: object): v is TermVariable {

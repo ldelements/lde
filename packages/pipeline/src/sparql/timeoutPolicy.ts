@@ -43,8 +43,8 @@ export interface AfterRequestContext {
 export interface TimeoutPolicy {
   /**
    * Returns the timeout (in milliseconds) to apply to the upcoming request.
-   * Called once per attempt — including retried attempts inside
-   * {@link p-retry}, so a retry can already use a tightened budget.
+   * Called once per attempt, retries included, so a retry can already use a
+   * tightened budget.
    */
   beforeRequest(context: BeforeRequestContext): number;
   /**

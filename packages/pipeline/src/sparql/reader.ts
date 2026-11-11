@@ -8,16 +8,16 @@ import { StreamParser } from 'n3';
 import { Parser } from '@traqula/parser-sparql-1-1';
 import { Generator } from '@traqula/generator-sparql-1-1';
 import type { QueryConstruct } from '@traqula/rules-sparql-1-1';
-import isNetworkError from 'is-network-error';
-import pRetry from 'p-retry';
+import {
+  createHostLimiter,
+  parseRetryAfter,
+  type HostLimiter,
+} from '@lde/host-limiter';
 import { quadToStringQuad } from 'rdf-string';
 import { withDefaultGraph } from './graph.js';
 import { injectValues } from './values.js';
-import {
-  ConstantTimeoutPolicy,
-  type TimeoutOutcome,
-  type TimeoutPolicy,
-} from './timeoutPolicy.js';
+import { ConstantTimeoutPolicy, type TimeoutPolicy } from './timeoutPolicy.js';
+import { classifyOutcome, isTransientError, statusOf } from './failure.js';
 
 /**
  * Fallback policy when no per-call `TimeoutPolicy` is supplied via
@@ -25,6 +25,9 @@ import {
  * matters when the reader is driven directly (without a Pipeline).
  */
 const defaultTimeoutPolicy: TimeoutPolicy = new ConstantTimeoutPolicy(300_000);
+
+/** The limiter of every read not given one, so they share one limit. */
+const defaultLimiter: HostLimiter = createHostLimiter(10, 10);
 
 /**
  * A reader could not run because the dataset lacks a supported distribution.
@@ -65,6 +68,23 @@ export interface ReadOptions {
    * Pipeline runners use this to thread the per-dataset policy through.
    */
   timeout?: TimeoutPolicy;
+
+  /**
+   * The limiter every query of a read goes through, keyed on the dataset’s
+   * IRI, so a dataset’s readers – and anything else keyed on the dataset, such
+   * as a resolver fetching from the same backend – share one adaptive limit.
+   * See {@link SparqlConstructReader}.
+   *
+   * Reads not given one share a default: `createHostLimiter(10, 10)`.
+   */
+  limiter?: HostLimiter;
+
+  /**
+   * Called for each root the endpoint failed on by itself: a query for that
+   * one root still answered HTTP 500. The root is left out of the read, and
+   * the rest of the batch is read without it.
+   */
+  onRootSkipped?: (root: VariableBindings, error: Error) => void;
 }
 
 export interface Reader {
@@ -83,12 +103,6 @@ export interface SparqlConstructReaderOptions {
    * SPARQL CONSTRUCT query to execute.
    */
   query: string;
-
-  /**
-   * Number of retries for transient errors (network failures and HTTP 502/503/504).
-   * @default 3
-   */
-  retries?: number;
 
   /**
    * Optional custom SparqlEndpointFetcher instance.
@@ -142,6 +156,13 @@ export interface SparqlConstructReaderOptions {
 /**
  * A streaming SPARQL CONSTRUCT reader.
  *
+ * Each query runs on the {@link ReadOptions.limiter}, keyed on the dataset’s
+ * IRI. While the endpoint is down (502, 503, 504 or a network error) the
+ * reader pauses the dataset and tries again; on a 500 it splits the batch,
+ * down to a root it reports through {@link ReadOptions.onRootSkipped} and
+ * leaves out. See
+ * {@link https://ldelements.org/reference/pipeline#when-the-endpoint-fails | When the endpoint fails}.
+ *
  * Queries **without** `#subjectFilter#` are parsed once in the constructor
  * (fast path). Queries that contain the template are stored as raw strings
  * and parsed at {@link read} time after substitution.
@@ -170,14 +191,12 @@ export class SparqlConstructReader implements Reader {
   private readonly rawQuery: string;
   private readonly preParsed?: QueryConstruct;
   private readonly userFetcher?: SparqlEndpointFetcher;
-  private readonly retries: number;
   private readonly lineBuffer: boolean;
   private readonly deduplicate: boolean;
   private readonly generator = new Generator();
 
   constructor(options: SparqlConstructReaderOptions) {
     this.rawQuery = options.query;
-    this.retries = options.retries ?? 3;
     this.lineBuffer = options.lineBuffer ?? false;
     this.deduplicate = options.deduplicate ?? false;
 
@@ -227,26 +246,110 @@ export class SparqlConstructReader implements Reader {
       withDefaultGraph(ast, distribution.namedGraph);
     }
 
-    const bindings = options?.bindings;
-    if (bindings !== undefined && bindings.length > 0) {
-      ast = injectValues(ast, bindings);
-    }
-
-    let query = this.generator.generate(ast);
     assertSafeIri(dataset.iri.toString());
-    query = query.replaceAll('?dataset', `<${dataset.iri}>`);
+    const query = (bindings: VariableBindings[]) =>
+      this.generator
+        .generate(bindings.length > 0 ? injectValues(ast, bindings) : ast)
+        .replaceAll('?dataset', `<${dataset.iri}>`);
 
-    const policy = options?.timeout ?? defaultTimeoutPolicy;
-
-    const quads = await pRetry(
-      () => this.fetchQuadsWithPolicy(endpoint, query, policy),
-      {
-        retries: this.retries,
-        shouldRetry: ({ error }) => isTransientError(error),
+    const bindings = options?.bindings ?? [];
+    let skipped = 0;
+    const quads = await this.readBatch(bindings, query, {
+      endpoint,
+      key: dataset.iri.toString(),
+      limiter: options?.limiter ?? defaultLimiter,
+      policy: options?.timeout ?? defaultTimeoutPolicy,
+      onRootSkipped: (root, error) => {
+        skipped++;
+        options?.onRootSkipped?.(root, error);
+        // Not one root answered: the endpoint fails this query whatever the
+        // roots, so the batch fails rather than coming out empty.
+        if (skipped === bindings.length && skipped > 1) throw error;
       },
-    );
+    });
 
     return this.deduplicate ? deduplicateQuads(quads) : quads;
+  }
+
+  /**
+   * Read one batch, splitting it on an HTTP 500 until the endpoint answers or
+   * one root is left; see {@link SparqlConstructReader}.
+   */
+  private async readBatch(
+    bindings: VariableBindings[],
+    query: (bindings: VariableBindings[]) => string,
+    attempt: Attempt,
+  ): Promise<AsyncIterable<Quad>> {
+    try {
+      return await this.fetchWithRetries(query(bindings), attempt);
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        statusOf(error) !== 500 ||
+        bindings.length === 0
+      ) {
+        throw error;
+      }
+      if (bindings.length === 1) {
+        attempt.onRootSkipped(bindings[0], error);
+        return noQuads();
+      }
+      const middle = Math.ceil(bindings.length / 2);
+      const halves = [bindings.slice(0, middle), bindings.slice(middle)];
+      // Each half is asked for once the one before it has been read, so a
+      // split adds no load, and leaves no response open, of its own.
+      const readHalf = (half: VariableBindings[]) =>
+        this.readBatch(half, query, attempt);
+      return (async function* () {
+        for (const half of halves) {
+          yield* await readHalf(half);
+        }
+      })();
+    }
+  }
+
+  /**
+   * Run a query on the limiter, pausing the dataset and trying again while the
+   * endpoint is down; see {@link SparqlConstructReader}.
+   */
+  private async fetchWithRetries(
+    query: string,
+    attempt: Attempt,
+  ): Promise<AsyncIterable<Quad>> {
+    for (let retry = 0; ; retry++) {
+      try {
+        return await attempt.limiter.run(attempt.key, async (slot) => {
+          const response: ResponseNotes = {};
+          try {
+            return await this.fetchQuadsWithPolicy(
+              attempt.endpoint,
+              query,
+              attempt.policy,
+              response,
+            );
+          } catch (error) {
+            // A rejection lowers the limit, unless the slot is told otherwise.
+            if (isTransientError(error)) {
+              // Paused before the slot frees, so no query waiting for it goes
+              // out to an endpoint that is down.
+              if (retry < BACKOFF_MS.length) {
+                attempt.limiter.pause(
+                  attempt.key,
+                  Date.now() + backoffMs(retry, response.retryAfterMs),
+                );
+              }
+            } else if (classifyOutcome(error) !== 'timeout') {
+              slot.ignore();
+            }
+            throw error;
+          }
+        });
+      } catch (error) {
+        if (!isTransientError(error) || retry === BACKOFF_MS.length) {
+          throw error;
+        }
+      }
+    }
   }
 
   /**
@@ -259,9 +362,10 @@ export class SparqlConstructReader implements Reader {
     endpointUrl: URL,
     query: string,
     policy: TimeoutPolicy,
+    response: ResponseNotes,
   ): Promise<AsyncIterable<Quad>> {
     const timeoutMs = policy.beforeRequest({ endpoint: endpointUrl });
-    const fetcher = this.fetcherForAttempt(timeoutMs);
+    const fetcher = this.fetcherForAttempt(timeoutMs, response);
     const start = Date.now();
     try {
       const quads = await this.fetchQuads(
@@ -292,11 +396,26 @@ export class SparqlConstructReader implements Reader {
    * policy budget is bypassed in that case (see the JSDoc on
    * {@link SparqlConstructReaderOptions.fetcher}). Otherwise a fresh
    * {@link SparqlEndpointFetcher} is constructed per attempt with the
-   * policy-supplied timeout baked in.
+   * policy-supplied timeout baked in, which notes the response’s
+   * `Retry-After` in `response`.
    */
-  private fetcherForAttempt(timeoutMs: number): SparqlEndpointFetcher {
+  private fetcherForAttempt(
+    timeoutMs: number,
+    response: ResponseNotes,
+  ): SparqlEndpointFetcher {
     if (this.userFetcher) return this.userFetcher;
-    return new SparqlEndpointFetcher({ timeout: timeoutMs });
+    return new SparqlEndpointFetcher({
+      timeout: timeoutMs,
+      fetch: async (input, init) => {
+        const answer = await fetch(input, init);
+        if (!answer.ok) {
+          response.retryAfterMs = parseRetryAfter(
+            answer.headers.get('retry-after'),
+          );
+        }
+        return answer;
+      },
+    });
   }
 
   /**
@@ -416,42 +535,37 @@ export async function* deduplicateQuads(
   }
 }
 
-const transientStatusPattern = /HTTP status (\d+)/;
+/** Where and how one batch’s queries run. */
+interface Attempt {
+  endpoint: URL;
+  key: string;
+  limiter: HostLimiter;
+  policy: TimeoutPolicy;
+  onRootSkipped: NonNullable<ReadOptions['onRootSkipped']>;
+}
 
-function isTransientError(error: unknown): boolean {
-  if (isNetworkError(error)) return true;
-  if (!(error instanceof Error)) return false;
-  const match = error.message.match(transientStatusPattern);
-  if (!match) return false;
-  const status = Number(match[1]);
-  return status === 502 || status === 503 || status === 504;
+/** What a query’s response said beyond its status. */
+interface ResponseNotes {
+  retryAfterMs?: number;
+}
+
+async function* noQuads(): AsyncIterable<Quad> {
+  // A skipped root reads as no quads.
 }
 
 /**
- * Classify a fetch error for {@link TimeoutPolicy} reporting.
- *
- * - HTTP 504 → `'timeout'`: the upstream reported it ran out of time. This
- *   is the exact failure mode adaptive timeouts exist to react to.
- * - `AbortError` / `TimeoutError`: our own `AbortSignal.timeout()` fired.
- * - Anything else → `'error'`: neutral with respect to tightening.
+ * How long a reader pauses its dataset before each retry after the endpoint
+ * went down, in milliseconds: tripled each time, about 10 minutes in all, to
+ * outlast a backend restart. A `Retry-After` header replaces a step.
  */
-function classifyOutcome(error: unknown): TimeoutOutcome {
-  if (error instanceof Error) {
-    if (error.name === 'AbortError' || error.name === 'TimeoutError') {
-      return 'timeout';
-    }
-    if (error.cause instanceof Error) {
-      if (
-        error.cause.name === 'AbortError' ||
-        error.cause.name === 'TimeoutError'
-      ) {
-        return 'timeout';
-      }
-    }
-    const match = error.message.match(transientStatusPattern);
-    if (match && Number(match[1]) === 504) {
-      return 'timeout';
-    }
-  }
-  return 'error';
+const BACKOFF_MS = [5_000, 15_000, 45_000, 135_000, 405_000];
+
+/**
+ * How long to pause before retry `retry`: what `Retry-After` asked, up to the
+ * longest step, or the step itself when the endpoint did not say.
+ */
+function backoffMs(retry: number, retryAfterMs: number | undefined): number {
+  return retryAfterMs === undefined
+    ? BACKOFF_MS[retry]
+    : Math.min(retryAfterMs, BACKOFF_MS[BACKOFF_MS.length - 1]);
 }

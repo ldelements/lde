@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createResolver,
   memoryFactStore,
-  parseRetryAfter,
   referenceFailure,
   RetryableError,
   urlHost,
@@ -574,29 +573,6 @@ describe('a failure of one reference', () => {
     ]);
 
     expect(asked).toHaveLength(3);
-  });
-});
-
-describe('parseRetryAfter', () => {
-  const now = new Date('2026-11-10T10:00:00.000Z');
-
-  it('reads a number of seconds', () => {
-    expect(parseRetryAfter('120', now)).toBe(120_000);
-  });
-
-  it('reads an HTTP date as the time left until it', () => {
-    expect(parseRetryAfter('Tue, 10 Nov 2026 10:00:30 GMT', now)).toBe(30_000);
-  });
-
-  it('reads a date already past as no wait at all', () => {
-    expect(parseRetryAfter('Tue, 10 Nov 2026 09:59:00 GMT', now)).toBe(0);
-  });
-
-  it('answers nothing for a missing or unreadable header', () => {
-    // `Headers.get` answers null for a header that is not there.
-    expect(parseRetryAfter(null, now)).toBeUndefined();
-    expect(parseRetryAfter('soon', now)).toBeUndefined();
-    expect(parseRetryAfter('-5', now)).toBeUndefined();
   });
 });
 

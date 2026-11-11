@@ -1,9 +1,6 @@
 export { createResolver, urlHost } from './resolver.js';
-export {
-  parseRetryAfter,
-  referenceFailure,
-  RetryableError,
-} from './failures.js';
+export { referenceFailure, RetryableError } from './failures.js';
+export { parseRetryAfter } from '@lde/host-limiter';
 export type { ReferenceFailure } from './failures.js';
 export type {
   Resolution,

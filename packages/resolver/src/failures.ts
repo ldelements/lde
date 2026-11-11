@@ -45,43 +45,6 @@ export function referenceFailure(reason: string): ReferenceFailure {
 }
 
 /**
- * Read an HTTP `Retry-After` header as milliseconds to wait, for
- * {@link RetryableError}’s `retryAfterMs`.
- *
- * Takes both forms the header comes in: a number of seconds, or an HTTP date –
- * read as the time left until it, and as no wait when it is already past.
- * Answers `undefined` for a missing or unreadable header, so the resolver falls
- * back to its own backoff.
- *
- * ```ts
- * if (response.status === 429) {
- *   throw new RetryableError('HTTP 429', {
- *     retryAfterMs: parseRetryAfter(response.headers.get('retry-after')),
- *   });
- * }
- * ```
- */
-export function parseRetryAfter(
-  value: string | null | undefined,
-  now: Date = new Date(),
-): number | undefined {
-  const trimmed = value?.trim();
-  if (trimmed === undefined || trimmed === '') {
-    return undefined;
-  }
-  if (/^\d+$/.test(trimmed)) {
-    return Number(trimmed) * 1000;
-  }
-  // An HTTP date always names its day, which keeps a bare signed number such as
-  // `-5` from being read as a year.
-  if (!/[a-z]/i.test(trimmed)) {
-    return undefined;
-  }
-  const at = Date.parse(trimmed);
-  return Number.isNaN(at) ? undefined : Math.max(0, at - now.getTime());
-}
-
-/**
  * Thrown from {@link ResolverOptions.fetch} when the source said to come back
  * later – a 429, or a 503 with `Retry-After` – so a retry within the run is
  * likely to succeed.
@@ -89,8 +52,9 @@ export function parseRetryAfter(
  * Only this is retried in the run, at most twice; any other throw fails the
  * call until the next run. With `retryAfterMs` the source sets the delay, and
  * the whole host waits it out: a rate limit is about this client, not about one
- * reference. Without it, or with 0 – what `Retry-After: 0` and a date skewed
- * into the past give – the resolver backs off by itself, 500 ms and then 1 s.
+ * reference. Without it, or with 0, which names no real wait, the resolver
+ * backs off by itself, 500 ms and then 1 s. {@link parseRetryAfter} answers
+ * `undefined` for `Retry-After: 0` and for a date already past.
  * A delay longer than {@link ResolverLimits.timeoutMs} is not waited out; the
  * call fails for this run instead.
  */
