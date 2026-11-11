@@ -22,18 +22,24 @@ jobs:
 
       - run: npm ci
 
-      # Leaves the tree unchanged when Nx is already up to date, in which case
-      # create-pull-request below has nothing to commit and opens no PR.
-      - run: npx nx migrate latest
+      # Touches package.json only when Nx has an update. Gate every later step
+      # on that: npm install would otherwise sync the lockfile drift that
+      # nx release leaves behind and open a PR without any Nx migration.
+      - id: migrate
+        run: |
+          npx nx migrate latest
+          git diff --quiet -- package.json || echo "updated=true" >> "$GITHUB_OUTPUT"
 
-      - run: npm install
+      - if: steps.migrate.outputs.updated == 'true'
+        run: npm install
 
-      - if: hashFiles('migrations.json') != ''
+      - if: steps.migrate.outputs.updated == 'true' && hashFiles('migrations.json') != ''
         run: npx nx migrate --run-migrations | tee "$RUNNER_TEMP/migrate.log"
 
       # Nx skips agent-driven migrations in CI and lists their prompt files;
       # put those in the PR description instead of committing them.
       - name: Describe migration
+        if: steps.migrate.outputs.updated == 'true'
         id: describe
         run: |
           version=$(node -p "require('./package.json').devDependencies.nx")
@@ -47,6 +53,7 @@ jobs:
           rm -rf migrations.json tools/ai-migrations
 
       - id: app-token
+        if: steps.migrate.outputs.updated == 'true'
         uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ secrets.GH_APP_ID }}
@@ -55,6 +62,7 @@ jobs:
       # A fixed branch keeps a single migration PR open: each run updates it
       # on top of main instead of opening another.
       - uses: peter-evans/create-pull-request@v8
+        if: steps.migrate.outputs.updated == 'true'
         with:
           token: ${{ steps.app-token.outputs.token }}
           sign-commits: true
