@@ -7,6 +7,7 @@ import {
   type FramedNode,
 } from './frame-by-type.js';
 import {
+  companionNames,
   assertTypeInSchema,
   displayFieldName,
   displayLangOf,
@@ -20,7 +21,7 @@ import {
   isAbsoluteIri,
   isInternalField,
   isInlineReference,
-  isoToUnixSeconds,
+  literalKindOf,
   localLookupTargetsOf,
   physicalFields,
   referencedTargetsOf,
@@ -28,6 +29,7 @@ import {
   storableUnixSeconds,
   storedTargetOf,
   TARGET_FIELD,
+  unixSecondsToIso,
   type KeywordField,
   type ProjectionValue,
   type FacetKeys,
@@ -40,6 +42,14 @@ import {
   type StoredDate,
   type TextField,
 } from './schema.js';
+import { periodCovering, periodOf, type StoredPeriod } from './period.js';
+import {
+  describeValue,
+  isReadKind,
+  readValue,
+  UNREADABLE,
+  type ReadKind,
+} from './read-value.js';
 
 /**
  * A projected node: the fields of one {@link SearchType}, flat. A **Root Type**
@@ -69,6 +79,34 @@ export interface ProjectionContext extends Partial<
 > {
   /** The IRI of the dataset being indexed. */
   readonly dataset?: string;
+  /**
+   * Called once for each value a typed field could not read and so left out:
+   * a `date` over `Z.j`, an `integer` over `onbekend`, a `period` over
+   * `1987/1897`, a `reference` over a literal, a `boolean` outside
+   * `true`/`false`/`1`/`0`. Values from a `derive` count too; one that is not
+   * a string is reported as `String(value)`.
+   */
+  readonly onUnreadable?: (unreadable: UnreadableValue) => void;
+  /**
+   * The projected document of the dataset being indexed, whose `id` is
+   * {@link dataset}: it lets a `derive` copy a field of the dataset – the
+   * publisher of a work’s dataset, say – onto every document indexed from it.
+   * Supplied by a caller that projects the dataset first (`@lde/search-pipeline`,
+   * for a schema with a `dcat:Dataset` root type); absent otherwise. See the
+   * docs’ “Copy a field of the dataset” for when it is absent.
+   */
+  readonly datasetDocument?: SearchDocument;
+}
+
+/** A value a typed field could not read ({@link ProjectionContext.onUnreadable}). */
+export interface UnreadableValue {
+  /** The field that could not read it; dotted for a field of a nested
+   *  referent (`creator.birthDate`). */
+  readonly field: string;
+  /** The value as the source – or the derive – stated it. */
+  readonly value: string;
+  /** The IRI of the node the document was projected from. */
+  readonly id: string;
 }
 
 /** The context a projection runs with when its caller supplied none. */
@@ -94,7 +132,8 @@ export function projectDocument(
   schema?: SearchSchema,
   context: ProjectionContext = NO_PROJECTION_CONTEXT,
 ): SearchDocument {
-  if (documentKey(node) === undefined) {
+  const key = documentKey(node);
+  if (key === undefined) {
     throw new Error(
       `Cannot project a “${searchType.name}” node whose @id is not an absolute IRI (got ${JSON.stringify(node['@id']) ?? 'none'}; a blank node label or a relative reference is not one): every search document needs a stable key, and an empty one would collide with other keyless nodes.`,
     );
@@ -106,6 +145,7 @@ export function projectDocument(
     searchType,
     schema,
     context,
+    unreadableSink(context, key),
   ) as SearchDocument;
   pruneInternalFields(document, searchType, schema);
   return document;
@@ -146,7 +186,10 @@ function pruneInternalFields(
   }
   for (const field of searchType.fields) {
     if (isInternalField(field)) {
-      delete document[field.name];
+      // With its companions, which no collection declares for it either.
+      for (const name of [field.name, ...companionNames(field)]) {
+        delete document[name];
+      }
       continue;
     }
     if (schema === undefined || field.kind !== 'reference') {
@@ -194,11 +237,21 @@ function projectFields(
   searchType: SearchType,
   schema: SearchSchema | undefined,
   context: ProjectionContext,
+  sink: UnreadableSink,
   nested = false,
 ): ProjectedNode {
   const document = emptyDocument(documentIdOf(node, searchType), searchType);
   for (const field of searchType.fields) {
-    applyField(document, node, field, searchType, schema, context, nested);
+    applyField(
+      document,
+      node,
+      field,
+      searchType,
+      schema,
+      context,
+      sink,
+      nested,
+    );
   }
   return document;
 }
@@ -383,14 +436,22 @@ export function missingRequiredFields(
 
 /** Whether a projected document carries a value for `field`: for text, in any
  *  of the physical fields it spreads over – never in a sibling field whose
- *  name only looks like one of them (`title_short` beside `title`). */
+ *  name only looks like one of them (`title_short` beside `title`); for a
+ *  lookup reading its literals as periods, a referent or a period. */
 function hasValue(
   document: ProjectedNode,
   field: SearchField,
   searchType: SearchType,
 ): boolean {
   if (field.kind !== 'text') {
-    return document[field.name] !== undefined;
+    const periods =
+      literalKindOf(field) === 'period'
+        ? physicalFields(field).period?.values
+        : undefined;
+    return (
+      document[field.name] !== undefined ||
+      (periods !== undefined && document[periods] !== undefined)
+    );
   }
   const { search, sort } = physicalFields(field);
   return Object.keys(document).some(
@@ -410,8 +471,10 @@ function applyField(
   searchType: SearchType,
   schema: SearchSchema | undefined,
   context: ProjectionContext,
+  sink: UnreadableSink,
   nested: boolean,
 ): void {
+  const unread: Unread = (value) => sink(field.name, value);
   // The three value sources, mutually exclusive by declaration
   // (`validateSearchType`): a projection value, a computed value, a graph path.
   if (
@@ -422,30 +485,42 @@ function applyField(
   }
   if (field.derive !== undefined) {
     const derived = field.derive(document, context);
-    // A derived `reference` is held to the same rule as a read one: what it
-    // stores is a selection key, and the surface types it `IRI`. ADR 21 sends
-    // an IRI-valued `keyword` derive here by converting it to `reference`, so
-    // this is the busiest way a non-IRI could otherwise reach the index. A
-    // value that survives nothing leaves the field absent, exactly as a derive
-    // returning `undefined` does.
-    if (field.kind === 'date') {
-      return applyDerivedDate(document, field, derived);
+    if (field.kind === 'period') {
+      return setPeriod(
+        document,
+        field,
+        derivedStrings(derived, unread),
+        unread,
+        nested,
+      );
     }
-    const value =
-      field.kind === 'reference' && derived !== undefined
-        ? derivedIris(derived)
-        : derived;
-    // NaN is not a value any kind stores, and a derive is the only route that
-    // can produce one (`setNumber` guards the read route). It serializes as
-    // `null`, which an engine rejects for a numeric field – so drop it, leaving
-    // the field absent as an unparseable string already does.
-    if (value !== undefined && !Number.isNaN(value)) {
-      document[field.name] = value;
+    // A derived value is held to the same rule as a read one, through the same
+    // reader: a derived `reference` stores a selection key the surface types
+    // `IRI` – ADR 21 sends an IRI-valued `keyword` derive here by converting it
+    // to `reference`, so this is the busiest way a non-IRI could otherwise
+    // reach the index – and a derived `integer` an int64.
+    if (isReadKind(field.kind)) {
+      return applyRead(
+        document,
+        field,
+        field.kind,
+        Array.isArray(derived) ? derived : [derived],
+        unread,
+      );
+    }
+    // A `keyword` or `text` field reads any value but NaN, which serializes as
+    // `null` – stored by an engine as no value, or refused with the document.
+    if (Number.isNaN(derived)) {
+      unread('NaN');
+    } else if (derived !== undefined) {
+      document[field.name] = derived;
     }
     return;
   }
-  if (field.path === undefined) {
-    // Neither path nor derive: populated outside the projection, if at all.
+  if (field.path === undefined && field.name !== searchType.literalField) {
+    // Neither path nor derive: populated outside the projection, if at all. A
+    // pathless literal field is the exception: {@link literalReader} fills it
+    // from a literal the reference reached, never from a node.
     return;
   }
   // The framed node is keyed by the {@link irAlias IR Alias} the extraction
@@ -468,6 +543,7 @@ function applyField(
         field,
         schema,
         context,
+        sink,
         nested,
       );
     }
@@ -487,6 +563,7 @@ function applyField(
         localTargets,
         schema,
         context,
+        sink,
       );
       // A `local` lookup stores an object, so its own id is a level deeper than
       // a filter can reach – an engine welds conditions on an entry's LEAF
@@ -503,39 +580,74 @@ function applyField(
     case 'keyword':
       return applyFacet(document, literalsOf(node, alias), field, schema);
     case 'reference': {
-      const targetsById = new Map<string, RootType>();
-      const values = referenceValues(node, alias, field, schema, targetsById);
-      rememberTargets(document, targetsById);
-      return applyFacet(document, values, field, schema, targetsById);
+      if (literalKindOf(field) === 'period') {
+        return applyReferentsOrPeriods(
+          document,
+          valuesOf(node, alias),
+          field,
+          schema,
+          unread,
+          nested,
+        );
+      }
+      return applyReferents(
+        document,
+        valuesOf(node, alias),
+        field,
+        schema,
+        unread,
+      );
     }
     case 'integer':
-      return setNumber(
-        document,
-        field.name,
-        toInteger(firstLiteralOf(node, alias)),
-      );
     case 'number':
-      return setNumber(
-        document,
-        field.name,
-        toNumber(firstLiteralOf(node, alias)),
-      );
-    case 'date': {
-      const literal = firstLiteralOf(node, alias);
-      return setDate(
+    case 'date':
+    case 'boolean':
+      return applyRead(
         document,
         field,
-        literal === undefined ? undefined : isoToUnixSeconds(literal),
+        field.kind,
+        literalsOf(node, alias),
+        unread,
       );
+    case 'period':
+      return setPeriod(
+        document,
+        field,
+        literalsOf(node, alias),
+        unread,
+        nested,
+      );
+  }
+}
+
+/**
+ * Store what {@link readValue} reads of `values` as `kind`, reporting every
+ * value it cannot. An `array` reference stores the list; every other kind is a
+ * scalar in the engine, so it stores the first value read – and an unreadable
+ * or blank value cannot cost the field a readable one behind it.
+ */
+function applyRead(
+  document: ProjectedNode,
+  field: SearchField,
+  kind: ReadKind,
+  values: readonly unknown[],
+  unread: Unread,
+): void {
+  const read = values.flatMap((value) => {
+    const reading = readValue(kind, value);
+    if (reading === UNREADABLE) {
+      unread(describeValue(value));
+      return [];
     }
-    case 'boolean': {
-      // The xsd:boolean lexical space: true/false/1/0.
-      const literal = firstLiteralOf(node, alias);
-      if (literal !== undefined) {
-        document[field.name] = literal === 'true' || literal === '1';
-      }
-      return;
-    }
+    return reading === undefined ? [] : [reading];
+  });
+  if (kind === 'date') {
+    return setDate(document, field, read[0] as StoredDate | undefined);
+  }
+  if (kind === 'reference' && field.array === true) {
+    document[field.name] = read;
+  } else if (read.length > 0) {
+    document[field.name] = read[0];
   }
 }
 
@@ -566,19 +678,29 @@ function applyField(
  * worth declaring together only deliberately.
  */
 function referenceValues(
-  node: FramedNode,
-  alias: string,
+  values: readonly unknown[],
   field: ReferenceField,
   schema: SearchSchema | undefined,
   targetsById: Map<string, RootType>,
+  unread: Unread,
 ): readonly string[] {
+  // A literal where a referent belongs states no IRI to store. A node without
+  // one – a blank node – carries no value a publisher could look up, so only
+  // literals are reported, and a blank one states nothing to correct.
+  for (const value of values) {
+    const literal =
+      iriString(value) === undefined ? literalString(value) : undefined;
+    if (literal !== undefined && literal.trim() !== '') {
+      unread(literal);
+    }
+  }
   // Guaranteed declared: `searchSchema` validates that every named target
   // resolves, and the projection only ever runs against a type of its schema.
   const targets = referencedTargetsOf(field, schema);
   if (targets.length === 0) {
-    return irisOf(node, alias);
+    return irisAmong(values);
   }
-  return valuesOf(node, alias)
+  return values
     .map((value) => {
       const iri = iriString(value);
       if (iri === undefined) {
@@ -612,6 +734,71 @@ function referenceValues(
       return keyed;
     })
     .filter((value): value is string => value !== undefined);
+}
+
+/** Store a non-inline reference’s referents: their ids, re-keyed through the
+ *  targets they belong to ({@link referenceValues}), and every companion an
+ *  id feeds. */
+function applyReferents(
+  document: ProjectedNode,
+  values: readonly unknown[],
+  field: ReferenceField,
+  schema: SearchSchema | undefined,
+  unread: Unread,
+): void {
+  const targetsById = new Map<string, RootType>();
+  const ids = referenceValues(values, field, schema, targetsById, unread);
+  rememberTargets(document, targetsById);
+  applyFacet(document, ids, field, schema, targetsById);
+}
+
+/**
+ * Store a lookup that reads its literals as periods
+ * ({@link ReferenceStrategy.literal}): its referents as any lookup stores them,
+ * and its literals as a `period` field stores its values, in the companions
+ * {@link physicalFields} names for them.
+ *
+ * A single-valued field keeps the first value the graph carries that either
+ * form can read, whichever form it is – so it holds one value, never one of
+ * each. A literal no reader can parse does not count, exactly as a `period`
+ * keeps its first readable value; a blank node carries no id, so it does not
+ * count either.
+ */
+function applyReferentsOrPeriods(
+  document: ProjectedNode,
+  values: readonly unknown[],
+  field: ReferenceField,
+  schema: SearchSchema | undefined,
+  unread: Unread,
+  nested: boolean,
+): void {
+  const isReferent = (value: unknown) => iriString(value) !== undefined;
+  const referents = values.filter(isReferent);
+  const periods = readablePeriods(
+    values
+      .filter((value) => !isReferent(value))
+      .map(literalString)
+      .filter((value): value is string => value !== undefined),
+    unread,
+  );
+  if (field.array === true) {
+    applyReferents(document, referents, field, schema, unread);
+    storePeriods(document, field, periods, nested);
+    return;
+  }
+  const readable = new Set(periods.map(({ value }) => value));
+  const first = values.find(
+    (value) =>
+      isReferent(value) || readable.has(literalString(value)?.trim() ?? ''),
+  );
+  if (first === undefined) {
+    return;
+  }
+  if (isReferent(first)) {
+    applyReferents(document, referents, field, schema, unread);
+  } else {
+    storePeriods(document, field, periods, nested);
+  }
 }
 
 /**
@@ -941,6 +1128,7 @@ function applyInlineReference(
   field: ReferenceField & { readonly ref: { readonly typeName: string } },
   schema: SearchSchema,
   context: ProjectionContext,
+  sink: UnreadableSink,
   nested: boolean,
 ): void {
   // Resolves for a schema that declares the referent (always so for the schema a
@@ -951,13 +1139,17 @@ function applyInlineReference(
     return;
   }
   const asEdge = edgeReader(referenceType, field.ref.identity);
+  const asLiteralEntry = literalReader(referenceType);
   const referents = applyNestedReferents(
     document,
-    valuesOf(node, alias).map(asEdge),
+    valuesOf(node, alias).map(
+      (value) => asLiteralEntry(value) ?? asEdge(value),
+    ),
     field,
     [referenceType],
     schema,
     context,
+    sink,
   );
   applyIdentityCompanion(document, referents, field, schema, nested);
 }
@@ -984,10 +1176,36 @@ function edgeReader(
   const endpointAlias = irAlias(referenceType, endpointField);
   return (value) =>
     // Only a node can be an endpoint: anything else is left for the
-    // projection to discard, as it would be without an edge class.
+    // projection to discard, as it would be without an edge class – unless
+    // {@link literalReader}, which runs first, read it as a literal entry.
     !isObject(value) || classesOf(value).has(referenceType.edgeClass as string)
       ? value
       : { [endpointAlias]: [value] };
+}
+
+/**
+ * Read a **literal** an inline reference reached in place of a node as an entry
+ * carrying it under the Reference Type’s
+ * {@link ReferenceType.literalField literal field} alone – so a value the graph
+ * states bare and one it states on a node project through one path. Returns
+ * `undefined` for anything that is not a literal, and for every value where the
+ * type declares no literal field, leaving it to {@link edgeReader}.
+ */
+function literalReader(
+  referenceType: ReferenceType,
+): (value: unknown) => FramedNode | undefined {
+  const field =
+    referenceType.literalField === undefined
+      ? undefined
+      : fieldNamed(referenceType, referenceType.literalField);
+  if (field === undefined) {
+    return () => undefined;
+  }
+  const literalAlias = irAlias(referenceType, field);
+  return (value) =>
+    literalString(value) === undefined
+      ? undefined
+      : { [literalAlias]: [value] };
 }
 
 /**
@@ -1207,6 +1425,7 @@ function applyNestedReferents(
   nestedTypes: readonly SearchType[],
   schema: SearchSchema,
   context: ProjectionContext,
+  sink: UnreadableSink,
 ): readonly ProjectedNode[] {
   // One node may stand for several entries: a weldable leaf is single-valued,
   // so an edge the graph gave several roles or several endpoints fans out into
@@ -1221,12 +1440,23 @@ function applyNestedReferents(
         nestedTypes.length === 1
           ? nestedTypes[0]
           : targetOfReferent(value, nestedTypes as readonly RootType[]);
+      // Every tuple of a node carries the node’s other values, so each value
+      // is reported once per node, not once per tuple it was copied into.
+      let reported: Set<string> | undefined;
+      const nestedSink: UnreadableSink = (name, value) => {
+        const key = JSON.stringify([name, value]);
+        if (!(reported ??= new Set()).has(key)) {
+          reported.add(key);
+          sink(`${field.name}.${name}`, value);
+        }
+      };
       return tuplesOf(value, nestedType, field).map((tuple) => {
         const projected = projectFields(
           tuple,
           nestedType,
           schema,
           context,
+          nestedSink,
           true,
         );
         if (nestedTypes.length > 1 && Object.keys(projected).length > 0) {
@@ -1351,12 +1581,12 @@ function literalsOf(node: FramedNode, key: string): string[] {
     .filter((value): value is string => value !== undefined);
 }
 
-function firstLiteralOf(node: FramedNode, key: string): string | undefined {
-  return literalsOf(node, key)[0];
+function irisOf(node: FramedNode, key: string): string[] {
+  return irisAmong(valuesOf(node, key));
 }
 
-function irisOf(node: FramedNode, key: string): string[] {
-  return valuesOf(node, key)
+function irisAmong(values: readonly unknown[]): string[] {
+  return values
     .map(iriString)
     .filter((value): value is string => value !== undefined);
 }
@@ -1423,59 +1653,6 @@ function iriString(value: unknown): string | undefined {
   return typeof iri === 'string' && isAbsoluteIri(iri) ? iri : undefined;
 }
 
-/** What a `derive` on a `reference` field is allowed to have produced: the
- *  absolute IRIs among its return value, keeping the shape the declaration
- *  promises (a list stays a list, a single value stays single) so `array` still
- *  decides the stored shape. A lone non-IRI becomes `undefined`, i.e. absent –
- *  the same outcome the graph path gives it. */
-function derivedIris(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.filter(
-      (entry): entry is string =>
-        typeof entry === 'string' && isAbsoluteIri(entry),
-    );
-  }
-  return typeof value === 'string' && isAbsoluteIri(value) ? value : undefined;
-}
-
-function toInteger(literal: string | undefined): number | undefined {
-  return literal === undefined ? undefined : Math.trunc(Number(literal));
-}
-
-function toNumber(literal: string | undefined): number | undefined {
-  return literal === undefined ? undefined : Number(literal);
-}
-
-/**
- * A derived `date` goes through the same storage codec as a read one: the field
- * is stored as Unix seconds, so an ISO string returned here would otherwise
- * land as a string in an int64 field – and it is parsed like any literal, its
- * precision included. A derive that computed seconds itself returns a number,
- * which states no precision and so is stored as a date-time; the codec never
- * saw it and so never range-checked it, and seconds outside the int64 a `date`
- * field is stored in would be refused by the engine where an unparseable
- * string merely leaves the field absent – so drop those too.
- */
-function applyDerivedDate(
-  document: ProjectedNode,
-  field: SearchField,
-  derived: unknown,
-): void {
-  if (typeof derived === 'string') {
-    return setDate(document, field, isoToUnixSeconds(derived));
-  }
-  if (typeof derived === 'number') {
-    // Truncated, as the codec truncates a string’s fractional seconds: the
-    // field is an int64. `storableUnixSeconds` drops NaN.
-    const seconds = storableUnixSeconds(Math.trunc(derived));
-    return setDate(
-      document,
-      field,
-      seconds === undefined ? undefined : { seconds, precision: 'dateTime' },
-    );
-  }
-}
-
 /** Store a `date` field’s seconds, and its precision in the companion beside
  *  them ({@link physicalFields}), so the surface can serve the value in the
  *  form its source gave. */
@@ -1491,14 +1668,103 @@ function setDate(
   document[physicalFields(field).precision as string] = stored.precision;
 }
 
-function setNumber(
+/**
+ * Store a `period` field: the values that state a period, as stated but for
+ * surrounding whitespace, under the field’s own name (a lookup’s
+ * `${name}_literal` companion), for output, and the stretch they cover between
+ * them in the bound companions ({@link physicalFields}). A value that states no period –
+ * `onbekend`, `1987/1897` – is reported and left out, so every value served is
+ * the EDTF its scalar promises; a deployment that wants to show such text
+ * declares a `keyword` field over the same path.
+ *
+ * Blank and unreadable values are dropped before a single-valued field keeps
+ * its first, so neither can cost the field the period behind it; and the
+ * bounds are taken from exactly the values stored, so what is served and what
+ * is filtered cannot disagree.
+ */
+function setPeriod(
   document: ProjectedNode,
-  field: string,
-  value: number | undefined,
+  field: SearchField,
+  values: readonly string[],
+  unread: Unread,
+  nested: boolean,
 ): void {
-  if (value !== undefined && !Number.isNaN(value)) {
-    document[field] = value;
+  storePeriods(document, field, readablePeriods(values, unread), nested);
+}
+
+/** The values a reader can parse as periods, trimmed and deduplicated in the
+ *  order stated, each with the stretch it covers; every other non-blank value
+ *  is reported. */
+function readablePeriods(
+  values: readonly string[],
+  unread: Unread,
+): readonly { readonly value: string; readonly period: StoredPeriod }[] {
+  return dedupe(values.map((value) => value.trim())).flatMap((value) => {
+    if (value === '') {
+      return [];
+    }
+    const period = periodOf(value);
+    if (period === undefined) {
+      unread(value);
+      return [];
+    }
+    return [{ value, period }];
+  });
+}
+
+/** Store readable periods ({@link readablePeriods}) – the first alone for a
+ *  single-valued field – and, outside a nested entry, the stretch they cover
+ *  between them. No filter or sort reaches a nested period, so an entry stores
+ *  its values alone. */
+function storePeriods(
+  document: ProjectedNode,
+  field: SearchField,
+  readable: readonly {
+    readonly value: string;
+    readonly period: StoredPeriod;
+  }[],
+  nested: boolean,
+): void {
+  const stated = field.array === true ? readable : readable.slice(0, 1);
+  // Named for every field that stores periods: a `period`, and a lookup
+  // reading its literals as periods.
+  const companions = physicalFields(field).period;
+  if (stated.length === 0 || companions === undefined) {
+    return;
   }
+  document[companions.values] =
+    field.array === true ? stated.map(({ value }) => value) : stated[0].value;
+  if (nested) {
+    return;
+  }
+  const [first, ...rest] = stated.map(({ period }) => period);
+  const covered = periodCovering(first, ...rest);
+  document[companions.start] = covered.start;
+  document[companions.end] = covered.end;
+}
+
+/** A derive’s value as the strings a `period` reads: one string or number,
+ *  or those in a list. A number is Unix seconds, as a `date` derive’s is, and
+ *  is stored as the instant it names (`1970-01-01T00:00:42Z`). `null` and
+ *  `undefined` state no value; anything else is reported. */
+function derivedStrings(derived: unknown, unread: Unread): readonly string[] {
+  const values = Array.isArray(derived) ? derived : [derived];
+  return values.flatMap((value) => {
+    if (typeof value === 'string') {
+      return [value];
+    }
+    const seconds =
+      typeof value === 'number'
+        ? storableUnixSeconds(Math.trunc(value))
+        : undefined;
+    if (seconds !== undefined) {
+      return [unixSecondsToIso(seconds, 'dateTime')];
+    }
+    if (value !== undefined && value !== null) {
+      unread(describeValue(value));
+    }
+    return [];
+  });
 }
 
 function dedupe(values: readonly string[]): string[] {
@@ -1540,4 +1806,28 @@ function setArray(
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** Where a field reports a value it could not read: the field’s name, prefixed
+ *  with its parents’ for a nested referent, and the value. */
+type UnreadableSink = (field: string, value: string) => void;
+
+/** Where one field reports a value it could not read. */
+type Unread = (value: string) => void;
+
+/** The sink a root document’s fields report to: the context’s
+ *  {@link ProjectionContext.onUnreadable}, told which node the value was
+ *  dropped from. */
+function unreadableSink(
+  context: ProjectionContext,
+  id: string,
+): UnreadableSink {
+  const { onUnreadable } = context;
+  return onUnreadable === undefined
+    ? ignoreUnreadable
+    : (field, value) => onUnreadable({ field, value, id });
+}
+
+function ignoreUnreadable(): void {
+  // Nobody asked for the report.
 }

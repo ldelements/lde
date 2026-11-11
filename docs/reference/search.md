@@ -100,8 +100,9 @@ Exports are stratified by audience:
     graph needs;
   - `labelFieldOf`, `labelFieldNameOf` – the text field a label source serves
     labels from, and the name it serves it under (`label` by default);
-  - `filterOperatorFor`, `filterOperator`, `FilterOperator` – the kind→operator
-    table and the operator a `Filter` value carries;
+  - `filterOperatorFor`, `filterOperator`, `FilterOperator` – the operator a
+    field takes (its kind’s, or a period’s `range` for a lookup declaring
+    `literal: 'period'`) and the operator a `Filter` value carries;
   - `validateQuery` / `QueryIssue`, `assertValidQuery` – query validation
     (the port’s always-on guard);
   - `pageForOffset` – the 1-based page an offset falls on (`limit: 0` pins
@@ -279,7 +280,7 @@ outside TypeScript – a SHACL generator, plain JS): `searchSchema()`
 rejects a structurally invalid declaration (duplicate or non-identifier field
 names, a field named `id` – see [Lookup by IRI](#lookup-by-iri) –, a locale containing `_`, an `output`
 reference without `ref`, `text` without locales, `locales` on a non-text kind,
-`facetRanges` on a non-numeric kind, `searchable`/`transform` on a kind whose
+`facetRanges` on a non-numeric kind, `facetable` on a `period`, `searchable`/`transform` on a kind whose
 projection cannot honour it, `filterable`/`facetable` on `text`, two types
 sharing a `class` IRI or `name`) – the declaration-time counterpart of the
 port’s always-on query validation, so a bad schema fails at startup rather
@@ -294,6 +295,7 @@ directly.
 | `reference`          | `in` (membership)    | yes   | –                | labelled reference (id + label), or a nested document for a surfaced inline reference |
 | `integer` / `number` | `range { min, max }` | yes   | yes              | number                                                                                |
 | `date`               | `range` (inclusive)  | yes   | yes              | ISO 8601 string at the source’s precision (surface), an `xsd:gYear` in deep time      |
+| `period`             | `range` (overlap)    | –     | yes              | EDTF string / `string[]`, as stated                                                   |
 | `boolean`            | `is`                 | yes   | –                | boolean (absent = false)                                                              |
 
 A **`date`** is stored as Unix seconds – a sortable, range-filterable integer –
@@ -348,6 +350,112 @@ period they name: `min: "1999"` starts at the first second of 1999 and
 `max: "1999"` runs through its last, so `{ min: "1999", max: "1999" }` is the
 year 1999, a document dated `1999-05` included. A date-time bound is just that
 second.
+
+A **`period`** holds what a source knows about when something happened, which
+is often only that it fell somewhere between two dates. Its values are
+[EDTF](https://www.loc.gov/standards/datetime/) Level 0 or 1 – or anything the
+`date` codec reads, which includes deep time – and are served exactly as
+stated: `1620~` stays `1620~`, because “circa” is part of what is known, and
+how to say it depends on the reader’s language.
+
+What a filter compares and a sort orders on is the stretch each value covers,
+from its first second to its last:
+
+| Value              | Covers                          |
+| ------------------ | ------------------------------- |
+| `1935`             | all of 1935                     |
+| `1935/1955`        | 1935 through 1955               |
+| `1620~`, `1620?`   | all of 1620                     |
+| `162X`             | 1620 through 1629               |
+| `1606-07-15/1607`  | 15 July 1606 through 1607       |
+| `1440/..`, `1440/` | 1440 onwards, with no end       |
+| `../1607`, `/1607` | up to the end of 1607, no start |
+
+- A **range filter matches by overlap**: a period matches when it starts no
+  later than `max` and ends no earlier than `min`, so `{ min: "1940", max:
+"1950" }` matches `1935/1955`. The bounds are read as a `date` filter’s are.
+- **Sorting** ascending orders on where a period starts, descending on where it
+  ends, so newest-first places `1935/1955` by 1955.
+- A **qualifier** (`~`, `?`, `%`) keeps the stated bounds. Widening them by a
+  guessed margin would invent a precision the source never gave.
+- An **unknown bound** (`1440/`) reads as an open one (`1440/..`). Leaving a
+  work out of every result it might belong to costs a reader more than one
+  extra hit.
+- An **`array`** field is stored as the one stretch its values cover between
+  them, from the earliest start to the latest end. A work dated `1668`, `1676`
+  and `1686` therefore matches a filter on 1670–1672.
+- A value that is not a date or period in either grammar (`ca. 1620`,
+  `onbekend`), and an interval that ends before it starts, is left out and
+  [reported](#values-a-field-could-not-read), so every value served is EDTF. A
+  single-valued field keeps its first readable value. To show such text anyway,
+  declare a `keyword` field over the same path.
+
+The values are stored as strings under the field’s own name, without
+surrounding whitespace. The bounds are two hidden int64 fields beside them
+(`PhysicalFields.period`, `${name}_start` and `${name}_end`), stored for every
+period on a document, whether or not it is `filterable` or `sortable`: a
+deployment may sort on a field it does not expose as sortable. A period in a
+nested entry stores its values alone, since no filter or sort reaches it. An
+open bound is stored as the furthest second the `date` codec holds, so an
+open-ended period meets a range however deep in time it reaches. A `derive`
+may return a number, read as Unix seconds as a `date` derive’s is. They are not part of the field model and never reach a
+client’s schema. Each side of an interval is read through the `date` codec;
+EDTF Level 1’s qualifiers, unspecified digits and seasons are rewritten into
+a form it reads first. A season covers its whole year, since EDTF fixes no
+months for it, and a Level 2 value states no period.
+
+A period is not `facetable`: it belongs in every bin it overlaps, which no
+engine facet counts from two bounds. It is filtered only on the document that
+holds it: nested in a Reference Type it may be `output` only, since a weld
+compares one value per condition. Nor can it be a collection’s default sorting
+field, which needs a single value.
+
+**A period stated as a value or as a reference.** A profile may let a
+publisher state a period either way: SCHEMA-AP-NDE gives
+`schema:temporalCoverage` an EDTF literal or a reference to a named period, and
+one dataset may use both. A `period` field drops the references and a lookup
+drops the literals, so serving both would take two fields over one path, which
+a client would then have to know to query together. Declare one lookup with
+`literal: 'period'` instead:
+
+```ts
+{
+  name: 'temporalCoverage',
+  kind: 'reference',
+  path: 'https://schema.org/temporalCoverage',
+  array: true,
+  output: true,
+  filterable: true,
+  sortable: true,
+  ref: { strategy: 'lookup', target: 'Term', literal: 'period' },
+}
+// temporalCoverage: ['1935/1955', { id: 'https://…/t17mnn3j0s32', label: { nl: ['19e/20e eeuw'] } }]
+```
+
+Each entry is a period, served as stated, or a referent, resolved like any
+lookup’s. The two forms keep their own rules:
+
+- The **literals** are read as a `period` field reads its values: stored as
+  stated, bounded by the stretch they cover, and
+  [reported](#values-a-field-could-not-read) when no reader can parse them.
+- The **referents** are stored by id, as any lookup stores them.
+- A **range filter** tests the periods by overlap, as it tests a `period`
+  field. A referent has no bounds, so it matches no range, and a work that
+  states only a referent sorts last, like a work with no period at all. The
+  field takes no `in`: its filter is `range` alone (`filterOperatorFor`), so
+  it is never `facetable` either, since a bucket per referent would offer a
+  selection no filter makes.
+- A **single-valued** field keeps the first value either form can read, so it
+  holds a period or a referent, never one of each.
+
+The periods are stored in a hidden `${name}_literal` field beside the
+referents’ ids, with the same `${name}_start` and `${name}_end` bounds a
+`period` field has (`PhysicalFields.period`). Such a lookup cannot also be
+`local` (which stores each referent as an object), `joinable` (whose filter is
+on ids) or a Reference Type’s field. `searchSchema` refuses all three. The
+literal kind is a union, so it can widen beyond `'period'` when a second
+literal form needs it. See
+[ADR 35](../decisions/0035-serve-a-propertys-literals-and-references-in-one-field.md).
 
 **`array` decides a field’s shape**, whatever the graph carries: a declared
 `array` field stores a list, and a single-valued one stores the first value –
@@ -551,15 +659,25 @@ facets: { creator { value count label { value } } }
 Two declarations make that work.
 
 **`identity`** names the nested reference whose ids identify each entry. A
-nested object is not something an engine can filter or facet, so a reference
-declaring `filterable` or `facetable` fans out a flat **identity companion**
+nested object is not something an engine can filter or facet by id, so a
+reference naming an `identity` fans out a flat **identity companion**
 holding those ids, which the engine filters and facets in its place. The logical
 field keeps one name; only the physical fanout knows there are two. It is
 declared rather than inferred – an edge may carry several references, and only
 you know which one identifies it – and naming it is also what supplies the
 target that types the filter and carries the facet's labels. Both directions are
-enforced: `filterable`/`facetable` without an `identity` has nothing to filter,
-and an `identity` without either is a companion nothing reads.
+enforced: `facetable` without an `identity` has nothing to count, and an
+`identity` without `filterable` or `facetable` is a companion nothing reads.
+
+A reference type made of literals alone, such as a `PropertyValue` with a
+`value` and a `propertyID`, has no ids to name. Without an `identity` it can
+still be `filterable`, through its own `filterable` fields: the `where` arm is
+then the only filter it takes, and `searchSchema` refuses one whose type
+declares no filterable field.
+
+```graphql
+where: { identifier: { where: { value: { in: ["G11125-19"] } } } }
+```
 
 Because the companion holds ids only, its facet is **exact**: an endpoint the
 source named inline contributes no bucket rather than a bucket keyed on a label,
@@ -635,6 +753,34 @@ Supporting both shapes reads both hops off every node: the endpoint’s fields
 off each edge node, and the edge’s fields off each flat endpoint. The
 projection discards what does not apply, so the cost is extraction volume, not
 what the index stores.
+
+**`literalField`** on the Reference Type is for a graph that may state the
+node’s value bare: SCHEMA-AP-NDE lets each `schema:identifier` be a string or a
+`schema:PropertyValue`, and one work may carry both. A literal the reference
+reaches is then an entry carrying it in the named field and none of the type’s
+other fields, so the consumer reads one list instead of two shapes:
+
+```ts
+defineSearchType({
+  name: 'PropertyValue',
+  literalField: 'value',
+  fields: [/* value, propertyID */],
+});
+// identifier: [{ value: 'G11125-19' }, { value: '12042', propertyID: '…#Priref' }]
+```
+
+The field must hold a literal – any kind but `reference`, with no `derive` or
+`from` – and no other field can be `required`, since an entry made from a
+literal never carries it; `searchSchema` enforces both. Without a `literalField`,
+a literal under an inline reference projects to nothing.
+
+The literal field may omit `path`, and is then filled from a literal only,
+never from a node. `schema:size` needs this: stated bare, it is display text –
+`"74 cm hoog bij 92 cm breed"@nl` – that no `schema:QuantitativeValue` node
+carries, so a `Size` type declares a pathless `text` field `statement` beside
+the node’s `value` and `unitCode`. A `text` literal field keeps the literal’s
+language tag. A pathless literal field cannot be `required`: an entry made from
+a node never has it.
 
 **Conditions inside one edge's `where` are welded to one entry.** `creator: {
 where: { creator: { in: […] }, role: { in: ["etser"] } } }` means _this person
@@ -980,6 +1126,47 @@ later:
   straight into the `is` filter that selects it;
 - a range-facet bin carries `min`/`max` instead – see below.
 
+### Faceting on an entry’s leaf
+
+A root document can be faceted on a leaf of the entries an inline reference
+holds. List the leaves in `ref.facetedLeaves`:
+
+```ts
+{
+  name: 'associatedMedia',
+  kind: 'reference',
+  array: true,
+  output: true,
+  filterable: true,
+  ref: { strategy: 'inline', typeName: 'MediaObject', facetedLeaves: ['license'] },
+}
+```
+
+The facet is named by its path, `associatedMedia.license`, in
+`SearchQuery.facets` and in the result, and GraphQL serves it as
+`facets { associatedMedia { license { value count } } }`. A bucket counts
+**root documents**: a work with three reproductions, two under CC BY, counts
+once under CC BY. That answers “which works have a reproduction under this
+licence?”, and it is how the engine counts a value stored under every entry,
+so no companion is written.
+
+A bucket is selected by a condition on one entry,
+`where: { associatedMedia: { where: { license: { in: […] } } } }`, which is the
+facet’s own clause: the facet counts without it and reports its value as
+selected. A clause welding a condition on another leaf to the same entry is
+nobody’s own, as a clause spanning two fields is not
+([ADR 36](../decisions/0036-facet-a-root-document-on-its-entries-leaves.md)).
+
+`searchSchema` holds each leaf to what that round trip needs: it is declared
+on the reference type, `filterable`, and a `keyword`, `boolean` or `reference`;
+the reference is `filterable`, not `facetable` itself (both facets would be
+named after it), and sits on a Root Type. A `lookup` leaf whose target declares
+a [facet policy](#facet-policy) is refused for now.
+
+A condition welded to one entry is owned by a faceted leaf, never by an
+`identity` facet: select an identity facet’s bucket through the reference’s
+`in` arm, `where: { contributor: { in: […] } }`.
+
 ### Facet policy
 
 A Root Type may declare **`facetKeys`**: which of its documents get a facet
@@ -1195,6 +1382,78 @@ bookkeeping** on – see [`@lde/search-typesense`](./search-typesense.md#provena
 – so the facet, the label, any derive and the membership sweep read one column
 rather than two copies of one IRI.
 
+### Values a field could not read
+
+A typed field leaves out a value it cannot read: an `integer` or `number` over
+`onbekend`, a `date` over `Z.j`, a `period` over `1987/1897`, a `reference` over
+a literal, a `boolean` outside `true`/`false`/`1`/`0`. The document is still
+projected; the value is missing from it. So that a run can say what it lost, the
+projection reports each such value to the context’s `onUnreadable`, with the
+field – dotted for a field of a nested referent, `creator.birthDate` – the value
+as stated, and the IRI of the node the document came from.
+
+What a kind reads is the same on both routes, a `path` and a `derive`, with
+surrounding whitespace collapsed and a blank value read as no value at all:
+
+| Kind        | Reads                                                                              |
+| ----------- | ---------------------------------------------------------------------------------- |
+| `integer`   | a number, or an `xsd:decimal` or `xsd:double` lexical form, truncated, within ±2⁵³ |
+| `number`    | the same, untruncated; `INF`, `NaN`, `0x1F` and `Infinity` are not read            |
+| `boolean`   | `true` or `false`, or `true`/`false`/`1`/`0` as text                               |
+| `date`      | what the [date codec](#field-model) reads, or Unix seconds as a number             |
+| `period`    | an EDTF Level 0 or 1 date or interval                                              |
+| `reference` | an absolute IRI                                                                    |
+
+A single-valued field keeps the first value it reads, so an unreadable or blank
+value ahead of it costs the field nothing; every unreadable one is still
+reported. An `array` reference keeps every value it reads. The other kinds are
+scalars in the engine, so they keep one value even when `array` is set.
+
+A value a `derive` returned is reported as `String(value)` when it is not a
+string – a derived `NaN` as `NaN`, which says the derive’s arithmetic failed
+but not on which source value; a derive that wants that in the report returns
+the source value instead.
+
+`@lde/search-pipeline`’s `searchStages` passes them on to the pipeline, which
+reports them per dataset and field ([`valuesUnread`](./pipeline.md#reporter)),
+so the console shows what each dataset lost and a publisher can be told which
+values to correct at the source. See
+[ADR 33](../decisions/0033-report-the-values-a-typed-field-could-not-read.md).
+
+### Copy a field of the dataset
+
+The context also carries `datasetDocument`: the projected document of the
+dataset being indexed. `@lde/search-pipeline` supplies it when the schema has a
+root type whose `class` is `dcat:Dataset`: that type’s stage runs first for each
+dataset, and the document it projects for the dataset itself – the one whose
+`id` is the dataset IRI – reaches every other stage.
+
+A `derive` uses it to copy a field of the dataset onto each document indexed
+from it. The copy is an ordinary stored field, so it filters, facets and counts
+per document:
+
+```ts
+{
+  name: 'publisher',
+  kind: 'reference',
+  output: true,
+  facetable: true,
+  ref: { strategy: 'lookup', target: 'Publisher' },
+  derive: (_document, context) => context.datasetDocument?.publisher,
+}
+```
+
+A facet on `publisher` then counts works per publisher of their dataset. A
+facet through a join cannot: Typesense counts the distinct _referenced_
+documents of a joined facet, so `$datasets(publisher)` on works counts
+datasets, not works (see
+[ADR 19](../decisions/0019-filter-across-collections-through-declared-joins#out-of-scope-deliberately)).
+
+`datasetDocument` is the dataset’s document as written, so the dataset type’s
+[internal fields](#field-model) are not in it: a field you copy must declare
+a role on the dataset type. It is absent when the schema has no `dcat:Dataset` type, when the
+dataset’s description is missing, and for documents of the dataset type itself.
+
 ## Locales
 
 `locales` declares the languages a `text` field wants **indexed** (`und` =
@@ -1211,7 +1470,14 @@ language present:
 - `searchable` → `title_search_nl`/`title_search_en` (folded; one field per
   locale lets a query `query_by` them and rank the user’s language higher, and
   lets a language that needs a dedicated tokenizer set its own stemming `locale`
-  in the engine schema);
+  in the engine schema). The request’s language keeps full weight and the other
+  tagged locales are demoted by one; a request with no language – `und`, or a
+  language the field does not declare – demotes none. Typesense stems the query
+  once, with the settings of the heaviest field
+  ([typesense#1815](https://github.com/typesense/typesense/issues/1815)), so that
+  field must be a stemmed one: the request’s language leads, or else the first
+  tagged locale in `locales`, ahead of `und` and every unstemmed field of equal
+  weight;
 - `sortable` → `title_sort_nl`/`title_sort_en` (folded, so a locale-switching UI
   sorts on the active language). Each locale’s key **falls back** to the
   document’s first value in `locales` order when that language is absent, so a
@@ -1268,7 +1534,7 @@ policy produced it. A typed surface like GraphQL makes most of these
 unrepresentable; the port enforces them for everyone else (deployment
 `queryDefaults`, in-process callers, weaker-typed surfaces).
 
-One rule is about a **value** rather than a field: a `date` range bound the
+Two rules are about a **value** rather than a field. A `date` range bound the
 storage codec cannot read (`'yesterday'`, or a year past the int64 of seconds
 the engine stores) is an `unparseable-bound` issue naming the rejected bound. No
 surface’s type system catches this – `String` is `String` – and it has to be
@@ -1276,7 +1542,10 @@ caught here because a compiler cannot recover what the caller meant: a rejected
 bound is indistinguishable from a bound never set, and inside an `or` the two
 readings pull opposite ways – read as unset it widens the range to unbounded,
 dropped it narrows the result to the criterion’s siblings. Only the caller can
-fix the bound, so validation hands it back to them instead of guessing.
+fix the bound, so validation hands it back to them instead of guessing. A
+range whose `min` comes after its `max` is an `inverted-range` for the same
+reason: a `date` field would match nothing and a `period` everything spanning
+the gap, and neither is what the caller meant.
 
 Validation is the guard, but it is not the only one: a compiler reached
 directly must not quietly answer a different question either. So a `where`

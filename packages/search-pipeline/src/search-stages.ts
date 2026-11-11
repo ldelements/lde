@@ -1,4 +1,4 @@
-import { Distribution } from '@lde/dataset';
+import { Distribution, type Dataset } from '@lde/dataset';
 import {
   SparqlConstructReader,
   SparqlItemSelector,
@@ -10,7 +10,12 @@ import {
   type StageOptions,
   type StageReaders,
 } from '@lde/pipeline';
-import { projectRoots, type RootType, type SearchSchema } from '@lde/search';
+import {
+  projectRoots,
+  type RootType,
+  type SearchDocument,
+  type SearchSchema,
+} from '@lde/search';
 import { extractionQueryString } from './extraction.js';
 import type { TypedSearchDocument } from './typed-search-document.js';
 
@@ -108,6 +113,12 @@ export interface SearchStagesOptions {
  * by the dataset
  * ([ADR 13](https://github.com/ldelements/lde/blob/main/docs/decisions/0013-project-inside-the-batch-per-root-type.md)).
  *
+ * A root type whose `class` is `dcat:Dataset` describes the dataset being
+ * indexed: its stage runs first, and the document it projects for the dataset
+ * itself – the one whose `id` is the dataset IRI – reaches every other stage’s
+ * projection as `ProjectionContext.datasetDocument`, so a `derive` can copy a
+ * field of the dataset onto each document.
+ *
  * Wire the result as `new Pipeline<TypedSearchDocument>({ datasetSelector,
  * stages: searchStages(...), writers: searchIndexWriter(...) })` – one terminal,
  * N stages.
@@ -116,7 +127,21 @@ export function searchStages(
   options: SearchStagesOptions,
 ): Stage<TypedSearchDocument>[] {
   const { schema, types } = options;
-  return types.map((type) => {
+  // The schema holds one root type per class, so at most one stage matches.
+  const isDatasetType = (type: SearchStageType) =>
+    type.searchType.class === DCAT_DATASET;
+  // The dataset being indexed and its own projected document, for the stages
+  // that run after its type’s. The pipeline processes datasets one at a time,
+  // so one slot holds one document, never one per dataset; it is read only for
+  // the dataset object it was written for.
+  let current: { dataset: Dataset; document: SearchDocument } | undefined;
+  // A dataset’s stages run one after another, in this order: the dataset
+  // type’s stage first, so its document is there for every other stage.
+  const ordered = [
+    ...types.filter(isDatasetType),
+    ...types.filter((type) => !isDatasetType(type)),
+  ];
+  return ordered.map((type) => {
     // Project with the schema’s OWN declaration object, whatever the caller
     // passed: `assertTypeInSchema` (inside `projectRoots`) is an identity check,
     // and re-resolving here makes a class-equal lookalike work too.
@@ -127,6 +152,7 @@ export function searchStages(
       );
     }
     const { rootVariable } = type;
+    const isDatasetStage = isDatasetType(type);
     if (type.readers !== undefined && type.transform !== undefined) {
       // Which of the caller’s readers the transform belongs to is knowable only
       // to that caller, so guessing (all of them? the first?) would be a silent
@@ -176,16 +202,31 @@ export function searchStages(
         // declared over, and what a `derive` reads to relate a projected value
         // to its provenance. The stage is where it is known: the writer sees it
         // only after projection, which is too late for either.
+        // The same `iri.toString()` the writer’s provenance bookkeeping and
+        // `selectedSources()` use, so a declared field, the membership sweep
+        // and the selection all compare one spelling of the IRI.
+        const datasetIri = context.dataset.iri.toString();
         for await (const document of projectRoots(
           quads,
           roots,
           schema,
           searchType,
-          // The same `iri.toString()` the writer’s provenance bookkeeping and
-          // `selectedSources()` use, so a declared field, the membership sweep
-          // and the selection all compare one spelling of the IRI.
-          { dataset: context.dataset.iri.toString() },
+          {
+            dataset: datasetIri,
+            // Only for other types: the dataset type’s own batches would
+            // otherwise see it or not depending on which batch ran first.
+            datasetDocument:
+              !isDatasetStage && current?.dataset === context.dataset
+                ? current.document
+                : undefined,
+            // Tallied by the pipeline and reported when the dataset completes.
+            onUnreadable: ({ field, id, value }) =>
+              context.valueUnread(searchType.name, field, { id, value }),
+          },
         )) {
+          if (isDatasetStage && document.id === datasetIri) {
+            current = { dataset: context.dataset, document };
+          }
           yield { searchType, document };
         }
       },
@@ -212,13 +253,36 @@ export function searchStages(
  * `rootVariable` defaults to `root` and must match the stage’s
  * {@link SearchStageType.rootVariable}; it must not be `dataset` (reserved by the
  * SPARQL reader).
+ *
+ * `pattern`, a SPARQL graph pattern over `?‹rootVariable›`, restricts the
+ * selection to the instances that also match it, e.g.
+ * `?root <https://schema.org/about> <http://vocab.getty.edu/aat/300000000>`.
+ * The reader injects the selected roots into the extraction, so a root the
+ * pattern leaves out is never extracted, projected or written. The query
+ * declares no prefixes, so write IRIs in full.
+ *
+ * The pattern is its own group, so a `UNION` of complete groups or a trailing
+ * comment stays under the class constraint and the blank-node filter. The
+ * pattern is spliced in as text, though: one with unbalanced braces can close
+ * the group itself. It must mention `?‹rootVariable›` – one over another
+ * variable joins nothing to the root, so it would restrict nothing – and that
+ * is checked by name only, so a mention inside `OPTIONAL` or a comment passes.
+ * A pattern without the variable, or one that does not parse, throws here.
  */
 export function selectByClass(
   searchType: RootType,
   rootVariable = 'root',
+  pattern?: string,
 ): ItemSelector {
+  if (
+    pattern !== undefined &&
+    !new RegExp(`[?$]${rootVariable}\\b`).test(pattern)
+  ) {
+    throw new Error(`The pattern must constrain ?${rootVariable}.`);
+  }
+  const restriction = pattern === undefined ? '' : `{\n${pattern}\n}`;
   return new SparqlItemSelector({
-    query: `SELECT DISTINCT ?${rootVariable} WHERE { ?${rootVariable} a <${searchType.class}> FILTER(!isBlank(?${rootVariable})) }`,
+    query: `SELECT DISTINCT ?${rootVariable} WHERE { ?${rootVariable} a <${searchType.class}> . ${restriction} FILTER(!isBlank(?${rootVariable})) }`,
   });
 }
 
@@ -274,3 +338,6 @@ export function registrySource(
       ? distribution
       : Distribution.sparql(endpoint, dataset.iri.toString());
 }
+
+/** The class of a root type that describes the dataset being indexed. */
+const DCAT_DATASET = 'http://www.w3.org/ns/dcat#Dataset';

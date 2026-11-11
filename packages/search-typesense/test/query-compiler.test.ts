@@ -86,16 +86,20 @@ describe('buildSearchParams', () => {
       buildSearchParams({ ...base, text: 'Kaart', locale: 'nl' }, schema),
     ).toMatchObject({ q: 'kaart', query_by_weights: '5,4,1' });
     expect(
-      buildSearchParams({ ...base, text: 'Kaart', locale: 'en' }, schema)
-        .query_by_weights,
-    ).toBe('4,5,1');
+      buildSearchParams({ ...base, text: 'Kaart', locale: 'en' }, schema),
+    ).toMatchObject({
+      query_by: 'title_search_en,title_search_nl,keyword_search',
+      query_by_weights: '5,4,1',
+    });
   });
 
   it('boosts the declared locale a regional tag falls under', () => {
     expect(
-      buildSearchParams({ ...base, text: 'Kaart', locale: 'en-GB' }, schema)
-        .query_by_weights,
-    ).toBe('4,5,1');
+      buildSearchParams({ ...base, text: 'Kaart', locale: 'en-GB' }, schema),
+    ).toMatchObject({
+      query_by: 'title_search_en,title_search_nl,keyword_search',
+      query_by_weights: '5,4,1',
+    });
   });
 
   it('sorts a regional tag on its declared locale’s key', () => {
@@ -692,11 +696,77 @@ describe('und locale', () => {
     ],
   };
 
+  const titleIn = (locales: string[]): SearchType => ({
+    ...undSchema,
+    fields: [
+      {
+        name: 'title',
+        kind: 'text',
+        locales,
+        output: true,
+        sortable: true,
+        searchable: { weight: 5 },
+      },
+    ],
+  });
+
   it('never demotes the language-neutral und search field', () => {
     const params = buildSearchParams({ ...base, locale: 'en' }, undSchema);
-    // Neither locale is active: nl is demoted, und keeps full weight.
+    // en is not declared, so nl leads; und keeps full weight.
     expect(params.query_by).toBe('title_search_nl,title_search_und');
-    expect(params.query_by_weights).toBe('4,5');
+    expect(params.query_by_weights).toBe('5,5');
+  });
+
+  // Typesense stems the query once, with the settings of the highest-weighted
+  // field (https://github.com/typesense/typesense/issues/1815): an unstemmed
+  // und companion in the lead leaves the query unstemmed, and every stemmed
+  // companion’s matches are lost.
+  it('leads with the first tagged locale for a request without a language', () => {
+    const params = buildSearchParams({ ...base, locale: 'und' }, undSchema);
+    expect(params.query_by).toBe('title_search_nl,title_search_und');
+    expect(params.query_by_weights).toBe('5,5');
+  });
+
+  it('puts the active locale ahead of an und declared before it', () => {
+    const params = buildSearchParams(
+      { ...base, locale: 'nl' },
+      titleIn(['und', 'nl']),
+    );
+    expect(params.query_by).toBe('title_search_nl,title_search_und');
+    expect(params.query_by_weights).toBe('5,5');
+  });
+
+  it('demotes no tagged locale for a request without a language', () => {
+    expect(
+      buildSearchParams({ ...base, text: 'Kaart', locale: 'und' }, schema),
+    ).toMatchObject({
+      query_by: 'title_search_nl,title_search_en,keyword_search',
+      query_by_weights: '5,5,1',
+    });
+  });
+
+  it('leads with a stemmed companion across fields of equal weight', () => {
+    const params = buildSearchParams(
+      { ...base, locale: 'nl' },
+      {
+        ...undSchema,
+        fields: [
+          { ...titleIn(['und']).fields[0], name: 'label' },
+          titleIn(['nl']).fields[0],
+        ],
+      },
+    );
+    expect(params.query_by).toBe('title_search_nl,label_search_und');
+    expect(params.query_by_weights).toBe('5,5');
+  });
+
+  it('searches an und-only field as before', () => {
+    const params = buildSearchParams(
+      { ...base, locale: 'und' },
+      titleIn(['und']),
+    );
+    expect(params.query_by).toBe('title_search_und');
+    expect(params.query_by_weights).toBe('5');
   });
 
   it('falls back to the first declared locale for sorting', () => {

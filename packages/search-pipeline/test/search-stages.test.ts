@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import nock from 'nock';
 import { DataFactory } from 'n3';
 import type { Quad } from '@rdfjs/types';
@@ -157,6 +157,180 @@ describe('searchStages', () => {
     expect(received[0].document.fromDataset).toBe('yes');
   });
 
+  it('passes what a field could not read on to the pipeline, under the type’s name', async () => {
+    const withNumber = searchSchema({
+      name: 'Person',
+      class: PERSON,
+      fields: [
+        { name: 'name', kind: 'keyword', path: NAME, output: true },
+        {
+          name: 'age',
+          kind: 'integer',
+          output: true,
+          derive: (document) => Number(document.name),
+        },
+      ],
+    });
+    const [stage] = searchStages({
+      schema: withNumber,
+      types: [
+        {
+          searchType: withNumber.get(PERSON) as RootType,
+          rootVariable: 'root',
+          itemSelector: rootsSelector(['https://ex/p/1']),
+          readers: nameReader,
+        },
+      ],
+    });
+    const valueUnread = vi.fn();
+
+    await stage.run(
+      dataset,
+      distribution,
+      {
+        write: async (_dataset, items) => {
+          for await (const item of items) {
+            void item;
+          }
+        },
+      },
+      { valueUnread },
+    );
+
+    expect(valueUnread).toHaveBeenCalledWith('Person', 'age', {
+      id: 'https://ex/p/1',
+      value: 'NaN',
+    });
+  });
+
+  it('runs the dcat:Dataset type first and hands its document to every later stage', async () => {
+    const DATASET = 'http://www.w3.org/ns/dcat#Dataset';
+    const WORK = 'https://example.org/Work';
+    const PUBLISHER = 'https://example.org/publisher';
+    const withDatasetType = searchSchema(
+      {
+        name: 'Dataset',
+        class: DATASET,
+        fields: [
+          {
+            name: 'label',
+            kind: 'text',
+            locales: ['und'],
+            path: NAME,
+            output: true,
+            searchable: { weight: 1 },
+          },
+          {
+            name: 'publisher',
+            kind: 'reference',
+            path: PUBLISHER,
+            output: true,
+            ref: { strategy: 'idOnly', typeName: 'Publisher' },
+          },
+        ],
+      },
+      {
+        name: 'Work',
+        class: WORK,
+        fields: [
+          { name: 'name', kind: 'keyword', path: NAME, output: true },
+          {
+            name: 'dataset',
+            kind: 'reference',
+            from: 'dataset',
+            output: true,
+            ref: { strategy: 'lookup', target: 'Dataset' },
+          },
+          {
+            name: 'publisher',
+            kind: 'reference',
+            facetable: true,
+            ref: { strategy: 'idOnly', typeName: 'Publisher' },
+            derive: (_document, context) => context.datasetDocument?.publisher,
+          },
+        ],
+      },
+    );
+    const datasetType = withDatasetType.get(DATASET) as RootType;
+    const workType = withDatasetType.get(WORK) as RootType;
+    const datasetIri = dataset.iri.toString();
+    const publisherAlias = irAlias(datasetType, datasetType.fields[1]);
+    const datasetReader: Reader = {
+      read: () =>
+        Promise.resolve(
+          stream([
+            quad(
+              namedNode(datasetIri),
+              namedNode(publisherAlias),
+              namedNode('https://ex/publisher/1'),
+            ),
+          ]),
+        ),
+    };
+    const workReader: Reader = {
+      read: (_dataset, _distribution, options) =>
+        Promise.resolve(
+          stream(
+            (options?.bindings ?? []).map((binding) =>
+              quad(
+                namedNode(binding.root.value),
+                namedNode(irAlias(workType, workType.fields[0])),
+                literal('A work'),
+              ),
+            ),
+          ),
+        ),
+    };
+
+    // Listed work first: the order the stages run in is not the order given.
+    const types = [
+      {
+        searchType: workType,
+        rootVariable: 'root',
+        itemSelector: rootsSelector(['https://ex/w/1', 'https://ex/w/2']),
+        readers: workReader,
+      },
+      {
+        searchType: datasetType,
+        rootVariable: 'root',
+        itemSelector: rootsSelector([datasetIri]),
+        readers: datasetReader,
+      },
+    ];
+    const received: TypedSearchDocument[] = [];
+    const writer: DatasetWriter<TypedSearchDocument> = {
+      write: async (_dataset, items) => {
+        for await (const item of items) {
+          received.push(item);
+        }
+      },
+    };
+    const publishersOfWorks = () =>
+      received
+        .filter((item) => item.searchType === workType)
+        .map((item) => item.document.publisher);
+
+    const stages = searchStages({ schema: withDatasetType, types });
+    expect(stages.map((stage) => stage.name)).toEqual(['Dataset', 'Work']);
+    // A dataset’s stages run one after another, as the pipeline runs them.
+    for (const stage of stages) {
+      await stage.run(dataset, distribution, writer);
+    }
+    expect(publishersOfWorks()).toEqual([
+      'https://ex/publisher/1',
+      'https://ex/publisher/1',
+    ]);
+
+    // Another dataset’s works see that dataset’s document, not this one’s.
+    const other = new Dataset({
+      iri: new URL('http://example.org/dataset/2'),
+      distributions: [],
+    });
+    received.length = 0;
+    await stages[1].run(other, distribution, writer);
+    expect(publishersOfWorks()).toEqual([undefined, undefined]);
+  });
+
   it('names each stage after its type and yields one stage per type', () => {
     const stages = searchStages({
       schema,
@@ -301,7 +475,39 @@ describe('selectByClass', () => {
     expect(await sentQuery()).toMatch(/SELECTDISTINCT\?root/i);
   });
 
-  async function sentQuery(): Promise<string> {
+  it('restricts the roots by a graph pattern, keeping blank nodes out', async () => {
+    const query = await sentQuery(
+      '?root <https://example.org/about> <https://example.org/term/1>',
+    );
+    expect(query).toContain(
+      '?root<https://example.org/about><https://example.org/term/1>',
+    );
+    expect(query).toMatch(/isblank\(\?root\)/i);
+  });
+
+  it('keeps a UNION or a trailing comment inside its own group', async () => {
+    const query = await sentQuery(
+      '{ ?root <https://example.org/p> <https://example.org/a> } UNION { ?root <https://example.org/p> <https://example.org/b> } # either',
+    );
+    // Both branches stay under the class constraint and the blank-node filter.
+    expect(query).toMatch(
+      /<https:\/\/example\.org\/Person>\.\{\{.*\}UNION\{.*\}\}FILTER/,
+    );
+    expect(query).toMatch(/isblank\(\?root\)/i);
+  });
+
+  it('rejects a pattern that does not parse', () => {
+    expect(() => selectByClass(person, 'root', '?root <unclosed')).toThrow();
+  });
+
+  it('rejects a pattern that does not constrain the root variable', () => {
+    // Joined to nothing, it would restrict nothing.
+    expect(() =>
+      selectByClass(person, 'work', '?root <https://example.org/p> ?o'),
+    ).toThrow(/must constrain \?work/);
+  });
+
+  async function sentQuery(pattern?: string): Promise<string> {
     let query = '';
     nock('http://example.org')
       .post('/sparql')
@@ -314,7 +520,7 @@ describe('selectByClass', () => {
         { 'Content-Type': 'application/sparql-results+json' },
       );
 
-    const selector = selectByClass(person);
+    const selector = selectByClass(person, 'root', pattern);
     for await (const row of selector.select(distribution, 10)) {
       void row;
     }
@@ -540,5 +746,7 @@ describe('memory is bounded by batchSize, not the input (counting, not measuring
     expect(large.peakLiveDocuments).toBe(small.peakLiveDocuments);
     // …and it is a small constant, nowhere near the 10 000 roots.
     expect(large.peakLiveDocuments).toBeLessThanOrEqual(BATCH_SIZE);
-  });
+    // 10 000 roots take about 2 s locally, and past the 5 s default on a busy
+    // CI runner.
+  }, 30_000);
 });

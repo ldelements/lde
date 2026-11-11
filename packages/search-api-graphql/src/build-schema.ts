@@ -39,11 +39,13 @@ import {
 } from '@lde/search';
 import {
   AND_KEY,
-  facetableFields,
+  assertValidQuery,
+  facetsOf,
   filterableFields,
   fieldNamed,
   labelSourceNamesOf,
   labelTargetNamesOf,
+  literalKindOf,
   localLookupTargetsOf,
   referenceFields,
   filterOn,
@@ -60,6 +62,7 @@ import {
   pageForOffset,
   sortableFields,
   unixSecondsToIso,
+  type FacetDeclaration,
   type JoinGraph,
   type StoredDate,
 } from '@lde/search/adapter';
@@ -217,6 +220,26 @@ const dateScalar = new GraphQLScalarType<string, string>({
   parseValue: (value: unknown) => assertDate(GraphQLString.parseValue(value)),
   parseLiteral: (node, variables) =>
     assertDate(GraphQLString.parseLiteral(node, variables)),
+});
+
+/**
+ * The period scalar: a `period` field’s value as its source stated it, an
+ * EDTF date or interval (`1935/1955`, `1620~`, `162X`, `1440/..`) or a plain
+ * ISO 8601 date, which EDTF Level 0 already is. Output only – a period is
+ * filtered with an {@link dateScalar} range – so it is passed through as
+ * stored, and declares no input parsing of its own.
+ *
+ * Not `String`, so a client knows to read the value as EDTF rather than show
+ * it raw; not normalised, because a qualifier such as `~` (“circa”) is part of
+ * what the source knows, and only the client knows how its reader says it.
+ */
+const edtfScalar = new GraphQLScalarType<string, string>({
+  name: 'EDTF',
+  description:
+    'A date or period as its source stated it, in the Extended Date/Time Format (EDTF): `1935`, `1935/1955`, `1620~` (circa), `1620?` (uncertain), `162X` (the 1620s), `1440/..` (open-ended). Serialized as a string, unchanged. Filter on it with an `ISO8601Date` range, which matches every period that overlaps it.',
+  specifiedByURL: 'https://www.loc.gov/standards/datetime/',
+  serialize: (value: unknown) =>
+    (GraphQLString.serialize as (value: unknown) => string)(value),
 });
 
 function assertDate(value: string): string {
@@ -642,6 +665,9 @@ export function buildGraphQLSchema(
    * targets behind it.
    */
   const interfaceTypes = new Map<string, GraphQLInterfaceType>();
+  /** Each `‹Target›OrPeriod` entry type, by the target’s name
+   *  ({@link referentOrPeriodType}). */
+  const referentOrPeriodTypes = new Map<string, GraphQLObjectType>();
   const interfaceMembers = new Map<string, readonly string[]>();
   /** Each interface’s implementation for a referent no collection holds. */
   const unresolvedTypes: GraphQLObjectType[] = [];
@@ -697,6 +723,7 @@ export function buildGraphQLSchema(
     ...rootTypeNames,
     iriScalar.name,
     dateScalar.name,
+    edtfScalar.name,
     keywordFilter.name,
     iriFilter.name,
     languageString.name,
@@ -1025,6 +1052,51 @@ export function buildGraphQLSchema(
     return { ...outputFieldType(field), description: field.description };
   }
 
+  /**
+   * The entry type of a lookup reading its literals as periods
+   * (`literal: 'period'`): `‹Target›OrPeriod`, holding either the period its
+   * source stated or the referent. Named for the target and shared, as
+   * `‹Target›Reference` is, by every such field that names it.
+   */
+  function referentOrPeriodType(
+    typeName: string,
+    referenceType: GraphQLOutputType,
+    field: SearchField,
+  ): GraphQLObjectType {
+    const existing = referentOrPeriodTypes.get(typeName);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const graphQLName = `${typeName}OrPeriod`;
+    if (takenTypeNames.has(graphQLName)) {
+      throw new Error(
+        `Field “${field.name}” reads its literals as periods, so it would be served as “${graphQLName}”, which collides with another type name; rename one.`,
+      );
+    }
+    takenTypeNames.add(graphQLName);
+    const isPeriod = (entry: unknown): entry is string =>
+      typeof entry === 'string';
+    const created = new GraphQLObjectType<unknown, SearchContext>({
+      name: graphQLName,
+      description: `A period, as its source stated it, or a reference to ${typeName}: exactly one of the two is set.`,
+      fields: {
+        value: {
+          type: edtfScalar,
+          description:
+            'The period, where the source stated one as a value; null for a reference.',
+          resolve: (entry) => (isPeriod(entry) ? entry : null),
+        },
+        reference: {
+          type: referenceType,
+          description: `The ${typeName} referenced, where the source named one; null for a period.`,
+          resolve: (entry) => (isPeriod(entry) ? null : entry),
+        },
+      },
+    });
+    referentOrPeriodTypes.set(typeName, created);
+    return created;
+  }
+
   function outputFieldType(
     field: SearchField,
   ): GraphQLFieldConfig<Source, SearchContext> {
@@ -1080,17 +1152,23 @@ export function buildGraphQLSchema(
         const extensions = isLookup
           ? costExtensions(operationCost * labelSourceNamesOf(field).length)
           : undefined;
+        // A lookup reading its literals as periods holds both forms, so each
+        // entry is wrapped in a type that says which.
+        const entryType =
+          literalKindOf(field) === 'period'
+            ? referentOrPeriodType(typeName, referenceType, field)
+            : referenceType;
         return field.array === true
           ? {
-              type: nonNullListOf(referenceType),
+              type: nonNullListOf(entryType),
               resolve: (s) => s[field.name] ?? [],
               extensions,
             }
           : {
               type:
                 field.required === true
-                  ? new GraphQLNonNull(referenceType)
-                  : referenceType,
+                  ? new GraphQLNonNull(entryType)
+                  : entryType,
               extensions,
             };
       }
@@ -1111,6 +1189,15 @@ export function buildGraphQLSchema(
               : unixSecondsToIso(value.seconds, value.precision);
           },
         };
+      case 'period':
+        // Served as stated: the bounds a filter and a sort read stay in the
+        // engine.
+        return field.array === true
+          ? {
+              type: nonNullListOf(edtfScalar),
+              resolve: (s) => s[field.name] ?? [],
+            }
+          : { type: scalarOutput(edtfScalar, field) };
       case 'boolean':
         return {
           type: new GraphQLNonNull(GraphQLBoolean),
@@ -1210,7 +1297,7 @@ export function buildGraphQLSchema(
    *  `reference` keys on identity (its target’s filter, or `IRIFilter` when it
    *  names no target), a `keyword` on literals. */
   function plainWhereFieldType(field: SearchField): GraphQLInputType {
-    switch (filterOperatorFor(field.kind)) {
+    switch (filterOperatorFor(field)) {
       case 'in': {
         if (field.kind !== 'reference') {
           return keywordFilter;
@@ -1418,9 +1505,9 @@ export function buildGraphQLSchema(
     // and skip-own-filter in the engine.
     // Like `where`, omitted entirely for a type with no facetable fields (a
     // GraphQL object type must have at least one field).
-    const facetable = facetableFields(searchType);
+    const facets = facetsOf(searchType, schema);
     const facetsType =
-      facetable.length === 0 ? undefined : facetsTypeFor(typeName, facetable);
+      facets.length === 0 ? undefined : facetsTypeFor(typeName, facets);
 
     const resultType = new GraphQLObjectType({
       name: `${typeName}SearchResult`,
@@ -1537,68 +1624,107 @@ export function buildGraphQLSchema(
     return field.kind === 'reference' ? iriBucket : valueBucket;
   }
 
-  /** The keyed facets object for one type (only called with ≥ 1 facetable field). */
+  /**
+   * The keyed facets object for one type (only called with ≥ 1 facet). A
+   * faceted leaf is served one level down, under the reference it is reached
+   * through – `facets { associatedMedia { license } }` – so a facet is named
+   * by the same path as the value it counts.
+   */
   function facetsTypeFor(
     typeName: string,
-    facetable: readonly SearchField[],
+    facets: readonly FacetDeclaration[],
   ): GraphQLObjectType {
+    const own: FacetDeclaration[] = [];
+    const byReference = new Map<string, FacetDeclaration[]>();
+    for (const facet of facets) {
+      if (facet.reference === undefined) {
+        own.push(facet);
+        continue;
+      }
+      const leaves = byReference.get(facet.reference.name) ?? [];
+      leaves.push(facet);
+      byReference.set(facet.reference.name, leaves);
+    }
+
     return new GraphQLObjectType({
       name: `${typeName}Facets`,
-      fields: () => {
-        const fields: Record<
-          string,
-          GraphQLFieldConfig<Source, SearchContext>
-        > = {};
-        // The keys share one engine round-trip, but each is its own facet
-        // calculation in it.
-        const facetCost = costExtensions(operationCost);
-        for (const field of facetable) {
-          // The batching into one engine dispatch and the degrade-to-empty
-          // error handling live in the loader (facet-batch.ts).
-          if (isRangeFacet(field)) {
-            fields[field.name] = {
-              type: new GraphQLNonNull(rangeFacetTypeFor(field)),
-              extensions: facetCost,
-              // Resolved synchronously, so the scopes its fields load land in
-              // the same batch as the sibling facets.
-              resolve: (source: Source) => ({
-                load: (scope: FacetScope) =>
-                  (source.loadFacet as FacetLoader)(field.name, scope),
-              }),
-            };
-            continue;
-          }
-          const bucketType = bucketTypeFor(field);
-          fields[field.name] = {
-            type: nonNullListOf(bucketType),
-            extensions: facetCost,
-            resolve: async (source: Source) => {
-              const { buckets } = await (source.loadFacet as FacetLoader)(
-                field.name,
-                'matching',
-              );
-              if (bucketType !== iriBucket) {
-                return buckets;
-              }
-              // A bucket keyed on something that is not an IRI is not a
-              // selection key – it cannot be sent back as the filter that
-              // selects it – so it is dropped rather than served under `IRI`.
-              // Dropping, not throwing: `value: IRI!` sits inside a chain of
-              // non-nulls up to the root field, so a raising coercion here
-              // would null the WHOLE response and take `items` with it, which
-              // is exactly what facet-batch.ts’s degradation contract forbids
-              // a supplementary sidebar count from doing.
-              return buckets.filter(
-                (bucket) =>
-                  typeof bucket.value === 'string' &&
-                  isAbsoluteIri(bucket.value),
-              );
+      fields: () => ({
+        ...facetFieldsFor(own),
+        ...Object.fromEntries(
+          [...byReference].map(([reference, leaves]) => [
+            reference,
+            {
+              type: new GraphQLNonNull(
+                new GraphQLObjectType({
+                  name: `${typeName}${reference.charAt(0).toUpperCase()}${reference.slice(1)}Facets`,
+                  fields: () => facetFieldsFor(leaves),
+                }),
+              ),
+              // The source carries the facet loader; the leaves read it.
+              resolve: (source: Source) => source,
             },
-          };
-        }
-        return fields;
-      },
+          ]),
+        ),
+      }),
     });
+  }
+
+  /** One GraphQL field per facet, keyed by its field’s name and loaded by the
+   *  facet’s logical name. */
+  function facetFieldsFor(
+    facets: readonly FacetDeclaration[],
+  ): Record<string, GraphQLFieldConfig<Source, SearchContext>> {
+    const fields: Record<
+      string,
+      GraphQLFieldConfig<Source, SearchContext>
+    > = {};
+    // The keys share one engine round-trip, but each is its own facet
+    // calculation in it.
+    const facetCost = costExtensions(operationCost);
+    for (const { name, field } of facets) {
+      // The batching into one engine dispatch and the degrade-to-empty
+      // error handling live in the loader (facet-batch.ts).
+      if (isRangeFacet(field)) {
+        fields[field.name] = {
+          type: new GraphQLNonNull(rangeFacetTypeFor(field)),
+          extensions: facetCost,
+          // Resolved synchronously, so the scopes its fields load land in
+          // the same batch as the sibling facets.
+          resolve: (source: Source) => ({
+            load: (scope: FacetScope) =>
+              (source.loadFacet as FacetLoader)(name, scope),
+          }),
+        };
+        continue;
+      }
+      const bucketType = bucketTypeFor(field);
+      fields[field.name] = {
+        type: nonNullListOf(bucketType),
+        extensions: facetCost,
+        resolve: async (source: Source) => {
+          const { buckets } = await (source.loadFacet as FacetLoader)(
+            name,
+            'matching',
+          );
+          if (bucketType !== iriBucket) {
+            return buckets;
+          }
+          // A bucket keyed on something that is not an IRI is not a
+          // selection key – it cannot be sent back as the filter that
+          // selects it – so it is dropped rather than served under `IRI`.
+          // Dropping, not throwing: `value: IRI!` sits inside a chain of
+          // non-nulls up to the root field, so a raising coercion here
+          // would null the WHOLE response and take `items` with it, which
+          // is exactly what facet-batch.ts’s degradation contract forbids
+          // a supplementary sidebar count from doing.
+          return buckets.filter(
+            (bucket) =>
+              typeof bucket.value === 'string' && isAbsoluteIri(bucket.value),
+          );
+        },
+      };
+    }
+    return fields;
   }
 
   const queryFields: Record<
@@ -1675,7 +1801,7 @@ function argsToQuery(
       `perPage must be between 0 and ${maxPerPage}; got ${perPage}.`,
     );
   }
-  return {
+  const query: SearchQuery = {
     text: args.query,
     where: whereToFilters(args.where, searchType, joins, schema),
     orderBy: args.orderBy
@@ -1687,6 +1813,15 @@ function argsToQuery(
     facets: [],
     locale: context.acceptLanguage[0] ?? 'und',
   };
+  // The port refuses what no GraphQL type rules out, such as a range that ends
+  // before it starts. Its error would be masked as internal, so the caller’s
+  // query is validated here and the port’s reason handed back as theirs.
+  try {
+    assertValidQuery(query, searchType, schema, joins);
+  } catch (error) {
+    throw userError((error as Error).message);
+  }
+  return query;
 }
 
 /**
@@ -1781,8 +1916,8 @@ function weldedCriterionOf(
 ): Criterion | undefined {
   // Every entry here is a plain criterion, and can only be: a hop needs either
   // a joinable reference (`joins.resolve` answers nothing from a Reference
-  // Type) or a filterable inline one (which needs an `identity`, refused inside
-  // a Reference Type). So there is nothing to skip.
+  // Type) or a filterable inline one (refused inside a Reference Type, with or
+  // without an `identity`). So there is nothing to skip.
   const conditions = keyEntriesOf(
     entry.nested,
     entry.target,
@@ -1916,7 +2051,7 @@ function keyEntriesOf(
         continue;
       }
     }
-    switch (filterOperatorFor(field.kind)) {
+    switch (filterOperatorFor(field)) {
       case 'in':
         entries.push({
           criterion: {

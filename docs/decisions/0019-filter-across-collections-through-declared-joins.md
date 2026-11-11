@@ -225,7 +225,14 @@ general drift detection is a separate feature.
   the schema has no name for the inverse edge, so the surface would have to
   invent one.
 - **Facets on joined fields** – leaves [ADR 5](./0005-batch-facet-queries-through-the-engine-port.md)
-  untouched. The `(on, field)` key already anticipates them.
+  untouched. The `(on, field)` key already anticipates them. A spike in
+  November 2026 ruled the engine route out: Typesense 30.2 counts the distinct
+  _referenced_ documents of a joined facet (`get_reference_facet_ids`
+  deduplicates them), so `$datasets(publisher)` on works counts datasets per
+  publisher, never works, and with a text query and no filter it returns
+  nothing. A field of the dataset is faceted instead by copying it onto each
+  document at projection time, from the projection context’s
+  `datasetDocument` (see [Copy a field of the dataset](../reference/search#copy-a-field-of-the-dataset)).
 - **Sort through joins** – cheap and symmetric (`Sort` gains the same `on`), but
   the joined per-locale sort key and the many-to-one representative-value
   semantics need their own decision.

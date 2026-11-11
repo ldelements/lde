@@ -26,7 +26,11 @@ The division of labour ([ADR 6](../decisions/0006-make-the-writer-transaction-aw
     CONSTRUCT that reads each field’s source `path` (a SPARQL property path) and
     emits it under the field’s IR Alias (`urn:lde:‹Type›/‹field›`) – the same key
     the projection reads back – so the reader and the projection cannot drift. A
-    stage without an explicit `readers` defaults to this generated reader;
+    stage without an explicit `readers` defaults to this generated reader.
+    A root type whose `class` is `dcat:Dataset` runs first, and the
+    dataset’s own document reaches every other stage’s projection as
+    `datasetDocument`, so a `derive` can copy a field of the dataset onto each
+    document ([Copy a field of the dataset](./search#copy-a-field-of-the-dataset));
   - `searchIndexWriter` is the pipeline’s single terminal: an engine-agnostic
     router that dispatches each document to the engine writer for **its**
     type’s collection ([ADR 9](../decisions/0009-route-a-whole-schema-projection-to-per-type-collections)).
@@ -110,6 +114,28 @@ subject variable and the stage’s root variable stay in step; a key the schema
 does not declare throws at wiring time. Note that a field a transform fills must
 still declare a `path` – projection skips a field with neither a `path` nor a
 `derive`.
+
+To index only some of a type’s instances, pass `restrictRoots`: a SPARQL graph
+pattern over `?root` per root type, keyed by `name`, added to the type’s root
+selection in every dataset:
+
+```ts
+searchIndexerPipeline({
+  schema,
+  datasets,
+  writerFor,
+  restrictRoots: {
+    Object: '?root <https://schema.org/about> <https://example.org/term/1>',
+  },
+});
+```
+
+A root the pattern leaves out is never extracted, so the collection and its
+facet counts hold only matching roots. Write IRIs in full: the query declares no
+prefixes. A key the schema does not declare, a
+registry-sourced type, a pattern that does not mention `?root` or one that does
+not parse throws at wiring time. The restrictions extend `pipelineVersion`, so
+changing one re-indexes every dataset instead of skipping it.
 
 A deployment that needs more – a bespoke root selector (where the entry point
 is a domain fact, not a class), per-stage tuning, non-SPARQL readers, or
@@ -251,6 +277,8 @@ document key, so it can never become a search document – a custom selector
 should exclude them too. It also selects `DISTINCT` roots, so a root typed in
 several named graphs is selected once on an engine whose default graph is their
 union – a custom selector on such an engine should select `DISTINCT` too.
+`selectByClass(searchType, rootVariable, pattern)` adds a graph pattern, in a
+group of its own, to restrict the selection.
 
 ## Registry-sourced root types
 
@@ -453,6 +481,11 @@ guarantees one output triple per genuine value:
   node’s `rdf:type` and the endpoint’s own selection – its key, its `local`
   fields – off it directly, each as one more branch. A flat agent then keeps its
   row through those branches even where it states nothing the edge reads.
+- **A node the graph may state as a literal keeps its row.** Where a Reference
+  Type declares a [`literalField`](./search#data-on-the-edge), the reference’s
+  union gains an empty branch, so a literal in place of the node – which has no
+  values of its own to read – still binds the reference’s template triple and
+  reaches the projection.
 - **A key hop stays inside its branch.** A reference naming a target that
   declares a [document key](./search#document-key) gets its branch extended with
   an `OPTIONAL` hop reading the referent’s key field, emitted under the target’s

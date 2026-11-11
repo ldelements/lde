@@ -275,10 +275,13 @@ function includeFields(
       }
     } else {
       physical.add(field.name);
-      // A date is served at the precision its source gave, kept beside it.
-      const precision = physicalFields(field).precision;
-      if (precision !== undefined) {
-        physical.add(precision);
+      // A date is served at the precision its source gave, kept beside it,
+      // and a lookup with the periods it reads its literals as.
+      const { precision, period } = physicalFields(field);
+      for (const companion of [precision, period?.values]) {
+        if (companion !== undefined) {
+          physical.add(companion);
+        }
       }
     }
   }

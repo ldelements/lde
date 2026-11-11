@@ -15,6 +15,7 @@ describe('configFromEnvironment', () => {
       registryEndpoint: new URL('https://registry.example.org/sparql'),
       registryRootTypes: [],
       datasetCriteria: {},
+      restrictRoots: {},
       localSources: [],
       typesense: {
         host: 'typesense.internal',
@@ -43,12 +44,14 @@ describe('configFromEnvironment', () => {
       QLEVER_IMAGE: 'adfreiburg/qlever:latest',
       IMPORT_STRATEGY: 'import',
       DATA_DIR: '/mnt/data',
+      RESTRICT_ROOTS: '{"CreativeWork": "?root a ?type"}',
     });
     expect(config).toEqual({
       schemaModulePath: '/mnt/schema.mjs',
       registryEndpoint: new URL('https://registry.example.org/sparql'),
       registryRootTypes: ['Dataset', 'Publisher'],
       datasetCriteria: {},
+      restrictRoots: { CreativeWork: '?root a ?type' },
       localSources: [],
       typesense: {
         host: 'typesense.internal',
@@ -138,6 +141,22 @@ describe('configFromEnvironment', () => {
       expect(() =>
         configFromEnvironment({ ...minimal, DATASET_CRITERIA: '["a"]' }),
       ).toThrowError(/DATASET_CRITERIA must be a JSON object/);
+    });
+
+    it('rejects RESTRICT_ROOTS that is not valid JSON', () => {
+      expect(() =>
+        configFromEnvironment({ ...minimal, RESTRICT_ROOTS: '{oops' }),
+      ).toThrowError(/RESTRICT_ROOTS must be valid JSON/);
+    });
+
+    it('rejects RESTRICT_ROOTS that is not an object of strings', () => {
+      for (const value of ['["a"]', '{"CreativeWork": 1}', 'null']) {
+        expect(() =>
+          configFromEnvironment({ ...minimal, RESTRICT_ROOTS: value }),
+        ).toThrowError(
+          /RESTRICT_ROOTS must be a JSON object mapping type names to graph patterns/,
+        );
+      }
     });
 
     it('rejects DATASETS combined with DATASET_CRITERIA', () => {

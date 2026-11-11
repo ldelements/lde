@@ -1,10 +1,13 @@
 import {
+  facetNamed,
   fieldNamed,
   filterOperatorFor,
   ID_FIELD,
-  isoToUnixSeconds,
+  holdsNoIds,
   nestedReferenceType,
   referencedTargetsOf,
+  storedRangeBound,
+  type FacetDeclaration,
   type SearchField,
   type SearchSchema,
   type SearchType,
@@ -270,6 +273,12 @@ export interface FacetSearch {
  * reached through a join path is a different axis than the local field of the
  * same name ([ADR 18](../../docs/decisions/0018-filter-across-several-fields-with-one-clause.md)).
  *
+ * A condition on a leaf of an inline reference – reached through `on`, or
+ * welded to one entry alone – is on the axis `‹reference›.‹leaf›`, which a
+ * faceted leaf owns. A weld of several conditions is nobody’s own: it
+ * constrains two parts of one entry, as a clause spanning two fields
+ * constrains two fields.
+ *
  * A default a surface adds to `where` (a valid-only `status`) is a clause
  * like any other: its facet counts across every value and reports the
  * default’s values as selected.
@@ -288,17 +297,7 @@ export function facetSearches(query: SearchQuery): FacetSearch[] {
   for (const field of facets.filter((field) => owned.has(field))) {
     const own = query.where.filter((_, index) => owners[index] === field);
     const selected = [
-      ...new Set(
-        own
-          .flatMap((filter) => filter.or)
-          .flatMap((criterion) =>
-            'in' in criterion
-              ? criterion.in
-              : 'is' in criterion
-                ? [String(criterion.is)]
-                : [],
-          ),
-      ),
+      ...new Set(own.flatMap((filter) => filter.or).flatMap(selectedValues)),
     ];
     searches.push({
       query: {
@@ -370,13 +369,22 @@ export interface QueryIssue {
      * and a rejected criterion answers a narrower one. Neither is the query,
      * and only the caller can fix the bound.
      */
-    | 'unparseable-bound';
+    | 'unparseable-bound'
+    /**
+     * A range whose `min` comes after its `max` – for a `date` or `period`,
+     * after the last second `max` names (`1950` to `1940`, not `1950` to
+     * `1950`). A `date` field would match nothing and a
+     * `period` everything spanning the gap, and neither is what the caller
+     * meant, so the caller is told.
+     */
+    | 'inverted-range';
 }
 
 /**
  * The checks every leaf criterion answers to, wherever it sits: the field is
  * declared and `filterable` on the type it constrains, its operator matches
- * that field's kind, and a `date` range's bounds are readable.
+ * that field's kind, and a `date` or `period` range's bounds are readable and
+ * in order.
  *
  * Shared by an ordinary criterion and by each condition welded to an entry, so
  * a welded condition is held to exactly the same rules – there is no second,
@@ -388,6 +396,7 @@ function collectLeafIssues(
   constrained: SearchType,
   field: string,
   issues: QueryIssue[],
+  schema: SearchSchema,
 ): void {
   const declared = fieldNamed(constrained, criterion.field);
   if (declared === undefined) {
@@ -398,17 +407,22 @@ function collectLeafIssues(
     issues.push({ part: 'where', field, reason: 'not-filterable' });
     return;
   }
-  if (filterOperatorFor(declared.kind) !== filterOperator(criterion)) {
+  if (
+    holdsNoIds(declared, schema) ||
+    filterOperatorFor(declared) !== filterOperator(criterion)
+  ) {
     issues.push({ part: 'where', field, reason: 'operator-mismatch' });
     return;
   }
-  if (declared.kind === 'date' && 'range' in criterion) {
-    // A `date` bound is ISO 8601 at the edge and Unix seconds in storage, so a
-    // bound the codec cannot read has nothing to compare against. Both bounds
-    // are checked, so a caller who wrote two bad ones is told about both
-    // instead of fixing one to be told about the other.
-    for (const bound of [criterion.range.min, criterion.range.max]) {
-      if (typeof bound === 'string' && isoToUnixSeconds(bound) === undefined) {
+  if ('range' in criterion) {
+    // A `date` or `period` bound is ISO 8601 at the edge and Unix seconds in
+    // storage, so a bound the codec cannot read has nothing to compare
+    // against. Both bounds are checked, so a caller who wrote two bad ones is
+    // told about both instead of fixing one to be told about the other.
+    const [min, max] = (['min', 'max'] as const).map((side) => {
+      const bound = criterion.range[side] ?? undefined;
+      const stored = storedRangeBound(declared, bound, side);
+      if (typeof bound === 'string' && stored === undefined) {
         issues.push({
           part: 'where',
           field,
@@ -416,6 +430,10 @@ function collectLeafIssues(
           reason: 'unparseable-bound',
         });
       }
+      return stored;
+    });
+    if (min !== undefined && max !== undefined && min > max) {
+      issues.push({ part: 'where', field, reason: 'inverted-range' });
     }
   }
 }
@@ -611,20 +629,26 @@ export function validateQuery(
             entryType,
             [...on, name, welded.field].join('.'),
             issues,
+            schema,
           );
         }
         continue;
       }
-      collectLeafIssues(criterion, constrained, field, issues);
+      collectLeafIssues(criterion, constrained, field, issues, schema);
     }
   }
   for (const name of query.facets) {
-    const field = fieldNamed(searchType, name);
-    if (field === undefined) {
-      issues.push({ part: 'facets', field: name, reason: 'unknown-field' });
-    } else if (field.facetable !== true) {
-      issues.push({ part: 'facets', field: name, reason: 'not-facetable' });
+    if (facetNamed(searchType, name, schema) !== undefined) {
+      continue;
     }
+    issues.push({
+      part: 'facets',
+      field: name,
+      reason:
+        fieldNamed(searchType, name) === undefined
+          ? 'unknown-field'
+          : 'not-facetable',
+    });
   }
   collectProjectionIssues(query.resolve, [searchType], schema, issues);
   for (const sort of query.orderBy) {
@@ -777,7 +801,48 @@ function ownedField(filter: Filter): string | undefined {
  * Facets are not offered on joined fields, so a joined clause never matches a
  * facet and simply never drops.
  */
-function axisOf(criterion: Criterion): string {
-  const on = criterion.on ?? [];
-  return on.length === 0 ? criterion.field : [...on, criterion.field].join('.');
+function axisOf(criterion: Criterion): string | undefined {
+  const path = [...(criterion.on ?? []), criterion.field];
+  if (!isWelded(criterion)) {
+    return path.join('.');
+  }
+  // One condition on one leaf selects on that leaf’s axis, the same documents
+  // whether read per entry or per document. Several are welded to one entry:
+  // like a clause spanning two fields, that constrains no single axis.
+  const [only, ...more] = criterion.entry;
+  return only !== undefined && more.length === 0
+    ? [...path, only.field].join('.')
+    : undefined;
+}
+
+/**
+ * The clause that selects one bucket of a facet – the inverse of the axis a
+ * facet owns ({@link facetSearches}): `is` on a boolean, `in` on anything
+ * else, and for a faceted leaf a condition welded to one entry of the
+ * reference it is reached through.
+ */
+export function selectionOf(facet: FacetDeclaration, value: string): Filter {
+  const field = facet.field.name;
+  const condition: Criterion =
+    facet.field.kind === 'boolean'
+      ? { field, is: value === 'true' }
+      : { field, in: [value] };
+  return filterOn(
+    facet.reference === undefined
+      ? condition
+      : { field: facet.reference.name, entry: [condition] },
+  );
+}
+
+/** The values a criterion selects: those of an `in` or `is`, looking through a
+ *  weld – which a facet owns only with one condition ({@link axisOf}). */
+function selectedValues(criterion: Criterion): readonly string[] {
+  if (isWelded(criterion)) {
+    return selectedValues(criterion.entry[0] as Criterion);
+  }
+  return 'in' in criterion
+    ? criterion.in
+    : 'is' in criterion
+      ? [String(criterion.is)]
+      : [];
 }

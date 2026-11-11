@@ -50,3 +50,21 @@ _:anonymousWork a schema:CreativeWork ;
 <https://ex/o/1> a schema:Organization ;
   schema:name "Société Céramique" ;
   schema:sameAs <https://rkd.example/104628> .
+
+# A value the publisher may state bare or on a node: SCHEMA-AP-NDE allows each
+# identifier to be a string or a PropertyValue, and one work may carry both.
+<https://ex/sc/1> a schema:Sculpture ;
+  schema:name "Borstbeeld"@nl ;
+  schema:identifier "G11125-19" ,
+                    [ a schema:PropertyValue ;
+                      schema:propertyID <https://data.axiell.com/vocabulary#Priref> ;
+                      schema:value "12042" ] .
+
+# A size stated bare is display text no QuantitativeValue node carries, so it
+# lands in a literal field with no path – tagged or not.
+<https://ex/dr/1> a schema:Drawing ;
+  schema:name "Studie"@nl ;
+  schema:size "74 cm hoog bij 92 cm breed"@nl ,
+              "groot" ,
+              [ a schema:QuantitativeValue ;
+                schema:value 74 ] .

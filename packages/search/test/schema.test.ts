@@ -767,6 +767,17 @@ describe('validateSearchType', () => {
     expect(
       validateSearchType(typeWith({ name: 'title', kind: 'text' })),
     ).toEqual([{ field: 'title', reason: 'text-requires-locales' }]);
+    // Reported, not thrown, where the roles would fan out per locale.
+    expect(
+      validateSearchType(
+        typeWith({
+          name: 'title',
+          kind: 'text',
+          searchable: { weight: 1 },
+          sortable: true,
+        }),
+      ),
+    ).toEqual([{ field: 'title', reason: 'text-requires-locales' }]);
     expect(
       validateSearchType(
         typeWith({ name: 'title', kind: 'text', locales: [] }),

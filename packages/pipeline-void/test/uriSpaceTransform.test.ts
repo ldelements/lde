@@ -30,6 +30,7 @@ const context: ReaderContext = {
   dataset,
   distribution,
   stage: 'object-uri-space.rq',
+  count: () => undefined,
 };
 
 function quadStream(quads: Quad[]): AsyncIterable<Quad> {

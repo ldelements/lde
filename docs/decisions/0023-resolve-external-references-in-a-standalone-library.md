@@ -169,6 +169,25 @@ budget, since they sent nothing; and because the breaker lives on the resolver
 rather than in the store, a host that recovers is retried on the very next run
 instead of waiting out a persisted backoff.
 
+_Amended 2026-11-10._ Retrying every failure the same way, and counting
+consecutive failures, both failed in Linked Open Limburg’s first run with IIIF
+images: a host where most manifests timed out cost about 91.5 s per reference
+and was never written off, because a few successes kept resetting the count,
+while images that answer 500 on every request cost three attempts each. So
+`fetch` now says what a failure means:
+
+- `referenceFailure` for one reference, which never counts against the host;
+- a throw for the call, with one more attempt at the back of the queue for a
+  timeout or a broken connection;
+- `RetryableError` for a source that said to come back later, the only failure
+  retried at once.
+
+The breaker writes a host off at `hostFailureThreshold` systemic failures among
+its last `2 × hostFailureThreshold` batches, `timeoutMs` defaults to 10 s, and
+`retries` and `retryDelayMs` are gone: tuning by hand gives way to an adaptive
+per-host limit, tracked in
+[#838](https://github.com/ldelements/lde/issues/838).
+
 **Naming.** _Transforms rewrite what the graph said; resolvers fetch what it
 only pointed at._ That rule distinguishes this from ADR 2’s quad transforms
 without needing to read an ADR, and it is why this is not called “enrichment” –

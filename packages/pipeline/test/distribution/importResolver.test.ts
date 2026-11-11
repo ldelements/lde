@@ -255,7 +255,7 @@ describe('ImportResolver', () => {
     expect(noDistribution.message).toBe('No supported import format available');
     expect(onImportFailed).toHaveBeenCalledWith(
       dataset.distributions[0],
-      'No supported import format',
+      expect.objectContaining({ message: 'No supported import format' }),
     );
   });
 
@@ -294,7 +294,8 @@ describe('ImportResolver', () => {
       }),
     };
     const server = makeServer();
-    server.start.mockRejectedValue(new Error('Port in use'));
+    const startError = new Error('Port in use');
+    server.start.mockRejectedValue(startError);
 
     const onImportFailed = vi.fn();
     const resolver = new ImportResolver(inner, {
@@ -309,7 +310,7 @@ describe('ImportResolver', () => {
     );
     expect(onImportFailed).toHaveBeenCalledWith(
       importedDistribution,
-      'Port in use',
+      startError,
     );
   });
 

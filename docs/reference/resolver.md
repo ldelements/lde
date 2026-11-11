@@ -1,7 +1,7 @@
 # @lde/resolver
 
 Everything around fetching a fact from **outside the graph**: a durable store,
-bounded outbound work, retry with backoff, per-key failure isolation and a cap
+bounded outbound work, retry of only what a retry can fix, per-key failure isolation and a cap
 on how much one run may fetch. A caller writes the fetch and what to do with the
 answer, and nothing else.
 
@@ -150,15 +150,36 @@ of them. Set it to what your upstream can bear.
 
 ## Bounding, waiting and giving up on a host
 
-Concurrency is bounded globally and per host through
-[@lde/host-limiter](./host-limiter), which the resolver **owns** rather than
-delegates: HTTP clients get this wrong often enough that it cannot be assumed
-(see [IIIF-Commons/iiif-helpers#39](https://github.com/IIIF-Commons/iiif-helpers/issues/39),
+Concurrency is bounded globally and per host through a
+[@lde/host-limiter](./host-limiter) limiter, which the resolver **owns** rather
+than delegates to an HTTP client: clients get this wrong often enough that it
+cannot be assumed (see [IIIF-Commons/iiif-helpers#39](https://github.com/IIIF-Commons/iiif-helpers/issues/39),
 where a client throttles on a single global counter borrowed from an unrelated
-config key). The caps belong to the resolver, not to one `resolveAll` call, so
+config key). The limits belong to the resolver, not to one `resolveAll` call, so
 batches resolving in parallel – a `Stage` running a transform per batch, say –
-share them. A batch never mixes hosts, so the per-host cap keeps meaning what it
-says even at `batchSize` above 1.
+share them. A batch never mixes hosts, so the per-host limit keeps meaning what
+it says even at `batchSize` above 1.
+
+**Each host’s limit adapts.** It starts at one batch in flight and rises while
+the host keeps up, up to the limiter’s per-host ceiling. A call that throws
+counts as overload and halves it; an answer – a `referenceFailure` included –
+does not. So a host that answers quickly is fetched from in parallel, and one
+that buckles under load is slowed down before it is given up on. Without a
+`limiter` option the resolver builds its own, with at most 4 batches in flight
+and at most 4 against any one host.
+
+**Share one limiter between resolvers that load the same backend.** A
+resolver’s own limiter cannot see another resolver’s requests, so when two of
+them fetch from one server – under different host names, even – create one
+limiter and pass it to both, with host keys that name that server:
+
+```ts
+import { createHostLimiter } from '@lde/host-limiter';
+
+const limiter = createHostLimiter(10, 8);
+const manifests = createResolver({ …, host: () => backend, limiter });
+const services = createResolver({ …, host: () => backend, limiter });
+```
 
 `host` is **required**, and is either a constant – for a source reached through
 one endpoint – or a function of the reference. It is deliberately not defaulted
@@ -167,53 +188,157 @@ batching API, the key names one host and the request goes to another, and a
 defaulted rule would bound hosts the resolver never contacts while leaving the
 one it hammers unbounded. Pass `urlHost` when the key **is** the URL fetched.
 
-`timeoutMs` (30 seconds by default) bounds one attempt, and `fetch` is handed an
+`timeoutMs` (10 seconds by default) bounds one attempt, and `fetch` is handed an
 `AbortSignal` to cancel with. This is owned here for the reason the caps are,
 only more so: an unbounded request rate is rude, but an unbounded wait means
 `resolveAll` never settles and the run hangs with nothing thrown and nothing
-reported.
+reported. Ten seconds is what `ky` and OkHttp default to, and six times what a
+slow IIIF manifest took when measured; it bounds a whole call to `fetch`, so a
+caller with a large `batchSize` may need to raise it.
 
-After `hostFailureThreshold` consecutive failed batches – five by default, each
-already past its retries – a host is written off for the rest of the resolver’s
-life, and its remaining batches answer without a request. The breaker cannot see
-_why_ a batch failed: a source answering 400 to one malformed IRI throws exactly
-as a dead host does, and at `batchSize: 1` a batch is a single reference, so a
-low threshold would let a couple of bad references write off a healthy host for
-a whole run. Five failures is evidence from five different keys, and costs a
-genuinely dead host fifteen requests before the breaker saves the rest. Retrying every reference against a host that
-is down is the stampede, not the remedy, and it costs the run’s wall clock as
-much as the host’s patience. Written-off references are refunded to the fetch
-budget, since they sent nothing – and refunded in time to be spent on other
-hosts in the same call, so a dead host cannot deny a live one an allowance it
-never used. The breaker lives on the resolver rather than in the store, so a
-host that recovers is retried on the very next run.
+A host is written off for the rest of the resolver’s life once
+`hostFailureThreshold` of its last `2 × hostFailureThreshold` batches failed –
+5 of the last 10 by default – and its remaining batches answer without a
+request. A window rather than consecutive failures, so a host where most
+references time out is cut off even when a few succeed in between: Limburgs
+Museum’s manifests did exactly that, resetting a consecutive count for more than
+24 minutes. Only systemic failures count (see below), so a run of broken
+references never writes off a host whose other references resolve: a batch with
+at least one fact or absence counts as a success, a batch the call threw for
+counts as a failure, and a batch whose every key came back as a
+`referenceFailure` does not count at all.
 
-## Failure degrades a batch, not the run
+**A burst of failures counts once.** When a host goes down, every batch in
+flight fails together, so a failure counts only if none of the host’s failures
+was counted after its batch started. One bad moment at a high limit costs one
+failure and halves the host’s limit; a host that keeps failing, burst after
+burst, is written off. The count is the resolver’s own: the requests of others
+sharing its limiter neither count towards it nor hide its failures. A dead host
+costs the threshold in bursts before the breaker saves the rest, plus the
+batches of the last burst, which were already in flight and still run.
+Retrying every reference against a host that is down is the stampede, not the
+remedy, and it costs the run’s wall clock as much as the host’s patience.
+Written-off references are refunded to the fetch budget, since they sent
+nothing – and refunded in time to be spent on other hosts in the same call, so a
+dead host cannot deny a live one an allowance it never used. The breaker lives on
+the resolver rather than in the store, so a host that recovers is retried on the
+very next run.
 
-`fetch` may throw: the batch is retried with doubling backoff, and if it still
-throws, each key in it falls back to its stored fact or absence – or is answered
-`unresolved`, with the reason. Either way `report` is called per key, saying
+## Failure degrades a reference or a batch, not the run
+
+The resolver never sees an HTTP response, so `fetch` says what went wrong by how
+it reports it:
+
+| `fetch` reports it by                  | Retried this run                                 | Counts towards a write-off | For                                                            |
+| -------------------------------------- | ------------------------------------------------ | -------------------------- | -------------------------------------------------------------- |
+| answering `[key, referenceFailure(…)]` | no                                               | no                         | one reference: a 500 on one image, a malformed document, a 403 |
+| throwing                               | once, at the back of the queue, for a stall only | yes                        | the call: a 502, a 503 without `Retry-After`, a timeout        |
+| throwing `RetryableError`              | up to twice                                      | only if it still fails     | a source that said to come back later: a 429                   |
+
+**A thrown failure is not retried at once.** A 500 or a 502 a moment later is
+the same 500 or 502, and the next run tries again anyway. The exception is a
+stall that may pass: the resolver’s own timeout, or a broken connection –
+`ECONNRESET`, `ECONNREFUSED`, `ETIMEDOUT`, `EAI_AGAIN`, `UND_ERR_SOCKET` or
+`UND_ERR_CONNECT_TIMEOUT` on the error or its `cause`, where Node’s `fetch` puts
+it. Such a batch queues again behind the batches already waiting for its host,
+for one more attempt at no second unit of the budget, which counts references,
+not requests.
+
+The stall counts against the host when it first fails, not after that second
+attempt, so a host that times out on everything is written off without every
+reference paying a timeout first. If the second attempt is answered, that
+failure is taken back – the stall was a slow moment, not a dead host – so a brief
+slowdown does not write off a host that recovers. If it fails, it is not counted
+a second time. A burst of stalls can still reach the threshold before any second
+attempt comes round, since those queue behind every batch already waiting for
+the host; within one run that cannot be told from a dead host, and the next run
+asks again. If the host is written off while the batch waits,
+the batch is sent nothing more and keeps the reason it first failed for; it was
+contacted once, so it is not refunded.
+
+**A source that says to come back later** gets what it asked for. Throw
+`RetryableError`, with `retryAfterMs` from `parseRetryAfter(response.headers.get('retry-after'))`,
+and no new attempt against the whole host – not just the one reference – starts
+until it has passed, because a rate limit is about this client. The limiter
+pauses the host, so the pause holds for everything sharing that limiter, and
+afterwards lets one batch through before slowly opening up again. Attempts
+already in flight finish, and the wait holds no concurrency slot, so other hosts
+carry on. Without a delay – or with a delay of 0, which `Retry-After: 0` and a date
+skewed into the past both give and which names no real wait – only that batch
+backs off, 500 ms and then 1 s. After two retries, or for a delay longer than
+`timeoutMs`, which is not waited out, the call fails for this run and counts
+against the host like any other throw. If the host is written off while the
+batch waits, it is sent nothing more and keeps its own reason and its charge.
+
+```ts
+fetch: async ([url], { signal }) => {
+  const response = await fetch(url, { signal });
+  const retryAfterMs = parseRetryAfter(response.headers.get('retry-after'));
+  if (
+    response.status === 429 ||
+    (response.status === 503 && retryAfterMs !== undefined)
+  ) {
+    throw new RetryableError(`HTTP ${response.status}`, { retryAfterMs });
+  }
+  if ([502, 503, 504].includes(response.status)) {
+    // A proxy whose backend is down: the host, not this image.
+    throw new Error(`HTTP ${response.status}`);
+  }
+  if (!response.ok) {
+    // This image, not the host: the others may well load.
+    return [[url, referenceFailure(`HTTP ${response.status}`)]];
+  }
+  return [[url, dimensionsOf(await response.json())]];
+};
+```
+
+Either way a failed key falls back to its stored fact or absence – or is
+answered `unresolved`, with the reason – and `report` is called per key, saying
 whether a stored value stood in (`degradedToStore`), so a run can log precisely
 what aged and what is missing.
 
-At the default `batchSize` of 1, a batch **is** one reference. Above that, the
-blast radius is the batch: a source that rejects a list over one malformed
-member takes the rest of that list with it. A failed batch is deliberately not
-re-attempted as single references – the common failure is source-wide, and
-re-asking would multiply traffic against a host that has just failed three
-times. Failures are unpersisted, so the next run retries the batch whole.
+At the default `batchSize` of 1, a batch **is** one reference. Above that, a
+throw takes the whole batch down, which is what `referenceFailure` is for: a
+source that answers for a list but fails one member reports just that member. A
+failed batch is deliberately not re-attempted as single references – the common
+reason a call throws is source-wide.
 
 A key the source simply **has nothing for** is not a failure and is not retried:
 leave it out of what `fetch` returns and it resolves to `absent`, which is then
 remembered.
 
-Which makes omission the stronger claim of the two, and the caller owns it: an
-absence replaces a stored fact and is believed for `absenceTtlMs`, so a source
-answering 200 with an empty result while it reindexes would erase what it told
-us last week. If a source can be empty for reasons other than “no such thing” –
-an empty page, a maintenance window, a partial response – detect it in `fetch`
-and **throw** instead of returning nothing. A failure ages a stored fact; an
-absence replaces it.
+Which makes omission the strongest claim a source can make, and the caller owns
+it: an absence replaces a stored fact and is believed for `absenceTtlMs`, so a
+source answering 200 with an empty result while it reindexes would erase what it
+told us last week. If a source can be empty for reasons other than “no such
+thing” – an empty page, a maintenance window, a partial response, an ambiguous
+403 – detect it in `fetch` and **throw**, or answer a `referenceFailure`,
+instead of returning nothing. A failure ages a stored fact; an absence replaces
+it.
+
+## Counting a run
+
+`report` covers failures one key at a time. To see a run whole – how much came
+from the store, how much was fetched, what the budget deferred – pass `count` to
+`resolveAll`. It is called once per distinct key with what became of it:
+
+| Count         | The key                                                          |
+| ------------- | ---------------------------------------------------------------- |
+| `fetched`     | was answered by the source this run                              |
+| `absent`      | was answered by the source, which has nothing for it             |
+| `from store`  | was answered by the store, and was not due a fetch               |
+| `failed`      | failed to fetch                                                  |
+| `written off` | was not sent, because its host had failed its way out of the run |
+| `deferred`    | was due a fetch, but not sent because the fetch budget was spent |
+
+For the last three, a stored fact may still stand in.
+
+Inside a pipeline transform, pass the transform’s `context.count`, and the
+counts are added up per stage on its `stageComplete` event:
+
+```ts
+const resolved = await resolver.resolveAll(iris, { count: context.count });
+```
 
 ## Batching
 
@@ -224,15 +349,18 @@ volume cap, not per-host concurrency, is what protects the store behind the API.
 
 ## API
 
-| Export                      | Purpose                                                                      |
-| --------------------------- | ---------------------------------------------------------------------------- |
-| `createResolver(options)`   | Build a `Resolver` from `key`, `host`, `fetch`, `store`, `version`, `limits` |
-| `Resolver.resolveAll(refs)` | Resolve references, one `Resolution` per distinct key                        |
-| `Resolver.check()`          | Fail a run at startup when the store cannot persist                          |
-| `Resolver.purge(keys)`      | Forget keys, so the next run resolves them afresh                            |
-| `urlHost(key)`              | The host of a key that is itself the URL fetched                             |
-| `sqliteFactStore(options)`  | Durable `FactStore` on `node:sqlite`                                         |
-| `memoryFactStore(initial?)` | In-process `FactStore`, for tests                                            |
+| Export                      | Purpose                                                                                 |
+| --------------------------- | --------------------------------------------------------------------------------------- |
+| `createResolver(options)`   | Build a `Resolver` from `key`, `host`, `fetch`, `store`, `version`, `limits`, `limiter` |
+| `Resolver.resolveAll(refs)` | Resolve references, one `Resolution` per distinct key; optionally `count`               |
+| `Resolver.check()`          | Fail a run at startup when the store cannot persist                                     |
+| `Resolver.purge(keys)`      | Forget keys, so the next run resolves them afresh                                       |
+| `urlHost(key)`              | The host of a key that is itself the URL fetched                                        |
+| `referenceFailure(reason)`  | Fail one reference in `fetch`’s answer, without holding it against the host             |
+| `RetryableError`            | Throw from `fetch` when the source said to come back later                              |
+| `parseRetryAfter(header)`   | Read a `Retry-After` header as milliseconds, for `RetryableError`                       |
+| `sqliteFactStore(options)`  | Durable `FactStore` on `node:sqlite`                                                    |
+| `memoryFactStore(initial?)` | In-process `FactStore`, for tests                                                       |
 
 `Resolver.check()` writes a row and rolls it back rather than merely opening the
 store: a database left by an earlier run opens cleanly, and even takes a

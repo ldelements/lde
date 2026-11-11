@@ -1,3 +1,135 @@
+## 0.39.2 (2026-11-11)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.52.2
+- Updated @lde/search-pipeline to 0.49.2
+- Updated @lde/search to 0.41.3
+
+## 0.39.1 (2026-11-11)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.52.1
+- Updated @lde/search-pipeline to 0.49.1
+- Updated @lde/search to 0.41.2
+
+## 0.39.0 (2026-11-10)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline-console-reporter to 0.37.0
+- Updated @lde/search-typesense to 0.52.0
+- Updated @lde/search-pipeline to 0.49.0
+- Updated @lde/pipeline to 0.46.0
+
+## 0.38.1 (2026-11-10)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.51.1
+- Updated @lde/search-pipeline to 0.48.1
+
+## 0.38.0 (2026-11-10)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline-console-reporter to 0.36.0
+- Updated @lde/search-typesense to 0.51.0
+- Updated @lde/search-pipeline to 0.48.0
+- Updated @lde/pipeline to 0.45.0
+
+## 0.37.1 (2026-11-10)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.50.1
+- Updated @lde/search-pipeline to 0.47.1
+- Updated @lde/search to 0.41.1
+
+## 0.37.0 (2026-11-10)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.50.0
+- Updated @lde/search-pipeline to 0.47.0
+- Updated @lde/search to 0.41.0
+
+## 0.36.0 (2026-11-10)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.49.0
+- Updated @lde/search-pipeline to 0.46.0
+- Updated @lde/search to 0.40.0
+
+## 0.35.0 (2026-11-10)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline-console-reporter to 0.35.0
+- Updated @lde/search-typesense to 0.48.0
+- Updated @lde/search-pipeline to 0.45.0
+- Updated @lde/pipeline to 0.44.0
+
+## 0.34.1 (2026-11-10)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.47.1
+- Updated @lde/search-pipeline to 0.44.1
+- Updated @lde/search to 0.39.1
+
+## 0.34.0 (2026-11-10)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.47.0
+- Updated @lde/search-pipeline to 0.44.0
+- Updated @lde/search to 0.39.0
+
+## 0.33.0 (2026-11-10)
+
+### 🚀 Features
+
+- **search-indexer:** restrict which roots a deployment indexes ([#1027](https://github.com/ldelements/lde/pull/1027))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline-console-reporter to 0.34.0
+- Updated @lde/search-typesense to 0.46.0
+- Updated @lde/search-pipeline to 0.43.0
+- Updated @lde/pipeline to 0.43.0
+- Updated @lde/search to 0.38.0
+
+## 0.32.0 (2026-11-09)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.45.0
+- Updated @lde/search-pipeline to 0.42.0
+- Updated @lde/search to 0.37.0
+
+## 0.31.3 (2026-11-09)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.44.2
+- Updated @lde/search-pipeline to 0.41.3
+- Updated @lde/search to 0.36.4
+
+## 0.31.2 (2026-11-09)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline-console-reporter to 0.33.1
+- Updated @lde/dataset-registry-client to 0.12.1
+- Updated @lde/search-typesense to 0.44.1
+- Updated @lde/search-pipeline to 0.41.2
+- Updated @lde/sparql-qlever to 0.21.1
+- Updated @lde/pipeline to 0.42.1
+- Updated @lde/dataset to 0.10.1
+
 ## 0.31.1 (2026-11-05)
 
 ### 🧱 Updated Dependencies

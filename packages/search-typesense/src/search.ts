@@ -24,10 +24,12 @@ import {
   assertTypeInSchema,
   assertValidQuery,
   displayLangOf,
-  facetableFields,
+  facetNamed,
   facetSearches,
+  facetsOf,
+  selectionOf,
+  type FacetDeclaration,
   fieldNamed,
-  filterOn,
   inheritedFacetPolicies,
   isDatePrecision,
   isInlineReference,
@@ -37,6 +39,7 @@ import {
   labelFieldOf,
   labelSourceNamesOf,
   labelTargetNamesOf,
+  literalKindOf,
   localLookupTargetsOf,
   nestedReferenceType,
   outputFields,
@@ -210,13 +213,22 @@ export function createTypesenseSearchEngine<
     [...schema.values()].map((searchType) => [
       searchType.class,
       new Map(
-        referenceFields(searchType)
+        [
+          ...referenceFields(searchType).map((field) => ({
+            name: field.name,
+            field,
+          })),
+          // A faceted leaf labels its buckets from the leaf’s own targets.
+          ...facetsOf(searchType, schema).filter(
+            (facet) => facet.reference !== undefined,
+          ),
+        ]
           // An INLINE reference names its label target one level in, through
           // its identity companion: the companion holds that field's ids, so
           // that field's target is what can label them.
-          .filter((field) => labelTargetNamesOf(field, schema).length > 0)
-          .map((field) => [
-            field.name,
+          .filter(({ field }) => labelTargetNamesOf(field, schema).length > 0)
+          .map(({ name, field }) => [
+            name,
             labelTargetNamesOf(field, schema).map((targetName) => {
               const source = typesByName.get(targetName) as RootType;
               const labelField = labelFieldOf(source) as TextField;
@@ -242,10 +254,9 @@ export function createTypesenseSearchEngine<
     [...schema.values()].map((searchType) => [
       searchType.class,
       new Map(
-        facetableFields(searchType).map((field) => [
-          // A facetable field always has a facet field.
-          physicalFields(field, schema).facet as string,
-          field.name,
+        facetsOf(searchType, schema).map((facet) => [
+          facet.engineField,
+          facet.name,
         ]),
       ),
     ]),
@@ -917,7 +928,19 @@ async function withSelectedValues(
         ...buildSearchParams(
           {
             ...query,
-            where: [...query.where, selecting(searchType, field, value)],
+            where: [
+              ...query.where,
+              // Only a facet the query asked for, and `assertValidQuery`
+              // admitted, is counted value by value.
+              selectionOf(
+                facetNamed(
+                  searchType,
+                  field,
+                  options.schema,
+                ) as FacetDeclaration,
+                value,
+              ),
+            ],
             facets: [],
             orderBy: [],
             limit: 0,
@@ -983,16 +1006,6 @@ async function withSelectedValues(
       ],
     };
   });
-}
-
-/** The clause that selects one facet value: `is` on a boolean, `in` on
- *  anything else. */
-function selecting(searchType: RootType, field: string, value: string) {
-  return filterOn(
-    fieldNamed(searchType, field)?.kind === 'boolean'
-      ? { field, is: value === 'true' }
-      : { field, in: [value] },
-  );
 }
 
 /** Orders buckets by descending count, as the engine orders its own. */
@@ -1182,9 +1195,9 @@ export function parseSearchResponse(
   // reference facet stays id-only even when a cached full-collection map holds
   // its IRIs.
   const referenceFacets = new Set(
-    referenceFields(searchType)
-      .filter((field) => labelTargetNamesOf(field, schema).length > 0)
-      .map((field) => field.name),
+    facetsOf(searchType, schema)
+      .filter((facet) => labelTargetNamesOf(facet.field, schema).length > 0)
+      .map((facet) => facet.name),
   );
   const facets: Record<string, Facet> = {};
   for (const facet of response.facet_counts ?? []) {
@@ -1192,7 +1205,7 @@ export function parseSearchResponse(
     // A binned facet echoes the declared range key as the bucket value; look
     // the bin’s half-open bounds back up by key, in stored terms, so the
     // bucket is self-describing.
-    const field = fieldNamed(searchType, facet.field_name);
+    const field = facetNamed(searchType, facet.field_name, schema)?.field;
     const rangesByKey =
       field !== undefined && isBinnedRangeFacet(field)
         ? new Map(storedFacetRanges(field).map((range) => [range.key, range]))
@@ -1232,12 +1245,47 @@ function reconstructDocument(
 ): ResultDocument {
   const document: Record<string, SearchValue> = {};
   for (const field of outputFields(searchType)) {
-    const value = logicalValue(flat, field, labels, schema, referents);
+    const value = withPeriods(
+      flat,
+      field,
+      logicalValue(flat, field, labels, schema, referents),
+    );
     if (value !== undefined) {
       document[field.name] = value;
     }
   }
   return document;
+}
+
+/**
+ * A lookup reading its literals as periods, with those periods added to its
+ * referents: one list in which each entry is a period, as stated, or a
+ * referent. A single-valued field stores only one of the two
+ * (`applyReferentsOrPeriods`). Any other field’s value is returned as it is.
+ */
+function withPeriods(
+  flat: Record<string, unknown>,
+  field: SearchField,
+  referents: SearchValue | undefined,
+): SearchValue | undefined {
+  const periods =
+    literalKindOf(field) === 'period'
+      ? physicalFields(field).period
+      : undefined;
+  if (periods === undefined) {
+    return referents;
+  }
+  const stored = flat[periods.values];
+  const values = (Array.isArray(stored) ? stored : [stored]).filter(
+    (value): value is string => typeof value === 'string',
+  );
+  if (field.array !== true || values.length === 0) {
+    return values[0] ?? referents;
+  }
+  return [
+    ...values,
+    ...((referents ?? []) as readonly (Reference | NestedDocument)[]),
+  ];
 }
 
 function logicalValue(
@@ -1301,7 +1349,9 @@ function logicalValue(
         ? undefined
         : referenceValue(flat, field, labels);
     }
-    case 'keyword': {
+    // A period is served as stated; its bound companions are for the engine.
+    case 'keyword':
+    case 'period': {
       const value = flat[field.name];
       return Array.isArray(value) || typeof value === 'string'
         ? (value as SearchValue)

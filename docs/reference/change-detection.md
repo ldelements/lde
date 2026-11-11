@@ -88,4 +88,13 @@ An IRI is missing from the returned `Map` when no hash is stored, and also when 
 
 ### Documents that can’t be canonicalized
 
-RDFC-1.0 can blow up on documents with many indistinguishable blank nodes. `detectChange` then throws, so a hostile or accidental document can’t hang the caller. Write such a document without a hash; it returns `created` on every run.
+RDFC-1.0 can blow up on documents with many indistinguishable blank nodes. `detectChange` then throws a `CanonicalizationLimitError`, so a hostile or accidental document can’t hang the caller. Write such a document without a hash; it returns `created` on every run. Any other error is passed through unchanged, so catch only this one:
+
+```ts
+const detected = await detectChange(document, previous, version).catch(
+  (error: unknown) => {
+    if (error instanceof CanonicalizationLimitError) return undefined;
+    throw error;
+  },
+);
+```

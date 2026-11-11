@@ -1,3 +1,114 @@
+## 0.45.3 (2026-11-11)
+
+### 🚀 Features
+
+- **search:** facet a root document on its entries’ leaves ([#1049](https://github.com/ldelements/lde/pull/1049))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.41.3
+
+## 0.45.2 (2026-11-11)
+
+### 🚀 Features
+
+- **search:** filter an inline reference on its own literal fields ([#1048](https://github.com/ldelements/lde/pull/1048))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.41.2
+
+## 0.45.1 (2026-11-10)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.41.1
+
+## 0.45.0 (2026-11-10)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.41.0
+
+## 0.44.0 (2026-11-10)
+
+### 🚀 Features
+
+- ⚠️  **search:** let a lookup read its literals as periods ([#1035](https://github.com/ldelements/lde/pull/1035))
+
+### ⚠️  Breaking Changes
+
+- **search:** let a lookup read its literals as periods  ([#1035](https://github.com/ldelements/lde/pull/1035))
+  filterOperatorFor takes the field instead of its kind. Replace
+  filterOperatorFor(field.kind) with filterOperatorFor(field)."
+  A	docs/decisions/0035-serve-a-propertys-literals-and-references-in-one-field.md
+  M	docs/reference/search-api-graphql.md
+  M	docs/reference/search.md
+  M	packages/search-api-graphql/src/build-schema.ts
+  M	packages/search-api-graphql/src/projection.ts
+  A	packages/search-api-graphql/test/referent-or-period.test.ts
+  M	packages/search-api-graphql/vite.config.ts
+  M	packages/search-typesense/src/collection-definition.ts
+  M	packages/search-typesense/src/lookup.ts
+  M	packages/search-typesense/src/query-compiler.ts
+  M	packages/search-typesense/src/search.ts
+  A	packages/search-typesense/test/referent-or-period.integration.test.ts
+  A	packages/search-typesense/test/referent-or-period.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/src/adapter.ts
+  M	packages/search/src/engine.ts
+  M	packages/search/src/index.ts
+  M	packages/search/src/project.ts
+  M	packages/search/src/query.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/src/testing.ts
+  M	packages/search/test/period.test.ts
+  M	packages/search/test/query.test.ts
+  A	packages/search/test/referent-or-period.test.ts
+  M	packages/search/test/schema.test.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.40.0
+
+## 0.43.1 (2026-11-10)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.39.1
+
+## 0.43.0 (2026-11-10)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.39.0
+
+## 0.42.0 (2026-11-10)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.38.0
+
+## 0.41.0 (2026-11-09)
+
+### 🚀 Features
+
+- ⚠️  **search:** add a period field kind for EDTF dates and intervals ([#1016](https://github.com/ldelements/lde/pull/1016))
+
+### ⚠️  Breaking Changes
+
+- **search:** add a period field kind for EDTF dates and intervals  ([#1016](https://github.com/ldelements/lde/pull/1016))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.37.0
+
+## 0.40.4 (2026-11-09)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.36.4
+
 ## 0.40.3 (2026-11-05)
 
 ### 🧱 Updated Dependencies

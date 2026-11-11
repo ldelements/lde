@@ -9,7 +9,14 @@ import { joinGraph } from './join-graph.js';
  * *derived* from this by the engine adapter, never declared here.
  */
 export type FieldKind =
-  'text' | 'keyword' | 'integer' | 'number' | 'boolean' | 'date' | 'reference';
+  | 'text'
+  | 'keyword'
+  | 'integer'
+  | 'number'
+  | 'boolean'
+  | 'date'
+  | 'period'
+  | 'reference';
 
 /** The `where` operator a kind accepts, or `undefined` when it is not filterable
  *  through `where` (`text` feeds the free-text `query` instead). */
@@ -24,17 +31,25 @@ const OPERATOR_BY_KIND: Readonly<
   integer: 'range',
   number: 'range',
   date: 'range',
+  period: 'range',
   boolean: 'is',
 };
 
 /**
- * The `where` operator a field of this kind accepts (per the ADR filter-semantics
- * table), or `undefined` for `text` – which feeds the free-text `query` rather
- * than `where`. The ONE source for the surface’s `where` input type, the
- * adapter’s filter compiler and declaration validation, so they cannot drift.
+ * The `where` operator a field accepts (per the ADR filter-semantics table),
+ * or `undefined` for `text` – which feeds the free-text `query` rather than
+ * `where`. Fixed by the field’s kind, except that a lookup reading a literal
+ * as a `period` ({@link ReferenceStrategy.literal}) takes a period’s `range`.
+ * The ONE source for the surface’s `where` input type, the adapter’s filter
+ * compiler and declaration validation, so they cannot drift.
  */
-export function filterOperatorFor(kind: FieldKind): FilterOperator | undefined {
-  return OPERATOR_BY_KIND[kind];
+export function filterOperatorFor(field: {
+  readonly kind: FieldKind;
+  readonly ref?: ReferenceStrategy;
+}): FilterOperator | undefined {
+  return storesPeriods(field)
+    ? OPERATOR_BY_KIND.period
+    : OPERATOR_BY_KIND[field.kind];
 }
 
 /**
@@ -74,7 +89,12 @@ export function filterOperatorFor(kind: FieldKind): FilterOperator | undefined {
  * and a hand-written declaration is just as valid.
  */
 export type SearchField =
-  TextField | KeywordField | ReferenceField | NumericField | BooleanField;
+  | TextField
+  | KeywordField
+  | ReferenceField
+  | NumericField
+  | PeriodField
+  | BooleanField;
 
 /** The declaration members every {@link SearchField} kind shares. */
 export interface SearchFieldBase {
@@ -233,6 +253,7 @@ export type ReferenceStrategy =
       readonly typeName?: string;
       readonly target?: never;
       readonly identity?: never;
+      readonly facetedLeaves?: never;
     }
   | {
       readonly strategy: 'lookup';
@@ -275,19 +296,45 @@ export type ReferenceStrategy =
        * ({@link inlineFramingDepth}). A schema that declares none pays neither.
        */
       readonly local?: boolean;
+      /**
+       * Also read a **literal** the graph states in place of a referent, as a
+       * value of this kind – for a property a profile lets a publisher state
+       * either way: `schema:temporalCoverage "1935/1955"` on one work, a
+       * `schema:temporalCoverage` pointing at a named period on the next.
+       *
+       * What it buys is one field where there were two. Without it, a lookup
+       * drops a literal as unreadable, and a deployment serving both forms
+       * needs a second field over the same path – which a client then has to
+       * know to query beside this one.
+       *
+       * With `'period'`, the field holds one list in which each entry is a
+       * literal, served as stated and read as a {@link PeriodField period}, or
+       * a referent, resolved like any lookup’s. A range filter tests the
+       * literal entries by overlap, as it tests a `period` field, and sorting
+       * orders on them; a referent has no bounds, so it matches no range and
+       * sorts as a period no reader can parse does. For that reason the field is filtered by `range` alone
+       * ({@link filterOperatorFor}) and is never `facetable`: a facet over the
+       * referents would offer buckets no filter selects. Neither `local` nor
+       * `joinable`, and only on a Root Type’s own field ({@link searchSchema}
+       * enforces all three).
+       */
+      readonly literal?: LiteralKind;
       readonly identity?: never;
+      readonly facetedLeaves?: never;
     }
   | {
       readonly strategy: 'inline';
       readonly typeName: string;
       /**
        * The `name` of a **nested reference field** of this reference type whose
-       * ids identify each entry’s endpoint – required to declare `filterable`
-       * or `facetable` on the inline reference itself, and meaningless without
-       * one ({@link searchSchema} enforces both directions).
+       * ids identify each entry’s endpoint – required to declare `facetable` on
+       * the inline reference itself, and meaningless without `filterable` or
+       * `facetable` ({@link searchSchema} enforces both directions). Without
+       * one, `filterable` filters by conditions welded to one entry alone, on
+       * the reference type’s own filterable fields.
        *
-       * A nested object is not something an engine can filter or facet, so an
-       * inline reference that opts into either fans out an **identity
+       * A nested object is not something an engine can filter or facet by id,
+       * so an inline reference naming an identity fans out an **identity
        * companion**: a flat physical field holding the ids its entries
        * reference ({@link physicalFields}), which the engine filters and facets
        * in the nested object’s place. The same mechanism `${name}_facet`
@@ -307,7 +354,56 @@ export type ReferenceStrategy =
        * keyed on a label, so two endpoints that share a label are never merged.
        */
       readonly identity?: string;
+      /**
+       * The `name`s of **leaf fields** of this reference type that the root
+       * document is faceted on, each served as the facet
+       * `‹reference›.‹leaf›` (GraphQL: `facets { ‹reference› { ‹leaf› } }`).
+       *
+       * A bucket counts **root documents**, not entries: a work with three
+       * reproductions, two under one licence, counts once under that licence.
+       * That is the question such a facet answers – *which works have a
+       * reproduction I may reuse?* – and it is how an engine counts a value
+       * stored under every entry, so the facet reads the nested path itself
+       * and needs no companion.
+       *
+       * Declared on the reference rather than on the leaf because the count
+       * is a fact about the root, and a reference type nested from several
+       * places may be faceted from one and not another. Each leaf must be
+       * `filterable`, so a bucket selects through a condition on one entry
+       * ({@link searchSchema} enforces it), and the reference must be too.
+       */
+      readonly facetedLeaves?: readonly string[];
     };
+
+/** The `literal` kinds a declaration may name, checked at runtime for one
+ *  built outside TypeScript. */
+const LITERAL_KINDS = ['period'] as const;
+
+/** The kinds a lookup may read a literal stated in place of a referent as
+ *  ({@link ReferenceStrategy.literal}). */
+export type LiteralKind = (typeof LITERAL_KINDS)[number];
+
+/** The kind a lookup reads a literal stated in place of a referent as
+ *  ({@link ReferenceStrategy.literal}), or `undefined` for a field that reads
+ *  no literal. */
+export function literalKindOf(field: {
+  readonly kind: FieldKind;
+  readonly ref?: ReferenceStrategy;
+}): LiteralKind | undefined {
+  return field.kind === 'reference' && field.ref?.strategy === 'lookup'
+    ? field.ref.literal
+    : undefined;
+}
+
+/** Whether a field stores periods – a `period`, or a lookup reading its
+ *  literals as periods: the one test its operator, its validation, its range
+ *  bounds and its companions ({@link PhysicalFields.period}) all read. */
+function storesPeriods(field: {
+  readonly kind: FieldKind;
+  readonly ref?: ReferenceStrategy;
+}): boolean {
+  return field.kind === 'period' || literalKindOf(field) === 'period';
+}
 
 /** An IRI-valued reference to another entity, resolved at the surface. */
 export interface ReferenceField extends SearchFieldBase, Searchable {
@@ -408,6 +504,41 @@ export interface DateField
   extends SearchFieldBase, RangeFacetable<DateFacetRange> {
   readonly kind: 'date';
   readonly searchable?: never;
+}
+
+/**
+ * A stretch of time, stated as an [EDTF](https://www.loc.gov/standards/datetime/)
+ * value or an ISO 8601 date: `1935/1955`, `1620~`, `162X`, `1440/..`. Where a
+ * `date` holds one instant, a period holds what its source knows – often only
+ * that something happened somewhere between two dates.
+ *
+ * - **Output** is each value as its source stated it, without surrounding
+ *   whitespace: `1620~` stays `1620~`, because the qualifier is part of what is known and how to render
+ *   it (“c. 1620”) depends on the reader’s language.
+ * - **A range filter matches by overlap**: `{ min: '1940', max: '1950' }`
+ *   matches `1935/1955`, which a filter on a start date alone would miss. The
+ *   bounds are ISO 8601, as a `date` filter’s are, and `max` reaches through
+ *   the end of the period it names.
+ * - **Sorting** ascending orders on the earliest second a value allows,
+ *   descending on the latest, so “newest first” places `1935/1955` by 1955.
+ *
+ * The bounds are two companions the engine stores beside the values
+ * ({@link PhysicalFields.period}), never fields a client sees. An `array`
+ * field is stored as the one stretch its values cover between them – the
+ * earliest start to the latest end – since that is what an engine can sort on
+ * and test in one clause. A value no reader can parse is left out and
+ * reported, so every value served is one the bounds account for.
+ *
+ * Not facetable: a period belongs in every bin it overlaps, which no engine
+ * facet counts from two bounds. And filtered only on the document that holds
+ * it, never through a nesting or a weld: the two bounds are compared in one
+ * clause, which a nested entry has no room for.
+ */
+export interface PeriodField extends SearchFieldBase {
+  readonly kind: 'period';
+  readonly searchable?: never;
+  readonly facetable?: never;
+  readonly facetRanges?: never;
 }
 
 /** A boolean flag; absent in a document means `false`. */
@@ -572,6 +703,9 @@ export interface RootType extends SearchTypeBase {
   /** Only a Reference Type is an edge a graph may leave out
    *  ({@link ReferenceType.edgeClass}). */
   readonly edgeClass?: never;
+  /** Only a Reference Type is a node a graph may state as a bare literal
+   *  ({@link ReferenceType.literalField}). */
+  readonly literalField?: never;
 }
 
 /**
@@ -616,6 +750,23 @@ export interface ReferenceType extends SearchTypeBase {
    * of its own.
    */
   readonly edgeClass?: string;
+  /**
+   * The field a **literal** goes into where an inline reference reaches one in
+   * place of this type’s node, for a graph that may state the node’s value
+   * bare – `schema:identifier "G11125-19"` on one work, a
+   * `schema:PropertyValue` carrying `schema:value "12042"` on the next.
+   *
+   * Declaring it is the opt-in. A literal the reference reaches is then an
+   * entry carrying that literal in this field and none of the type’s other
+   * fields, so a consumer reads both shapes as one list; without it, a literal
+   * projects to nothing. The field must hold a literal – any kind but
+   * `reference`, with no `derive` or `from` – and no other field may be
+   * `required`, since a literal never carries one ({@link searchSchema}
+   * enforces both). Without a `path`, it is filled from a literal only: the
+   * display text of a `schema:size` stated bare, which no `QuantitativeValue`
+   * node carries.
+   */
+  readonly literalField?: string;
 }
 
 /**
@@ -768,6 +919,7 @@ export function searchSchema<const Types extends readonly SearchType[]>(
     new Map(rootTypes.map((searchType) => [searchType.name, searchType])),
   );
   assertResolvableLabelSources(types, schema);
+  assertUnnarrowedFacetedLeaves(rootTypes, schema);
   // Build the join graph eagerly and discard it: it is cached per schema, and
   // building it is what enforces the schema-wide join rules (one joinable
   // reference per target, every target an indexed Root Type, no cycles). A
@@ -1085,6 +1237,7 @@ function assertResolvableInlineReferences(
         );
       }
       assertIdentityCompanion(searchType, field, referenceType);
+      assertFacetedLeaves(searchType, field, referenceType);
     }
   }
   for (const searchType of types) {
@@ -1095,14 +1248,63 @@ function assertResolvableInlineReferences(
   assertConsistentIdentities(types);
   for (const referenceType of referenceTypes.values()) {
     assertNoInlineCycle(referenceType, referenceTypes, new Set());
+    assertLiteralField(referenceType);
+  }
+}
+
+/**
+ * A Reference Type’s {@link ReferenceType.literalField literal field} can hold
+ * the literal it stands for: it is declared, it holds a literal (no `derive` or
+ * `from`, which compute a value, and not a `reference`, which reads IRIs), and
+ * no other field is `required` – an entry made from a literal carries that one
+ * field alone, so any other required one would drop it. A `path` is optional:
+ * without one, the field is filled from a literal only, never from a node, so
+ * it cannot be `required` itself.
+ */
+function assertLiteralField(referenceType: ReferenceType): void {
+  const { literalField } = referenceType;
+  if (literalField === undefined) {
+    return;
+  }
+  const where = `Reference type “${referenceType.name}”`;
+  const field = fieldNamed(referenceType, literalField);
+  if (field === undefined) {
+    throw new Error(
+      `${where} names literal field “${literalField}”, which it does not declare.`,
+    );
+  }
+  if (
+    field.kind === 'reference' ||
+    field.derive !== undefined ||
+    ('from' in field && field.from !== undefined)
+  ) {
+    throw new Error(
+      `${where} names literal field “${literalField}”, which reads no literal: declare it with a kind other than “reference”, and no “derive” or “from”.`,
+    );
+  }
+  const required = referenceType.fields.find(
+    (other) => other.required === true && other.name !== literalField,
+  );
+  if (required !== undefined) {
+    throw new Error(
+      `${where} declares a “literalField” and requires “${required.name}”: an entry made from a literal carries only “${literalField}”, so it would never have “${required.name}”. Drop “required” from “${required.name}”.`,
+    );
+  }
+  // The mirror image: a literal field with no path is filled from a literal
+  // only, so an entry made from a node would never have it.
+  if (field.path === undefined && field.required === true) {
+    throw new Error(
+      `${where} requires literal field “${literalField}”, which has no “path”: an entry made from a node never has it. Drop “required”, or give it a “path”.`,
+    );
   }
 }
 
 /**
  * An inline reference’s {@link ReferenceStrategy.identity identity companion}
- * holds together in both directions: `filterable`/`facetable` need an
- * `identity` to point the engine at, and an `identity` with neither Role is a
- * companion nothing reads.
+ * holds together in both directions: `facetable` needs an `identity` to point
+ * the engine at, and an `identity` with neither Role is a companion nothing
+ * reads. `filterable` without one is served by conditions welded to one entry
+ * alone, so it needs a filterable field on the entry instead.
  *
  * The named field must be a nested **reference that names a target** – a
  * `lookup`’s `target` or an `idOnly`’s `labelSource` – because naming one is
@@ -1126,9 +1328,27 @@ function assertIdentityCompanion(
     );
   }
   if (identity === undefined) {
-    if (filters) {
+    // Without an identity the entries hold no ids, so a facet has nothing to
+    // count. A filter still has something to read: the entry’s own filterable
+    // leaves, reached through a condition welded to one entry.
+    if (field.facetable === true) {
       throw new Error(
-        `${where} declares “filterable”/“facetable” without an “identity”: a nested object is not a value an engine filters or facets, so it needs a nested reference to name the ids to filter and facet in its place.`,
+        `${where} declares “facetable” without an “identity”: a nested object is not a value an engine facets, so it needs a nested reference to name the ids to facet in its place.`,
+      );
+    }
+    if (field.filterable !== true) {
+      return;
+    }
+    // A weld is a single level: a condition inside one entry cannot itself be
+    // a weld, so an entry filtered this way cannot sit inside another entry.
+    if (searchType.class === undefined) {
+      throw new Error(
+        `${where} declares “filterable” without an “identity”, but “${searchType.name}” is a reference type: a condition on one entry cannot be welded inside another. Declare it on a Root Type’s reference, or drop “filterable”.`,
+      );
+    }
+    if (filterableFields(referenceType).length === 0) {
+      throw new Error(
+        `${where} declares “filterable” without an “identity”, but “${field.ref.typeName}” declares no “filterable” field: a condition on one entry is the only filter it can take, and there is nothing for one to name. Declare “filterable” on a field of “${field.ref.typeName}”, or name an “identity”.`,
       );
     }
     return;
@@ -1175,6 +1395,107 @@ function assertIdentityCompanion(
     throw new Error(
       `${where} nests “${field.ref.typeName}”, which declares an “edgeClass” and requires “${requiredOnEdge.name}”: an endpoint the graph states without its edge carries only “${identity}”, so it would never have “${requiredOnEdge.name}”. Drop “required” from “${requiredOnEdge.name}”.`,
     );
+  }
+}
+
+/** The leaf kinds a root document may be faceted on: values a bucket can key
+ *  on, with no range bins ({@link ReferenceStrategy.facetedLeaves}). */
+const FACETABLE_LEAF_KINDS: ReadonlySet<FieldKind> = new Set([
+  'keyword',
+  'boolean',
+  'reference',
+]);
+
+/**
+ * An inline reference’s {@link ReferenceStrategy.facetedLeaves faceted leaves}
+ * each name a single-valued leaf of the type it nests that a condition on one
+ * entry can select, so every bucket round-trips into a filter. Only a Root
+ * Type’s reference may declare them: the facet is a count of root documents,
+ * and a reference type has none.
+ */
+function assertFacetedLeaves(
+  searchType: SearchType,
+  field: ReferenceField & { readonly ref: { readonly typeName: string } },
+  referenceType: ReferenceType,
+): void {
+  const leaves = facetedLeavesOf(field);
+  if (leaves.length === 0) {
+    return;
+  }
+  const where = `Inline reference “${searchType.name}.${field.name}”`;
+  if (searchType.class === undefined) {
+    throw new Error(
+      `${where} declares “facetedLeaves”, but “${searchType.name}” is a reference type: a faceted leaf counts root documents, and an entry is not one. Declare it on the Root Type’s reference instead.`,
+    );
+  }
+  if (field.facetable === true) {
+    throw new Error(
+      `${where} is “facetable” and declares “facetedLeaves”: its facet and its leaves’ facets would both be named after “${field.name}”. Facet the reference or its leaves, not both.`,
+    );
+  }
+  if (field.filterable !== true) {
+    throw new Error(
+      `${where} declares “facetedLeaves” without “filterable”: a bucket is selected by a condition on one entry, which the reference must accept. Declare “filterable” on it.`,
+    );
+  }
+  const seen = new Set<string>();
+  for (const name of leaves) {
+    if (seen.has(name)) {
+      throw new Error(`${where} names faceted leaf “${name}” twice.`);
+    }
+    seen.add(name);
+    const leaf = fieldNamed(referenceType, name);
+    if (leaf === undefined) {
+      throw new Error(
+        `${where} names faceted leaf “${name}”, which “${field.ref.typeName}” does not declare.`,
+      );
+    }
+    const storesObject =
+      isInlineReference(leaf) ||
+      (leaf.kind === 'reference' &&
+        leaf.ref?.strategy === 'lookup' &&
+        leaf.ref.local === true);
+    if (
+      !FACETABLE_LEAF_KINDS.has(leaf.kind) ||
+      storesObject ||
+      literalKindOf(leaf) !== undefined
+    ) {
+      throw new Error(
+        `${where} names faceted leaf “${name}”, ${storesObject ? 'which stores a nested object' : `a “${leaf.kind}”`}: only a “keyword”, “boolean” or “reference” leaf holding ids keys a bucket.`,
+      );
+    }
+    if (leaf.filterable !== true) {
+      throw new Error(
+        `${where} names faceted leaf “${name}”, which is not “filterable”: a bucket selects through a condition on that leaf. Declare “filterable” on “${field.ref.typeName}.${name}”.`,
+      );
+    }
+  }
+}
+
+/**
+ * A faceted leaf facets its nested path as stored, so a facet policy on the
+ * leaf’s target ({@link RootType.facetKeys}) would go unapplied: the buckets
+ * would offer ids the policy excludes. Refused until a narrowed companion is
+ * written inside each entry.
+ */
+function assertUnnarrowedFacetedLeaves(
+  rootTypes: readonly RootType[],
+  schema: SearchSchema,
+): void {
+  for (const searchType of rootTypes) {
+    for (const facet of facetsOf(searchType, schema)) {
+      if (facet.reference === undefined) {
+        continue;
+      }
+      const narrowing = referencedTargetsOf(facet.field, schema).find(
+        (target) => target.facetKeys !== undefined,
+      );
+      if (narrowing !== undefined) {
+        throw new Error(
+          `Inline reference “${searchType.name}.${facet.reference.name}” names faceted leaf “${facet.field.name}”, whose target “${narrowing.name}” declares “facetKeys”: a faceted leaf cannot be narrowed by a facet policy yet, so its buckets would offer ids the policy excludes.`,
+        );
+      }
+    }
   }
 }
 
@@ -1339,7 +1660,7 @@ function assertServiceableNestedFields(
             .map((role) => `“${role}”`)
             .join(
               ', ',
-            )}, which nesting cannot serve: an engine facets a nested field per document rather than per entry, sorts on one value rather than into an array, and has no collection to join to from inside an entry. Facet the edge through the inline reference’s “identity” companion instead.`,
+            )}, which nesting cannot serve: an engine facets a nested field per document rather than per entry, sorts on one value rather than into an array, and has no collection to join to from inside an entry. Facet the edge through the inline reference’s “identity” companion, or the root document on this leaf through the reference’s “facetedLeaves”, instead.`,
         );
       }
       if (
@@ -1347,6 +1668,17 @@ function assertServiceableNestedFields(
       ) {
         throw new Error(
           `Nested field “${referenceType.name}.${field.name}” declares a label source, which an inline reference cannot serve; declare a “lookup” on the nested reference instead of resolving a label for it.`,
+        );
+      }
+      const literalKind = literalKindOf(field);
+      if (literalKind !== undefined) {
+        throw new Error(
+          `Nested field “${referenceType.name}.${field.name}” reads a literal as a “${literalKind}”, which only a Root Type’s own field can: carry the field on the Root Type.`,
+        );
+      }
+      if (field.filterable === true && field.kind === 'period') {
+        throw new Error(
+          `Nested field “${referenceType.name}.${field.name}” is a filterable “period”, which a weld cannot test: a period is matched by comparing two stored bounds, and a weld compares one value per condition. Declare it “output” only, or carry the period on the Root Type.`,
         );
       }
       if (field.filterable === true && field.array === true) {
@@ -1653,6 +1985,10 @@ export interface SearchTypeIssue {
     | 'duplicate-projection-value'
     | 'text-not-filterable'
     | 'text-not-facetable'
+    | 'period-not-facetable'
+    | 'unknown-literal-kind'
+    | 'literal-with-local'
+    | 'literal-with-joinable'
     | 'joinable-not-allowed'
     | 'joinable-without-label-source'
     | 'joinable-with-inline-ref'
@@ -1784,6 +2120,9 @@ const LOCALE_PATTERN = /^[A-Za-z0-9]+(-[A-Za-z0-9]+)*$/;
  *   an id a reference field can point at. The schema-wide half of the rule (at
  *   most one joinable field per (type, label source), no cycles) is
  *   {@link joinGraph}’s;
+ * - a lookup’s {@link ReferenceStrategy.literal `literal`} names a known
+ *   {@link LiteralKind}, and is neither `local` nor `joinable`; reading its
+ *   literals as periods, it is not `facetable`, as a `period` is not;
  * - a `text` field declares at least one locale (`und` = untagged; projection and
  *   result reconstruction have no representation for unlocalized text – use
  *   `keyword` for untagged strings); `locales` on any other kind is
@@ -1820,13 +2159,10 @@ export function validateSearchType(
   const issues: SearchTypeIssue[] = [];
   const seen = new Set<string>();
   const seenProjectionValues = new Set<string>();
-  // A `date` field stores its precision under `${name}_precision`, so a
-  // declared field of that name would overwrite it, and be overwritten.
-  const precisionCompanions = new Set(
-    searchType.fields
-      .filter((field) => field.kind === 'date')
-      .map((field) => physicalFields(field).precision),
-  );
+  // A `date` field stores its precision under `${name}_precision`, and a
+  // `period` its bounds under `${name}_start` and `${name}_end`, so a declared
+  // field of such a name would overwrite one, and be overwritten.
+  const companionFields = new Set(searchType.fields.flatMap(companionNames));
   for (const declared of searchType.fields) {
     // Validation guards declarations built OUTSIDE TypeScript (a SHACL
     // generator, plain JS), so it inspects the uniform flat shape rather
@@ -1849,7 +2185,7 @@ export function validateSearchType(
     // answering a different question.
     if (
       RESERVED_FIELD_NAMES.includes(field.name) ||
-      precisionCompanions.has(field.name)
+      companionFields.has(field.name)
     ) {
       issue('reserved-field-name');
     }
@@ -1915,6 +2251,23 @@ export function validateSearchType(
       if (field.joinable === true && field.ref?.strategy === 'inline') {
         issue('joinable-with-inline-ref');
       }
+      if (field.ref?.strategy === 'lookup' && field.ref.literal !== undefined) {
+        // A declaration built outside TypeScript may name any string.
+        if (!(LITERAL_KINDS as readonly string[]).includes(field.ref.literal)) {
+          issue('unknown-literal-kind');
+        }
+        // A `local` lookup stores each referent as an object, and a literal
+        // read as a period is a string beside it: one stored list cannot be
+        // both.
+        if (field.ref.local === true) {
+          issue('literal-with-local');
+        }
+        // A join filters on the ids the field holds, and this field is
+        // filtered by its literals’ bounds instead.
+        if (field.joinable === true) {
+          issue('literal-with-joinable');
+        }
+      }
     } else {
       if (field.ref !== undefined) {
         issue('ref-not-allowed');
@@ -1941,21 +2294,22 @@ export function validateSearchType(
     // Derived from the kind→operator table, so validation, the surfaces and
     // the compilers cannot disagree: a kind without a `where` operator (text)
     // is neither filterable nor facetable, and only `range` kinds bin.
-    if (
-      field.filterable === true &&
-      filterOperatorFor(field.kind) === undefined
-    ) {
+    if (field.filterable === true && filterOperatorFor(field) === undefined) {
       issue('text-not-filterable');
     }
-    if (
-      field.facetable === true &&
-      filterOperatorFor(field.kind) === undefined
-    ) {
+    if (field.facetable === true && filterOperatorFor(field) === undefined) {
       issue('text-not-facetable');
+    }
+    // A lookup reading its literals as periods is no more facetable than a
+    // period field: its referents have no bounds, and a bucket per referent
+    // would offer a selection no filter can make.
+    const readsPeriods = storesPeriods(field);
+    if (field.facetable === true && readsPeriods) {
+      issue('period-not-facetable');
     }
     if (
       field.facetRanges !== undefined &&
-      filterOperatorFor(field.kind) !== 'range'
+      (filterOperatorFor(field) !== 'range' || readsPeriods)
     ) {
       issue('facet-ranges-not-allowed');
     }
@@ -2183,6 +2537,24 @@ export interface PhysicalFields {
    * other kind.
    */
   readonly precision: string | undefined;
+  /**
+   * The **bound companions** of a `period` field: `${name}_start` and
+   * `${name}_end`, the first and last second its values cover, in Unix
+   * seconds. The field itself stores the values verbatim for output, so what
+   * a filter compares and a sort orders on lives here. Declared for every
+   * period, `filterable` and `sortable` or not: a deployment may sort on a
+   * field it does not expose as sortable, and two int64 values per document
+   * cost less than a sort the engine refuses. `undefined` for every other
+   * field.
+   *
+   * `values` is where the periods themselves are stored: under the field’s
+   * own name for a `period`, and in a `${name}_literal` companion for a
+   * lookup reading its literals as periods ({@link ReferenceStrategy.literal}),
+   * whose own name holds the referents’ ids, as every lookup’s does.
+   */
+  readonly period:
+    | { readonly values: string; readonly start: string; readonly end: string }
+    | undefined;
 }
 
 /** The physical name of an inline reference’s
@@ -2234,6 +2606,23 @@ export function localLookupTargetsOf(
     return [];
   }
   return referencedTargetsOf(field, schema);
+}
+
+/**
+ * Whether a field stores entries that hold **no ids**: an inline reference
+ * naming no {@link ReferenceStrategy.identity identity}. Membership on it would
+ * test the nested object itself, so it is filtered by a condition welded to
+ * one entry alone. The one reading a validator and an adapter’s compiler share.
+ */
+export function holdsNoIds(
+  field: SearchField,
+  schema: SearchSchema | undefined,
+): boolean {
+  return (
+    schema !== undefined &&
+    nestedReferenceType(schema, field) !== undefined &&
+    identityFieldOf(field, schema) === undefined
+  );
 }
 
 /**
@@ -2342,6 +2731,119 @@ export function facetableFields(
   searchType: SearchType,
 ): readonly SearchField[] {
   return searchType.fields.filter((field) => field.facetable === true);
+}
+
+/**
+ * One facet a Root Type serves: a facetable field of its own, or a leaf of an
+ * inline reference the type is faceted on
+ * ({@link ReferenceStrategy.facetedLeaves}).
+ */
+export interface FacetDeclaration {
+  /** The logical name a query asks for and a result files buckets under: the
+   *  field’s own name, or `‹reference›.‹leaf›`. */
+  readonly name: string;
+  /** The field whose values the buckets are – the facetable field, or the
+   *  faceted leaf. Its kind types the buckets, and its label source labels
+   *  them. */
+  readonly field: SearchField;
+  /** The inline reference a faceted leaf is reached through; absent for a
+   *  field of the type’s own. */
+  readonly reference?: SearchField;
+  /** The physical field the engine facets ({@link physicalFields}): the field
+   *  itself or one of its companions, or the nested path of a leaf. */
+  readonly engineField: string;
+}
+
+/**
+ * Every facet a Root Type serves, in declaration order: each facetable field,
+ * then each reference’s faceted leaves after it. The one place a logical facet
+ * name is mapped to what an engine facets, so a surface, a validator and an
+ * adapter enumerate the same facets.
+ */
+export function facetsOf(
+  searchType: SearchType,
+  schema?: SearchSchema,
+): readonly FacetDeclaration[] {
+  if (schema === undefined) {
+    return declaredFacets(searchType, schema);
+  }
+  // Read per facet a query names, on every search: derived once per type.
+  let bySchema = facetsBySchema.get(schema);
+  if (bySchema === undefined) {
+    bySchema = new WeakMap();
+    facetsBySchema.set(schema, bySchema);
+  }
+  const cached = bySchema.get(searchType);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const facets = declaredFacets(searchType, schema);
+  bySchema.set(searchType, facets);
+  return facets;
+}
+
+/** The {@link ReferenceStrategy.facetedLeaves faceted leaves} an inline
+ *  reference declares, or none. */
+function facetedLeavesOf(inlineReference: SearchField): readonly string[] {
+  return (
+    (
+      inlineReference as {
+        readonly ref: { readonly facetedLeaves?: readonly string[] };
+      }
+    ).ref.facetedLeaves ?? []
+  );
+}
+
+const facetsBySchema = new WeakMap<
+  SearchSchema,
+  WeakMap<SearchType, readonly FacetDeclaration[]>
+>();
+
+function declaredFacets(
+  searchType: SearchType,
+  schema: SearchSchema | undefined,
+): readonly FacetDeclaration[] {
+  return searchType.fields.flatMap((field): FacetDeclaration[] => {
+    const own: FacetDeclaration[] =
+      field.facetable === true
+        ? [
+            {
+              name: field.name,
+              field,
+              engineField: physicalFields(field, schema).facet as string,
+            },
+          ]
+        : [];
+    const referenceType =
+      schema === undefined ? undefined : nestedReferenceType(schema, field);
+    if (referenceType === undefined) {
+      return own;
+    }
+    // Only an inline reference nests a reference type, and `searchSchema`
+    // has resolved every faceted leaf against it.
+    const leaves = facetedLeavesOf(field);
+    return [
+      ...own,
+      ...leaves.map((leafName): FacetDeclaration => {
+        const path = nestedFieldName(field.name, leafName);
+        return {
+          name: path,
+          field: fieldNamed(referenceType, leafName) as SearchField,
+          reference: field,
+          engineField: path,
+        };
+      }),
+    ];
+  });
+}
+
+/** The facet a Root Type serves under `name`, or `undefined`. */
+export function facetNamed(
+  searchType: SearchType,
+  name: string,
+  schema?: SearchSchema,
+): FacetDeclaration | undefined {
+  return facetsOf(searchType, schema).find((facet) => facet.name === name);
 }
 
 /** Fields usable in `where`, in declaration order. */
@@ -2783,6 +3285,30 @@ export function lastSecondOf(stored: StoredDate): number {
     : next.getTime() / 1000 - 1;
 }
 
+/** A range bound as stored: a `date` or `period` bound (a lookup’s too, where
+ *  it reads its literals as periods), ISO 8601 at the edge,
+ *  becomes Unix seconds ({@link isoToUnixSeconds}) – a `min` the first second
+ *  of what it names, a `max` the last ({@link lastSecondOf}), so the range
+ *  takes in the whole of each. Any other bound is stored as given; one the
+ *  codec cannot read is `undefined`. */
+export function storedRangeBound(
+  field: SearchField,
+  bound: number | string | undefined,
+  side: 'min' | 'max',
+): number | string | undefined {
+  if (
+    (field.kind !== 'date' && !storesPeriods(field)) ||
+    typeof bound !== 'string'
+  ) {
+    return bound;
+  }
+  const stored = isoToUnixSeconds(bound);
+  if (stored === undefined) {
+    return undefined;
+  }
+  return side === 'min' ? stored.seconds : lastSecondOf(stored);
+}
+
 /** `seconds` if a `date` field can store it – the int64 the engine keeps
  *  Unix seconds in – or `undefined`, the same answer {@link isoToUnixSeconds}
  *  gives a string it cannot parse. */
@@ -2922,6 +3448,7 @@ export function physicalFields(
       facet: undefined,
       identity: undefined,
       precision: undefined,
+      period: undefined,
     };
   }
   // A field storing a nested OBJECT cannot be filtered or faceted as itself, so
@@ -2947,7 +3474,33 @@ export function physicalFields(
           : `${filtered}_facet`,
     identity,
     precision: field.kind === 'date' ? `${field.name}_precision` : undefined,
+    period: storesPeriods(field)
+      ? {
+          values:
+            field.kind === 'period' ? field.name : `${field.name}_literal`,
+          start: `${field.name}_start`,
+          end: `${field.name}_end`,
+        }
+      : undefined,
   };
+}
+
+/** The value companions a field stores beside its own name: a `date`’s
+ *  precision, a `period`’s two bounds, and the periods a lookup reads its
+ *  literals as. */
+export function companionNames(field: SearchField): string[] {
+  // Text stores none, and a declaration without `locales` – which validation
+  // reports – has no per-locale fanout to compute.
+  if (field.kind === 'text') {
+    return [];
+  }
+  const { precision, period } = physicalFields(field);
+  return [
+    precision,
+    period?.values === field.name ? undefined : period?.values,
+    period?.start,
+    period?.end,
+  ].filter((name): name is string => name !== undefined);
 }
 
 /**

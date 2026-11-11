@@ -12,6 +12,7 @@ import type { Reader, ReadOptions } from '../src/sparql/reader.js';
 import { NotSupported } from '../src/sparql/reader.js';
 import { Dataset, Distribution } from '@lde/dataset';
 import type { DatasetWriter } from '../src/writer/writer.js';
+import type { StagePhases } from '../src/pipelineEvent.js';
 import type {
   Validator,
   ValidationResult,
@@ -925,7 +926,12 @@ describe('Stage', () => {
       });
 
       await stage.run(dataset, distribution, collectingWriter());
-      expect(seen).toEqual({ dataset, distribution, stage: 'my-stage' });
+      expect(seen).toEqual({
+        dataset,
+        distribution,
+        stage: 'my-stage',
+        count: expect.any(Function),
+      });
     });
 
     it('applies multiple attached transforms in order', async () => {
@@ -1120,6 +1126,51 @@ describe('Stage', () => {
       await stage.run(dataset, distribution, collectingItemWriter<string>());
 
       expect(seen).toEqual(['http://root/1', 'http://root/2']);
+    });
+
+    it('passes the values a projection could not read on to the run’s receiver', async () => {
+      const valueUnread = vi.fn();
+      const stage = new Stage<string>({
+        name: 'project',
+        itemSelector: mockItemSelector([{ s: namedNode('http://root/1') }]),
+        readers: mockExecutor([q1]),
+        project: (_quads, context) => {
+          context.valueUnread('Work', 'dateCreated', {
+            id: 'http://root/1',
+            value: 'onbekend',
+          });
+          return [];
+        },
+      });
+
+      await stage.run(dataset, distribution, collectingItemWriter<string>(), {
+        valueUnread,
+      });
+
+      expect(valueUnread).toHaveBeenCalledWith('Work', 'dateCreated', {
+        id: 'http://root/1',
+        value: 'onbekend',
+      });
+    });
+
+    it('lets a projection report unread values when the run has no receiver', async () => {
+      const stage = new Stage<string>({
+        name: 'project',
+        itemSelector: mockItemSelector([{ s: namedNode('http://root/1') }]),
+        readers: mockExecutor([q1]),
+        project: (_quads, context) => {
+          context.valueUnread('Work', 'dateCreated', {
+            id: 'http://root/1',
+            value: 'onbekend',
+          });
+          return ['projected'];
+        },
+      });
+      const writer = collectingItemWriter<string>();
+
+      await stage.run(dataset, distribution, writer);
+
+      expect(writer.items).toEqual(['projected']);
     });
 
     it('invokes project once per batch (ceil(roots / batchSize))', async () => {
@@ -1336,6 +1387,305 @@ describe('Stage', () => {
       await stage.run(dataset, distribution, collectingWriter());
 
       expect(reader.read.mock.calls[0][1]).toBe(distribution);
+    });
+  });
+
+  describe('phase durations', () => {
+    // Real timers, with delays far apart enough that scheduling noise cannot
+    // move a phase across the bounds asserted below.
+    const DELAY = 60;
+
+    function delay(milliseconds: number): Promise<void> {
+      return new Promise((resolve) => setTimeout(resolve, milliseconds));
+    }
+
+    function slowReader(quads: Quad[], milliseconds: number): Reader {
+      return {
+        async read() {
+          return (async function* () {
+            await delay(milliseconds);
+            yield* quads;
+          })();
+        },
+      };
+    }
+
+    function slowTransform(milliseconds: number): QuadTransform<ReaderContext> {
+      return async function* slowEnrich(quads) {
+        yield* quads;
+        await delay(milliseconds);
+      };
+    }
+
+    function slowWriter(milliseconds: number): DatasetWriter {
+      return {
+        async write(_dataset, data) {
+          for await (const _quad of data) {
+            // Drain, then take time of the writer’s own.
+          }
+          await delay(milliseconds);
+        },
+      };
+    }
+
+    async function phasesOf(
+      stage: Stage<unknown>,
+      writer: DatasetWriter<unknown>,
+    ): Promise<StagePhases> {
+      const onComplete = vi.fn();
+      await stage.run(dataset, distribution, writer, { onComplete });
+      expect(onComplete).toHaveBeenCalledOnce();
+      return onComplete.mock.calls[0][0].phases;
+    }
+
+    it('attributes the time of a stage with an item selector to its phases', async () => {
+      const stage = new Stage({
+        name: 'test',
+        itemSelector: {
+          async *select() {
+            await delay(DELAY);
+            yield { s: namedNode('http://example.org/s1') };
+          },
+        },
+        readers: {
+          reader: slowReader([q1], DELAY),
+          transform: slowTransform(DELAY),
+        },
+        project: async function* (quads) {
+          await delay(DELAY);
+          yield* quads;
+        },
+      });
+
+      const phases = await phasesOf(stage, slowWriter(DELAY));
+
+      expect(phases.selectMs).toBeGreaterThanOrEqual(DELAY - 5);
+      expect(phases.readMs).toBeGreaterThanOrEqual(DELAY - 5);
+      expect(phases.readMs).toBeLessThan(2 * DELAY);
+      expect(phases.transforms).toEqual([
+        { name: 'slowEnrich', durationMs: expect.any(Number) },
+      ]);
+      expect(phases.transforms[0].durationMs).toBeGreaterThanOrEqual(DELAY - 5);
+      // Its own time only: the reader it pulls from is not counted again.
+      expect(phases.transforms[0].durationMs).toBeLessThan(2 * DELAY);
+      expect(phases.projectMs).toBeGreaterThanOrEqual(DELAY - 5);
+      expect(phases.projectMs).toBeLessThan(2 * DELAY);
+      expect(phases.writeMs).toBeGreaterThanOrEqual(DELAY - 5);
+      expect(phases.writeMs).toBeLessThan(2 * DELAY);
+      expect(phases.validateMs).toBe(0);
+    });
+
+    it('does not count a reader’s time against a transform that passes quads through', async () => {
+      const stage = new Stage({
+        name: 'test',
+        readers: {
+          reader: slowReader([q1, q2], DELAY),
+          transform: async function* passThrough(quads) {
+            yield* quads;
+          },
+        },
+      });
+
+      const phases = await phasesOf(stage, collectingWriter());
+
+      expect(phases.readMs).toBeGreaterThanOrEqual(DELAY - 5);
+      expect(phases.transforms[0].durationMs).toBeLessThan(DELAY / 2);
+      // The writer only waited on the reader, which is not its own time.
+      expect(phases.writeMs).toBeLessThan(DELAY / 2);
+    });
+
+    it('attributes the time of a stage without an item selector to its phases', async () => {
+      const stage = new Stage({
+        name: 'test',
+        readers: [
+          { reader: slowReader([q1], DELAY), transform: slowTransform(DELAY) },
+          mockExecutor([q2]),
+        ],
+      });
+
+      const phases = await phasesOf(stage, slowWriter(DELAY));
+
+      expect(phases.selectMs).toBe(0);
+      expect(phases.readMs).toBeGreaterThanOrEqual(DELAY - 5);
+      expect(phases.transforms[0].durationMs).toBeGreaterThanOrEqual(DELAY - 5);
+      expect(phases.writeMs).toBeGreaterThanOrEqual(DELAY - 5);
+      expect(phases.projectMs).toBe(0);
+    });
+
+    it('adds up a phase over batches that run at the same time', async () => {
+      const stage = new Stage({
+        name: 'test',
+        batchSize: 1,
+        itemSelector: mockItemSelector([
+          { s: namedNode('http://example.org/s1') },
+          { s: namedNode('http://example.org/s2') },
+          { s: namedNode('http://example.org/s3') },
+        ]),
+        readers: slowReader([q1], DELAY),
+      });
+
+      const started = performance.now();
+      const phases = await phasesOf(stage, collectingWriter());
+      const elapsed = performance.now() - started;
+
+      expect(phases.readMs).toBeGreaterThanOrEqual(3 * (DELAY - 5));
+      expect(elapsed).toBeLessThan(2 * DELAY);
+    });
+
+    it('names an anonymous transform by its position', async () => {
+      const stage = new Stage({
+        name: 'test',
+        readers: [
+          mockExecutor([q1]),
+          {
+            reader: mockExecutor([q2]),
+            transform: [
+              (quads) => quads,
+              async function* named(quads) {
+                yield* quads;
+              },
+            ],
+          },
+        ],
+      });
+
+      const phases = await phasesOf(stage, collectingWriter());
+
+      expect(phases.transforms.map(({ name }) => name)).toEqual([
+        'transform 1',
+        'named',
+      ]);
+    });
+
+    it('adds up a transform attached to several readers as one', async () => {
+      async function* shared(quads: AsyncIterable<Quad>) {
+        yield* quads;
+      }
+      const stage = new Stage({
+        name: 'test',
+        readers: [
+          { reader: mockExecutor([q1]), transform: shared },
+          { reader: mockExecutor([q2]), transform: shared },
+        ],
+      });
+
+      const phases = await phasesOf(stage, collectingWriter());
+
+      expect(phases.transforms.map(({ name }) => name)).toEqual(['shared']);
+    });
+
+    it('counts a transform’s work before it returns its stream', async () => {
+      const stage = new Stage({
+        name: 'test',
+        readers: {
+          reader: mockExecutor([q1]),
+          transform: function eager(quads) {
+            const until = performance.now() + DELAY;
+            while (performance.now() < until) {
+              // Busy, as a transform doing its setup synchronously would be.
+            }
+            return quads;
+          },
+        },
+      });
+
+      const phases = await phasesOf(stage, collectingWriter());
+
+      expect(phases.transforms[0].durationMs).toBeGreaterThanOrEqual(DELAY - 5);
+    });
+
+    it('counts the time validation takes', async () => {
+      const validator: Validator = {
+        async validate(): Promise<ValidationResult> {
+          await delay(DELAY);
+          return { conforms: true, violations: 0 };
+        },
+        async report(): Promise<ValidationReport> {
+          return { conforms: true, violations: 0, quadsValidated: 1 };
+        },
+      };
+      const stage = new Stage({
+        name: 'test',
+        itemSelector: mockItemSelector([
+          { s: namedNode('http://example.org/s1') },
+        ]),
+        readers: mockExecutor([q1]),
+        validation: { validator, onInvalid: 'skip' },
+      });
+
+      const phases = await phasesOf(stage, collectingWriter());
+
+      expect(phases.validateMs).toBeGreaterThanOrEqual(DELAY - 5);
+    });
+  });
+
+  describe('counts', () => {
+    async function countsOf(
+      stage: Stage<unknown>,
+    ): Promise<Readonly<Record<string, number>>> {
+      const onComplete = vi.fn();
+      await stage.run(dataset, distribution, collectingWriter(), {
+        onComplete,
+      });
+      return onComplete.mock.calls[0][0].counts;
+    }
+
+    it('adds up what transforms count over all batches', async () => {
+      const stage = new Stage({
+        name: 'test',
+        batchSize: 1,
+        itemSelector: mockItemSelector([
+          { s: namedNode('http://example.org/s1') },
+          { s: namedNode('http://example.org/s2') },
+        ]),
+        readers: {
+          reader: mockExecutor([q1]),
+          transform: async function* (quads, context) {
+            context.count('fetched');
+            context.count('from store', 2);
+            yield* quads;
+          },
+        },
+      });
+
+      expect(await countsOf(stage)).toEqual({ fetched: 2, 'from store': 4 });
+    });
+
+    it('adds what a projection counts', async () => {
+      const stage = new Stage({
+        name: 'test',
+        itemSelector: mockItemSelector([
+          { s: namedNode('http://example.org/s1') },
+        ]),
+        readers: mockExecutor([q1]),
+        project: function* (quads, context) {
+          context.count('projected', quads.length);
+          yield* quads;
+        },
+      });
+
+      expect(await countsOf(stage)).toEqual({ projected: 1 });
+    });
+
+    it('counts in a stage without an item selector', async () => {
+      const stage = new Stage({
+        name: 'test',
+        readers: {
+          reader: mockExecutor([q1]),
+          transform: async function* (quads, context) {
+            context.count('seen');
+            yield* quads;
+          },
+        },
+      });
+
+      expect(await countsOf(stage)).toEqual({ seen: 1 });
+    });
+
+    it('reports no counts when nothing counted', async () => {
+      const stage = new Stage({ name: 'test', readers: mockExecutor([q1]) });
+
+      expect(await countsOf(stage)).toEqual({});
     });
   });
 });

@@ -246,6 +246,39 @@ describe('fanning an edge out into one entry per tuple', () => {
     ).toEqual([RKD, RKD]);
   });
 
+  it('reports an unreadable value on a fanned-out edge once, not once per entry', () => {
+    const datedEdge = defineSearchType({
+      ...weldableEdge,
+      fields: [
+        ...weldableEdge.fields,
+        {
+          name: 'year',
+          kind: 'date',
+          path: `${SCHEMA_ORG}startDate`,
+          output: true,
+        },
+      ],
+    });
+    const node = {
+      ...twoRoles,
+      [workKey('creator')]: [
+        {
+          ...(twoRoles[workKey('creator')] as Record<string, unknown>[])[0],
+          [edgeKey('year')]: [{ '@value': 'Z.j' }],
+        },
+      ],
+    };
+    const unread: unknown[] = [];
+
+    projectDocument(node, work, searchSchema(work, person, datedEdge), {
+      onUnreadable: (value) => unread.push(value),
+    });
+
+    expect(unread).toEqual([
+      { field: 'creator.year', value: 'Z.j', id: 'https://ex/work/2' },
+    ]);
+  });
+
   it('takes the product where two weldable leaves are multi-valued', () => {
     const twoOfEach = {
       '@id': 'https://ex/work/3',
@@ -1254,12 +1287,6 @@ describe('declaring the companion', () => {
     ).toThrow(/names no target/);
   });
 
-  it('rejects filterable without an identity to filter through', () => {
-    expect(() => searchSchema(workWith({}), person, creatorEdge)).toThrow(
-      /without an “identity”/,
-    );
-  });
-
   it('rejects an identity declared inside a reference type', () => {
     // A companion is a flat field beside the reference, and only a Root Type
     // has somewhere flat to put one. Nested, the projection would write it into
@@ -1780,5 +1807,177 @@ describe('an edge the graph may leave out', () => {
     expect(() => searchSchema(optionalWork, person, strictEdge)).toThrow(
       /declares an “edgeClass” and requires “role”/,
     );
+  });
+});
+
+describe('filtering an inline reference without an identity', () => {
+  /** An entry made of literals alone: nothing in it names another document. */
+  const propertyValue = defineSearchType({
+    name: 'PropertyValue',
+    fields: [
+      {
+        name: 'value',
+        kind: 'keyword',
+        path: `${SCHEMA_ORG}value`,
+        output: true,
+        filterable: true,
+      },
+      {
+        name: 'propertyID',
+        kind: 'keyword',
+        path: `${SCHEMA_ORG}propertyID`,
+        output: true,
+        filterable: true,
+      },
+    ],
+  });
+  const workWithIdentifier = (roles: Record<string, boolean>) =>
+    defineSearchType({
+      name: 'Work',
+      class: `${SCHEMA_ORG}CreativeWork`,
+      fields: [
+        {
+          name: 'identifier',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}identifier`,
+          array: true,
+          output: true,
+          ...roles,
+          ref: { strategy: 'inline', typeName: 'PropertyValue' },
+        },
+      ],
+    });
+  const filterable = workWithIdentifier({ filterable: true });
+  const schemaOf = (type: SearchType) => searchSchema(type, propertyValue);
+  const base: SearchQuery = {
+    where: [],
+    orderBy: [],
+    limit: 10,
+    offset: 0,
+    facets: [],
+    locale: 'nl',
+  };
+
+  it('accepts filterable, which it serves by welding', () => {
+    expect(() => schemaOf(filterable)).not.toThrow();
+    expect(
+      physicalFields(filterable.fields[0], schemaOf(filterable)).identity,
+    ).toBeUndefined();
+  });
+
+  it('still rejects facetable, which needs ids to count', () => {
+    expect(() => schemaOf(workWithIdentifier({ facetable: true }))).toThrow(
+      /“facetable” without an “identity”/,
+    );
+  });
+
+  it('rejects filterable when no entry field can be filtered', () => {
+    const literalsOnly = defineSearchType({
+      name: 'PropertyValue',
+      fields: [
+        {
+          name: 'value',
+          kind: 'keyword',
+          path: `${SCHEMA_ORG}value`,
+          output: true,
+        },
+      ],
+    });
+    expect(() => searchSchema(filterable, literalsOnly)).toThrow(
+      /declares no “filterable” field/,
+    );
+  });
+
+  it('rejects filterable on a reference nested inside another entry', () => {
+    // A weld is one level: a condition on one entry cannot itself be welded
+    // inside another entry.
+    const edge = defineSearchType({
+      name: 'Edge',
+      fields: [
+        {
+          name: 'ids',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}identifier`,
+          output: true,
+          filterable: true,
+          ref: { strategy: 'inline', typeName: 'PropertyValue' },
+        },
+      ],
+    });
+    const root = defineSearchType({
+      name: 'Work',
+      class: `${SCHEMA_ORG}CreativeWork`,
+      fields: [
+        {
+          name: 'creator',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}creator`,
+          array: true,
+          output: true,
+          ref: { strategy: 'inline', typeName: 'Edge' },
+        },
+      ],
+    });
+    expect(() => searchSchema(root, edge, propertyValue)).toThrow(
+      /“Edge” is a reference type: a condition on one entry cannot be welded/,
+    );
+  });
+
+  it('refuses membership on a non-filterable one as not filterable', () => {
+    const displayOnly = workWithIdentifier({});
+    expect(
+      validateQuery(
+        {
+          ...base,
+          where: [{ or: [{ field: 'identifier', in: ['x'] }] }],
+        },
+        displayOnly,
+        schemaOf(displayOnly),
+      ),
+    ).toEqual([
+      { part: 'where', field: 'identifier', reason: 'not-filterable' },
+    ]);
+  });
+
+  it('accepts a condition on one entry', () => {
+    expect(
+      validateQuery(
+        {
+          ...base,
+          where: [
+            {
+              or: [
+                {
+                  field: 'identifier',
+                  entry: [
+                    { field: 'value', in: ['G11125-19'] },
+                    { field: 'propertyID', in: ['https://example.org/id'] },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+        filterable,
+        schemaOf(filterable),
+      ),
+    ).toEqual([]);
+  });
+
+  it('refuses membership, since the entries hold no ids', () => {
+    // Without an identity there is no companion to hold ids, so `in` would
+    // compile against the nested object itself, which no engine filters.
+    expect(
+      validateQuery(
+        {
+          ...base,
+          where: [{ or: [{ field: 'identifier', in: ['G11125-19'] }] }],
+        },
+        filterable,
+        schemaOf(filterable),
+      ),
+    ).toEqual([
+      { part: 'where', field: 'identifier', reason: 'operator-mismatch' },
+    ]);
   });
 });

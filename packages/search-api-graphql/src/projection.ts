@@ -12,6 +12,7 @@ import {
 } from '@lde/search';
 import {
   fieldNamed,
+  literalKindOf,
   nestedReferenceType,
   referencedTargetsOf,
 } from '@lde/search/adapter';
@@ -174,30 +175,37 @@ function fromSelections(
       // type; the fragment’s fields are read like any other, and each target
       // takes the ones it serves.
       const targets = referencedTargetsOf(field, schema);
+      // A lookup reading its literals as periods wraps each referent in an
+      // entry, so what is selected of the referent sits under `reference`.
+      const referentSelections =
+        literalKindOf(field) === 'period'
+          ? selectionsNamed(selected.selectionSet, 'reference', fragments)
+          : selected.selectionSet === undefined
+            ? []
+            : [selected.selectionSet];
       // Only what a target actually serves. A selection carries more than
       // that: `id` is on the referring document already, and every GraphQL
       // client worth the name injects `__typename` into every selection set –
       // asking the engine for either would fail the query at the port's guard.
-      const wanted = fieldsOf(selected.selectionSet, fragments)
+      const wanted = referentSelections
+        .flatMap((selectionSet) => fieldsOf(selectionSet, fragments))
         .map((node) => node.name.value)
         .filter((name) => targets.some((target) => servesField(target, name)));
       const entry = (projection[selected.name.value] ??= {});
       entry.fields = [...new Set([...(entry.fields ?? []), ...wanted])];
-      if (selected.selectionSet !== undefined) {
-        for (const target of targets) {
-          const below = fromSelections(
-            [selected.selectionSet],
-            target,
-            fragments,
-            schema,
-          );
-          if (Object.keys(below).length > 0) {
-            // Merged level by level, not key by key: one lookup selected twice
-            // – two fragments each spreading it – must union what each asked
-            // for, or the second selection silently replaces the first and a
-            // field the client asked for is never fetched.
-            entry.resolve = mergeProjections(entry.resolve, below);
-          }
+      for (const target of targets) {
+        const below = fromSelections(
+          referentSelections,
+          target,
+          fragments,
+          schema,
+        );
+        if (Object.keys(below).length > 0) {
+          // Merged level by level, not key by key: one lookup selected twice
+          // – two fragments each spreading it – must union what each asked
+          // for, or the second selection silently replaces the first and a
+          // field the client asked for is never fetched.
+          entry.resolve = mergeProjections(entry.resolve, below);
         }
       }
     }

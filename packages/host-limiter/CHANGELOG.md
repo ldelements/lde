@@ -1,3 +1,27 @@
+## 0.3.0 (2026-11-10)
+
+### 🚀 Features
+
+- ⚠️  adapt each host’s limit to how the host responds, in the limiter and the resolver ([#1043](https://github.com/ldelements/lde/pull/1043))
+
+### ⚠️  Breaking Changes
+
+- adapt each host’s limit to how the host responds, in the limiter and the resolver  ([#1043](https://github.com/ldelements/lde/pull/1043))
+  the per-host limit of createHostLimiter and mapHostLimited is now a ceiling that
+  each host starts below, at one task in flight; HostLimiter gains pause, and run hands its task a
+  slot. The resolver limits concurrency and perHostConcurrency are removed: pass
+  limiter: createHostLimiter(global, perHost) instead."
+  M	README.md
+  M	docs/reference/host-limiter.md
+  M	docs/reference/resolver.md
+  M	packages/host-limiter/README.md
+  M	packages/host-limiter/package.json
+  M	packages/host-limiter/src/index.ts
+  M	packages/host-limiter/src/mapHostLimited.ts
+  M	packages/host-limiter/test/mapHostLimited.test.ts
+  M	packages/resolver/src/resolver.ts
+  M	packages/resolver/test/resolver.test.ts
+
 ## 0.2.1 (2026-10-31)
 
 ### 🩹 Fixes
