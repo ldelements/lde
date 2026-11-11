@@ -1,3 +1,9 @@
+## 0.41.2 (2026-11-11)
+
+### 🚀 Features
+
+- **search:** filter an inline reference on its own literal fields ([#1048](https://github.com/ldelements/lde/pull/1048))
+
 ## 0.41.1 (2026-11-10)
 
 ### 🩹 Fixes

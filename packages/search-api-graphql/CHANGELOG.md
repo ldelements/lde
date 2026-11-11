@@ -1,3 +1,13 @@
+## 0.45.2 (2026-11-11)
+
+### 🚀 Features
+
+- **search:** filter an inline reference on its own literal fields ([#1048](https://github.com/ldelements/lde/pull/1048))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.41.2
+
 ## 0.45.1 (2026-11-10)
 
 ### 🧱 Updated Dependencies
