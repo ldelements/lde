@@ -1,3 +1,9 @@
+## 0.41.3 (2026-11-11)
+
+### 🚀 Features
+
+- **search:** facet a root document on its entries’ leaves ([#1049](https://github.com/ldelements/lde/pull/1049))
+
 ## 0.41.2 (2026-11-11)
 
 ### 🚀 Features
