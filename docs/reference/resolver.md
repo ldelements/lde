@@ -1,8 +1,8 @@
 # @lde/resolver
 
 Everything around fetching a fact from **outside the graph**: a durable store,
-bounded outbound work, retry of only what a retry can fix, per-key failure isolation and a cap
-on how much one run may fetch. A caller writes the fetch and what to do with the
+bounded outbound work, retry of only what a retry can fix, per-key failure isolation and an
+optional cap on how long one run may fetch. A caller writes the fetch and what to do with the
 answer, and nothing else.
 
 _Transforms rewrite what the graph said; resolvers fetch what it only pointed
@@ -25,7 +25,6 @@ const resolver = createResolver<string, Place>({
   version: '1',
   limits: {
     batchSize: 25,
-    fetchesPerResolver: 5_000,
     ttlMs: 30 * 24 * 3_600_000,
   },
   report: (failure) => console.warn(failure.key, failure.reason),
@@ -68,7 +67,7 @@ middle one earns its place:
 - **`absent`** – the source answered and has none. That is durable, so a record
   may be indexed as having no such value.
 - **`unresolved`** – we do not know: the fetch failed, timed out, went down with
-  its host, or the budget deferred it. Indexing this as an absence bakes a
+  its host, or the fetch window passed before it was sent. Indexing this as an absence bakes a
   passing outage into the index until the next rebuild.
 
 There is no accessor that collapses `absent` and `unresolved`, deliberately: it
@@ -82,16 +81,17 @@ live**. `FactStore` is that place, and the two consequences run through the rest
 of the design:
 
 - **A TTL marks stale, it never evicts.** An elapsed TTL makes a key a candidate
-  for a refresh; if the budget or the source denies it, the stored fact is still
-  served. Eviction here would be data loss, not cache management.
+  for a refresh; if the fetch fails, or the fetch window passes before it is
+  sent, the stored fact is still served. Eviction here would be data loss, not cache management.
 - **Removing a fact is explicit.** `resolver.purge(keys)` is the only way, and
   the answer to a fact that turned out wrong – nothing revalidates, because
   neither known consumer has a validator to revalidate against.
 - **An absence is remembered too**, under its own `absenceTtlMs` (a week by
   default, even when `ttlMs` is unset – an absence is a weaker claim than a
   fact). Without this, a key the source does not know returns as missing every
-  run, sorts ahead of merely stale keys and spends the budget re-asking a
-  settled question, so a register with a tail of unknown keys never warms.
+  run, sorts ahead of merely stale keys and costs a fetch re-asking a settled
+  question, so a register with a tail of unknown keys is fetched again in full,
+  every run.
 - **A failure is not remembered.** It is transient, so the batch is simply
   retried next run – within the run, a host that is down is handled by the
   breaker below rather than by a record that would hide its recovery.
@@ -111,8 +111,9 @@ Because a fact is a projection, the projection has a version. Bump `version` in
 the same commit that changes what you derive, and rows stamped with the old one
 read as missing and are fetched afresh. Nothing else can express it: such a row
 is not old, so no TTL applies, and `purge` would need you to enumerate every key
-you ever wrote. Expect to raise `fetchesPerResolver` for a few runs while the
-store re-warms.
+you ever wrote. A bump makes every row missing at once, so the next run
+re-fetches the whole store – over several runs, if a `fetchWindowMs` cuts it
+short.
 
 `sqliteFactStore` is the default backend, on Node’s own `node:sqlite`, so keyed
 reads and single-row writes cost no dependency. `memoryFactStore` is for tests.
@@ -125,28 +126,32 @@ process is done with it. `node:sqlite` is loaded on first use rather than at
 import, so importing this package costs nothing on a runtime without it; the
 manifest declares `engines.node >= 24` all the same.
 
-## What a run may spend
+## How long a run may fetch
 
-`fetchesPerResolver` caps how many references one **resolver** fetches,
-refreshes included – not one `resolveAll`, so a caller passing many batches is
-still one run. Without it, the first run after a cold or purged store hands an
-upstream service the entire backlog at once. With it, the store warms over
-successive runs and every run still completes: what is not fetched degrades to
-the stored value, or is answered `unresolved`.
+Nothing caps how many references a run fetches: each host’s limit adapts to
+what the host can bear (see below), so a cold or purged store is fetched in
+full in one run, as fast as its hosts allow.
 
-The counter never resets, so **a resolver is a run-scoped object**: construct
-one, use it, discard it. A resolver kept alive across runs stops fetching when
-its budget is gone and never starts again.
+`fetchWindowMs` bounds how long a run spends doing so, for a deployment whose
+run has to finish in time. It is how long after the resolver is created it may
+still **start** a batch – measured on the resolver, not per `resolveAll`, so a
+caller passing many batches is still one run. Once the window has passed, a
+batch that has not started is not sent: each of its keys is served from the
+store where a usable fact is stored, and otherwise answered `unresolved`, so the
+run still completes and a later run fetches what this one did not. A batch that
+started within the window finishes, retries included. Unset, there is no limit.
 
-Within the budget, **a key with nothing stored is fetched before one that is
-merely stale** – a missing fact costs the caller a value, where a stale one only
-ages it. A deferral is not reported: it is the cap working, the caller already
-has it in the returned resolution, and one callback per deferred key would bury
-the failures that matter on the very run that produces most of them.
+**A key with nothing stored is fetched before one that is merely stale** – a
+missing fact costs the caller a value, where a stale one only ages it – so the
+window goes to the keys that matter most first. A deferral is not reported: it
+is the cap working, the caller already has it in the returned resolution, and
+one callback per deferred key would bury the failures that matter on the very
+run that produces most of them.
 
-The default of 500 is tuned to be polite on a small store, not to fill a
-register-scale one: a first run over 50 000 references at that setting warms 1%
-of them. Set it to what your upstream can bear.
+**A resolver is a run-scoped object**: construct one per run, use it, discard
+it. A host its breaker writes off stays written off for the resolver’s life, and
+the fetch window is measured from its creation, so a resolver kept alive across
+runs never retries the one and stops fetching once the other has passed.
 
 ## Bounding, waiting and giving up on a host
 
@@ -218,11 +223,8 @@ costs the threshold in bursts before the breaker saves the rest, plus the
 batches of the last burst, which were already in flight and still run.
 Retrying every reference against a host that is down is the stampede, not the
 remedy, and it costs the run’s wall clock as much as the host’s patience.
-Written-off references are refunded to the fetch budget, since they sent
-nothing – and refunded in time to be spent on other hosts in the same call, so a
-dead host cannot deny a live one an allowance it never used. The breaker lives on
-the resolver rather than in the store, so a host that recovers is retried on the
-very next run.
+The breaker lives on the resolver rather than in the store, so a host that
+recovers is retried on the very next run – by the next run’s resolver.
 
 ## Failure degrades a reference or a batch, not the run
 
@@ -241,8 +243,7 @@ stall that may pass: the resolver’s own timeout, or a broken connection –
 `ECONNRESET`, `ECONNREFUSED`, `ETIMEDOUT`, `EAI_AGAIN`, `UND_ERR_SOCKET` or
 `UND_ERR_CONNECT_TIMEOUT` on the error or its `cause`, where Node’s `fetch` puts
 it. Such a batch queues again behind the batches already waiting for its host,
-for one more attempt at no second unit of the budget, which counts references,
-not requests.
+for one more attempt.
 
 The stall counts against the host when it first fails, not after that second
 attempt, so a host that times out on everything is written off without every
@@ -253,8 +254,7 @@ a second time. A burst of stalls can still reach the threshold before any second
 attempt comes round, since those queue behind every batch already waiting for
 the host; within one run that cannot be told from a dead host, and the next run
 asks again. If the host is written off while the batch waits,
-the batch is sent nothing more and keeps the reason it first failed for; it was
-contacted once, so it is not refunded.
+the batch is sent nothing more and keeps the reason it first failed for.
 
 **A source that says to come back later** gets what it asked for. Throw
 `RetryableError`, with `retryAfterMs` from `parseRetryAfter(response.headers.get('retry-after'))`,
@@ -268,7 +268,7 @@ a date already past – or with a delay of 0, which names no real wait, only tha
 backs off, 500 ms and then 1 s. After two retries, or for a delay longer than
 `timeoutMs`, which is not waited out, the call fails for this run and counts
 against the host like any other throw. If the host is written off while the
-batch waits, it is sent nothing more and keeps its own reason and its charge.
+batch waits, it is sent nothing more and keeps its own reason.
 
 ```ts
 fetch: async ([url], { signal }) => {
@@ -319,17 +319,17 @@ it.
 ## Counting a run
 
 `report` covers failures one key at a time. To see a run whole – how much came
-from the store, how much was fetched, what the budget deferred – pass `count` to
+from the store, how much was fetched, what the fetch window deferred – pass `count` to
 `resolveAll`. It is called once per distinct key with what became of it:
 
-| Count         | The key                                                          |
-| ------------- | ---------------------------------------------------------------- |
-| `fetched`     | was answered by the source this run                              |
-| `absent`      | was answered by the source, which has nothing for it             |
-| `from store`  | was answered by the store, and was not due a fetch               |
-| `failed`      | failed to fetch                                                  |
-| `written off` | was not sent, because its host had failed its way out of the run |
-| `deferred`    | was due a fetch, but not sent because the fetch budget was spent |
+| Count         | The key                                                                   |
+| ------------- | ------------------------------------------------------------------------- |
+| `fetched`     | was answered by the source this run                                       |
+| `absent`      | was answered by the source, which has nothing for it                      |
+| `from store`  | was answered by the store, and was not due a fetch                        |
+| `failed`      | failed to fetch                                                           |
+| `written off` | was not sent, because its host had failed its way out of the run          |
+| `deferred`    | was due a fetch, but not sent because the fetch window had already passed |
 
 For the last three, a stored fact may still stand in.
 
@@ -344,8 +344,7 @@ const resolved = await resolver.resolveAll(iris, { count: context.count });
 
 `batchSize` defaults to 1 – one reference, one call. Raise it only for a source
 that takes a list, where a batch of references is a single request: the Network
-of Terms’ `lookup(uris: [...])` is the motivating case, and there the per-run
-volume cap, not per-host concurrency, is what protects the store behind the API.
+of Terms’ `lookup(uris: [...])` is the motivating case.
 
 ## API
 
@@ -366,7 +365,8 @@ volume cap, not per-host concurrency, is what protects the store behind the API.
 store: a database left by an earlier run opens cleanly, and even takes a
 transaction, when its file or directory is no longer writable – a remounted
 volume, or a pod now running as another user. Call it at startup, or the failure
-surfaces at the end of the first batch with the fetch budget already spent.
+surfaces at the end of the first batch with its requests already sent for facts
+that cannot be kept.
 
 Memory is bounded by what the caller passes to `resolveAll`: the resolver holds
 that batch, its stored facts and its results, and nothing beyond them

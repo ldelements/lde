@@ -1,7 +1,7 @@
 {
   "name": "@lde/resolver",
   "version": "0.6.0",
-  "description": "Resolve external references with a durable fact store, bounded outbound work, timeouts, retry, failure isolation and a per-run volume cap",
+  "description": "Resolve external references with a durable fact store, adaptive per-host limits, timeouts, retry, failure isolation and an optional fetch window",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
     "directory": "packages/resolver"
