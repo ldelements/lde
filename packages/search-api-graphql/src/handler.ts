@@ -126,10 +126,15 @@ export function createSearchGraphQLHandler(
     // different class, which every host that checks `instanceof Response`
     // nominally – SvelteKit, Hono, Next – rejects. yoga ignores the keys a
     // runtime leaves `undefined`, so one without them keeps the ponyfill.
+    // The stream classes travel together: yoga pipes a native request body
+    // through `fetchAPI.TransformStream` to limit its size, which a ponyfill
+    // TransformStream cannot accept.
     fetchAPI: {
       Request: globalThis.Request,
       Response: globalThis.Response,
       ReadableStream: globalThis.ReadableStream,
+      WritableStream: globalThis.WritableStream,
+      TransformStream: globalThis.TransformStream,
     },
     landingPage: false,
     graphiql: options.playground !== false,
