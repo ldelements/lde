@@ -1394,7 +1394,6 @@ describe('Stage', () => {
       const middle = new Stage({
         name: 'middle',
         readers: mockExecutor([]),
-        emitOutput: false,
       });
       const last = new Stage({
         name: 'last',
