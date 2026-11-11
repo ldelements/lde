@@ -659,15 +659,25 @@ facets: { creator { value count label { value } } }
 Two declarations make that work.
 
 **`identity`** names the nested reference whose ids identify each entry. A
-nested object is not something an engine can filter or facet, so a reference
-declaring `filterable` or `facetable` fans out a flat **identity companion**
+nested object is not something an engine can filter or facet by id, so a
+reference naming an `identity` fans out a flat **identity companion**
 holding those ids, which the engine filters and facets in its place. The logical
 field keeps one name; only the physical fanout knows there are two. It is
 declared rather than inferred – an edge may carry several references, and only
 you know which one identifies it – and naming it is also what supplies the
 target that types the filter and carries the facet's labels. Both directions are
-enforced: `filterable`/`facetable` without an `identity` has nothing to filter,
-and an `identity` without either is a companion nothing reads.
+enforced: `facetable` without an `identity` has nothing to count, and an
+`identity` without `filterable` or `facetable` is a companion nothing reads.
+
+A reference type made of literals alone, such as a `PropertyValue` with a
+`value` and a `propertyID`, has no ids to name. Without an `identity` it can
+still be `filterable`, through its own `filterable` fields: the `where` arm is
+then the only filter it takes, and `searchSchema` refuses one whose type
+declares no filterable field.
+
+```graphql
+where: { identifier: { where: { value: { in: ["G11125-19"] } } } }
+```
 
 Because the companion holds ids only, its facet is **exact**: an endpoint the
 source named inline contributes no bucket rather than a bucket keyed on a label,

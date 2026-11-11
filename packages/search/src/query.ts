@@ -2,6 +2,7 @@ import {
   fieldNamed,
   filterOperatorFor,
   ID_FIELD,
+  holdsNoIds,
   nestedReferenceType,
   referencedTargetsOf,
   storedRangeBound,
@@ -397,6 +398,7 @@ function collectLeafIssues(
   constrained: SearchType,
   field: string,
   issues: QueryIssue[],
+  schema: SearchSchema,
 ): void {
   const declared = fieldNamed(constrained, criterion.field);
   if (declared === undefined) {
@@ -407,7 +409,10 @@ function collectLeafIssues(
     issues.push({ part: 'where', field, reason: 'not-filterable' });
     return;
   }
-  if (filterOperatorFor(declared) !== filterOperator(criterion)) {
+  if (
+    holdsNoIds(declared, schema) ||
+    filterOperatorFor(declared) !== filterOperator(criterion)
+  ) {
     issues.push({ part: 'where', field, reason: 'operator-mismatch' });
     return;
   }
@@ -626,11 +631,12 @@ export function validateQuery(
             entryType,
             [...on, name, welded.field].join('.'),
             issues,
+            schema,
           );
         }
         continue;
       }
-      collectLeafIssues(criterion, constrained, field, issues);
+      collectLeafIssues(criterion, constrained, field, issues, schema);
     }
   }
   for (const name of query.facets) {

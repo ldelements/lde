@@ -325,12 +325,14 @@ export type ReferenceStrategy =
       readonly typeName: string;
       /**
        * The `name` of a **nested reference field** of this reference type whose
-       * ids identify each entry’s endpoint – required to declare `filterable`
-       * or `facetable` on the inline reference itself, and meaningless without
-       * one ({@link searchSchema} enforces both directions).
+       * ids identify each entry’s endpoint – required to declare `facetable` on
+       * the inline reference itself, and meaningless without `filterable` or
+       * `facetable` ({@link searchSchema} enforces both directions). Without
+       * one, `filterable` filters by conditions welded to one entry alone, on
+       * the reference type’s own filterable fields.
        *
-       * A nested object is not something an engine can filter or facet, so an
-       * inline reference that opts into either fans out an **identity
+       * A nested object is not something an engine can filter or facet by id,
+       * so an inline reference naming an identity fans out an **identity
        * companion**: a flat physical field holding the ids its entries
        * reference ({@link physicalFields}), which the engine filters and facets
        * in the nested object’s place. The same mechanism `${name}_facet`
@@ -1276,9 +1278,10 @@ function assertLiteralField(referenceType: ReferenceType): void {
 
 /**
  * An inline reference’s {@link ReferenceStrategy.identity identity companion}
- * holds together in both directions: `filterable`/`facetable` need an
- * `identity` to point the engine at, and an `identity` with neither Role is a
- * companion nothing reads.
+ * holds together in both directions: `facetable` needs an `identity` to point
+ * the engine at, and an `identity` with neither Role is a companion nothing
+ * reads. `filterable` without one is served by conditions welded to one entry
+ * alone, so it needs a filterable field on the entry instead.
  *
  * The named field must be a nested **reference that names a target** – a
  * `lookup`’s `target` or an `idOnly`’s `labelSource` – because naming one is
@@ -1302,9 +1305,27 @@ function assertIdentityCompanion(
     );
   }
   if (identity === undefined) {
-    if (filters) {
+    // Without an identity the entries hold no ids, so a facet has nothing to
+    // count. A filter still has something to read: the entry’s own filterable
+    // leaves, reached through a condition welded to one entry.
+    if (field.facetable === true) {
       throw new Error(
-        `${where} declares “filterable”/“facetable” without an “identity”: a nested object is not a value an engine filters or facets, so it needs a nested reference to name the ids to filter and facet in its place.`,
+        `${where} declares “facetable” without an “identity”: a nested object is not a value an engine facets, so it needs a nested reference to name the ids to facet in its place.`,
+      );
+    }
+    if (field.filterable !== true) {
+      return;
+    }
+    // A weld is a single level: a condition inside one entry cannot itself be
+    // a weld, so an entry filtered this way cannot sit inside another entry.
+    if (searchType.class === undefined) {
+      throw new Error(
+        `${where} declares “filterable” without an “identity”, but “${searchType.name}” is a reference type: a condition on one entry cannot be welded inside another. Declare it on a Root Type’s reference, or drop “filterable”.`,
+      );
+    }
+    if (filterableFields(referenceType).length === 0) {
+      throw new Error(
+        `${where} declares “filterable” without an “identity”, but “${field.ref.typeName}” declares no “filterable” field: a condition on one entry is the only filter it can take, and there is nothing for one to name. Declare “filterable” on a field of “${field.ref.typeName}”, or name an “identity”.`,
       );
     }
     return;
@@ -2461,6 +2482,23 @@ export function localLookupTargetsOf(
     return [];
   }
   return referencedTargetsOf(field, schema);
+}
+
+/**
+ * Whether a field stores entries that hold **no ids**: an inline reference
+ * naming no {@link ReferenceStrategy.identity identity}. Membership on it would
+ * test the nested object itself, so it is filtered by a condition welded to
+ * one entry alone. The one reading a validator and an adapter’s compiler share.
+ */
+export function holdsNoIds(
+  field: SearchField,
+  schema: SearchSchema | undefined,
+): boolean {
+  return (
+    schema !== undefined &&
+    nestedReferenceType(schema, field) !== undefined &&
+    identityFieldOf(field, schema) === undefined
+  );
 }
 
 /**

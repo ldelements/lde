@@ -494,3 +494,76 @@ describe('the surface of a qualified relation', () => {
     expect(printed).not.toMatch(/input CreatorEdgeWhere \{[^}]*\bid:/);
   });
 });
+
+describe('an inline reference without an identity', () => {
+  const propertyValue = defineSearchType({
+    name: 'PropertyValue',
+    fields: [
+      { name: 'value', kind: 'keyword', output: true, filterable: true },
+      { name: 'propertyID', kind: 'keyword', output: true, filterable: true },
+    ],
+  });
+  const record = defineSearchType({
+    name: 'Record',
+    class: `${SCHEMA_ORG}CreativeWork`,
+    fields: [
+      { name: 'title', kind: 'text', locales: ['nl'], output: true },
+      {
+        name: 'identifier',
+        kind: 'reference',
+        array: true,
+        output: true,
+        filterable: true,
+        ref: { strategy: 'inline', typeName: 'PropertyValue' },
+      },
+    ],
+  });
+  const recordSchema = searchSchema(record, propertyValue);
+  const recordGqlSchema = buildGraphQLSchema(recordSchema, {});
+
+  it('offers the `where` arm alone, since its entries hold no ids', () => {
+    const printed = printSchema(recordGqlSchema);
+
+    expect(printed).toMatch(
+      /input PropertyValueFilter @oneOf \{[^}]*where: PropertyValueWhere[^}]*\}/,
+    );
+    expect(printed).not.toMatch(
+      /input PropertyValueFilter @oneOf \{[^}]*\bin:/,
+    );
+  });
+
+  it('welds conditions on its literal fields to one entry', async () => {
+    let captured: SearchQuery | undefined;
+    const engine: SearchEngine = {
+      schema: recordSchema,
+      async search(_searchType: SearchType, query: SearchQuery) {
+        captured = query;
+        return { total: 0, hits: [], facets: {} } as SearchResult;
+      },
+      async searchFacets(_searchType, queries) {
+        return queries.map(() => ({ facets: {} })) as never;
+      },
+    };
+
+    const response = await graphql({
+      schema: recordGqlSchema,
+      source: `{ records(where: { identifier: { where: { value: { in: ["G11125-19"] }, propertyID: { in: ["https://ex/objectNumber"] } } } }) { items { title { value } } } }`,
+      contextValue: { engine, acceptLanguage: ['nl'] } as SearchContext,
+    });
+
+    expect(response.errors).toBeUndefined();
+    expect(captured?.where).toEqual([
+      {
+        or: [
+          {
+            field: 'identifier',
+            entry: [
+              { field: 'value', in: ['G11125-19'] },
+              { field: 'propertyID', in: ['https://ex/objectNumber'] },
+            ],
+          },
+        ],
+      },
+    ]);
+  });
+});
