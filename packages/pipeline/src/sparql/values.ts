@@ -346,9 +346,9 @@ export interface DatasetBindingTargets {
  * and how the query uses them. It depends only on the query, so a caller that
  * injects into the same query repeatedly can identify them once.
  *
- * A variable the query assigns itself, with `BIND(… AS ?x)` or `(… AS ?x)`, is
- * left out: the query's own value takes precedence, and an outer binding would
- * make the assignment invalid SPARQL.
+ * A variable the query assigns itself, with `BIND`, `VALUES` or `AS` (in a
+ * projection or `GROUP BY`), is left out: the query's own value takes
+ * precedence, and an outer binding could make the assignment invalid SPARQL.
  */
 export function identifyDatasetBindings(
   query: QueryConstruct | QuerySelect,

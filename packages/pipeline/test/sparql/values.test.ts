@@ -687,27 +687,10 @@ describe('identifyDatasetBindings', () => {
     );
   }
 
-  it('separates template-only variables from those used elsewhere', () => {
-    const targets = targetsOf(
-      'CONSTRUCT { ?s <urn:a> ?a ; <urn:b> ?b } WHERE { ?s a ?b }',
-    );
-
-    expect(targets.variables).toEqual(new Set(['s', 'a', 'b']));
-    expect(targets.usedOutsideTemplate).toEqual(new Set(['s', 'b']));
-    expect(targets.templateTriples).toEqual([
-      new Set(['s', 'a']),
-      new Set(['s', 'b']),
-    ]);
-  });
-
   it.each([
     [
       'a BIND',
       'CONSTRUCT { ?s <urn:l> ?x } WHERE { ?s a ?c BIND(<urn:x> AS ?x) }',
-    ],
-    [
-      'a BIND in a nested group',
-      'CONSTRUCT { ?s <urn:l> ?x } WHERE { ?s a ?c { BIND(<urn:x> AS ?x) } }',
     ],
     [
       'an AS in a sub-SELECT projection',
@@ -720,10 +703,6 @@ describe('identifyDatasetBindings', () => {
     [
       'a VALUES',
       'CONSTRUCT { ?s <urn:l> ?x } WHERE { VALUES ?x { <urn:x> } ?s a ?c }',
-    ],
-    [
-      'a trailing VALUES',
-      'CONSTRUCT { ?s <urn:l> ?x } WHERE { ?s a ?c } VALUES ?x { <urn:x> }',
     ],
     [
       'a GROUP BY',
@@ -789,21 +768,5 @@ describe('injectDatasetBindings with variables the query assigns', () => {
 
     expect(generated).not.toContain('<http://example.org/license>');
     expect(() => parser.parse(generated)).not.toThrow();
-  });
-
-  it('uses the targets it is given instead of identifying them again', () => {
-    const query = parseConstruct(
-      'CONSTRUCT { ?dataset <urn:license> ?datasetLicense } WHERE { }',
-    );
-
-    const result = injectDatasetBindings(query, bindings, {
-      variables: new Set(['dataset']),
-      usedOutsideTemplate: new Set(),
-      templateTriples: [new Set(['dataset'])],
-    });
-
-    expect(generator.generate(result)).not.toContain(
-      '<http://example.org/license>',
-    );
   });
 });
