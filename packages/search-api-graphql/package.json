@@ -35,7 +35,7 @@
   ],
   "dependencies": {
     "@escape.tech/graphql-armor-max-depth": "^2.4.2",
-    "@graphql-yoga/render-graphiql": "^5.24.6",
+    "@graphql-yoga/render-graphiql": "^6.0.1",
     "@lde/search": "^0.41.3",
     "commander": "^15.0.0",
     "dataloader": "^2.2.3",
