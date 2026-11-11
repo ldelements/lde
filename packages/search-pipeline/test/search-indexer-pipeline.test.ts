@@ -117,11 +117,10 @@ describe('searchIndexerPipeline', () => {
           .times(4)
           .reply(
             200,
-            (_uri, body) => {
+            async (request: Request) => {
+              const body = await request.text();
               endpoints.push(host);
-              queries.push(
-                decodeURIComponent(String(body).replace(/\+/g, ' ')),
-              );
+              queries.push(decodeURIComponent(body.replace(/\+/g, ' ')));
               return { head: { vars: ['root'] }, results: { bindings: [] } };
             },
             { 'Content-Type': 'application/sparql-results+json' },
@@ -210,8 +209,9 @@ describe('searchIndexerPipeline', () => {
       nock('http://data.example.org')
         .post('/sparql')
         .times(10)
-        .reply((_uri, body) => {
-          const query = decodeURIComponent(String(body).replace(/\+/g, ' '));
+        .reply(async (request: Request) => {
+          const body = await request.text();
+          const query = decodeURIComponent(body.replace(/\+/g, ' '));
           if (query.includes('CONSTRUCT')) {
             return [
               200,
@@ -280,10 +280,9 @@ describe('searchIndexerPipeline', () => {
         .times(4)
         .reply(
           200,
-          (_uri, body) => {
-            selections.push(
-              decodeURIComponent(String(body).replace(/\+/g, ' ')),
-            );
+          async (request: Request) => {
+            const body = await request.text();
+            selections.push(decodeURIComponent(body.replace(/\+/g, ' ')));
             return { head: { vars: ['root'] }, results: { bindings: [] } };
           },
           { 'Content-Type': 'application/sparql-results+json' },
