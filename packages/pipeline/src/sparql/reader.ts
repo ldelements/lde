@@ -10,6 +10,7 @@ import { Generator } from '@traqula/generator-sparql-1-1';
 import type { QueryConstruct } from '@traqula/rules-sparql-1-1';
 import {
   createHostLimiter,
+  hostKeyOf,
   parseRetryAfter,
   type HostLimiter,
 } from '@lde/host-limiter';
@@ -70,10 +71,11 @@ export interface ReadOptions {
   timeout?: TimeoutPolicy;
 
   /**
-   * The limiter every query of a read goes through, keyed on the dataset’s
-   * IRI, so a dataset’s readers – and anything else keyed on the dataset, such
-   * as a resolver fetching from the same backend – share one adaptive limit.
-   * See {@link SparqlConstructReader}.
+   * The limiter every query of a read goes through, keyed on the endpoint’s
+   * host (`hostKeyOf(distribution.accessUrl)`), so every dataset an endpoint
+   * serves – and anything else given that key, such as a resolver fetching
+   * from the same backend – shares one adaptive limit and one pause. See
+   * {@link SparqlConstructReader}.
    *
    * Reads not given one share a default: `createHostLimiter(10, 10)`.
    */
@@ -156,9 +158,9 @@ export interface SparqlConstructReaderOptions {
 /**
  * A streaming SPARQL CONSTRUCT reader.
  *
- * Each query runs on the {@link ReadOptions.limiter}, keyed on the dataset’s
- * IRI. While the endpoint is down (502, 503, 504 or a network error) the
- * reader pauses the dataset and tries again; on a 500 it splits the batch,
+ * Each query runs on the {@link ReadOptions.limiter}, keyed on the endpoint’s
+ * host. While the endpoint is down (502, 503, 504 or a network error) the
+ * reader pauses that host and tries again; on a 500 it splits the batch,
  * down to a root it reports through {@link ReadOptions.onRootSkipped} and
  * leaves out. See
  * {@link https://ldelements.org/reference/pipeline#when-the-endpoint-fails | When the endpoint fails}.
@@ -256,7 +258,7 @@ export class SparqlConstructReader implements Reader {
     let skipped = 0;
     const quads = await this.readBatch(bindings, query, {
       endpoint,
-      key: dataset.iri.toString(),
+      key: hostKeyOf(endpoint),
       limiter: options?.limiter ?? defaultLimiter,
       policy: options?.timeout ?? defaultTimeoutPolicy,
       onRootSkipped: (root, error) => {

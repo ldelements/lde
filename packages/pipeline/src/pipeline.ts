@@ -175,11 +175,12 @@ export interface PipelineOptions<Out = Quad> {
   timeout?: () => TimeoutPolicy;
   /**
    * The limiter every stage’s readers run their queries on, keyed on the
-   * dataset’s IRI. Each dataset’s limit adapts to how its endpoint responds,
-   * up to the limiter’s per-host ceiling; see {@link SparqlConstructReader}.
+   * endpoint’s host. Each host’s limit adapts to how it responds, up to the
+   * limiter’s per-host ceiling, and carries over from one dataset to the next;
+   * see {@link SparqlConstructReader}.
    *
    * Pass the limiter you also give a resolver that loads the same backend –
-   * keyed on the dataset too – so the two share one limit.
+   * keyed on the endpoint’s host too – so the two share one limit.
    *
    * Left out, the readers share a default: `createHostLimiter(10, 10)`.
    */

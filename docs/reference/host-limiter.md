@@ -127,5 +127,5 @@ tasks, none of them can finish.
 [@lde/resolver](./resolver) runs every batch on one limiter, its own or one it is
 given to share, turns a failed call into a rejection so the host’s limit comes
 down, and pauses a host that asked it to come back later.
-[@lde/pipeline](./pipeline) runs every reader query on one, keyed on the dataset,
-and pauses the dataset while its endpoint is down.
+[@lde/pipeline](./pipeline) runs every reader query on one, keyed on the
+endpoint’s host, and pauses that host while it is down.

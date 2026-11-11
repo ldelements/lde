@@ -342,8 +342,9 @@ describe('SparqlConstructReader', () => {
   describe('when the endpoint fails', () => {
     const endpoint = 'http://example.org/sparql';
     const distribution = Distribution.sparql(new URL(endpoint));
+    // On another host than its endpoint, as on LDMax.
     const dataset = new Dataset({
-      iri: new URL('http://example.org/dataset'),
+      iri: new URL('http://data.example.com/dataset'),
       distributions: [distribution],
     });
     const query = 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }';
@@ -367,7 +368,7 @@ describe('SparqlConstructReader', () => {
       ['a network error', () => new TypeError('fetch failed')],
       ['a reset connection', connectionReset],
     ])(
-      'pauses the dataset on %s, lowers its limit and tries again',
+      'pauses the endpoint’s host on %s, lowers its limit and tries again',
       async (_name, failure) => {
         const fetcher = new SparqlEndpointFetcher();
         const spy = vi
@@ -386,7 +387,7 @@ describe('SparqlConstructReader', () => {
         // Paused before the failed query frees its slot.
         expect(log).toEqual(['pause', 'overloaded', 'success']);
         expect(pauses).toHaveLength(1);
-        expect(pauses[0].host).toBe('http://example.org/dataset');
+        expect(pauses[0].host).toBe('example.org');
         expect(secondsUntil(pauses[0].untilMs)).toBe(5);
       },
     );
