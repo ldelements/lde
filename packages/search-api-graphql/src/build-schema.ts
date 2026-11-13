@@ -1252,7 +1252,10 @@ export function buildGraphQLSchema(
     const nestedWhere = nestedWhereInputFor(referenceType);
     const created = new GraphQLInputObjectType({
       name: `${referenceType.name}Filter`,
-      description: `A condition on ${referenceType.name}: the ids its entries reference, or a condition on one entry.`,
+      description:
+        identityTargets.length > 0
+          ? `A condition on ${referenceType.name}: the ids its entries reference, or a condition on one entry.`
+          : `A condition on one ${referenceType.name} entry.`,
       isOneOf: true,
       fields: () => ({
         ...(identityTargets.length > 0 && {
