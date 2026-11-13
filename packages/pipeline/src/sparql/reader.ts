@@ -10,7 +10,6 @@ import { Generator } from '@traqula/generator-sparql-1-1';
 import type { QueryConstruct } from '@traqula/rules-sparql-1-1';
 import {
   createHostLimiter,
-  hostKeyOf,
   parseRetryAfter,
   type HostLimiter,
 } from '@lde/host-limiter';
@@ -29,6 +28,19 @@ const defaultTimeoutPolicy: TimeoutPolicy = new ConstantTimeoutPolicy(300_000);
 
 /** The limiter of every read not given one, so they share one limit. */
 const defaultLimiter: HostLimiter = createHostLimiter(10, 10);
+
+/**
+ * The key readers run an endpoint’s queries under on the limiter: its host and
+ * path, such as `sparql.example.org/dataset`, without query string or
+ * fragment. Separate endpoints on one host get separate keys; datasets served
+ * by one endpoint share its key.
+ *
+ * Key a resolver that loads the same endpoint on it too, so the two share one
+ * limit: `endpointKeyOf(context.distribution.accessUrl)`.
+ */
+export function endpointKeyOf(url: URL): string {
+  return url.host + url.pathname;
+}
 
 /**
  * A reader could not run because the dataset lacks a supported distribution.
@@ -71,10 +83,10 @@ export interface ReadOptions {
   timeout?: TimeoutPolicy;
 
   /**
-   * The limiter every query of a read goes through, keyed on the endpoint’s
-   * host (`hostKeyOf(distribution.accessUrl)`), so every dataset an endpoint
-   * serves – and anything else given that key, such as a resolver fetching
-   * from the same backend – shares one adaptive limit and one pause. See
+   * The limiter every query of a read goes through, keyed on the endpoint
+   * ({@link endpointKeyOf}), so every dataset an endpoint serves – and
+   * anything else given that key, such as a resolver fetching from the same
+   * backend – shares one adaptive limit and one pause. See
    * {@link SparqlConstructReader}.
    *
    * Reads not given one share a default: `createHostLimiter(10, 10)`.
@@ -158,9 +170,9 @@ export interface SparqlConstructReaderOptions {
 /**
  * A streaming SPARQL CONSTRUCT reader.
  *
- * Each query runs on the {@link ReadOptions.limiter}, keyed on the endpoint’s
- * host. While the endpoint is down (502, 503, 504 or a network error) the
- * reader pauses that host and tries again; on a 500 it splits the batch,
+ * Each query runs on the {@link ReadOptions.limiter}, keyed on the endpoint
+ * ({@link endpointKeyOf}). While the endpoint is down (502, 503, 504 or a
+ * network error) the reader pauses it and tries again; on a 500 it splits the batch,
  * down to a root it reports through {@link ReadOptions.onRootSkipped} and
  * leaves out. See
  * {@link https://ldelements.org/reference/pipeline#when-the-endpoint-fails | When the endpoint fails}.
@@ -258,7 +270,7 @@ export class SparqlConstructReader implements Reader {
     let skipped = 0;
     const quads = await this.readBatch(bindings, query, {
       endpoint,
-      key: hostKeyOf(endpoint),
+      key: endpointKeyOf(endpoint),
       limiter: options?.limiter ?? defaultLimiter,
       policy: options?.timeout ?? defaultTimeoutPolicy,
       onRootSkipped: (root, error) => {
@@ -556,7 +568,7 @@ async function* noQuads(): AsyncIterable<Quad> {
 }
 
 /**
- * How long a reader pauses the endpoint’s host before each retry after it
+ * How long a reader pauses the endpoint before each retry after it
  * went down, in milliseconds: tripled each time, about 10 minutes in all, to
  * outlast a backend restart. A `Retry-After` header replaces a step.
  */

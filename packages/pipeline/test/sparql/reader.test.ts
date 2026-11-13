@@ -1,5 +1,6 @@
 import {
   deduplicateQuads,
+  endpointKeyOf,
   SparqlConstructReader,
   LineBufferTransform,
   readQueryFile,
@@ -368,7 +369,7 @@ describe('SparqlConstructReader', () => {
       ['a network error', () => new TypeError('fetch failed')],
       ['a reset connection', connectionReset],
     ])(
-      'pauses the endpoint’s host on %s, lowers its limit and tries again',
+      'pauses the endpoint on %s, lowers its limit and tries again',
       async (_name, failure) => {
         const fetcher = new SparqlEndpointFetcher();
         const spy = vi
@@ -387,7 +388,7 @@ describe('SparqlConstructReader', () => {
         // Paused before the failed query frees its slot.
         expect(log).toEqual(['pause', 'overloaded', 'success']);
         expect(pauses).toHaveLength(1);
-        expect(pauses[0].host).toBe('example.org');
+        expect(pauses[0].host).toBe('example.org/sparql');
         expect(secondsUntil(pauses[0].untilMs)).toBe(5);
       },
     );
@@ -1032,6 +1033,23 @@ function recordingLimiter() {
   };
   return { limiter, pauses, outcomes, log };
 }
+
+describe('endpointKeyOf', () => {
+  it('keys separate endpoints on one host apart', () => {
+    expect(endpointKeyOf(new URL('https://sparql.example.org/a'))).toBe(
+      'sparql.example.org/a',
+    );
+    expect(endpointKeyOf(new URL('https://sparql.example.org/b'))).toBe(
+      'sparql.example.org/b',
+    );
+  });
+
+  it('keeps the port and drops the query string and fragment', () => {
+    expect(
+      endpointKeyOf(new URL('http://localhost:7001/sparql?timeout=60#top')),
+    ).toBe('localhost:7001/sparql');
+  });
+});
 
 describe('LineBufferTransform', () => {
   async function collect(stream: Readable): Promise<string> {

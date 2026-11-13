@@ -162,9 +162,9 @@ new Stage({
 
 `maxConcurrency` (default: 10) limits the total number of concurrent SPARQL queries. Within each batch, all readers run in parallel; the number of concurrent batches is automatically reduced to `⌊maxConcurrency / readerCount⌋` so the total query pressure stays within the limit. For example, with `maxConcurrency: 10` and two readers per stage, up to 5 batches run concurrently (10 SPARQL queries total).
 
-How many of those queries reach the endpoint at once is up to the pipeline’s `limiter`, a [`HostLimiter`](host-limiter) keyed on the endpoint’s host (`hostKeyOf(distribution.accessUrl)`). Each host starts at one query in flight, and its limit then adapts to how it responds, up to the limiter’s per-host ceiling. Datasets served by one endpoint share its limit and its pauses, so the next dataset on a host starts at the limit the previous one left; see [the adaptive limit](host-limiter#an-adaptive-per-host-limit). Without one, every reader shares a default `createHostLimiter(10, 10)`, so a `maxConcurrency` above 10 needs a limiter with a higher ceiling to make a difference. A weak endpoint that falls over at two queries is therefore asked one at a time, while a strong one climbs to the ceiling within a few batches.
+How many of those queries reach the endpoint at once is up to the pipeline’s `limiter`, a [`HostLimiter`](host-limiter) keyed on the endpoint: `endpointKeyOf(distribution.accessUrl)`, its host and path. Each endpoint starts at one query in flight, and its limit then adapts to how it responds, up to the limiter’s per-host ceiling. Datasets served by one endpoint share its limit and its pauses, so the next dataset on an endpoint starts at the limit the previous one left, while separate endpoints on one host – one SPARQL server per dataset, say – each get their own; see [the adaptive limit](host-limiter#an-adaptive-per-host-limit). Without one, every reader shares a default `createHostLimiter(10, 10)`, so a `maxConcurrency` above 10 needs a limiter with a higher ceiling to make a difference. A weak endpoint that falls over at two queries is therefore asked one at a time, while a strong one climbs to the ceiling within a few batches.
 
-To share one limit with a [resolver](resolver) that loads the same backend – IIIF manifests served by the endpoint’s own server, say – create the limiter once and pass it to both, and key the resolver on the endpoint’s host too. A transform has the stage’s distribution in its context:
+To share one limit with a [resolver](resolver) that loads the same backend – IIIF manifests served by the endpoint’s own server, say – create the limiter once and pass it to both, and key the resolver on the endpoint too. A transform has the stage’s distribution in its context:
 
 ```typescript
 const limiter = createHostLimiter(10, 8);
@@ -173,7 +173,7 @@ const manifests = createResolver({
   /* … */ limiter,
   // Your reference type carries the endpoint URL the transform read it
   // from: `context.distribution.accessUrl`.
-  host: (reference) => hostKeyOf(reference.endpoint),
+  host: (reference) => endpointKeyOf(reference.endpoint),
 });
 ```
 
@@ -295,14 +295,14 @@ The query is templated per dataset and distribution, in order:
 
 Each query waits for a slot in the [pipeline’s limiter](#concurrency) and holds it until the endpoint starts answering. What the reader does then depends on the answer:
 
-| Answer                                       | Means                                 | Limit      | Then                                                                                                                |
-| -------------------------------------------- | ------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------- |
-| HTTP 502, 503 or 504, or a network error     | The endpoint is down or struggling    | Lowered    | Pause the host and try again, at most five times: 5, 15, 45, 135 and 405 s, or what `Retry-After` says, up to 405 s |
-| A timeout                                    | The query took longer than its budget | Lowered    | Fail the read                                                                                                       |
-| HTTP 500                                     | This query failed, not the endpoint   | Left alone | Split the batch, down to one root, which is reported as `rootSkipped` and left out                                  |
-| Anything else, such as a 400 for a bad query | The query is wrong                    | Left alone | Fail the read                                                                                                       |
+| Answer                                       | Means                                 | Limit      | Then                                                                                                                    |
+| -------------------------------------------- | ------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------- |
+| HTTP 502, 503 or 504, or a network error     | The endpoint is down or struggling    | Lowered    | Pause the endpoint and try again, at most five times: 5, 15, 45, 135 and 405 s, or what `Retry-After` says, up to 405 s |
+| A timeout                                    | The query took longer than its budget | Lowered    | Fail the read                                                                                                           |
+| HTTP 500                                     | This query failed, not the endpoint   | Left alone | Split the batch, down to one root, which is reported as `rootSkipped` and left out                                      |
+| Anything else, such as a 400 for a bad query | The query is wrong                    | Left alone | Fail the read                                                                                                           |
 
-The backoff adds up to about 10 minutes, long enough to outlast a backend restart; a failed read then fails its stage, and the [reactive dump fallback](#distribution-resolver) takes over if configured. A pause drops the host’s limit to 1, for every dataset and resolver keyed on it, so after it only one query goes out, and that query is the probe: if it is answered, the limit climbs back; if not, the next, longer pause follows.
+The backoff adds up to about 10 minutes, long enough to outlast a backend restart; a failed read then fails its stage, and the [reactive dump fallback](#distribution-resolver) takes over if configured. A pause drops the endpoint’s limit to 1, for every dataset and resolver keyed on it, so after it only one query goes out, and that query is the probe: if it is answered, the limit climbs back; if not, the next, longer pause follows.
 
 A 500 that keeps coming back usually means the query does not fit in the endpoint’s memory for these roots, at any load. The reader reads each half of the batch, one after the other, splitting again where a half still fails, so a single root that will not extract does not cost the rest of its batch. A batch of 10 with one such root costs at most 19 queries. Each half is asked for only once the one before it has been read, so a split adds no load of its own. When not one root of the batch answers, the endpoint fails this query whatever the roots, and the read fails rather than coming out empty. A read without bindings has nothing to split, and fails.
 

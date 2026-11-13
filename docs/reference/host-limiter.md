@@ -128,4 +128,4 @@ tasks, none of them can finish.
 given to share, turns a failed call into a rejection so the host’s limit comes
 down, and pauses a host that asked it to come back later.
 [@lde/pipeline](./pipeline) runs every reader query on one, keyed on the
-endpoint’s host, and pauses that host while it is down.
+endpoint (its host and path), and pauses the endpoint while it is down.
