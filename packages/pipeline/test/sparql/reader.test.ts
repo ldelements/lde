@@ -343,7 +343,7 @@ describe('SparqlConstructReader', () => {
   describe('when the endpoint fails', () => {
     const endpoint = 'http://example.org/sparql';
     const distribution = Distribution.sparql(new URL(endpoint));
-    // On another host than its endpoint, as on LDMax.
+    // The dataset IRI is on another host than its endpoint.
     const dataset = new Dataset({
       iri: new URL('http://data.example.com/dataset'),
       distributions: [distribution],

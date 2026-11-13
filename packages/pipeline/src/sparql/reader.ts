@@ -323,8 +323,8 @@ export class SparqlConstructReader implements Reader {
   }
 
   /**
-   * Run a query on the limiter, pausing the dataset and trying again while the
-   * endpoint is down; see {@link SparqlConstructReader}.
+   * Run a query on the limiter, pausing the endpoint and trying again while it is
+   * down; see {@link SparqlConstructReader}.
    */
   private async fetchWithRetries(
     query: string,
