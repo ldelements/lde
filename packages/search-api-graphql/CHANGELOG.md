@@ -1,3 +1,9 @@
+## 0.46.1 (2026-11-13)
+
+### 🩹 Fixes
+
+- **search-api-graphql:** describe a filter without ids as a condition on one entry ([#1070](https://github.com/ldelements/lde/pull/1070))
+
 ## 0.46.0 (2026-11-13)
 
 ### 🚀 Features

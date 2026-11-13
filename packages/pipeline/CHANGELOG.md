@@ -1,3 +1,25 @@
+## 0.49.0 (2026-11-13)
+
+### 🚀 Features
+
+- ⚠️  **pipeline:** give each pipeline a reader limiter of its own ([#1069](https://github.com/ldelements/lde/pull/1069))
+
+### ⚠️  Breaking Changes
+
+- **pipeline:** give each pipeline a reader limiter of its own  ([#1069](https://github.com/ldelements/lde/pull/1069))
+  PipelineOptions.limiter is removed. A pipeline now builds its own
+  limiter; raise a stage's maxConcurrency to raise the per-endpoint ceiling.
+  * fix(pipeline): clamp the limiter ceiling and share one per standalone stage run
+  - Clamp the ceiling with positiveIntOrDefault, so maxConcurrency 0 or no stages cannot hang a run
+  - Give a Stage run outside a pipeline one limiter for all its batches
+  - Walk stages with one module-level generator instead of two"
+  M	docs/reference/pipeline.md
+  M	packages/pipeline/src/pipeline.ts
+  M	packages/pipeline/src/sparql/reader.ts
+  M	packages/pipeline/src/stage.ts
+  M	packages/pipeline/test/pipeline.test.ts
+  M	packages/pipeline/vite.config.ts
+
 ## 0.48.0 (2026-11-13)
 
 ### 🚀 Features
