@@ -27,7 +27,7 @@
   "dependencies": {
     "@lde/dataset": "^0.10.1",
     "@rdfjs/types": "^2.0.1",
-    "fetch-sparql-endpoint": "^7.2.0",
+    "fetch-sparql-endpoint": "^7.3.0",
     "n3": "^2.13.12",
     "rdf-canonize": "^5.0.0",
     "tslib": "^2.3.0"
