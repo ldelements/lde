@@ -114,6 +114,9 @@ tasks, none of them can finish.
 - `hostKeyOf(url)` is the host, falling back to the full href when the URL has no
   authority, so a `urn:` or `file:` URL gets its own budget rather than sharing a
   single empty-string bucket.
+- `endpointKeyOf(url)` is the host and path, without query string or fragment,
+  for services that share a host but not a server – one SPARQL endpoint per path
+  behind a proxy, say. It falls back to the full href like `hostKeyOf`.
 - `parseRetryAfter(header)` reads a `Retry-After` header – seconds or an HTTP
   date – as milliseconds to wait, for `pause`, and `undefined` when it is missing
   or unreadable.
@@ -127,5 +130,5 @@ tasks, none of them can finish.
 [@lde/resolver](./resolver) runs every batch on one limiter, its own or one it is
 given to share, turns a failed call into a rejection so the host’s limit comes
 down, and pauses a host that asked it to come back later.
-[@lde/pipeline](./pipeline) runs every reader query on one, keyed on the dataset,
-and pauses the dataset while its endpoint is down.
+[@lde/pipeline](./pipeline) runs every reader query on one, keyed on the
+endpoint (its host and path), and pauses the endpoint while it is down.

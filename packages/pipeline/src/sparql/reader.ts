@@ -10,6 +10,7 @@ import { Generator } from '@traqula/generator-sparql-1-1';
 import type { QueryConstruct } from '@traqula/rules-sparql-1-1';
 import {
   createHostLimiter,
+  endpointKeyOf,
   parseRetryAfter,
   type HostLimiter,
 } from '@lde/host-limiter';
@@ -70,10 +71,11 @@ export interface ReadOptions {
   timeout?: TimeoutPolicy;
 
   /**
-   * The limiter every query of a read goes through, keyed on the dataset’s
-   * IRI, so a dataset’s readers – and anything else keyed on the dataset, such
-   * as a resolver fetching from the same backend – share one adaptive limit.
-   * See {@link SparqlConstructReader}.
+   * The limiter every query of a read goes through, keyed on the endpoint
+   * ({@link endpointKeyOf}), so every dataset an endpoint serves – and
+   * anything else given that key, such as a resolver fetching from the same
+   * backend – shares one adaptive limit and one pause. See
+   * {@link SparqlConstructReader}.
    *
    * Reads not given one share a default: `createHostLimiter(10, 10)`.
    */
@@ -156,9 +158,9 @@ export interface SparqlConstructReaderOptions {
 /**
  * A streaming SPARQL CONSTRUCT reader.
  *
- * Each query runs on the {@link ReadOptions.limiter}, keyed on the dataset’s
- * IRI. While the endpoint is down (502, 503, 504 or a network error) the
- * reader pauses the dataset and tries again; on a 500 it splits the batch,
+ * Each query runs on the {@link ReadOptions.limiter}, keyed on the endpoint
+ * ({@link endpointKeyOf}). While the endpoint is down (502, 503, 504 or a
+ * network error) the reader pauses it and tries again; on a 500 it splits the batch,
  * down to a root it reports through {@link ReadOptions.onRootSkipped} and
  * leaves out. See
  * {@link https://ldelements.org/reference/pipeline#when-the-endpoint-fails | When the endpoint fails}.
@@ -256,7 +258,7 @@ export class SparqlConstructReader implements Reader {
     let skipped = 0;
     const quads = await this.readBatch(bindings, query, {
       endpoint,
-      key: dataset.iri.toString(),
+      key: endpointKeyOf(endpoint),
       limiter: options?.limiter ?? defaultLimiter,
       policy: options?.timeout ?? defaultTimeoutPolicy,
       onRootSkipped: (root, error) => {
@@ -309,8 +311,8 @@ export class SparqlConstructReader implements Reader {
   }
 
   /**
-   * Run a query on the limiter, pausing the dataset and trying again while the
-   * endpoint is down; see {@link SparqlConstructReader}.
+   * Run a query on the limiter, pausing the endpoint and trying again while it is
+   * down; see {@link SparqlConstructReader}.
    */
   private async fetchWithRetries(
     query: string,
@@ -554,7 +556,7 @@ async function* noQuads(): AsyncIterable<Quad> {
 }
 
 /**
- * How long a reader pauses its dataset before each retry after the endpoint
+ * How long a reader pauses the endpoint before each retry after it
  * went down, in milliseconds: tripled each time, about 10 minutes in all, to
  * outlast a backend restart. A `Retry-After` header replaces a step.
  */

@@ -1,6 +1,7 @@
 export {
   createHostLimiter,
   mapHostLimited,
+  endpointKeyOf,
   hostKeyOf,
   positiveIntOrDefault,
   type HostLimiter,

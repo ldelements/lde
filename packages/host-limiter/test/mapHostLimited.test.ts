@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createHostLimiter,
+  endpointKeyOf,
   hostKeyOf,
   mapHostLimited,
   positiveIntOrDefault,
@@ -307,6 +308,27 @@ describe('createHostLimiter', () => {
     ).rejects.toThrow('thrown');
 
     expect(await limiter.run('a', async () => 'next')).toBe('next');
+  });
+});
+
+describe('endpointKeyOf', () => {
+  it('keys separate endpoints on one host apart', () => {
+    expect(endpointKeyOf(new URL('https://example.org/a'))).toBe(
+      'example.org/a',
+    );
+    expect(endpointKeyOf(new URL('https://example.org/b'))).toBe(
+      'example.org/b',
+    );
+  });
+
+  it('keeps the port and drops the query string and fragment', () => {
+    expect(
+      endpointKeyOf(new URL('http://localhost:7001/sparql?timeout=60#top')),
+    ).toBe('localhost:7001/sparql');
+  });
+
+  it('gives an authority-less URL a budget of its own', () => {
+    expect(endpointKeyOf(new URL('urn:uuid:1234'))).toBe('urn:uuid:1234');
   });
 });
 
