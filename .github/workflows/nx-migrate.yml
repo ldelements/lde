@@ -50,6 +50,7 @@ jobs:
           for prompt in $prompts; do
             printf '\n<details><summary>Apply before merging: <code>%s</code></summary>\n\n%s\n\n</details>\n' "$prompt" "$(cat "$prompt")" >> "$body"
           done
+          [ -z "$prompts" ] && echo "agent_prompts=false" >> "$GITHUB_OUTPUT"
           rm -rf migrations.json tools/ai-migrations
 
       - id: app-token
@@ -61,7 +62,8 @@ jobs:
 
       # A fixed branch keeps a single migration PR open: each run updates it
       # on top of main instead of opening another.
-      - uses: peter-evans/create-pull-request@v8
+      - id: pr
+        uses: peter-evans/create-pull-request@v8
         if: steps.migrate.outputs.updated == 'true'
         with:
           token: ${{ steps.app-token.outputs.token }}
@@ -70,3 +72,12 @@ jobs:
           commit-message: 'build(deps): migrate Nx to ${{ steps.describe.outputs.version }}'
           title: 'build(deps): migrate Nx to ${{ steps.describe.outputs.version }}'
           body-path: ${{ runner.temp }}/pr-body.md
+
+      # Merge once the required checks pass, like Dependabot PRs. Agent-driven
+      # migrations still need a human to apply their prompts, so leave those
+      # PRs open.
+      - if: steps.pr.outputs.pull-request-number != '' && steps.describe.outputs.agent_prompts == 'false'
+        run: gh pr merge --auto --squash "$PR_NUMBER"
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.pull-request-number }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
