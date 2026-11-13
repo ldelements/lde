@@ -58,7 +58,7 @@
     "verdaccio": "6.10.6",
     "vite": "8.0.9",
     "vitepress": "^1.6.4",
-    "vitepress-mermaid-viewer": "^0.5.1",
+    "vitepress-mermaid-viewer": "^0.5.2",
     "vitest": "5.0.4"
   },
   "nx": {
