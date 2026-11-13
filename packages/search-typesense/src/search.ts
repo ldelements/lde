@@ -224,8 +224,8 @@ export function createTypesenseSearchEngine<
           ),
         ]
           // An INLINE reference names its label target one level in, through
-          // its identity companion: the companion holds that field's ids, so
-          // that field's target is what can label them.
+          // its identity: the facet counts that field's ids, so that field's
+          // target is what can label them.
           .filter(({ field }) => labelTargetNamesOf(field, schema).length > 0)
           .map(({ name, field }) => [
             name,

@@ -117,8 +117,8 @@ const creatorRole = defineSearchType({
     {
       name: 'agent',
       kind: 'reference',
-      array: true,
       output: true,
+      filterable: true,
       path: `<${SCHEMA}creator>`,
       ref: { strategy: 'lookup', target: 'Agent', local: true },
     },

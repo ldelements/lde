@@ -247,7 +247,7 @@ editor.
 
   An **inline reference** takes the same two-armed input, because it asks the
   same question one hop out – `in` for the ids its entries hold (its
-  [identity companion](./search#data-on-the-edge)), `where` for a condition on
+  [identity](./search#data-on-the-edge)), `where` for a condition on
   an entry, typed `‹Edge›Where`. Only the cost differs: a join crosses into
   another collection, a nesting stays inside the document.
 

@@ -1211,7 +1211,7 @@ export function buildGraphQLSchema(
     owner: SearchType,
   ): GraphQLInputType {
     // An inline reference is filterable in two ways at once, exactly as a
-    // joinable one is: by the ids its entries hold (its identity companion),
+    // joinable one is: by the ids its entries hold (its identity),
     // and by a condition on an entry. Same input shape, because it is the same
     // question one hop out – only what the hop costs differs.
     const nested = nestedReferenceType(schema, field);
@@ -1235,7 +1235,7 @@ export function buildGraphQLSchema(
    * condition on one entry. `@oneOf`, so a criterion stays an atom.
    *
    * The `in` arm is typed by the target the reference’s
-   * {@link ReferenceStrategy.identity identity companion} names, so a bucket a
+   * {@link ReferenceStrategy.identity identity} names, so a bucket a
    * consumer clicks feeds straight back in – the same round trip an ordinary
    * facetable reference already guarantees. A reference declaring no identity
    * has no ids to filter, so it offers the `where` arm alone.

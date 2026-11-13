@@ -110,6 +110,7 @@ describe('physicalFields', () => {
     expect(physicalFields(title)).toEqual({
       search: ['title_search_nl', 'title_search_en'],
       sort: ['title_sort_nl', 'title_sort_en'],
+      filter: 'title',
     });
   });
 
@@ -127,6 +128,7 @@ describe('physicalFields', () => {
       search: ['keyword_search'],
       sort: [],
       facet: 'keyword',
+      filter: 'keyword',
     });
   });
 
@@ -141,6 +143,7 @@ describe('physicalFields', () => {
     expect(physicalFields(creator)).toEqual({
       search: ['creator_search_nl', 'creator_search_en'],
       sort: [],
+      filter: 'creator',
     });
   });
 
@@ -157,6 +160,7 @@ describe('physicalFields', () => {
     expect(physicalFields(title)).toEqual({
       search: [],
       sort: [],
+      filter: 'title',
     });
   });
 
@@ -174,6 +178,7 @@ describe('physicalFields', () => {
       search: [],
       sort: [],
       facet: 'publisher',
+      filter: 'publisher',
     });
   });
 

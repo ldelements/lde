@@ -114,10 +114,13 @@ both handled here rather than left to a caller:
   against what is stored, so it is widened (`int64` → `int64[]`); an unindexed
   one is not.
 
-An inline reference declaring `filterable` or `facetable` also emits its
-[identity companion](./search#data-on-the-edge) – a flat `${name}_id` field,
-faceted in the nested object’s place, since an engine can filter and facet
-neither an object nor per array element.
+An inline reference naming an [`identity`](./search#data-on-the-edge) is
+filtered and faceted on that identity’s leaf inside each entry, declared with
+`facet: true` where the facet reads it. Typesense flattens a leaf under an
+`object[]` into one list per document, so a bucket counts each document once.
+A `local` lookup declaring `filterable` or `facetable` emits a flat `${name}_id`
+companion beside its endpoints instead, since their own `id` is a level deeper
+than a condition on one entry reaches.
 
 A **reference inheriting a [facet policy](./search#facet-policy)** – a facetable
 `lookup`/`labelSource` reference to a type declaring `facetKeys` – is declared

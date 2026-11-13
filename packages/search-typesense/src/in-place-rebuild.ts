@@ -258,7 +258,7 @@ function assertReferencesAndFacetCompanionsPresent(
         .map((companion) => `“${companion}”`)
         .join(
           ', ',
-        )} its search type facets on in place of the field itself – an identity companion, one narrowed by a facet policy (“facetKeys”), or the nested path of a faceted leaf. A facet field cannot be added to a live collection here: drop “${name}” (and the collections that join to it) and let the next run rebuild them.`,
+        )} its search type facets on in place of the field itself – the id leaf of a nested object, one narrowed by a facet policy (“facetKeys”), or the nested path of a faceted leaf. A facet field cannot be added to a live collection here: drop “${name}” (and the collections that join to it) and let the next run rebuild them.`,
     );
   }
 }

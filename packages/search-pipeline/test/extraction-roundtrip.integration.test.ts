@@ -100,8 +100,8 @@ const creatorRole = defineSearchType({
     {
       name: 'agent',
       kind: 'reference',
-      array: true,
       output: true,
+      filterable: true,
       path: `<${SCHEMA}creator>`,
       ref: { strategy: 'lookup', target: 'Agent', local: true },
     },
@@ -191,6 +191,7 @@ const contributorRole = defineSearchType({
       name: 'contributor',
       kind: 'reference',
       output: true,
+      filterable: true,
       path: `<${SCHEMA}contributor>`,
       ref: {
         strategy: 'lookup',
@@ -389,23 +390,23 @@ describe('extraction round-trip: generate → read → frame → project', () =>
 
     // An identified agent: the id the reference has always stored, and now the
     // name this document states about it, read off the referent one hop on.
-    expect(entryFor('etser')?.agent).toEqual([
+    expect(entryFor('etser')?.agent).toEqual(
       expect.objectContaining({
         id: 'https://ex/p/1',
         name_und: 'Johannes Vermeer',
       }),
-    ]);
+    );
     // An agent the graph named inline: an entry like any other, minus its id –
     // which is the whole reason `local` exists, and what a plain lookup loses.
-    expect(entryFor('uitgever')?.agent).toEqual([
+    expect(entryFor('uitgever')?.agent).toEqual(
       expect.objectContaining({ name_nl: 'Onbekende drukker' }),
-    ]);
-    expect(entryFor('uitgever')?.agent).not.toEqual([
-      expect.objectContaining({ id: expect.anything() }),
-    ]);
+    );
+    expect(entryFor('uitgever')?.agent).not.toHaveProperty('id');
     // The facet stays keyed on identity alone, so the inline agent buckets
     // under nothing rather than under a label.
-    expect(item?.document.creator_id).toEqual(['https://ex/p/1']);
+    expect(entryFor('etser')?.agent_id).toBe('https://ex/p/1');
+    expect(entryFor('uitgever')).not.toHaveProperty('agent_id');
+    expect(item?.document).not.toHaveProperty('creator_id');
   });
 
   it('reads an agent stated without its Role, keyed like one stated in it', async () => {
@@ -417,6 +418,7 @@ describe('extraction round-trip: generate → read → frame → project', () =>
     // by id – as it would be inside a Role.
     expect(entries).toContainEqual({
       contributor: expect.objectContaining({ id: 'https://ex/o/2' }),
+      contributor_id: 'https://ex/o/2',
     });
     expect(entries).toContainEqual(
       expect.objectContaining({
@@ -442,9 +444,10 @@ describe('extraction round-trip: generate → read → frame → project', () =>
     );
     // A Role naming no agent stays an edge, not an agent called “fabrikant”.
     expect(entries).toContainEqual({ role: 'fabrikant' });
-    expect(item?.document.contributor_id).toEqual(
+    expect(entries.map((entry) => entry.contributor_id)).toEqual(
       expect.arrayContaining(['https://ex/p/1', 'https://rkd.example/104628']),
     );
+    expect(item?.document).not.toHaveProperty('contributor_id');
   });
 
   it('reads a value stated bare beside one stated on a node, as one list', async () => {

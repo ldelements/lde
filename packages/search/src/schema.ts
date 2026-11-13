@@ -334,12 +334,12 @@ export type ReferenceStrategy =
        * the reference type’s own filterable fields.
        *
        * A nested object is not something an engine can filter or facet by id,
-       * so an inline reference naming an identity fans out an **identity
-       * companion**: a flat physical field holding the ids its entries
-       * reference ({@link physicalFields}), which the engine filters and facets
-       * in the nested object’s place. The same mechanism `${name}_facet`
-       * already uses – one logical field, two physical fields, one holding a
-       * derived subset of the other.
+       * so the engine filters and facets the named field’s **leaf inside each
+       * entry** in the nested object’s place ({@link PhysicalFields.filter}).
+       * Typesense flattens a leaf under an `object[]` into one list per
+       * document, so a facet on it counts each document once, however many of
+       * its entries name the same endpoint. The named field must therefore be
+       * `filterable`, which is what indexes that leaf.
        *
        * Declared rather than inferred, because a reference type may carry more
        * than one nested reference and only the schema author knows which one
@@ -348,7 +348,7 @@ export type ReferenceStrategy =
        * these ids are, which is what a facet policy is inherited through
        * ({@link inheritedFacetPolicies}) and what types the filter at the surface.
        *
-       * The companion holds ids only, so a facet over it is exact and
+       * The leaf holds ids only, so a facet over it is exact and
        * identity-keyed: an entry whose endpoint the graph named inline – a
        * literal, a blank node – contributes no bucket rather than a bucket
        * keyed on a label, so two endpoints that share a label are never merged.
@@ -1001,8 +1001,8 @@ export function isInlineReference(
  * Role is a reading device, pruned before the writer
  * ({@link isInternalField}), while one that is `filterable` or `facetable`
  * without being `output` still has its entries stored – they are what a nested
- * filter constrains and what the
- * {@link ReferenceStrategy.identity identity companion} is harvested from. Only
+ * filter constrains and what a
+ * {@link ReferenceStrategy.identity identity} is filtered and faceted on. Only
  * `output` decides whether they are *surfaced*, which is the surfaces’ own
  * question ({@link outputFields}).
  *
@@ -1224,8 +1224,8 @@ function assertResolvableInlineReferences(
       }
       // An inline reference’s stored value is a nested object, which an engine
       // can neither tokenize for free text nor order by. `filterable` and
-      // `facetable` it CAN serve – through the identity companion below – so
-      // only the roles no companion could answer are refused here.
+      // `facetable` it CAN serve – through its identity’s leaf below – so only
+      // the roles no leaf could answer are refused here.
       const extraRoles = unserviceableInlineRoles(field);
       if (extraRoles.length > 0) {
         throw new Error(
@@ -1236,7 +1236,7 @@ function assertResolvableInlineReferences(
             )}, which it cannot serve: its value is a nested object, not a token an engine can search, sort or join on.`,
         );
       }
-      assertIdentityCompanion(searchType, field, referenceType);
+      assertIdentity(searchType, field, referenceType);
       assertFacetedLeaves(searchType, field, referenceType);
     }
   }
@@ -1300,20 +1300,20 @@ function assertLiteralField(referenceType: ReferenceType): void {
 }
 
 /**
- * An inline reference’s {@link ReferenceStrategy.identity identity companion}
- * holds together in both directions: `facetable` needs an `identity` to point
- * the engine at, and an `identity` with neither Role is a companion nothing
- * reads. `filterable` without one is served by conditions welded to one entry
- * alone, so it needs a filterable field on the entry instead.
+ * An inline reference’s {@link ReferenceStrategy.identity identity} holds
+ * together in both directions: `facetable` needs an `identity` to point the
+ * engine at, and an `identity` with neither Role is a leaf nothing reads.
+ * `filterable` without one is served by conditions welded to one entry alone,
+ * so it needs a filterable field on the entry instead.
  *
  * The named field must be a nested **reference that names a target** – a
  * `lookup`’s `target` or an `idOnly`’s `labelSource` – because naming one is
- * exactly the claim the companion rests on: *these values are ids of documents
+ * exactly the claim the identity rests on: *these values are ids of documents
  * in that collection* (ADR 20). That the target resolves to a declared Root
  * Type needs no rule here: {@link assertResolvableLabelSources} walks Reference
  * Types too, so the nested reference this names is resolved with every other.
  */
-function assertIdentityCompanion(
+function assertIdentity(
   searchType: SearchType,
   field: ReferenceField & { readonly ref: { readonly typeName: string } },
   referenceType: ReferenceType,
@@ -1355,17 +1355,17 @@ function assertIdentityCompanion(
   }
   if (!filters) {
     throw new Error(
-      `${where} declares an “identity” but neither “filterable” nor “facetable”: the companion it names would be indexed and never read. Declare a Role for it, or drop the “identity”.`,
+      `${where} declares an “identity” but neither “filterable” nor “facetable”: the leaf it names would be indexed and never read. Declare a Role for it, or drop the “identity”.`,
     );
   }
-  // A companion is a FLAT field beside the reference, and only a Root Type has
-  // somewhere flat to put one: inside a Reference Type it would be written into
-  // each entry and declared nowhere, so a filter on it would name a field the
-  // collection does not carry. An edge nested inside another edge is not a
-  // shape anything has needed; refusing it is better than serving it wrong.
+  // The identity’s leaf is one level in from the Root Type, which is as deep as
+  // a facet counts documents and a condition on one entry reaches. Inside a
+  // Reference Type it would be two levels in. An edge nested inside another
+  // edge is not a shape anything has needed; refusing it is better than
+  // serving it wrong.
   if (searchType.class === undefined) {
     throw new Error(
-      `${where} declares an “identity”, but “${searchType.name}” is a reference type: an identity companion is a flat field beside the reference, and a nested one has nowhere to live. Declare the companion on the reference that carries this type.`,
+      `${where} declares an “identity”, but “${searchType.name}” is a reference type: a filter and a facet read the identity one level in from a Root Type, and inside a reference type it would be two. Declare the identity on the reference that carries this type.`,
     );
   }
   const identityField = fieldNamed(referenceType, identity);
@@ -1379,7 +1379,14 @@ function assertIdentityCompanion(
     labelSourceNamesOf(identityField).length === 0
   ) {
     throw new Error(
-      `${where} names identity “${identity}”, which names no target: an identity companion holds ids of documents in a collection, so the field it harvests must be a reference declaring a “lookup” target or a label source.`,
+      `${where} names identity “${identity}”, which names no target: an identity holds ids of documents in a collection, so the field it names must be a reference declaring a “lookup” target or a label source.`,
+    );
+  }
+  // A filter and a facet on the reference read this field’s leaf inside each
+  // entry, which the engine indexes only for a field with a query Role.
+  if (identityField.filterable !== true) {
+    throw new Error(
+      `${where} names identity “${identity}”, which is not “filterable”: the reference filters and facets on that field inside each entry, so it must be indexed. Declare “filterable” on “${field.ref.typeName}.${identity}”.`,
     );
   }
   // An endpoint stated without its edge carries the identity field alone, so
@@ -1623,8 +1630,8 @@ function assertNoInlineCycle(
  *   a bucket counts every entry of every matching document, including the
  *   entries that did not satisfy the filter. The count is therefore wrong in a
  *   way no work on our side recovers. Facet a qualified edge through its
- *   {@link ReferenceStrategy.identity identity companion}, which is a flat
- *   field an engine facets exactly.
+ *   Root Type’s reference and its {@link ReferenceStrategy.identity identity},
+ *   which counts documents.
  * - **`sortable`** – there is no such thing as sorting *into* an element of an
  *   array; a document holds many entries and a sort key is one value.
  *
@@ -1660,7 +1667,7 @@ function assertServiceableNestedFields(
             .map((role) => `“${role}”`)
             .join(
               ', ',
-            )}, which nesting cannot serve: an engine facets a nested field per document rather than per entry, sorts on one value rather than into an array, and has no collection to join to from inside an entry. Facet the edge through the inline reference’s “identity” companion, or the root document on this leaf through the reference’s “facetedLeaves”, instead.`,
+            )}, which nesting cannot serve: an engine facets a nested field per document rather than per entry, sorts on one value rather than into an array, and has no collection to join to from inside an entry. Facet the edge through the inline reference’s “identity”, or the root document on this leaf through the reference’s “facetedLeaves”, instead.`,
         );
       }
       if (
@@ -1720,7 +1727,7 @@ const UNSERVICEABLE_NESTED_ROLES = [
 /** The Roles the **inline reference itself** declares that it cannot serve, in
  *  declaration order. Its value is a nested object, which an engine can neither
  *  tokenize for free text nor order by; `filterable` and `facetable` it serves
- *  through its {@link ReferenceStrategy.identity identity companion}. */
+ *  through its {@link ReferenceStrategy.identity identity}. */
 function unserviceableInlineRoles(
   field: ReferenceField,
 ): readonly (typeof UNSERVICEABLE_INLINE_ROLES)[number][] {
@@ -1817,8 +1824,8 @@ export function referencedTargetsOf(
  * Reference Types are walked too, so a **nested** `lookup` has its `target`
  * resolved by the same pass a top-level one does. That is also what validates
  * the target behind an inline reference’s
- * {@link ReferenceStrategy.identity identity companion}, since the companion
- * harvests a nested reference that names one.
+ * {@link ReferenceStrategy.identity identity}, since the identity names a
+ * nested reference that names one.
  */
 function assertResolvableLabelSources(
   types: readonly SearchType[],
@@ -2511,20 +2518,28 @@ export interface PhysicalFields {
   /** Per-locale folded sort keys `${name}_sort_${locale}` (localized text,
    *  `sortable`); a non-localized field sorts on its own `name` field. */
   readonly sort: readonly string[];
-  /** The field a facet on this field reads, when `facetable`: the field’s own
-   *  `name`, or the `${name}_facet` companion holding the subset its target’s
-   *  {@link FacetKeys facet policy} admits. `undefined` for a field that is
-   *  not facetable. */
+  /** The field a facet on this field reads, when `facetable`: the field a
+   *  {@link filter} reads, or the `_facet` companion holding the subset its
+   *  target’s {@link FacetKeys facet policy} admits. `undefined` for a field
+   *  that is not facetable. */
   readonly facet: string | undefined;
   /**
-   * The **identity companion** an inline reference filters and facets through:
-   * `${name}_id`, holding the ids its entries reference
-   * ({@link ReferenceStrategy.identity}). `undefined` for every other field –
-   * an ordinary field filters on its own `name`.
+   * The field a membership filter on this field reads: its own `name`, the
+   * {@link identity} companion of a `local` lookup, or – for an inline
+   * reference naming an {@link ReferenceStrategy.identity identity} – the
+   * nested id leaf of that identity in each entry (`${name}.${leaf}`).
    *
    * A nested object is not a value an engine filters or facets, so this is the
-   * flat field it filters and facets in its place. The logical field keeps one
-   * name at the surface; only the physical fanout knows there are two.
+   * field it filters and facets in its place. The logical field keeps one name
+   * at the surface; only the physical fanout knows they differ.
+   */
+  readonly filter: string;
+  /**
+   * The **identity companion** of a {@link ReferenceStrategy.local local}
+   * lookup that is `filterable` or `facetable`: `${name}_id`, a leaf beside the
+   * nested endpoints holding their ids, because an endpoint’s own `id` is a
+   * level further in than a condition on one entry reaches. `undefined` for
+   * every other field.
    */
   readonly identity: string | undefined;
   /**
@@ -2557,8 +2572,8 @@ export interface PhysicalFields {
     | undefined;
 }
 
-/** The physical name of an inline reference’s
- *  {@link ReferenceStrategy.identity identity companion}. */
+/** The physical name of a {@link ReferenceStrategy.local local} lookup’s
+ *  {@link PhysicalFields.identity identity companion}. */
 export function identityFieldName(name: string): string {
   return `${name}_id`;
 }
@@ -2566,11 +2581,11 @@ export function identityFieldName(name: string): string {
 /**
  * The Root Types whose labels a reference’s **facet buckets** read, by name and
  * in order of precedence – its own label sources, or, for an inline reference,
- * those its {@link ReferenceStrategy.identity identity companion} points at.
+ * those its {@link ReferenceStrategy.identity identity} points at.
  * Empty for a field that labels no bucket.
  *
  * The same one-level-in reading {@link inheritedFacetPolicies} makes, and for
- * the same reason: the companion holds that field’s ids, so the types that
+ * the same reason: the facet counts that field’s ids, so the types that
  * name those ids are the types that can label them. Kept together with it so a
  * facet cannot inherit a policy from one type and its labels from another –
  * or, as happened first, inherit the policy and no labels at all.
@@ -2627,7 +2642,7 @@ export function holdsNoIds(
 
 /**
  * The nested reference an inline reference’s
- * {@link ReferenceStrategy.identity identity companion} harvests, or
+ * {@link ReferenceStrategy.identity identity} names, or
  * `undefined` where the field declares none (or the schema cannot resolve its
  * reference type). The one reading of *which nested field identifies the edge*,
  * so the projection (which harvests it), {@link inheritedFacetPolicies} (which
@@ -2649,7 +2664,7 @@ export function identityFieldOf(
   if (referenceType === undefined) {
     return undefined;
   }
-  // `assertIdentityCompanion` guarantees the named field is declared and is a
+  // `assertIdentity` guarantees the named field is declared and is a
   // reference, so this is a read rather than a search.
   return fieldNamed(referenceType, identity) as ReferenceField | undefined;
 }
@@ -3422,14 +3437,16 @@ function deepTimeDate(year: number): StoredDate | undefined {
  * localized `text` field’s display fields are pattern-based and not enumerated
  * here – see {@link displayFieldName} and its siblings.
  *
- * The facet is the one member that depends on more than the declaration. A
- * field storing a nested object facets its `${name}_id` identity companion
- * rather than itself, and a facetable reference whose target declares a
- * {@link FacetKeys facet policy} facets a `_facet` companion of whichever field
- * it would otherwise facet – `${name}_facet` or `${name}_id_facet`. Only the
- * `schema` can resolve either ({@link inheritedFacetPolicies}). Without one the
- * field facets on its own name – the same reading the projection makes without
- * a schema, where it cannot re-key a reference either.
+ * The filter and facet are the members that depend on more than the
+ * declaration. A field storing a nested object filters and facets an id leaf
+ * rather than itself – a local lookup its `${name}_id` companion, an inline
+ * reference its identity’s leaf inside each entry – and a facetable reference
+ * whose target declares a {@link FacetKeys facet policy} facets a top-level
+ * `_facet` companion instead: `${name}_facet`, or `${name}_id_facet` for a
+ * local lookup. Only the `schema` can resolve any of these
+ * ({@link inheritedFacetPolicies}). Without one the field filters and facets
+ * its own name – the same reading the projection makes without a schema,
+ * where it cannot re-key a reference either.
  */
 export function physicalFields(
   field: SearchField,
@@ -3446,32 +3463,43 @@ export function physicalFields(
         : [],
       // Text is never facetable (`validateSearchType`).
       facet: undefined,
+      filter: field.name,
       identity: undefined,
       precision: undefined,
       period: undefined,
     };
   }
   // A field storing a nested OBJECT cannot be filtered or faceted as itself, so
-  // everything an engine indexes for it reads the identity companion instead –
-  // the facet included, which is why the facet name is derived from the
-  // companion rather than from `name`. Two shapes store one: an inline
-  // reference that names an `identity`, and a `local` lookup, whose own id is
-  // otherwise a level further in than an engine can weld a condition to.
-  const nestsAnObject =
-    identityFieldOf(field, schema) !== undefined ||
-    (localLookupTargetsOf(field, schema).length > 0 &&
-      (field.filterable === true || field.facetable === true));
-  const identity = nestsAnObject ? identityFieldName(field.name) : undefined;
-  const filtered = identity ?? field.name;
+  // what an engine filters and facets for it is an id leaf. A `local` lookup’s
+  // own id is a level further in than a condition on one entry reaches, so it
+  // gets a companion leaf beside the endpoints; an inline reference naming an
+  // `identity` reads that identity’s leaf inside each entry, which Typesense
+  // flattens into one list per document – the count a facet wants.
+  const identity =
+    localLookupTargetsOf(field, schema).length > 0 &&
+    (field.filterable === true || field.facetable === true)
+      ? identityFieldName(field.name)
+      : undefined;
+  const identityField = identityFieldOf(field, schema);
+  const filter =
+    identityField === undefined
+      ? (identity ?? field.name)
+      : nestedFieldName(
+          field.name,
+          physicalFields(identityField, schema).filter,
+        );
   return {
     search: field.searchable !== undefined ? [`${field.name}_search`] : [],
     sort: [],
+    // The narrowed companion is a top-level field even where the filter reads
+    // a nested leaf: it holds the admitted ids of the whole document.
     facet:
       field.facetable !== true
         ? undefined
         : inheritedFacetPolicies(field, schema).size === 0
-          ? filtered
-          : `${filtered}_facet`,
+          ? filter
+          : `${identity ?? field.name}_facet`,
+    filter,
     identity,
     precision: field.kind === 'date' ? `${field.name}_precision` : undefined,
     period: storesPeriods(field)
@@ -3519,8 +3547,8 @@ export function companionNames(field: SearchField): string[] {
  * companion) and {@link physicalFields} (which names it) share.
  *
  * An **inline** reference names its target one level in, through the nested
- * reference its {@link ReferenceStrategy.identity identity companion} harvests
- * ({@link identityFieldOf}). The boundary is the same one: the companion holds
+ * reference its {@link ReferenceStrategy.identity identity} names
+ * ({@link identityFieldOf}). The boundary is the same one: the facet counts
  * that field’s ids, so the policy that narrows a facet over those ids is the
  * policy of the type that field names. Reading it through the nested field
  * rather than declaring it twice is what keeps *which of a type’s ids deserve

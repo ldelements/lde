@@ -524,7 +524,8 @@ declare `facetable` or `sortable`, and `searchSchema` rejects those naming the
 field: an engine's facet counts over a nested field are computed per _document_
 rather than per entry, so a bucket would count entries that did not match the
 filter, and there is no sorting _into_ an element of an array. Facet an edge
-through its [identity companion](#data-on-the-edge) instead.
+through its [identity](#data-on-the-edge) instead, or list the leaf in
+[`facetedLeaves`](#faceting-on-an-entry-s-leaf).
 
 A field's **capabilities** – `output`, `filterable`, `facetable`, `sortable`,
 `searchable`, `joinable`; the code calls them Roles – are independent opt-ins,
@@ -537,8 +538,8 @@ for the one.
 A referent needs no identity of its own: the nesting carries its fields, not a
 document key. An entry of a Reference Type carries **no `id` at all** – named
 node or blank – because nothing resolves an entry by key: it is kept in no
-collection, a weld names the flat identity companion beside it, and an entry's
-own key answers no query. So a profile that allows a blank node here needs no
+collection, a filter reads the ids its fields hold, and an entry's own key
+answers no query. So a profile that allows a blank node here needs no
 flattening workaround, and an entry's shape never depends on whether a publisher
 minted an IRI for the thing it describes.
 
@@ -660,14 +661,17 @@ Two declarations make that work.
 
 **`identity`** names the nested reference whose ids identify each entry. A
 nested object is not something an engine can filter or facet by id, so a
-reference naming an `identity` fans out a flat **identity companion**
-holding those ids, which the engine filters and facets in its place. The logical
-field keeps one name; only the physical fanout knows there are two. It is
-declared rather than inferred – an edge may carry several references, and only
-you know which one identifies it – and naming it is also what supplies the
-target that types the filter and carries the facet's labels. Both directions are
-enforced: `facetable` without an `identity` has nothing to count, and an
-`identity` without `filterable` or `facetable` is a companion nothing reads.
+reference naming an `identity` filters and facets that reference's leaf inside
+each entry in its place. A work naming one person in two roles counts once
+under that person: the engine counts the leaf per document. The logical field
+keeps one name; only the physical fanout knows they differ. It is declared
+rather than inferred – an edge may carry several references, and only you know
+which one identifies it – and naming it is also what supplies the target that
+types the filter and carries the facet's labels. The named reference must be
+`filterable`, which is what indexes its leaf, and therefore names one endpoint
+per entry: an entry naming several endpoints is several entries. Both directions are enforced:
+`facetable` without an `identity` has nothing to count, and an `identity`
+without `filterable` or `facetable` is a leaf nothing reads.
 
 A reference type made of literals alone, such as a `PropertyValue` with a
 `value` and a `propertyID`, has no ids to name. Without an `identity` it can
@@ -679,7 +683,7 @@ declares no filterable field.
 where: { identifier: { where: { value: { in: ["G11125-19"] } } } }
 ```
 
-Because the companion holds ids only, its facet is **exact**: an endpoint the
+Because the leaf holds ids only, its facet is **exact**: an endpoint the
 source named inline contributes no bucket rather than a bucket keyed on a label,
 so two people who share a name are never merged. The cost is stated rather than
 hidden – the buckets do not sum to the result count, and that belongs in the
@@ -703,10 +707,10 @@ only where there is no id, because the two failures differ – at index time the
 question is _is this endpoint identified_, at query time it is _is that document
 indexed_.
 
-A `local` lookup stores an object, so it filters and facets the way an inline
-reference does: `filterable` or `facetable` fans out a flat `${name}_id`
-companion holding the endpoints’ document keys, and the engine filters and
-facets that instead. Its buckets are keyed exactly like the target’s
+A `local` lookup stores an object, and its endpoints’ ids are a level further
+in than a condition on one entry reaches. So `filterable` or `facetable` fans
+out a flat `${name}_id` companion beside it, holding the endpoints’ document
+keys, and the engine filters and facets that instead. Its buckets are keyed exactly like the target’s
 documents – two datasets’ nodes aligned to one authority record count in one
 bucket, labelled from the target’s collection – and an endpoint without an id
 contributes none. A target’s [facet policy](#facet-policy) narrows the facet as it
