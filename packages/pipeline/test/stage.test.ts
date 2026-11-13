@@ -7,6 +7,7 @@ import type {
   ItemSelector,
   QuadTransform,
   RunOptions,
+  SelectOptions,
 } from '../src/stage.js';
 import type { Reader, ReadOptions } from '../src/sparql/reader.js';
 import { NotSupported } from '../src/sparql/reader.js';
@@ -1720,6 +1721,61 @@ describe('Stage', () => {
       const stage = new Stage({ name: 'test', readers: mockExecutor([q1]) });
 
       expect(await countsOf(stage)).toEqual({});
+    });
+  });
+
+  describe('bindingsProvider', () => {
+    const datasetRow = { dataset: namedNode('http://example.org/dataset') };
+    const customRow = { type: namedNode('http://example.org/CustomType') };
+    const bindingsProvider = { bindings: async () => [customRow] };
+
+    it('hands the selector and readers the same dataset bindings, separate from item bindings', async () => {
+      const seenOptions: SelectOptions[] = [];
+      const item = { s: namedNode('http://example.org/s1') };
+      const selector: ItemSelector = {
+        async *select(_distribution, _batchSize, options) {
+          seenOptions.push(options ?? {});
+          yield item;
+        },
+      };
+      const reader = capturingExecutor([q1]);
+      const stage = new Stage({
+        name: 'withProvider',
+        readers: reader,
+        itemSelector: selector,
+        bindingsProvider,
+      });
+
+      await stage.run(dataset, distribution, collectingWriter());
+
+      const options = reader.read.mock.calls[0][2] as ReadOptions;
+      expect(options.bindings).toEqual([item]);
+      expect(options.datasetBindings).toContainEqual([customRow]);
+      expect(seenOptions[0].datasetBindings).toBe(options.datasetBindings);
+    });
+
+    it('passes dataset bindings to the reader when there is no item selector', async () => {
+      const reader = capturingExecutor([q1]);
+      const stage = new Stage({
+        name: 'withProvider',
+        readers: reader,
+        bindingsProvider,
+      });
+
+      await stage.run(dataset, distribution, collectingWriter());
+
+      const options = reader.read.mock.calls[0][2] as ReadOptions;
+      expect(options.datasetBindings).toContainEqual([customRow]);
+    });
+
+    it('passes the predefined bindings without a provider', async () => {
+      const reader = capturingExecutor([q1]);
+      const stage = new Stage({ name: 'withoutProvider', readers: reader });
+
+      await stage.run(dataset, distribution, collectingWriter());
+
+      const options = reader.read.mock.calls[0][2] as ReadOptions;
+      expect(options.datasetBindings).toContainEqual([datasetRow]);
     });
   });
 });

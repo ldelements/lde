@@ -11,6 +11,11 @@ import {
 import type { ItemSelector, SelectOptions } from '../stage.js';
 import { classifyOutcome } from './failure.js';
 import { withDefaultGraph } from './graph.js';
+import {
+  identifyDatasetBindings,
+  injectDatasetBindings,
+  type DatasetBindingTargets,
+} from './values.js';
 import type { VariableBindings } from './reader.js';
 import { ConstantTimeoutPolicy, type TimeoutPolicy } from './timeoutPolicy.js';
 
@@ -85,6 +90,7 @@ export interface SparqlItemSelectorOptions {
  */
 export class SparqlItemSelector implements ItemSelector {
   private readonly parsed: QuerySelect;
+  private readonly datasetBindingTargets: DatasetBindingTargets;
   private readonly queryLimit?: number;
   private readonly variableNames: readonly string[];
   private readonly maxResults?: number;
@@ -110,6 +116,7 @@ export class SparqlItemSelector implements ItemSelector {
     }
 
     this.parsed = parsed as QuerySelect;
+    this.datasetBindingTargets = identifyDatasetBindings(this.parsed);
     this.queryLimit = this.parsed.solutionModifiers.limitOffset?.limit;
     this.variableNames = variables.map((variable) => variable.value);
     this.maxResults = options.maxResults;
@@ -131,9 +138,16 @@ export class SparqlItemSelector implements ItemSelector {
     const endpoint = distribution.accessUrl!;
     // Per call, so concurrent selections over different datasets cannot see
     // each other's graph scope or page window.
-    const query = structuredClone(this.parsed);
+    let query = structuredClone(this.parsed);
     if (distribution.namedGraph) {
       withDefaultGraph(query, distribution.namedGraph);
+    }
+    if (options?.datasetBindings) {
+      query = injectDatasetBindings(
+        query,
+        options.datasetBindings,
+        this.datasetBindingTargets,
+      );
     }
     const policy = options?.timeout ?? defaultTimeoutPolicy;
     let offset = 0;

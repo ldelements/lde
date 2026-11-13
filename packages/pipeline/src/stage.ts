@@ -3,6 +3,11 @@ import type { Quad } from '@rdfjs/types';
 import type { ReadOptions, Reader, VariableBindings } from './sparql/reader.js';
 import { NoItemsSelected, NotSupported } from './sparql/reader.js';
 import type { TimeoutPolicy } from './sparql/timeoutPolicy.js';
+import {
+  datasetBindingsFor,
+  type DatasetBindings,
+  type DatasetBindingsProvider,
+} from './sparql/datasetBindings.js';
 import { batch } from './batch.js';
 import type { Validator } from './validator.js';
 import type { DatasetWriter } from './writer/writer.js';
@@ -196,6 +201,13 @@ export interface StageOptions<Out = Quad> {
     /** What to do when a batch fails validation. @default 'write' */
     onInvalid?: 'write' | 'skip' | 'halt';
   };
+  /**
+   * Supplies additional per-dataset bindings beyond the built-in DCAT ones
+   * (see {@link DATASET_BINDING_VARIABLES}), for values this library can't
+   * know about (e.g. a caller-local `edm:type`). Handed to both the item
+   * selector and every reader.
+   */
+  bindingsProvider?: DatasetBindingsProvider;
 }
 
 export interface RunOptions extends Pick<
@@ -222,6 +234,12 @@ export interface RunOptions extends Pick<
 export interface SelectOptions {
   /** Per-call timeout policy. */
   timeout?: TimeoutPolicy;
+  /**
+   * Dataset-level bindings so an {@link ItemSelector} can inject the same
+   * bindings a reader would, e.g. to filter selected items by
+   * `?datasetLicense` – see {@link injectDatasetBindings}.
+   */
+  datasetBindings?: DatasetBindings;
 }
 
 export class Stage<Out = Quad> {
@@ -240,6 +258,7 @@ export class Stage<Out = Quad> {
   private readonly project?: BatchTransform<Out>;
   private readonly queueCapacity?: number;
   private readonly sourceFor?: StageOptions<Out>['sourceFor'];
+  private readonly bindingsProvider?: DatasetBindingsProvider;
 
   constructor(options: StageOptions<Out>) {
     if (options.project && !options.itemSelector) {
@@ -274,6 +293,7 @@ export class Stage<Out = Quad> {
     this.queueCapacity = options.queueCapacity;
     this.sourceFor = options.sourceFor;
     this.sourcesOwnData = options.sourceFor !== undefined;
+    this.bindingsProvider = options.bindingsProvider;
   }
 
   /** The validator for this stage, if configured. */
@@ -288,22 +308,31 @@ export class Stage<Out = Quad> {
     options?: RunOptions,
   ): Promise<NotSupported | void> {
     const timeout = options?.timeout;
-    const readOptions: ReadOptions = {
-      timeout,
-      limiter: options?.limiter,
-      onRootSkipped: options?.onRootSkipped,
-    };
     // Substituted once, before anything reads: the selector and the readers
     // must agree on where this stage's data comes from.
     const distribution = this.sourceFor
       ? this.sourceFor(dataset, resolved)
       : resolved;
+    const datasetBindings = datasetBindingsFor(
+      dataset,
+      this.bindingsProvider
+        ? await this.bindingsProvider.bindings(dataset, distribution)
+        : [],
+    );
+    const readOptions: ReadOptions = {
+      timeout,
+      limiter: options?.limiter,
+      onRootSkipped: options?.onRootSkipped,
+      datasetBindings,
+    };
+
     const tally = new StageTally(this.transformNames);
     if (this.itemSelector) {
       const result = await this.runWithSelector(
         tally.selected(
           this.itemSelector.select(distribution, this.batchSize, {
             timeout,
+            datasetBindings,
           }),
         ),
         dataset,
