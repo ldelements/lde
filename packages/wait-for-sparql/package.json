@@ -25,7 +25,7 @@
   ],
   "dependencies": {
     "fetch-sparql-endpoint": "^7.3.0",
-    "p-retry": "^8.0.1",
+    "p-retry": "^9.0.0",
     "tslib": "^2.3.0"
   }
 }
