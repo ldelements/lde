@@ -1122,6 +1122,110 @@ describe('Pipeline', () => {
       expect(stageOutputResolver.cleanup).toHaveBeenCalledTimes(1);
     });
 
+    describe('emitOutput', () => {
+      /** A stage whose run writes one quad with subject `http://<name>`. */
+      function writingStage(
+        name: string,
+        options: { emitOutput?: boolean; stages?: Stage[] } = {},
+      ): Stage {
+        const stage = new Stage({ name, readers: [], ...options });
+        vi.spyOn(stage, 'run').mockImplementation(
+          async (staged, _distribution, stageWriter) => {
+            await stageWriter.write(
+              staged,
+              (async function* () {
+                yield DataFactory.quad(
+                  DataFactory.namedNode(`http://${name}`),
+                  DataFactory.namedNode('http://p'),
+                  DataFactory.namedNode('http://o'),
+                );
+              })(),
+            );
+          },
+        );
+        return stage;
+      }
+
+      /** Run `parent` as a chain and return the subjects the writers got. */
+      async function writtenSubjects(parent: Stage): Promise<string[]> {
+        const outputDir = await mkdtemp(join(tmpdir(), 'pipeline-emit-test-'));
+        const subjects: string[] = [];
+        writer.runWriter.write.mockImplementation(
+          async (_dataset: Dataset, quads: AsyncIterable<Quad>) => {
+            for await (const quad of quads) subjects.push(quad.subject.value);
+          },
+        );
+        const pipeline = new Pipeline({
+          datasetSelector: makeDatasetSelector(dataset),
+          stages: [parent],
+          writers: writer,
+          distributionResolver: makeResolver(makeResolvedDistribution()),
+          chaining: {
+            stageOutputResolver: makeStageOutputResolver(),
+            outputDir,
+          },
+        });
+        try {
+          await pipeline.run();
+        } finally {
+          await rm(outputDir, { recursive: true, force: true });
+        }
+        return subjects;
+      }
+
+      it('writes the output of every stage in a chain by default', async () => {
+        const parent = writingStage('parent', {
+          stages: [writingStage('child')],
+        });
+
+        expect(await writtenSubjects(parent)).toEqual([
+          'http://parent',
+          'http://child',
+        ]);
+      });
+
+      it('leaves a parent that does not emit output out of the writers, while its child still runs', async () => {
+        const child = writingStage('child');
+        const parent = writingStage('parent', {
+          emitOutput: false,
+          stages: [child],
+        });
+
+        expect(await writtenSubjects(parent)).toEqual(['http://child']);
+        expect(child.run).toHaveBeenCalledTimes(1);
+      });
+
+      it('leaves a middle child that does not emit output out of the writers, while the next child still chains off it', async () => {
+        const middle = writingStage('middle', { emitOutput: false });
+        const last = writingStage('last');
+        const parent = writingStage('parent', { stages: [middle, last] });
+
+        expect(await writtenSubjects(parent)).toEqual([
+          'http://parent',
+          'http://last',
+        ]);
+        expect(last.run).toHaveBeenCalledTimes(1);
+      });
+
+      it('rejects a top-level stage without sub-stages that does not emit output', () => {
+        const stage = new Stage({
+          name: 'lonely',
+          readers: [],
+          emitOutput: false,
+        });
+
+        expect(
+          () =>
+            new Pipeline({
+              datasetSelector: makeDatasetSelector(dataset),
+              stages: [stage],
+              writers: writer,
+              distributionResolver: makeResolver(makeResolvedDistribution()),
+            }),
+        ).toThrow(/Stage 'lonely' sets 'emitOutput: false'/);
+      });
+    });
+
     it('validates chaining is required for sub-stages', () => {
       const child = makeStage('child');
       const parent = makeStage('parent', undefined, [child]);

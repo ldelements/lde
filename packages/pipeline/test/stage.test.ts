@@ -1388,6 +1388,46 @@ describe('Stage', () => {
       ).toThrow(/chained stage 'child' declares 'sourceFor'/);
     });
 
+    it('rejects a last chained stage that does not emit output', () => {
+      // Nothing reads the last child's output, so withholding it would
+      // discard the stage's work.
+      const middle = new Stage({
+        name: 'middle',
+        readers: mockExecutor([]),
+      });
+      const last = new Stage({
+        name: 'last',
+        readers: mockExecutor([]),
+        emitOutput: false,
+      });
+      expect(
+        () =>
+          new Stage({
+            name: 'parent',
+            readers: mockExecutor([q1]),
+            stages: [middle, last],
+          }),
+      ).toThrow(/the last chained stage 'last' sets 'emitOutput: false'/);
+    });
+
+    it('allows a chained stage that does not emit output when a later stage reads it', () => {
+      const middle = new Stage({
+        name: 'middle',
+        readers: mockExecutor([]),
+        emitOutput: false,
+      });
+      const last = new Stage({ name: 'last', readers: mockExecutor([]) });
+      expect(
+        () =>
+          new Stage({
+            name: 'parent',
+            readers: mockExecutor([q1]),
+            emitOutput: false,
+            stages: [middle, last],
+          }),
+      ).not.toThrow();
+    });
+
     it('allows a chaining parent to source its own data', () => {
       const child = new Stage({ name: 'child', readers: mockExecutor([]) });
       expect(

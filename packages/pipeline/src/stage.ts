@@ -174,6 +174,20 @@ export interface StageOptions<Out = Quad> {
   /** Child stages that chain off this stage's output. */
   stages?: Stage[];
   /**
+   * Whether this stage's output reaches the pipeline's writers. Set it to
+   * `false` on a stage in a chain whose output only feeds the next stage – a
+   * working graph a child queries, say: the stage still writes its scratch
+   * file, but the chain leaves it out of what it writes.
+   *
+   * Only meaningful inside a chain, and only where a next stage reads the
+   * output, so `false` is rejected on the last chained stage (by the parent's
+   * constructor) and on a top-level stage without `stages` (by the
+   * `Pipeline`'s) – either would discard the stage's work.
+   *
+   * @default true
+   */
+  emitOutput?: boolean;
+  /**
    * Treat a supported stage that produces no quads as a hard failure (throws),
    * rather than a legitimately empty result.
    *
@@ -232,6 +246,9 @@ export class Stage<Out = Quad> {
   /** Whether this stage reads a source of its own rather than the dataset’s
    *  resolved distribution. @see {@link StageOptions.sourceFor} */
   readonly sourcesOwnData: boolean;
+  /** Whether this stage's output reaches the pipeline's writers.
+   *  @see {@link StageOptions.emitOutput} */
+  readonly emitOutput: boolean;
   private readonly readers: NormalizedReader[];
   private readonly itemSelector?: ItemSelector;
   private readonly batchSize: number;
@@ -262,6 +279,14 @@ export class Stage<Out = Quad> {
         `Stage '${options.name}': chained stage '${sourcedChild.name}' declares 'sourceFor' – a chained stage reads its parent's output, so it cannot source its own data.`,
       );
     }
+    // Nothing reads the last chained stage's output, so withholding it from the
+    // writers would discard the stage's work.
+    const lastChild = options.stages?.at(-1);
+    if (lastChild && !lastChild.emitOutput) {
+      throw new Error(
+        `Stage '${options.name}': the last chained stage '${lastChild.name}' sets 'emitOutput: false' – no stage reads its output, so it would be discarded.`,
+      );
+    }
     this.name = options.name;
     this.stages = options.stages ?? [];
     this.readers = normalizeReaders(options.readers);
@@ -274,6 +299,7 @@ export class Stage<Out = Quad> {
     this.queueCapacity = options.queueCapacity;
     this.sourceFor = options.sourceFor;
     this.sourcesOwnData = options.sourceFor !== undefined;
+    this.emitOutput = options.emitOutput ?? true;
   }
 
   /** The validator for this stage, if configured. */
