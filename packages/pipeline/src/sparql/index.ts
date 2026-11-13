@@ -1,6 +1,5 @@
 export {
   deduplicateQuads,
-  endpointKeyOf,
   SparqlConstructReader,
   LineBufferTransform,
   NotSupported,

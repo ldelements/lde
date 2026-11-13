@@ -162,13 +162,13 @@ new Stage({
 
 `maxConcurrency` (default: 10) limits the total number of concurrent SPARQL queries. Within each batch, all readers run in parallel; the number of concurrent batches is automatically reduced to `⌊maxConcurrency / readerCount⌋` so the total query pressure stays within the limit. For example, with `maxConcurrency: 10` and two readers per stage, up to 5 batches run concurrently (10 SPARQL queries total).
 
-How many of those queries reach the endpoint at once is up to the pipeline’s `limiter`, a [`HostLimiter`](host-limiter) keyed on the endpoint: `endpointKeyOf(distribution.accessUrl)`, its host and path. Each endpoint starts at one query in flight, and its limit then adapts to how it responds, up to the limiter’s per-host ceiling. Datasets served by one endpoint share its limit and its pauses, so the next dataset on an endpoint starts at the limit the previous one left – as long as the limiter still remembers it, which it does for its last 1,000 idle keys – while separate endpoints on one host – one SPARQL server per dataset, say – each get their own; see [the adaptive limit](host-limiter#an-adaptive-per-host-limit). Without one, every reader shares a default `createHostLimiter(10, 10)`, so a `maxConcurrency` above 10 needs a limiter with a higher ceiling to make a difference. A weak endpoint that falls over at two queries is therefore asked one at a time, while a strong one climbs to the ceiling within a few batches.
+How many of those queries reach the endpoint at once is up to the pipeline’s `limiter`, a [`HostLimiter`](host-limiter) keyed on the endpoint: [`endpointKeyOf(distribution.accessUrl)`](host-limiter#contract), its host and path. Each endpoint starts at one query in flight, and its limit then adapts to how it responds, up to the limiter’s per-host ceiling. Datasets served by one endpoint share its limit and its pauses, while separate endpoints on one host – one SPARQL server per dataset, say – each get their own. The next dataset on an endpoint starts at the limit the previous one left, as long as the limiter still remembers it: it keeps its last 1,000 idle keys. See [the adaptive limit](host-limiter#an-adaptive-per-host-limit). Without one, every reader shares a default `createHostLimiter(10, 10)`, so a `maxConcurrency` above 10 needs a limiter with a higher ceiling to make a difference. A weak endpoint that falls over at two queries is therefore asked one at a time, while a strong one climbs to the ceiling within a few batches.
 
 To share one limit with a [resolver](resolver) that loads the same backend – IIIF manifests served by the endpoint’s own server, say – create the limiter once and pass it to both, and key the resolver on the endpoint too. A transform has the stage’s distribution in its context:
 
 ```typescript
-import { createHostLimiter } from '@lde/host-limiter';
-import { endpointKeyOf, Pipeline } from '@lde/pipeline';
+import { createHostLimiter, endpointKeyOf } from '@lde/host-limiter';
+import { Pipeline } from '@lde/pipeline';
 import { createResolver } from '@lde/resolver';
 
 const limiter = createHostLimiter(10, 8);

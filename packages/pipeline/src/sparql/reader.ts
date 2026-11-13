@@ -10,6 +10,7 @@ import { Generator } from '@traqula/generator-sparql-1-1';
 import type { QueryConstruct } from '@traqula/rules-sparql-1-1';
 import {
   createHostLimiter,
+  endpointKeyOf,
   parseRetryAfter,
   type HostLimiter,
 } from '@lde/host-limiter';
@@ -28,19 +29,6 @@ const defaultTimeoutPolicy: TimeoutPolicy = new ConstantTimeoutPolicy(300_000);
 
 /** The limiter of every read not given one, so they share one limit. */
 const defaultLimiter: HostLimiter = createHostLimiter(10, 10);
-
-/**
- * The key readers run an endpoint’s queries under on the limiter: its host and
- * path, such as `sparql.example.org/dataset`, without query string or
- * fragment. Separate endpoints on one host get separate keys; datasets served
- * by one endpoint share its key.
- *
- * Key a resolver that loads the same endpoint on it too, so the two share one
- * limit: `endpointKeyOf(context.distribution.accessUrl)`.
- */
-export function endpointKeyOf(url: URL): string {
-  return url.host + url.pathname;
-}
 
 /**
  * A reader could not run because the dataset lacks a supported distribution.

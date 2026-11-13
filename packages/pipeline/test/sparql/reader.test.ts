@@ -1,6 +1,5 @@
 import {
   deduplicateQuads,
-  endpointKeyOf,
   SparqlConstructReader,
   LineBufferTransform,
   readQueryFile,
@@ -1033,23 +1032,6 @@ function recordingLimiter() {
   };
   return { limiter, pauses, outcomes, log };
 }
-
-describe('endpointKeyOf', () => {
-  it('keys separate endpoints on one host apart', () => {
-    expect(endpointKeyOf(new URL('https://sparql.example.org/a'))).toBe(
-      'sparql.example.org/a',
-    );
-    expect(endpointKeyOf(new URL('https://sparql.example.org/b'))).toBe(
-      'sparql.example.org/b',
-    );
-  });
-
-  it('keeps the port and drops the query string and fragment', () => {
-    expect(
-      endpointKeyOf(new URL('http://localhost:7001/sparql?timeout=60#top')),
-    ).toBe('localhost:7001/sparql');
-  });
-});
 
 describe('LineBufferTransform', () => {
   async function collect(stream: Readable): Promise<string> {
