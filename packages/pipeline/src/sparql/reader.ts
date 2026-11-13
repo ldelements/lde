@@ -556,7 +556,7 @@ async function* noQuads(): AsyncIterable<Quad> {
 }
 
 /**
- * How long a reader pauses its dataset before each retry after the endpoint
+ * How long a reader pauses the endpoint’s host before each retry after it
  * went down, in milliseconds: tripled each time, about 10 minutes in all, to
  * outlast a backend restart. A `Retry-After` header replaces a step.
  */
