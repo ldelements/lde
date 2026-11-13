@@ -73,7 +73,8 @@ export interface ReadOptions {
    * limit and one pause. A pipeline passes its own. See
    * {@link SparqlConstructReader}.
    *
-   * A read not given one gets a limiter of its own: `createHostLimiter(10, 10)`.
+   * A read not given one gets a limiter for that read alone:
+   * `createHostLimiter(10, 10)`. A {@link Stage} passes one for all its batches.
    */
   limiter?: HostLimiter;
 

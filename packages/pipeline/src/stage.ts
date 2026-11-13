@@ -1,4 +1,9 @@
 import { Dataset, Distribution } from '@lde/dataset';
+import {
+  createHostLimiter,
+  positiveIntOrDefault,
+  type HostLimiter,
+} from '@lde/host-limiter';
 import type { Quad } from '@rdfjs/types';
 import type { ReadOptions, Reader, VariableBindings } from './sparql/reader.js';
 import { NoItemsSelected, NotSupported } from './sparql/reader.js';
@@ -237,6 +242,8 @@ export class Stage<Out = Quad> {
   private readonly readers: NormalizedReader[];
   private readonly itemSelector?: ItemSelector;
   private readonly batchSize: number;
+  /** The limiter of a run not given one, so its batches back off together. */
+  private readonly limiter: HostLimiter;
   private readonly validation?: StageOptions<Out>['validation'];
   private readonly project?: BatchTransform<Out>;
   private readonly queueCapacity?: number;
@@ -269,6 +276,8 @@ export class Stage<Out = Quad> {
     this.itemSelector = options.itemSelector;
     this.batchSize = options.batchSize ?? 10;
     this.maxConcurrency = options.maxConcurrency ?? 10;
+    const ceiling = positiveIntOrDefault(this.maxConcurrency, 10);
+    this.limiter = createHostLimiter(ceiling, ceiling);
     this.validation = options.validation;
     this.expectsOutput = options.expectsOutput ?? false;
     this.project = options.project;
@@ -291,7 +300,7 @@ export class Stage<Out = Quad> {
     const timeout = options?.timeout;
     const readOptions: ReadOptions = {
       timeout,
-      limiter: options?.limiter,
+      limiter: options?.limiter ?? this.limiter,
       onRootSkipped: options?.onRootSkipped,
     };
     // Substituted once, before anything reads: the selector and the readers
