@@ -532,6 +532,12 @@ describe('an inline reference without an identity', () => {
     );
   });
 
+  it('describes its filter as a condition on one entry, promising no ids', () => {
+    expect(recordGqlSchema.getType('PropertyValueFilter')?.description).toBe(
+      'A condition on one PropertyValue entry.',
+    );
+  });
+
   it('welds conditions on its literal fields to one entry', async () => {
     let captured: SearchQuery | undefined;
     const engine: SearchEngine = {
