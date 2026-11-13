@@ -71,6 +71,7 @@ const creatorEdge = defineSearchType({
       name: 'creator',
       kind: 'reference',
       output: true,
+      filterable: true,
       ref: {
         strategy: 'lookup',
         target: ['Person', 'Organization'],
@@ -325,7 +326,6 @@ describe('a stored referent of several possible kinds', () => {
               creator: { name_und: 'Jan Jansen', [TARGET_FIELD]: 'Person' },
             },
           ],
-          creator_id: ['https://o/1', 'https://o/gone'],
         },
       },
     ],
@@ -416,7 +416,6 @@ describe('a lookup below a referent of several possible kinds', () => {
               },
             },
           ],
-          creator_id: ['https://p/1', 'https://p/gone'],
         },
       },
     ],

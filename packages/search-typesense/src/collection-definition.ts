@@ -113,9 +113,10 @@ export interface CollectionDefinitionOptions {
  * the display labels; one that opts into `filterable` or `searchable` is
  * indexed, and its parent object with it (see {@link nestedFields}).
  *
- * An inline reference declaring `filterable` or `facetable` also emits its
- * {@link ReferenceStrategy.identity identity companion} – a flat id field the
- * engine can filter and facet, which a nested object is not
+ * An inline reference naming an {@link ReferenceStrategy.identity identity}
+ * filters and facets that identity’s leaf inside each entry, which a nested
+ * object is not; a `local` lookup that is `filterable` or `facetable` emits a
+ * flat id companion beside its endpoints instead
  * ({@link identityCompanionFields}).
  */
 export function buildCollectionDefinition(
@@ -136,12 +137,11 @@ export function buildCollectionDefinition(
       ),
     ),
   };
-  // A faceted leaf is faceted on its nested path, which Typesense flattens
-  // into one list per document – so a bucket counts documents, not entries.
+  // A faceted leaf, and an inline reference’s identity, are faceted on a
+  // nested path, which Typesense flattens into one list per document – so a
+  // bucket counts documents, not entries.
   const facetedPaths = new Set(
-    facetsOf(searchType, options.schema)
-      .filter((facet) => facet.reference !== undefined)
-      .map((facet) => facet.engineField),
+    facetsOf(searchType, options.schema).map((facet) => facet.engineField),
   );
   for (const field of collection.fields as CollectionFieldSchema[]) {
     if (facetedPaths.has(field.name)) {
@@ -644,12 +644,13 @@ function nestedFields(
 }
 
 /**
- * The **identity companion** of an inline reference: the flat field holding the
- * ids its entries reference, which the engine filters and facets in place of
- * the nested object it cannot. Empty for an inline reference declaring no
- * `identity` – a display-only nesting keeps costing no RAM.
+ * The top-level companions of a field storing nested objects: a `local`
+ * lookup’s **identity companion**, the flat field holding the ids of its
+ * endpoints, which the engine filters and facets in place of the nested object
+ * it cannot. An inline reference needs none – it reads its identity’s leaf
+ * inside each entry – and a display-only nesting keeps costing no RAM.
  *
- * A second, narrowed field joins it where the target declares a facet policy,
+ * A narrowed field joins them where the target declares a facet policy,
  * exactly as it does for a top-level facetable reference: the facet then reads
  * the admitted subset, so an excluded id is never seen by the engine rather
  * than merely unlabelled.
@@ -659,18 +660,16 @@ function identityCompanionFields(
   schema: SearchSchema,
 ): CollectionFieldSchema[] {
   const names = physicalFields(field, schema);
-  if (names.identity === undefined) {
-    return [];
-  }
-  const fields: CollectionFieldSchema[] = [
-    {
+  const fields: CollectionFieldSchema[] = [];
+  if (names.identity !== undefined) {
+    fields.push({
       name: names.identity,
       type: 'string[]',
       facet: names.facet === names.identity,
       optional: true,
-    },
-  ];
-  if (names.facet !== undefined && names.facet !== names.identity) {
+    });
+  }
+  if (names.facet !== undefined && names.facet !== names.filter) {
     fields.push({
       name: names.facet,
       type: 'string[]',

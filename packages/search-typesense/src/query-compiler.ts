@@ -633,11 +633,10 @@ function compileMembership(
 ): string {
   const list = `[${values.map(escapeFilterValue).join(',')}]`;
   const names = physicalFields(field, schema);
-  // An inline reference stores a nested object, which an engine cannot filter.
-  // Its identity companion is the flat id field standing in for it – so the
-  // logical name a consumer writes and the physical name the engine reads
-  // differ here, and only here.
-  const name = qualify(prefix, names.identity ?? field.name);
+  // A field storing a nested object, which an engine cannot filter, is read
+  // through an id leaf standing in for it – so the logical name a consumer
+  // writes and the physical name the engine reads differ here, and only here.
+  const name = qualify(prefix, names.filter);
   return names.facet === name ? `${name}:${list}` : `${name}:=${list}`;
 }
 
