@@ -1,3 +1,45 @@
+## 0.48.0 (2026-11-13)
+
+### 🚀 Features
+
+- ⚠️  **pipeline:** key the reader limiter on the endpoint, not the dataset ([#1053](https://github.com/ldelements/lde/pull/1053))
+
+### ⚠️  Breaking Changes
+
+- **pipeline:** key the reader limiter on the endpoint, not the dataset  ([#1053](https://github.com/ldelements/lde/pull/1053))
+  the pipeline’s limiter is keyed on the endpoint’s host
+  instead of the dataset’s IRI. Key a resolver that shares it on
+  hostKeyOf(distribution.accessUrl).
+  * feat(pipeline)!: key the reader limiter on the endpoint’s host and path
+  - Add endpointKeyOf: host and path, without query string or fragment
+  - Separate endpoints on one host, such as one SPARQL server per dataset,
+    each get their own limit and pauses
+  - Datasets served by one endpoint still share its key
+  BREAKING CHANGE: the pipeline’s limiter is keyed on endpointKeyOf(accessUrl)
+  instead of the endpoint’s host. Key a resolver that shares it the same way.
+  * docs(pipeline): tidy the endpoint key’s docs
+  - Import what the resolver example uses
+  - Say the carry-over lasts while the limiter remembers the endpoint
+  - Fix a stale mention of pausing the dataset
+  * feat(host-limiter): add endpointKeyOf next to hostKeyOf
+  - Move endpointKeyOf from the pipeline into the host-limiter, so a resolver
+    keys on it without depending on the pipeline
+  - Fall back to the full href for a URL without authority, like hostKeyOf"
+  M	docs/reference/host-limiter.md
+  M	docs/reference/pipeline.md
+  M	packages/host-limiter/src/index.ts
+  M	packages/host-limiter/src/mapHostLimited.ts
+  M	packages/host-limiter/test/mapHostLimited.test.ts
+  M	packages/pipeline/src/pipeline.ts
+  M	packages/pipeline/src/sparql/reader.ts
+  M	packages/pipeline/test/sparql/reader.test.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-health to 0.10.0
+- Updated @lde/distribution-probe to 0.8.0
+- Updated @lde/host-limiter to 0.5.0
+
 ## 0.47.0 (2026-11-11)
 
 ### 🚀 Features
