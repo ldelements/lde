@@ -1,7 +1,11 @@
 import { createReadStream } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { Dataset, Distribution } from '@lde/dataset';
-import type { HostLimiter } from '@lde/host-limiter';
+import {
+  createHostLimiter,
+  positiveIntOrDefault,
+  type HostLimiter,
+} from '@lde/host-limiter';
 import type { Quad } from '@rdfjs/types';
 import { StreamParser } from 'n3';
 import type { DatasetSelector } from './selector.js';
@@ -173,18 +177,6 @@ export interface PipelineOptions<Out = Quad> {
    * once per dataset so state resets between datasets.
    */
   timeout?: () => TimeoutPolicy;
-  /**
-   * The limiter every stage’s readers run their queries on, keyed on the
-   * endpoint ({@link endpointKeyOf}). Each endpoint’s limit adapts to how it
-   * responds, up to the limiter’s per-host ceiling, and carries over to the
-   * next dataset it serves; see {@link SparqlConstructReader}.
-   *
-   * Pass the limiter you also give a resolver that loads the same backend –
-   * keyed on the endpoint too – so the two share one limit.
-   *
-   * Left out, the readers share a default: `createHostLimiter(10, 10)`.
-   */
-  limiter?: HostLimiter;
 }
 
 /**
@@ -430,7 +422,13 @@ export class Pipeline<Out = Quad> {
   private readonly chaining?: PipelineOptions<Out>['chaining'];
   private readonly reporters: readonly Reporter[];
   private readonly timeoutFactory: () => TimeoutPolicy;
-  private readonly limiter?: HostLimiter;
+  /**
+   * The limiter every stage’s readers run their queries on, keyed on the
+   * endpoint, so each endpoint’s limit adapts to how it responds and carries
+   * over to the next dataset it serves; see {@link SparqlConstructReader}.
+   * Its ceiling is the highest `maxConcurrency` of any stage.
+   */
+  private readonly limiter: HostLimiter;
   private readonly provenanceStore?: ProvenanceStore;
   private readonly pipelineVersion?: string;
 
@@ -487,7 +485,13 @@ export class Pipeline<Out = Quad> {
     this.reporters = [options.reporter ?? []].flat();
     this.timeoutFactory =
       options.timeout ?? (() => new ConstantTimeoutPolicy(300_000));
-    this.limiter = options.limiter;
+    const ceiling = positiveIntOrDefault(
+      Math.max(
+        ...[...allStages(options.stages)].map((stage) => stage.maxConcurrency),
+      ),
+      10,
+    );
+    this.limiter = createHostLimiter(ceiling, ceiling);
     this.provenanceStore = options.provenanceStore;
     this.pipelineVersion = options.pipelineVersion;
   }
@@ -935,7 +939,7 @@ export class Pipeline<Out = Quad> {
     dataset: Dataset,
   ): Promise<void> {
     const validators = new Set<Validator>();
-    for (const stage of this.collectStages(this.stages)) {
+    for (const stage of allStages(this.stages)) {
       if (stage.validator) validators.add(stage.validator);
     }
     for (const validator of validators) {
@@ -946,14 +950,6 @@ export class Pipeline<Out = Quad> {
 
   // Walks every stage and sub-stage to collect validators; it reads only
   // `validator`/`stages`, never output, so it is agnostic to the item type.
-  private *collectStages(
-    stages: readonly Stage<unknown>[],
-  ): Iterable<Stage<unknown>> {
-    for (const stage of stages) {
-      yield stage;
-      if (stage.stages.length > 0) yield* this.collectStages(stage.stages);
-    }
-  }
 
   /**
    * The writer a stage's merged output is written through: the open run
@@ -1260,6 +1256,16 @@ export class Pipeline<Out = Quad> {
         stream.destroy();
       }
     }
+  }
+}
+
+/** Every stage, with the stages chained under it. */
+function* allStages(
+  stages: readonly Stage<unknown>[],
+): Iterable<Stage<unknown>> {
+  for (const stage of stages) {
+    yield stage;
+    yield* allStages(stage.stages);
   }
 }
 

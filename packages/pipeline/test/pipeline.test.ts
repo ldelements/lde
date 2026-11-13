@@ -8,7 +8,6 @@ import {
   type PipelinePlugin,
 } from '../src/pipeline.js';
 import { Dataset, Distribution } from '@lde/dataset';
-import { createHostLimiter } from '@lde/host-limiter';
 import { Stage } from '../src/stage.js';
 import { NoItemsSelected, NotSupported } from '../src/sparql/reader.js';
 import {
@@ -2732,43 +2731,46 @@ describe('Pipeline', () => {
   });
 
   describe('limiter', () => {
-    it('hands every stage the limiter it was given', async () => {
-      const limiter = createHostLimiter(4, 2);
+    const limitersOf = (stage: Stage) =>
+      (stage.run as ReturnType<typeof vi.fn>).mock.calls.map(
+        (call) => call[3].limiter,
+      );
+
+    it('hands every stage, for every dataset, one limiter of its own', async () => {
       const first = makeStage('first');
       const second = makeStage('second');
-
-      await new Pipeline({
-        datasetSelector: makeDatasetSelector(dataset),
-        stages: [first, second],
-        writers: writer,
-        distributionResolver: makeResolver(makeResolvedDistribution()),
-        limiter,
-      }).run();
-
-      for (const stage of [first, second]) {
-        const options = (stage.run as ReturnType<typeof vi.fn>).mock
-          .calls[0][3];
-        expect(options.limiter).toBe(limiter);
-      }
-    });
-
-    it('leaves the limiter to the readers when given none', async () => {
-      const stage = makeStage('stage1');
 
       await new Pipeline({
         datasetSelector: makeDatasetSelector(
           makeDataset('http://example.org/dataset-a'),
           makeDataset('http://example.org/dataset-b'),
         ),
-        stages: [stage],
+        stages: [first, second],
         writers: writer,
         distributionResolver: makeResolver(makeResolvedDistribution()),
       }).run();
 
-      const limiters = (stage.run as ReturnType<typeof vi.fn>).mock.calls.map(
-        (call) => call[3].limiter,
-      );
-      expect(limiters).toEqual([undefined, undefined]);
+      const limiters = [...limitersOf(first), ...limitersOf(second)];
+      expect(limiters).toHaveLength(4);
+      expect(limiters[0]).toBeDefined();
+      expect(new Set(limiters).size).toBe(1);
+    });
+
+    it('shares no limiter between pipelines', async () => {
+      const stages = [makeStage('first'), makeStage('second')];
+
+      for (const stage of stages) {
+        await new Pipeline({
+          datasetSelector: makeDatasetSelector(dataset),
+          stages: [stage],
+          writers: writer,
+          distributionResolver: makeResolver(makeResolvedDistribution()),
+        }).run();
+      }
+
+      const [first, second] = stages.map((stage) => limitersOf(stage)[0]);
+      expect(first).toBeDefined();
+      expect(first).not.toBe(second);
     });
 
     it('reports a root a stage skipped', async () => {
