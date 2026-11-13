@@ -1,3 +1,48 @@
+## 0.52.0 (2026-11-13)
+
+### 🚀 Features
+
+- ⚠️  **search:** filter and facet an identity on its nested leaf ([#1068](https://github.com/ldelements/lde/pull/1068))
+
+### ⚠️  Breaking Changes
+
+- **search:** filter and facet an identity on its nested leaf  ([#1068](https://github.com/ldelements/lde/pull/1068))
+  an inline reference’s identity no longer writes ${name}_id;
+  filters and facets read its nested leaf, so every deployment with an identity
+  needs a full reindex (the in-place rebuild refuses the old collection). The
+  field an identity names must be filterable, and can no longer be an array. The
+  narrowed facet companion is renamed to ${name}_facet."
+  M	docs/decisions/0024-carry-data-on-a-reference-edge.md
+  A	docs/decisions/0037-filter-and-facet-an-identity-on-its-nested-leaf.md
+  M	docs/reference/search-api-graphql.md
+  M	docs/reference/search-typesense.md
+  M	docs/reference/search.md
+  M	packages/search-api-graphql/src/build-schema.ts
+  M	packages/search-pipeline/test/extraction-roundtrip.integration.test.ts
+  M	packages/search-pipeline/test/extraction.test.ts
+  M	packages/search-pipeline/test/nested-fanout.integration.test.ts
+  M	packages/search-typesense/src/collection-definition.ts
+  M	packages/search-typesense/src/documents.ts
+  M	packages/search-typesense/src/in-place-rebuild.ts
+  M	packages/search-typesense/src/query-compiler.ts
+  M	packages/search-typesense/src/search.ts
+  A	packages/search-typesense/test/identity-facet.integration.test.ts
+  M	packages/search-typesense/test/polymorphic-lookup.test.ts
+  M	packages/search-typesense/test/qualified-lookup.test.ts
+  M	packages/search-typesense/test/qualified-relation.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/src/project.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/test/literal-referent.test.ts
+  M	packages/search/test/polymorphic-lookup.test.ts
+  M	packages/search/test/qualified-relation.test.ts
+  M	packages/search/test/schema.test.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.55.0
+- Updated @lde/search to 0.42.0
+
 ## 0.51.0 (2026-11-13)
 
 ### 🧱 Updated Dependencies
