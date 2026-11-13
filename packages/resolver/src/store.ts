@@ -3,9 +3,9 @@
  *
  * An absence is a real answer and is remembered like any other. Without it a
  * key the source does not know is missing from the store every run, sorts ahead
- * of merely stale keys, and spends the run’s budget re-asking a question that
- * has already been answered – so a register with a tail of unknown keys never
- * warms.
+ * of merely stale keys, and every run spends a fetch re-asking a question that
+ * has already been answered – so a register with a tail of unknown keys is
+ * fetched again in full, every run.
  *
  * A failure is **not** here. It is transient, so it is never persisted: the
  * whole batch is simply retried next run, and a host that is down is handled
@@ -43,8 +43,7 @@ export type StoredFact<Fact> = FactOutcome<Fact> & {
  * a pipeline reads is re-read from its publisher each run, and a search index is
  * rebuilt from its sources, so a fact fetched from a third party has nowhere
  * else to survive. A cold store therefore costs outbound requests, which is why
- * {@link ResolverLimits.fetchesPerResolver} exists and why the default backend
- * keeps a keyed file rather than a whole-file blob.
+ * the default backend keeps a keyed file rather than a whole-file blob.
  *
  * A seam, deliberately: the interface is the deliverable and the backends are
  * replaceable – {@link sqliteFactStore} for a durable volume,
@@ -64,8 +63,8 @@ export interface FactStore<Fact> {
    * Verify the store can persist facts, throwing when it cannot. A resolver
    * calls this from its own `check()`, so a deployment can fail a run at
    * startup – an unwritable mounted volume – rather than at the end of the
-   * first batch, with the run’s fetch budget already spent on facts that
-   * cannot be kept.
+   * first batch, with the run’s requests already spent on facts that cannot be
+   * kept.
    *
    * Opening the store is not enough of a test: a store that exists from an
    * earlier run opens cleanly when it is no longer writable. Prove the write.

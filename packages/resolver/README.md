@@ -1,8 +1,8 @@
 # @lde/resolver
 
 Everything around fetching a fact from outside the graph: a durable store,
-bounded outbound work, retry of only what a retry can fix, failure isolation and a cap on how
-much a single run may fetch. You write the fetch and what to do with the answer.
+bounded outbound work, retry of only what a retry can fix, failure isolation and an optional cap on how
+long a single run may fetch. You write the fetch and what to do with the answer.
 
 ## Installation
 
@@ -25,7 +25,7 @@ const resolver = createResolver({
       coordinatesOf(term),
     ]),
   store,
-  limits: { batchSize: 25, fetchesPerResolver: 5_000 },
+  limits: { batchSize: 25 },
 });
 
 const resolved = await resolver.resolveAll(placeIris);

@@ -138,6 +138,18 @@ gone. Budget deferral is not reported – it is the cap working, the caller
 already has it in the returned resolution, and on a cold register-scale store
 one callback per deferred key is a flood that buries the failures that matter.
 
+_Amended 2026-11-11._ The count budget, and with it the refund of written-off
+references, was replaced by a time window once each host’s limit adapted
+(`@lde/resolver` 0.5.0): a host’s limit starts at one batch in flight, grows
+while the host keeps up and halves on a failure, so a fetch count no longer has
+to protect a server, and a cold store is fetched in full in one run. The
+optional `fetchWindowMs`, unbounded by default, says how long after its creation
+a resolver may still start a batch. Keys whose batch has not started by then are
+deferred as before – served from the store or answered `unresolved`, counted
+`deferred` and not reported – and missing keys still go before stale ones. A
+resolver stays run-scoped, now because its breaker and its window both last for
+its life.
+
 **Bounding is owned, not delegated – and so is waiting.** The resolver applies
 the global and per-host caps itself, through `@lde/host-limiter` – promoted out of
 `@lde/distribution-probe` by this work. Libraries get this wrong often enough
@@ -164,7 +176,7 @@ past its retries), the remaining batches for that host answer without a request.
 The threshold is a limit rather than a constant because the breaker cannot see
 _why_ a batch failed – a 400 on one malformed IRI throws exactly as a dead host
 does – and at the default `batchSize` of 1 a batch is a single reference, so too
-low a threshold writes off healthy hosts over a couple of bad references. Written-off references are refunded to the fetch
+low a threshold writes off healthy hosts over a couple of bad references. (Superseded 2026-11-11: refunds went with the budget, see the amendment above.) Written-off references are refunded to the fetch
 budget, since they sent nothing; and because the breaker lives on the resolver
 rather than in the store, a host that recovers is retried on the very next run
 instead of waiting out a persisted backoff.
@@ -214,7 +226,9 @@ which says only that something got better, not where the data came from.
   (with a reason) per key, and `report` is called for what failed or degraded –
   so a run can log what aged, what broke and what is missing.
 - A cold store warms over several runs rather than in one burst. A run under a
-  spent budget still completes, on stored values.
+  spent budget still completes, on stored values. (Superseded 2026-11-11: see
+  the amendment above – a cold store now warms in one run, unless a fetch
+  window cuts it short.)
 - The package is testable without a pipeline: its edge cases are unit tests, not
   integration runs.
 - A wrong fact is durable until purged. That is the accepted cost of having no
