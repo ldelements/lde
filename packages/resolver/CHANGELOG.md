@@ -1,3 +1,23 @@
+## 0.7.0 (2026-11-13)
+
+### 🚀 Features
+
+- ⚠️  **resolver:** bound a run by a fetch window rather than a fetch count ([#1050](https://github.com/ldelements/lde/pull/1050))
+
+### ⚠️  Breaking Changes
+
+- **resolver:** bound a run by a fetch window rather than a fetch count  ([#1050](https://github.com/ldelements/lde/pull/1050))
+  fetchesPerResolver is removed, and a resolver no longer caps
+  fetches per run: a cold or purged store is fetched in full in one run, as fast
+  as its hosts allow. To bound how long a run fetches, set fetchWindowMs."
+  M	docs/decisions/0023-resolve-external-references-in-a-standalone-library.md
+  M	docs/reference/resolver.md
+  M	packages/resolver/README.md
+  M	packages/resolver/package.json
+  M	packages/resolver/src/resolver.ts
+  M	packages/resolver/src/store.ts
+  M	packages/resolver/test/resolver.test.ts
+
 ## 0.6.0 (2026-11-11)
 
 ### 🚀 Features
