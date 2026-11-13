@@ -232,10 +232,11 @@ export class Stage<Out = Quad> {
   /** Whether this stage reads a source of its own rather than the dataset’s
    *  resolved distribution. @see {@link StageOptions.sourceFor} */
   readonly sourcesOwnData: boolean;
+  /** Maximum concurrent in-flight SPARQL queries. @see {@link StageOptions.maxConcurrency} */
+  readonly maxConcurrency: number;
   private readonly readers: NormalizedReader[];
   private readonly itemSelector?: ItemSelector;
   private readonly batchSize: number;
-  private readonly maxConcurrency: number;
   private readonly validation?: StageOptions<Out>['validation'];
   private readonly project?: BatchTransform<Out>;
   private readonly queueCapacity?: number;

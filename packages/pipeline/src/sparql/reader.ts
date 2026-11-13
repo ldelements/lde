@@ -27,9 +27,6 @@ import { classifyOutcome, isTransientError, statusOf } from './failure.js';
  */
 const defaultTimeoutPolicy: TimeoutPolicy = new ConstantTimeoutPolicy(300_000);
 
-/** The limiter of every read not given one, so they share one limit. */
-const defaultLimiter: HostLimiter = createHostLimiter(10, 10);
-
 /**
  * A reader could not run because the dataset lacks a supported distribution.
  */
@@ -72,12 +69,11 @@ export interface ReadOptions {
 
   /**
    * The limiter every query of a read goes through, keyed on the endpoint
-   * ({@link endpointKeyOf}), so every dataset an endpoint serves – and
-   * anything else given that key, such as a resolver fetching from the same
-   * backend – shares one adaptive limit and one pause. See
+   * ({@link endpointKeyOf}), so every read on one endpoint shares one adaptive
+   * limit and one pause. A pipeline passes its own. See
    * {@link SparqlConstructReader}.
    *
-   * Reads not given one share a default: `createHostLimiter(10, 10)`.
+   * A read not given one gets a limiter of its own: `createHostLimiter(10, 10)`.
    */
   limiter?: HostLimiter;
 
@@ -259,7 +255,7 @@ export class SparqlConstructReader implements Reader {
     const quads = await this.readBatch(bindings, query, {
       endpoint,
       key: endpointKeyOf(endpoint),
-      limiter: options?.limiter ?? defaultLimiter,
+      limiter: options?.limiter ?? createHostLimiter(10, 10),
       policy: options?.timeout ?? defaultTimeoutPolicy,
       onRootSkipped: (root, error) => {
         skipped++;
