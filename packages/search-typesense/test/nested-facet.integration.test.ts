@@ -168,6 +168,12 @@ describe('a root document faceted on its entries’ leaves', () => {
         path: 'https://schema.org/uploadDate',
         output: true,
       },
+      {
+        name: 'temporalCoverage',
+        kind: 'period',
+        path: 'https://schema.org/temporalCoverage',
+        output: true,
+      },
     ],
   };
   const work = {
@@ -255,13 +261,22 @@ describe('a root document faceted on its entries’ leaves', () => {
                 width: 1200,
                 uploadDate: 1_700_000_000,
                 uploadDate_precision: 'day',
+                temporalCoverage: '1850/1900',
               },
             ],
           },
           { id: 'https://ex/bare', title: 'bare' },
         ],
         { action: 'create' },
-      );
+      )
+      .catch((error: { importResults?: { success: boolean }[] }) => {
+        // Typesense names the rejected field per document; show it.
+        throw new Error(
+          JSON.stringify(
+            error.importResults?.filter((result) => !result.success),
+          ),
+        );
+      });
     expect(results.every((result) => result.success)).toBe(true);
     engine = createTypesenseSearchEngine(client, schema, {
       collections: { Work: 'works' },
