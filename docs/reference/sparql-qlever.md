@@ -18,7 +18,7 @@ npm install @lde/sparql-qlever
 | `image`                | –                                     | (docker mode, required) Docker image to run QLever from, e.g. `adfreiburg/qlever:latest`.                                     |
 | `containerName`        | –                                     | (docker mode) Name for the container; a previous container with the same name is removed on `run()`.                          |
 | `network`              | –                                     | (docker mode, requires `containerName`) Docker network the QLever containers join; see [Networking](#networking-docker-mode). |
-| `dataDir`              | –                                     | Directory where downloaded data files and the index are stored. **Must be absolute in docker mode; required in remote mode.** |
+| `dataDir`              | –                                     | Directory where downloaded data files and the index are stored. **Required in docker and remote mode; absolute in docker.**   |
 | `indexName`            | `'data'`                              | Base name of the QLever index files.                                                                                          |
 | `port`                 | `7001`                                | Port the SPARQL server listens on. In docker mode, bound to the same port number on the host.                                 |
 | `downloader`           | `new LastModifiedDownloader(dataDir)` | [`Downloader`](https://github.com/ldelements/lde/tree/main/packages/distribution-downloader) used to fetch distributions.     |
@@ -29,7 +29,7 @@ npm install @lde/sparql-qlever
 
 ### Docker mode
 
-Docker mode runs `qlever-index` and `qlever-server` in containers created from `image`, with `dataDir` bind-mounted at `/mount`.
+Docker mode runs `qlever-index` and `qlever-server` in containers created from `image`, with `dataDir` bind-mounted at `/mount`. `dataDir` is required: without the mount the container sees neither the downloaded data nor the index settings.
 
 > [!WARNING]
 > In docker mode, `dataDir` **must be an absolute path**. The path is passed verbatim to the Docker bind mount (`<dataDir>:/mount`), and Docker interprets a relative bind source as a named _volume_ rather than a host directory. The downloader, by contrast, resolves relative paths against the process working directory – so the download succeeds on the host while the container sees an empty `/mount`, and the import fails cryptically (missing file, 0 triples indexed) instead of erroring on the path ([ldelements/lde#638](https://github.com/ldelements/lde/issues/638)).
@@ -106,6 +106,7 @@ import schemaOrgContext from './schema-org-context.json' with { type: 'json' };
 createQlever({
   mode: 'docker',
   image: 'adfreiburg/qlever:latest',
+  dataDir: '/data',
   replaceJsonLdContext: (url) =>
     /^https?:\/\/schema\.org\b/.test(url) ? schemaOrgContext : undefined,
 });
@@ -157,6 +158,7 @@ Example:
 const { importer, server } = createQlever({
   mode: 'docker',
   image: 'adfreiburg/qlever:latest',
+  dataDir: '/data',
   serverOptions: {
     'memory-max-size': '12G',
     'default-query-timeout': '120s',
