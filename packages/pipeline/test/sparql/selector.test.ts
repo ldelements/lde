@@ -108,6 +108,29 @@ describe('SparqlItemSelector', () => {
     expect(queries[1]).toMatch(/OFFSET\s+2/);
   });
 
+  it('keeps the query’s ORDER BY on every page', async () => {
+    // Without a total order, LIMIT/OFFSET pages may skip or repeat rows.
+    const { fetcher, queries } = pagedFetcher([
+      [
+        { uri: namedNode('http://example.com/1') },
+        { uri: namedNode('http://example.com/2') },
+      ],
+      [{ uri: namedNode('http://example.com/3') }],
+    ]);
+
+    const selector = new SparqlItemSelector({
+      query: `${query} ORDER BY ?uri`,
+      fetcher: fetcher as never,
+    });
+
+    await selectAll(selector, 2);
+
+    expect(queries).toHaveLength(2);
+    for (const pageQuery of queries) {
+      expect(pageQuery).toMatch(/ORDER\s+BY\s+ASC\s*\(\s*\?uri\s*\)/);
+    }
+  });
+
   it('yields nothing for empty results', async () => {
     const { fetcher } = pagedFetcher([]);
 

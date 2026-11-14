@@ -26,7 +26,7 @@ const pipeline = new Pipeline({
     new Stage({
       name: 'per-class',
       itemSelector: new SparqlItemSelector({
-        query: 'SELECT DISTINCT ?class WHERE { ?s a ?class }',
+        query: 'SELECT DISTINCT ?class WHERE { ?s a ?class } ORDER BY ?class',
       }),
       readers: new SparqlConstructReader({
         query:

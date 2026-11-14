@@ -752,7 +752,15 @@ async function* countQuads(
   onCount(count);
 }
 
-/** Selects items (as variable bindings) for readers to process. Pagination is an implementation detail. */
+/**
+ * Selects items (as variable bindings) for readers to process. Pagination is an
+ * implementation detail.
+ *
+ * A selector that pages through its source must yield each item exactly once
+ * across pages: an item skipped between pages is never read, and an item
+ * repeated is read twice. A paginated SPARQL query therefore needs a total
+ * order over its projected variables (see `SparqlItemSelector`).
+ */
 export interface ItemSelector {
   select(
     distribution: Distribution,

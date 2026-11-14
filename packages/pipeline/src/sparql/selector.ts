@@ -34,6 +34,16 @@ export interface SparqlItemSelectorOptions {
    * It does **not** cap the total number of bindings the selector yields;
    * pagination continues with `OFFSET` until the source is exhausted. Use
    * {@link maxResults} to cap the total.
+   *
+   * The query needs a **total order** over its projected variables, such as
+   * `ORDER BY ?s` for a query projecting `?s`. Pages are fetched with
+   * `LIMIT`/`OFFSET`, and SPARQL leaves solution order unspecified without
+   * `ORDER BY`, so an endpoint may answer each page in a different order –
+   * skipping or repeating rows between pages, and making a
+   * {@link maxResults} sample unreproducible. An engine may happen to answer a
+   * plain triple-pattern scan in a stable order, but a `DISTINCT` over a join
+   * is commonly answered from a hash table whose order can vary between
+   * requests.
    */
   query: string;
   /**
@@ -65,7 +75,9 @@ export interface SparqlItemSelectorOptions {
  * within that graph (a `FROM` clause), the same scoping `SparqlConstructReader`
  * applies to the extraction. The two must scope alike, or the roots come from a
  * wider source than the quads read for them.
- * Pagination is an internal detail – consumers iterate binding rows directly.
+ * Pagination is an internal detail – consumers iterate binding rows directly,
+ * but it is only stable when the query orders its rows totally (see
+ * {@link SparqlItemSelectorOptions.query}).
  *
  * The page size (results per SPARQL request) is determined by, in order:
  * 1. A `LIMIT` clause in the selector query (for endpoints with hard result limits)
