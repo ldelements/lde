@@ -1,7 +1,7 @@
 import { Dataset } from '@lde/dataset';
 import type { Quad } from '@rdfjs/types';
 import { createWriteStream, type WriteStream } from 'node:fs';
-import { mkdir, rename, rm } from 'node:fs/promises';
+import { access, mkdir, rename, rm } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import filenamifyUrl from 'filenamify-url';
 import { DataFactory, Writer as N3Writer } from 'n3';
@@ -233,6 +233,18 @@ export class FileWriter implements Writer {
       openFile.stream.destroy();
     });
     await rm(openFile.tempPath, { force: true, recursive: true });
+  }
+
+  /**
+   * Whether the dataset’s output file exists – see {@link Writer.hasOutput}.
+   */
+  async hasOutput(dataset: Dataset): Promise<boolean> {
+    try {
+      await access(this.getFilePath(dataset));
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   getOutputPath(dataset: Dataset): string {

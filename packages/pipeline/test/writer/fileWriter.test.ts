@@ -526,6 +526,31 @@ describe('FileWriter', () => {
     });
   });
 
+  describe('hasOutput', () => {
+    it('tells whether a dataset’s output file exists', async () => {
+      const fileWriter = new FileWriter({ outputDir: tempDir });
+      const dataset = createDataset('http://example.com/dataset/1');
+      expect(await fileWriter.hasOutput(dataset)).toBe(false);
+
+      const run = await fileWriter.openRun();
+      await run.write(
+        dataset,
+        quadsOf(
+          quad(
+            namedNode('http://example.com/subject'),
+            namedNode('http://example.com/predicate'),
+            literal('object'),
+          ),
+        ),
+      );
+      await run.flush(dataset);
+      expect(await fileWriter.hasOutput(dataset)).toBe(true);
+
+      await rm(fileWriter.getOutputPath(dataset));
+      expect(await fileWriter.hasOutput(dataset)).toBe(false);
+    });
+  });
+
   describe('flush', () => {
     it('is a no-op when no write was made for the dataset', async () => {
       const writer = await new FileWriter({ outputDir: tempDir }).openRun();
