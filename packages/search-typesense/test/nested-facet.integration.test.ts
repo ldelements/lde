@@ -141,6 +141,33 @@ describe('a root document faceted on its entries’ leaves', () => {
         output: true,
         filterable: true,
       },
+      // Stored only. Their parent is indexed for `license`, so Typesense checks
+      // their declared types against the list an `object[]` flattens them into.
+      {
+        name: 'contentUrl',
+        kind: 'keyword',
+        path: 'https://schema.org/contentUrl',
+        output: true,
+      },
+      {
+        name: 'caption',
+        kind: 'text',
+        path: 'https://schema.org/caption',
+        locales: ['nl'],
+        output: true,
+      },
+      {
+        name: 'width',
+        kind: 'integer',
+        path: 'https://schema.org/width',
+        output: true,
+      },
+      {
+        name: 'uploadDate',
+        kind: 'date',
+        path: 'https://schema.org/uploadDate',
+        output: true,
+      },
     ],
   };
   const work = {
@@ -219,7 +246,17 @@ describe('a root document faceted on its entries’ leaves', () => {
           {
             id: 'https://ex/one',
             title: 'one',
-            associatedMedia: [{ license: CC_BY, encodingFormat: 'image/png' }],
+            associatedMedia: [
+              {
+                license: CC_BY,
+                encodingFormat: 'image/png',
+                contentUrl: 'https://ex/one.png',
+                caption_nl: 'Voorzijde',
+                width: 1200,
+                uploadDate: 1_700_000_000,
+                uploadDate_precision: 'day',
+              },
+            ],
           },
           { id: 'https://ex/bare', title: 'bare' },
         ],

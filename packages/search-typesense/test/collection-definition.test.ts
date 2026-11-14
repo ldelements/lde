@@ -478,12 +478,14 @@ describe('surfaced inline references', () => {
         index: false,
         optional: true,
       },
-      { name: 'media.width', type: 'int64', index: false, optional: true },
+      // Lists, as an `object[]` flattens them: once the parent is indexed,
+      // Typesense checks even an un-indexed child against that list.
+      { name: 'media.width', type: 'int64[]', index: false, optional: true },
       // A nested text field stores its display values exactly as a root one
       // does – one field per present language, matched by one pattern.
       {
         name: 'media.caption_[^_]+',
-        type: 'string',
+        type: 'string[]',
         index: false,
         optional: true,
       },

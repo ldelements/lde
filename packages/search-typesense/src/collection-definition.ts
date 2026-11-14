@@ -439,8 +439,13 @@ function periodFields(
 /** A `date` field’s precision companion ({@link physicalFields}): read back
  *  with the hit to format the value, never queried, so stored but not
  *  indexed – it costs disk, not RAM. */
-function precisionField(name: string): CollectionFieldSchema {
-  return { name, type: 'string', index: false, optional: true };
+function precisionField(name: string, array = false): CollectionFieldSchema {
+  return {
+    name,
+    type: array ? 'string[]' : 'string',
+    index: false,
+    optional: true,
+  };
 }
 
 /**
@@ -544,8 +549,8 @@ function nestedFields(
   const walked = new Set(onPath).add(nestedType.name);
   // Typesense flattens a nested object, so a value under a multi-valued
   // ancestor arrives as an array however single-valued the declaration is.
-  // That only matters for an INDEXED field, whose declared type is checked
-  // against what is stored; an unindexed one is stored as-is.
+  // Once the parent is indexed, every declared child is checked against that
+  // array – stored-only ones too – so each is declared a list.
   const flattensToArray = withinArray || array;
   const children: CollectionFieldSchema[] = [];
   // A `local` lookup nests its endpoint’s own document, which carries the `id`
@@ -764,6 +769,11 @@ function nestedLeafFields(
 ): CollectionFieldSchema[] {
   const names = physicalFields(field);
   const searchString = flattensToArray ? 'string[]' : 'string';
+  // Under an `object[]` every leaf arrives as a list, and Typesense checks each
+  // declared type against that list once the parent is indexed – stored-only
+  // leaves included, so they are widened too.
+  const flattened = (type: ValueType) =>
+    flattensToArray ? arrayValueType(type) : type;
   const fields: CollectionFieldSchema[] = [];
   if (field.kind === 'text') {
     const pattern = displayFieldPattern(field);
@@ -774,7 +784,7 @@ function nestedLeafFields(
       // `array` field.
       fields.push({
         name: nestedFieldName(prefix, pattern),
-        type: typesenseValueType(field),
+        type: flattened(typesenseValueType(field)),
         index: false,
         optional: true,
       });
@@ -799,7 +809,7 @@ function nestedLeafFields(
     return [
       {
         name: nestedFieldName(prefix, names.period.values),
-        type: typesenseValueType(field),
+        type: flattened(typesenseValueType(field)),
         index: false,
         optional: true,
       },
@@ -823,7 +833,7 @@ function nestedLeafFields(
   const storesAList = flattensToArray || field.array === true;
   fields.push({
     name: nestedFieldName(prefix, field.name),
-    type: indexed && storesAList ? arrayValueType(valueType) : valueType,
+    type: storesAList ? arrayValueType(valueType) : valueType,
     index: indexed,
     // Always optional: `required` is a promise about the *referent* (this value
     // is on every referent), while Typesense’s flag is about the document.
@@ -839,7 +849,9 @@ function nestedLeafFields(
     });
   }
   if (names.precision !== undefined) {
-    fields.push(precisionField(nestedFieldName(prefix, names.precision)));
+    fields.push(
+      precisionField(nestedFieldName(prefix, names.precision), flattensToArray),
+    );
   }
   return fields;
 }
@@ -848,8 +860,8 @@ function nestedLeafFields(
  *  integers (and dates, stored as Unix seconds) so large counts never overflow. */
 /**
  * The array form of a value type, for a nested field that an ancestor’s
- * `object[]` flattens into a list. Only an **indexed** field needs it: Typesense
- * checks a declared type against what is stored, and a value under a
+ * `object[]` flattens into a list. Typesense checks every declared child of an
+ * indexed parent against what is stored, indexed or not, and a value under a
  * multi-valued ancestor arrives as an array however single-valued its own
  * declaration is. Enumerated rather than string-appended so an invalid
  * combination cannot be built.
