@@ -8,7 +8,7 @@ import type {
 } from '@lde/pipeline';
 import type { Dataset } from '@lde/dataset';
 import { buildCollectionDefinition } from './collection-definition.js';
-import { httpStatus, openLockedRun, releaseLock } from './lock.js';
+import { httpStatus, openLockedRun } from './lock.js';
 import {
   assertWritableType,
   openDocuments,
@@ -93,7 +93,7 @@ export class BlueGreenRebuild<
       this.resolved;
     const name = this.collectionName;
 
-    return openLockedRun(this.client, name, lockTtlMs, async () => {
+    return openLockedRun(this.client, name, lockTtlMs, async (lock) => {
       // Create the fresh (blue) collection up front, so a failure surfaces
       // before any dataset is processed. startedAt orders the versioned names;
       // concurrent same-name runs are excluded by the lock.
@@ -169,6 +169,9 @@ export class BlueGreenRebuild<
 
         commit: async () => {
           await documents.flush();
+          // A run that lost its lock must not swap the alias back to older
+          // data than the run that took the lock over.
+          await lock.assertHeld();
           // The alias swap is the commit point: once it lands the new
           // collection is live. Everything after it is best-effort cleanup that
           // must NOT fail the commit – a post-swap rejection would otherwise
@@ -185,7 +188,7 @@ export class BlueGreenRebuild<
               .delete()
               .catch(() => undefined);
           }
-          await releaseLock(this.client, name).catch(() => undefined);
+          await lock.release().catch(() => undefined);
         },
 
         abort: async () => {
@@ -195,7 +198,7 @@ export class BlueGreenRebuild<
             .collections(collection)
             .delete()
             .catch(() => undefined);
-          await releaseLock(this.client, name);
+          await lock.release();
         },
 
         abandon: async () => {
@@ -205,7 +208,7 @@ export class BlueGreenRebuild<
           // joins, so the collection is kept for a later run to supersede.
           // Releasing the lock is the whole point – without it the index stays
           // locked for its full TTL and the next run cannot rebuild it.
-          await releaseLock(this.client, name);
+          await lock.release();
         },
       };
     });

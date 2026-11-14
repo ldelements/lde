@@ -24,7 +24,8 @@ const DEFAULT_MAX_REJECTED_SHARE = 0.5;
 export interface RebuildOptions extends CollectionDefinitionOptions {
   /** Documents imported per Typesense request (default 1000). */
   readonly batchSize?: number;
-  /** A held lock older than this (ms) is reclaimed (default 10 minutes). */
+  /** A lock its holder has not refreshed for this long (ms) is reclaimed
+   *  (default 10 minutes). An open run refreshes its lock every third of it. */
   readonly lockTtlMs?: number;
   /**
    * The largest share of a dataset’s documents, from 0 to 1, this collection

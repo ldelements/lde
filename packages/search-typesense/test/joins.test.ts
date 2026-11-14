@@ -339,6 +339,7 @@ describe('buildCollectionDefinition over a joinable reference', () => {
  */
 function fakeClient(existingFields?: readonly Record<string, unknown>[]) {
   const created = vi.fn().mockResolvedValue({});
+  let lockDocument: unknown;
   const client = {
     aliases: () => ({
       retrieve: () => Promise.reject(typesenseError(404)),
@@ -358,8 +359,16 @@ function fakeClient(existingFields?: readonly Record<string, unknown>[]) {
           retrieve: () => Promise.resolve({}),
           documents: (id?: string) =>
             id === undefined
-              ? { create: () => Promise.resolve({}) }
-              : { delete: () => Promise.resolve({}) },
+              ? {
+                  create: (document: unknown) => {
+                    lockDocument = document;
+                    return Promise.resolve({});
+                  },
+                }
+              : {
+                  retrieve: () => Promise.resolve(lockDocument),
+                  delete: () => Promise.resolve({}),
+                },
         };
       }
       return {
