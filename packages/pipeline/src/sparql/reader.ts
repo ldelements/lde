@@ -376,6 +376,7 @@ export class SparqlConstructReader implements Reader {
         endpoint: endpointUrl,
         outcome: 'ok',
         durationMs: Date.now() - start,
+        timeoutMs,
       });
       return quads;
     } catch (error) {
@@ -383,6 +384,7 @@ export class SparqlConstructReader implements Reader {
         endpoint: endpointUrl,
         outcome: classifyOutcome(error),
         durationMs: Date.now() - start,
+        timeoutMs,
         error,
       });
       throw error;

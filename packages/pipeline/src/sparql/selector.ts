@@ -221,6 +221,7 @@ export class SparqlItemSelector implements ItemSelector {
         endpoint,
         outcome: 'ok',
         durationMs: Date.now() - start,
+        timeoutMs,
       });
       return stream;
     } catch (error) {
@@ -228,6 +229,7 @@ export class SparqlItemSelector implements ItemSelector {
         endpoint,
         outcome: classifyOutcome(error),
         durationMs: Date.now() - start,
+        timeoutMs,
         error,
       });
       throw error;
