@@ -137,8 +137,25 @@ registry-sourced type, a pattern that does not mention `?root` or one that does
 not parse throws at wiring time. The restrictions extend `pipelineVersion`, so
 changing one re-indexes every dataset instead of skipping it.
 
+To change how the stages read, pass `tuning` for every type and `tuningByType`
+per type name: a `batchSize` (roots per Extraction CONSTRUCT) and a
+`maxConcurrency` (see [per-stage tuning](#per-stage-tuning)). A field set per
+type wins over the same field in `tuning`; a key the schema does not declare
+throws at wiring time. A batch size set here applies to every source, imported
+or not.
+
+```ts
+searchIndexerPipeline({
+  schema,
+  datasets,
+  writerFor,
+  tuning: { maxConcurrency: 4 },
+  tuningByType: { Object: { batchSize: 200 } },
+});
+```
+
 A deployment that needs more – a bespoke root selector (where the entry point
-is a domain fact, not a class), per-stage tuning, non-SPARQL readers, or
+is a domain fact, not a class), non-SPARQL readers, or
 quad-level plugins – composes the parts directly, as below, restating the
 registry sourcing, provenance and reporting this convenience wires; beyond
 those it owns no capability of its own.
@@ -355,9 +372,15 @@ declaration serves a deployment that sources it differently.
 Each `SearchStageType` entry carries three knobs beyond its selector and
 readers:
 
-- **`batchSize`** (default 10) – roots (and so documents) per batch: **the
-  memory bound**. Under a root-bound selector it moves memory and request
-  count, never output.
+- **`batchSize`** (default `{ endpoint: 10, imported: 100 }`) – roots (and so
+  documents) per batch: **the memory bound**. Under a root-bound selector it
+  moves memory and request count, never output. Each batch is one Extraction
+  CONSTRUCT, whose planning costs the same however many roots it binds, so a
+  larger batch finishes a type sooner: on a QLever import of 17574 roots, 100
+  per batch ran 5.5 times faster than 10, and past 100 the query grew faster
+  than it saved. A dump the pipeline imported serves this run alone, so it gets
+  100; a live endpoint may be shared and fail on large queries, so it keeps 10. Pass a single number to use it for both
+  ([source kinds](./pipeline#batch-size)).
 - **`maxConcurrency`** (default 10) – maximum concurrent in-flight SPARQL
   queries for the stage.
 - **`queueCapacity`** (default 128) – capacity of the bounded queue funnelling

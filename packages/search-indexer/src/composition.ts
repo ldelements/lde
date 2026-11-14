@@ -105,10 +105,12 @@ export function distributionResolverFrom(
   if (!config.qlever) {
     return undefined;
   }
-  const serverOptions =
-    config.qlever.memoryMaxSize === undefined
-      ? undefined
-      : { 'memory-max-size': config.qlever.memoryMaxSize };
+  const serverOptions = {
+    ...(config.qlever.memoryMaxSize === undefined
+      ? {}
+      : { 'memory-max-size': config.qlever.memoryMaxSize }),
+    'num-simultaneous-queries': simultaneousQueries(config),
+  };
   const { importer, server } =
     config.qlever.mode === 'remote'
       ? createQlever({
@@ -144,3 +146,27 @@ export function distributionResolverFrom(
     strategy: config.qlever.strategy,
   });
 }
+
+/**
+ * The queries the imported QLever answers at once: as many as the busiest
+ * stage sends, up to 4. Without it QLever answers one at a time and a stage’s
+ * concurrency only queues. Past 4 the gain is small, and the queries share
+ * QLever’s memory budget, whose 4G default was measured to suffice for 8
+ * queries of 100 roots each.
+ */
+function simultaneousQueries(config: IndexerConfig): number {
+  const concurrencies = [
+    config.extraction.maxConcurrency ?? defaultConcurrency,
+    // A type without a concurrency of its own takes the one above.
+    ...Object.values(config.extraction.byType).flatMap(
+      (tuning) => tuning.maxConcurrency ?? [],
+    ),
+  ];
+  return Math.min(Math.max(...concurrencies), maxSimultaneousQueries);
+}
+
+/** A stage’s concurrency when the configuration sets none. */
+const defaultConcurrency = 10;
+
+/** {@link simultaneousQueries}’ ceiling. */
+const maxSimultaneousQueries = 4;

@@ -10,7 +10,7 @@ import type { Quad } from '@rdfjs/types';
 import { StreamParser } from 'n3';
 import type { DatasetSelector } from './selector.js';
 import { Stage } from './stage.js';
-import type { QuadTransform } from './stage.js';
+import type { QuadTransform, SourceKind } from './stage.js';
 import { AsyncQueue } from './asyncQueue.js';
 import type {
   DatasetOutcome,
@@ -745,6 +745,7 @@ export class Pipeline<Out = Quad> {
       ({ stageFailed, unread } = await this.runStages(
         dataset,
         resolved.distribution,
+        sourceKindOf(resolved),
         timeout,
         runWriter,
         context,
@@ -797,6 +798,7 @@ export class Pipeline<Out = Quad> {
             ({ stageFailed, unread } = await this.runStages(
               dataset,
               fallback.distribution,
+              sourceKindOf(fallback),
               timeout,
               runWriter,
               context,
@@ -1023,6 +1025,7 @@ export class Pipeline<Out = Quad> {
   private async runStages(
     dataset: Dataset,
     distribution: Distribution,
+    source: SourceKind,
     timeout: TimeoutPolicy,
     runWriter: RunWriter<Out>,
     context: RunContext,
@@ -1035,6 +1038,7 @@ export class Pipeline<Out = Quad> {
           await this.runChain(
             dataset,
             distribution,
+            source,
             stage,
             runWriter,
             context,
@@ -1047,6 +1051,7 @@ export class Pipeline<Out = Quad> {
             distribution,
             stage,
             this.stageWriter(runWriter, stage.name),
+            source,
             timeout,
             unread,
           );
@@ -1069,6 +1074,7 @@ export class Pipeline<Out = Quad> {
     distribution: Distribution,
     stage: Stage<Item>,
     writer: DatasetWriter<Item>,
+    source: SourceKind,
     timeout?: TimeoutPolicy,
     unread?: UnreadValueTally,
   ): Promise<boolean> {
@@ -1080,6 +1086,7 @@ export class Pipeline<Out = Quad> {
     let summary: StageSummary | undefined;
 
     const result = await stage.run(dataset, distribution, writer, {
+      source,
       onProgress: (items, quads) => {
         itemsProcessed = items;
         quadsGenerated = quads;
@@ -1147,6 +1154,7 @@ export class Pipeline<Out = Quad> {
     distribution: Distribution,
     stage: Stage<Item>,
     writer: DatasetWriter<Item>,
+    source: SourceKind,
     timeout?: TimeoutPolicy,
   ): Promise<void> {
     const supported = await this.runStage(
@@ -1155,6 +1163,7 @@ export class Pipeline<Out = Quad> {
       distribution,
       stage,
       writer,
+      source,
       timeout,
     );
     if (!supported) {
@@ -1167,6 +1176,7 @@ export class Pipeline<Out = Quad> {
   private async runChain(
     dataset: Dataset,
     distribution: Distribution,
+    source: SourceKind,
     stage: Stage<Out>,
     runWriter: RunWriter<Out>,
     context: RunContext,
@@ -1184,6 +1194,7 @@ export class Pipeline<Out = Quad> {
     const runScratchStage = async (
       chainedStage: Stage<Quad>,
       stageDistribution: Distribution,
+      stageSource: SourceKind,
     ): Promise<string> => {
       const scratchWriter = new FileWriter({
         outputDir: `${outputDir}/${chainedStage.name}`,
@@ -1197,6 +1208,7 @@ export class Pipeline<Out = Quad> {
           stageDistribution,
           chainedStage,
           scratchRun,
+          stageSource,
           timeout,
         );
         await scratchRun.flush(dataset, 'success');
@@ -1213,15 +1225,19 @@ export class Pipeline<Out = Quad> {
       const parentOutput = await runScratchStage(
         stage as unknown as Stage<Quad>,
         distribution,
+        source,
       );
       outputFiles.push(parentOutput);
 
       // 2. Chain through children.
       let currentDistribution = await stageOutputResolver.resolve(parentOutput);
       for (let i = 0; i < stage.stages.length; i++) {
+        // A child reads its parent’s output, which the pipeline serves from
+        // a store of its own, as it does an imported dump.
         const childOutput = await runScratchStage(
           stage.stages[i],
           currentDistribution,
+          'imported',
         );
         outputFiles.push(childOutput);
 
@@ -1294,4 +1310,9 @@ function mapProbeResult(
     warnings: result.warnings,
     fingerprint,
   };
+}
+
+/** What kind of source a resolved distribution serves the stages. */
+function sourceKindOf(resolved: ResolvedDistribution): SourceKind {
+  return resolved.imported === undefined ? 'endpoint' : 'imported';
 }

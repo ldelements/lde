@@ -270,6 +270,82 @@ describe('searchIndexerPipeline', () => {
     });
   });
 
+  describe('tuning', () => {
+    /** Each stage’s batch size and concurrency, by stage name. Both are fixed
+     *  when the stage is built, so reading them is enough to see the wiring. */
+    function tuningOf(
+      pipeline: ReturnType<typeof searchIndexerPipeline>,
+    ): Record<string, { batchSize: unknown; maxConcurrency: number }> {
+      const stages = (
+        pipeline as unknown as {
+          stages: {
+            name: string;
+            batchSize: unknown;
+            maxConcurrency: number;
+          }[];
+        }
+      ).stages;
+      return Object.fromEntries(
+        stages.map((stage) => [
+          stage.name,
+          { batchSize: stage.batchSize, maxConcurrency: stage.maxConcurrency },
+        ]),
+      );
+    }
+
+    const build = (
+      options: Partial<Parameters<typeof searchIndexerPipeline>[0]>,
+    ) =>
+      searchIndexerPipeline({
+        schema,
+        datasets: [],
+        writerFor: () => engineWriter,
+        ...options,
+      });
+
+    it('batches 100 roots from an imported dump and 10 from an endpoint by default', () => {
+      expect(tuningOf(build({}))).toEqual({
+        Dataset: {
+          batchSize: { endpoint: 10, imported: 100 },
+          maxConcurrency: 10,
+        },
+        Organization: {
+          batchSize: { endpoint: 10, imported: 100 },
+          maxConcurrency: 10,
+        },
+      });
+    });
+
+    it('applies tuning to every type, whatever the source', () => {
+      expect(
+        tuningOf(build({ tuning: { batchSize: 50, maxConcurrency: 4 } })),
+      ).toEqual({
+        Dataset: { batchSize: 50, maxConcurrency: 4 },
+        Organization: { batchSize: 50, maxConcurrency: 4 },
+      });
+    });
+
+    it('lets a type override a field and keep the other', () => {
+      expect(
+        tuningOf(
+          build({
+            tuning: { batchSize: 50, maxConcurrency: 4 },
+            tuningByType: { Organization: { batchSize: 200 } },
+          }),
+        ),
+      ).toEqual({
+        Dataset: { batchSize: 50, maxConcurrency: 4 },
+        Organization: { batchSize: 200, maxConcurrency: 4 },
+      });
+    });
+
+    it('rejects a name the schema does not declare', () => {
+      expect(() =>
+        build({ tuningByType: { Organisation: { batchSize: 200 } } }),
+      ).toThrow(/Unknown tuned type\(s\) “Organisation”/);
+    });
+  });
+
   describe('restrictRoots', () => {
     const PATTERN = '?root <https://example.org/about> <https://example.org/t>';
 

@@ -73,6 +73,9 @@ images.
 | `DATASETS`               | all registry datasets        | Dataset IRIs and `file:` URLs of local data to index (whitespace- or comma-separated; see below)                                                      |
 | `DATASET_CRITERIA`       | all registry datasets        | Search criteria as a JSON object, in [`@lde/dataset-registry-client`](./dataset-registry-client)’s criteria format (mutually exclusive w/ `DATASETS`) |
 | `RESTRICT_ROOTS`         | none                         | JSON object mapping root type names to a SPARQL graph pattern over `?root`; only matching roots are indexed (see below)                               |
+| `EXTRACTION_BATCH_SIZE`  | 100 imported, 10 endpoint    | Roots per extraction query for every type, whatever the source (see below)                                                                            |
+| `EXTRACTION_CONCURRENCY` | `10`                         | Concurrent queries per type’s stage; also sets how many queries an imported QLever answers at once, up to 4 (see below)                               |
+| `EXTRACTION_TUNING`      | none                         | JSON object mapping root type names to `batchSize` and `maxConcurrency`, overriding the two variables above for that type                             |
 | `TYPESENSE_HOST`         | **required**                 | Typesense host                                                                                                                                        |
 | `TYPESENSE_PORT`         | `8108`                       | Typesense port                                                                                                                                        |
 | `TYPESENSE_PROTOCOL`     | `http`                       | `http` or `https`                                                                                                                                     |
@@ -189,6 +192,31 @@ schema: a `SearchType` is defined by its `class`, never by where its triples
 come from, and the same declaration serves a deployment that sources it
 differently. A name that the mounted schema does not declare fails the boot,
 rather than shipping an empty collection.
+
+## Extraction batch size and concurrency
+
+Each root type’s stage extracts its roots in batches, one CONSTRUCT query per
+batch. A query costs a fixed amount to plan however many roots it binds, so
+larger batches finish sooner, up to a point. On a QLever import of 17574
+roots, batches of 100 ran 5.5 times faster than batches of 10; past 100 the
+query grew faster than it saved. By default a type therefore batches 100 roots
+from a dump the indexer imported, and 10 from a live endpoint, which other
+users share and which may fail on larger queries.
+
+`EXTRACTION_BATCH_SIZE` and `EXTRACTION_CONCURRENCY` set the batch size and the
+concurrent queries for every type, and `EXTRACTION_TUNING` per type. A batch
+size you set applies to imported dumps and live endpoints alike:
+
+```sh
+--env EXTRACTION_CONCURRENCY=4 \
+--env EXTRACTION_TUNING='{"CreativeWork": {"batchSize": 200}}'
+```
+
+An imported QLever answers as many queries at once as the busiest stage sends,
+up to 4 (its `--num-simultaneous-queries`). The queries share
+`QLEVER_MEMORY_MAX_SIZE`; the `4G` default was measured to suffice for 8
+queries of 100 roots each. A name the mounted schema does not declare fails the
+boot.
 
 ## Restricted root types
 

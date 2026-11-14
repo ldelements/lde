@@ -79,9 +79,16 @@ export interface SearchStageType {
   /**
    * Roots (and so documents) per batch – the memory bound. Under a root-bound
    * selector it moves memory and request count, never output.
-   * @default 10
+   *
+   * Each batch is one Extraction CONSTRUCT, whose planning costs the same
+   * however many roots it binds, so larger batches finish a type sooner. A
+   * QLever import of 17574 roots ran 5.5 times faster at 100 roots per batch
+   * than at 10; past 100 the query grows faster than it saves. A live endpoint
+   * shared with other users keeps 10.
+   *
+   * @default { endpoint: 10, imported: 100 }
    */
-  batchSize?: number;
+  batchSize?: StageOptions<TypedSearchDocument>['batchSize'];
   /** Maximum concurrent in-flight SPARQL queries for this stage. @default 10 */
   maxConcurrency?: number;
   /**
@@ -180,7 +187,7 @@ export function searchStages(
       readers,
       itemSelector: type.itemSelector,
       sourceFor: type.sourceFor,
-      batchSize: type.batchSize,
+      batchSize: type.batchSize ?? defaultBatchSize,
       maxConcurrency: type.maxConcurrency,
       queueCapacity: type.queueCapacity,
       project: async function* (quads, context) {
@@ -338,6 +345,9 @@ export function registrySource(
       ? distribution
       : Distribution.sparql(endpoint, dataset.iri.toString());
 }
+
+/** {@link SearchStageType.batchSize} when the type sets none. */
+const defaultBatchSize = { endpoint: 10, imported: 100 } as const;
 
 /** The class of a root type that describes the dataset being indexed. */
 const DCAT_DATASET = 'http://www.w3.org/ns/dcat#Dataset';
