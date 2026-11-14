@@ -1,3 +1,9 @@
+## 0.50.1 (2026-11-14)
+
+### 🩹 Fixes
+
+- **pipeline:** retry SPARQL queries on HTTP 408 and 429 ([#1073](https://github.com/ldelements/lde/pull/1073))
+
 ## 0.50.0 (2026-11-14)
 
 ### 🚀 Features
