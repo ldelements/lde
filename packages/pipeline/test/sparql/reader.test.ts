@@ -363,7 +363,6 @@ describe('SparqlConstructReader', () => {
 
     it.each([
       ['HTTP 408', () => httpError(408)],
-      ['HTTP 425', () => httpError(425)],
       ['HTTP 429', () => httpError(429)],
       ['HTTP 502', () => httpError(502)],
       ['HTTP 503', () => httpError(503)],
@@ -417,7 +416,7 @@ describe('SparqlConstructReader', () => {
     it.each([
       ['30', 30],
       ['0', 5],
-      ['86400', 405],
+      ['405', 405],
     ])('pauses for Retry-After: %s as %i s', async (retryAfter, seconds) => {
       const answers = [
         new Response('down', {
@@ -448,6 +447,33 @@ describe('SparqlConstructReader', () => {
       expect(pauses.map(({ untilMs }) => secondsUntil(untilMs))).toEqual([
         seconds,
       ]);
+    });
+
+    it('fails the read at once when Retry-After outlasts the longest step', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(
+          async () =>
+            new Response('slow down', {
+              status: 429,
+              headers: { 'Retry-After': '3600' },
+            }),
+        ),
+      );
+      const { limiter, pauses } = recordingLimiter();
+
+      try {
+        await expect(
+          new SparqlConstructReader({ query }).read(dataset, distribution, {
+            limiter,
+          }),
+        ).rejects.toThrow('HTTP status 429');
+        expect(fetch).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+
+      expect(pauses).toEqual([]);
     });
 
     it('lowers the limit on a timeout, without trying again', async () => {

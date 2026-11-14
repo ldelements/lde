@@ -7,11 +7,11 @@ const httpError = (status: number) =>
   );
 
 describe('isTransientError', () => {
-  it.each([408, 425, 429, 502, 503, 504])('is true for HTTP %i', (status) => {
+  it.each([408, 429, 502, 503, 504])('is true for HTTP %i', (status) => {
     expect(isTransientError(httpError(status))).toBe(true);
   });
 
-  it.each([400, 404, 500])('is false for HTTP %i', (status) => {
+  it.each([400, 404, 425, 500])('is false for HTTP %i', (status) => {
     expect(isTransientError(httpError(status))).toBe(false);
   });
 
