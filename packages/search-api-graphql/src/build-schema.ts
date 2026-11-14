@@ -399,26 +399,16 @@ export function buildGraphQLSchema(
       count: { type: new GraphQLNonNull(GraphQLInt) },
     },
   });
-  // A numeric range-facet bin: half-open `[min, max)` bounds (max null on an
-  // open-ended top bin) and the count of documents in it.
-  const rangeBucket = new GraphQLObjectType({
-    name: 'RangeBucket',
-    fields: {
-      min: { type: GraphQLFloat },
-      max: { type: GraphQLFloat },
-      count: { type: new GraphQLNonNull(GraphQLInt) },
-    },
-  });
-  // A binned date facet’s bin: like RangeBucket, with its bounds served as the
-  // ISO 8601 the bin was declared in, so they feed straight into DateRange.
-  const dateRangeBucket = new GraphQLObjectType({
-    name: 'DateRangeBucket',
-    fields: {
-      min: { type: dateScalar },
-      max: { type: dateScalar },
-      count: { type: new GraphQLNonNull(GraphQLInt) },
-    },
-  });
+  // A range-facet bin: its bounds (null on an open end) in the type its
+  // field’s `range` filter takes (IntRange, FloatRange, DateRange), so a bin
+  // feeds straight back into the filter that selects it, and the count of
+  // documents in it. A number bin is half-open `[min, max)`; a date bin’s
+  // bounds are served as the ISO 8601 it was declared in.
+  const rangeBucketTypes = {
+    integer: rangeBucketType('IntRangeBucket', GraphQLInt),
+    number: rangeBucketType('FloatRangeBucket', GraphQLFloat),
+    date: rangeBucketType('DateRangeBucket', dateScalar),
+  };
   // A boolean-facet bucket: the value as a real boolean, so the bucket a client
   // selects round-trips straight into the `is` filter that selects it. No label
   // – a boolean has no data label to resolve, and the sensible rendering (“with
@@ -486,12 +476,10 @@ export function buildGraphQLSchema(
         },
         buckets: {
           type: nonNullListOf(
-            field.kind === 'date'
-              ? binned
-                ? dateRangeBucket
-                : dateBucket
-              : binned
-                ? rangeBucket
+            binned
+              ? rangeBucketTypes[field.kind]
+              : field.kind === 'date'
+                ? dateBucket
                 : valueBucket,
           ),
           description: binned
@@ -729,9 +717,8 @@ export function buildGraphQLSchema(
     languageString.name,
     valueBucket.name,
     iriBucket.name,
-    rangeBucket.name,
+    ...Object.values(rangeBucketTypes).map((type) => type.name),
     dateBucket.name,
-    dateRangeBucket.name,
     booleanBucket.name,
     paginationType.name,
     sortDirection.name,
@@ -2110,6 +2097,20 @@ function extentType(
   return new GraphQLObjectType({
     name,
     fields: { min: field('min'), max: field('max') },
+  });
+}
+
+function rangeBucketType(
+  name: string,
+  bound: typeof GraphQLInt | typeof GraphQLFloat | typeof GraphQLString,
+): GraphQLObjectType {
+  return new GraphQLObjectType({
+    name,
+    fields: {
+      min: { type: bound },
+      max: { type: bound },
+      count: { type: new GraphQLNonNull(GraphQLInt) },
+    },
   });
 }
 
