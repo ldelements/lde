@@ -234,7 +234,7 @@ A row is yielded only when **every** projected variable binds a `NamedNode` – 
 - From an **imported dump**, a page holds 1000 bindings, or the stage’s `batchSize` when that is larger. The dump serves this run alone, and fewer pages mean fewer round trips: on a QLever import of 17574 roots, a stage ran 25–30% faster with pages of 1000 than with one page per batch.
 - From a **live endpoint**, a page holds one batch, as many bindings as the stage’s `batchSize`. An endpoint that streams results stops early on a small `LIMIT`, so a larger page of a heavy SELECT may time out where small pages would not.
 
-A selector that takes a small sample with [`maxResults`](#capping-total-results-with-maxresults) should set a `pageSize` to match, or its first page fetches rows it never yields. Each page is read in full before its first binding is yielded, so a page’s response is closed before the stage extracts its batches; memory is bounded by the page size.
+From an imported dump the default page is also no larger than [`maxResults`](#capping-total-results-with-maxresults) needs, or one batch when that is larger, so a small sample fetches no rows it never yields. Each page is read in full before its first binding is yielded, so a page’s response is closed before the stage extracts its batches; memory is bounded by the page size.
 
 Some SPARQL endpoints enforce different result limits for SELECT and CONSTRUCT queries. A `LIMIT` clause in the selector query overrides `pageSize`; use it when the endpoint caps SELECT results below the page size you want:
 

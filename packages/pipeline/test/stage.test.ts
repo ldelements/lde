@@ -7,6 +7,7 @@ import type {
   ItemSelector,
   QuadTransform,
   RunOptions,
+  SelectOptions,
 } from '../src/stage.js';
 import type { Reader, ReadOptions } from '../src/sparql/reader.js';
 import { NotSupported } from '../src/sparql/reader.js';
@@ -1373,7 +1374,7 @@ describe('Stage', () => {
       const selectFn = vi.fn(async function* (
         _distribution: Distribution,
         _batchSize?: number,
-        _options?: { source?: string },
+        _options?: SelectOptions,
       ) {
         yield { class: namedNode('http://example.org/Person') };
       });

@@ -221,6 +221,30 @@ describe('SparqlItemSelector', () => {
     expect(await firstLimit(undefined, { source: 'imported' })).toBe('1000');
   });
 
+  it('caps an imported dump’s page at what maxResults needs, but not below a batch', async () => {
+    const limitFor = async (maxResults: number, batchSize: number) => {
+      const { fetcher, queries } = pagedFetcher([]);
+      const selector = new SparqlItemSelector({
+        query,
+        maxResults,
+        fetcher: fetcher as never,
+      });
+      await selectAll(selector, batchSize, { source: 'imported' });
+      return /LIMIT\s+(\d+)/.exec(queries[0] ?? '')?.[1];
+    };
+    expect(await limitFor(50, 10)).toBe('50');
+    // Smaller than a batch would crawl dropped rows a few per request.
+    expect(await limitFor(5, 10)).toBe('10');
+    expect(await limitFor(5000, 10)).toBe('1000');
+  });
+
+  it('validates the batchSize even when maxResults is 0', async () => {
+    const selector = new SparqlItemSelector({ query, maxResults: 0 });
+    await expect(selectAll(selector, 0)).rejects.toThrow(
+      'Batch size must be a positive integer',
+    );
+  });
+
   it('pages an imported dump in the batchSize when it is larger than 1000', async () => {
     expect(await firstLimit(1500, { source: 'imported' })).toBe('1500');
   });
@@ -281,6 +305,7 @@ describe('SparqlItemSelector', () => {
 
     const rows = selector.select(distribution, 1);
     await rows.next();
+    await rows.return?.(undefined);
 
     expect(stream?.readableEnded).toBe(true);
   });

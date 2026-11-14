@@ -63,8 +63,9 @@ export interface SparqlItemSelectorOptions {
    * stage has taken all its bindings. Must be a positive integer.
    *
    * @default for an imported dump, the larger of the stage’s `batchSize` and
-   * 1000; for a live endpoint, the `batchSize`, since a larger page of a heavy
-   * SELECT may time out where small pages would not
+   * 1000, but no more than the larger of the `batchSize` and
+   * {@link maxResults}; for a live endpoint, the `batchSize`, since a larger
+   * page of a heavy SELECT may time out where small pages would not
    */
   pageSize?: number;
   /** Custom fetcher instance. */
@@ -95,7 +96,8 @@ export interface SparqlItemSelectorOptions {
  * 2. {@link SparqlItemSelectorOptions.pageSize}
  * 3. For an imported dump ({@link SelectOptions.source}), the larger of the
  *    stage’s {@link StageOptions.batchSize} (passed via {@link select}) and
- *    {@link importedPageSize}
+ *    {@link importedPageSize}, but no more than the larger of the batch size
+ *    and {@link SparqlItemSelectorOptions.maxResults}
  * 4. For a live endpoint, the stage’s `batchSize`, or
  *    {@link endpointPageSize} without one: an endpoint that streams results
  *    stops early on a small `LIMIT`, so a larger page of a heavy SELECT may
@@ -171,18 +173,16 @@ export class SparqlItemSelector implements ItemSelector {
     batchSize?: number,
     options?: SelectOptions,
   ): AsyncIterableIterator<VariableBindings> {
-    if (this.maxResults === 0) return;
     if (batchSize !== undefined && !isPositiveInteger(batchSize)) {
       throw new Error(
         `Batch size must be a positive integer; got ${batchSize}`,
       );
     }
+    if (this.maxResults === 0) return;
     const basePageSize =
       this.queryLimit ??
       this.pageSize ??
-      (options?.source === 'imported'
-        ? Math.max(batchSize ?? importedPageSize, importedPageSize)
-        : (batchSize ?? endpointPageSize));
+      this.defaultPageSize(batchSize, options?.source);
     const endpoint = distribution.accessUrl!;
     // Per call, so concurrent selections over different datasets cannot see
     // each other's graph scope or page window.
@@ -246,6 +246,26 @@ export class SparqlItemSelector implements ItemSelector {
 
       offset += fetched;
     }
+  }
+
+  /**
+   * The page size when neither the query’s `LIMIT` nor
+   * {@link SparqlItemSelectorOptions.pageSize} sets one: a batch from a live
+   * endpoint; from an imported dump, {@link importedPageSize} or a batch when
+   * that is larger, but no more than {@link SparqlItemSelectorOptions.maxResults}
+   * needs. Never less than a batch, which would crawl a region of dropped rows
+   * a few rows per request.
+   */
+  private defaultPageSize(
+    batchSize: number | undefined,
+    source: SelectOptions['source'],
+  ): number {
+    const batch = batchSize ?? endpointPageSize;
+    if (source !== 'imported') return batch;
+    const page = Math.max(batch, importedPageSize);
+    return this.maxResults === undefined
+      ? page
+      : Math.min(page, Math.max(batch, this.maxResults));
   }
 
   /**
