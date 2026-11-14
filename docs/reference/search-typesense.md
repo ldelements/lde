@@ -224,9 +224,11 @@ down.
   reimplementing it. A projected lookup naming several targets fetches from
   each target’s collection concurrently, still one round-trip per level, and
   marks each nested document with the target whose collection answered for it
-  (`NESTED_DOCUMENT_TYPE`, a symbol key, so it never surfaces as a field); a
-  stored referent no collection answers for is read through the target its
-  stored discriminator names.
+  (`NESTED_DOCUMENT_TYPE`, a symbol key, so it never surfaces as a field). A
+  stored referent is read through the target its stored discriminator names –
+  that target’s collection’s answer where several collections hold its IRI,
+  what was stored where none does. A bare IRI two collections hold takes the
+  target declared first.
 
 A label source is just another `SearchType` in the schema (with an `output`,
 `searchable` text field under its

@@ -1090,8 +1090,8 @@ export async function fetchLabels(
       const id = String(hit.document.id);
       // First group wins: the groups arrive in the order a field declares its
       // targets, so an IRI two collections hold is labelled by the target
-      // declared first – the same precedence the lookup and the projection
-      // apply.
+      // declared first – the same precedence the lookup applies to an entry
+      // that stores no target, and the projection to an unmatched referent.
       if (labels.has(id)) {
         continue;
       }
@@ -1473,7 +1473,7 @@ function localLookupValue(
   const fetched =
     resolved?.via === 'lookup'
       ? resolved.documents
-      : new Map<string, ResolvedReferent>();
+      : new Map<string, readonly ResolvedReferent[]>();
   const documents = (Array.isArray(raw) ? raw : [raw])
     .filter(
       (entry): entry is Record<string, unknown> =>
@@ -1481,7 +1481,19 @@ function localLookupValue(
     )
     .map((entry) => {
       const id = typeof entry.id === 'string' ? entry.id : undefined;
-      const authoritative = id === undefined ? undefined : fetched.get(id);
+      const answers = id === undefined ? undefined : fetched.get(id);
+      // Where several collections answered, the entry’s own discriminator
+      // picks among them; where it stores none, the target declared first.
+      const answeredBy =
+        answers === undefined
+          ? undefined
+          : storedTargetOf(
+              entry,
+              answers.map((answer) => answer.target),
+            );
+      const authoritative = answers?.find(
+        (answer) => answer.target === answeredBy,
+      );
       // An entry no collection answered for is read through the declaration
       // it was stored under – which it says itself where there were several
       // to choose from, and the only one otherwise.
@@ -1579,7 +1591,9 @@ function lookupValue(
   const iris = Array.isArray(raw) ? (raw as string[]) : [String(raw)];
   const polymorphic = referencedTargetsOf(field, schema).length > 1;
   const documents: NestedDocument[] = iris.map((iri) => {
-    const referent = resolved.documents.get(iri);
+    // A bare IRI names no target, so of the collections that hold it the
+    // target declared first wins.
+    const referent = resolved.documents.get(iri)?.[0];
     return referent === undefined
       ? { id: iri }
       : typedDocument(polymorphic, referent.target, {

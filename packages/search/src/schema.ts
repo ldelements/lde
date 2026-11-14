@@ -2050,10 +2050,11 @@ export const OR_KEY = 'or';
  * **several** targets records which of them it belongs to: the `name` of the
  * Root Type whose `class` its `rdf:type` matched first, or the first target
  * declared where none did. Written by the projection, read by an engine
- * adapter to reconstruct the referent through the right declaration when no
+ * adapter to reconstruct the referent through the right declaration: when no
  * collection answers for it – an unidentified referent, or an identified one
- * whose document is not indexed. A single-target lookup stores none: there is
- * nothing to tell apart.
+ * whose document is not indexed – and when several do, to take the answer of
+ * the target it names rather than of the one declared first. A single-target
+ * lookup stores none: there is nothing to tell apart.
  *
  * Reserved schema-wide ({@link validateSearchType} rejects a field of this
  * name), so it can never shadow a declared field of a stored entry.
