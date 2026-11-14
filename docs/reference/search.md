@@ -1863,6 +1863,9 @@ signatures, and `engine.schema` exposes the bound declaration for routing.
 
 An engine port’s rebuild writers are single-flight per index across pods: a
 run opened while another holds the index’s lock throws `RebuildAlreadyRunning`.
+The lock stays held for as long as its run is open, however long that takes,
+and goes to another run only once its holder has died. A run that lost its lock
+does not go live, and never releases the lock of the run that took it over.
 A rebuild started for a change that landed mid-run would then be dropped, and
 the change stay out of the index until something rebuilds again.
 

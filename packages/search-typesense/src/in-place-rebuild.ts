@@ -10,7 +10,7 @@ import type {
   Writer,
 } from '@lde/pipeline';
 import { buildCollectionDefinition } from './collection-definition.js';
-import { ensureCollectionExists, openLockedRun, releaseLock } from './lock.js';
+import { ensureCollectionExists, openLockedRun } from './lock.js';
 import {
   assertBookkeepingPresent,
   assertWritableType,
@@ -117,7 +117,7 @@ export class InPlaceRebuild<
       this.resolved;
     const name = this.collectionName;
 
-    return openLockedRun(this.client, name, lockTtlMs, async () => {
+    return openLockedRun(this.client, name, lockTtlMs, async (lock) => {
       // Create the collection on demand: the SearchType’s schema plus whatever
       // bookkeeping its membership regime keeps.
       const definition = buildCollectionDefinition(
@@ -187,12 +187,15 @@ export class InPlaceRebuild<
 
         commit: async () => {
           await documents.flush();
+          // A run that lost its lock must not sweep what the run that took
+          // it over has written.
+          await lock.assertHeld();
           await documents.dropUnselected(context.selectedSources());
-          await releaseLock(this.client, name);
+          await lock.release();
         },
 
         abort: async () => {
-          await releaseLock(this.client, name);
+          await lock.release();
         },
       };
     });

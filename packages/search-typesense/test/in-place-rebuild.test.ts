@@ -5,7 +5,13 @@ import { Dataset } from '@lde/dataset';
 import { InPlaceRebuild } from '../src/in-place-rebuild.js';
 import { RebuildAlreadyRunning } from '@lde/search';
 import { TypesenseContainer } from './typesense-container.js';
-import { currentRunId, makeRunContext, seedLock, stream } from './helpers.js';
+import {
+  currentRunId,
+  LOCK_COLLECTION,
+  makeRunContext,
+  seedLock,
+  stream,
+} from './helpers.js';
 
 const NAME = 'objects';
 
@@ -293,6 +299,31 @@ describe('InPlaceRebuild', () => {
     await expect(
       writer.openRun(makeRunContext([datasetA.iri.toString()])),
     ).rejects.toThrow(RebuildAlreadyRunning);
+  });
+
+  it('does not sweep once another run took its lock over', async () => {
+    const writer = new InPlaceRebuild<{ id: string; title: string }>(
+      client,
+      objectType,
+      { collectionNameFor: () => NAME },
+    );
+    const first = await writer.openRun(
+      makeRunContext([datasetA.iri.toString()]),
+    );
+    await first.write(datasetA, stream([{ id: 'a1', title: 'One' }]));
+    await first.flush?.(datasetA, 'success');
+    await first.commit();
+
+    // Dataset A is deselected, so a commit would sweep it.
+    const run = await writer.openRun(makeRunContext([]));
+    await client
+      .collections(LOCK_COLLECTION)
+      .documents()
+      .upsert({ id: NAME, owner: 'another run', acquired_at: Date.now() });
+
+    await expect(run.commit()).rejects.toThrow(/Another run took over/);
+    expect(await documentIds(client)).toEqual(['a1']);
+    await run.abort(new Error('lost the lock'));
   });
 
   it('abort releases the lock and leaves the live index for next-run reconciliation', async () => {

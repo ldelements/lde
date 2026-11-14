@@ -5,7 +5,12 @@ import { Dataset } from '@lde/dataset';
 import { BlueGreenRebuild } from '../src/blue-green-rebuild.js';
 import { RebuildAlreadyRunning } from '@lde/search';
 import { TypesenseContainer } from './typesense-container.js';
-import { makeRunContext, seedLock, stream } from './helpers.js';
+import {
+  LOCK_COLLECTION,
+  makeRunContext,
+  seedLock,
+  stream,
+} from './helpers.js';
 
 const NAME = 'datasets';
 
@@ -168,6 +173,45 @@ describe('BlueGreenRebuild', () => {
     await run.commit();
 
     expect(await aliasTarget(client)).toBeDefined();
+  });
+
+  it('keeps its lock while a run outlives the lock TTL', async () => {
+    const writer = new BlueGreenRebuild(client, datasetType, {
+      collectionNameFor: () => NAME,
+      lockTtlMs: 300,
+    });
+
+    const run = await writer.openRun(makeRunContext());
+    await new Promise((resolve) => setTimeout(resolve, 600));
+
+    await expect(writer.openRun(makeRunContext())).rejects.toThrow(
+      RebuildAlreadyRunning,
+    );
+    await run.write(dataset, stream([{ id: 'a', title: 'A', year: 2024 }]));
+    await run.commit();
+    expect(await aliasTarget(client)).toBeDefined();
+  });
+
+  it('does not go live once another run took its lock over', async () => {
+    const writer = new BlueGreenRebuild(client, datasetType, {
+      collectionNameFor: () => NAME,
+    });
+    const run = await writer.openRun(makeRunContext());
+    await run.write(dataset, stream([{ id: 'a', title: 'A', year: 2024 }]));
+    // Another run reclaims the lock, as it would after a missed heartbeat.
+    await client
+      .collections(LOCK_COLLECTION)
+      .documents()
+      .upsert({ id: NAME, owner: 'another run', acquired_at: Date.now() });
+
+    await expect(run.commit()).rejects.toThrow(/Another run took over/);
+    expect(await aliasTarget(client)).toBeUndefined();
+
+    // Aborting leaves the other run’s lock alone.
+    await run.abort(new Error('lost the lock'));
+    await expect(writer.openRun(makeRunContext())).rejects.toThrow(
+      RebuildAlreadyRunning,
+    );
   });
 
   it('abort drops the half-built collection and leaves the live alias intact', async () => {
