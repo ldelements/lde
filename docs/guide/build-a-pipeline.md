@@ -63,7 +63,7 @@ import {
 const stage = new Stage({
   name: 'classes',
   itemSelector: new SparqlItemSelector({
-    query: 'SELECT DISTINCT ?class WHERE { ?s a ?class }',
+    query: 'SELECT DISTINCT ?class WHERE { ?s a ?class } ORDER BY ?class',
     maxResults: 100,
   }),
   readers: new SparqlConstructReader({
