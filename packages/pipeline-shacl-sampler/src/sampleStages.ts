@@ -154,9 +154,12 @@ function subjectSelector(
         namespaceAliases,
         excludeFilter,
       });
+      // A page per batch: a sample yields at most `limit` rows, so a larger
+      // page would fetch rows it never yields.
       return new SparqlItemSelector({
         query,
         maxResults: limit,
+        pageSize: batchSize,
       }).select(distribution, batchSize, options);
     },
   };

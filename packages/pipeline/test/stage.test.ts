@@ -1369,6 +1369,29 @@ describe('Stage', () => {
       ).toBe(50);
     });
 
+    it('tells the item selector which kind of source it reads', async () => {
+      const selectFn = vi.fn(async function* (
+        _distribution: Distribution,
+        _batchSize?: number,
+        _options?: { source?: string },
+      ) {
+        yield { class: namedNode('http://example.org/Person') };
+      });
+      const stage = new Stage({
+        name: 'test',
+        readers: capturingExecutor([q1]),
+        itemSelector: { select: selectFn },
+      });
+
+      await stage.run(dataset, distribution, collectingWriter(), {
+        source: 'imported',
+      });
+
+      expect(selectFn.mock.calls[0][2]).toEqual(
+        expect.objectContaining({ source: 'imported' }),
+      );
+    });
+
     it('cuts batches at the chosen size', async () => {
       const reader = capturingExecutor([q1]);
       const stage = new Stage({
