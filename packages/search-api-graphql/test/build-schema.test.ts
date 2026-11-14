@@ -513,7 +513,7 @@ describe('buildGraphQLSchema', () => {
       size: { buckets: unknown[] };
       keyword: unknown[];
     };
-    // RangeBuckets carry their half-open bounds (max null = open-ended top bin).
+    // IntRangeBuckets carry their half-open bounds (max null = open-ended top bin).
     expect(facets.size.buckets).toEqual([
       { min: 1, max: 10, count: 2 },
       { min: 10, max: null, count: 5 },
@@ -1157,8 +1157,14 @@ describe('buildGraphQLSchema', () => {
     // where the field declares bins and per distinct value where it doesn’t.
     expect(sdl).toMatch(/size: IntBinnedRangeFacet!/);
     expect(sdl).toMatch(
-      /type IntBinnedRangeFacet {[^}]*all: IntExtent\n[^}]*matching: IntExtent\n[^}]*buckets: \[RangeBucket!\]!/,
+      /type IntBinnedRangeFacet {[^}]*all: IntExtent\n[^}]*matching: IntExtent\n[^}]*buckets: \[IntRangeBucket!\]!/,
     );
+    // A bin’s bounds are in the type the field’s range filter takes, so an
+    // integer bin feeds straight back into IntRange.
+    expect(sdl).toMatch(
+      /type IntRangeBucket \{\s+min: Int\s+max: Int\s+count: Int!/,
+    );
+    expect(sdl).not.toMatch(/\bRangeBucket\b/);
     expect(sdl).toMatch(/datePosted: DateRangeFacet!/);
     expect(sdl).toMatch(/type DateRangeFacet {[^}]*buckets: \[DateBucket!\]!/);
     expect(sdl).toMatch(/type DateBucket \{\s+value: ISO8601Date!/);
@@ -1169,6 +1175,38 @@ describe('buildGraphQLSchema', () => {
     expect(sdl).toMatch(/input DatasetWhere/);
     expect(sdl).toMatch(/status: KeywordFilter/);
     expect(sdl).toMatch(/size: IntRange/);
+  });
+
+  it('serves a binned number facet’s bounds as Float, the type FloatRange takes', () => {
+    const binned: SearchType = {
+      ...schema,
+      fields: schema.fields.map((field): SearchField =>
+        field.name === 'score'
+          ? {
+              name: 'score',
+              kind: 'number',
+              facetable: true,
+              output: true,
+              facetRanges: [
+                { key: 'low', max: 0.5 },
+                { key: 'high', min: 0.5 },
+              ],
+            }
+          : field,
+      ),
+    };
+    const sdl = printSchema(
+      buildGraphQLSchema(
+        searchSchema(binned, organization, term),
+        datasetOptions,
+      ),
+    );
+    expect(sdl).toMatch(
+      /type FloatBinnedRangeFacet {[^}]*all: FloatExtent\n[^}]*buckets: \[FloatRangeBucket!\]!/,
+    );
+    expect(sdl).toMatch(
+      /type FloatRangeBucket \{\s+min: Float\s+max: Float\s+count: Int!/,
+    );
   });
 
   it('buckets a reference facet on IRI, so a bucket feeds the filter that selects it', () => {
