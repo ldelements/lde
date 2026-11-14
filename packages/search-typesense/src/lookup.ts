@@ -32,9 +32,12 @@ import { escapeFilterValue } from './query-compiler.js';
 export type ResolvedReferents =
   | {
       readonly via: 'lookup';
-      /** By IRI. A lookup naming several targets holds referents of any of
-       *  them here, each saying which. */
-      readonly documents: ReadonlyMap<string, ResolvedReferent>;
+      /** By IRI, every collection’s answer for it in target declaration
+       *  order. A lookup naming several targets holds referents of any of
+       *  them here, each saying which – and an IRI two collections hold has
+       *  one per collection, so a stored entry can take the one its own
+       *  discriminator names. */
+      readonly documents: ReadonlyMap<string, readonly ResolvedReferent[]>;
       /** The levels below, by target name – what a stored referent no
        *  collection answered for is reconstructed against. */
       readonly childrenByTarget: ReadonlyMap<
@@ -159,9 +162,10 @@ export async function resolveProjection(
           return { target, fetched, children };
         }),
       );
-      // Declaration order is precedence: an IRI two collections hold belongs
-      // to the target declared first.
-      const documents = new Map<string, ResolvedReferent>();
+      // Every answer is kept, in declaration order: an IRI two collections
+      // hold belongs to the target the referring entry stored, and to the one
+      // declared first only where the entry stores none.
+      const documents = new Map<string, ResolvedReferent[]>();
       const childrenByTarget = new Map<
         string,
         ReadonlyMap<string, ResolvedReferents>
@@ -172,13 +176,13 @@ export async function resolveProjection(
         }
         childrenByTarget.set(resolved.target.name, resolved.children);
         for (const [iri, document] of resolved.fetched) {
-          if (!documents.has(iri)) {
-            documents.set(iri, {
-              target: resolved.target,
-              document,
-              children: resolved.children,
-            });
-          }
+          const referents = documents.get(iri) ?? [];
+          referents.push({
+            target: resolved.target,
+            document,
+            children: resolved.children,
+          });
+          documents.set(iri, referents);
         }
       }
       if (perTarget.every((resolved) => resolved === undefined)) {

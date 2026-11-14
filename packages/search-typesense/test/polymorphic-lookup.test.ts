@@ -208,7 +208,8 @@ describe('resolving a lookup over several targets', () => {
     expect(creators.map(typeOf)).toEqual([
       'Person',
       'Organization',
-      // Held by both: the target declared first wins.
+      // Held by both, and a bare IRI names no target: the one declared first
+      // wins.
       'Person',
       // Held by neither: a bare id, of no type at all.
       undefined,
@@ -372,6 +373,58 @@ describe('a stored referent of several possible kinds', () => {
     for (const endpoint of endpoints) {
       expect(endpoint).not.toHaveProperty(TARGET_FIELD);
     }
+  });
+
+  it('types an entry several collections answer for by its stored discriminator', async () => {
+    const { fake } = client({
+      found: 1,
+      hits: [
+        {
+          document: {
+            id: 'https://w/6',
+            creator: [
+              {
+                role: 'schilder',
+                creator: {
+                  id: 'https://both',
+                  [TARGET_FIELD]: 'Organization',
+                },
+              },
+              {
+                role: 'auteur',
+                creator: { id: 'https://both', [TARGET_FIELD]: 'Person' },
+              },
+            ],
+          },
+        },
+      ],
+    });
+    const engine = createTypesenseSearchEngine(fake.client, schema, {
+      collections,
+    });
+
+    const result = await engine.search(edgedWork as never, {
+      ...base,
+      resolve: {
+        creator: { resolve: { creator: { fields: ['name'] } } },
+      },
+    });
+    const entries = (result.hits[0].document as Record<string, unknown>)
+      .creator as readonly Record<string, unknown>[];
+    const endpoints = entries.map((entry) => entry.creator as NestedDocument);
+
+    expect(endpoints).toEqual([
+      {
+        id: 'https://both',
+        name: { nl: ['Als organisatie'] },
+        [NESTED_DOCUMENT_TYPE]: 'Organization',
+      },
+      {
+        id: 'https://both',
+        name: { nl: ['Als persoon'] },
+        [NESTED_DOCUMENT_TYPE]: 'Person',
+      },
+    ]);
   });
 });
 
