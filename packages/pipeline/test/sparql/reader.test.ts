@@ -362,6 +362,9 @@ describe('SparqlConstructReader', () => {
       Math.round((untilMs - Date.now()) / 1000);
 
     it.each([
+      ['HTTP 408', () => httpError(408)],
+      ['HTTP 425', () => httpError(425)],
+      ['HTTP 429', () => httpError(429)],
       ['HTTP 502', () => httpError(502)],
       ['HTTP 503', () => httpError(503)],
       ['HTTP 504', () => httpError(504)],
