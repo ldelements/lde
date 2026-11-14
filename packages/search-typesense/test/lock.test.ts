@@ -89,6 +89,20 @@ describe('acquireLock', () => {
     ).rejects.toThrow('HTTP 500');
   });
 
+  it('rethrows an unexpected error from creating the missing lock collection', async () => {
+    await expect(
+      acquireLock(
+        fakeClient({
+          createDocument: () => Promise.reject(typesenseError(404)),
+          retrieveCollection: () => Promise.reject(typesenseError(404)),
+          createCollection: () => Promise.reject(typesenseError(500)),
+        }),
+        'datasets',
+        1000,
+      ),
+    ).rejects.toThrow('HTTP 500');
+  });
+
   it('rethrows an unexpected error from taking the lock', async () => {
     await expect(
       acquireLock(
@@ -284,6 +298,14 @@ describe('a held lock', () => {
     const { client, store } = statefulClient();
     const lock = await heldLock(client);
     store.delete('datasets');
+
+    await expect(lock.release()).resolves.toBeUndefined();
+  });
+
+  it('tolerates the lock going away between its check and its delete', async () => {
+    const { client, store } = statefulClient();
+    const lock = await heldLock(client);
+    vi.spyOn(store, 'delete').mockReturnValue(false);
 
     await expect(lock.release()).resolves.toBeUndefined();
   });
