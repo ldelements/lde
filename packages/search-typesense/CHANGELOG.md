@@ -1,3 +1,9 @@
+## 0.57.2 (2026-11-14)
+
+### 🩹 Fixes
+
+- **search-typesense:** declare every leaf under an object array as a list ([#1083](https://github.com/ldelements/lde/pull/1083))
+
 ## 0.57.1 (2026-11-14)
 
 ### 🧱 Updated Dependencies
