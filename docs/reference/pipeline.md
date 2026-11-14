@@ -324,7 +324,7 @@ By default, every SPARQL request uses the same 5-minute budget. When a pipeline 
 A `TimeoutPolicy` decides the budget for each SPARQL request and observes the outcome. Two are built in:
 
 - **`ConstantTimeoutPolicy(timeoutMs)`** – returns the same budget for every request. The implicit default when `PipelineOptions.timeout` is omitted (`constantTimeoutPolicy(300_000)`).
-- **`AdaptiveTimeoutPolicy({ defaultMs, tightenedMs, tightenAfterTimeouts })`** – per-endpoint state machine. Each endpoint is either _healthy_ (use `defaultMs`) or _tightened_ (use `tightenedMs`). After `tightenAfterTimeouts` consecutive `timeout` outcomes the endpoint flips to _tightened_; a single `ok` flips it back to _healthy_.
+- **`AdaptiveTimeoutPolicy({ defaultMs, tightenedMs, tightenAfterTimeouts })`** – per-endpoint state machine. Each endpoint is either _healthy_ (use `defaultMs`) or _tightened_ (use `tightenedMs`). After `tightenAfterTimeouts` consecutive `timeout` outcomes at `defaultMs` the endpoint flips to _tightened_; a single `ok` flips it back to _healthy_. A timeout at `tightenedMs` doesn’t count: it may just be a heavy query on a healthy endpoint, so the next request re-probes at `defaultMs`. If that probe succeeds the endpoint relaxes; if it times out too, the endpoint stays tightened. A healthy-but-slow endpoint therefore loses one request rather than every heavy query until a cheap one happens to pass, while an endpoint that keeps timing out at `defaultMs` waits out the full budget on only every other request.
 
 `PipelineOptions.timeout` accepts a `() => TimeoutPolicy` factory. The pipeline invokes it once per dataset, so policy state resets between datasets and one bad dataset can’t poison the next:
 

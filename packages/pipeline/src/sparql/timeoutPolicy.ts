@@ -2,12 +2,12 @@
  * Outcome of a single SPARQL request attempt, as reported back to a
  * {@link TimeoutPolicy} so it can adapt the budget for subsequent requests.
  *
- * - `ok` — the request resolved successfully (the HTTP response was accepted
+ * - `ok` – the request resolved successfully (the HTTP response was accepted
  *   and the body started streaming).
- * - `timeout` — the per-call {@link AbortSignal} fired, or the endpoint
+ * - `timeout` – the per-call {@link AbortSignal} fired, or the endpoint
  *   returned an HTTP 504 (upstream-reported timeout). Both are semantically
  *   ‘the endpoint did not deliver in time’.
- * - `error` — any other failure (4xx other than 504, parser errors, etc.).
+ * - `error` – any other failure (4xx other than 504, parser errors, etc.).
  *   Neutral with respect to adaptive tightening.
  */
 export type TimeoutOutcome = 'ok' | 'error' | 'timeout';
@@ -26,6 +26,11 @@ export interface AfterRequestContext {
   outcome: TimeoutOutcome;
   /** Wall-clock duration of the request attempt, in milliseconds. */
   durationMs: number;
+  /**
+   * Budget, in milliseconds, that {@link TimeoutPolicy.beforeRequest}
+   * returned for this attempt.
+   */
+  timeoutMs: number;
   /** The raw error, when {@link outcome} is `'error'` or `'timeout'`. */
   error?: unknown;
 }
@@ -33,7 +38,7 @@ export interface AfterRequestContext {
 /**
  * Decides the timeout budget for each SPARQL request and observes the
  * outcome. Implementations are free to adapt the budget based on recent
- * behaviour — see {@link AdaptiveTimeoutPolicy} for the built-in adaptive
+ * behaviour – see {@link AdaptiveTimeoutPolicy} for the built-in adaptive
  * implementation, and {@link ConstantTimeoutPolicy} for fixed-budget
  * behaviour.
  *
@@ -69,9 +74,9 @@ export interface TimeoutTransitionEvent {
   /** Budget in effect after the transition. */
   toTimeoutMs: number;
   /**
-   * Number of consecutive timeouts observed at the moment of the
-   * transition. For a `relax` event, this is the run that ended in the
-   * `ok` that triggered relaxation.
+   * Number of consecutive timeouts at the default budget observed at the
+   * moment of the transition. For a `relax` event, this is the run that
+   * ended in the `ok` that triggered relaxation.
    */
   consecutiveTimeouts: number;
 }
@@ -106,7 +111,7 @@ export class ConstantTimeoutPolicy implements TimeoutPolicy {
   }
 
   afterRequest(_context: AfterRequestContext): void {
-    // Constant policy is stateless — outcomes never affect future budgets.
+    // Constant policy is stateless – outcomes never affect future budgets.
   }
 }
 
@@ -128,8 +133,13 @@ export interface AdaptiveTimeoutPolicyOptions {
 
 interface EndpointState {
   tightened: boolean;
-  /** Consecutive timeouts since the last `ok`. */
+  /** Consecutive timeouts at the default budget since the last `ok`. */
   consecutiveTimeouts: number;
+  /**
+   * Whether the next request re-probes a tightened endpoint at the default
+   * budget.
+   */
+  probeDue: boolean;
 }
 
 /**
@@ -139,7 +149,17 @@ interface EndpointState {
  * full default budget. A single successful request relaxes the endpoint
  * back to the default budget.
  *
- * State is in-memory and tied to the policy instance — Pipeline creates a
+ * A timeout at the tightened budget says nothing about the endpoint’s
+ * health – a healthy endpoint’s heavy query may simply need longer – so it
+ * does not count toward tightening. Instead, the next request re-probes
+ * the endpoint at the default budget: if that probe succeeds, the endpoint
+ * relaxes; if it times out too, the endpoint stays tightened until the
+ * next timeout at the tightened budget schedules another probe. A
+ * healthy-but-slow endpoint therefore recovers after one lost request,
+ * while an endpoint that keeps timing out at the default budget waits it
+ * out on only every other request.
+ *
+ * State is in-memory and tied to the policy instance – Pipeline creates a
  * fresh instance per dataset so one offending dataset doesn’t poison the
  * next.
  *
@@ -184,7 +204,12 @@ export class AdaptiveTimeoutPolicy implements TimeoutPolicy {
 
   beforeRequest(context: BeforeRequestContext): number {
     const state = this.stateFor(context.endpoint);
-    return state.tightened ? this.options.tightenedMs : this.options.defaultMs;
+    if (!state.tightened) return this.options.defaultMs;
+    if (state.probeDue) {
+      state.probeDue = false;
+      return this.options.defaultMs;
+    }
+    return this.options.tightenedMs;
   }
 
   afterRequest(context: AfterRequestContext): void {
@@ -194,6 +219,7 @@ export class AdaptiveTimeoutPolicy implements TimeoutPolicy {
       const priorCount = state.consecutiveTimeouts;
       state.consecutiveTimeouts = 0;
       state.tightened = false;
+      state.probeDue = false;
       if (wasTightened) {
         this.notify('relax', {
           endpoint: context.endpoint,
@@ -205,6 +231,11 @@ export class AdaptiveTimeoutPolicy implements TimeoutPolicy {
       return;
     }
     if (context.outcome === 'timeout') {
+      if (context.timeoutMs < this.options.defaultMs) {
+        // Too short a budget to judge the endpoint by: re-probe it instead.
+        if (state.tightened) state.probeDue = true;
+        return;
+      }
       state.consecutiveTimeouts += 1;
       if (
         !state.tightened &&
@@ -233,7 +264,7 @@ export class AdaptiveTimeoutPolicy implements TimeoutPolicy {
     const key = endpoint.toString();
     let state = this.states.get(key);
     if (!state) {
-      state = { tightened: false, consecutiveTimeouts: 0 };
+      state = { tightened: false, consecutiveTimeouts: 0, probeDue: false };
       this.states.set(key, state);
     }
     return state;
