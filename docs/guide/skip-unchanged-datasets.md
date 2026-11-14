@@ -38,6 +38,8 @@ A live SPARQL endpoint exposes neither signal, so endpoint-backed datasets are a
 
 The downloader reuses the same modification date as its change signal: a cached dump file at least as new as that date is not downloaded again. The skip layer and the download layer agree by construction, so there is no separate cache state to store or invalidate.
 
+Before skipping a dataset recorded as a success, the pipeline asks its writers whether they still hold its output (`Writer.hasOutput`). If any writer says no – a `FileWriter` whose file was pruned or deleted by hand – the dataset reprocesses, so lost output comes back on the next run instead of staying gone until the source changes. A writer without `hasOutput` is trusted to hold the output.
+
 A dataset that **failed** but whose source is unchanged is recorded as `'failed'` and skipped on later runs, so a deterministically failing import is not retried every run.
 
 ## Rotate the pipeline version when output changes
