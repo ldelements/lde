@@ -6,6 +6,7 @@ describe('createQlever', () => {
     const { server } = createQlever({
       mode: 'docker',
       image: 'adfreiburg/qlever:latest',
+      dataDir: '/data',
     });
     expect(server.queryEndpoint.toString()).toBe(
       'http://localhost:7001/sparql',
@@ -25,6 +26,7 @@ describe('createQlever', () => {
       image: 'adfreiburg/qlever:latest',
       network: 'app_default',
       containerName: 'qlever',
+      dataDir: '/data',
     });
     expect(server.queryEndpoint.toString()).toBe('http://qlever:7001/sparql');
   });
@@ -33,8 +35,17 @@ describe('createQlever', () => {
     createQlever({
       mode: 'docker',
       image: 'adfreiburg/qlever:latest',
+      dataDir: '/data',
       // @ts-expect-error network requires containerName, the endpoint hostname
       network: 'app_default',
+    });
+  });
+
+  it('rejects docker mode without a data directory at the type level', () => {
+    // @ts-expect-error docker mode requires dataDir, the directory it bind-mounts
+    createQlever({
+      mode: 'docker',
+      image: 'adfreiburg/qlever:latest',
     });
   });
 });

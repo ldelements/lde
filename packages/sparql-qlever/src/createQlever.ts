@@ -32,12 +32,24 @@ export type QleverOptions = {
   | {
       mode: 'docker';
       image: string;
+      /**
+       * Absolute host directory bind-mounted into the QLever container. The
+       * importer downloads into it and QLever builds the index there, so
+       * without it the container cannot see the data.
+       */
+      dataDir: string;
       containerName?: string;
       network?: never;
     }
   | {
       mode: 'docker';
       image: string;
+      /**
+       * Absolute host directory bind-mounted into the QLever container. The
+       * importer downloads into it and QLever builds the index there, so
+       * without it the container cannot see the data.
+       */
+      dataDir: string;
       /**
        * Docker network to attach the QLever containers to. Set this when the
        * consumer itself runs in a container on that network: the query

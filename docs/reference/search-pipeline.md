@@ -72,7 +72,11 @@ const pipeline = searchIndexerPipeline({
   datasets,
   // Import each dataset’s data dump into a local QLever and query that.
   distributionResolver: new ImportResolver(new SparqlDistributionResolver(), {
-    ...createQlever({ mode: 'docker', image: 'adfreiburg/qlever:latest' }),
+    ...createQlever({
+      mode: 'docker',
+      image: 'adfreiburg/qlever:latest',
+      dataDir: '/data',
+    }),
     strategy: 'import',
   }),
   writerFor: (searchType, schema) =>
