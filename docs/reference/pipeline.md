@@ -142,21 +142,7 @@ new Stage({
 
 #### Batch size
 
-`batchSize` (default: 10) controls how many variable bindings are passed to each reader call as a `VALUES` clause. It also sets the page size for the item selector's SPARQL requests, so that each paginated request fills exactly one reader batch.
-
-Some SPARQL endpoints enforce different result limits for SELECT and CONSTRUCT queries. Since the selector uses SELECT and the reader uses CONSTRUCT, a `LIMIT` clause in the selector query overrides `batchSize` as the page size. Use this when the endpoint caps SELECT results below your desired batch size:
-
-```typescript
-// Endpoint caps SELECT results at 500, but each CONSTRUCT can handle 1000 bindings.
-new Stage({
-  name: 'per-class',
-  itemSelector: new SparqlItemSelector({
-    query: 'SELECT DISTINCT ?class WHERE { ?s a ?class } LIMIT 500',
-  }),
-  readers: reader,
-  batchSize: 1000, // Two SELECT pages fill one CONSTRUCT batch.
-});
-```
+`batchSize` (default: 10) controls how many variable bindings are passed to each reader call as a `VALUES` clause. The stage cuts the item selector’s output into batches of this size; `SparqlItemSelector` fetches that output in larger pages, so the stage does not wait on a SELECT before every batch (see [page size](#page-size)).
 
 #### Concurrency
 
@@ -227,6 +213,24 @@ new SparqlItemSelector({
 ```
 
 A row is yielded only when **every** projected variable binds a `NamedNode` – binding values double as stable item identities downstream, which a blank-node label or literal cannot provide. Other rows are dropped client-side but still count toward pagination, so they are fetched first; to skip them at the endpoint, filter in the query itself (e.g. `FILTER(isIRI(?s))`, as `selectByClass` in [@lde/search-pipeline](./search-pipeline) does with `FILTER(!isBlank(?root))`).
+
+#### Page size
+
+`SparqlItemSelector` fetches its bindings in pages of `pageSize` per SELECT, and the stage cuts each page into batches. By default a page holds 1000 bindings, or the stage’s `batchSize` when that is larger. A selector that takes a small sample with [`maxResults`](#capping-total-results-with-maxresults) should set a `pageSize` to match, or its first page fetches rows it never yields. Each page is read in full before its first binding is yielded, so a page’s response is closed before the stage extracts its batches; memory is bounded by the page size.
+
+Some SPARQL endpoints enforce different result limits for SELECT and CONSTRUCT queries. A `LIMIT` clause in the selector query overrides `pageSize`; use it when the endpoint caps SELECT results below the page size you want:
+
+```typescript
+// Endpoint caps SELECT results at 500, but each CONSTRUCT can handle 1000 bindings.
+new Stage({
+  name: 'per-class',
+  itemSelector: new SparqlItemSelector({
+    query: 'SELECT DISTINCT ?class WHERE { ?s a ?class } LIMIT 500',
+  }),
+  readers: reader,
+  batchSize: 1000, // Two SELECT pages fill one CONSTRUCT batch.
+});
+```
 
 #### Capping total results with `maxResults`
 

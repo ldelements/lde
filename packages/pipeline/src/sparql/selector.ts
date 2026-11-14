@@ -21,6 +21,14 @@ import { ConstantTimeoutPolicy, type TimeoutPolicy } from './timeoutPolicy.js';
  */
 const defaultTimeoutPolicy: TimeoutPolicy = new ConstantTimeoutPolicy(300_000);
 
+/**
+ * Bindings per SELECT request unless the stage’s batches are larger: few
+ * enough IRIs to hold cheaply, many enough that selection stops costing a
+ * round trip per batch. Measured on a QLever import of 17574 roots, one SELECT
+ * for all of them was no faster than pages of 1000.
+ */
+const defaultPageSize = 1000;
+
 const parser = new Parser();
 const generator = new Generator();
 const F = new AstFactory();
@@ -29,8 +37,8 @@ export interface SparqlItemSelectorOptions {
   /**
    * SELECT query projecting at least one named variable.
    *
-   * A `LIMIT` clause in the query overrides the stage's `batchSize` as the
-   * page size – use this when the SPARQL endpoint enforces a result limit.
+   * A `LIMIT` clause in the query overrides {@link pageSize} – use this when
+   * the SPARQL endpoint enforces a result limit.
    * It does **not** cap the total number of bindings the selector yields;
    * pagination continues with `OFFSET` until the source is exhausted. Use
    * {@link maxResults} to cap the total.
@@ -44,6 +52,15 @@ export interface SparqlItemSelectorOptions {
    * yielded. Must not be negative.
    */
   maxResults?: number;
+  /**
+   * Bindings per SELECT request. The stage cuts each page into batches of
+   * its `batchSize`, so a page larger than a batch saves the stage a SELECT
+   * round trip before every batch. Each page is held in memory until the
+   * stage has taken all its bindings. Must be a positive integer.
+   *
+   * @default the larger of the stage’s `batchSize` and 1000
+   */
+  pageSize?: number;
   /** Custom fetcher instance. */
   fetcher?: SparqlEndpointFetcher;
 }
@@ -69,11 +86,17 @@ export interface SparqlItemSelectorOptions {
  *
  * The page size (results per SPARQL request) is determined by, in order:
  * 1. A `LIMIT` clause in the selector query (for endpoints with hard result limits)
- * 2. The stage's {@link StageOptions.batchSize} (passed via {@link select})
- * 3. A default of 10
+ * 2. {@link SparqlItemSelectorOptions.pageSize}
+ * 3. The larger of the stage’s {@link StageOptions.batchSize} (passed via
+ *    {@link select}) and {@link defaultPageSize}
  *
- * The page size must be positive – a page size of 0 could never terminate,
- * so it is rejected as a configuration error.
+ * Each page is read in full before its first binding is yielded, so the
+ * request is done before the stage starts extracting the page’s batches: a
+ * slow consumer never holds a response open. Memory is bounded by the page
+ * size.
+ *
+ * The page size and the batch size must be positive – a page size of 0 could
+ * never terminate, so it is rejected as a configuration error.
  *
  * {@link SparqlItemSelectorOptions.maxResults} is independent of page size:
  * it caps the *total* bindings yielded across pages without changing how
@@ -88,6 +111,7 @@ export class SparqlItemSelector implements ItemSelector {
   private readonly queryLimit?: number;
   private readonly variableNames: readonly string[];
   private readonly maxResults?: number;
+  private readonly pageSize?: number;
   private readonly userFetcher?: SparqlEndpointFetcher;
 
   constructor(options: SparqlItemSelectorOptions) {
@@ -109,10 +133,25 @@ export class SparqlItemSelector implements ItemSelector {
       );
     }
 
+    if (
+      options.pageSize !== undefined &&
+      !isPositiveInteger(options.pageSize)
+    ) {
+      throw new Error(
+        `pageSize must be a positive integer; got ${options.pageSize}`,
+      );
+    }
+
     this.parsed = parsed as QuerySelect;
     this.queryLimit = this.parsed.solutionModifiers.limitOffset?.limit;
+    if (this.queryLimit !== undefined && this.queryLimit <= 0) {
+      throw new Error(
+        `Page size must be positive; got the query’s LIMIT ${this.queryLimit}`,
+      );
+    }
     this.variableNames = variables.map((variable) => variable.value);
     this.maxResults = options.maxResults;
+    this.pageSize = options.pageSize;
     this.userFetcher = options.fetcher;
   }
 
@@ -122,12 +161,15 @@ export class SparqlItemSelector implements ItemSelector {
     options?: SelectOptions,
   ): AsyncIterableIterator<VariableBindings> {
     if (this.maxResults === 0) return;
-    const basePageSize = this.queryLimit ?? batchSize ?? 10;
-    if (basePageSize <= 0) {
+    if (batchSize !== undefined && !isPositiveInteger(batchSize)) {
       throw new Error(
-        `Page size must be positive; got ${basePageSize} (from the query’s LIMIT or the stage’s batchSize)`,
+        `Batch size must be a positive integer; got ${batchSize}`,
       );
     }
+    const basePageSize =
+      this.queryLimit ??
+      this.pageSize ??
+      Math.max(batchSize ?? defaultPageSize, defaultPageSize);
     const endpoint = distribution.accessUrl!;
     // Per call, so concurrent selections over different datasets cannot see
     // each other's graph scope or page window.
@@ -161,17 +203,12 @@ export class SparqlItemSelector implements ItemSelector {
       );
       const paginatedQuery = generator.generate(query);
 
-      const stream = await this.fetchBindingsWithPolicy(
-        endpoint,
-        paginatedQuery,
-        policy,
-      );
+      const page = await this.fetchPage(endpoint, paginatedQuery, policy);
 
       // Fetched rows drive pagination, yielded rows only `maxResults` – see
       // the class JSDoc for why dropped rows must keep their page slot.
-      let fetched = 0;
-      for await (const record of stream) {
-        fetched++;
+      const fetched = page.length;
+      for (const record of page) {
         totalFetched++;
 
         if (
@@ -199,15 +236,17 @@ export class SparqlItemSelector implements ItemSelector {
   }
 
   /**
-   * Run a single SPARQL request against the endpoint, threading the
-   * per-call timeout from {@link TimeoutPolicy.beforeRequest} and
-   * reporting the outcome to {@link TimeoutPolicy.afterRequest}.
+   * Run a single SPARQL request and read its whole page, so the response is
+   * closed before the stage starts on the page’s batches. Threads the per-call
+   * timeout from {@link TimeoutPolicy.beforeRequest} and reports the outcome
+   * to {@link TimeoutPolicy.afterRequest} once the page is read, so the body
+   * transfer counts towards the duration and a failure mid-body is reported.
    */
-  private async fetchBindingsWithPolicy(
+  private async fetchPage(
     endpoint: URL,
     paginatedQuery: string,
     policy: TimeoutPolicy,
-  ): Promise<AsyncIterable<Record<string, Term>>> {
+  ): Promise<Record<string, Term>[]> {
     const timeoutMs = policy.beforeRequest({ endpoint });
     const fetcher =
       this.userFetcher ?? new SparqlEndpointFetcher({ timeout: timeoutMs });
@@ -217,12 +256,16 @@ export class SparqlItemSelector implements ItemSelector {
         endpoint.toString(),
         paginatedQuery,
       )) as AsyncIterable<Record<string, Term>>;
+      const page: Record<string, Term>[] = [];
+      for await (const record of stream) {
+        page.push(record);
+      }
       policy.afterRequest({
         endpoint,
         outcome: 'ok',
         durationMs: Date.now() - start,
       });
-      return stream;
+      return page;
     } catch (error) {
       policy.afterRequest({
         endpoint,
@@ -233,6 +276,10 @@ export class SparqlItemSelector implements ItemSelector {
       throw error;
     }
   }
+}
+
+function isPositiveInteger(value: number): boolean {
+  return Number.isInteger(value) && value > 0;
 }
 
 function isVariableTerm(v: object): v is TermVariable {
