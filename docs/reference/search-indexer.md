@@ -153,7 +153,7 @@ Dropping a file from the list, or from a listed directory, removes its documents
 on the next run. A separate run that selects only local data deletes what a
 registry run wrote to the same collections, and the other way round, unless it has
 its own `COLLECTION_PREFIX`.
-[ADR 31](../decisions/0031-import-local-files-through-the-data-dump-path) explains
+[ADR 38](../decisions/0038-import-local-files-through-the-data-dump-path) explains
 the design.
 
 ## Registry-sourced root types

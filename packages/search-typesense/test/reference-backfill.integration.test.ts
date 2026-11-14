@@ -15,8 +15,9 @@ import { TypesenseContainer } from './typesense-container.js';
  *
  * The concurrency caveat is deliberately NOT asserted here: when the referring
  * and the referenced collection are imported at the same time, 30.2 can lose a
- * reference permanently, which is why an indexing run does not yet make a
- * one-run guarantee. See ADR 19.
+ * reference permanently, which is why the writers never import into two
+ * collections of a join component at once. See ADR 39, and the joins
+ * end-to-end test in `@lde/search-pipeline`.
  */
 describe('async_reference back-fill', () => {
   const container = new TypesenseContainer();
