@@ -163,15 +163,15 @@ All three are forced, none is a knob:
   stream per dataset, so out-of-order arrival is normal, and the engine
   back-fills the reference when the referent lands.
 
-  ::: warning First build: run the indexer twice
-  Back-fill is exact when the two collections are written one after the other,
-  but per-type stages write them **concurrently**, and Typesense 30.2 can lose a
-  reference written in that window permanently – the documents all land, the
-  join just finds nothing. A second run meets referents that already exist, so
-  every reference resolves at write time. Steady-state runs over a stable corpus
-  are unaffected; a component built from scratch should be indexed twice. See
-  [ADR 19](../decisions/0019-filter-across-collections-through-declared-joins#documented-limitations).
-  :::
+  Back-fill is exact only when the two collections are imported one after the
+  other: Typesense 30.2 permanently loses a reference written while its
+  referent’s collection is being imported. So the writers never import into two
+  collections of one join component at once. Imports into one collection still
+  run concurrently, and a type outside any join never waits. The writers of a
+  component share that lock through the schema, so give them all the same
+  `SearchSchema`, as `searchIndexWriter` does. One run resolves every join, in
+  place or blue/green. See
+  [ADR 39](../decisions/0039-serialise-imports-across-a-join-components-collections).
 
 - **`cascade_delete: false`.** It defaults to `true`, so a sweep removing a
   departed source’s `Publisher` documents would delete other sources’

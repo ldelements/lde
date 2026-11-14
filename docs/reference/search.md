@@ -1800,11 +1800,9 @@ Four rules come with declaring one, all enforced when the schema is built:
 a schema whose joins do not hold up fails at startup.
 
 Not yet supported through a join: facets, sorting, free-text search, and the
-reverse direction. And one engine-level caveat worth knowing before you deploy:
-a component built from scratch needs its **indexer run twice** before its joins
-resolve – see
+reverse direction. See
 [ADR 19](../decisions/0019-filter-across-collections-through-declared-joins.md)
-for that and the other limitations.
+for the other limitations.
 
 Sorting has two deliberate wrinkles. `orderBy` accepts the sentinel field
 **`relevance`** – text-match ranking, not a declared field (Typesense compiles
