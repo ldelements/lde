@@ -262,6 +262,12 @@ export interface SelectOptions {
    * @default 'endpoint'
    */
   source?: SourceKind;
+  /**
+   * The limiter the selector’s queries run on, keyed on the endpoint – the
+   * one the stage’s readers run on, so they share one adaptive limit and one
+   * pause. A selection not given one gets a limiter for itself alone.
+   */
+  limiter?: HostLimiter;
 }
 
 export class Stage<Out = Quad> {
@@ -360,6 +366,7 @@ export class Stage<Out = Quad> {
           this.itemSelector.select(distribution, batchSize, {
             timeout,
             source,
+            limiter: readOptions.limiter,
           }),
         ),
         batchSize,

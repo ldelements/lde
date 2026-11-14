@@ -378,6 +378,26 @@ describe('Stage', () => {
     },
   );
 
+  it('hands its item selector the limiter its readers run on', async () => {
+    const reader = capturingExecutor([q1]);
+    const limiter = createHostLimiter(4, 2);
+    const selectFn = vi.fn(async function* () {
+      yield { class: namedNode('http://example.org/Person') };
+    });
+
+    await new Stage({
+      name: 'test',
+      readers: reader,
+      itemSelector: { select: selectFn },
+    }).run(dataset, distribution, collectingWriter(), { limiter });
+
+    expect(selectFn).toHaveBeenCalledWith(
+      distribution,
+      10,
+      expect.objectContaining({ limiter }),
+    );
+  });
+
   it('passes batchSize to item selector', async () => {
     const reader = capturingExecutor([q1]);
     const selectFn = vi.fn(async function* () {

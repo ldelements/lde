@@ -2,9 +2,11 @@ import { SparqlItemSelector } from '../../src/sparql/selector.js';
 import type { ItemSelector, SelectOptions } from '../../src/stage.js';
 import type { VariableBindings } from '../../src/sparql/reader.js';
 import { Distribution } from '@lde/dataset';
+import type { HostLimiter } from '@lde/host-limiter';
 import { describe, it, expect, vi } from 'vitest';
 import { Readable } from 'node:stream';
 import { DataFactory } from 'n3';
+import { recordingLimiter } from './recordingLimiter.js';
 
 const { namedNode, literal, blankNode } = DataFactory;
 
@@ -705,6 +707,8 @@ describe('SparqlItemSelector', () => {
       const iterate = async () => {
         for await (const _row of selector.select(distribution, 10, {
           timeout: policy,
+          // Ignores the pauses between the retries a 504 gets.
+          limiter: recordingLimiter().limiter,
         })) {
           // consume
         }
@@ -794,6 +798,190 @@ describe('SparqlItemSelector', () => {
       }
       expect(rows).toHaveLength(0);
       expect(mockFetcher.fetchBindings).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('when the endpoint fails', () => {
+    const httpError = (status: number) =>
+      new Error(
+        `Invalid SPARQL endpoint response from http://example.com/sparql (HTTP status ${status}):\nbody`,
+      );
+    const secondsUntil = (untilMs: number) =>
+      Math.round((untilMs - Date.now()) / 1000);
+    const drain = async (
+      selector: SparqlItemSelector,
+      limiter: HostLimiter,
+      batchSize = 10,
+    ) => {
+      const rows: VariableBindings[] = [];
+      for await (const row of selector.select(distribution, batchSize, {
+        limiter,
+      })) {
+        rows.push(row);
+      }
+      return rows;
+    };
+
+    it.each([
+      ['HTTP 408', () => httpError(408)],
+      ['HTTP 429', () => httpError(429)],
+      ['HTTP 502', () => httpError(502)],
+      ['HTTP 503', () => httpError(503)],
+      ['HTTP 504', () => httpError(504)],
+      ['a network error', () => new TypeError('fetch failed')],
+    ])(
+      'pauses the endpoint on %s, lowers its limit and asks for the page again',
+      async (_name, failure) => {
+        const { fetcher } = pagedFetcher([
+          [{ uri: namedNode('http://example.com/1') }],
+        ]);
+        fetcher.fetchBindings.mockRejectedValueOnce(failure());
+        const { limiter, pauses, log } = recordingLimiter();
+
+        const rows = await drain(
+          new SparqlItemSelector({ query, fetcher: fetcher as never }),
+          limiter,
+        );
+
+        expect(rows).toEqual([{ uri: namedNode('http://example.com/1') }]);
+        expect(fetcher.fetchBindings).toHaveBeenCalledTimes(2);
+        // Paused before the failed query frees its slot.
+        expect(log).toEqual(['pause', 'overloaded', 'success']);
+        expect(pauses).toHaveLength(1);
+        expect(pauses[0].host).toBe('example.com/sparql');
+        expect(secondsUntil(pauses[0].untilMs)).toBe(5);
+      },
+    );
+
+    it('asks for a later page again, at the same offset', async () => {
+      const { fetcher } = pagedFetcher([
+        [
+          { uri: namedNode('http://example.com/1') },
+          { uri: namedNode('http://example.com/2') },
+        ],
+        [{ uri: namedNode('http://example.com/3') }],
+      ]);
+      const serve = fetcher.fetchBindings.getMockImplementation()!;
+      let requests = 0;
+      fetcher.fetchBindings.mockImplementation(
+        (endpoint: string, generatedQuery: string) =>
+          ++requests === 2
+            ? Promise.reject(httpError(503))
+            : serve(endpoint, generatedQuery),
+      );
+
+      const rows = await drain(
+        new SparqlItemSelector({ query, fetcher: fetcher as never }),
+        recordingLimiter().limiter,
+        2,
+      );
+
+      expect(rows.map((row) => row.uri.value)).toEqual([
+        'http://example.com/1',
+        'http://example.com/2',
+        'http://example.com/3',
+      ]);
+      const asked = fetcher.fetchBindings.mock.calls.map(
+        ([, generatedQuery]) => generatedQuery as string,
+      );
+      expect(asked).toHaveLength(3);
+      expect(asked[1]).toContain('OFFSET 2');
+      expect(asked[2]).toBe(asked[1]);
+    });
+
+    it('backs off 5, 15, 45, 135 and 405 s, then fails the selection', async () => {
+      const fetcher = {
+        fetchBindings: vi.fn().mockRejectedValue(httpError(502)),
+      };
+      const { limiter, pauses } = recordingLimiter();
+
+      await expect(
+        drain(
+          new SparqlItemSelector({ query, fetcher: fetcher as never }),
+          limiter,
+        ),
+      ).rejects.toThrow('HTTP status 502');
+
+      expect(fetcher.fetchBindings).toHaveBeenCalledTimes(6);
+      expect(pauses.map(({ untilMs }) => secondsUntil(untilMs))).toEqual([
+        5, 15, 45, 135, 405,
+      ]);
+    });
+
+    it('pauses for what Retry-After asks', async () => {
+      const answers = [
+        new Response('down', { status: 503, headers: { 'Retry-After': '30' } }),
+        new Response(
+          JSON.stringify({
+            head: { vars: ['uri'] },
+            results: {
+              bindings: [
+                { uri: { type: 'uri', value: 'http://example.com/1' } },
+              ],
+            },
+          }),
+          { headers: { 'Content-Type': 'application/sparql-results+json' } },
+        ),
+      ];
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => answers.shift()),
+      );
+      const { limiter, pauses } = recordingLimiter();
+
+      try {
+        const rows = await drain(new SparqlItemSelector({ query }), limiter);
+        expect(rows.map((row) => row.uri.value)).toEqual([
+          'http://example.com/1',
+        ]);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+
+      expect(pauses.map(({ untilMs }) => secondsUntil(untilMs))).toEqual([30]);
+    });
+
+    it('fails the selection at once when Retry-After outlasts the longest step', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(
+          async () =>
+            new Response('slow down', {
+              status: 429,
+              headers: { 'Retry-After': '3600' },
+            }),
+        ),
+      );
+      const { limiter, pauses } = recordingLimiter();
+
+      try {
+        await expect(
+          drain(new SparqlItemSelector({ query }), limiter),
+        ).rejects.toThrow('HTTP status 429');
+        expect(fetch).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+
+      expect(pauses).toEqual([]);
+    });
+
+    it('fails on HTTP 400 at once, leaving the limit alone', async () => {
+      const fetcher = {
+        fetchBindings: vi.fn().mockRejectedValue(httpError(400)),
+      };
+      const { limiter, pauses, outcomes } = recordingLimiter();
+
+      await expect(
+        drain(
+          new SparqlItemSelector({ query, fetcher: fetcher as never }),
+          limiter,
+        ),
+      ).rejects.toThrow('HTTP status 400');
+
+      expect(fetcher.fetchBindings).toHaveBeenCalledTimes(1);
+      expect(outcomes).toEqual(['ignored']);
+      expect(pauses).toEqual([]);
     });
   });
 
