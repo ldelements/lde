@@ -1302,6 +1302,96 @@ describe('Stage', () => {
     });
   });
 
+  describe('batchSize per source kind', () => {
+    /** The batch size a stage hands its item selector when run with `options`. */
+    async function selectedBatchSize(
+      stageOptions: Partial<ConstructorParameters<typeof Stage>[0]>,
+      options?: RunOptions,
+    ): Promise<unknown> {
+      const selectFn = vi.fn(async function* (
+        _distribution: Distribution,
+        _batchSize?: number,
+      ) {
+        yield { class: namedNode('http://example.org/Person') };
+      });
+      const stage = new Stage({
+        name: 'test',
+        readers: capturingExecutor([q1]),
+        itemSelector: { select: selectFn },
+        ...stageOptions,
+      });
+      await stage.run(dataset, distribution, collectingWriter(), options);
+      return selectFn.mock.calls[0][1];
+    }
+
+    const batchSize = { endpoint: 10, imported: 100 };
+
+    it('takes the endpoint size when the run names no source', async () => {
+      expect(await selectedBatchSize({ batchSize })).toBe(10);
+    });
+
+    it('takes the imported size for an imported source', async () => {
+      expect(
+        await selectedBatchSize({ batchSize }, { source: 'imported' }),
+      ).toBe(100);
+    });
+
+    it('takes the endpoint size for a stage that substitutes its source', async () => {
+      // The pipeline resolved – and imported – the dataset’s distribution,
+      // not the source the stage substitutes for it.
+      expect(
+        await selectedBatchSize(
+          {
+            batchSize,
+            sourceFor: () =>
+              Distribution.sparql(
+                new URL('http://registry.example.org/sparql'),
+              ),
+          },
+          { source: 'imported' },
+        ),
+      ).toBe(10);
+    });
+
+    it('keeps the source kind when sourceFor hands back the resolved distribution', async () => {
+      // registrySource does so for a local file, which has no registration.
+      expect(
+        await selectedBatchSize(
+          { batchSize, sourceFor: (_dataset, resolved) => resolved },
+          { source: 'imported' },
+        ),
+      ).toBe(100);
+    });
+
+    it('takes a single size for either source', async () => {
+      expect(
+        await selectedBatchSize({ batchSize: 50 }, { source: 'imported' }),
+      ).toBe(50);
+    });
+
+    it('cuts batches at the chosen size', async () => {
+      const reader = capturingExecutor([q1]);
+      const stage = new Stage({
+        name: 'test',
+        readers: reader,
+        itemSelector: {
+          select: async function* () {
+            for (let index = 0; index < 5; index++) {
+              yield { class: namedNode(`http://example.org/${index}`) };
+            }
+          },
+        },
+        batchSize: { endpoint: 1, imported: 5 },
+      });
+
+      await stage.run(dataset, distribution, collectingWriter(), {
+        source: 'imported',
+      });
+
+      expect(reader.read).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('sourceFor', () => {
     /** The registry-sourced shape: a fixed endpoint, scoped to the graph the
      *  dataset in hand names. */

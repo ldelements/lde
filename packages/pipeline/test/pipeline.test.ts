@@ -1575,6 +1575,51 @@ describe('Pipeline', () => {
       );
     });
 
+    it('tells each stage whether it reads an imported dump', async () => {
+      const imported = new ResolvedDistribution(sparqlDistribution, [], {
+        from: new Distribution(
+          new URL('http://example.org/data.nt'),
+          'application/n-triples',
+        ),
+        durationMs: 1000,
+      });
+      const stage = makeStage('stage1');
+
+      await new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [stage],
+        writers: writer,
+        distributionResolver: makeResolver(imported),
+      }).run();
+
+      expect(stage.run).toHaveBeenCalledWith(
+        dataset,
+        sparqlDistribution,
+        expect.anything(),
+        expect.objectContaining({ source: 'imported' }),
+      );
+    });
+
+    it('tells each stage it reads an endpoint when nothing was imported', async () => {
+      const stage = makeStage('stage1');
+
+      await new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [stage],
+        writers: writer,
+        distributionResolver: makeResolver(
+          new ResolvedDistribution(sparqlDistribution, []),
+        ),
+      }).run();
+
+      expect(stage.run).toHaveBeenCalledWith(
+        dataset,
+        sparqlDistribution,
+        expect.anything(),
+        expect.objectContaining({ source: 'endpoint' }),
+      );
+    });
+
     it('calls importStarted before distributionSelected when a data dump is imported', async () => {
       const reporter = makeReporter();
       const importedFromDistribution = new Distribution(

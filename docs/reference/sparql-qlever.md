@@ -144,12 +144,13 @@ Caching is enabled by default. Disable it by passing `cacheIndex: false` to `cre
 
 Passed to `qlever-server` at startup.
 
-| Option                    | Description                                                                                                                                                                                                                       | Default |
-| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| `memory-max-size`         | Maximum memory for query processing and caching.                                                                                                                                                                                  | `'4G'`  |
-| `default-query-timeout`   | Default query timeout.                                                                                                                                                                                                            | `'30s'` |
-| `cache-max-size`          | Maximum cache size for query results.                                                                                                                                                                                             | –       |
-| `construct-deduplication` | Deduplication of `CONSTRUCT` results: `'none'`, `'full'` (memory grows with the number of distinct triples) or `'lru:N'` (drops a triple among the N most recently emitted ones). Needs a QLever image from August 2026 or later. | –       |
+| Option                     | Description                                                                                                                                                                                                                       | Default |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `memory-max-size`          | Maximum memory for query processing and caching.                                                                                                                                                                                  | `'4G'`  |
+| `default-query-timeout`    | Default query timeout.                                                                                                                                                                                                            | `'30s'` |
+| `cache-max-size`           | Maximum cache size for query results.                                                                                                                                                                                             | –       |
+| `construct-deduplication`  | Deduplication of `CONSTRUCT` results: `'none'`, `'full'` (memory grows with the number of distinct triples) or `'lru:N'` (drops a triple among the N most recently emitted ones). Needs a QLever image from August 2026 or later. | –       |
+| `num-simultaneous-queries` | Queries QLever answers at once; others wait. They share `memory-max-size`, so raise that with this. QLever’s default is 1.                                                                                                        | –       |
 
 Example:
 

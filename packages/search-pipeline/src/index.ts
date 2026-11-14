@@ -1,5 +1,8 @@
 export { searchIndexerPipeline } from './search-indexer-pipeline.js';
-export type { SearchIndexerPipelineOptions } from './search-indexer-pipeline.js';
+export type {
+  ExtractionTuning,
+  SearchIndexerPipelineOptions,
+} from './search-indexer-pipeline.js';
 export {
   registrySource,
   searchStages,

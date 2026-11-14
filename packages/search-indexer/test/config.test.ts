@@ -16,6 +16,11 @@ describe('configFromEnvironment', () => {
       registryRootTypes: [],
       datasetCriteria: {},
       restrictRoots: {},
+      extraction: {
+        batchSize: undefined,
+        maxConcurrency: undefined,
+        byType: {},
+      },
       localSources: [],
       typesense: {
         host: 'typesense.internal',
@@ -45,6 +50,9 @@ describe('configFromEnvironment', () => {
       IMPORT_STRATEGY: 'import',
       DATA_DIR: '/mnt/data',
       RESTRICT_ROOTS: '{"CreativeWork": "?root a ?type"}',
+      EXTRACTION_BATCH_SIZE: '100',
+      EXTRACTION_CONCURRENCY: '4',
+      EXTRACTION_TUNING: '{"CreativeWork": {"batchSize": 200}}',
     });
     expect(config).toEqual({
       schemaModulePath: '/mnt/schema.mjs',
@@ -52,6 +60,13 @@ describe('configFromEnvironment', () => {
       registryRootTypes: ['Dataset', 'Publisher'],
       datasetCriteria: {},
       restrictRoots: { CreativeWork: '?root a ?type' },
+      extraction: {
+        batchSize: 100,
+        maxConcurrency: 4,
+        byType: {
+          CreativeWork: { batchSize: 200, maxConcurrency: undefined },
+        },
+      },
       localSources: [],
       typesense: {
         host: 'typesense.internal',
@@ -157,6 +172,48 @@ describe('configFromEnvironment', () => {
           /RESTRICT_ROOTS must be a JSON object mapping type names to graph patterns/,
         );
       }
+    });
+
+    it('rejects an extraction batch size or concurrency that is not a positive integer', () => {
+      for (const name of ['EXTRACTION_BATCH_SIZE', 'EXTRACTION_CONCURRENCY']) {
+        for (const value of ['0', '-1', '2.5', 'ten']) {
+          expect(() =>
+            configFromEnvironment({ ...minimal, [name]: value }),
+          ).toThrowError(new RegExp(`${name} must be a positive integer`));
+        }
+      }
+    });
+
+    it('rejects EXTRACTION_TUNING that is not valid JSON', () => {
+      expect(() =>
+        configFromEnvironment({ ...minimal, EXTRACTION_TUNING: '{oops' }),
+      ).toThrowError(/EXTRACTION_TUNING must be valid JSON/);
+    });
+
+    it('rejects EXTRACTION_TUNING that is not an object of tunings', () => {
+      for (const value of [
+        '["a"]',
+        '{"CreativeWork": 1}',
+        '{"CreativeWork": {"pageSize": 1000}}',
+        'null',
+      ]) {
+        expect(() =>
+          configFromEnvironment({ ...minimal, EXTRACTION_TUNING: value }),
+        ).toThrowError(
+          /EXTRACTION_TUNING must be a JSON object mapping type names to/,
+        );
+      }
+    });
+
+    it('rejects a tuned batch size that is not a positive integer', () => {
+      expect(() =>
+        configFromEnvironment({
+          ...minimal,
+          EXTRACTION_TUNING: '{"CreativeWork": {"batchSize": "100"}}',
+        }),
+      ).toThrowError(
+        /EXTRACTION_TUNING’s CreativeWork.batchSize must be a positive integer/,
+      );
     });
 
     it('rejects DATASETS combined with DATASET_CRITERIA', () => {

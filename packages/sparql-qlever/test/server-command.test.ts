@@ -74,4 +74,23 @@ describe('Server command construction', () => {
       '--construct-deduplication lru:10000',
     );
   });
+
+  it('includes --num-simultaneous-queries only when option is set', async () => {
+    const withoutOption = createMockTaskRunner();
+    await new Server({
+      taskRunner: withoutOption,
+      indexName: 'test-index',
+    }).start();
+    expect(withoutOption.lastCommand).not.toContain(
+      '--num-simultaneous-queries',
+    );
+
+    const withOption = createMockTaskRunner();
+    await new Server({
+      taskRunner: withOption,
+      indexName: 'test-index',
+      qleverOptions: { 'num-simultaneous-queries': 4 },
+    }).start();
+    expect(withOption.lastCommand).toContain('--num-simultaneous-queries 4');
+  });
 });

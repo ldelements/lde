@@ -14,11 +14,33 @@ import {
 import type { RootType, SearchDocument, SearchSchema } from '@lde/search';
 import { searchIndexWriter } from './search-index-writer.js';
 import {
+  defaultBatchSize,
   registrySource,
   searchStages,
   selectByClass,
+  type SearchStageType,
 } from './search-stages.js';
 import type { TypedSearchDocument } from './typed-search-document.js';
+
+/**
+ * How a root type’s stage reads: how many roots each Extraction CONSTRUCT
+ * binds and how many queries run at once. Unset fields keep the
+ * {@link SearchStageType} defaults.
+ */
+export interface ExtractionTuning {
+  /**
+   * Roots per Extraction CONSTRUCT from a dump the pipeline imported
+   * ({@link SearchStageType.batchSize}). @default 100
+   *
+   * A live endpoint always takes 10 roots per CONSTRUCT, whatever this says:
+   * other users share it, and it may fail on larger queries. A dump imported
+   * for this run alone is where a larger batch pays off.
+   */
+  readonly batchSize?: number;
+  /** Maximum concurrent SPARQL queries for the stage
+   *  ({@link SearchStageType.maxConcurrency}). @default 10 */
+  readonly maxConcurrency?: number;
+}
 
 /** Options for {@link searchIndexerPipeline}. */
 export interface SearchIndexerPipelineOptions {
@@ -112,6 +134,17 @@ export interface SearchIndexerPipelineOptions {
    */
   restrictRoots?: Readonly<Record<string, string>>;
   /**
+   * {@link ExtractionTuning} for every root type’s stage, such as a larger
+   * batch for a deployment that only reads imported dumps.
+   */
+  tuning?: ExtractionTuning;
+  /**
+   * {@link ExtractionTuning} per root type, keyed by {@link SearchType.name};
+   * a field set here wins over {@link tuning}. A name the schema does not
+   * declare throws at wiring time.
+   */
+  tuningByType?: Readonly<Record<string, ExtractionTuning>>;
+  /**
    * Optional per-dataset processing memory: skip a dataset whose source
    * fingerprint and {@link pipelineVersion} both match the stored record.
    * Requires {@link pipelineVersion}.
@@ -161,8 +194,8 @@ export interface SearchIndexerPipelineOptions {
  * adding it costs the behaviour rather than this whole composition.
  *
  * A deployment that needs more – a bespoke root selector (the entry point is a
- * domain fact, not a class), per-stage tuning (`batchSize`, `maxConcurrency`),
- * non-SPARQL readers, or quad-level plugins – composes {@link searchStages},
+ * domain fact, not a class), non-SPARQL readers, or quad-level plugins –
+ * composes {@link searchStages},
  * {@link searchIndexWriter} and {@link Pipeline} directly, restating the
  * registry sourcing, provenance and reporting this function wires; beyond
  * those, this convenience owns no capability of its own.
@@ -176,9 +209,12 @@ export function searchIndexerPipeline(
     registryTypes,
     transforms,
     restrictRoots = {},
+    tuning = {},
+    tuningByType = {},
   } = options;
   const fromRegistry = registryTypeNames(schema, registryTypes?.names);
   assertDeclaredTypeNames(schema, Object.keys(transforms ?? {}), 'transform');
+  assertDeclaredTypeNames(schema, Object.keys(tuningByType), 'tuned');
   assertRestrictable(schema, restrictRoots, fromRegistry);
   const sourceFor =
     registryTypes === undefined
@@ -197,6 +233,7 @@ export function searchIndexerPipeline(
         itemSelector: rootSelector(searchType, restrictRoots),
         sourceFor: fromRegistry.has(searchType.name) ? sourceFor : undefined,
         transform: transforms?.[searchType.name],
+        ...tuningFor(searchType, tuning, tuningByType),
       })),
     }),
     writers: searchIndexWriter({ schema, writerFor: options.writerFor }),
@@ -288,6 +325,27 @@ function versionWithRestrictions(
     Object.keys(restrictRoots).length === 0
     ? pipelineVersion
     : `${pipelineVersion}+restrictRoots=${JSON.stringify(restrictRoots)}`;
+}
+
+/** The type’s stage tuning: each {@link ExtractionTuning} field from
+ *  {@link SearchIndexerPipelineOptions.tuningByType} when set there, else from
+ *  {@link SearchIndexerPipelineOptions.tuning}, with the batch size applied to
+ *  imported dumps only. */
+function tuningFor(
+  searchType: RootType,
+  tuning: ExtractionTuning,
+  tuningByType: Readonly<Record<string, ExtractionTuning>>,
+): Pick<SearchStageType, 'batchSize' | 'maxConcurrency'> {
+  // Own keys only, as in rootSelector.
+  const own = Object.hasOwn(tuningByType, searchType.name)
+    ? tuningByType[searchType.name]
+    : {};
+  const imported = own?.batchSize ?? tuning.batchSize;
+  return {
+    batchSize:
+      imported === undefined ? undefined : { ...defaultBatchSize, imported },
+    maxConcurrency: own?.maxConcurrency ?? tuning.maxConcurrency,
+  };
 }
 
 /** The type’s {@link selectByClass} selector, restricted by its

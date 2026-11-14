@@ -16,6 +16,12 @@ export interface QleverServerOptions {
    * later. QLever default: `'none'`.
    */
   'construct-deduplication'?: string;
+  /**
+   * Queries QLever answers at once; further queries wait for one to finish.
+   * The queries share {@link memory-max-size}, so raise that with this.
+   * QLever default: 1.
+   */
+  'num-simultaneous-queries'?: number;
 }
 
 /** Options that have defaults and are always present in the command. */
@@ -35,7 +41,10 @@ export class Server<Task> implements SparqlServer {
   private readonly port: number;
   private readonly hostname: string;
   private readonly qleverOptions: RequiredQleverServerOptions &
-    Pick<QleverServerOptions, 'cache-max-size' | 'construct-deduplication'>;
+    Pick<
+      QleverServerOptions,
+      'cache-max-size' | 'construct-deduplication' | 'num-simultaneous-queries'
+    >;
 
   constructor({
     taskRunner,
@@ -69,6 +78,12 @@ export class Server<Task> implements SparqlServer {
     if (this.qleverOptions['construct-deduplication'] !== undefined) {
       args.push(
         `--construct-deduplication ${this.qleverOptions['construct-deduplication']}`,
+      );
+    }
+
+    if (this.qleverOptions['num-simultaneous-queries'] !== undefined) {
+      args.push(
+        `--num-simultaneous-queries ${this.qleverOptions['num-simultaneous-queries']}`,
       );
     }
 
