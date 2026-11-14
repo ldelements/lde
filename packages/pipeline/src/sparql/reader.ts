@@ -156,10 +156,10 @@ export interface SparqlConstructReaderOptions {
  * A streaming SPARQL CONSTRUCT reader.
  *
  * Each query runs on the {@link ReadOptions.limiter}, keyed on the endpoint
- * ({@link endpointKeyOf}). While the endpoint is down (502, 503, 504 or a
- * network error) the reader pauses it and tries again; on a 500 it splits the batch,
- * down to a root it reports through {@link ReadOptions.onRootSkipped} and
- * leaves out. See
+ * ({@link endpointKeyOf}). While the endpoint is down, struggling or
+ * throttling (408, 429, 502, 503, 504 or a network error) the reader pauses
+ * it and tries again; on a 500 it splits the batch, down to a root it reports
+ * through {@link ReadOptions.onRootSkipped} and leaves out. See
  * {@link https://ldelements.org/reference/pipeline#when-the-endpoint-fails | When the endpoint fails}.
  *
  * Queries **without** `#subjectFilter#` are parsed once in the constructor
@@ -316,9 +316,13 @@ export class SparqlConstructReader implements Reader {
     attempt: Attempt,
   ): Promise<AsyncIterable<Quad>> {
     for (let retry = 0; ; retry++) {
+      const response: ResponseNotes = {};
+      const willRetry = (error: unknown) =>
+        isTransientError(error) &&
+        retry < BACKOFF_MS.length &&
+        !asksToWaitTooLong(response);
       try {
         return await attempt.limiter.run(attempt.key, async (slot) => {
-          const response: ResponseNotes = {};
           try {
             return await this.fetchQuadsWithPolicy(
               attempt.endpoint,
@@ -331,7 +335,7 @@ export class SparqlConstructReader implements Reader {
             if (isTransientError(error)) {
               // Paused before the slot frees, so no query waiting for it goes
               // out to an endpoint that is down.
-              if (retry < BACKOFF_MS.length) {
+              if (willRetry(error)) {
                 attempt.limiter.pause(
                   attempt.key,
                   Date.now() + backoffMs(retry, response.retryAfterMs),
@@ -344,7 +348,7 @@ export class SparqlConstructReader implements Reader {
           }
         });
       } catch (error) {
-        if (!isTransientError(error) || retry === BACKOFF_MS.length) {
+        if (!willRetry(error)) {
           throw error;
         }
       }
@@ -560,11 +564,21 @@ async function* noQuads(): AsyncIterable<Quad> {
 const BACKOFF_MS = [5_000, 15_000, 45_000, 135_000, 405_000];
 
 /**
- * How long to pause before retry `retry`: what `Retry-After` asked, up to the
- * longest step, or the step itself when the endpoint did not say.
+ * How long to pause before retry `retry`: what `Retry-After` asked, or the
+ * step itself when the endpoint did not say.
  */
 function backoffMs(retry: number, retryAfterMs: number | undefined): number {
-  return retryAfterMs === undefined
-    ? BACKOFF_MS[retry]
-    : Math.min(retryAfterMs, BACKOFF_MS[BACKOFF_MS.length - 1]);
+  return retryAfterMs ?? BACKOFF_MS[retry];
+}
+
+/**
+ * Whether the endpoint asked to be left alone for longer than the longest
+ * step, such as a rate limit’s hourly quota: the read fails at once rather
+ * than ask again before the endpoint said it would answer.
+ */
+function asksToWaitTooLong(response: ResponseNotes): boolean {
+  return (
+    response.retryAfterMs !== undefined &&
+    response.retryAfterMs > BACKOFF_MS[BACKOFF_MS.length - 1]
+  );
 }
