@@ -1969,6 +1969,10 @@ export function storedTargetOf(
  */
 export interface SearchTypeIssue {
   readonly field: string;
+  /** The other field a clash is with, for a reason that names a pair –
+   *  `display-field-name`: the output text field whose display fields
+   *  {@link field} would be read as. */
+  readonly clashesWith?: string;
   readonly reason:
     | 'duplicate-field-name'
     | 'invalid-field-name'
@@ -2003,6 +2007,7 @@ export interface SearchTypeIssue {
     | 'duplicate-target'
     | 'empty-target'
     | 'reserved-field-name'
+    | 'display-field-name'
     | 'key-field-unknown'
     | 'key-field-not-reference'
     | 'key-field-without-path'
@@ -2113,7 +2118,9 @@ const LOCALE_PATTERN = /^[A-Za-z0-9]+(-[A-Za-z0-9]+)*$/;
  *   identifier (the name is interpolated into physical field names and the
  *   display RE2 pattern), and is not the reserved {@link ID_FIELD}, nor the
  *   precision companion a `date` field stores beside itself
- *   ({@link PhysicalFields.precision});
+ *   ({@link PhysicalFields.precision}), nor matches an `output` text sibling’s
+ *   {@link displayFieldPattern} – a field that does would be read back as one
+ *   of the sibling’s languages;
  * - a `text` field’s declared locales are BCP-47-shaped (no `_`, which is the
  *   reserved name↔locale separator);
  * - a `reference` field that is `output` declares `ref` (the API surfaces
@@ -2170,6 +2177,13 @@ export function validateSearchType(
   // `period` its bounds under `${name}_start` and `${name}_end`, so a declared
   // field of such a name would overwrite one, and be overwritten.
   const companionFields = new Set(searchType.fields.flatMap(companionNames));
+  // An `output` text field stores its display under every `${name}_${lang}`
+  // ({@link displayFieldPattern}), so a sibling of such a name would be read
+  // back as one of its languages.
+  const displayTextFields = searchType.fields.filter(
+    (field): field is TextField =>
+      field.kind === 'text' && field.output === true,
+  );
   for (const declared of searchType.fields) {
     // Validation guards declarations built OUTSIDE TypeScript (a SHACL
     // generator, plain JS), so it inspects the uniform flat shape rather
@@ -2195,6 +2209,15 @@ export function validateSearchType(
       companionFields.has(field.name)
     ) {
       issue('reserved-field-name');
+    }
+    for (const textField of displayTextFields) {
+      if (displayLangOf(textField, field.name) !== undefined) {
+        issues.push({
+          field: field.name,
+          reason: 'display-field-name',
+          clashesWith: textField.name,
+        });
+      }
     }
     // Every kind-dependent rule below would silently pass for a kind outside
     // the union, so a typo’d kind in a plain-JS declaration must fail here.
@@ -2499,7 +2522,14 @@ export function assertValidSearchType(searchType: SearchType): void {
   const issues = validateSearchType(searchType);
   if (issues.length > 0) {
     const detail = issues
-      .map((issue) => `“${issue.field}” (${issue.reason})`)
+      .map(
+        (issue) =>
+          `“${issue.field}” (${issue.reason}${
+            issue.clashesWith === undefined
+              ? ''
+              : `, clashes with “${issue.clashesWith}”`
+          })`,
+      )
       .join(', ');
     throw new Error(`Invalid search type “${searchType.name}”: ${detail}.`);
   }

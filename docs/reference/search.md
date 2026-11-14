@@ -278,7 +278,10 @@ time).
 **Declarations are also validated at runtime** (for declarations built
 outside TypeScript – a SHACL generator, plain JS): `searchSchema()`
 rejects a structurally invalid declaration (duplicate or non-identifier field
-names, a field named `id` – see [Lookup by IRI](#lookup-by-iri) –, a locale containing `_`, an `output`
+names, a field named `id` – see [Lookup by IRI](#lookup-by-iri) –, a field
+named like an `output` text sibling’s display field, such as `title_tags`
+beside `title`, which would be read back as its language `tags`
+(`display-field-name`), a locale containing `_`, an `output`
 reference without `ref`, `text` without locales, `locales` on a non-text kind,
 `facetRanges` on a non-numeric kind, `facetable` on a `period`, `searchable`/`transform` on a kind whose
 projection cannot honour it, `filterable`/`facetable` on `text`, two types
