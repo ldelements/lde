@@ -159,4 +159,18 @@ export interface Writer<Item = Quad> {
    * @param context The run’s identity and selection scope
    */
   openRun(context: RunContext): Promise<RunWriter<Item>>;
+
+  /**
+   * Whether this destination still holds output for a dataset. The pipeline’s
+   * skip-unchanged gate ({@link PipelineOptions.provenanceStore}) asks before
+   * it skips a dataset as unchanged, so output that disappeared after it was
+   * recorded – pruned, deleted by hand – gets regenerated instead of staying
+   * gone until the source changes.
+   *
+   * Optional: a writer that cannot tell omits it and is treated as holding the
+   * output.
+   *
+   * @param dataset The dataset whose output to look for
+   */
+  hasOutput?(dataset: Dataset): Promise<boolean>;
 }

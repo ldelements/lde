@@ -3045,6 +3045,122 @@ describe('Pipeline', () => {
       );
     });
 
+    it('reprocesses an unchanged dataset whose output a writer no longer holds', async () => {
+      const resolver = makeDumpResolver();
+      const store = makeStore({
+        sourceFingerprint: currentFingerprint,
+        pipelineVersion: 'v1',
+        generatedAt: '2026-06-01T00:00:00.000Z',
+        status: 'success',
+      });
+      const stage = makeStage('stage1');
+      // One writer still holds the output, one lost it, one cannot tell.
+      const holdingWriter = Object.assign(makeWriter(), {
+        hasOutput: vi.fn().mockResolvedValue(true),
+      });
+      const emptiedWriter = Object.assign(makeWriter(), {
+        hasOutput: vi.fn().mockResolvedValue(false),
+      });
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [stage],
+        writers: [holdingWriter, emptiedWriter, writer],
+        distributionResolver: resolver,
+        provenanceStore: store,
+        pipelineVersion: 'v1',
+      });
+
+      await pipeline.run();
+
+      expect(emptiedWriter.hasOutput).toHaveBeenCalledWith(dataset);
+      expect(resolver.resolve).toHaveBeenCalledTimes(1);
+      expect(stage.run).toHaveBeenCalledTimes(1);
+    });
+
+    it('reprocesses an unchanged dataset when a writer’s output check fails', async () => {
+      const store = makeStore({
+        sourceFingerprint: currentFingerprint,
+        pipelineVersion: 'v1',
+        generatedAt: '2026-06-01T00:00:00.000Z',
+        status: 'success',
+      });
+      const stage = makeStage('stage1');
+      const failingWriter = Object.assign(makeWriter(), {
+        hasOutput: vi.fn().mockRejectedValue(new Error('unreachable')),
+      });
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [stage],
+        writers: failingWriter,
+        distributionResolver: makeDumpResolver(),
+        provenanceStore: store,
+        pipelineVersion: 'v1',
+      });
+
+      await pipeline.run();
+
+      expect(stage.run).toHaveBeenCalledTimes(1);
+    });
+
+    it('skips an unchanged failed dataset without asking for its output', async () => {
+      // A failed record makes no claim about output: requiring output would
+      // retry a deterministically failing dataset every run.
+      const store = makeStore({
+        sourceFingerprint: currentFingerprint,
+        pipelineVersion: 'v1',
+        generatedAt: '2026-06-01T00:00:00.000Z',
+        status: 'failed',
+      });
+      const stage = makeStage('stage1');
+      const emptiedWriter = Object.assign(makeWriter(), {
+        hasOutput: vi.fn().mockResolvedValue(false),
+      });
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [stage],
+        writers: emptiedWriter,
+        distributionResolver: makeDumpResolver(),
+        provenanceStore: store,
+        pipelineVersion: 'v1',
+      });
+
+      await pipeline.run();
+
+      expect(emptiedWriter.hasOutput).not.toHaveBeenCalled();
+      expect(stage.run).not.toHaveBeenCalled();
+    });
+
+    it('skips an unchanged dataset whose writers all hold its output', async () => {
+      const resolver = makeDumpResolver();
+      const store = makeStore({
+        sourceFingerprint: currentFingerprint,
+        pipelineVersion: 'v1',
+        generatedAt: '2026-06-01T00:00:00.000Z',
+        status: 'success',
+      });
+      const stage = makeStage('stage1');
+      const holdingWriter = Object.assign(makeWriter(), {
+        hasOutput: vi.fn().mockResolvedValue(true),
+      });
+
+      const pipeline = new Pipeline({
+        datasetSelector: makeDatasetSelector(dataset),
+        stages: [stage],
+        writers: [holdingWriter, writer],
+        distributionResolver: resolver,
+        provenanceStore: store,
+        pipelineVersion: 'v1',
+      });
+
+      await pipeline.run();
+
+      expect(holdingWriter.hasOutput).toHaveBeenCalledWith(dataset);
+      expect(stage.run).not.toHaveBeenCalled();
+    });
+
     it('includes skipped-unchanged datasets in the run’s selected sources', async () => {
       // A dataset skipped as unchanged is still a member of the selection: a
       // writer’s registry-membership sweep must not delete its documents.

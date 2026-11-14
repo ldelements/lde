@@ -248,6 +248,13 @@ class FanOutWriter<Item> implements Writer<Item> {
     }
     return new FanOutRunWriter<Item>(opened);
   }
+
+  async hasOutput(dataset: Dataset): Promise<boolean> {
+    const answers = await Promise.all(
+      this.writers.map((writer) => writer.hasOutput?.(dataset) ?? true),
+    );
+    return answers.every(Boolean);
+  }
 }
 
 /**
@@ -672,7 +679,10 @@ export class Pipeline<Out = Quad> {
             pipelineVersion: this.pipelineVersion!,
           },
           stored,
-        )
+        ) &&
+        // A success record claims output; a failed one does not, so a
+        // deterministically failing dataset stays skipped without output.
+        (stored?.status === 'failed' || (await this.writerHoldsOutput(dataset)))
       ) {
         skip({ code: 'unchanged', message: 'Unchanged since last run' });
         return;
@@ -931,6 +941,20 @@ export class Pipeline<Out = Quad> {
       // surfaced: a store that fails every write silently disables
       // skip-unchanged.
       this.reportStageFailed(runId, dataset, 'provenance', error);
+    }
+  }
+
+  /**
+   * Whether the writers still hold the dataset’s output, so skipping it as
+   * unchanged keeps that output rather than leaving the dataset without any.
+   * A check that fails counts as output missing: reprocessing once too often
+   * is cheaper than skipping a dataset whose output is gone.
+   */
+  private async writerHoldsOutput(dataset: Dataset): Promise<boolean> {
+    try {
+      return (await this.writer.hasOutput?.(dataset)) ?? true;
+    } catch {
+      return false;
     }
   }
 
