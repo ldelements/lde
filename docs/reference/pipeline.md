@@ -30,7 +30,7 @@ const pipeline = new Pipeline({
     new Stage({
       name: 'per-class',
       itemSelector: new SparqlItemSelector({
-        query: 'SELECT DISTINCT ?class WHERE { ?s a ?class }',
+        query: 'SELECT DISTINCT ?class WHERE { ?s a ?class } ORDER BY ?class',
       }),
       readers: new SparqlConstructReader({
         query:
@@ -132,7 +132,7 @@ A stage groups an item selector, one or more readers, and configuration:
 new Stage({
   name: 'per-class',
   itemSelector: new SparqlItemSelector({
-    query: 'SELECT DISTINCT ?class WHERE { ?s a ?class }',
+    query: 'SELECT DISTINCT ?class WHERE { ?s a ?class } ORDER BY ?class',
   }),
   readers: reader,
   batchSize: 100,
@@ -151,7 +151,8 @@ Some SPARQL endpoints enforce different result limits for SELECT and CONSTRUCT q
 new Stage({
   name: 'per-class',
   itemSelector: new SparqlItemSelector({
-    query: 'SELECT DISTINCT ?class WHERE { ?s a ?class } LIMIT 500',
+    query:
+      'SELECT DISTINCT ?class WHERE { ?s a ?class } ORDER BY ?class LIMIT 500',
   }),
   readers: reader,
   batchSize: 1000, // Two SELECT pages fill one CONSTRUCT batch.
@@ -222,9 +223,11 @@ The distribution is received at run time, so selectors don't need the endpoint U
 
 ```typescript
 new SparqlItemSelector({
-  query: 'SELECT DISTINCT ?class WHERE { ?s a ?class }',
+  query: 'SELECT DISTINCT ?class WHERE { ?s a ?class } ORDER BY ?class',
 });
 ```
+
+**Order the query totally over its projected variables.** The selector pages with `LIMIT`/`OFFSET`, and SPARQL leaves solution order unspecified without `ORDER BY`, so an endpoint may answer each page in a different order – skipping or repeating rows between pages, and making a [`maxResults`](#capping-total-results-with-maxresults) sample unreproducible. A skipped row is an item never read. An engine may happen to answer a plain triple-pattern scan in a stable order, but a `DISTINCT` over a join is commonly answered from a hash table whose order can vary between requests, so add `ORDER BY` over every projected variable (e.g. `ORDER BY ?class`, or `ORDER BY ?s ?o` for two). `selectByClass` in [@lde/search-pipeline](./search-pipeline) orders by its root variable.
 
 A row is yielded only when **every** projected variable binds a `NamedNode` – binding values double as stable item identities downstream, which a blank-node label or literal cannot provide. Other rows are dropped client-side but still count toward pagination, so they are fetched first; to skip them at the endpoint, filter in the query itself (e.g. `FILTER(isIRI(?s))`, as `selectByClass` in [@lde/search-pipeline](./search-pipeline) does with `FILTER(!isBlank(?root))`).
 
@@ -234,7 +237,8 @@ By default, `SparqlItemSelector` paginates through **all** matching rows: any `L
 
 ```typescript
 new SparqlItemSelector({
-  query: 'SELECT DISTINCT ?s WHERE { ?s a <http://example.com/Class> }',
+  query:
+    'SELECT DISTINCT ?s WHERE { ?s a <http://example.com/Class> } ORDER BY ?s',
   maxResults: 50,
 });
 ```

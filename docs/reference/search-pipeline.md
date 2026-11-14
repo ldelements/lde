@@ -276,7 +276,12 @@ blank-node subjects (`FILTER(!isBlank(?root))`): a blank node has no stable
 document key, so it can never become a search document – a custom selector
 should exclude them too. It also selects `DISTINCT` roots, so a root typed in
 several named graphs is selected once on an engine whose default graph is their
-union – a custom selector on such an engine should select `DISTINCT` too.
+union – a custom selector on such an engine should select `DISTINCT` too. And it
+orders the roots (`ORDER BY ?root`), so its `LIMIT`/`OFFSET` pages neither skip
+nor repeat a root – a custom selector needs a total order over its projected
+variables too (see [`SparqlItemSelector`](./pipeline#item-selector)). A skipped
+root is worse than a missing document under a rebuild: the run does not write
+it, so it is deleted.
 `selectByClass(searchType, rootVariable, pattern)` adds a graph pattern, in a
 group of its own, to restrict the selection.
 

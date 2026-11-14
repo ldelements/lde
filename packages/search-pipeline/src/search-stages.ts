@@ -237,7 +237,7 @@ export function searchStages(
 /**
  * An {@link ItemSelector} that selects every instance of a root type’s source
  * class:
- * `SELECT DISTINCT ?‹rootVariable› WHERE { ?‹rootVariable› a <class> FILTER(!isBlank(?‹rootVariable›)) }`.
+ * `SELECT DISTINCT ?‹rootVariable› WHERE { ?‹rootVariable› a <class> FILTER(!isBlank(?‹rootVariable›)) } ORDER BY ?‹rootVariable›`.
  * A convenience for the **object grain**, where {@link RootType.class} really is
  * the source class – **not** a default: root selection is a deployment concern,
  * and three of the Dataset Register’s four catalog types have no source class at
@@ -249,6 +249,10 @@ export function searchStages(
  * document – framing skips it. Excluding it at the endpoint keeps result pages
  * full, so pagination walks the whole class instead of stopping at the first
  * page a client-side drop would leave short.
+ *
+ * **The roots are ordered** (`ORDER BY ?‹rootVariable›`): the selector pages with
+ * `LIMIT`/`OFFSET`, and without a total order an endpoint may answer each page
+ * in a different order, skipping or repeating roots between pages.
  *
  * `rootVariable` defaults to `root` and must match the stage’s
  * {@link SearchStageType.rootVariable}; it must not be `dataset` (reserved by the
@@ -282,7 +286,7 @@ export function selectByClass(
   }
   const restriction = pattern === undefined ? '' : `{\n${pattern}\n}`;
   return new SparqlItemSelector({
-    query: `SELECT DISTINCT ?${rootVariable} WHERE { ?${rootVariable} a <${searchType.class}> . ${restriction} FILTER(!isBlank(?${rootVariable})) }`,
+    query: `SELECT DISTINCT ?${rootVariable} WHERE { ?${rootVariable} a <${searchType.class}> . ${restriction} FILTER(!isBlank(?${rootVariable})) } ORDER BY ?${rootVariable}`,
   });
 }
 
