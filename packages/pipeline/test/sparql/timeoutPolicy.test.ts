@@ -21,6 +21,7 @@ describe('ConstantTimeoutPolicy', () => {
       endpoint: endpointA,
       outcome: 'timeout',
       durationMs: 500,
+      timeoutMs: 1000,
     });
     expect(policy.beforeRequest({ endpoint: endpointA })).toBe(1000);
   });
@@ -116,6 +117,7 @@ describe('AdaptiveTimeoutPolicy', () => {
         endpoint: endpointA,
         outcome: 'timeout',
         durationMs: 1000,
+        timeoutMs: 1000,
       });
       expect(policy.beforeRequest({ endpoint: endpointA })).toBe(100);
     });
@@ -130,12 +132,14 @@ describe('AdaptiveTimeoutPolicy', () => {
         endpoint: endpointA,
         outcome: 'timeout',
         durationMs: 1000,
+        timeoutMs: 1000,
       });
       expect(policy.beforeRequest({ endpoint: endpointA })).toBe(1000);
       policy.afterRequest({
         endpoint: endpointA,
         outcome: 'timeout',
         durationMs: 1000,
+        timeoutMs: 1000,
       });
       expect(policy.beforeRequest({ endpoint: endpointA })).toBe(100);
     });
@@ -150,17 +154,20 @@ describe('AdaptiveTimeoutPolicy', () => {
         endpoint: endpointA,
         outcome: 'timeout',
         durationMs: 1000,
+        timeoutMs: 1000,
       });
       policy.afterRequest({
         endpoint: endpointA,
         outcome: 'timeout',
         durationMs: 1000,
+        timeoutMs: 1000,
       });
       expect(policy.beforeRequest({ endpoint: endpointA })).toBe(1000);
       policy.afterRequest({
         endpoint: endpointA,
         outcome: 'timeout',
         durationMs: 1000,
+        timeoutMs: 1000,
       });
       expect(policy.beforeRequest({ endpoint: endpointA })).toBe(100);
     });
@@ -176,6 +183,7 @@ describe('AdaptiveTimeoutPolicy', () => {
           endpoint: endpointA,
           outcome: 'timeout',
           durationMs: 1000,
+          timeoutMs: 1000,
         });
       }
       expect(policy.beforeRequest({ endpoint: endpointA })).toBe(100);
@@ -191,12 +199,14 @@ describe('AdaptiveTimeoutPolicy', () => {
         endpoint: endpointA,
         outcome: 'timeout',
         durationMs: 1000,
+        timeoutMs: 1000,
       });
       expect(policy.beforeRequest({ endpoint: endpointA })).toBe(100);
       policy.afterRequest({
         endpoint: endpointA,
         outcome: 'ok',
         durationMs: 80,
+        timeoutMs: 1000,
       });
       expect(policy.beforeRequest({ endpoint: endpointA })).toBe(1000);
     });
@@ -211,16 +221,19 @@ describe('AdaptiveTimeoutPolicy', () => {
         endpoint: endpointA,
         outcome: 'timeout',
         durationMs: 1000,
+        timeoutMs: 1000,
       });
       policy.afterRequest({
         endpoint: endpointA,
         outcome: 'ok',
         durationMs: 80,
+        timeoutMs: 1000,
       });
       policy.afterRequest({
         endpoint: endpointA,
         outcome: 'timeout',
         durationMs: 1000,
+        timeoutMs: 1000,
       });
       expect(policy.beforeRequest({ endpoint: endpointA })).toBe(1000);
     });
@@ -235,12 +248,14 @@ describe('AdaptiveTimeoutPolicy', () => {
         endpoint: endpointA,
         outcome: 'error',
         durationMs: 50,
+        timeoutMs: 1000,
       });
       expect(policy.beforeRequest({ endpoint: endpointA })).toBe(1000);
       policy.afterRequest({
         endpoint: endpointA,
         outcome: 'timeout',
         durationMs: 1000,
+        timeoutMs: 1000,
       });
       expect(policy.beforeRequest({ endpoint: endpointA })).toBe(100);
       // An `error` while tightened keeps state tightened.
@@ -248,6 +263,7 @@ describe('AdaptiveTimeoutPolicy', () => {
         endpoint: endpointA,
         outcome: 'error',
         durationMs: 50,
+        timeoutMs: 1000,
       });
       expect(policy.beforeRequest({ endpoint: endpointA })).toBe(100);
     });
@@ -262,9 +278,132 @@ describe('AdaptiveTimeoutPolicy', () => {
         endpoint: endpointA,
         outcome: 'timeout',
         durationMs: 1000,
+        timeoutMs: 1000,
       });
       expect(policy.beforeRequest({ endpoint: endpointA })).toBe(100);
       expect(policy.beforeRequest({ endpoint: endpointB })).toBe(1000);
+    });
+
+    describe('re-probing a tightened endpoint', () => {
+      function tightenedPolicy(): AdaptiveTimeoutPolicy {
+        const policy = new AdaptiveTimeoutPolicy({
+          defaultMs: 1000,
+          tightenedMs: 100,
+          tightenAfterTimeouts: 1,
+        });
+        policy.afterRequest({
+          endpoint: endpointA,
+          outcome: 'timeout',
+          durationMs: 1000,
+          timeoutMs: 1000,
+        });
+        return policy;
+      }
+
+      it('gives the next request the default budget after a timeout at the tightened budget', () => {
+        const policy = tightenedPolicy();
+        expect(policy.beforeRequest({ endpoint: endpointA })).toBe(100);
+        policy.afterRequest({
+          endpoint: endpointA,
+          outcome: 'timeout',
+          durationMs: 100,
+          timeoutMs: 100,
+        });
+        expect(policy.beforeRequest({ endpoint: endpointA })).toBe(1000);
+        // One probe at a time: concurrent requests keep the tightened budget.
+        expect(policy.beforeRequest({ endpoint: endpointA })).toBe(100);
+      });
+
+      it('relaxes a healthy-but-slow endpoint when the probe succeeds', () => {
+        const policy = tightenedPolicy();
+        const onRelax = vi.fn();
+        policy.subscribe({ onRelax });
+        policy.afterRequest({
+          endpoint: endpointA,
+          outcome: 'timeout',
+          durationMs: 100,
+          timeoutMs: 100,
+        });
+        expect(policy.beforeRequest({ endpoint: endpointA })).toBe(1000);
+        policy.afterRequest({
+          endpoint: endpointA,
+          outcome: 'ok',
+          durationMs: 900,
+          timeoutMs: 1000,
+        });
+        expect(onRelax).toHaveBeenCalledTimes(1);
+        expect(policy.beforeRequest({ endpoint: endpointA })).toBe(1000);
+        expect(policy.beforeRequest({ endpoint: endpointA })).toBe(1000);
+      });
+
+      it('stays tightened when the probe times out at the default budget', () => {
+        const policy = tightenedPolicy();
+        const onTighten = vi.fn();
+        const onRelax = vi.fn();
+        policy.subscribe({ onTighten, onRelax });
+        policy.afterRequest({
+          endpoint: endpointA,
+          outcome: 'timeout',
+          durationMs: 100,
+          timeoutMs: 100,
+        });
+        expect(policy.beforeRequest({ endpoint: endpointA })).toBe(1000);
+        policy.afterRequest({
+          endpoint: endpointA,
+          outcome: 'timeout',
+          durationMs: 1000,
+          timeoutMs: 1000,
+        });
+        expect(policy.beforeRequest({ endpoint: endpointA })).toBe(100);
+        expect(onTighten).not.toHaveBeenCalled();
+        expect(onRelax).not.toHaveBeenCalled();
+      });
+
+      it('ignores a late timeout at the tightened budget after the endpoint relaxed', () => {
+        const policy = tightenedPolicy();
+        expect(policy.beforeRequest({ endpoint: endpointA })).toBe(100);
+        policy.afterRequest({
+          endpoint: endpointA,
+          outcome: 'ok',
+          durationMs: 50,
+          timeoutMs: 100,
+        });
+        policy.afterRequest({
+          endpoint: endpointA,
+          outcome: 'timeout',
+          durationMs: 100,
+          timeoutMs: 100,
+        });
+        expect(policy.beforeRequest({ endpoint: endpointA })).toBe(1000);
+        expect(policy.beforeRequest({ endpoint: endpointA })).toBe(1000);
+      });
+
+      it('does not count timeouts at the tightened budget toward tightening', () => {
+        const policy = new AdaptiveTimeoutPolicy({
+          defaultMs: 1000,
+          tightenedMs: 100,
+          tightenAfterTimeouts: 2,
+        });
+        const onRelax = vi.fn();
+        policy.subscribe({ onRelax });
+        for (const timeoutMs of [1000, 1000, 100, 1000]) {
+          policy.afterRequest({
+            endpoint: endpointA,
+            outcome: 'timeout',
+            durationMs: timeoutMs,
+            timeoutMs,
+          });
+        }
+        policy.afterRequest({
+          endpoint: endpointA,
+          outcome: 'ok',
+          durationMs: 900,
+          timeoutMs: 1000,
+        });
+        expect(onRelax).toHaveBeenCalledWith(
+          expect.objectContaining({ consecutiveTimeouts: 3 }),
+        );
+      });
     });
   });
 
@@ -282,12 +421,14 @@ describe('AdaptiveTimeoutPolicy', () => {
         endpoint: endpointA,
         outcome: 'timeout',
         durationMs: 1000,
+        timeoutMs: 1000,
       });
       expect(onTighten).not.toHaveBeenCalled();
       policy.afterRequest({
         endpoint: endpointA,
         outcome: 'timeout',
         durationMs: 1000,
+        timeoutMs: 1000,
       });
       expect(onTighten).toHaveBeenCalledTimes(1);
       expect(onTighten).toHaveBeenCalledWith(
@@ -313,16 +454,19 @@ describe('AdaptiveTimeoutPolicy', () => {
         endpoint: endpointA,
         outcome: 'timeout',
         durationMs: 1000,
+        timeoutMs: 1000,
       });
       policy.afterRequest({
         endpoint: endpointA,
         outcome: 'timeout',
         durationMs: 1000,
+        timeoutMs: 1000,
       });
       policy.afterRequest({
         endpoint: endpointA,
         outcome: 'timeout',
         durationMs: 1000,
+        timeoutMs: 1000,
       });
       expect(onTighten).toHaveBeenCalledTimes(1);
     });
@@ -339,11 +483,13 @@ describe('AdaptiveTimeoutPolicy', () => {
         endpoint: endpointA,
         outcome: 'timeout',
         durationMs: 1000,
+        timeoutMs: 1000,
       });
       policy.afterRequest({
         endpoint: endpointA,
         outcome: 'ok',
         durationMs: 80,
+        timeoutMs: 1000,
       });
       expect(onRelax).toHaveBeenCalledTimes(1);
       expect(onRelax).toHaveBeenCalledWith(
@@ -367,6 +513,7 @@ describe('AdaptiveTimeoutPolicy', () => {
         endpoint: endpointA,
         outcome: 'ok',
         durationMs: 80,
+        timeoutMs: 1000,
       });
       expect(onRelax).not.toHaveBeenCalled();
     });
@@ -384,6 +531,7 @@ describe('AdaptiveTimeoutPolicy', () => {
         endpoint: endpointA,
         outcome: 'timeout',
         durationMs: 1000,
+        timeoutMs: 1000,
       });
       expect(onTighten).not.toHaveBeenCalled();
     });
@@ -414,6 +562,7 @@ describe('adaptiveTimeoutPolicy factory', () => {
       endpoint: endpointA,
       outcome: 'timeout',
       durationMs: 1000,
+      timeoutMs: 1000,
     });
     const b = factory();
     expect(b.beforeRequest({ endpoint: endpointA })).toBe(1000);
