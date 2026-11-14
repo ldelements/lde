@@ -284,12 +284,12 @@ The query is templated per dataset and distribution, in order:
 
 Each query waits for a slot in the [pipeline’s limiter](#concurrency) and holds it until the endpoint starts answering. What the reader does then depends on the answer:
 
-| Answer                                       | Means                                 | Limit      | Then                                                                                                                    |
-| -------------------------------------------- | ------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------- |
-| HTTP 502, 503 or 504, or a network error     | The endpoint is down or struggling    | Lowered    | Pause the endpoint and try again, at most five times: 5, 15, 45, 135 and 405 s, or what `Retry-After` says, up to 405 s |
-| A timeout                                    | The query took longer than its budget | Lowered    | Fail the read                                                                                                           |
-| HTTP 500                                     | This query failed, not the endpoint   | Left alone | Split the batch, down to one root, which is reported as `rootSkipped` and left out                                      |
-| Anything else, such as a 400 for a bad query | The query is wrong                    | Left alone | Fail the read                                                                                                           |
+| Answer                                                  | Means                                 | Limit      | Then                                                                                                                    |
+| ------------------------------------------------------- | ------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------- |
+| HTTP 408, 425, 429, 502, 503 or 504, or a network error | The endpoint is down or struggling    | Lowered    | Pause the endpoint and try again, at most five times: 5, 15, 45, 135 and 405 s, or what `Retry-After` says, up to 405 s |
+| A timeout                                               | The query took longer than its budget | Lowered    | Fail the read                                                                                                           |
+| HTTP 500                                                | This query failed, not the endpoint   | Left alone | Split the batch, down to one root, which is reported as `rootSkipped` and left out                                      |
+| Anything else, such as a 400 for a bad query            | The query is wrong                    | Left alone | Fail the read                                                                                                           |
 
 The backoff adds up to about 10 minutes, long enough to outlast a backend restart; a failed read then fails its stage, and the [reactive dump fallback](#distribution-resolver) takes over if configured. A pause drops the endpoint’s limit to 1, for every dataset and resolver keyed on it, so after it only one query goes out, and that query is the probe: if it is answered, the limit climbs back; if not, the next, longer pause follows.
 
