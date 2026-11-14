@@ -43,9 +43,9 @@ export interface IndexerConfig {
    * (`EXTRACTION_BATCH_SIZE`) and concurrent queries
    * (`EXTRACTION_CONCURRENCY`) for every type, and either per type
    * (`EXTRACTION_TUNING`, a JSON object keyed by {@link SearchType.name}, e.g.
-   * `{"CreativeWork":{"batchSize":200}}`). A batch size set here applies to
-   * imported dumps and live endpoints alike; unset, a type batches 100 roots
-   * from an imported dump and 10 from a live endpoint.
+   * `{"CreativeWork":{"batchSize":200}}`). A batch size applies to dumps the
+   * indexer imported, 100 when unset; a live endpoint always takes 10 roots
+   * per query.
    */
   readonly extraction: ExtractionConfig;
   /** Local data to index besides what the registry selects, from the `file:`

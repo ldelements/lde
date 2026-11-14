@@ -14,9 +14,11 @@ import {
 import type { RootType, SearchDocument, SearchSchema } from '@lde/search';
 import { searchIndexWriter } from './search-index-writer.js';
 import {
+  defaultBatchSize,
   registrySource,
   searchStages,
   selectByClass,
+  type SearchStageType,
 } from './search-stages.js';
 import type { TypedSearchDocument } from './typed-search-document.js';
 
@@ -26,9 +28,14 @@ import type { TypedSearchDocument } from './typed-search-document.js';
  * {@link SearchStageType} defaults.
  */
 export interface ExtractionTuning {
-  /** Roots per Extraction CONSTRUCT, whatever the source
-   *  ({@link SearchStageType.batchSize}). Unset: 100 for an imported dump, 10
-   *  for a live endpoint. */
+  /**
+   * Roots per Extraction CONSTRUCT from a dump the pipeline imported
+   * ({@link SearchStageType.batchSize}). @default 100
+   *
+   * A live endpoint always takes 10 roots per CONSTRUCT, whatever this says:
+   * other users share it, and it may fail on larger queries. A dump imported
+   * for this run alone is where a larger batch pays off.
+   */
   readonly batchSize?: number;
   /** Maximum concurrent SPARQL queries for the stage
    *  ({@link SearchStageType.maxConcurrency}). @default 10 */
@@ -320,20 +327,23 @@ function versionWithRestrictions(
     : `${pipelineVersion}+restrictRoots=${JSON.stringify(restrictRoots)}`;
 }
 
-/** The type’s {@link ExtractionTuning}: each field from
+/** The type’s stage tuning: each {@link ExtractionTuning} field from
  *  {@link SearchIndexerPipelineOptions.tuningByType} when set there, else from
- *  {@link SearchIndexerPipelineOptions.tuning}. */
+ *  {@link SearchIndexerPipelineOptions.tuning}, with the batch size applied to
+ *  imported dumps only. */
 function tuningFor(
   searchType: RootType,
   tuning: ExtractionTuning,
   tuningByType: Readonly<Record<string, ExtractionTuning>>,
-): ExtractionTuning {
+): Pick<SearchStageType, 'batchSize' | 'maxConcurrency'> {
   // Own keys only, as in rootSelector.
   const own = Object.hasOwn(tuningByType, searchType.name)
     ? tuningByType[searchType.name]
     : {};
+  const imported = own?.batchSize ?? tuning.batchSize;
   return {
-    batchSize: own?.batchSize ?? tuning.batchSize,
+    batchSize:
+      imported === undefined ? undefined : { ...defaultBatchSize, imported },
     maxConcurrency: own?.maxConcurrency ?? tuning.maxConcurrency,
   };
 }

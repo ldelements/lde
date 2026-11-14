@@ -73,7 +73,7 @@ images.
 | `DATASETS`               | all registry datasets        | Dataset IRIs and `file:` URLs of local data to index (whitespace- or comma-separated; see below)                                                      |
 | `DATASET_CRITERIA`       | all registry datasets        | Search criteria as a JSON object, in [`@lde/dataset-registry-client`](./dataset-registry-client)’s criteria format (mutually exclusive w/ `DATASETS`) |
 | `RESTRICT_ROOTS`         | none                         | JSON object mapping root type names to a SPARQL graph pattern over `?root`; only matching roots are indexed (see below)                               |
-| `EXTRACTION_BATCH_SIZE`  | 100 imported, 10 endpoint    | Roots per extraction query for every type, whatever the source (see below)                                                                            |
+| `EXTRACTION_BATCH_SIZE`  | `100`                        | Roots per extraction query from an imported dump, for every type; a live endpoint always takes 10 (see below)                                         |
 | `EXTRACTION_CONCURRENCY` | `10`                         | Concurrent queries per type’s stage; also sets how many queries an imported QLever answers at once, up to 4 (see below)                               |
 | `EXTRACTION_TUNING`      | none                         | JSON object mapping root type names to `batchSize` and `maxConcurrency`, overriding the two variables above for that type                             |
 | `TYPESENSE_HOST`         | **required**                 | Typesense host                                                                                                                                        |
@@ -204,8 +204,9 @@ from a dump the indexer imported, and 10 from a live endpoint, which other
 users share and which may fail on larger queries.
 
 `EXTRACTION_BATCH_SIZE` and `EXTRACTION_CONCURRENCY` set the batch size and the
-concurrent queries for every type, and `EXTRACTION_TUNING` per type. A batch
-size you set applies to imported dumps and live endpoints alike:
+concurrent queries for every type, and `EXTRACTION_TUNING` per type. The batch
+size applies to imported dumps only; a live endpoint, the registry included,
+always takes 10 roots per query:
 
 ```sh
 --env EXTRACTION_CONCURRENCY=4 \

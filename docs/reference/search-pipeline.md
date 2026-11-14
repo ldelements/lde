@@ -141,8 +141,9 @@ To change how the stages read, pass `tuning` for every type and `tuningByType`
 per type name: a `batchSize` (roots per Extraction CONSTRUCT) and a
 `maxConcurrency` (see [per-stage tuning](#per-stage-tuning)). A field set per
 type wins over the same field in `tuning`; a key the schema does not declare
-throws at wiring time. A batch size set here applies to every source, imported
-or not.
+throws at wiring time. The batch size applies to imported dumps only: a live
+endpoint always takes 10 roots per batch, since other users share it and it may
+fail on larger queries.
 
 ```ts
 searchIndexerPipeline({

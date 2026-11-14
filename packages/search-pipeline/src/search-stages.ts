@@ -347,7 +347,7 @@ export function registrySource(
 }
 
 /** {@link SearchStageType.batchSize} when the type sets none. */
-const defaultBatchSize = { endpoint: 10, imported: 100 } as const;
+export const defaultBatchSize = { endpoint: 10, imported: 100 } as const;
 
 /** The class of a root type that describes the dataset being indexed. */
 const DCAT_DATASET = 'http://www.w3.org/ns/dcat#Dataset';

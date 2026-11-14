@@ -316,12 +316,20 @@ describe('searchIndexerPipeline', () => {
       });
     });
 
-    it('applies tuning to every type, whatever the source', () => {
+    it('applies tuning to every type, its batch size to imported dumps only', () => {
+      // A live endpoint is shared, so a batch size raised for imports must not
+      // reach it.
       expect(
         tuningOf(build({ tuning: { batchSize: 50, maxConcurrency: 4 } })),
       ).toEqual({
-        Dataset: { batchSize: 50, maxConcurrency: 4 },
-        Organization: { batchSize: 50, maxConcurrency: 4 },
+        Dataset: {
+          batchSize: { endpoint: 10, imported: 50 },
+          maxConcurrency: 4,
+        },
+        Organization: {
+          batchSize: { endpoint: 10, imported: 50 },
+          maxConcurrency: 4,
+        },
       });
     });
 
@@ -334,8 +342,14 @@ describe('searchIndexerPipeline', () => {
           }),
         ),
       ).toEqual({
-        Dataset: { batchSize: 50, maxConcurrency: 4 },
-        Organization: { batchSize: 200, maxConcurrency: 4 },
+        Dataset: {
+          batchSize: { endpoint: 10, imported: 50 },
+          maxConcurrency: 4,
+        },
+        Organization: {
+          batchSize: { endpoint: 10, imported: 200 },
+          maxConcurrency: 4,
+        },
       });
     });
 
