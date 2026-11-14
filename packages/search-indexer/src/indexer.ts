@@ -101,5 +101,7 @@ export async function createSearchIndexer(
     reporter: new ConsoleReporter(),
     transforms: extensions.transforms,
     restrictRoots: config.restrictRoots,
+    tuning: config.extraction,
+    tuningByType: config.extraction.byType,
   });
 }

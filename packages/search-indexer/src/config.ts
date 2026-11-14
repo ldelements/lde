@@ -1,5 +1,6 @@
 import { Dataset } from '@lde/dataset';
 import type { SearchCriteria } from '@lde/dataset-registry-client';
+import type { ExtractionTuning } from '@lde/search-pipeline';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -37,6 +38,16 @@ export interface IndexerConfig {
    * the mounted schema when the pipeline is wired.
    */
   readonly restrictRoots: Readonly<Record<string, string>>;
+  /**
+   * How each root type’s stage reads: roots per Extraction CONSTRUCT
+   * (`EXTRACTION_BATCH_SIZE`) and concurrent queries
+   * (`EXTRACTION_CONCURRENCY`) for every type, and either per type
+   * (`EXTRACTION_TUNING`, a JSON object keyed by {@link SearchType.name}, e.g.
+   * `{"CreativeWork":{"batchSize":200}}`). A batch size set here applies to
+   * imported dumps and live endpoints alike; unset, a type batches 100 roots
+   * from an imported dump and 10 from a live endpoint.
+   */
+  readonly extraction: ExtractionConfig;
   /** Local data to index besides what the registry selects, from the `file:`
    *  URLs in `DATASETS`: paths of files, each one dataset, and of directories,
    *  which end in `/`, with one dataset per RDF file. */
@@ -64,6 +75,14 @@ export interface IndexerConfig {
    *  pipeline-controlled QLever instead of relying on live SPARQL endpoints
    *  alone. */
   readonly qlever?: QleverConfig;
+}
+
+/** {@link IndexerConfig.extraction}. */
+export interface ExtractionConfig extends ExtractionTuning {
+  /** Overrides per root type, keyed by {@link SearchType.name}; empty when
+   *  unset. The names are validated against the mounted schema when the
+   *  pipeline is wired. */
+  readonly byType: Readonly<Record<string, ExtractionTuning>>;
 }
 
 /** Connection details of the Typesense node the indexer writes to. */
@@ -219,6 +238,7 @@ export function configFromEnvironment(
     registryRootTypes: names(environment['REGISTRY_ROOT_TYPES']),
     datasetCriteria,
     restrictRoots: restrictRootsFromEnvironment(environment, problems),
+    extraction: extractionFromEnvironment(environment, problems),
     localSources,
     typesense: {
       host: required('TYPESENSE_HOST'),
@@ -370,6 +390,95 @@ function restrictRootsFromEnvironment(
     return {};
   }
   return parsed as Record<string, string>;
+}
+
+/** `EXTRACTION_BATCH_SIZE`, `EXTRACTION_CONCURRENCY` and
+ *  `EXTRACTION_TUNING`. */
+function extractionFromEnvironment(
+  environment: Readonly<Record<string, string | undefined>>,
+  problems: string[],
+): ExtractionConfig {
+  // A JSON value must be a number; an environment variable is a string.
+  const positive = (name: string, value: unknown): number | undefined => {
+    if (value === undefined) return undefined;
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) {
+      problems.push(
+        `${name} must be a positive integer, got “${JSON.stringify(value)}”`,
+      );
+      return undefined;
+    }
+    return value;
+  };
+  const variable = (name: string): number | undefined => {
+    const value = environment[name];
+    if (value === undefined || value.length === 0) return undefined;
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed < 1) {
+      problems.push(`${name} must be a positive integer, got “${value}”`);
+      return undefined;
+    }
+    return parsed;
+  };
+  return {
+    batchSize: variable('EXTRACTION_BATCH_SIZE'),
+    maxConcurrency: variable('EXTRACTION_CONCURRENCY'),
+    byType: tuningByTypeFromEnvironment(
+      environment['EXTRACTION_TUNING'],
+      positive,
+      problems,
+    ),
+  };
+}
+
+/** `EXTRACTION_TUNING`: a JSON object mapping root type names to
+ *  `batchSize` and `maxConcurrency`; empty when unset. */
+function tuningByTypeFromEnvironment(
+  json: string | undefined,
+  positive: (name: string, value: unknown) => number | undefined,
+  problems: string[],
+): Readonly<Record<string, ExtractionTuning>> {
+  if (!json) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    problems.push('EXTRACTION_TUNING must be valid JSON');
+    return {};
+  }
+  const isObject = (value: unknown): value is Record<string, unknown> =>
+    typeof value === 'object' && value !== null && !Array.isArray(value);
+  if (
+    !isObject(parsed) ||
+    !Object.values(parsed).every(
+      (tuning) =>
+        isObject(tuning) &&
+        Object.keys(tuning).every(
+          (key) => key === 'batchSize' || key === 'maxConcurrency',
+        ),
+    )
+  ) {
+    problems.push(
+      'EXTRACTION_TUNING must be a JSON object mapping type names to { batchSize, maxConcurrency }',
+    );
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(parsed as Record<string, Record<string, unknown>>).map(
+      ([name, tuning]) => [
+        name,
+        {
+          batchSize: positive(
+            `EXTRACTION_TUNING’s ${name}.batchSize`,
+            tuning['batchSize'],
+          ),
+          maxConcurrency: positive(
+            `EXTRACTION_TUNING’s ${name}.maxConcurrency`,
+            tuning['maxConcurrency'],
+          ),
+        },
+      ],
+    ),
+  );
 }
 
 function provenanceFromEnvironment(

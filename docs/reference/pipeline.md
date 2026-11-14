@@ -158,6 +158,19 @@ new Stage({
 });
 ```
 
+A source the pipeline imported for this run answers larger batches than a live endpoint that others share. Give `batchSize` a value per source kind to use both well:
+
+```typescript
+new Stage({
+  name: 'extract',
+  itemSelector,
+  readers: reader,
+  batchSize: { endpoint: 10, imported: 100 },
+});
+```
+
+The pipeline tells the stage which kind it reads: `imported` when the [distribution resolver](#distribution-resolver) imported a data dump, `endpoint` otherwise. A stage whose `sourceFor` substitutes another distribution reads a source the pipeline did not resolve, so it takes the `endpoint` value. A [chained](#chaining-stages) child reads its parent’s output, which the pipeline serves itself, so it takes the `imported` value.
+
 #### Concurrency
 
 `maxConcurrency` (default: 10) limits the total number of concurrent SPARQL queries. Within each batch, all readers run in parallel; the number of concurrent batches is automatically reduced to `⌊maxConcurrency / readerCount⌋` so the total query pressure stays within the limit. For example, with `maxConcurrency: 10` and two readers per stage, up to 5 batches run concurrently (10 SPARQL queries total).

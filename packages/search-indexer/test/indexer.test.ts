@@ -73,6 +73,19 @@ describe('createSearchIndexer', () => {
     ).rejects.toThrowError(/Unknown restricted root type\(s\) “Publisher”/);
   });
 
+  it('fails the boot on a tuned type the schema does not declare', async () => {
+    // Proves EXTRACTION_TUNING reaches the pipeline.
+    await expect(
+      createSearchIndexer(
+        configFromEnvironment({
+          ...minimal,
+          SCHEMA_MODULE: fixture,
+          EXTRACTION_TUNING: '{"Publisher": {"batchSize": 100}}',
+        }),
+      ),
+    ).rejects.toThrowError(/Unknown tuned type\(s\) “Publisher”/);
+  });
+
   it('attaches a deployment’s transform without giving up the wiring', async () => {
     // The whole cost of adding behaviour: one option. Everything
     // createSearchIndexer wires – provenance, the reporter, registry types,
