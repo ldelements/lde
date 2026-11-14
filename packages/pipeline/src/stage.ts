@@ -131,9 +131,9 @@ export interface StageOptions<Out = Quad> {
   /**
    * Maximum number of bindings per reader call.
    *
-   * Also used as the selector's page size so that each paginated request
-   * fills exactly one batch. A `LIMIT` clause in the selector query
-   * overrides this for endpoints with hard result limits.
+   * Handed to the item selector, which may page its source in larger
+   * requests: `SparqlItemSelector` fetches pages of 1000 bindings
+   * by default (its `pageSize`) and the stage cuts them into batches of this size.
    *
    * @default 10
    */

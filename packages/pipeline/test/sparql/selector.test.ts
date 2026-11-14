@@ -91,6 +91,7 @@ describe('SparqlItemSelector', () => {
     const selector = new SparqlItemSelector({
       query,
       fetcher: fetcher as never,
+      pageSize: 2,
     });
 
     const rows = await selectAll(selector, 2);
@@ -153,6 +154,7 @@ describe('SparqlItemSelector', () => {
     const selector = new SparqlItemSelector({
       query,
       fetcher: fetcher as never,
+      pageSize: 2,
     });
 
     const rows = await selectAll(selector, 2);
@@ -176,6 +178,7 @@ describe('SparqlItemSelector', () => {
     const selector = new SparqlItemSelector({
       query,
       fetcher: fetcher as never,
+      pageSize: 2,
     });
 
     const rows = await selectAll(selector, 2);
@@ -185,7 +188,7 @@ describe('SparqlItemSelector', () => {
     expect(queries[1]).toMatch(/OFFSET\s+2/);
   });
 
-  it('defaults page size to 10', async () => {
+  it('defaults page size to 1000', async () => {
     const { fetcher, queries } = pagedFetcher([]);
 
     const selector = new SparqlItemSelector({
@@ -195,10 +198,12 @@ describe('SparqlItemSelector', () => {
 
     await selectAll(selector);
 
-    expect(queries[0]).toMatch(/LIMIT\s+10/);
+    expect(queries[0]).toMatch(/LIMIT\s+1000\b/);
   });
 
-  it('uses batchSize from select()', async () => {
+  it('pages in 1000 when the batchSize is smaller', async () => {
+    // Batches are cut from the page, so a page per batch would cost the stage
+    // a SELECT round trip before every batch.
     const { fetcher, queries } = pagedFetcher([]);
 
     const selector = new SparqlItemSelector({
@@ -206,9 +211,82 @@ describe('SparqlItemSelector', () => {
       fetcher: fetcher as never,
     });
 
-    await selectAll(selector, 500);
+    await selectAll(selector, 10);
 
-    expect(queries[0]).toMatch(/LIMIT\s+500/);
+    expect(queries[0]).toMatch(/LIMIT\s+1000\b/);
+  });
+
+  it('pages in the batchSize when it is larger than 1000', async () => {
+    const { fetcher, queries } = pagedFetcher([]);
+
+    const selector = new SparqlItemSelector({
+      query,
+      fetcher: fetcher as never,
+    });
+
+    await selectAll(selector, 1500);
+
+    expect(queries[0]).toMatch(/LIMIT\s+1500\b/);
+  });
+
+  it('uses pageSize over the batchSize', async () => {
+    const { fetcher, queries } = pagedFetcher([]);
+
+    const selector = new SparqlItemSelector({
+      query,
+      pageSize: 5,
+      fetcher: fetcher as never,
+    });
+
+    await selectAll(selector, 10);
+
+    expect(queries[0]).toMatch(/LIMIT\s+5\b/);
+  });
+
+  it('prefers query LIMIT over pageSize', async () => {
+    const { fetcher, queries } = pagedFetcher([]);
+
+    const selector = new SparqlItemSelector({
+      query: 'SELECT ?class WHERE { ?s a ?class } LIMIT 25',
+      pageSize: 500,
+      fetcher: fetcher as never,
+    });
+
+    await selectAll(selector);
+
+    expect(queries[0]).toMatch(/LIMIT\s+25\b/);
+  });
+
+  it.each([0, Number.NaN, 2.5])('rejects pageSize %s', (pageSize) => {
+    expect(() => new SparqlItemSelector({ query, pageSize })).toThrow(
+      'pageSize must be a positive integer',
+    );
+  });
+
+  it('reads the whole page before yielding its first binding', async () => {
+    // A stage takes a batch, then extracts it before taking the next: were the
+    // page streamed, its response would stay open for the whole page’s
+    // extraction.
+    let stream: Readable | undefined;
+    const fetcher = {
+      fetchBindings: vi.fn().mockImplementation(async () => {
+        stream = await bindingsStream([
+          { uri: namedNode('http://example.com/1') },
+          { uri: namedNode('http://example.com/2') },
+        ]);
+        return stream;
+      }),
+    };
+
+    const selector = new SparqlItemSelector({
+      query,
+      fetcher: fetcher as never,
+    });
+
+    const rows = selector.select(distribution, 1);
+    await rows.next();
+
+    expect(stream?.readableEnded).toBe(true);
   });
 
   it('uses query LIMIT as page size', async () => {
@@ -242,11 +320,10 @@ describe('SparqlItemSelector', () => {
     expect(queries[0]).toMatch(/LIMIT\s+25/);
   });
 
-  it('rejects a non-positive page size instead of querying pointlessly', async () => {
-    // batchSize 0 (or a query LIMIT 0) is a configuration error: a LIMIT 0
-    // request can never terminate pagination meaningfully, and silently
-    // yielding nothing would make a misconfigured stage look like an empty
-    // source.
+  it('rejects a non-positive batchSize instead of querying pointlessly', async () => {
+    // batchSize 0 is a configuration error: a batch of 0 would never fill, and
+    // silently yielding nothing would make a misconfigured stage look like an
+    // empty source.
     const { fetcher } = pagedFetcher([]);
 
     const selector = new SparqlItemSelector({
@@ -255,9 +332,15 @@ describe('SparqlItemSelector', () => {
     });
 
     await expect(selectAll(selector, 0)).rejects.toThrow(
-      'Page size must be positive',
+      'Batch size must be a positive integer',
     );
     expect(fetcher.fetchBindings).not.toHaveBeenCalled();
+  });
+
+  it('rejects a query LIMIT 0 as the page size', () => {
+    expect(() => new SparqlItemSelector({ query: `${query} LIMIT 0` })).toThrow(
+      'Page size must be positive',
+    );
   });
 
   it('collects all projected variables per row', async () => {
@@ -414,6 +497,7 @@ describe('SparqlItemSelector', () => {
       const selector = new SparqlItemSelector({
         query,
         fetcher: fetcher as never,
+        pageSize: 100,
         maxResults: 5,
       });
 
@@ -421,7 +505,7 @@ describe('SparqlItemSelector', () => {
 
       // The first page asks for the configured page size (100), even though
       // we only yield 5 rows from it.
-      expect(queries[0]).toMatch(/LIMIT\s+100/);
+      expect(queries[0]).toMatch(/LIMIT\s+100\b/);
       expect(rows).toHaveLength(5);
     });
 
@@ -440,13 +524,14 @@ describe('SparqlItemSelector', () => {
       const selector = new SparqlItemSelector({
         query,
         fetcher: fetcher as never,
+        pageSize: 10,
         maxResults: 12,
       });
 
       const rows = await selectAll(selector, 10);
 
-      expect(queries[0]).toMatch(/LIMIT\s+10/);
-      expect(queries[1]).toMatch(/LIMIT\s+2/);
+      expect(queries[0]).toMatch(/LIMIT\s+10\b/);
+      expect(queries[1]).toMatch(/LIMIT\s+2\b/);
       expect(rows).toHaveLength(12);
     });
 
@@ -471,6 +556,7 @@ describe('SparqlItemSelector', () => {
       const selector = new SparqlItemSelector({
         query,
         fetcher: fetcher as never,
+        pageSize: 3,
         maxResults: 3,
       });
 
@@ -557,6 +643,7 @@ describe('SparqlItemSelector', () => {
       const selector = new SparqlItemSelector({
         query,
         fetcher: fetcher as never,
+        pageSize: 2,
       });
 
       const rows: VariableBindings[] = [];
@@ -605,6 +692,35 @@ describe('SparqlItemSelector', () => {
       await expect(iterate()).rejects.toThrow('504');
       expect(policy.afterRequest).toHaveBeenCalledWith(
         expect.objectContaining({ outcome: 'timeout' }),
+      );
+    });
+
+    it('reports a page that fails mid-body as an error, not ok', async () => {
+      const stream = new Readable({
+        objectMode: true,
+        read() {
+          this.push({ uri: namedNode('http://example.com/1') });
+          this.destroy(new Error('socket hang up'));
+        },
+      });
+      const policy = recordingPolicy();
+      const selector = new SparqlItemSelector({
+        query,
+        fetcher: { fetchBindings: vi.fn().mockResolvedValue(stream) } as never,
+      });
+
+      const iterate = async () => {
+        for await (const _row of selector.select(distribution, 10, {
+          timeout: policy,
+        })) {
+          // consume
+        }
+      };
+
+      await expect(iterate()).rejects.toThrow('socket hang up');
+      expect(policy.afterRequest).toHaveBeenCalledTimes(1);
+      expect(policy.afterRequest).toHaveBeenCalledWith(
+        expect.objectContaining({ outcome: 'error' }),
       );
     });
 
@@ -716,6 +832,7 @@ describe('SparqlItemSelector', () => {
       const selector = new SparqlItemSelector({
         query,
         fetcher: fetcher as never,
+        pageSize: 2,
       });
 
       for await (const _row of selector.select(
