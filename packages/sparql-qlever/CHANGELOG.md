@@ -1,3 +1,44 @@
+## 0.22.0 (2026-11-14)
+
+### 🚀 Features
+
+- ⚠️  **search-indexer:** batch imported extraction at 100 roots ([#1081](https://github.com/ldelements/lde/pull/1081))
+
+### ⚠️  Breaking Changes
+
+- **search-indexer:** batch imported extraction at 100 roots  ([#1081](https://github.com/ldelements/lde/pull/1081))
+  IndexerConfig has a required extraction field; a config
+  built by hand must add one (extraction: { byType: {} } keeps the defaults).
+  Search stages that set no batchSize now batch 100 roots from an imported
+  dump; pass batchSize: 10 to keep the old size.
+  * fix(search-pipeline): apply a tuned batch size to imported dumps only
+  - Keep live endpoints, the registry included, at 10 roots per extraction
+    query when tuning or tuningByType sets a batch size
+  - Document EXTRACTION_BATCH_SIZE and EXTRACTION_TUNING as import-only"
+  M	docs/reference/pipeline.md
+  M	docs/reference/search-indexer.md
+  M	docs/reference/search-pipeline.md
+  M	docs/reference/sparql-qlever.md
+  M	packages/pipeline/src/pipeline.ts
+  M	packages/pipeline/src/stage.ts
+  M	packages/pipeline/test/pipeline.test.ts
+  M	packages/pipeline/test/stage.test.ts
+  M	packages/pipeline/vite.config.ts
+  M	packages/search-indexer/src/composition.ts
+  M	packages/search-indexer/src/config.ts
+  M	packages/search-indexer/src/index.ts
+  M	packages/search-indexer/src/indexer.ts
+  M	packages/search-indexer/test/config.test.ts
+  M	packages/search-indexer/test/indexer.test.ts
+  M	packages/search-indexer/test/qlever-server-options.test.ts
+  M	packages/search-pipeline/src/index.ts
+  M	packages/search-pipeline/src/search-indexer-pipeline.ts
+  M	packages/search-pipeline/src/search-stages.ts
+  M	packages/search-pipeline/test/search-indexer-pipeline.test.ts
+  M	packages/sparql-qlever/src/server.ts
+  M	packages/sparql-qlever/test/server-command.test.ts
+  M	packages/sparql-qlever/vite.config.ts
+
 ## 0.21.1 (2026-11-09)
 
 ### 🧱 Updated Dependencies
