@@ -544,8 +544,8 @@ function nestedFields(
   const walked = new Set(onPath).add(nestedType.name);
   // Typesense flattens a nested object, so a value under a multi-valued
   // ancestor arrives as an array however single-valued the declaration is.
-  // That only matters for an INDEXED field, whose declared type is checked
-  // against what is stored; an unindexed one is stored as-is.
+  // Once the parent is indexed, every declared child is checked against that
+  // array – stored-only ones too – so each is declared a list ({@link asList}).
   const flattensToArray = withinArray || array;
   const children: CollectionFieldSchema[] = [];
   // A `local` lookup nests its endpoint’s own document, which carries the `id`
@@ -639,9 +639,30 @@ function nestedFields(
       index: children.some((child) => child.index !== false),
       optional: reference.required !== true,
     },
-    ...children,
+    ...(flattensToArray ? children.map(asList) : children),
   ];
 }
+
+/**
+ * The list form of a nested field under an `object[]`, which flattens every
+ * value beneath it into one list per document. Applied to every child in one
+ * place, because Typesense checks each declared child of an indexed parent
+ * against that list – stored-only ones too – and rejects the whole document
+ * on a scalar declaration.
+ */
+function asList(field: CollectionFieldSchema): CollectionFieldSchema {
+  const list = LIST_TYPES[field.type as keyof typeof LIST_TYPES];
+  return list === undefined ? field : { ...field, type: list };
+}
+
+/** The scalar types a nested declaration can carry, each with its list form. */
+const LIST_TYPES = {
+  string: 'string[]',
+  int64: 'int64[]',
+  float: 'float[]',
+  bool: 'bool[]',
+  object: 'object[]',
+} as const satisfies Record<string, CollectionFieldSchema['type']>;
 
 /**
  * The top-level companions of a field storing nested objects: a `local`
@@ -823,7 +844,7 @@ function nestedLeafFields(
   const storesAList = flattensToArray || field.array === true;
   fields.push({
     name: nestedFieldName(prefix, field.name),
-    type: indexed && storesAList ? arrayValueType(valueType) : valueType,
+    type: storesAList ? arrayValueType(valueType) : valueType,
     index: indexed,
     // Always optional: `required` is a promise about the *referent* (this value
     // is on every referent), while Typesense’s flag is about the document.
@@ -844,14 +865,11 @@ function nestedLeafFields(
   return fields;
 }
 
-/** The Typesense field type for a non-localized field, from its `kind`. 64-bit
- *  integers (and dates, stored as Unix seconds) so large counts never overflow. */
 /**
- * The array form of a value type, for a nested field that an ancestor’s
- * `object[]` flattens into a list. Only an **indexed** field needs it: Typesense
- * checks a declared type against what is stored, and a value under a
- * multi-valued ancestor arrives as an array however single-valued its own
- * declaration is. Enumerated rather than string-appended so an invalid
+ * The array form of a value type, for a nested field that holds a list: one
+ * an ancestor’s `object[]` flattens, or one declaring `array` itself. Typesense
+ * checks every declared child of an indexed parent against what is stored,
+ * indexed or not. Enumerated rather than string-appended so an invalid
  * combination cannot be built.
  */
 function arrayValueType(type: ValueType): CollectionFieldSchema['type'] {
@@ -882,6 +900,8 @@ function arrayValueType(type: ValueType): CollectionFieldSchema['type'] {
  */
 type ValueType = 'string' | 'string[]' | 'int64' | 'float' | 'bool';
 
+/** The Typesense field type for a non-localized field, from its `kind`. 64-bit
+ *  integers (and dates, stored as Unix seconds) so large counts never overflow. */
 function typesenseValueType(field: SearchField): ValueType {
   switch (field.kind) {
     case 'integer':

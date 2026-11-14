@@ -32,7 +32,7 @@ export default mergeConfig(
           // They hold for a direct caller, and are exercised as one. Moved
           // again when an inline reference’s identity dropped its flat
           // companion: covered branches deleted, nothing uncovered.
-          branches: 97.07,
+          branches: 97.08,
           statements: 99.59,
         },
       },

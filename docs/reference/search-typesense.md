@@ -110,9 +110,9 @@ both handled here rather than left to a caller:
   under an `index: false` parent is silently ignored – no error, and every query
   answering empty – so the parent’s flag is computed from its children.
 - **A value under a multi-valued ancestor arrives as a list**, however
-  single-valued its own declaration. An indexed field’s declared type is checked
-  against what is stored, so it is widened (`int64` → `int64[]`); an unindexed
-  one is not.
+  single-valued its own declaration. Once the parent is indexed, Typesense
+  checks every declared child against what is stored, unindexed ones included,
+  so each is widened (`int64` → `int64[]`).
 
 An inline reference naming an [`identity`](./search#data-on-the-edge) is
 filtered and faceted on that identity’s leaf inside each entry, declared with
