@@ -48,6 +48,7 @@ import {
   referenceFields,
   storedFacetRanges,
   storedTargetOf,
+  TARGET_FIELD,
   type FacetSearch,
 } from '@lde/search/adapter';
 import {
@@ -1482,21 +1483,16 @@ function localLookupValue(
     .map((entry) => {
       const id = typeof entry.id === 'string' ? entry.id : undefined;
       const answers = id === undefined ? undefined : fetched.get(id);
-      // Where several collections answered, the entry’s own discriminator
-      // picks among them; where it stores none, the target declared first.
-      const answeredBy =
-        answers === undefined
-          ? undefined
-          : storedTargetOf(
-              entry,
-              answers.map((answer) => answer.target),
-            );
-      const authoritative = answers?.find(
-        (answer) => answer.target === answeredBy,
-      );
-      // An entry no collection answered for is read through the declaration
-      // it was stored under – which it says itself where there were several
-      // to choose from, and the only one otherwise.
+      const target = storedTargetOf(entry, targets);
+      // An entry that stores its target takes only that target’s answer, so
+      // another collection holding the same IRI never retypes it; one that
+      // stores none takes the target declared first.
+      const authoritative =
+        entry[TARGET_FIELD] === undefined
+          ? answers?.[0]
+          : answers?.find((answer) => answer.target.name === target.name);
+      // An answer replaces the entry: the target’s own record, read through
+      // the target that answered.
       if (authoritative !== undefined) {
         return typedDocument(
           targets.length > 1,
@@ -1510,9 +1506,11 @@ function localLookupValue(
           ),
         );
       }
-      // Its own lookups resolve against the level its target’s fetch carried
+      // An entry its target’s collection did not answer for is read through
+      // the declaration it was stored under – which it says itself where
+      // there were several to choose from, and the only one otherwise. Its
+      // own lookups resolve against the level its target’s fetch carried
       // down, so a nested IRI it shares with a fetched referent still nests.
-      const target = storedTargetOf(entry, targets);
       return typedDocument(
         targets.length > 1,
         target,

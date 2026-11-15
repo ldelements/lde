@@ -38,8 +38,8 @@ export type ResolvedReferents =
        *  one per collection, so a stored entry can take the one its own
        *  discriminator names. */
       readonly documents: ReadonlyMap<string, readonly ResolvedReferent[]>;
-      /** The levels below, by target name – what a stored referent no
-       *  collection answered for is reconstructed against. */
+      /** The levels below, by target name – what a stored referent its own
+       *  target’s collection did not answer for is reconstructed against. */
       readonly childrenByTarget: ReadonlyMap<
         string,
         ReadonlyMap<string, ResolvedReferents>

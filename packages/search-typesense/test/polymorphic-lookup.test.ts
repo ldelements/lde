@@ -426,6 +426,49 @@ describe('a stored referent of several possible kinds', () => {
       },
     ]);
   });
+
+  it('reads an entry only another target’s collection answers for as stored, not as that target', async () => {
+    const { fake } = client({
+      found: 1,
+      hits: [
+        {
+          document: {
+            id: 'https://w/7',
+            creator: [
+              {
+                role: 'schilder',
+                creator: {
+                  id: 'https://p/1',
+                  name_und: 'Atelier Koel',
+                  location: 'Maastricht',
+                  [TARGET_FIELD]: 'Organization',
+                },
+              },
+            ],
+          },
+        },
+      ],
+    });
+    const engine = createTypesenseSearchEngine(fake.client, schema, {
+      collections,
+    });
+
+    const result = await engine.search(edgedWork as never, {
+      ...base,
+      resolve: {
+        creator: { resolve: { creator: { fields: ['name', 'location'] } } },
+      },
+    });
+    const entries = (result.hits[0].document as Record<string, unknown>)
+      .creator as readonly Record<string, unknown>[];
+
+    expect(entries[0].creator).toEqual({
+      id: 'https://p/1',
+      name: { und: ['Atelier Koel'] },
+      location: 'Maastricht',
+      [NESTED_DOCUMENT_TYPE]: 'Organization',
+    });
+  });
 });
 
 describe('a lookup below a referent of several possible kinds', () => {

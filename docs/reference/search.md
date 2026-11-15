@@ -887,9 +887,11 @@ each target’s `class`, projecting the entry through the matching declaration
 and recording which under a reserved physical name (`_target`, which no type
 may declare). A stored referent that no collection answers for – unidentified,
 or identified but not indexed – is then still served as the kind it was stated
-to be. A stored referent that several collections answer for is served as the
-kind it was stored as, not as the first one listed: two documents can type the
-same IRI differently, and each keeps its own reading. The nested object declares the union of the targets’ fields, so two
+to be. A stored referent other collections answer for is served as the kind it
+was stored as too, not as the first one listed: it takes the answer of its own
+kind’s collection, or what was stored where that collection holds no record of
+it. Two documents can type the same IRI differently, and each keeps its own
+reading. The nested object declares the union of the targets’ fields, so two
 targets that both declare a field must declare it alike – same `kind`, same
 arity, same Roles, and for a reference the same strategy and referent;
 `searchSchema` rejects the pair otherwise.
