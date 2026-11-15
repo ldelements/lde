@@ -811,6 +811,7 @@ describe('SparqlConstructReader', () => {
         expect.objectContaining({
           endpoint: distribution.accessUrl,
           outcome: 'ok',
+          timeoutMs: 1234,
         }),
       );
     });
@@ -838,7 +839,7 @@ describe('SparqlConstructReader', () => {
       ).rejects.toThrow('504');
 
       expect(policy.afterRequest).toHaveBeenCalledWith(
-        expect.objectContaining({ outcome: 'timeout' }),
+        expect.objectContaining({ outcome: 'timeout', timeoutMs: 1234 }),
       );
     });
 
@@ -862,7 +863,7 @@ describe('SparqlConstructReader', () => {
       ).rejects.toThrow();
 
       expect(policy.afterRequest).toHaveBeenCalledWith(
-        expect.objectContaining({ outcome: 'timeout' }),
+        expect.objectContaining({ outcome: 'timeout', timeoutMs: 1234 }),
       );
     });
 
@@ -886,7 +887,7 @@ describe('SparqlConstructReader', () => {
       ).rejects.toThrow();
 
       expect(policy.afterRequest).toHaveBeenCalledWith(
-        expect.objectContaining({ outcome: 'timeout' }),
+        expect.objectContaining({ outcome: 'timeout', timeoutMs: 1234 }),
       );
     });
 
@@ -912,7 +913,7 @@ describe('SparqlConstructReader', () => {
       ).rejects.toThrow();
 
       expect(policy.afterRequest).toHaveBeenCalledWith(
-        expect.objectContaining({ outcome: 'error' }),
+        expect.objectContaining({ outcome: 'error', timeoutMs: 1234 }),
       );
     });
 
@@ -942,11 +943,11 @@ describe('SparqlConstructReader', () => {
       expect(policy.afterRequest).toHaveBeenCalledTimes(2);
       expect(policy.afterRequest).toHaveBeenNthCalledWith(
         1,
-        expect.objectContaining({ outcome: 'timeout' }),
+        expect.objectContaining({ outcome: 'timeout', timeoutMs: 1234 }),
       );
       expect(policy.afterRequest).toHaveBeenNthCalledWith(
         2,
-        expect.objectContaining({ outcome: 'ok' }),
+        expect.objectContaining({ outcome: 'ok', timeoutMs: 1234 }),
       );
     });
 
@@ -1003,7 +1004,7 @@ describe('SparqlConstructReader', () => {
       ).rejects.toThrow();
 
       expect(policy.afterRequest).toHaveBeenCalledWith(
-        expect.objectContaining({ outcome: 'timeout' }),
+        expect.objectContaining({ outcome: 'timeout', timeoutMs: 10 }),
       );
       expect(slowFetch).toHaveBeenCalled();
       const init = slowFetch.mock.calls[0][1];

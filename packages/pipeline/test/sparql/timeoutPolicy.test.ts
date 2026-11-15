@@ -314,6 +314,56 @@ describe('AdaptiveTimeoutPolicy', () => {
         expect(policy.beforeRequest({ endpoint: endpointA })).toBe(100);
       });
 
+      it('hands out no second probe while one is in flight, whatever its outcome', () => {
+        const policy = tightenedPolicy();
+        const concurrentBudgets = [
+          policy.beforeRequest({ endpoint: endpointA }),
+          policy.beforeRequest({ endpoint: endpointA }),
+        ];
+        expect(concurrentBudgets).toEqual([100, 100]);
+        policy.afterRequest({
+          endpoint: endpointA,
+          outcome: 'timeout',
+          durationMs: 100,
+          timeoutMs: 100,
+        });
+        expect(policy.beforeRequest({ endpoint: endpointA })).toBe(1000);
+
+        // Concurrent requests at the tightened budget time out while the
+        // probe is in flight: none of them schedules another probe.
+        policy.afterRequest({
+          endpoint: endpointA,
+          outcome: 'timeout',
+          durationMs: 100,
+          timeoutMs: 100,
+        });
+        expect(policy.beforeRequest({ endpoint: endpointA })).toBe(100);
+        policy.afterRequest({
+          endpoint: endpointA,
+          outcome: 'timeout',
+          durationMs: 100,
+          timeoutMs: 100,
+        });
+        expect(policy.beforeRequest({ endpoint: endpointA })).toBe(100);
+
+        // The probe fails with an error: no longer in flight, so the next
+        // tightened timeout schedules a new probe.
+        policy.afterRequest({
+          endpoint: endpointA,
+          outcome: 'error',
+          durationMs: 50,
+          timeoutMs: 1000,
+        });
+        expect(policy.beforeRequest({ endpoint: endpointA })).toBe(100);
+        policy.afterRequest({
+          endpoint: endpointA,
+          outcome: 'timeout',
+          durationMs: 100,
+          timeoutMs: 100,
+        });
+        expect(policy.beforeRequest({ endpoint: endpointA })).toBe(1000);
+      });
+
       it('relaxes a healthy-but-slow endpoint when the probe succeeds', () => {
         const policy = tightenedPolicy();
         const onRelax = vi.fn();

@@ -140,6 +140,11 @@ interface EndpointState {
    * budget.
    */
   probeDue: boolean;
+  /**
+   * Whether a probe has been handed out and its outcome not yet reported,
+   * so concurrent requests keep the tightened budget meanwhile.
+   */
+  probeInFlight: boolean;
 }
 
 /**
@@ -152,12 +157,14 @@ interface EndpointState {
  * A timeout at the tightened budget says nothing about the endpoint’s
  * health – a healthy endpoint’s heavy query may simply need longer – so it
  * does not count toward tightening. Instead, the next request re-probes
- * the endpoint at the default budget: if that probe succeeds, the endpoint
- * relaxes; if it times out too, the endpoint stays tightened until the
- * next timeout at the tightened budget schedules another probe. A
- * healthy-but-slow endpoint therefore recovers after one lost request,
- * while an endpoint that keeps timing out at the default budget waits it
- * out on only every other request.
+ * the endpoint at the default budget, one probe at a time: concurrent
+ * requests keep the tightened budget until the probe’s outcome is
+ * reported. If the probe succeeds, the endpoint relaxes; if it fails, the
+ * endpoint stays tightened until the next timeout at the tightened budget
+ * schedules another probe. A healthy-but-slow endpoint therefore recovers
+ * after one lost request. The price is paid by an endpoint that is
+ * genuinely down: without re-probing, a tightened endpoint never waited
+ * out the full default budget; now it does on about every other request.
  *
  * State is in-memory and tied to the policy instance – Pipeline creates a
  * fresh instance per dataset so one offending dataset doesn’t poison the
@@ -207,6 +214,7 @@ export class AdaptiveTimeoutPolicy implements TimeoutPolicy {
     if (!state.tightened) return this.options.defaultMs;
     if (state.probeDue) {
       state.probeDue = false;
+      state.probeInFlight = true;
       return this.options.defaultMs;
     }
     return this.options.tightenedMs;
@@ -214,6 +222,9 @@ export class AdaptiveTimeoutPolicy implements TimeoutPolicy {
 
   afterRequest(context: AfterRequestContext): void {
     const state = this.stateFor(context.endpoint);
+    if (context.timeoutMs === this.options.defaultMs) {
+      state.probeInFlight = false;
+    }
     if (context.outcome === 'ok') {
       const wasTightened = state.tightened;
       const priorCount = state.consecutiveTimeouts;
@@ -233,7 +244,7 @@ export class AdaptiveTimeoutPolicy implements TimeoutPolicy {
     if (context.outcome === 'timeout') {
       if (context.timeoutMs < this.options.defaultMs) {
         // Too short a budget to judge the endpoint by: re-probe it instead.
-        if (state.tightened) state.probeDue = true;
+        if (state.tightened && !state.probeInFlight) state.probeDue = true;
         return;
       }
       state.consecutiveTimeouts += 1;
@@ -264,7 +275,12 @@ export class AdaptiveTimeoutPolicy implements TimeoutPolicy {
     const key = endpoint.toString();
     let state = this.states.get(key);
     if (!state) {
-      state = { tightened: false, consecutiveTimeouts: 0, probeDue: false };
+      state = {
+        tightened: false,
+        consecutiveTimeouts: 0,
+        probeDue: false,
+        probeInFlight: false,
+      };
       this.states.set(key, state);
     }
     return state;
