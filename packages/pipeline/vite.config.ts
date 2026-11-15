@@ -9,12 +9,14 @@ export default mergeConfig(
     test: {
       fileParallelism: false,
       coverage: {
+        // Test helpers shared between test files are not under test.
+        exclude: ['test/**'],
         thresholds: {
           autoUpdate: true,
-          functions: 99.4,
+          functions: 99.41,
           lines: 98.78,
-          branches: 96.67,
-          statements: 98.62,
+          branches: 96.82,
+          statements: 98.63,
         },
       },
     },

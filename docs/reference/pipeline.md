@@ -217,7 +217,7 @@ interface ItemSelector {
 }
 ```
 
-The distribution is received at run time, so selectors don't need the endpoint URL at construction time. The `batchSize` parameter is set by the stage; `options` carries the per-dataset [timeout policy](#timeout-policies). Use `SparqlItemSelector` for SPARQL-based selection with automatic pagination:
+The distribution is received at run time, so selectors don’t need the endpoint URL at construction time. The `batchSize` parameter is set by the stage; `options` carries the per-dataset [timeout policy](#timeout-policies) and the limiter the stage’s readers run on. Use `SparqlItemSelector` for SPARQL-based selection with automatic pagination:
 
 ```typescript
 new SparqlItemSelector({
@@ -226,6 +226,8 @@ new SparqlItemSelector({
 ```
 
 A row is yielded only when **every** projected variable binds a `NamedNode` – binding values double as stable item identities downstream, which a blank-node label or literal cannot provide. Other rows are dropped client-side but still count toward pagination, so they are fetched first; to skip them at the endpoint, filter in the query itself (e.g. `FILTER(isIRI(?s))`, as `selectByClass` in [@lde/search-pipeline](./search-pipeline) does with `FILTER(!isBlank(?root))`).
+
+Each page’s query runs on that limiter, keyed on the endpoint like the readers’ queries, and is retried the same way while the endpoint is down, struggling or throttling: see [When the endpoint fails](#when-the-endpoint-fails). A retried page is asked for again at the same offset, so no row is skipped or yielded twice.
 
 #### Page size
 
@@ -304,7 +306,7 @@ The query is templated per dataset and distribution, in order:
 
 #### When the endpoint fails
 
-Each query waits for a slot in the [pipeline’s limiter](#concurrency) and holds it until the endpoint starts answering. What the reader does then depends on the answer:
+Each query waits for a slot in the [pipeline’s limiter](#concurrency) and holds it until the endpoint starts answering. What the reader does then depends on the answer; an [item selector’s](#item-selector) page queries are retried on the same terms, and anything the reader would not retry, a 500 included, fails the selection and with it the stage:
 
 | Answer                                             | Means                                          | Limit      | Then                                                                                                                                                           |
 | -------------------------------------------------- | ---------------------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |

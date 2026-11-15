@@ -8,17 +8,18 @@ import { StreamParser } from 'n3';
 import { Parser } from '@traqula/parser-sparql-1-1';
 import { Generator } from '@traqula/generator-sparql-1-1';
 import type { QueryConstruct } from '@traqula/rules-sparql-1-1';
-import {
-  createHostLimiter,
-  endpointKeyOf,
-  parseRetryAfter,
-  type HostLimiter,
-} from '@lde/host-limiter';
+import { endpointKeyOf, type HostLimiter } from '@lde/host-limiter';
 import { quadToStringQuad } from 'rdf-string';
 import { withDefaultGraph } from './graph.js';
 import { injectValues } from './values.js';
 import { ConstantTimeoutPolicy, type TimeoutPolicy } from './timeoutPolicy.js';
-import { classifyOutcome, isTransientError, statusOf } from './failure.js';
+import { classifyOutcome, statusOf } from './failure.js';
+import {
+  createOwnLimiter,
+  fetcherNotingRetryAfter,
+  runWithRetries,
+  type ResponseNotes,
+} from './retry.js';
 
 /**
  * Fallback policy when no per-call `TimeoutPolicy` is supplied via
@@ -256,7 +257,7 @@ export class SparqlConstructReader implements Reader {
     const quads = await this.readBatch(bindings, query, {
       endpoint,
       key: endpointKeyOf(endpoint),
-      limiter: options?.limiter ?? createHostLimiter(10, 10),
+      limiter: options?.limiter ?? createOwnLimiter(),
       policy: options?.timeout ?? defaultTimeoutPolicy,
       onRootSkipped: (root, error) => {
         skipped++;
@@ -311,48 +312,18 @@ export class SparqlConstructReader implements Reader {
    * Run a query on the limiter, pausing the endpoint and trying again while it is
    * down; see {@link SparqlConstructReader}.
    */
-  private async fetchWithRetries(
+  private fetchWithRetries(
     query: string,
     attempt: Attempt,
   ): Promise<AsyncIterable<Quad>> {
-    for (let retry = 0; ; retry++) {
-      const response: ResponseNotes = {};
-      const willRetry = (error: unknown) =>
-        isTransientError(error) &&
-        retry < BACKOFF_MS.length &&
-        !asksToWaitTooLong(response);
-      try {
-        return await attempt.limiter.run(attempt.key, async (slot) => {
-          try {
-            return await this.fetchQuadsWithPolicy(
-              attempt.endpoint,
-              query,
-              attempt.policy,
-              response,
-            );
-          } catch (error) {
-            // A rejection lowers the limit, unless the slot is told otherwise.
-            if (isTransientError(error)) {
-              // Paused before the slot frees, so no query waiting for it goes
-              // out to an endpoint that is down.
-              if (willRetry(error)) {
-                attempt.limiter.pause(
-                  attempt.key,
-                  Date.now() + backoffMs(retry, response.retryAfterMs),
-                );
-              }
-            } else if (classifyOutcome(error) !== 'timeout') {
-              slot.ignore();
-            }
-            throw error;
-          }
-        });
-      } catch (error) {
-        if (!willRetry(error)) {
-          throw error;
-        }
-      }
-    }
+    return runWithRetries(attempt.limiter, attempt.key, (response) =>
+      this.fetchQuadsWithPolicy(
+        attempt.endpoint,
+        query,
+        attempt.policy,
+        response,
+      ),
+    );
   }
 
   /**
@@ -406,19 +377,7 @@ export class SparqlConstructReader implements Reader {
     timeoutMs: number,
     response: ResponseNotes,
   ): SparqlEndpointFetcher {
-    if (this.userFetcher) return this.userFetcher;
-    return new SparqlEndpointFetcher({
-      timeout: timeoutMs,
-      fetch: async (input, init) => {
-        const answer = await fetch(input, init);
-        if (!answer.ok) {
-          response.retryAfterMs = parseRetryAfter(
-            answer.headers.get('retry-after'),
-          );
-        }
-        return answer;
-      },
-    });
+    return this.userFetcher ?? fetcherNotingRetryAfter(timeoutMs, response);
   }
 
   /**
@@ -547,38 +506,6 @@ interface Attempt {
   onRootSkipped: NonNullable<ReadOptions['onRootSkipped']>;
 }
 
-/** What a query’s response said beyond its status. */
-interface ResponseNotes {
-  retryAfterMs?: number;
-}
-
 async function* noQuads(): AsyncIterable<Quad> {
   // A skipped root reads as no quads.
-}
-
-/**
- * How long a reader pauses the endpoint before each retry after it
- * went down, in milliseconds: tripled each time, about 10 minutes in all, to
- * outlast a backend restart. A `Retry-After` header replaces a step.
- */
-const BACKOFF_MS = [5_000, 15_000, 45_000, 135_000, 405_000];
-
-/**
- * How long to pause before retry `retry`: what `Retry-After` asked, or the
- * step itself when the endpoint did not say.
- */
-function backoffMs(retry: number, retryAfterMs: number | undefined): number {
-  return retryAfterMs ?? BACKOFF_MS[retry];
-}
-
-/**
- * Whether the endpoint asked to be left alone for longer than the longest
- * step, such as a rate limit’s hourly quota: the read fails at once rather
- * than ask again before the endpoint said it would answer.
- */
-function asksToWaitTooLong(response: ResponseNotes): boolean {
-  return (
-    response.retryAfterMs !== undefined &&
-    response.retryAfterMs > BACKOFF_MS[BACKOFF_MS.length - 1]
-  );
 }

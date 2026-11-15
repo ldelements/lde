@@ -1,6 +1,6 @@
 import type { Distribution } from '@lde/dataset';
 import type { Term } from '@rdfjs/types';
-import { SparqlEndpointFetcher } from 'fetch-sparql-endpoint';
+import type { SparqlEndpointFetcher } from 'fetch-sparql-endpoint';
 import { Parser } from '@traqula/parser-sparql-1-1';
 import { Generator } from '@traqula/generator-sparql-1-1';
 import {
@@ -8,9 +8,16 @@ import {
   type QuerySelect,
   type TermVariable,
 } from '@traqula/rules-sparql-1-1';
+import { endpointKeyOf } from '@lde/host-limiter';
 import type { ItemSelector, SelectOptions } from '../stage.js';
 import { classifyOutcome } from './failure.js';
 import { withDefaultGraph } from './graph.js';
+import {
+  createOwnLimiter,
+  fetcherNotingRetryAfter,
+  runWithRetries,
+  type ResponseNotes,
+} from './retry.js';
 import type { VariableBindings } from './reader.js';
 import { ConstantTimeoutPolicy, type TimeoutPolicy } from './timeoutPolicy.js';
 
@@ -90,6 +97,13 @@ export interface SparqlItemSelectorOptions {
  * applies to the extraction. The two must scope alike, or the roots come from a
  * wider source than the quads read for them.
  * Pagination is an internal detail – consumers iterate binding rows directly.
+ *
+ * Each page’s query runs on the {@link SelectOptions.limiter}, keyed on the
+ * endpoint ({@link endpointKeyOf}), and is retried the way
+ * `SparqlConstructReader` retries its queries: while the endpoint is down,
+ * struggling or throttling (408, 429, 502, 503, 504 or a network error) the
+ * selector pauses it and tries the page again. See
+ * {@link https://ldelements.org/reference/pipeline#when-the-endpoint-fails | When the endpoint fails}.
  *
  * The page size (results per SPARQL request) is determined by, in order:
  * 1. A `LIMIT` clause in the selector query (for endpoints with hard result limits)
@@ -191,6 +205,8 @@ export class SparqlItemSelector implements ItemSelector {
       withDefaultGraph(query, distribution.namedGraph);
     }
     const policy = options?.timeout ?? defaultTimeoutPolicy;
+    const limiter = options?.limiter ?? createOwnLimiter();
+    const key = endpointKeyOf(endpoint);
     let offset = 0;
     let totalFetched = 0;
     let totalYielded = 0;
@@ -216,7 +232,9 @@ export class SparqlItemSelector implements ItemSelector {
       );
       const paginatedQuery = generator.generate(query);
 
-      const page = await this.fetchPage(endpoint, paginatedQuery, policy);
+      const page = await runWithRetries(limiter, key, (response) =>
+        this.fetchPage(endpoint, paginatedQuery, policy, response),
+      );
 
       // Fetched rows drive pagination, yielded rows only `maxResults` – see
       // the class JSDoc for why dropped rows must keep their page slot.
@@ -274,15 +292,20 @@ export class SparqlItemSelector implements ItemSelector {
    * timeout from {@link TimeoutPolicy.beforeRequest} and reports the outcome
    * to {@link TimeoutPolicy.afterRequest} once the page is read, so the body
    * transfer counts towards the duration and a failure mid-body is reported.
+   * Reading the page inside the attempt means a response that breaks off
+   * mid-body is retried like one that never came, at the same offset. A
+   * failed response’s `Retry-After` is noted in `response`, unless a custom
+   * fetcher was supplied.
    */
   private async fetchPage(
     endpoint: URL,
     paginatedQuery: string,
     policy: TimeoutPolicy,
+    response: ResponseNotes,
   ): Promise<Record<string, Term>[]> {
     const timeoutMs = policy.beforeRequest({ endpoint });
     const fetcher =
-      this.userFetcher ?? new SparqlEndpointFetcher({ timeout: timeoutMs });
+      this.userFetcher ?? fetcherNotingRetryAfter(timeoutMs, response);
     const start = Date.now();
     try {
       const stream = (await fetcher.fetchBindings(
