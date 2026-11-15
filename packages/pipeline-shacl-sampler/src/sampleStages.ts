@@ -196,11 +196,13 @@ export function buildSubjectSelectorQuery({
   // Exclude blank-node subjects at the endpoint: the selector would drop them
   // client-side anyway (no stable identity), but only after fetching them –
   // and a class instantiated by many blank nodes would then be walked to the
-  // end through pages that yield nothing.
+  // end through pages that yield nothing. Order the subjects: the selector
+  // pages with LIMIT/OFFSET, which skips or repeats rows without a total order.
   return [
     'SELECT DISTINCT ?s',
     fromClause,
     `WHERE { ${subjectFilter ?? ''} ${typePattern} FILTER(!isBlank(?s)) ${excludeFilter ?? ''} }`,
+    'ORDER BY ?s',
   ].join('\n');
 }
 
