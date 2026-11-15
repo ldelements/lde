@@ -1,3 +1,9 @@
+## 0.50.2 (2026-11-15)
+
+### 🚀 Features
+
+- **pipeline:** fetch roots from imported dumps in pages of 1000 ([#1079](https://github.com/ldelements/lde/pull/1079))
+
 ## 0.50.1 (2026-11-14)
 
 ### 🩹 Fixes
