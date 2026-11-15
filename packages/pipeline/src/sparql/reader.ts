@@ -8,17 +8,14 @@ import { StreamParser } from 'n3';
 import { Parser } from '@traqula/parser-sparql-1-1';
 import { Generator } from '@traqula/generator-sparql-1-1';
 import type { QueryConstruct } from '@traqula/rules-sparql-1-1';
-import {
-  createHostLimiter,
-  endpointKeyOf,
-  type HostLimiter,
-} from '@lde/host-limiter';
+import { endpointKeyOf, type HostLimiter } from '@lde/host-limiter';
 import { quadToStringQuad } from 'rdf-string';
 import { withDefaultGraph } from './graph.js';
 import { injectValues } from './values.js';
 import { ConstantTimeoutPolicy, type TimeoutPolicy } from './timeoutPolicy.js';
 import { classifyOutcome, statusOf } from './failure.js';
 import {
+  createOwnLimiter,
   fetcherNotingRetryAfter,
   runWithRetries,
   type ResponseNotes,
@@ -260,7 +257,7 @@ export class SparqlConstructReader implements Reader {
     const quads = await this.readBatch(bindings, query, {
       endpoint,
       key: endpointKeyOf(endpoint),
-      limiter: options?.limiter ?? createHostLimiter(10, 10),
+      limiter: options?.limiter ?? createOwnLimiter(),
       policy: options?.timeout ?? defaultTimeoutPolicy,
       onRootSkipped: (root, error) => {
         skipped++;

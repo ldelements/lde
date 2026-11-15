@@ -1,5 +1,9 @@
 import { SparqlEndpointFetcher } from 'fetch-sparql-endpoint';
-import { parseRetryAfter, type HostLimiter } from '@lde/host-limiter';
+import {
+  createHostLimiter,
+  parseRetryAfter,
+  type HostLimiter,
+} from '@lde/host-limiter';
 import { classifyOutcome, isTransientError } from './failure.js';
 
 /** What a query’s response said beyond its status. */
@@ -77,6 +81,14 @@ export function fetcherNotingRetryAfter(
       return answer;
     },
   });
+}
+
+/**
+ * A limiter for a read or selection that was not given one, for its queries
+ * alone: `createHostLimiter(10, 10)`.
+ */
+export function createOwnLimiter(): HostLimiter {
+  return createHostLimiter(10, 10);
 }
 
 /**

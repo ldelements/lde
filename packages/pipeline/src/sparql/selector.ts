@@ -8,11 +8,12 @@ import {
   type QuerySelect,
   type TermVariable,
 } from '@traqula/rules-sparql-1-1';
+import { endpointKeyOf } from '@lde/host-limiter';
 import type { ItemSelector, SelectOptions } from '../stage.js';
-import { createHostLimiter, endpointKeyOf } from '@lde/host-limiter';
 import { classifyOutcome } from './failure.js';
 import { withDefaultGraph } from './graph.js';
 import {
+  createOwnLimiter,
   fetcherNotingRetryAfter,
   runWithRetries,
   type ResponseNotes,
@@ -204,7 +205,7 @@ export class SparqlItemSelector implements ItemSelector {
       withDefaultGraph(query, distribution.namedGraph);
     }
     const policy = options?.timeout ?? defaultTimeoutPolicy;
-    const limiter = options?.limiter ?? createHostLimiter(10, 10);
+    const limiter = options?.limiter ?? createOwnLimiter();
     const key = endpointKeyOf(endpoint);
     let offset = 0;
     let totalFetched = 0;
@@ -291,6 +292,10 @@ export class SparqlItemSelector implements ItemSelector {
    * timeout from {@link TimeoutPolicy.beforeRequest} and reports the outcome
    * to {@link TimeoutPolicy.afterRequest} once the page is read, so the body
    * transfer counts towards the duration and a failure mid-body is reported.
+   * Reading the page inside the attempt means a response that breaks off
+   * mid-body is retried like one that never came, at the same offset. A
+   * failed response’s `Retry-After` is noted in `response`, unless a custom
+   * fetcher was supplied.
    */
   private async fetchPage(
     endpoint: URL,

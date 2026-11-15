@@ -217,7 +217,7 @@ interface ItemSelector {
 }
 ```
 
-The distribution is received at run time, so selectors don't need the endpoint URL at construction time. The `batchSize` parameter is set by the stage; `options` carries the per-dataset [timeout policy](#timeout-policies) and the limiter the stage’s readers run on. Use `SparqlItemSelector` for SPARQL-based selection with automatic pagination:
+The distribution is received at run time, so selectors don’t need the endpoint URL at construction time. The `batchSize` parameter is set by the stage; `options` carries the per-dataset [timeout policy](#timeout-policies) and the limiter the stage’s readers run on. Use `SparqlItemSelector` for SPARQL-based selection with automatic pagination:
 
 ```typescript
 new SparqlItemSelector({

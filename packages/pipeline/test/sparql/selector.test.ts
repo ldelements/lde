@@ -889,6 +889,53 @@ describe('SparqlItemSelector', () => {
       expect(asked[2]).toBe(asked[1]);
     });
 
+    it('asks for a page again when its response breaks off mid-body', async () => {
+      const { fetcher } = pagedFetcher([
+        [
+          { uri: namedNode('http://example.com/1') },
+          { uri: namedNode('http://example.com/2') },
+        ],
+        [{ uri: namedNode('http://example.com/3') }],
+      ]);
+      const serve = fetcher.fetchBindings.getMockImplementation()!;
+      let requests = 0;
+      fetcher.fetchBindings.mockImplementation(
+        (endpoint: string, generatedQuery: string) => {
+          if (++requests !== 2) return serve(endpoint, generatedQuery);
+          // The endpoint starts answering the second page, then the
+          // connection drops: undici’s mid-body network error.
+          const brokenStream = new Readable({
+            objectMode: true,
+            read() {
+              this.push({ uri: namedNode('http://example.com/3') });
+              this.destroy(new TypeError('terminated'));
+            },
+          });
+          return Promise.resolve(brokenStream);
+        },
+      );
+      const { limiter, pauses } = recordingLimiter();
+
+      const rows = await drain(
+        new SparqlItemSelector({ query, fetcher: fetcher as never }),
+        limiter,
+        2,
+      );
+
+      expect(rows.map((row) => row.uri.value)).toEqual([
+        'http://example.com/1',
+        'http://example.com/2',
+        'http://example.com/3',
+      ]);
+      const asked = fetcher.fetchBindings.mock.calls.map(
+        ([, generatedQuery]) => generatedQuery as string,
+      );
+      expect(asked).toHaveLength(3);
+      expect(asked[1]).toContain('OFFSET 2');
+      expect(asked[2]).toBe(asked[1]);
+      expect(pauses).toHaveLength(1);
+    });
+
     it('backs off 5, 15, 45, 135 and 405 s, then fails the selection', async () => {
       const fetcher = {
         fetchBindings: vi.fn().mockRejectedValue(httpError(502)),
