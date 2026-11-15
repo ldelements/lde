@@ -1,3 +1,30 @@
+## 0.23.0 (2026-11-15)
+
+### 🩹 Fixes
+
+- ⚠️  **sparql-qlever:** require dataDir in docker mode ([#1072](https://github.com/ldelements/lde/pull/1072))
+
+### ⚠️  Breaking Changes
+
+- **sparql-qlever:** require dataDir in docker mode  ([#1072](https://github.com/ldelements/lde/pull/1072))
+  createQlever({ mode: 'docker' }) now requires dataDir.
+  Pass an absolute host directory, e.g. dataDir: '/data'.
+  * fix(sparql-qlever): resolve a relative docker dataDir and reject an empty one
+  Docker reads a relative bind source as a named volume while the downloader resolves it
+  against the working directory, so docker mode now resolves dataDir to an absolute path
+  for both. A missing or empty dataDir throws a clear error for untyped callers.
+  Type-check the test directory so the @ts-expect-error tests actually check, declare
+  the docker dataDir once, and use ./data in the examples.
+  * test(sparql-qlever): update coverage thresholds"
+  M	docs/reference/search-pipeline.md
+  M	docs/reference/sparql-qlever.md
+  M	packages/search-pipeline/src/search-indexer-pipeline.ts
+  M	packages/sparql-qlever/README.md
+  M	packages/sparql-qlever/src/createQlever.ts
+  M	packages/sparql-qlever/test/createQlever.test.ts
+  M	packages/sparql-qlever/tsconfig.spec.json
+  M	packages/sparql-qlever/vite.config.ts
+
 ## 0.22.0 (2026-11-14)
 
 ### 🚀 Features

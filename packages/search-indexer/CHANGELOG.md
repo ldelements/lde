@@ -1,3 +1,12 @@
+## 0.45.0 (2026-11-15)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.58.0
+- Updated @lde/search-pipeline to 0.55.0
+- Updated @lde/sparql-qlever to 0.23.0
+- Updated @lde/search to 0.43.0
+
 ## 0.44.3 (2026-11-15)
 
 ### 🧱 Updated Dependencies

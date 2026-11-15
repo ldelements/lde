@@ -1,3 +1,22 @@
+## 0.43.0 (2026-11-15)
+
+### 🩹 Fixes
+
+- ⚠️  **search:** reject a field named like an output text sibling’s display field ([#1071](https://github.com/ldelements/lde/pull/1071))
+
+### ⚠️  Breaking Changes
+
+- **search:** reject a field named like an output text sibling’s display field  ([#1071](https://github.com/ldelements/lde/pull/1071))
+  searchSchema() now throws for a field named like an output text
+  sibling’s display field (e.g. title_tags beside title). Rename the sibling so it no
+  longer matches <text field>_<language>, for example titleTags or title_tag_list."
+  M	docs/reference/search.md
+  M	packages/search/src/project.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/test/missing-required-fields.test.ts
+  M	packages/search/test/schema.test.ts
+  M	packages/search/vite.config.ts
+
 ## 0.42.0 (2026-11-13)
 
 ### 🚀 Features
