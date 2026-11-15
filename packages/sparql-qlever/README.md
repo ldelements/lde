@@ -12,7 +12,7 @@ npm install @lde/sparql-qlever
 const { importer, server } = createQlever({
   mode: 'docker',
   image: 'adfreiburg/qlever:latest',
-  dataDir: '/data',
+  dataDir: './data',
   serverOptions: {
     'memory-max-size': '12G',
     'default-query-timeout': '120s',

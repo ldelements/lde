@@ -1,3 +1,4 @@
+import { resolve } from 'node:path';
 import { DockerTaskRunner } from '@lde/task-runner-docker';
 import { HttpTaskRunner } from '@lde/task-runner-http';
 import { NativeTaskRunner } from '@lde/task-runner-native';
@@ -29,40 +30,36 @@ export type QleverOptions = {
   /** Options for `qlever-server` (query processing). */
   serverOptions?: QleverServerOptions;
 } & (
-  | {
+  | ({
       mode: 'docker';
       image: string;
       /**
-       * Absolute host directory bind-mounted into the QLever container. The
-       * importer downloads into it and QLever builds the index there, so
-       * without it the container cannot see the data.
+       * Host directory that is bind-mounted into the QLever container at
+       * `/mount`. The default downloader stores the data files in it and
+       * QLever builds the index there. A relative path is resolved against
+       * the process working directory.
        */
       dataDir: string;
-      containerName?: string;
-      network?: never;
-    }
-  | {
-      mode: 'docker';
-      image: string;
-      /**
-       * Absolute host directory bind-mounted into the QLever container. The
-       * importer downloads into it and QLever builds the index there, so
-       * without it the container cannot see the data.
-       */
-      dataDir: string;
-      /**
-       * Docker network to attach the QLever containers to. Set this when the
-       * consumer itself runs in a container on that network: the query
-       * endpoint is then addressed by `containerName` as hostname instead of
-       * a host-published `localhost` port, which a containerized consumer on
-       * a bridge network cannot reach. Leave unset when the consumer runs on
-       * the host (or shares the QLever container’s network namespace), where
-       * `localhost` is correct.
-       */
-      network: string;
-      /** The hostname at which consumers on the network reach the endpoint. */
-      containerName: string;
-    }
+    } & (
+      | {
+          containerName?: string;
+          network?: never;
+        }
+      | {
+          /**
+           * Docker network to attach the QLever containers to. Set this when the
+           * consumer itself runs in a container on that network: the query
+           * endpoint is then addressed by `containerName` as hostname instead of
+           * a host-published `localhost` port, which a containerized consumer on
+           * a bridge network cannot reach. Leave unset when the consumer runs on
+           * the host (or shares the QLever container’s network namespace), where
+           * `localhost` is correct.
+           */
+          network: string;
+          /** The hostname at which consumers on the network reach the endpoint. */
+          containerName: string;
+        }
+    ))
   | { mode: 'native' }
   | {
       /**
@@ -84,6 +81,14 @@ export type QleverOptions = {
  * working directory) so that the server can serve the index the importer built.
  */
 export function createQlever(options: QleverOptions) {
+  if (options.mode === 'docker' && !options.dataDir) {
+    throw new Error('dataDir is required for QLever docker mode');
+  }
+  // Docker reads a relative bind source as a named volume, while the
+  // downloader resolves it against the working directory, so make both see
+  // the same absolute directory.
+  const dataDir =
+    options.mode === 'docker' ? resolve(options.dataDir) : options.dataDir;
   const port = options.port ?? 7001;
   // On a shared network the endpoint is reached by container name, so don't
   // claim a host port.
@@ -96,7 +101,7 @@ export function createQlever(options: QleverOptions) {
       ? new DockerTaskRunner({
           image: options.image,
           containerName: options.containerName,
-          mountDir: options.dataDir,
+          mountDir: dataDir,
           network: options.network,
           port: hostname ? undefined : port,
         })
@@ -108,8 +113,7 @@ export function createQlever(options: QleverOptions) {
     importer: new Importer({
       taskRunner,
       indexName: options.indexName,
-      downloader:
-        options.downloader ?? new LastModifiedDownloader(options.dataDir),
+      downloader: options.downloader ?? new LastModifiedDownloader(dataDir),
       cacheIndex: options.cacheIndex,
       qleverOptions: options.indexOptions,
       replaceJsonLdContext: options.replaceJsonLdContext,

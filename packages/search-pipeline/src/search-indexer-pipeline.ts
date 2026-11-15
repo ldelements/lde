@@ -184,7 +184,7 @@ export interface SearchIndexerPipelineOptions {
  *     ...createQlever({
  *       mode: 'docker',
  *       image: 'adfreiburg/qlever:latest',
- *       dataDir: '/data',
+ *       dataDir: './data',
  *     }),
  *     strategy: 'import',
  *   }),

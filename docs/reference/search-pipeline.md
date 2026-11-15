@@ -75,7 +75,7 @@ const pipeline = searchIndexerPipeline({
     ...createQlever({
       mode: 'docker',
       image: 'adfreiburg/qlever:latest',
-      dataDir: '/data',
+      dataDir: './data',
     }),
     strategy: 'import',
   }),
