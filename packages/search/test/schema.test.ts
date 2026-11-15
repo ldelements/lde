@@ -666,6 +666,46 @@ describe('validateSearchType', () => {
     ).toEqual([{ field: 'created_precision', reason: 'reserved-field-name' }]);
   });
 
+  it('rejects a field named like an output text sibling’s display field', () => {
+    // `title_tags` matches `title_[^_]+`, so it would be read back as the
+    // display value of `title` in language `tags`.
+    const searchType: SearchType = {
+      name: 'Dataset',
+      class: 'https://example.org/Dataset',
+      fields: [
+        { name: 'title', kind: 'text', locales: ['nl'], output: true },
+        { name: 'title_tags', kind: 'keyword', array: true, output: true },
+      ],
+    };
+    expect(validateSearchType(searchType)).toEqual([
+      {
+        field: 'title_tags',
+        reason: 'display-field-name',
+        clashesWith: 'title',
+      },
+    ]);
+    expect(() => assertValidSearchType(searchType)).toThrow(
+      'Invalid search type “Dataset”: “title_tags” (display-field-name, clashes with “title”).',
+    );
+  });
+
+  it('accepts a field named like a text sibling that has no display', () => {
+    // A text field that is not `output` stores no display fields, and a name
+    // with a second underscore is never one.
+    expect(
+      validateSearchType({
+        name: 'Dataset',
+        class: 'https://example.org/Dataset',
+        fields: [
+          { name: 'title', kind: 'text', locales: ['nl'], sortable: true },
+          { name: 'title_tags', kind: 'keyword', output: true },
+          { name: 'label', kind: 'text', locales: ['nl'], output: true },
+          { name: 'label_search_x', kind: 'keyword', output: true },
+        ],
+      }),
+    ).toEqual([]);
+  });
+
   it('rejects a declared locale containing an underscore', () => {
     // `_` is the reserved name↔locale separator; a locale carrying one would
     // collide with the physical/display field naming.
