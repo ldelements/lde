@@ -531,7 +531,20 @@ Limitations to design around:
   refreshing it – because the process died. The lock records which run holds
   it. A run whose lock was taken over refuses to commit – blue/green does not
   swap the alias, in-place does not sweep – and releasing never deletes
-  another run’s lock.
+  another run’s lock. `lockTtlMs` must be positive and finite.
+- **Ownership is checked, then acted on.** Refreshing, releasing and
+  committing first read who holds the lock and then write, delete or go
+  live. Typesense has no conditional write that could make this one step, so
+  a run whose lock is taken over between the two can still refresh, delete
+  or commit once more – the advisory limit above, in another place.
+- **An open run holds its lock for as long as its process lives.** The
+  heartbeat stops only on `commit`, `abort` or process exit, so a run that is
+  opened and then neither committed nor aborted blocks the index until its
+  process exits.
+- **Mixed-version rollouts.** A pod on a version without the heartbeat
+  neither refreshes its lock nor checks who holds it, so until every pod runs
+  a version with it, an older pod’s long run can still overlap a newer one,
+  and its release can delete the newer run’s lock.
 - **Membership-sweep cap.** The in-place membership sweep enumerates distinct
   sources via a single facet, capped at `maxSweepableSources` (default
   10 000); beyond that the commit throws rather than sweeping blind. Raise the

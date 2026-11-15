@@ -195,7 +195,9 @@ export class InPlaceRebuild<
         },
 
         abort: async () => {
-          await lock.release();
+          // The caller is aborting over an error of its own, which a failed
+          // release must not replace; the lock goes stale on its TTL instead.
+          await lock.release().catch(() => undefined);
         },
       };
     });

@@ -50,6 +50,7 @@ describe('acquireLock', () => {
     expect(acquired).toBeDefined();
     expect(createDocument).toHaveBeenCalledOnce();
     expect(createCollection).not.toHaveBeenCalled();
+    await acquired?.release();
   });
 
   it('creates the lock collection on first use, tolerating a concurrent creator', async () => {
@@ -74,6 +75,7 @@ describe('acquireLock', () => {
     expect(acquired).toBeDefined();
     expect(createCollection).toHaveBeenCalledOnce();
     expect(createDocument).toHaveBeenCalledTimes(2);
+    await acquired?.release();
   });
 
   it('rethrows an unexpected error from creating the lock collection', async () => {
@@ -148,7 +150,12 @@ describe('acquireLock', () => {
  * A fake lock store that keeps the lock document, so a run can take, refresh,
  * lose and release it like it would against Typesense.
  */
-function statefulClient() {
+function statefulClient(
+  options: {
+    /** Replaces the refresh write; call `write` to let it land. */
+    upsert?: (write: () => void) => Promise<void>;
+  } = {},
+) {
   const store = new Map<string, Record<string, unknown>>();
   const client = {
     collections: () => ({
@@ -162,7 +169,12 @@ function statefulClient() {
                 store.set(document.id, document);
               },
               upsert: async (document: { id: string }) => {
-                store.set(document.id, document);
+                const write = () => store.set(document.id, document);
+                if (options.upsert === undefined) {
+                  write();
+                } else {
+                  await options.upsert(write);
+                }
               },
             }
           : {
@@ -249,6 +261,61 @@ describe('a held lock', () => {
 
     expect(store.get('datasets')).toMatchObject({ owner: 'another run' });
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('skips a beat while the previous refresh is still in flight', async () => {
+    let landRefresh: (() => void) | undefined;
+    const upsert = vi.fn(
+      (write: () => void) =>
+        new Promise<void>((resolve) => {
+          landRefresh = () => {
+            write();
+            resolve();
+          };
+        }),
+    );
+    const { client, store } = statefulClient({ upsert });
+    const lock = await heldLock(client);
+
+    // Several beats pass while the first refresh hangs.
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(upsert).toHaveBeenCalledOnce();
+
+    const released = lock.release();
+    landRefresh?.();
+    await released;
+
+    // The one refresh landed before the delete, so nothing recreates the lock.
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(store.has('datasets')).toBe(false);
+  });
+
+  it('remembers it was lost, without asking again', async () => {
+    const { client, store, takeOver } = statefulClient();
+    const lock = await heldLock(client);
+    takeOver('datasets');
+    await vi.advanceTimersByTimeAsync(1000);
+    const retrieve = vi.spyOn(store, 'get');
+
+    await expect(lock.assertHeld()).rejects.toThrow(
+      /Another run took over the rebuild lock on “datasets”/,
+    );
+    await lock.release();
+
+    expect(retrieve).not.toHaveBeenCalled();
+    expect(store.get('datasets')).toMatchObject({ owner: 'another run' });
+  });
+
+  it('caps the refresh interval at the longest timer delay', async () => {
+    const { client, store } = statefulClient();
+    const lock = await heldLock(client, 2 ** 40);
+    const retrieve = vi.spyOn(store, 'get');
+
+    // An unclamped interval overflows the timer, which then fires every 1 ms.
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(retrieve).not.toHaveBeenCalled();
+    await lock.release();
   });
 
   it('keeps refreshing after a failed refresh', async () => {

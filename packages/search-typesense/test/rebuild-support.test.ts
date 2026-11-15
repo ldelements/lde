@@ -169,4 +169,13 @@ describe('settleDataset', () => {
       resolveRebuildOptions(WORK, { maxRejectedShare: 1.5 }),
     ).toThrow('maxRejectedShare must be a share from 0 to 1, got 1.5.');
   });
+
+  it.each([Infinity, NaN, 0, -1])(
+    'refuses a lockTtlMs of %s when the writer is built',
+    (lockTtlMs) => {
+      expect(() => resolveRebuildOptions(WORK, { lockTtlMs })).toThrow(
+        `lockTtlMs must be a positive, finite number of milliseconds, got ${lockTtlMs}.`,
+      );
+    },
+  );
 });

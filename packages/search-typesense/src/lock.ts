@@ -46,7 +46,9 @@ export async function openLockedRun<Run>(
   try {
     return await setup(lock);
   } catch (error) {
-    await lock.release();
+    // The setup failure is what the caller must see, not a failed release;
+    // a lock left behind goes stale on its TTL, as release stops refreshing it.
+    await lock.release().catch(() => undefined);
     throw error;
   }
 }
@@ -64,7 +66,10 @@ export async function openLockedRun<Run>(
  * consensus store. Under a reclaim race two rebuilds can briefly run at
  * once; Blue/green tolerates this because it is idempotent (worst case:
  * redundant work and a transient orphaned collection), In-place because its
- * upserts are idempotent.
+ * upserts are idempotent. For the same reason, checking ownership and then
+ * refreshing, deleting or committing are two steps, not one atomic write.
+ * The heartbeat stops only on release or process exit, so a run that is
+ * never committed or aborted keeps the lock while its process lives.
  */
 export async function acquireLock(
   client: Client,
@@ -165,6 +170,9 @@ async function reclaimIfStale(
   return true;
 }
 
+/** Node’s largest timer delay (ms); a longer one fires after 1 ms instead. */
+const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
+
 /** Refresh the lock every third of `ttlMs` until it is released or lost. */
 function holdLock(
   client: Client,
@@ -173,24 +181,40 @@ function holdLock(
   owner: string,
 ): HeldLock {
   const holds = async () => (await readLock(client, name))?.owner === owner;
-  let refreshing: Promise<void> = Promise.resolve();
-  const heartbeat = setInterval(() => {
-    refreshing = (async () => {
-      if (await holds()) {
-        await writeLock(client, name, owner);
-      } else {
-        clearInterval(heartbeat);
+  // Set once a beat finds another run holding the lock, which it never gives
+  // back to this run.
+  let lost = false;
+  // The refresh in flight, if any. A beat that finds one still running is
+  // skipped, so this is the only refresh `release` has to wait for.
+  let refreshing: Promise<void> | undefined;
+  const heartbeat = setInterval(
+    () => {
+      if (refreshing !== undefined) {
+        return;
       }
-      // A failed refresh is retried on the next beat; the TTL leaves room for
-      // two more before the lock goes stale.
-    })().catch(() => undefined);
-  }, ttlMs / 3);
+      refreshing = (async () => {
+        if (await holds()) {
+          await writeLock(client, name, owner);
+        } else {
+          lost = true;
+          clearInterval(heartbeat);
+        }
+        // A failed refresh is retried on the next beat; the TTL leaves room
+        // for two more before the lock goes stale.
+      })()
+        .catch(() => undefined)
+        .finally(() => {
+          refreshing = undefined;
+        });
+    },
+    Math.min(ttlMs / 3, MAX_TIMER_DELAY_MS),
+  );
   // An open run must not keep the process alive on its own.
   heartbeat.unref();
 
   return {
     assertHeld: async () => {
-      if (!(await holds())) {
+      if (lost || !(await holds())) {
         throw new Error(
           `Another run took over the rebuild lock on “${name}”, so this run does not go live`,
         );
@@ -201,7 +225,7 @@ function holdLock(
       // Let a refresh already in flight land first, or it would recreate
       // the lock after the delete.
       await refreshing;
-      if (!(await holds())) {
+      if (lost || !(await holds())) {
         return;
       }
       try {
