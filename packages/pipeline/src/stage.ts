@@ -131,9 +131,10 @@ export interface StageOptions<Out = Quad> {
   /**
    * Maximum number of bindings per reader call.
    *
-   * Also used as the selector's page size so that each paginated request
-   * fills exactly one batch. A `LIMIT` clause in the selector query
-   * overrides this for endpoints with hard result limits.
+   * Also the item selector’s page size for a live endpoint, so that each
+   * paginated request fills one batch. From an imported dump,
+   * `SparqlItemSelector` fetches pages of 1000 bindings by default (its
+   * `pageSize`) and the stage cuts them into batches of this size.
    *
    * Give a value per {@link SourceKind} where the two kinds of source want
    * different sizes: an engine that imported a dump for this run alone
@@ -253,6 +254,14 @@ export interface RunOptions extends Pick<
 export interface SelectOptions {
   /** Per-call timeout policy. */
   timeout?: TimeoutPolicy;
+  /**
+   * What the distribution handed to {@link ItemSelector.select} serves, as the
+   * stage reads it ({@link RunOptions.source}). A selector may page an
+   * imported dump in larger requests than a live endpoint.
+   *
+   * @default 'endpoint'
+   */
+  source?: SourceKind;
 }
 
 export class Stage<Out = Quad> {
@@ -350,6 +359,7 @@ export class Stage<Out = Quad> {
         tally.selected(
           this.itemSelector.select(distribution, batchSize, {
             timeout,
+            source,
           }),
         ),
         batchSize,
