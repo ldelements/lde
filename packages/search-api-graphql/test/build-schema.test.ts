@@ -508,6 +508,8 @@ describe('buildGraphQLSchema', () => {
       } } }`,
       { engine, acceptLanguage: ['nl'] },
     );
+    // The bounds serialize as Int without erroring the facet.
+    expect(result.errors).toBeUndefined();
     const facets = (result.data?.datasets as Record<string, unknown>)
       .facets as {
       size: { buckets: unknown[] };
@@ -1358,7 +1360,7 @@ describe('buildGraphQLSchema', () => {
     expect(sdl).toMatch(/size: IntRange/);
   });
 
-  it('serves a binned number facet’s bounds as Float, the type FloatRange takes', () => {
+  it('serves a binned number facet’s bounds as Float, the type FloatRange takes', async () => {
     const binned: SearchType = {
       ...schema,
       fields: schema.fields.map((field): SearchField =>
@@ -1376,18 +1378,46 @@ describe('buildGraphQLSchema', () => {
           : field,
       ),
     };
-    const sdl = printSchema(
-      buildGraphQLSchema(
-        searchSchema(binned, organization, term),
-        datasetOptions,
-      ),
-    );
+    const searchSchemaWithBins = searchSchema(binned, organization, term);
+    const built = buildGraphQLSchema(searchSchemaWithBins, datasetOptions);
+    const sdl = printSchema(built);
     expect(sdl).toMatch(
       /type FloatBinnedRangeFacet {[^}]*all: FloatExtent\n[^}]*buckets: \[FloatRangeBucket!\]!/,
     );
     expect(sdl).toMatch(
       /type FloatRangeBucket \{\s+min: Float\s+max: Float\s+count: Int!/,
     );
+    const facets: SearchResult['facets'] = {
+      score: {
+        buckets: [
+          { value: 'low', count: 3, max: 0.5 },
+          { value: 'high', count: 1, min: 0.5 },
+        ],
+      },
+    };
+    const engine: SearchEngine = {
+      schema: searchSchemaWithBins,
+      search: async () => ({ total: 0, hits: [], facets }),
+      searchFacets: async (_searchType, queries) =>
+        queries.map(() => ({ facets })),
+    };
+    const result = await graphql({
+      schema: built,
+      source: `{ datasets { facets { score { buckets { min max count } } } } }`,
+      contextValue: { engine, acceptLanguage: ['nl'] },
+    });
+    // A fractional bound serializes as Float, where Int would error the facet.
+    expect(result.errors).toBeUndefined();
+    expect(
+      (
+        (result.data?.datasets as Record<string, unknown>).facets as {
+          score: { buckets: unknown[] };
+        }
+      ).score.buckets,
+    ).toEqual([
+      { min: null, max: 0.5, count: 3 },
+      { min: 0.5, max: null, count: 1 },
+    ]);
   });
 
   it('buckets a reference facet on IRI, so a bucket feeds the filter that selects it', () => {

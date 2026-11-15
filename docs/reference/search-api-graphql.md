@@ -374,10 +374,12 @@ role: { in: ["etser"] } } }` asks for _this person in this role_, where the
     `‹Kind›BinnedRangeFacet` variant instead, whose buckets hold one bucket
     per declared half-open `[min, max)` bin, carrying `min`/`max` (null on an
     open end) and `count`, with no `value` or `label`. Like the extent, a
-    bin’s bounds are in the type the field’s range filter takes, so a bin
-    feeds straight back into `where`: `[IntRangeBucket!]!`,
-    `[FloatRangeBucket!]!` or `[DateRangeBucket!]!`. A date bin’s bounds are
-    served at the precision they were declared in (`1900`, not
+    bin’s bounds are in the type the field’s range filter takes:
+    `[IntRangeBucket!]!`, `[FloatRangeBucket!]!` or `[DateRangeBucket!]!`. A
+    number bin’s `max` is exclusive while the range filter’s is inclusive, so
+    the filter built from a number bin also matches values equal to its
+    `max`. A date bin is inclusive like the filter, and its bounds are served
+    at the precision they were declared in (`1900`, not
     `1900-01-01T00:00:00Z`);
   - a `boolean` field returns `[BooleanBucket!]!` – `value: Boolean!` +
     `count`, and **no `label` field at all**. The value is a real boolean, so

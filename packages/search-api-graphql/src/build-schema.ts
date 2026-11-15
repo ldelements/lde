@@ -427,16 +427,6 @@ export function buildGraphQLSchema(
       count: { type: new GraphQLNonNull(GraphQLInt) },
     },
   });
-  // A range-facet bin: its bounds (null on an open end) in the type its
-  // field’s `range` filter takes (IntRange, FloatRange, DateRange), so a bin
-  // feeds straight back into the filter that selects it, and the count of
-  // documents in it. A number bin is half-open `[min, max)`; a date bin’s
-  // bounds are served as the ISO 8601 it was declared in.
-  const rangeBucketTypes = {
-    integer: rangeBucketType('IntRangeBucket', GraphQLInt),
-    number: rangeBucketType('FloatRangeBucket', GraphQLFloat),
-    date: rangeBucketType('DateRangeBucket', dateScalar),
-  };
   // A boolean-facet bucket: the value as a real boolean, so the bucket a client
   // selects round-trips straight into the `is` filter that selects it. No label
   // – a boolean has no data label to resolve, and the sensible rendering (“with
@@ -479,19 +469,38 @@ export function buildGraphQLSchema(
     type: GraphQLInt,
     description: `At most this many buckets, between 1 and ${maxFacetLimit}: the values with the highest counts. A larger limit returns a superset of a smaller one; there is no next page. Omit it for the deployment’s default.`,
   };
-  // A range facet’s extent, in the type its field’s `range` filter takes
-  // (IntRange, FloatRange, DateRange), so a slider’s bounds feed straight back
-  // into the filter that selects them. A date is stored as Unix seconds and
-  // served as an ISO 8601 date-time (an `xsd:gYear` in deep time): a facet
-  // spans documents whose dates may each have a different precision, so it
-  // states none of its own, and a client draws the slider at whatever grain
-  // it chooses.
-  const extentTypes = {
-    integer: extentType('IntExtent', GraphQLInt),
-    number: extentType('FloatExtent', GraphQLFloat),
-    date: extentType('DateExtent', dateScalar, servedDateTime),
+  // Per range kind: the prefix of its facet type names, its extent and its
+  // bin type. Both carry their bounds in the type the field’s `range` filter
+  // takes (IntRange, FloatRange, DateRange).
+  //
+  // The extent’s bounds feed straight back into the filter that selects them,
+  // as a slider’s. A date is stored as Unix seconds and served as an ISO 8601
+  // date-time (an `xsd:gYear` in deep time): a facet spans documents whose
+  // dates may each have a different precision, so it states none of its own,
+  // and a client draws the slider at whatever grain it chooses.
+  //
+  // A bin carries its bounds (null on an open end) and the count of documents
+  // in it. A number bin is half-open `[min, max)` while the inclusive range
+  // filter is not, so sending a number bin back as the filter also matches
+  // values equal to its `max`. A date bin is inclusive like the filter, and
+  // its bounds are served as the ISO 8601 it was declared in.
+  const rangeKinds = {
+    integer: {
+      prefix: 'Int',
+      extent: extentType('IntExtent', GraphQLInt),
+      bucket: rangeBucketType('IntRangeBucket', GraphQLInt),
+    },
+    number: {
+      prefix: 'Float',
+      extent: extentType('FloatExtent', GraphQLFloat),
+      bucket: rangeBucketType('FloatRangeBucket', GraphQLFloat),
+    },
+    date: {
+      prefix: 'Date',
+      extent: extentType('DateExtent', dateScalar, servedDateTime),
+      bucket: rangeBucketType('DateRangeBucket', dateScalar),
+    },
   };
-  const rangeFacetPrefixes = { integer: 'Int', number: 'Float', date: 'Date' };
   // A range facet: the extent over the whole collection and over the
   // documents the other filters leave, plus the buckets over the latter – one
   // per distinct value, or, for a field declaring bins, one per bin. One type
@@ -500,10 +509,8 @@ export function buildGraphQLSchema(
   const rangeFacetTypes = new Map<string, GraphQLObjectType>();
   function rangeFacetTypeFor(field: NumericField): GraphQLObjectType {
     const binned = isBinnedRangeFacet(field);
-    const extent = extentTypes[field.kind];
-    const name = `${rangeFacetPrefixes[field.kind]}${
-      binned ? 'Binned' : ''
-    }RangeFacet`;
+    const { prefix, extent, bucket: binBucket } = rangeKinds[field.kind];
+    const name = `${prefix}${binned ? 'Binned' : ''}RangeFacet`;
     const existing = rangeFacetTypes.get(name);
     if (existing !== undefined) {
       return existing;
@@ -533,7 +540,7 @@ export function buildGraphQLSchema(
         buckets: {
           type: nonNullListOf(
             binned
-              ? rangeBucketTypes[field.kind]
+              ? binBucket
               : field.kind === 'date'
                 ? dateBucket
                 : valueBucket,
@@ -839,7 +846,7 @@ export function buildGraphQLSchema(
     languageString.name,
     valueBucket.name,
     iriBucket.name,
-    ...Object.values(rangeBucketTypes).map((type) => type.name),
+    ...Object.values(rangeKinds).map(({ bucket }) => bucket.name),
     dateBucket.name,
     booleanBucket.name,
     valueFacet.name,
@@ -2682,9 +2689,13 @@ function canonicalDate(declared: string | undefined): string | undefined {
     : unixSecondsToIso(stored.seconds, stored.precision);
 }
 
+/** The scalar a range kind’s bounds are served and filtered in. */
+type RangeBound =
+  typeof GraphQLInt | typeof GraphQLFloat | typeof GraphQLString;
+
 function extentType(
   name: string,
-  bound: typeof GraphQLInt | typeof GraphQLFloat | typeof GraphQLString,
+  bound: RangeBound,
   serve: (stored: number) => number | string = (stored) => stored,
 ): GraphQLObjectType {
   const field = (key: 'min' | 'max') => ({
@@ -2697,10 +2708,7 @@ function extentType(
   });
 }
 
-function rangeBucketType(
-  name: string,
-  bound: typeof GraphQLInt | typeof GraphQLFloat | typeof GraphQLString,
-): GraphQLObjectType {
+function rangeBucketType(name: string, bound: RangeBound): GraphQLObjectType {
   return new GraphQLObjectType({
     name,
     fields: {
@@ -2711,10 +2719,7 @@ function rangeBucketType(
   });
 }
 
-function rangeInput(
-  name: string,
-  bound: typeof GraphQLInt | typeof GraphQLFloat | typeof GraphQLString,
-): GraphQLInputObjectType {
+function rangeInput(name: string, bound: RangeBound): GraphQLInputObjectType {
   return new GraphQLInputObjectType({
     name,
     fields: { min: { type: bound }, max: { type: bound } },
