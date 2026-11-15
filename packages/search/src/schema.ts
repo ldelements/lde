@@ -2182,15 +2182,19 @@ export function validateSearchType(
   // back as one of its languages.
   const displayTextFields = searchType.fields.filter(
     (field): field is TextField =>
-      field.kind === 'text' && field.output === true,
+      field.kind === 'text' && Boolean(field.output),
   );
   for (const declared of searchType.fields) {
     // Validation guards declarations built OUTSIDE TypeScript (a SHACL
     // generator, plain JS), so it inspects the uniform flat shape rather
     // than trusting the discriminated union.
     const field = declared as FlatField;
-    const issue = (reason: SearchTypeIssue['reason']) =>
-      issues.push({ field: field.name, reason });
+    const issue = (reason: SearchTypeIssue['reason'], clashesWith?: string) =>
+      issues.push({
+        field: field.name,
+        reason,
+        ...(clashesWith === undefined ? {} : { clashesWith }),
+      });
     if (seen.has(field.name)) {
       issue('duplicate-field-name');
     }
@@ -2212,11 +2216,7 @@ export function validateSearchType(
     }
     for (const textField of displayTextFields) {
       if (displayLangOf(textField, field.name) !== undefined) {
-        issues.push({
-          field: field.name,
-          reason: 'display-field-name',
-          clashesWith: textField.name,
-        });
+        issue('display-field-name', textField.name);
       }
     }
     // Every kind-dependent rule below would silently pass for a kind outside

@@ -174,6 +174,9 @@ describe('missingRequiredFields', () => {
   });
 
   it('does not mistake a sibling field for a language of a text field', () => {
+    // `title` is not `output`, so it stores no display fields and
+    // `title_short` is no language of it. (Beside an `output` `title`,
+    // validation rejects that name.)
     const note = defineSearchType({
       name: 'Note',
       class: `${SCHEMA_ORG}Comment`,
@@ -183,7 +186,7 @@ describe('missingRequiredFields', () => {
           kind: 'text',
           path: `${SCHEMA_ORG}name`,
           locales: ['nl'],
-          output: true,
+          sortable: true,
           required: true,
         },
         {

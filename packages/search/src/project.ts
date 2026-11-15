@@ -408,7 +408,7 @@ export function missingRequiredFields(
       field.required === true &&
       field.array !== true &&
       field.kind !== 'boolean' &&
-      !hasValue(document, field, searchType)
+      !hasValue(document, field)
     ) {
       missing.add(field.name);
     }
@@ -436,14 +436,12 @@ export function missingRequiredFields(
 }
 
 /** Whether a projected document carries a value for `field`: for text, in any
- *  of the physical fields it spreads over – never in a sibling field whose
- *  name only looks like one of them (`title_short` beside `title`); for a
- *  lookup reading its literals as periods, a referent or a period. */
-function hasValue(
-  document: ProjectedNode,
-  field: SearchField,
-  searchType: SearchType,
-): boolean {
+ *  of the physical fields it spreads over – display fields only when it is
+ *  `output`, so a sibling named like one (`title_short` beside a non-output
+ *  `title`) never counts, and validation rejects such a sibling beside an
+ *  `output` one; for a lookup reading its literals as periods, a referent or a
+ *  period. */
+function hasValue(document: ProjectedNode, field: SearchField): boolean {
   if (field.kind !== 'text') {
     const periods =
       literalKindOf(field) === 'period'
@@ -460,8 +458,7 @@ function hasValue(
       document[key] !== undefined &&
       (search.includes(key) ||
         sort.includes(key) ||
-        (displayLangOf(field, key) !== undefined &&
-          fieldNamed(searchType, key) === undefined)),
+        (Boolean(field.output) && displayLangOf(field, key) !== undefined)),
   );
 }
 
