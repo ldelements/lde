@@ -1360,6 +1360,37 @@ describe('buildGraphQLSchema', () => {
     expect(sdl).toMatch(/size: IntRange/);
   });
 
+  it('rejects an integer bin bound that GraphQL’s Int cannot hold', () => {
+    const withSizeBound = (bound: number) =>
+      buildGraphQLSchema(
+        searchSchema(
+          {
+            ...schema,
+            fields: schema.fields.map((field): SearchField =>
+              field.name === 'size'
+                ? {
+                    name: 'size',
+                    kind: 'integer',
+                    facetable: true,
+                    facetRanges: [{ key: 'big', min: bound }],
+                  }
+                : field,
+            ),
+          },
+          organization,
+          term,
+        ),
+        datasetOptions,
+      );
+    expect(() => withSizeBound(-(2 ** 31))).not.toThrow();
+    expect(() => withSizeBound(2 ** 31 - 1)).not.toThrow();
+    for (const bound of [1.5, 2 ** 31, -(2 ** 31) - 1]) {
+      expect(() => withSizeBound(bound)).toThrow(
+        `Facet “size” has bin “big” with bound ${bound}, which GraphQL’s Int cannot hold`,
+      );
+    }
+  });
+
   it('serves a binned number facet’s bounds as Float, the type FloatRange takes', async () => {
     const binned: SearchType = {
       ...schema,

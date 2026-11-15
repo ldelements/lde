@@ -1958,6 +1958,7 @@ export function buildGraphQLSchema(
       GraphQLFieldConfig<Source, SearchContext>
     > = {};
     if (values !== undefined && range) {
+      assertIntBinBounds(values.name, values.field as NumericField);
       // Each part is charged as the facet key it stands in for is – `all`
       // already is, a facet query of its own.
       const rangeFields = rangeFacetTypeFor(
@@ -2025,6 +2026,7 @@ export function buildGraphQLSchema(
     // The batching into one engine dispatch and the degrade-to-empty error
     // handling live in the loader (facet-batch.ts).
     if (isRangeFacet(field)) {
+      assertIntBinBounds(name, field);
       return {
         type: new GraphQLNonNull(rangeFacetTypeFor(field)),
         extensions: facetCost,
@@ -2707,6 +2709,30 @@ function extentType(
     fields: { min: field('min'), max: field('max') },
   });
 }
+
+/** Rejects an integer bin bound GraphQL’s 32-bit `Int` cannot serve, which
+ *  would otherwise error the whole facet at query time. The `IntRange` filter
+ *  takes `Int` too, so no filter could select such a bin anyway. */
+function assertIntBinBounds(facet: string, field: NumericField): void {
+  if (field.kind !== 'integer' || !isBinnedRangeFacet(field)) {
+    return;
+  }
+  for (const range of field.facetRanges) {
+    for (const bound of [range.min, range.max]) {
+      if (
+        bound !== undefined &&
+        !(Number.isInteger(bound) && bound >= INT_MIN && bound <= INT_MAX)
+      ) {
+        throw new Error(
+          `Facet “${facet}” has bin “${range.key}” with bound ${bound}, which GraphQL’s Int cannot hold: an integer bin’s bounds must be whole numbers in the signed 32-bit range. Fix the bound or declare the field as number.`,
+        );
+      }
+    }
+  }
+}
+
+const INT_MIN = -(2 ** 31);
+const INT_MAX = 2 ** 31 - 1;
 
 function rangeBucketType(name: string, bound: RangeBound): GraphQLObjectType {
   return new GraphQLObjectType({
