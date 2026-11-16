@@ -1,3 +1,29 @@
+## 0.47.0 (2026-11-16)
+
+### 🩹 Fixes
+
+- ⚠️  **search-typesense:** keep the rebuild lock alive while a run is open ([#1080](https://github.com/ldelements/lde/pull/1080))
+
+### ⚠️  Breaking Changes
+
+- **search-typesense:** keep the rebuild lock alive while a run is open  ([#1080](https://github.com/ldelements/lde/pull/1080))
+  the rebuild writers now throw when lockTtlMs is not a positive,
+  finite number. Replace lockTtlMs: Infinity with a finite TTL: the heartbeat keeps a
+  long run’s lock alive, so the TTL no longer needs to outlast the run."
+  M	docs/reference/search-typesense.md
+  M	docs/reference/search.md
+  M	packages/search-typesense/src/blue-green-rebuild.ts
+  M	packages/search-typesense/src/in-place-rebuild.ts
+  M	packages/search-typesense/src/lock.ts
+  M	packages/search-typesense/src/rebuild-support.ts
+  M	packages/search-typesense/test/blue-green-rebuild.test.ts
+  M	packages/search-typesense/test/in-place-rebuild.test.ts
+  M	packages/search-typesense/test/joins.test.ts
+  M	packages/search-typesense/test/lock.test.ts
+  M	packages/search-typesense/test/rebuild-error-paths.test.ts
+  M	packages/search-typesense/test/rebuild-support.test.ts
+  M	packages/search/src/rebuild.ts
+
 ## 0.46.1 (2026-11-16)
 
 ### 🩹 Fixes
