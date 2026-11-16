@@ -1,3 +1,42 @@
+## 0.50.0 (2026-11-16)
+
+### 🚀 Features
+
+- ⚠️  **search:** filter and facet a field on whether it has a value ([#1095](https://github.com/ldelements/lde/pull/1095))
+
+### ⚠️  Breaking Changes
+
+- **search:** filter and facet a field on whether it has a value  ([#1095](https://github.com/ldelements/lde/pull/1095))
+  `Criterion` gains `PresenceCriterion` (`{ field, exists }`), `FilterOperator` gains `'exists'` and `PhysicalFields` gains a required `exists`. An engine adapter must compile an `exists` criterion against `PhysicalFields.exists`, declare that companion, and set `is` on presence buckets; an exhaustive switch over `Criterion` or `FilterOperator` needs the new case. In GraphQL, a type declaring presence is reached through a join by `‹Type›JoinedWhere` instead of `‹Type›Where`, and a filterable field declaring presence takes `‹Filter›OrExists` instead of its old filter type, so variables typed with the old names stop validating. Collections built before this lack the companion, so a schema declaring `presence` needs a full rebuild; the in-place check refuses to run over them.
+  ---"
+  M	docs/decisions/0036-facet-a-root-document-on-its-entries-leaves.md
+  A	docs/decisions/0038-filter-and-facet-a-field-on-whether-it-has-a-value.md
+  M	docs/reference/search-api-graphql.md
+  M	docs/reference/search-typesense.md
+  M	docs/reference/search.md
+  M	packages/search-api-graphql/src/build-schema.ts
+  A	packages/search-api-graphql/test/presence.test.ts
+  M	packages/search-api-graphql/vite.config.ts
+  M	packages/search-typesense/src/collection-definition.ts
+  M	packages/search-typesense/src/in-place-rebuild.ts
+  M	packages/search-typesense/src/query-compiler.ts
+  M	packages/search-typesense/src/search.ts
+  A	packages/search-typesense/test/presence.integration.test.ts
+  M	packages/search-typesense/test/query-compiler.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/src/adapter.ts
+  M	packages/search/src/engine.ts
+  M	packages/search/src/index.ts
+  M	packages/search/src/project.ts
+  M	packages/search/src/query.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/src/testing.ts
+  A	packages/search/test/presence.test.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.46.0
+
 ## 0.49.0 (2026-11-16)
 
 ### 🧱 Updated Dependencies
