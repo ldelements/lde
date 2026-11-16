@@ -111,6 +111,7 @@ describe('physicalFields', () => {
       search: ['title_search_nl', 'title_search_en'],
       sort: ['title_sort_nl', 'title_sort_en'],
       filter: 'title',
+      leafExists: [],
     });
   });
 
@@ -129,6 +130,7 @@ describe('physicalFields', () => {
       sort: [],
       facet: 'keyword',
       filter: 'keyword',
+      leafExists: [],
     });
   });
 
@@ -144,6 +146,7 @@ describe('physicalFields', () => {
       search: ['creator_search_nl', 'creator_search_en'],
       sort: [],
       filter: 'creator',
+      leafExists: [],
     });
   });
 
@@ -161,6 +164,7 @@ describe('physicalFields', () => {
       search: [],
       sort: [],
       filter: 'title',
+      leafExists: [],
     });
   });
 
@@ -179,6 +183,7 @@ describe('physicalFields', () => {
       sort: [],
       facet: 'publisher',
       filter: 'publisher',
+      leafExists: [],
     });
   });
 

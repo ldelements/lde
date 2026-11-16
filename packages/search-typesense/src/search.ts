@@ -220,9 +220,10 @@ export function createTypesenseSearchEngine<
             name: field.name,
             field,
           })),
-          // A faceted leaf labels its buckets from the leaf’s own targets.
+          // A faceted leaf labels its buckets from the leaf’s own targets; a
+          // presence leaf’s buckets are booleans, and labelled by nothing.
           ...facetsOf(searchType, schema).filter(
-            (facet) => facet.reference !== undefined,
+            (facet) => facet.reference !== undefined && facet.presence !== true,
           ),
         ]
           // An INLINE reference names its label target one level in, through

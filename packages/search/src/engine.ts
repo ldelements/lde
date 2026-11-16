@@ -161,7 +161,19 @@ export type FacetFieldsOf<Type extends SearchType> = RootType extends Type
   ? string
   : | Extract<Type['fields'][number], { readonly facetable: true }>['name']
     | FacetedLeavesOf<Type['fields'][number]>
+    | PresenceLeavesOf<Type['fields'][number]>
     | `${Extract<Type['fields'][number], { readonly presence: true }>['name']}.exists`;
+
+/** The `‹reference›.‹leaf›.exists` facet names an inline reference declares
+ *  through its presence leaves (`ref.presenceLeaves`). */
+type PresenceLeavesOf<Field> = Field extends {
+  readonly name: infer Name extends string;
+  readonly ref: {
+    readonly presenceLeaves: readonly (infer Leaf extends string)[];
+  };
+}
+  ? `${Name}.${Leaf}.exists`
+  : never;
 
 /** The `‹reference›.‹leaf›` facet names an inline reference declares through
  *  its faceted leaves (`ref.facetedLeaves`). */

@@ -443,10 +443,13 @@ function periodFields(
  *  the field stores – a value, a period, a nested object – and for a field
  *  declaring presence alone, which is internal and stores nothing else. */
 function presenceFields(field: SearchField): CollectionFieldSchema[] {
-  const exists = physicalFields(field).exists;
-  return exists === undefined
-    ? []
-    : [{ name: exists, type: 'bool', facet: true }];
+  const { exists, leafExists } = physicalFields(field);
+  return [
+    ...(exists === undefined ? [] : [exists]),
+    // One per presence leaf of an inline reference: whether any entry holds
+    // a value, a top-level boolean of the root document.
+    ...leafExists.map((companion) => companion.exists),
+  ].map((name) => ({ name, type: 'bool', facet: true }));
 }
 
 /** A `date` field’s precision companion ({@link physicalFields}): read back

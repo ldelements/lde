@@ -885,3 +885,119 @@ describe('a field filtered and faceted on whether it has a value', () => {
     expect(params.filter_by).toBe('id:=[]');
   });
 });
+
+describe('`exists` welded to an inline entry', () => {
+  const media: SearchType = {
+    name: 'Media',
+    fields: [
+      { name: 'thumbnailUrl', kind: 'keyword' },
+      { name: 'format', kind: 'keyword', filterable: true },
+    ],
+  };
+  const work: SearchType = {
+    name: 'Work',
+    class: 'https://schema.org/CreativeWork',
+    fields: [
+      {
+        name: 'media',
+        kind: 'reference',
+        filterable: true,
+        ref: {
+          strategy: 'inline',
+          typeName: 'Media',
+          presenceLeaves: ['thumbnailUrl'],
+        },
+      },
+    ],
+  };
+  const mediaSchema = searchSchema(work, media);
+  const filterBy = (entry: Record<string, unknown>[]) =>
+    buildSearchParams(
+      {
+        ...base,
+        where: [{ or: [{ field: 'media', entry }] } as never],
+      },
+      work,
+      { schema: mediaSchema },
+    ).filter_by;
+
+  it('reads the root document’s boolean when welded alone', () => {
+    expect(filterBy([{ field: 'thumbnailUrl', exists: false }])).toBe(
+      'media_thumbnailUrl_exists:=false',
+    );
+  });
+
+  it('compiles to a term matching nothing beside another condition, or on a leaf named no presence', () => {
+    // `assertValidQuery` rejects both first; this is the guard for a direct
+    // caller.
+    expect(
+      filterBy([
+        { field: 'thumbnailUrl', exists: true },
+        { field: 'format', in: ['image/png'] },
+      ]),
+    ).toBe('id:=[]');
+    expect(
+      filterBy([
+        { field: 'format', in: ['image/png'] },
+        { field: 'thumbnailUrl', exists: true },
+      ]),
+    ).toBe('id:=[]');
+    expect(filterBy([{ field: 'format', exists: true }])).toBe('id:=[]');
+  });
+
+  it('compiles to a term matching nothing under a nesting, where no boolean is written', () => {
+    // `searchSchema` refuses presence leaves, and a filterable reference, on
+    // a Reference Type, so the declaration is changed after the fact, as a
+    // direct caller could.
+    const nestedRef = { strategy: 'inline', typeName: 'Media' } as const;
+    const nestedMedia = {
+      name: 'media',
+      kind: 'reference',
+      output: true,
+      ref: nestedRef,
+    } as const;
+    const edge: SearchType = {
+      name: 'Edge',
+      fields: [
+        nestedMedia,
+        { name: 'role', kind: 'keyword', filterable: true },
+      ],
+    };
+    const root: SearchType = {
+      name: 'Work',
+      class: 'https://schema.org/CreativeWork',
+      fields: [
+        {
+          name: 'edges',
+          kind: 'reference',
+          filterable: true,
+          ref: { strategy: 'inline', typeName: 'Edge' },
+        },
+      ],
+    };
+    const nestedSchema = searchSchema(root, edge, media);
+    Object.assign(nestedRef, { presenceLeaves: ['thumbnailUrl'] });
+    Object.assign(nestedMedia, { filterable: true });
+
+    expect(
+      buildSearchParams(
+        {
+          ...base,
+          where: [
+            {
+              or: [
+                {
+                  on: ['edges'],
+                  field: 'media',
+                  entry: [{ field: 'thumbnailUrl', exists: true }],
+                },
+              ],
+            },
+          ],
+        },
+        root,
+        { schema: nestedSchema },
+      ).filter_by,
+    ).toBe('id:=[]');
+  });
+});

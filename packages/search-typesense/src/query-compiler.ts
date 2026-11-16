@@ -636,6 +636,19 @@ function compileWelded(
   if (entryType === undefined) {
     return UNUSABLE;
   }
+  // Presence on a leaf is recorded once per root document, not inside an
+  // entry: a weld of that one condition reads the root’s companion. Welded to
+  // anything else, or under a nesting prefix, it has no entry to hold of –
+  // `assertValidQuery` rejects both first.
+  const [only, ...more] = criterion.entry;
+  if (only !== undefined && 'exists' in only) {
+    const companion = physicalFields(
+      fieldNamed(searchType, criterion.field) as SearchField,
+    ).leafExists.find(({ leaf }) => leaf === only.field);
+    return more.length === 0 && prefix === '' && companion !== undefined
+      ? `${companion.exists}:=${only.exists}`
+      : UNUSABLE;
+  }
   const conditions: string[] = [];
   for (const condition of criterion.entry) {
     const compiled = compileLeaf(condition, entryType, schema);

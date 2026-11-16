@@ -41,7 +41,6 @@ import {
   AND_KEY,
   assertValidQuery,
   facetsOf,
-  filterableFields,
   fieldNamed,
   labelSourceNamesOf,
   labelTargetNamesOf,
@@ -60,6 +59,7 @@ import {
   nestedReferenceType,
   outputFields,
   pageForOffset,
+  physicalFields,
   sortableFields,
   unixSecondsToIso,
   type FacetDeclaration,
@@ -689,7 +689,7 @@ export function buildGraphQLSchema(
    */
   function presenceFilterFor(
     field: SearchField,
-    owner: RootType,
+    owner: SearchType,
   ): GraphQLInputObjectType {
     if (field.filterable !== true) {
       return existsFilter;
@@ -839,6 +839,21 @@ export function buildGraphQLSchema(
     floatRange.name,
     dateRange.name,
   ]);
+  /**
+   * Claim a generated type name, throwing a clear error when a declaration
+   * already took it – graphql-js would reject the duplicate too, but only once
+   * the whole schema is assembled and without saying what caused it. `what`
+   * says what the name is for.
+   */
+  function claimTypeName(name: string, what: string): string {
+    if (takenTypeNames.has(name)) {
+      throw new Error(
+        `“${name}”, the type name of ${what}, is already the name of another type; rename that type.`,
+      );
+    }
+    takenTypeNames.add(name);
+    return name;
+  }
 
   // The declared joins, and the input types they make shareable. Each map is
   // keyed by the SearchType `name`, so a type reached as a join target and the
@@ -1309,6 +1324,7 @@ export function buildGraphQLSchema(
   function whereFieldType(
     field: SearchField,
     owner: SearchType,
+    joined = false,
   ): GraphQLInputType {
     // An inline reference is filterable in two ways at once, exactly as a
     // joinable one is: by the ids its entries hold (its identity),
@@ -1316,7 +1332,7 @@ export function buildGraphQLSchema(
     // question one hop out – only what the hop costs differs.
     const nested = nestedReferenceType(schema, field);
     if (nested !== undefined) {
-      return nestedFilterFor(nested, field);
+      return nestedFilterFor(nested, field, joined);
     }
     // A joinable reference is filterable in two ways at once – by the ids it
     // holds, and by a condition on the referent – so it earns a richer input
@@ -1343,15 +1359,40 @@ export function buildGraphQLSchema(
   function nestedFilterFor(
     referenceType: ReferenceType,
     field: SearchField,
+    joined: boolean,
   ): GraphQLInputObjectType {
-    const existing = nestedFilters.get(referenceType.name);
+    // Every reference nesting the type declares the same presence leaves
+    // (`searchSchema`), so the filter is shared – except through a join, which
+    // reads no presence companion yet and so gets a variant without `exists`.
+    const presenceLeaves = joined ? [] : presenceLeavesOf(field);
+    const variant =
+      joined && presenceLeavesOf(field).length > 0
+        ? `${referenceType.name}Joined`
+        : referenceType.name;
+    const existing = nestedFilters.get(variant);
     if (existing !== undefined) {
       return existing;
     }
+    // The join variants are names of their own, so they are claimed like
+    // every other name a declaration could clash with.
+    if (variant !== referenceType.name) {
+      claimTypeName(
+        `${variant}Filter`,
+        `the filter on “${referenceType.name}” through a join`,
+      );
+      claimTypeName(
+        `${variant}Where`,
+        `the condition on one “${referenceType.name}” entry through a join`,
+      );
+    }
     const identityTargets = labelTargetNamesOf(field, schema);
-    const nestedWhere = nestedWhereInputFor(referenceType);
+    const nestedWhere = nestedWhereInputFor(
+      referenceType,
+      presenceLeaves,
+      variant,
+    );
     const created = new GraphQLInputObjectType({
-      name: `${referenceType.name}Filter`,
+      name: `${variant}Filter`,
       description:
         identityTargets.length > 0
           ? `A condition on ${referenceType.name}: the ids its entries reference, or a condition on one entry.`
@@ -1364,7 +1405,7 @@ export function buildGraphQLSchema(
         where: { type: nestedWhere },
       }),
     });
-    nestedFilters.set(referenceType.name, created);
+    nestedFilters.set(variant, created);
     return created;
   }
 
@@ -1373,22 +1414,33 @@ export function buildGraphQLSchema(
    * else. Deliberately without the `id` key every Root Type's `where` carries:
    * an entry is read, not addressed, so it has no document key to filter on
    * ({@link validateQuery} refuses one).
+   *
+   * A presence leaf of the references nesting the type takes `exists` too,
+   * as a field of the root’s own does: `ExistsFilter`, or `‹Filter›OrExists`
+   * for a `filterable` leaf. Whether any entry holds a value is the root
+   * document’s, so `exists` is welded to nothing else – a `where` setting it
+   * beside another key is refused with the rewrite ({@link
+   * weldedCriterionOf}).
    */
   function nestedWhereInputFor(
     referenceType: ReferenceType,
+    presenceLeaves: readonly string[],
+    variant: string,
   ): GraphQLInputObjectType {
     // Memoized by its only caller, which is memoized itself – so this is built
-    // once per Reference Type however many fields nest it.
+    // once per Reference Type (and variant) however many fields nest it.
     return new GraphQLInputObjectType({
-      name: `${referenceType.name}Where`,
+      name: `${variant}Where`,
       description:
         'Sibling keys are combined with AND, and all of them must hold of the SAME entry.',
       fields: () =>
         Object.fromEntries(
-          filterableFields(referenceType).map((nestedField) => [
+          whereFieldsOf(referenceType, presenceLeaves).map((nestedField) => [
             nestedField.name,
             {
-              type: whereFieldType(nestedField, referenceType),
+              type: presenceLeaves.includes(nestedField.name)
+                ? presenceFilterFor(nestedField, referenceType)
+                : whereFieldType(nestedField, referenceType),
               description: nestedField.description,
             },
           ]),
@@ -1498,7 +1550,7 @@ export function buildGraphQLSchema(
         type:
           field.presence === true && !joined
             ? presenceFilterFor(field, searchType)
-            : whereFieldType(field, searchType),
+            : whereFieldType(field, searchType, joined),
         description: field.description,
       };
     }
@@ -1514,14 +1566,21 @@ export function buildGraphQLSchema(
    * `creativeWorks(where: { dataset: { where: … } })`.
    *
    * The one exception is presence, which no join reads yet: a type declaring
-   * it is reached through a join by `‹Type›JoinedWhere`, the same input without
-   * `exists` ({@link fieldKeys}). A type declaring none shares one input.
+   * it – on a field or on an inline reference’s leaves – is reached through a
+   * join by `‹Type›JoinedWhere`, the same input without `exists`
+   * ({@link fieldKeys}). A type declaring none shares one input.
    */
   function whereInputFor(
     searchType: RootType,
     joined = false,
   ): GraphQLInputObjectType {
-    if (joined && !searchType.fields.some((field) => field.presence === true)) {
+    if (
+      joined &&
+      !searchType.fields.some(
+        (field) =>
+          field.presence === true || presenceLeavesOf(field).length > 0,
+      )
+    ) {
       return whereInputFor(searchType);
     }
     const prefix = joined ? `${searchType.name}Joined` : searchType.name;
@@ -1756,8 +1815,11 @@ export function buildGraphQLSchema(
     const own: FacetDeclaration[] = [];
     const byGroup = new Map<string, FacetDeclaration[]>();
     for (const facet of facets) {
+      // A leaf’s facets, a presence leaf’s included, go under the reference;
+      // an own field’s presence facet under the field.
       const group =
-        facet.presence === true ? facet.field.name : facet.reference?.name;
+        facet.reference?.name ??
+        (facet.presence === true ? facet.field.name : undefined);
       if (group === undefined) {
         own.push(facet);
         continue;
@@ -1770,31 +1832,40 @@ export function buildGraphQLSchema(
     return new GraphQLObjectType({
       name: `${typeName}Facets`,
       fields: () => ({
-        ...facetFieldsFor(own),
+        ...facetFieldsFor(own, typeName),
         ...Object.fromEntries(
-          [...byGroup].map(([group, grouped]) => [
-            group,
-            {
-              type: new GraphQLNonNull(
-                new GraphQLObjectType({
-                  name: `${typeName}${group.charAt(0).toUpperCase()}${group.slice(1)}Facets`,
-                  fields: () => facetFieldsFor(grouped),
-                }),
-              ),
-              // The source carries the facet loader; the grouped facets read
-              // it.
-              resolve: (source: Source) => source,
-            },
-          ]),
+          [...byGroup].map(([group, grouped]) => {
+            const groupBaseName = `${typeName}${capitalized(group)}`;
+            return [
+              group,
+              {
+                type: new GraphQLNonNull(
+                  new GraphQLObjectType({
+                    name: `${groupBaseName}Facets`,
+                    fields: () => facetFieldsFor(grouped, groupBaseName),
+                  }),
+                ),
+                // The source carries the facet loader; the grouped facets
+                // read it.
+                resolve: (source: Source) => source,
+              },
+            ];
+          }),
         ),
       }),
     });
   }
 
-  /** One GraphQL field per facet, keyed by its field’s name – `exists` for a
-   *  presence facet – and loaded by the facet’s logical name. */
+  /**
+   * One GraphQL field per facet, keyed by its field’s name – `exists` for an
+   * own field’s presence facet, served under the field – and loaded by the
+   * facet’s logical name. A presence leaf’s facet is one level further down,
+   * `‹leaf› { exists }`, in an object typed `‹Base›‹Leaf›Facets` after the
+   * base name of the object it sits in (`WorkAssociatedMedia`).
+   */
   function facetFieldsFor(
     facets: readonly FacetDeclaration[],
+    baseName: string,
   ): Record<string, GraphQLFieldConfig<Source, SearchContext>> {
     const fields: Record<
       string,
@@ -1803,16 +1874,34 @@ export function buildGraphQLSchema(
     // The keys share one engine round-trip, but each is its own facet
     // calculation in it.
     const facetCost = costExtensions(operationCost);
-    for (const { name, field, presence } of facets) {
+    for (const { name, field, presence, reference: reachedThrough } of facets) {
       // The batching into one engine dispatch and the degrade-to-empty
       // error handling live in the loader (facet-batch.ts).
       if (presence === true) {
-        fields.exists = {
+        const exists: GraphQLFieldConfig<Source, SearchContext> = {
           type: nonNullListOf(booleanBucket),
           extensions: facetCost,
-          description: `Documents that hold a value for “${field.name}”, and documents that hold none.`,
+          description: reachedThrough
+            ? `Documents with an entry that holds a value for “${field.name}”, and documents with none.`
+            : `Documents that hold a value for “${field.name}”, and documents that hold none.`,
           resolve: async (source: Source) =>
             (await (source.loadFacet as FacetLoader)(name, 'matching')).buckets,
+        };
+        if (reachedThrough === undefined) {
+          fields.exists = exists;
+          continue;
+        }
+        fields[field.name] = {
+          type: new GraphQLNonNull(
+            new GraphQLObjectType({
+              name: claimTypeName(
+                `${baseName}${capitalized(field.name)}Facets`,
+                `the presence facet of “${name}”`,
+              ),
+              fields: { exists },
+            }),
+          ),
+          resolve: (source: Source) => source,
         };
         continue;
       }
@@ -2062,12 +2151,17 @@ function whereToFilters(
  * a resolver runs: a disjunction inside a weld is not a weld, and the flat IR
  * has nowhere to put one. `undefined` when the `where` states nothing, which
  * constrains nothing and so contributes no clause.
+ *
+ * `exists` on a presence leaf is the root document’s, not one entry’s, so it
+ * is welded to nothing else: beside another key it is refused, naming the
+ * rewrite into two conditions.
  */
 function weldedCriterionOf(
   entry: {
     readonly name: string;
     readonly nested: Record<string, unknown>;
     readonly target: SearchType;
+    readonly presenceLeaves: readonly string[];
   },
   joins: JoinGraph,
   schema: SearchSchema,
@@ -2082,7 +2176,16 @@ function weldedCriterionOf(
     entry.target,
     joins,
     schema,
+    entry.presenceLeaves,
   ).map((nested) => (nested as { readonly criterion: Criterion }).criterion);
+  const presence = conditions.find((condition) => 'exists' in condition);
+  if (presence !== undefined && conditions.length > 1) {
+    const other = conditions.find((condition) => condition !== presence)
+      ?.field as string;
+    throw userError(
+      `“${entry.name}” welds “exists” on “${presence.field}” to “${other}” on one entry, but whether any entry holds a value for “${presence.field}” is recorded per document, not per entry. Write each as its own condition – and: [{ ${entry.name}: { where: { ${presence.field}: { exists: ${String((presence as { exists: boolean }).exists)} } } } }, { ${entry.name}: { where: { ${other}: … } } }].`,
+    );
+  }
   return conditions.length === 0
     ? undefined
     : withPath({ field: entry.name, entry: conditions }, on);
@@ -2167,6 +2270,9 @@ type KeyEntry =
       // A Root Type for a JOIN hop, a Reference Type for a NESTING hop. Both
       // extend the `on` path the same way; only the compiler tells them apart.
       readonly target: SearchType;
+      // The presence leaves of a NESTING hop’s reference, whose keys in the
+      // entry’s `where` take `exists`; none for a join.
+      readonly presenceLeaves: readonly string[];
     };
 
 /**
@@ -2184,18 +2290,19 @@ function keyEntriesOf(
   searchType: SearchType,
   joins: JoinGraph,
   schema: SearchSchema,
+  presenceLeaves: readonly string[] = [],
 ): KeyEntry[] {
   const entries: KeyEntry[] = [];
   const id = keyed[ID_FIELD] as { in?: string[] } | undefined | null;
   if (id !== undefined && id !== null) {
     entries.push({ criterion: { field: ID_FIELD, in: id.in ?? [] } });
   }
-  for (const field of whereFieldsOf(searchType)) {
+  for (const field of whereFieldsOf(searchType, presenceLeaves)) {
     const value = keyed[field.name];
     if (value === undefined || value === null) {
       continue;
     }
-    if (field.presence === true) {
+    if (field.presence === true || presenceLeaves.includes(field.name)) {
       const presence = presenceCriterionOf(field.name, value);
       if (presence !== undefined) {
         entries.push({ criterion: presence });
@@ -2216,7 +2323,12 @@ function keyEntriesOf(
       const nested = (value as { where?: Record<string, unknown> | null })
         .where;
       if (nested !== undefined && nested !== null) {
-        entries.push({ name: field.name, nested, target });
+        entries.push({
+          name: field.name,
+          nested,
+          target,
+          presenceLeaves: presenceLeavesOf(field),
+        });
         continue;
       }
     }
@@ -2249,11 +2361,18 @@ function keyEntriesOf(
 }
 
 /** The fields a `where` input carries a key for, in declaration order: the
- *  `filterable` ones, and those declaring presence, which take `exists`
- *  whether or not they are filterable. */
-function whereFieldsOf(searchType: SearchType): readonly SearchField[] {
+ *  `filterable` ones, and those declaring presence – or, for a reference
+ *  type’s `where`, named among the presence leaves of the references nesting
+ *  it – which take `exists` whether or not they are filterable. */
+function whereFieldsOf(
+  searchType: SearchType,
+  presenceLeaves: readonly string[] = [],
+): readonly SearchField[] {
   return searchType.fields.filter(
-    (field) => field.filterable === true || field.presence === true,
+    (field) =>
+      field.filterable === true ||
+      field.presence === true ||
+      presenceLeaves.includes(field.name),
   );
 }
 
@@ -2326,6 +2445,18 @@ function rangeInput(
     name,
     fields: { min: { type: bound }, max: { type: bound } },
   });
+}
+
+/** The presence leaves an inline reference declares, read off the physical
+ *  companions that record them – none for any other field. */
+function presenceLeavesOf(field: SearchField): readonly string[] {
+  return physicalFields(field).leafExists.map(({ leaf }) => leaf);
+}
+
+/** A name with its first letter upper-cased, as it is spelled inside a type
+ *  name: `associatedMedia` → `AssociatedMedia`. */
+function capitalized(name: string): string {
+  return `${name.charAt(0).toUpperCase()}${name.slice(1)}`;
 }
 
 /** Type names as prose, with no article to get wrong: `Person`,

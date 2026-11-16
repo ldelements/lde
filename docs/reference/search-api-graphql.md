@@ -280,6 +280,18 @@ role: { in: ["etser"] } } }` asks for _this person in this role_, where the
   without the keys of fields declaring presence alone. A type declaring none
   keeps one `‹Type›Where` for both.
 
+  An inline reference’s
+  [presence leaves](./search#presence-on-an-entry-s-leaf) take `exists` in its
+  reference type’s `‹Edge›Where`, typed as a field of the root’s own is
+  (`ExistsFilter`, or `‹Filter›OrExists` for a `filterable` leaf):
+  `where: { associatedMedia: { where: { thumbnailUrl: { exists: true } } } }`.
+  Whether any entry holds a value is recorded per document, so `exists` is
+  welded to nothing else: setting it beside another key of the same
+  `‹Edge›Where` is an error naming the rewrite into two conditions. Every
+  reference nesting one reference type declares the same presence leaves, so
+  `‹Edge›Where` stays shared; through a join, where no companion is read, a
+  reference with presence leaves takes `‹Edge›JoinedFilter`, without `exists`.
+
 - **`orderBy`**: `RELEVANCE` plus every `sortable` field, as an enum – field
   names SCREAMING_SNAKE_CASEd (`datePosted` → `DATE_POSTED`); `direction`
   defaults to `DESC`.
@@ -343,7 +355,11 @@ license { buckets { value count } } } }`, typed `‹Type›‹Reference›Facets
 dateCreated { exists { value count } } }`, typed `‹Type›‹Field›Facets`
   (`WorkDateCreatedFacets`) with `exists: [BooleanBucket!]!`. The object
   leaves room for a field’s value buckets beside it, once a field may be both
-  `facetable` and declare presence.
+  `facetable` and declare presence. A presence leaf’s facet sits under the
+  reference, one level further down: `facets { associatedMedia { thumbnailUrl {
+exists { value count } } } }`, typed `‹Type›‹Reference›‹Leaf›Facets`
+  (`WorkAssociatedMediaThumbnailUrlFacets`), beside the reference’s faceted
+  leaves.
 
   Selecting facet fields IS
   the request, and the whole selection is **batched per request**: one

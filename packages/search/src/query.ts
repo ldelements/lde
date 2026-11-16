@@ -5,6 +5,7 @@ import {
   ID_FIELD,
   holdsNoIds,
   nestedReferenceType,
+  physicalFields,
   presenceFacetName,
   referencedTargetsOf,
   storedRangeBound,
@@ -310,7 +311,9 @@ export interface FacetSearch {
  *
  * An `exists` criterion is on the axis `‹field›.exists`, which the field’s
  * presence facet owns. It owns nothing else: a range on the same field is
- * another axis, and so a presence facet counts under it.
+ * another axis, and so a presence facet counts under it. Welded alone to an
+ * entry, `exists` is on the axis `‹reference›.‹leaf›.exists`, owned by that
+ * presence leaf’s facet and never by a facet on the leaf’s values.
  *
  * A default a surface adds to `where` (a valid-only `status`) is a clause
  * like any other: its facet counts across every value and reports the
@@ -418,16 +421,24 @@ export interface QueryIssue {
     | 'inverted-range'
     /**
      * An `exists` criterion on a field that declares no
-     * {@link SearchFieldBase.presence}, so no document records whether it
-     * holds a value. A field of a Reference Type never declares one, which
-     * makes this the reason for an `exists` welded to an entry, too.
+     * {@link SearchFieldBase.presence} – or, welded to one entry, on a leaf
+     * its inline reference does not name among its
+     * {@link ReferenceStrategy.presenceLeaves presence leaves} – so no
+     * document records whether it holds a value.
      */
     | 'no-presence'
     /**
      * An `exists` criterion reached through a join path. The joined type’s
      * own field may declare presence, but no join reads its companion yet.
      */
-    | 'joined-presence';
+    | 'joined-presence'
+    /**
+     * An `exists` welded to one entry together with other conditions. Whether
+     * any entry holds a value for a leaf is recorded once per root document,
+     * not per entry, so it cannot hold of the same entry as another
+     * condition. State it as a weld of its own.
+     */
+    | 'exists-in-weld';
 }
 
 /**
@@ -649,7 +660,12 @@ export function validateQuery(
         }
         constrained = resolved.leafType;
         nested = resolved.nestedPath.length > 0;
-        if ('exists' in criterion && resolved.joinPath.length > 0) {
+        if (
+          ('exists' in criterion ||
+            (isWelded(criterion) &&
+              criterion.entry.some((welded) => 'exists' in welded))) &&
+          resolved.joinPath.length > 0
+        ) {
           issues.push({ part: 'where', field, reason: 'joined-presence' });
           continue;
         }
@@ -688,6 +704,30 @@ export function validateQuery(
           continue;
         }
         for (const welded of criterion.entry) {
+          // Presence on an entry’s leaf is the root document’s, so it is
+          // answered by a weld of that one condition alone, on a leaf the
+          // reference names among its presence leaves.
+          if ('exists' in welded) {
+            const path = [...on, name, welded.field].join('.');
+            if (criterion.entry.length > 1) {
+              issues.push({
+                part: 'where',
+                field: path,
+                reason: 'exists-in-weld',
+              });
+            } else if (
+              !physicalFields(declared as SearchField).leafExists.some(
+                ({ leaf }) => leaf === welded.field,
+              )
+            ) {
+              issues.push({
+                part: 'where',
+                field: path,
+                reason: 'no-presence',
+              });
+            }
+            continue;
+          }
           collectLeafIssues(
             welded,
             entryType,
@@ -879,10 +919,14 @@ function axisOf(criterion: Criterion): string | undefined {
   // One condition on one leaf selects on that leaf’s axis, the same documents
   // whether read per entry or per document. Several are welded to one entry:
   // like a clause spanning two fields, that constrains no single axis.
+  // An `exists` welded alone is on its leaf’s presence axis, which no facet
+  // on the leaf’s values owns.
   const [only, ...more] = criterion.entry;
-  return only !== undefined && more.length === 0
-    ? [...path, only.field].join('.')
-    : undefined;
+  if (only === undefined || more.length > 0) {
+    return undefined;
+  }
+  const leafPath = [...path, only.field].join('.');
+  return 'exists' in only ? presenceFacetName(leafPath) : leafPath;
 }
 
 /**

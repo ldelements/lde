@@ -1258,12 +1258,64 @@ declaring no presence (`no-presence`), which is also what a weld meets.
 `validateSearchType` accepts `presence` on a Root Type’s own field only, and
 `searchSchema` says why in full. It refuses
 it on a field of a Reference Type and on an inline reference, whose entries
-hold no companion yet ([#1091](https://github.com/ldelements/lde/issues/1091));
-on a `text` field, which stores its values per language; on a `boolean`, which
+are counted through the reference’s
+[presence leaves](#presence-on-an-entry-s-leaf) instead; on a `text` field, which stores its values per language; on a `boolean`, which
 states its own absence as `false`; and on a field that is already `facetable`,
 since its facet would have to become an object to hold both kinds of bucket
 ([#1090](https://github.com/ldelements/lde/issues/1090))
-([ADR 38](../decisions/0038-filter-and-facet-a-field-on-whether-it-has-a-value.md)).
+([ADR 40](../decisions/0040-filter-and-facet-a-field-on-whether-it-has-a-value.md)).
+
+### Presence on an entry’s leaf
+
+A root document can be filtered and faceted on whether **any entry** of an
+inline reference holds a value for a leaf – “a work with a reproduction that
+has a thumbnail”. List the leaves in `ref.presenceLeaves`, beside
+[`facetedLeaves`](#faceting-on-an-entry-s-leaf):
+
+```ts
+{
+  name: 'associatedMedia',
+  kind: 'reference',
+  array: true,
+  output: true,
+  filterable: true,
+  ref: {
+    strategy: 'inline',
+    typeName: 'MediaObject',
+    presenceLeaves: ['thumbnailUrl'],
+  },
+}
+```
+
+The projection writes one boolean per root document,
+`associatedMedia_thumbnailUrl_exists` (`physicalFields(field).leafExists`): `true` when
+any entry holds a value for the leaf, in the sense above, and `false`
+otherwise – a document with no entries included. It is read before pruning, so
+a leaf declaring no role of its own still counts. A boolean inside each entry
+would not answer the question: an engine flattens it into one list per
+document, so a work with one entry that has a thumbnail and one that lacks it
+would count in both buckets.
+
+The facet is `associatedMedia.thumbnailUrl.exists`, and a bucket is selected
+by `exists` welded to one entry alone:
+`{ field: 'associatedMedia', entry: [{ field: 'thumbnailUrl', exists: true }] }`
+(GraphQL: `where: { associatedMedia: { where: { thumbnailUrl: { exists: true } } } }`).
+That weld is the facet’s own clause; a condition on the leaf’s value is not,
+nor is `exists` the selection of a facet on the leaf’s values. `exists`
+welded to other conditions is refused (`exists-in-weld`): whether any entry
+holds a value is recorded per document, so it cannot hold of the same entry
+as another condition. Through a join it is refused like any `exists`
+(`joined-presence`).
+
+The reference is `filterable`, sits on a Root Type and – for now – is not
+`facetable` itself; each leaf is declared by the reference type, named once,
+and neither `text`, `boolean`, an inline reference nor – for now – one of the
+reference’s faceted leaves. Every `filterable` inline reference on a Root
+Type nesting the same reference type declares the same presence leaves,
+because they share the type’s filter input. The two “for now” refusals and the
+shared leaves are lifted by per-field facet objects and per-reference filter
+inputs ([#1090](https://github.com/ldelements/lde/issues/1090))
+([ADR 41](../decisions/0041-filter-and-facet-a-root-document-on-whether-an-entrys-leaf-has-a-value.md)).
 
 ### Facet policy
 

@@ -144,7 +144,7 @@ describe('declaring presence', () => {
       ],
     });
     expect(() => searchSchema(media)).toThrow(
-      /“MediaObject” is a reference type: presence is counted on a Root Type’s own field/,
+      /“MediaObject” is a reference type: presence is counted on a root document.*“presenceLeaves”/,
     );
   });
 
