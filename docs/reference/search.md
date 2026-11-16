@@ -592,14 +592,21 @@ points at the term “Starluster” matches the query `starluster`. The extracti
 reads each referent’s label field off the referent, one hop from the document,
 beside its key. The projection folds the labels in the label field’s own
 `locales` into the reference’s `${name}_search` companion, so a query still
-searches one collection. The label is the one the document’s own graph states
-for its referent. A referent stated by IRI alone, or one whose label only an
-enrichment or another dataset supplies, adds nothing to search, and the label
-field must therefore have a `path`. A copied label changes when the document is
-reindexed. A reference naming no label source still folds its IRIs, and a
-`derive`d or `from` reference reads no referent, so it is never searched by
-labels
-([ADR 38](../decisions/0038-search-a-document-by-its-referents-labels.md)).
+searches one collection. The label field must therefore have a `path`.
+
+Before projecting, `@lde/search-pipeline` passes each referent’s key and label,
+as read, through the target type’s own transforms, so the reference is searched
+by the labels the target’s documents get: where a transform replaces a term’s
+label with an Authority’s, the referring document is searched by the
+Authority’s. A transform on a label source therefore also receives nodes that
+carry only those two fields, once per referring batch. A referent stated by IRI
+alone, with no triple of its own, gives a transform nothing to act on and adds
+nothing to search. A copied label changes when the document is reindexed.
+
+A reference naming no label source still folds its IRIs, and a `derive`d or
+`from` reference reads no referent, so it is never searched by labels
+([ADR 38](../decisions/0038-search-a-document-by-its-referents-labels.md),
+[ADR 39](../decisions/0039-apply-a-label-sources-transforms-to-its-referents.md)).
 
 The resolved label carries **one word** wherever it surfaces: on the label
 source’s own type, on the reference that resolves against it (`dataset { id

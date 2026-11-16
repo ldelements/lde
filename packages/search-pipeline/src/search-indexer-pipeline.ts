@@ -110,6 +110,9 @@ export interface SearchIndexerPipelineOptions {
    * Named by `name` rather than by class IRI, like {@link registryTypes}; a
    * name the schema does not declare throws at wiring time rather than
    * attaching nothing and shipping an unenriched collection.
+   *
+   * A type’s transforms also run on its referents in the stages of the types
+   * searching it by its labels ({@link SearchStageType.transform}).
    */
   transforms?: Readonly<
     Record<

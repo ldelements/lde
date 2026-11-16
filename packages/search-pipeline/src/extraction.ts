@@ -450,19 +450,10 @@ function buildReferentHops(
       // is one of them, so emitting the hop as well would state it twice.
       // A searchable reference is searched by its referents’ labels, so it
       // reads them off the referent beside the key.
-      const hopFields = [
-        keyedFieldOf(target),
-        // `searchSchema` guarantees a searchable reference’s label a path.
-        field.searchable === undefined
-          ? undefined
-          : (labelFieldOf(target) as PathField),
-      ];
-      for (const hopField of hopFields) {
-        if (hopField !== undefined) {
-          const built = buildFieldHop(target, hopField, referent, counter);
-          template.push(built.triple);
-          expansions.push(built.pattern);
-        }
+      for (const hopField of referentHopFields(field, target)) {
+        const built = buildFieldHop(target, hopField, referent, counter);
+        template.push(built.triple);
+        expansions.push(built.pattern);
       }
       continue;
     }
@@ -495,6 +486,24 @@ function localTargetsOf(
  * reads the same declarations rather than a rule of its own: a reference that
  * names no target keeps the node IRI, and needs no hop.
  */
+/**
+ * The fields a reference reads off a referent of a target it does not expand
+ * `local`ly: the target’s key field, where it is keyed, and – for a
+ * `searchable` reference – its label field, by which the reference is searched.
+ */
+export function referentHopFields(
+  field: SearchField,
+  target: RootType,
+): PathField[] {
+  return [
+    keyedFieldOf(target),
+    // `searchSchema` guarantees a searchable reference’s label a path.
+    field.searchable === undefined
+      ? undefined
+      : (labelFieldOf(target) as PathField),
+  ].filter((hopField) => hopField !== undefined);
+}
+
 function keyedFieldOf(target: RootType): PathField | undefined {
   if (target.key === undefined) {
     return undefined;

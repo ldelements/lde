@@ -1,3 +1,4 @@
+import type { Quad, Term } from '@rdfjs/types';
 import { Distribution, type Dataset } from '@lde/dataset';
 import {
   SparqlConstructReader,
@@ -15,8 +16,15 @@ import {
   type RootType,
   type SearchDocument,
   type SearchSchema,
+  type SearchType,
 } from '@lde/search';
-import { extractionQueryString } from './extraction.js';
+import {
+  irAlias,
+  isInlineReference,
+  referencedTargetsOf,
+  referenceTypeNamed,
+} from '@lde/search/adapter';
+import { extractionQueryString, referentHopFields } from './extraction.js';
 import type { TypedSearchDocument } from './typed-search-document.js';
 
 /** One root type’s stage in a search pipeline. */
@@ -67,6 +75,15 @@ export interface SearchStageType {
    * A field a transform fills must still declare a `path`: projection skips a
    * field with neither a `path` nor a `derive`, so a transform-minted IR Alias
    * is otherwise never read.
+   *
+   * **It also runs on this type’s referents in other stages.** Where another
+   * type’s `searchable` reference names this type as its target, that stage
+   * hands the transform(s) each referent its batch read – the referent’s key
+   * and label field under this type’s IR Aliases, and nothing else – so the
+   * reference is searched by the labels this type’s documents get. A transform
+   * must therefore cope with a node carrying only those two fields, once per
+   * referring batch. A reference from this type to itself gets no separate
+   * pass: this transform already sees its referents’ quads in the batch.
    */
   transform?: QuadTransform<ReaderContext> | QuadTransform<ReaderContext>[];
   /**
@@ -126,6 +143,12 @@ export interface SearchStagesOptions {
  * projection as `ProjectionContext.datasetDocument`, so a `derive` can copy a
  * field of the dataset onto each document.
  *
+ * Before projection, a stage passes the referents of its `searchable`
+ * references through their target type’s
+ * {@link SearchStageType.transform transform(s)}, so a reference is searched
+ * by the labels the target’s documents get. A stage with its own `readers`
+ * gets no such pass.
+ *
  * Wire the result as `new Pipeline<TypedSearchDocument>({ datasetSelector,
  * stages: searchStages(...), writers: searchIndexWriter(...) })` – one terminal,
  * N stages.
@@ -148,6 +171,16 @@ export function searchStages(
     ...types.filter(isDatasetType),
     ...types.filter((type) => !isDatasetType(type)),
   ];
+  // Each type’s transforms, for the referring stages to apply to its
+  // referents. A type with its own readers has none here: `transform`
+  // attaches to the default reader only.
+  const transformsByName = new Map(
+    types.flatMap((type) =>
+      type.transform === undefined
+        ? []
+        : [[type.searchType.name, [type.transform].flat()] as const],
+    ),
+  );
   return ordered.map((type) => {
     // Project with the schema’s OWN declaration object, whatever the caller
     // passed: `assertTypeInSchema` (inside `projectRoots`) is an identity check,
@@ -180,7 +213,10 @@ export function searchStages(
             subjectVariable: rootVariable,
           }),
         }),
-        transform: type.transform,
+        transform: [
+          type.transform ?? [],
+          referentTransforms(searchType, schema, transformsByName) ?? [],
+        ].flat(),
       } satisfies AttachedReader);
     return new Stage<TypedSearchDocument>({
       name: searchType.name,
@@ -355,6 +391,131 @@ export function registrySource(
 
 /** {@link SearchStageType.batchSize} when the type sets none. */
 export const defaultBatchSize = { endpoint: 10, imported: 100 } as const;
+
+/**
+ * A transform passing each referent of the type’s `searchable` references,
+ * its inline referents’ included, through its target type’s transforms: the
+ * quads the extraction read off the referent ({@link referentHopFields}) go
+ * in, and what the target’s transforms make of them comes back in their place.
+ * `undefined` where no such reference names a target with transforms.
+ *
+ * The batch is buffered to find the referents, so memory stays bounded by the
+ * stage’s `batchSize`.
+ */
+function referentTransforms(
+  searchType: RootType,
+  schema: SearchSchema,
+  transformsByName: ReadonlyMap<
+    string,
+    readonly QuadTransform<ReaderContext>[]
+  >,
+): QuadTransform<ReaderContext> | undefined {
+  // Per target with transforms: the reference fields naming it, and the
+  // aliases its referents carry. A target’s aliases are its own, so no quad
+  // belongs to two targets.
+  const routes = new Map<
+    RootType,
+    { fields: Set<string>; aliases: Set<string> }
+  >();
+  for (const { owner, field } of searchedReferences(searchType, schema)) {
+    for (const target of referencedTargetsOf(field, schema)) {
+      // A reference to its own type: the type’s transform saw the batch.
+      if (
+        target !== searchType &&
+        transformsByName.get(target.name) !== undefined
+      ) {
+        const route = routes.get(target) ?? {
+          fields: new Set<string>(),
+          aliases: new Set<string>(),
+        };
+        route.fields.add(irAlias(owner, field));
+        for (const hopField of referentHopFields(field, target)) {
+          route.aliases.add(irAlias(target, hopField));
+        }
+        routes.set(target, route);
+      }
+    }
+  }
+  if (routes.size === 0) {
+    return undefined;
+  }
+  const targetsByField = new Map<string, RootType[]>();
+  const targetByAlias = new Map<string, RootType>();
+  for (const [target, { fields, aliases }] of routes) {
+    for (const field of fields) {
+      targetsByField.set(field, [...(targetsByField.get(field) ?? []), target]);
+    }
+    for (const alias of aliases) {
+      targetByAlias.set(alias, target);
+    }
+  }
+  return async function* referentTransforms(quads, context) {
+    const batch: Quad[] = [];
+    // Each target’s referents in this batch: the objects of the references
+    // naming it.
+    const referents = new Map<RootType, Set<string>>();
+    for await (const quad of quads) {
+      batch.push(quad);
+      for (const target of targetsByField.get(quad.predicate.value) ?? []) {
+        const keys = referents.get(target) ?? new Set<string>();
+        keys.add(termKey(quad.object));
+        referents.set(target, keys);
+      }
+    }
+    // One pass sorting each quad into its target’s input, or keeping it.
+    const inputs = new Map<RootType, Quad[]>();
+    for (const quad of batch) {
+      const target = targetByAlias.get(quad.predicate.value);
+      if (
+        target !== undefined &&
+        referents.get(target)?.has(termKey(quad.subject))
+      ) {
+        inputs.set(target, [...(inputs.get(target) ?? []), quad]);
+      } else {
+        yield quad;
+      }
+    }
+    for (const [target, input] of inputs) {
+      let stream: AsyncIterable<Quad> = streamOf(input);
+      for (const transform of transformsByName.get(
+        target.name,
+      ) as readonly QuadTransform<ReaderContext>[]) {
+        stream = transform(stream, context);
+      }
+      yield* stream;
+    }
+  };
+}
+
+/** The type’s `searchable` reference fields, with the type declaring each:
+ *  its own, and those of the inline referents it nests. `searchSchema`
+ *  refuses an inline cycle, so the descent ends. */
+function searchedReferences(
+  owner: SearchType,
+  schema: SearchSchema,
+): { owner: SearchType; field: SearchType['fields'][number] }[] {
+  return owner.fields.flatMap((field) => {
+    if (isInlineReference(field)) {
+      // Guaranteed declared: `searchSchema` resolves every inline `typeName`.
+      return searchedReferences(
+        referenceTypeNamed(schema, field.ref.typeName) as SearchType,
+        schema,
+      );
+    }
+    return field.kind === 'reference' && field.searchable !== undefined
+      ? [{ owner, field }]
+      : [];
+  });
+}
+
+/** A term’s identity as a string: a blank node never equals an IRI. */
+function termKey(term: Term): string {
+  return `${term.termType}:${term.value}`;
+}
+
+async function* streamOf(quads: readonly Quad[]): AsyncIterable<Quad> {
+  yield* quads;
+}
 
 /** The class of a root type that describes the dataset being indexed. */
 const DCAT_DATASET = 'http://www.w3.org/ns/dcat#Dataset';
