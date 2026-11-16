@@ -21,6 +21,7 @@ import {
   isAbsoluteIri,
   isInternalField,
   isInlineReference,
+  labelFieldOf,
   literalKindOf,
   localLookupTargetsOf,
   physicalFields,
@@ -680,6 +681,7 @@ function referenceValues(
   schema: SearchSchema | undefined,
   targetsById: Map<string, RootType>,
   unread: Unread,
+  labelsById?: Map<string, string[]>,
 ): readonly string[] {
   // A literal where a referent belongs states no IRI to store. A node without
   // one – a blank node – carries no value a publisher could look up, so only
@@ -719,14 +721,23 @@ function referenceValues(
                 : [],
             );
       // Remembered only where there was a choice: a single-target reference
-      // stays byte-identical to what it was, symbol keys included. Keyed by
-      // what the field STORES – the value after its own `transform`, which
-      // `applyFacet` applies before it reads this map.
-      if (keyed !== undefined && targets.length > 1) {
-        targetsById.set(
-          field.transform === undefined ? keyed : field.transform(keyed),
-          target,
-        );
+      // stays byte-identical to what it was, symbol keys included – and its
+      // labels only where the field is searched by them. Both keyed by what
+      // the field STORES – the value after its own `transform`, which
+      // `applyFacet` applies before it reads these maps.
+      if (
+        keyed !== undefined &&
+        (targets.length > 1 || labelsById !== undefined)
+      ) {
+        const stored =
+          field.transform === undefined ? keyed : field.transform(keyed);
+        if (targets.length > 1) {
+          targetsById.set(stored, target);
+        }
+        labelsById?.set(stored, [
+          ...(labelsById.get(stored) ?? []),
+          ...labelsOf(value, target),
+        ]);
       }
       return keyed;
     })
@@ -744,9 +755,44 @@ function applyReferents(
   unread: Unread,
 ): void {
   const targetsById = new Map<string, RootType>();
-  const ids = referenceValues(values, field, schema, targetsById, unread);
+  // A reference naming a target is searched by its referents’ labels, which
+  // the extraction read off each referent beside its key.
+  const labelsById =
+    field.searchable !== undefined &&
+    referencedTargetsOf(field, schema).length > 0
+      ? new Map<string, string[]>()
+      : undefined;
+  const ids = referenceValues(
+    values,
+    field,
+    schema,
+    targetsById,
+    unread,
+    labelsById,
+  );
   rememberTargets(document, targetsById);
-  applyFacet(document, ids, field, schema, targetsById);
+  applyFacet(document, ids, field, schema, targetsById, labelsById);
+}
+
+/**
+ * The labels a framed referent states in its target’s label field, in that
+ * field’s declared locales – the same values the target’s own search companion
+ * holds. A referent stated by IRI alone, or one whose label only an
+ * enrichment or another dataset supplies, has none here.
+ */
+function labelsOf(value: unknown, target: RootType): string[] {
+  if (!isObject(value)) {
+    return [];
+  }
+  // `searchSchema` guarantees every reference’s target a label field.
+  const labelField = labelFieldOf(target) as TextField;
+  return langValuesOf(value as FramedNode, irAlias(target, labelField))
+    .filter(
+      ({ lang, value: label }) =>
+        label.trim() !== '' &&
+        matchLanguage(lang, labelField.locales)[0] !== undefined,
+    )
+    .map(({ value: label }) => label.trim());
 }
 
 /**
@@ -996,7 +1042,9 @@ function foldedSearchValue(values: readonly string[]): string {
  * Project a faceted field: dedupe (after the optional transform), write the
  * value field, and – when `searchable` – its folded `${name}_search` companion.
  * `keyword` reads literals; `reference` reads IRIs (the caller passes the
- * already-read raw values).
+ * already-read raw values). A reference passing `labelsById` – one naming a
+ * target – folds its stored referents’ labels into that companion instead of
+ * their IRIs, so a query finds the document by what the referent is called.
  *
  * A reference inheriting a {@link FacetKeys facet policy} from the type it
  * names ({@link inheritedFacetPolicies}) also writes the `${name}_facet` companion
@@ -1024,6 +1072,7 @@ function applyFacet(
   field: KeywordField | ReferenceField,
   schema: SearchSchema | undefined,
   targetsById?: ReadonlyMap<string, RootType>,
+  labelsById?: ReadonlyMap<string, readonly string[]>,
 ): void {
   // A `reference` stores identity, so what it stores must be an IRI whatever
   // route the value arrived by. {@link iriString} guards the graph path, but a
@@ -1035,7 +1084,6 @@ function applyFacet(
   const values = dedupe(
     referenced ? transformed.filter(isAbsoluteIri) : transformed,
   );
-  const folded = dedupe(values.map((value) => fold(value)));
   const names = physicalFields(field, schema);
   const searchField = names.search[0];
   const policies = inheritedFacetPolicies(field, schema);
@@ -1047,6 +1095,15 @@ function applyFacet(
   // field its first value, not the first admitted of all of them, or the facet
   // would count a value no filter on the field can reproduce.
   const stored = field.array === true ? values : values.slice(0, 1);
+  // What a query matches: the stored values themselves, or – for a reference
+  // searched by its referents’ labels – the labels of the referents it stores,
+  // which {@link referenceValues} recorded for every id it returned.
+  const folded = dedupe(
+    (labelsById === undefined
+      ? values
+      : stored.flatMap((id) => labelsById.get(id) as readonly string[])
+    ).map((value) => fold(value)),
+  );
   const targets = referencedTargetsOf(field, schema);
   const admitted = !inherited
     ? []
@@ -1065,7 +1122,12 @@ function applyFacet(
   }
   setString(document, field.name, stored[0]);
   if (field.searchable) {
-    setString(document, searchField, folded[0]);
+    setString(
+      document,
+      searchField,
+      // A single referent may state its label in several languages.
+      labelsById === undefined ? folded[0] : folded.join(' '),
+    );
   }
   if (inherited) {
     setString(document, facetField, admitted[0]);

@@ -185,7 +185,9 @@ export interface SearchFieldBase {
 export type ProjectionValue = 'dataset';
 
 /** Full-text inclusion with a `query_by` weight (folded; per-locale for
- *  localized text). Presence is what makes a field searchable. */
+ *  localized text). Presence is what makes a field searchable. A reference
+ *  naming a label source is searched by its referents’ labels, read off each
+ *  referent at index time; any other reference by its folded values. */
 export interface Searchable {
   readonly searchable?: { readonly weight: number };
 }
@@ -1870,6 +1872,18 @@ function assertResolvableLabelSources(
         if (labelFieldOf(source) === undefined) {
           throw new Error(
             `Reference “${searchType.name}.${field.name}” uses label source “${sourceName}”, which must declare an output, searchable text field “${labelFieldNameOf(source)}”.`,
+          );
+        }
+        // A searchable reference read from the graph is searched by its
+        // referents’ labels, which the extraction reads off each referent along
+        // the label field’s path; a label without one has nothing to read there.
+        if (
+          field.searchable !== undefined &&
+          field.path !== undefined &&
+          labelFieldOf(source)?.path === undefined
+        ) {
+          throw new Error(
+            `Reference “${searchType.name}.${field.name}” is searchable, so its label source “${sourceName}” must read its label field “${labelFieldNameOf(source)}” from a path.`,
           );
         }
         sources.push(source);

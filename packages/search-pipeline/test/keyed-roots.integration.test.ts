@@ -73,6 +73,7 @@ const creativeWork = defineSearchType({
       path: `<${SCHEMA}locationCreated>`,
       facetable: true,
       output: true,
+      searchable: { weight: 1 },
       ref: { strategy: 'lookup', target: 'Place' },
     },
   ],
@@ -169,5 +170,20 @@ describe('a root type keyed on a declared field, end to end', () => {
     // that is the id their own document is written under.
     expect(byName['Werk 2'].locationCreated).toBe('https://a/place/kessel');
     expect(byName['Werk 4'].locationCreated).toBe('https://a/place/buurtschap');
+  });
+
+  it('makes each work searchable by its place’s label, not its IRI', async () => {
+    const byName = Object.fromEntries(
+      (await project(creativeWork)).map((document) => [
+        document.name_nl,
+        document,
+      ]),
+    );
+
+    // Folded, as every search companion is, and read from the publisher’s node
+    // whatever key the reference stores.
+    expect(byName['Werk 1'].locationCreated_search).toBe('venlo');
+    expect(byName['Werk 2'].locationCreated_search).toBe('kessel');
+    expect(byName['Werk 3'].locationCreated_search).toBe('roermond');
   });
 });
