@@ -1,6 +1,5 @@
 PREFIX schema: <http://schema.org/>
 PREFIX dcterms: <http://purl.org/dc/terms/>
-PREFIX dc: <http://purl.org/dc/elements/1.1/>
 PREFIX rico: <https://www.ica.org/standards/RiC/ontology#>
 PREFIX void: <http://rdfs.org/ns/void#>
 
@@ -16,7 +15,9 @@ WHERE {
         SELECT ?license (COUNT(*) AS ?count) {
             #subjectFilter#
             ?s ?p ?license .
-            VALUES ?p { schema:license <https://schema.org/license> dc:license rico:conditionsOfUse }
+            # dcterms:license is the Dublin Core (and DCAT) license property;
+            # Dublin Core Elements 1.1 has no license element.
+            VALUES ?p { schema:license <https://schema.org/license> dcterms:license rico:conditionsOfUse }
             # Licenses must be IRIs: casting a text literal such as “CC0 1.0”
             # with IRI() would yield an invalid IRI that fails serialisation.
             FILTER(isIRI(?license))
