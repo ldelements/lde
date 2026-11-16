@@ -1,3 +1,9 @@
+## 0.49.4 (2026-11-16)
+
+### 🩹 Fixes
+
+- **pipeline-void:** read licenses from dcterms:license ([#1094](https://github.com/ldelements/lde/pull/1094))
+
 ## 0.49.3 (2026-11-16)
 
 ### 🩹 Fixes
