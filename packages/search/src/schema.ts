@@ -322,6 +322,13 @@ export type ReferenceStrategy =
        * rather than an id – and because framing must reach one step further to
        * read the target’s fields off the referent
        * ({@link inlineFramingDepth}). A schema that declares none pays neither.
+       *
+       * And opt-in because not every lookup has a copy worth storing. A
+       * `derive`d or `from` lookup yields ids with no referent node behind
+       * them. A `literal` lookup stores strings beside its referents, which a
+       * nested object cannot sit beside. A lookup whose target documents are
+       * built from the same graph as the referring one – a register’s
+       * publisher – would only store each of them twice.
        */
       readonly local?: boolean;
       /**
