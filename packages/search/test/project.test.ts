@@ -2163,6 +2163,60 @@ describe('document keys (a type keyed on a declared field)', () => {
     expect(document.about).toEqual([`${WIKIDATA}Q1`]);
   });
 
+  it('searches a searchable reference by its referents’ labels, not their ids', () => {
+    // A work found by what the place it references is called. The label is
+    // the referent’s own, whatever key the reference stores for it.
+    const searchableWork = defineSearchType({
+      ...work,
+      name: 'SearchableWork',
+      class: 'urn:x:SearchableWork',
+      fields: work.fields.map((field) => ({
+        ...field,
+        searchable: { weight: 1 },
+      })),
+    });
+    const searchableKey = (field: string) => alias('SearchableWork', field);
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/work/1',
+        [searchableKey('locationCreated')]: {
+          '@id': 'https://ex/place/1',
+          [placeKey('_sameAs')]: [{ '@id': `${GEONAMES}2751283` }],
+          [placeKey('name')]: [{ '@value': 'Késsel' }],
+        },
+        [searchableKey('about')]: [
+          {
+            '@id': 'https://ex/place/2',
+            [placeKey('_sameAs')]: [{ '@id': `${WIKIDATA}Q1` }],
+            // In a language the label field does not declare: not searched,
+            // as the place’s own search companion would not hold it either.
+            [placeKey('name')]: [{ '@value': 'Venlo', '@language': 'fr' }],
+          },
+          // Stated by IRI alone, or with a blank label: stored, with no label
+          // to search.
+          { '@id': 'https://ex/place/3', [placeKey('name')]: ' ' },
+          'https://ex/place/5',
+          { '@id': 'https://ex/place/4', [placeKey('name')]: 'Roermond' },
+        ],
+        [searchableKey('unnamed')]: [{ '@id': 'https://ex/Thing' }],
+      },
+      searchableWork,
+      searchSchema(place, searchableWork),
+    );
+
+    expect(document.locationCreated).toBe(`${GEONAMES}2751283`);
+    expect(document.locationCreated_search).toBe('kessel');
+    expect(document.about).toEqual([
+      `${WIKIDATA}Q1`,
+      'https://ex/place/3',
+      'https://ex/place/5',
+      'https://ex/place/4',
+    ]);
+    expect(document.about_search).toEqual(['roermond']);
+    // A reference naming no target has no label to read: its ids, folded.
+    expect(document.unnamed_search).toEqual(['https://ex/thing']);
+  });
+
   it('stores the referent’s own IRI when it offers no key', () => {
     // An unaligned place: the reference still resolves, against the document
     // that place is written under.

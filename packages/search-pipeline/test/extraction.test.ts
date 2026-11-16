@@ -544,6 +544,37 @@ describe('references into a keyed type', () => {
     expect(extractionQueryString(work, keyedSchema)).toContain('OPTIONAL');
   });
 
+  it('reads a searchable lookup’s labels off the referent, under the target’s alias', () => {
+    // A work found by the name of the place it references: the label is read
+    // one hop from the work, beside the key, so the work’s own document can
+    // hold it for the query to match.
+    const searchableWork = defineSearchType({
+      ...work,
+      fields: [{ ...work.fields[0], searchable: { weight: 1 } }],
+    });
+    const query = extractionQuery(
+      searchableWork,
+      searchSchema(searchableWork, place),
+    );
+
+    expect(templatePredicates(query)).toEqual([
+      irAlias(searchableWork, searchableWork.fields[0]),
+      irAlias(place, place.fields[1]),
+      irAlias(place, place.fields[0]),
+    ]);
+    const [referenceTriple, , labelTriple] = templateTriples(query);
+    expect(labelTriple.subject).toEqual(referenceTriple.object);
+    // Still one OPTIONAL: a referent without a label keeps its row.
+    const [group] = unionBranches(query);
+    expect(group.patterns[1]).toMatchObject({ subType: 'optional' });
+  });
+
+  it('reads no label for a lookup that is not searchable', () => {
+    expect(
+      templatePredicates(extractionQuery(work, keyedSchema)),
+    ).not.toContain(irAlias(place, place.fields[0]));
+  });
+
   it('leaves the keyed type’s own extraction unchanged', () => {
     // The key field is an ordinary declared field, so its read and template
     // triple are already there; keying adds nothing on the root side. Both are

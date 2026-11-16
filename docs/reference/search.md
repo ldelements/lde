@@ -586,6 +586,21 @@ the labels are read from that collection: it must declare an `output`,
 `searchable` text field named by its label field (below), and `searchSchema`
 validates this schema-wide, so a dangling or unsuitable source fails at startup.
 
+A **`searchable`** reference that names a label source finds the document by
+its referents’ **labels**, not by their IRIs: a work whose `about`
+points at the term “Starluster” matches the query `starluster`. The extraction
+reads each referent’s label field off the referent, one hop from the document,
+beside its key. The projection folds the labels in the label field’s own
+`locales` into the reference’s `${name}_search` companion, so a query still
+searches one collection. The label is the one the document’s own graph states
+for its referent. A referent stated by IRI alone, or one whose label only an
+enrichment or another dataset supplies, adds nothing to search, and the label
+field must therefore have a `path`. A copied label changes when the document is
+reindexed. A reference naming no label source still folds its IRIs, and a
+`derive`d or `from` reference reads no referent, so it is never searched by
+labels
+([ADR 38](../decisions/0038-search-a-document-by-its-referents-labels.md)).
+
 The resolved label carries **one word** wherever it surfaces: on the label
 source’s own type, on the reference that resolves against it (`dataset { id
 label }`), and on a reference facet’s bucket. One word, one meaning – so a
