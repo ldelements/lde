@@ -899,9 +899,10 @@ fragment reaches the fields only one kind has. The interface itself carries
 `id` and whatever every target declares alike.
 
 **Order is precedence.** A referent two collections hold – two Root Types
-whose `class` selections overlap – belongs to the first target listed, and so
-does a stored referent whose `rdf:type` matches none of them. List the most
-specific type first.
+whose `class` selections overlap – belongs to the first target listed unless
+the referring document stored which kind it is (see below), and a stored
+referent whose `rdf:type` matches none of them belongs to the first target too.
+List the most specific type first.
 
 **A stored referent says which kind it is.** A [`local`](#data-on-the-edge)
 lookup stores what the referring document states, and most such referents are
@@ -911,7 +912,11 @@ each target’s `class`, projecting the entry through the matching declaration
 and recording which under a reserved physical name (`_target`, which no type
 may declare). A stored referent that no collection answers for – unidentified,
 or identified but not indexed – is then still served as the kind it was stated
-to be. The nested object declares the union of the targets’ fields, so two
+to be. A stored referent other collections answer for is served as the kind it
+was stored as too, not as the first one listed: it takes the answer of its own
+kind’s collection, or what was stored where that collection holds no record of
+it. Two documents can type the same IRI differently, and each keeps its own
+reading. The nested object declares the union of the targets’ fields, so two
 targets that both declare a field must declare it alike – same `kind`, same
 arity, same Roles, and for a reference the same strategy and referent;
 `searchSchema` rejects the pair otherwise.

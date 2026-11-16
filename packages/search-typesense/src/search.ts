@@ -48,6 +48,7 @@ import {
   referenceFields,
   storedFacetRanges,
   storedTargetOf,
+  TARGET_FIELD,
   type FacetSearch,
 } from '@lde/search/adapter';
 import {
@@ -1099,8 +1100,8 @@ export async function fetchLabels(
       const id = String(hit.document.id);
       // First group wins: the groups arrive in the order a field declares its
       // targets, so an IRI two collections hold is labelled by the target
-      // declared first – the same precedence the lookup and the projection
-      // apply.
+      // declared first – the same precedence the lookup applies to an entry
+      // that stores no target, and the projection to an unmatched referent.
       if (labels.has(id)) {
         continue;
       }
@@ -1500,7 +1501,7 @@ function localLookupValue(
   const fetched =
     resolved?.via === 'lookup'
       ? resolved.documents
-      : new Map<string, ResolvedReferent>();
+      : new Map<string, readonly ResolvedReferent[]>();
   const documents = (Array.isArray(raw) ? raw : [raw])
     .filter(
       (entry): entry is Record<string, unknown> =>
@@ -1508,10 +1509,17 @@ function localLookupValue(
     )
     .map((entry) => {
       const id = typeof entry.id === 'string' ? entry.id : undefined;
-      const authoritative = id === undefined ? undefined : fetched.get(id);
-      // An entry no collection answered for is read through the declaration
-      // it was stored under – which it says itself where there were several
-      // to choose from, and the only one otherwise.
+      const answers = id === undefined ? undefined : fetched.get(id);
+      const target = storedTargetOf(entry, targets);
+      // An entry that stores its target takes only that target’s answer, so
+      // another collection holding the same IRI never retypes it; one that
+      // stores none takes the target declared first.
+      const authoritative =
+        entry[TARGET_FIELD] === undefined
+          ? answers?.[0]
+          : answers?.find((answer) => answer.target.name === target.name);
+      // An answer replaces the entry: the target’s own record, read through
+      // the target that answered.
       if (authoritative !== undefined) {
         return typedDocument(
           targets.length > 1,
@@ -1525,9 +1533,11 @@ function localLookupValue(
           ),
         );
       }
-      // Its own lookups resolve against the level its target’s fetch carried
+      // An entry its target’s collection did not answer for is read through
+      // the declaration it was stored under – which it says itself where
+      // there were several to choose from, and the only one otherwise. Its
+      // own lookups resolve against the level its target’s fetch carried
       // down, so a nested IRI it shares with a fetched referent still nests.
-      const target = storedTargetOf(entry, targets);
       return typedDocument(
         targets.length > 1,
         target,
@@ -1606,7 +1616,9 @@ function lookupValue(
   const iris = Array.isArray(raw) ? (raw as string[]) : [String(raw)];
   const polymorphic = referencedTargetsOf(field, schema).length > 1;
   const documents: NestedDocument[] = iris.map((iri) => {
-    const referent = resolved.documents.get(iri);
+    // A bare IRI names no target, so of the collections that hold it the
+    // target declared first wins.
+    const referent = resolved.documents.get(iri)?.[0];
     return referent === undefined
       ? { id: iri }
       : typedDocument(polymorphic, referent.target, {
