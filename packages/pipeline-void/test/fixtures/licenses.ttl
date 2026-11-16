@@ -1,0 +1,10 @@
+@prefix schema: <http://schema.org/> .
+
+# Licenses given as IRIs are counted.
+<http://example.org/record/1> schema:license <http://creativecommons.org/publicdomain/zero/1.0/> .
+<http://example.org/record/2> schema:license <http://creativecommons.org/publicdomain/zero/1.0/> .
+
+# Licenses given as text literals, as in Bonnefanten and RKD, are not IRIs:
+# they are not counted and must not fail the stage.
+<http://example.org/record/3> schema:license "CC0 1.0" .
+<http://example.org/record/4> schema:license "Gebruik vrij van rechten" .
