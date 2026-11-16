@@ -44,6 +44,25 @@ A dataset that **failed** but whose source is unchanged is recorded as `'failed'
 
 `pipelineVersion` is yours and opaque to LDE: rotate it only on releases that change the pipeline’s output. After a rotation, every dataset reprocesses on the next run. The option is required when a `provenanceStore` is configured – a skip-enabled pipeline without a version would silently freeze its output.
 
+## Process the stalest datasets first
+
+By default the pipeline processes datasets in the order the selector yields them. A run that is cut off before the end – a scheduler that kills a still-running run when the next one starts, say – then starts over from the top every time, and the datasets at the tail of the selection are never refreshed. Set `datasetOrder: 'stalestFirst'` to process the datasets that waited longest first:
+
+```typescript
+const pipeline = new Pipeline({
+  // …
+  provenanceStore,
+  pipelineVersion: 'v3',
+  datasetOrder: 'stalestFirst',
+});
+```
+
+Datasets without a record come first, then the rest by their record’s `generatedAt`, oldest first; ties keep selection order. With a writer that persists each dataset as it finishes, a run that is cut off still makes progress, and the next one picks up where it stopped. The option requires a `provenanceStore`.
+
+To sort, the pipeline reads the whole selection and each dataset’s record before it processes the first dataset, so memory grows with the number of selected datasets – one description and one record each – rather than staying at one dataset at a time. A dataset whose record cannot be read sorts as if it had none.
+
+A dataset whose processing never finishes – it hangs, or the process is killed – never gets its record written, so it would stay the stalest and block every later run. To prevent that, the pipeline records each attempt as soon as it decides to reprocess a dataset: a `'failed'` record without a source fingerprint, which the record written on completion replaces. An interrupted dataset therefore moves to the back of the next run and is still reprocessed, because a missing fingerprint never matches. A dataset skipped as unchanged gets no such record.
+
 ## Use a triplestore-backed store
 
 When your pipeline output is bulk-loaded into a read-only triplestore (e.g. [QLever](https://github.com/ad-freiburg/qlever)), use `FileLoadedSparqlProvenanceStore` instead – a _SPARQL_ store whose contents are _file-loaded_: it reads records through SPARQL queries against the live endpoint and writes them as [PROV-O](https://www.w3.org/TR/prov-o/) N-Quads files to be bulk-loaded together with the next run’s output:

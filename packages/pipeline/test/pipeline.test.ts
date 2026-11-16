@@ -1,4 +1,12 @@
-import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
+import {
+  describe,
+  it,
+  expect,
+  vi,
+  afterEach,
+  beforeEach,
+  type Mock,
+} from 'vitest';
 import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -3548,6 +3556,244 @@ describe('Pipeline', () => {
       // Today's behaviour: always resolve and run.
       expect(resolver.resolve).toHaveBeenCalledTimes(1);
       expect(stage.run).toHaveBeenCalledTimes(1);
+    });
+
+    describe('stalest-first order', () => {
+      const all = [1, 2, 3, 4, 5].map((number) =>
+        makeDataset(`http://example.org/dataset/${number}`),
+      );
+      const [first, second, third, fourth, fifth] = all;
+
+      afterEach(() => {
+        vi.useRealTimers();
+      });
+
+      /** A store keeping records in memory across runs, like a real one. */
+      function makeMemoryStore(
+        initial: [Dataset, ProcessingRecord][] = [],
+      ): ProvenanceStore & {
+        records: Map<string, ProcessingRecord>;
+        get: ReturnType<typeof vi.fn>;
+        set: ReturnType<typeof vi.fn>;
+      } {
+        const records = new Map(
+          initial.map(([recorded, record]) => [
+            recorded.iri.toString(),
+            record,
+          ]),
+        );
+        return {
+          records,
+          get: vi.fn(async (datasetUri: URL) => {
+            return records.get(datasetUri.toString()) ?? null;
+          }),
+          set: vi.fn(async (datasetUri: URL, record: ProcessingRecord) => {
+            records.set(datasetUri.toString(), record);
+          }),
+        };
+      }
+
+      function processedAt(generatedAt: string): ProcessingRecord {
+        return {
+          sourceFingerprint: 'fingerprint',
+          pipelineVersion: 'v1',
+          generatedAt,
+          status: 'success',
+        };
+      }
+
+      function startedDatasets(reporter: RecordingReporter): string[] {
+        return reporter.events.flatMap((event) =>
+          event.type === 'datasetStart' ? [event.dataset.iri.toString()] : [],
+        );
+      }
+
+      const iris = (...datasets: Dataset[]) =>
+        datasets.map((selected) => selected.iri.toString());
+
+      function makeStalestFirstPipeline(
+        store: ProvenanceStore,
+        reporter: Reporter,
+        selected: Dataset[],
+        distributionResolver: DistributionResolver = makeResolver(
+          makeResolvedDistribution(),
+        ),
+        datasetOrder: 'selection' | 'stalestFirst' = 'stalestFirst',
+      ) {
+        return new Pipeline({
+          datasetSelector: makeDatasetSelector(...selected),
+          stages: [makeStage('stage1')],
+          writers: makeWriter(),
+          distributionResolver,
+          provenanceStore: store,
+          pipelineVersion: 'v1',
+          datasetOrder,
+          reporter,
+        });
+      }
+
+      it('throws without a store', () => {
+        expect(
+          () =>
+            new Pipeline({
+              datasetSelector: makeDatasetSelector(dataset),
+              stages: [makeStage('stage1')],
+              writers: writer,
+              datasetOrder: 'stalestFirst',
+            }),
+        ).toThrow("datasetOrder 'stalestFirst' requires a provenanceStore");
+      });
+
+      it('processes never-processed datasets first, then the oldest records, keeping selection order for ties', async () => {
+        const store = makeMemoryStore([
+          [first, processedAt('2026-01-03T00:00:00.000Z')],
+          [third, processedAt('2026-01-01T00:00:00.000Z')],
+          [fifth, processedAt('2026-01-01T00:00:00.000Z')],
+        ]);
+        const reporter = makeReporter();
+
+        await makeStalestFirstPipeline(store, reporter, all).run();
+
+        expect(startedDatasets(reporter)).toEqual(
+          iris(second, fourth, third, fifth, first),
+        );
+        // The skip gate reuses the records read for ordering.
+        expect(store.get).toHaveBeenCalledTimes(5);
+      });
+
+      it('resumes a run that was cut off with the datasets it did not reach', async () => {
+        // The first run processed the first two datasets before it was killed.
+        const store = makeMemoryStore([
+          [first, processedAt('2026-01-01T00:00:00.000Z')],
+          [second, processedAt('2026-01-01T01:00:00.000Z')],
+        ]);
+        const reporter = makeReporter();
+
+        await makeStalestFirstPipeline(store, reporter, all).run();
+
+        expect(startedDatasets(reporter)).toEqual(
+          iris(third, fourth, fifth, first, second),
+        );
+      });
+
+      it('records the attempt so a dataset that never finishes does not come first on the next run', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        const store = makeMemoryStore();
+
+        // First run: the first dataset hangs while resolving, so the run never
+        // reaches the others, as when the process is killed.
+        vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+        let recordWhileResolving: ProcessingRecord | undefined;
+        let resolving: () => void;
+        const resolveReached = new Promise<void>((resolve) => {
+          resolving = resolve;
+        });
+        const hangingResolver = makeResolver(makeResolvedDistribution());
+        hangingResolver.resolve = vi.fn(() => {
+          recordWhileResolving = store.records.get(first.iri.toString());
+          resolving();
+          return new Promise<never>(() => undefined);
+        });
+        void makeStalestFirstPipeline(
+          store,
+          makeReporter(),
+          [first, second, third],
+          hangingResolver,
+        ).run();
+        await resolveReached;
+
+        expect(recordWhileResolving).toEqual({
+          sourceFingerprint: null,
+          pipelineVersion: 'v1',
+          generatedAt: '2026-01-01T00:00:00.000Z',
+          status: 'failed',
+        });
+
+        // Second run: the datasets the first run never reached go first, and
+        // the one that hung is still reprocessed.
+        vi.setSystemTime(new Date('2026-01-02T00:00:00.000Z'));
+        const reporter = makeReporter();
+        await makeStalestFirstPipeline(store, reporter, [
+          first,
+          second,
+          third,
+        ]).run();
+
+        expect(startedDatasets(reporter)).toEqual(iris(second, third, first));
+        expect(reporter.datasetSkipped).not.toHaveBeenCalled();
+        expect(store.records.get(first.iri.toString())).toMatchObject({
+          generatedAt: '2026-01-02T00:00:00.000Z',
+          status: 'success',
+        });
+      });
+
+      it('sorts a dataset whose record cannot be read as stalest, and still runs', async () => {
+        const store = makeMemoryStore([
+          [first, processedAt('2026-01-01T00:00:00.000Z')],
+          [third, processedAt('2026-01-01T00:00:00.000Z')],
+        ]);
+        store.get.mockImplementation(async (datasetUri: URL) => {
+          if (datasetUri.toString() === third.iri.toString()) {
+            throw new Error('store unreachable');
+          }
+          return store.records.get(datasetUri.toString()) ?? null;
+        });
+        const reporter = makeReporter();
+
+        await makeStalestFirstPipeline(store, reporter, [
+          first,
+          second,
+          third,
+        ]).run();
+
+        expect(startedDatasets(reporter)).toEqual(iris(second, third, first));
+        expect(reporter.pipelineComplete).toHaveBeenCalled();
+      });
+
+      it('writes no record for a dataset skipped as unchanged', async () => {
+        const store = makeMemoryStore([
+          [
+            dataset,
+            {
+              ...processedAt('2026-01-01T00:00:00.000Z'),
+              sourceFingerprint: currentFingerprint,
+            },
+          ],
+        ]);
+        const reporter = makeReporter();
+
+        await makeStalestFirstPipeline(
+          store,
+          reporter,
+          [dataset],
+          makeDumpResolver(),
+        ).run();
+
+        expect(reporter.datasetSkipped).toHaveBeenCalled();
+        expect(store.set).not.toHaveBeenCalled();
+      });
+
+      it('keeps selection order and records no attempt by default', async () => {
+        const store = makeMemoryStore([
+          [first, processedAt('2026-01-03T00:00:00.000Z')],
+          [second, processedAt('2026-01-01T00:00:00.000Z')],
+        ]);
+        const reporter = makeReporter();
+
+        await makeStalestFirstPipeline(
+          store,
+          reporter,
+          [first, second, third],
+          undefined,
+          'selection',
+        ).run();
+
+        expect(startedDatasets(reporter)).toEqual(iris(first, second, third));
+        expect(store.set).toHaveBeenCalledTimes(3);
+        for (const [, record] of store.set.mock.calls) {
+          expect(record).toMatchObject({ status: 'success' });
+        }
+      });
     });
   });
 

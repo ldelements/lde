@@ -27,6 +27,8 @@ export interface ProcessingRecord {
    * Whether processing succeeded. Recorded so a dataset that failed but whose
    * source is unchanged is skipped on subsequent runs rather than re-imported
    * every run; it is retried at the next source change or version rotation.
+   * With the `'stalestFirst'` dataset order, an attempt still in progress (or
+   * interrupted) is also recorded as failed, without a source fingerprint.
    */
   status: 'success' | 'failed';
 }

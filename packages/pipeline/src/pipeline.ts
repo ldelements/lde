@@ -167,6 +167,19 @@ export interface PipelineOptions<Out = Quad> {
    */
   pipelineVersion?: string;
   /**
+   * The order in which the selected datasets are processed: `'selection'`
+   * (default) streams them as the {@link datasetSelector} yields them;
+   * `'stalestFirst'` puts datasets without a record in the
+   * {@link provenanceStore} first, then the rest by record age, oldest first,
+   * so a run that is cut off still refreshes the datasets that waited longest.
+   * Sorting reads the whole selection and every record up front, so memory
+   * grows with the number of selected datasets. The pipeline also records each
+   * attempt as a `'failed'` record without a source fingerprint, so a dataset
+   * whose processing never finishes does not stay first. Requires a
+   * {@link provenanceStore}.
+   */
+  datasetOrder?: 'selection' | 'stalestFirst';
+  /**
    * Factory producing a fresh {@link TimeoutPolicy} per dataset. Defaults
    * to {@link constantTimeoutPolicy}`(300_000)` so existing call sites
    * keep today’s 5-minute fixed budget.
@@ -431,6 +444,7 @@ export class Pipeline<Out = Quad> {
   private readonly limiter: HostLimiter;
   private readonly provenanceStore?: ProvenanceStore;
   private readonly pipelineVersion?: string;
+  private readonly stalestFirst: boolean;
 
   constructor(options: PipelineOptions<Out>) {
     const hasSubStages = options.stages.some(
@@ -443,6 +457,12 @@ export class Pipeline<Out = Quad> {
     if (options.provenanceStore && options.pipelineVersion === undefined) {
       throw new Error(
         'pipelineVersion is required when a provenanceStore is configured',
+      );
+    }
+
+    if (options.datasetOrder === 'stalestFirst' && !options.provenanceStore) {
+      throw new Error(
+        "datasetOrder 'stalestFirst' requires a provenanceStore to read each dataset’s last processing from",
       );
     }
 
@@ -494,6 +514,7 @@ export class Pipeline<Out = Quad> {
     this.limiter = createHostLimiter(ceiling, ceiling);
     this.provenanceStore = options.provenanceStore;
     this.pipelineVersion = options.pipelineVersion;
+    this.stalestFirst = options.datasetOrder === 'stalestFirst';
   }
 
   async run(): Promise<void> {
@@ -509,12 +530,15 @@ export class Pipeline<Out = Quad> {
     await this.provenanceStore?.check?.();
 
     const selectStart = Date.now();
-    const datasets = await this.datasetSelector.select();
+    const selection = await this.datasetSelector.select();
     this.report(runId, {
       type: 'datasetsSelected',
-      count: datasets.total,
+      count: selection.total,
       durationMs: Date.now() - selectStart,
     });
+    const { datasets, records } = this.stalestFirst
+      ? await this.orderStalestFirst(selection)
+      : { datasets: selection, records: new Map<string, ProcessingRecord>() };
 
     // The run transaction: one openRun → write* → commit/abort per pipeline
     // run. `selectedSources` accumulates every selected dataset – including
@@ -545,8 +569,13 @@ export class Pipeline<Out = Quad> {
 
     try {
       for await (const dataset of datasets) {
-        selectedSources.push(dataset.iri.toString());
-        await this.processDataset(dataset, runWriter, context);
+        const iri = dataset.iri.toString();
+        selectedSources.push(iri);
+        const prefetched = records.get(iri);
+        // Use a prefetched record once: should the selection hold the dataset
+        // twice, the second pass reads the record the first one wrote.
+        records.delete(iri);
+        await this.processDataset(dataset, runWriter, context, prefetched);
       }
       // Committing an empty selection would hand every writer an empty
       // membership as if it were the truth: an In-place writer’s sweep reads
@@ -585,10 +614,48 @@ export class Pipeline<Out = Quad> {
     });
   }
 
+  /**
+   * Read the whole selection and sort it stalest first (see
+   * {@link PipelineOptions.datasetOrder}), returning the records read, keyed by
+   * dataset IRI, so the skip gate need not read them again. A dataset whose
+   * record cannot be read sorts as stalest, and the skip gate retries the read.
+   */
+  private async orderStalestFirst(selection: AsyncIterable<Dataset>): Promise<{
+    datasets: Dataset[];
+    records: Map<string, ProcessingRecord | null>;
+  }> {
+    const records = new Map<string, ProcessingRecord | null>();
+    const sortable: { dataset: Dataset; processedAt: number }[] = [];
+    for await (const dataset of selection) {
+      const iri = dataset.iri.toString();
+      try {
+        records.set(iri, await this.provenanceStore!.get(dataset.iri));
+      } catch {
+        // Left out of `records`, so the skip gate reads it again.
+      }
+      // No record, or one without a readable date, counts as stalest.
+      const processedAt = Date.parse(records.get(iri)?.generatedAt ?? '');
+      sortable.push({
+        dataset,
+        processedAt: Number.isNaN(processedAt)
+          ? Number.MIN_SAFE_INTEGER
+          : processedAt,
+      });
+    }
+    // Array sort is stable, so ties keep selection order.
+    sortable.sort((a, b) => a.processedAt - b.processedAt);
+    return { datasets: sortable.map(({ dataset }) => dataset), records };
+  }
+
+  /**
+   * @param prefetched The dataset’s record when already read for ordering
+   *   (`null`: none exists), or `undefined` to read it here.
+   */
   private async processDataset(
     dataset: Dataset,
     runWriter: RunWriter<Out>,
     context: RunContext,
+    prefetched?: ProcessingRecord | null,
   ): Promise<void> {
     const { runId } = context;
     const datasetStart = Date.now();
@@ -658,7 +725,10 @@ export class Pipeline<Out = Quad> {
     if (this.provenanceStore) {
       let stored: ProcessingRecord | null = null;
       try {
-        stored = await this.provenanceStore.get(dataset.iri);
+        stored =
+          prefetched === undefined
+            ? await this.provenanceStore.get(dataset.iri)
+            : prefetched;
       } catch {
         // An unreadable record must not abort the whole run, nor wrongly skip:
         // treat it as ‘never processed’ so this dataset reprocesses. The
@@ -676,6 +746,15 @@ export class Pipeline<Out = Quad> {
       ) {
         skip({ code: 'unchanged', message: 'Unchanged since last run' });
         return;
+      }
+
+      // Record the attempt, so a dataset whose processing never finishes – it
+      // hangs, or the process is killed – does not stay the stalest and come
+      // first on every later run. The null fingerprint never compares equal,
+      // so it is still reprocessed; the record written on completion replaces
+      // this one.
+      if (this.stalestFirst) {
+        await this.recordOutcome(runId, dataset, null, 'failed');
       }
     }
 

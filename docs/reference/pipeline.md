@@ -551,7 +551,7 @@ interface ProvenanceStore {
 
 The optional `check` verifies the store can persist records; the pipeline calls it once at the start of a run, so a store that would fail every write fails the run immediately instead of silently disabling skip-unchanged. A record write that fails mid-run is reported through the reporter (`stageFailed` with stage `'provenance'`) and does not abort the run.
 
-A `ProcessingRecord` holds the two opaque change fields – `sourceFingerprint` (derived automatically from source metadata) and `pipelineVersion` (consumer-declared) – plus `generatedAt` and a `status` of `'success'` or `'failed'`. The two change fields are compared only for equality, never parsed or ordered.
+A `ProcessingRecord` holds the two opaque change fields – `sourceFingerprint` (derived automatically from source metadata) and `pipelineVersion` (consumer-declared) – plus `generatedAt` and a `status` of `'success'` or `'failed'`. The two change fields are compared only for equality, never parsed or ordered. With `datasetOrder: 'stalestFirst'`, the pipeline also orders datasets by `generatedAt`, and writes a provisional `'failed'` record without a fingerprint when it starts reprocessing a dataset (see [Process the stalest datasets first](../guide/skip-unchanged-datasets#process-the-stalest-datasets-first)).
 
 Two implementations ship with the package:
 
