@@ -538,7 +538,26 @@ describe('createTypesenseSearchEngine (integration)', () => {
     ]);
     // Only d1 (valid) and d2 (valid, no date) remain.
     expect(valid.facets.dateCreated?.extent).toEqual({ min: bce, max: bce });
-    expect(none.facets.dateCreated).toEqual({ buckets: [] });
+    expect(none.facets.dateCreated).toEqual({ buckets: [], totalValues: 0 });
+  });
+
+  it('caps a facet at its own limit and reports how many values it holds', async () => {
+    const [outcome] = await engine.searchFacets(datasetSchema, [
+      {
+        ...baseQuery,
+        limit: 0,
+        facets: ['keyword'],
+        facetLimits: { keyword: 1 },
+      },
+    ]);
+    if (outcome === undefined || 'error' in outcome) {
+      throw new Error('Expected a facets outcome.');
+    }
+    // `kaarten` (two datasets) beats `atlas` (one); both count in the total.
+    expect(outcome.facets.keyword).toEqual({
+      buckets: [{ value: 'kaarten', count: 2 }],
+      totalValues: 2,
+    });
   });
 
   it('buckets a date into its ISO 8601 bins', async () => {
@@ -569,6 +588,8 @@ describe('createTypesenseSearchEngine (integration)', () => {
     expect(outcome.facets.triples).toEqual({
       buckets: [{ value: 'small', count: 1, min: 1, max: 100 }],
       extent: { min: 12, max: 2500000 },
+      // A binned facet counts the bins its documents fall in.
+      totalValues: 1,
     });
   });
 

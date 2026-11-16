@@ -136,7 +136,8 @@ fails this – accepts. The endpoint path defaults to `/graphql`
   error such as `Query costs 112; at most 100 is allowed.`
 
 - **Result limits**: `maxPerPage` (a `buildGraphQLSchema` option, default 100)
-  rejects a larger `perPage`, and `maxSearches` (default 10) rejects an
+  rejects a larger `perPage`, `maxFacetLimit` (default 100) a larger facet
+  `limit`, and `maxSearches` (default 10) rejects an
   operation that selects more root fields – each alias counts, as does a custom
   field merged in; fragments are flattened, and introspection is exempt.
 
@@ -265,13 +266,25 @@ role: { in: ["etser"] } } }` asks for _this person in this role_, where the
   defaults to `DESC`.
 - **Facets**: a keyed object with one field per `facetable` field, typed by
   the field’s declaration:
-  - a **reference** facet returns `[IRIBucket!]!` – `value` (an `IRI`) +
-    `count` + the resolved data `label`. `value` is typed as the
-    `‹Target›Filter` that selects it takes, so a bucket feeds that filter
-    back without a cast;
-  - a plain value facet returns `[ValueBucket!]!` – the same shape with a
-    `String` `value` and a `null` `label`, for token/free-string facets whose
-    display the consumer owns (its own i18n, or the value itself);
+  - a **reference** facet returns an `IRIFacet!` – `buckets: [IRIBucket!]!`,
+    each a `value` (an `IRI`) + `count` + the resolved data `label`, and
+    `totalValues`. `value` is typed as the `‹Target›Filter` that selects it
+    takes, so a bucket feeds that filter back without a cast;
+  - a plain value facet returns a `ValueFacet!` – the same shape with
+    `[ValueBucket!]!` buckets: a `String` `value` and a `null` `label`, for
+    token/free-string facets whose display the consumer owns (its own i18n,
+    or the value itself);
+
+  Both take a `limit` argument: at most that many buckets, the values with
+  the highest counts, between 1 and the `maxFacetLimit` schema option
+  (default 100); omitted, the engine’s own cap applies. `limit` is a cap, not
+  a page: `limit: 100` returns a superset of what `limit: 10` returned, and
+  there is no offset. A “show more” panel asks for a larger `limit` on that
+  one facet in a follow-up query with `perPage: 0`. `totalValues` is how many
+  distinct values the facet holds over the same documents, however many
+  buckets came back, so a client can show “10 of 195” and knows whether a
+  larger `limit` would bring more; it may be an estimate on large result
+  sets, and is `null` when the engine does not report it;
   - a numeric field is a [range facet](./search#range-facets) and returns an
     object rather than a list: `IntRangeFacet`, `FloatRangeFacet` or
     `DateRangeFacet`. Its `all` is the extent over the whole collection,
@@ -306,12 +319,13 @@ role: { in: ["etser"] } } }` asks for _this person in this role_, where the
 
   An inline reference’s [faceted leaves](./search#faceting-on-an-entry-s-leaf)
   are served one level down, under the reference: `facets { associatedMedia {
-license { value count } } }`, typed `‹Type›‹Reference›Facets`.
+license { buckets { value count } } } }`, typed `‹Type›‹Reference›Facets`.
 
   Selecting facet fields IS
   the request, and the whole selection is **batched per request**: one
   facet query over the listing’s filters, plus one unfiltered query when an
-  `all` is selected, dispatched as one `engine.searchFacets` call, so a
+  `all` is selected, and one more when a facet is loaded under two `limit`s
+  (two aliases), dispatched as one `engine.searchFacets` call, so a
   typical page costs the listing search plus one batched facet round-trip.
   The engine computes each facet with its own `where`-filter removed
   (skip-own-filter) and keeps every value that filter selects among its

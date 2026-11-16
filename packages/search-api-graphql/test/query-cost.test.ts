@@ -188,7 +188,7 @@ describe('the cost of a query', () => {
     expect(
       await costOf(
         // `year.all` is a second facet query, next to the `matching` one.
-        '{ creativeWorks(perPage: 0) { facets { genre { value count } author { value count } year { all { min max } buckets { value } } } } }',
+        '{ creativeWorks(perPage: 0) { facets { genre { buckets { value count } } author { buckets { value count } } year { all { min max } buckets { value } } } } }',
       ),
     ).toBe(1 + 3 + 1);
   });

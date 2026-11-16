@@ -53,6 +53,7 @@ import {
 import {
   buildSearchParams,
   escapeFilterValue,
+  facetCapOf,
   type BuildSearchParamsOptions,
 } from './query-compiler.js';
 import { deriveCollectionName } from './collection-name.js';
@@ -889,14 +890,23 @@ async function withSelectedValues(
   })[],
   options: BuildSearchParamsOptions,
 ): Promise<(TypesenseSearchResponse | Error)[]> {
-  const cap = options.maxFacetValues ?? TYPESENSE_DEFAULT_MAX_FACET_VALUES;
   const missing = entries.map(({ query, selected, response }) =>
     response instanceof Error
       ? []
       : Object.entries(selected).flatMap(([field, values]) => {
-          const counts =
-            response.facet_counts?.find((facet) => facet.field_name === field)
-              ?.counts ?? [];
+          const facet = response.facet_counts?.find(
+            (candidate) => candidate.field_name === field,
+          );
+          const counts = facet?.counts ?? [];
+          // The facet’s own count of its values says whether any was cut off;
+          // without one, a facet filled to the cap may have been.
+          const total = facet?.stats?.total_values;
+          const cutOff =
+            total !== undefined
+              ? total > counts.length
+              : counts.length >=
+                (facetCapOf(query, options) ??
+                  TYPESENSE_DEFAULT_MAX_FACET_VALUES);
           const present = new Set(counts.map((bucket) => bucket.value));
           // A facet narrowed by a facet policy never reports a value the
           // policy excludes, though a filter on the field still matches it:
@@ -904,8 +914,7 @@ async function withSelectedValues(
           // asks for no document has nothing to count.
           const uncertain =
             !isUnsatisfiable(query) &&
-            (counts.length >= cap ||
-              narrowedByPolicy(searchType, field, options));
+            (cutOff || narrowedByPolicy(searchType, field, options));
           return values
             .filter((value) => !present.has(value))
             .map((value) => ({ field, value, uncertain }));
@@ -1153,9 +1162,14 @@ export interface TypesenseSearchResponse {
     /** A numeric facet’s value statistics over the matching documents, binned
      *  or not and whatever the bucket cap; `min`/`max` are absent when none
      *  holds a value. (Its `sum` and `avg` overflow on large values; unused.) */
-    readonly stats?:
+    readonly stats?: (
       | { readonly min: number; readonly max: number }
-      | { readonly min?: never; readonly max?: never };
+      | { readonly min?: never; readonly max?: never }
+    ) & {
+      /** Distinct values over the matching documents, whatever the bucket
+       *  cap; approximate under facet sampling or `top_values`. */
+      readonly total_values?: number;
+    };
   }[];
 }
 
@@ -1227,10 +1241,15 @@ export function parseSearchResponse(
     });
     // Only a numeric facet’s stats carry a min and max.
     const stats = facet.stats;
-    facets[facet.field_name] =
-      stats?.min === undefined
-        ? { buckets }
-        : { buckets, extent: { min: stats.min, max: stats.max } };
+    facets[facet.field_name] = {
+      buckets,
+      ...(stats?.min !== undefined
+        ? { extent: { min: stats.min, max: stats.max } }
+        : {}),
+      ...(stats?.total_values !== undefined
+        ? { totalValues: stats.total_values }
+        : {}),
+    };
   }
   return { hits, total: response.found, facets };
 }

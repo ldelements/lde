@@ -678,6 +678,36 @@ describe('buildSearchParams', () => {
       }).max_facet_values,
     ).toBe(250);
   });
+
+  it('counts facets exhaustively, so their total number of values is real', () => {
+    expect(
+      buildSearchParams({ ...base, facets: ['keyword'] }, schema)
+        .facet_strategy,
+    ).toBe('exhaustive');
+  });
+
+  it('lets a facet’s limit override the configured max_facet_values', () => {
+    expect(
+      buildSearchParams(
+        { ...base, facets: ['keyword'], facetLimits: { keyword: 50 } },
+        schema,
+        { maxFacetValues: 250 },
+      ).max_facet_values,
+    ).toBe(50);
+  });
+
+  it('caps a search at the largest limit among its facets', () => {
+    expect(
+      buildSearchParams(
+        {
+          ...base,
+          facets: ['keyword', 'status'],
+          facetLimits: { keyword: 50, status: 5, other: 500 },
+        },
+        schema,
+      ).max_facet_values,
+    ).toBe(50);
+  });
 });
 
 describe('und locale', () => {

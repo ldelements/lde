@@ -130,6 +130,14 @@ export interface Facet {
    * value.
    */
   readonly extent?: FacetExtent;
+  /**
+   * How many distinct values the facet holds over the matching documents,
+   * however many {@link buckets} the bucket cap let through – so a consumer
+   * can tell “10 of 195”. May be an estimate: an engine that samples or
+   * approximates its facet counts reports its approximation. Absent when the
+   * engine does not report it.
+   */
+  readonly totalValues?: number;
 }
 
 /**
