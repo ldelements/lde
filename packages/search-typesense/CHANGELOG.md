@@ -1,3 +1,44 @@
+## 0.59.0 (2026-11-16)
+
+### 🚀 Features
+
+- ⚠️  **search-api-graphql:** let a client cap each facet and see its total number of values ([#1092](https://github.com/ldelements/lde/pull/1092))
+
+### ⚠️  Breaking Changes
+
+- **search-api-graphql:** let a client cap each facet and see its total number of values  ([#1092](https://github.com/ldelements/lde/pull/1092))
+  a non-boolean value facet is an object instead of a bucket list.
+  Before: facets { creator { value count } }
+  After: facets { creator(limit: 50) { buckets { value count } totalValues } }
+  Boolean and range facets are unchanged."
+  M	docs/guide/build-a-search-api.md
+  M	docs/reference/search-api-graphql.md
+  M	docs/reference/search-typesense.md
+  M	docs/reference/search.md
+  M	packages/search-api-graphql/src/build-schema.ts
+  M	packages/search-api-graphql/src/facet-batch.ts
+  M	packages/search-api-graphql/test/__snapshots__/generator-stability.test.ts.snap
+  M	packages/search-api-graphql/test/build-schema.test.ts
+  M	packages/search-api-graphql/test/faceted-leaves.test.ts
+  M	packages/search-api-graphql/test/handler.test.ts
+  M	packages/search-api-graphql/test/query-cost.test.ts
+  M	packages/search-api-graphql/vite.config.ts
+  M	packages/search-typesense/src/query-compiler.ts
+  M	packages/search-typesense/src/search.ts
+  M	packages/search-typesense/test/parse-response.test.ts
+  M	packages/search-typesense/test/query-compiler.test.ts
+  M	packages/search-typesense/test/search-engine.test.ts
+  M	packages/search-typesense/test/skip-own-filter.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/src/engine.ts
+  M	packages/search/src/query.ts
+  M	packages/search/src/testing.ts
+  M	packages/search/test/facet-searches.test.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.44.0
+
 ## 0.58.0 (2026-11-15)
 
 ### 🧱 Updated Dependencies
