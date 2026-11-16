@@ -1,3 +1,13 @@
+## 0.61.2 (2026-11-16)
+
+### 🩹 Fixes
+
+- **search-typesense:** type a referent several collections hold by its stored target ([#1075](https://github.com/ldelements/lde/pull/1075))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.46.1
+
 ## 0.61.1 (2026-11-16)
 
 ### 🧱 Updated Dependencies

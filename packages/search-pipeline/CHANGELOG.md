@@ -1,3 +1,38 @@
+## 0.59.0 (2026-11-16)
+
+### 🚀 Features
+
+- ⚠️  **search-pipeline:** apply a label source’s transforms to its referents ([#1096](https://github.com/ldelements/lde/pull/1096))
+
+### ⚠️  Breaking Changes
+
+- **search-pipeline:** apply a label source’s transforms to its referents  ([#1096](https://github.com/ldelements/lde/pull/1096))
+  a root type’s transforms also run on its referents in
+  the stages of types whose searchable references name it, receiving
+  nodes that carry only the key and label field. Make such a transform
+  cope with that input, or drop searchable from the referring reference.
+  * fix(search-pipeline): pass an endpoint stated without its edge
+  - Route the referents of an inline reference whose graph leaves the edge
+    out, read off the inline node itself, through the endpoint’s target
+  - Key the referents’ transforms by class, as the schema resolves a
+    class-equal lookalike
+  - Append routed quads in place instead of copying the array per quad
+  - Move referentHopFields above the private helpers and restore
+    keyedFieldOf’s doc comment"
+  A	docs/decisions/0039-apply-a-label-sources-transforms-to-its-referents.md
+  M	docs/reference/search.md
+  M	package-lock.json
+  M	packages/search-pipeline/package.json
+  M	packages/search-pipeline/src/extraction.ts
+  M	packages/search-pipeline/src/search-indexer-pipeline.ts
+  M	packages/search-pipeline/src/search-stages.ts
+  M	packages/search-pipeline/test/keyed-roots.integration.test.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.61.2
+- Updated @lde/search to 0.46.1
+
 ## 0.58.1 (2026-11-16)
 
 ### 🩹 Fixes
