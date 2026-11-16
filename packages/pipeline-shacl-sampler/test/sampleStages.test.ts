@@ -27,7 +27,7 @@ describe('buildSampleQuery', () => {
     ],
   };
 
-  it('contains no inner SELECT or LIMIT — sample selection is the ItemSelector’s job', () => {
+  it('contains no inner SELECT or LIMIT – sample selection is the ItemSelector’s job', () => {
     const query = buildSampleQuery(shape);
     expect(query).not.toMatch(/\bSELECT\b/);
     expect(query).not.toMatch(/\bLIMIT\b/);
@@ -59,6 +59,11 @@ describe('buildSubjectSelectorQuery', () => {
     const query = buildSubjectSelectorQuery({ targetClass });
     expect(query).toMatch(/SELECT DISTINCT \?s/);
     expect(query).not.toMatch(/\bLIMIT\b/);
+  });
+
+  it('orders the subjects so LIMIT/OFFSET pages neither skip nor repeat one', () => {
+    const query = buildSubjectSelectorQuery({ targetClass });
+    expect(query).toMatch(/\}\s*ORDER BY \?s$/);
   });
 
   it('emits the plain bound type pattern by default (no namespace aliases)', () => {
