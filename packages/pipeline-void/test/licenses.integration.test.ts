@@ -72,6 +72,7 @@ describe('licenses (end to end)', () => {
   it('counts IRI licenses and skips literal ones', async () => {
     expect(await triplesByLicense(distribution)).toEqual({
       'http://creativecommons.org/publicdomain/zero/1.0/': '2',
+      'http://creativecommons.org/licenses/by/4.0/': '1',
     });
   }, 30_000);
 });
