@@ -1,3 +1,14 @@
+## 0.58.1 (2026-11-16)
+
+### 🩹 Fixes
+
+- **search-pipeline:** order the roots selectByClass pages through ([#1076](https://github.com/ldelements/lde/pull/1076))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.61.1
+- Updated @lde/pipeline to 0.50.3
+
 ## 0.58.0 (2026-11-16)
 
 ### 🧱 Updated Dependencies

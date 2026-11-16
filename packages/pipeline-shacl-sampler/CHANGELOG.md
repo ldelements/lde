@@ -1,3 +1,13 @@
+## 0.24.3 (2026-11-16)
+
+### 🩹 Fixes
+
+- **search-pipeline:** order the roots selectByClass pages through ([#1076](https://github.com/ldelements/lde/pull/1076))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.50.3
+
 ## 0.24.2 (2026-11-15)
 
 ### 🧱 Updated Dependencies
