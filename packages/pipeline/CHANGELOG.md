@@ -1,3 +1,45 @@
+## 0.51.0 (2026-11-16)
+
+### 🩹 Fixes
+
+- ⚠️  **pipeline:** re-probe a tightened endpoint at the default budget ([#1077](https://github.com/ldelements/lde/pull/1077))
+
+### ⚠️  Breaking Changes
+
+- **pipeline:** re-probe a tightened endpoint at the default budget  ([#1077](https://github.com/ldelements/lde/pull/1077))
+  AfterRequestContext has a required timeoutMs property:
+  the budget beforeRequest returned for the attempt. Code that calls
+  TimeoutPolicy.afterRequest itself must pass it.
+  * fix(pipeline): hand out one re-probe at a time
+  Track a probe in flight so timeouts at the tightened budget can’t schedule a second probe
+  while one is still running; any outcome at the default budget clears it. Assert that
+  readers and selectors report the budget they were given, and state the dead-endpoint
+  cost of re-probing plainly.
+  * fix(pipeline)!: tell the probe by its budget and back off between probes
+  - Have beforeRequest return a RequestBudget and afterRequest receive that same
+    object, so the adaptive policy recognises its probe by identity; a request
+    budgeted before tightening no longer releases the probe slot
+  - Double the gap between probes after each timed-out probe (1, 2, 4… timeouts
+    at the tightened budget, up to 64), so an endpoint that is down rarely waits
+    out the full default budget; a probe that errors keeps the gap
+  - Model endpoint health and probe state as one discriminated union instead of
+    loose booleans
+  BREAKING CHANGE: TimeoutPolicy.beforeRequest returns a RequestBudget
+  ({ timeoutMs }) instead of a number, and AfterRequestContext.timeoutMs is
+  replaced by budget, which must be the object beforeRequest returned. Custom
+  policies return { timeoutMs } and read context.budget.timeoutMs."
+  M	docs/guide/adapt-timeouts-to-endpoint-health.md
+  M	docs/reference/pipeline.md
+  M	packages/pipeline/src/sparql/index.ts
+  M	packages/pipeline/src/sparql/reader.ts
+  M	packages/pipeline/src/sparql/selector.ts
+  M	packages/pipeline/src/sparql/timeoutPolicy.ts
+  M	packages/pipeline/test/pipeline.test.ts
+  M	packages/pipeline/test/sparql/reader.test.ts
+  M	packages/pipeline/test/sparql/selector.test.ts
+  M	packages/pipeline/test/sparql/timeoutPolicy.test.ts
+  M	packages/pipeline/vite.config.ts
+
 ## 0.50.3 (2026-11-16)
 
 ### 🩹 Fixes
