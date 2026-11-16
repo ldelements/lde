@@ -367,10 +367,10 @@ export class SparqlConstructReader implements Reader {
     policy: TimeoutPolicy,
     response: ResponseNotes,
   ): Promise<AsyncIterable<Quad>> {
-    const timeoutMs = policy.beforeRequest({ endpoint: endpointUrl });
-    const fetcher = this.fetcherForAttempt(timeoutMs, response);
+    const budget = policy.beforeRequest({ endpoint: endpointUrl });
     const start = Date.now();
     try {
+      const fetcher = this.fetcherForAttempt(budget.timeoutMs, response);
       const quads = await this.fetchQuads(
         fetcher,
         endpointUrl.toString(),
@@ -380,7 +380,7 @@ export class SparqlConstructReader implements Reader {
         endpoint: endpointUrl,
         outcome: 'ok',
         durationMs: Date.now() - start,
-        timeoutMs,
+        budget,
       });
       return quads;
     } catch (error) {
@@ -388,7 +388,7 @@ export class SparqlConstructReader implements Reader {
         endpoint: endpointUrl,
         outcome: classifyOutcome(error),
         durationMs: Date.now() - start,
-        timeoutMs,
+        budget,
         error,
       });
       throw error;

@@ -18,6 +18,17 @@ export interface BeforeRequestContext {
   endpoint: URL;
 }
 
+/**
+ * Budget that {@link TimeoutPolicy.beforeRequest} hands out for one request
+ * attempt. Callers pass this same object back as
+ * {@link AfterRequestContext.budget}, so a policy can tell by identity which
+ * attempt is reporting.
+ */
+export interface RequestBudget {
+  /** Timeout to apply to the attempt, in milliseconds. */
+  readonly timeoutMs: number;
+}
+
 /** Context passed to {@link TimeoutPolicy.afterRequest}. */
 export interface AfterRequestContext {
   /** Endpoint URL the request was sent to. */
@@ -27,10 +38,10 @@ export interface AfterRequestContext {
   /** Wall-clock duration of the request attempt, in milliseconds. */
   durationMs: number;
   /**
-   * Budget, in milliseconds, that {@link TimeoutPolicy.beforeRequest}
-   * returned for this attempt.
+   * The object {@link TimeoutPolicy.beforeRequest} returned for this
+   * attempt – the same object, not a copy.
    */
-  timeoutMs: number;
+  budget: RequestBudget;
   /** The raw error, when {@link outcome} is `'error'` or `'timeout'`. */
   error?: unknown;
 }
@@ -47,14 +58,15 @@ export interface AfterRequestContext {
  */
 export interface TimeoutPolicy {
   /**
-   * Returns the timeout (in milliseconds) to apply to the upcoming request.
-   * Called once per attempt, retries included, so a retry can already use a
-   * tightened budget.
+   * Returns the budget to apply to the upcoming request. Called once per
+   * attempt, retries included, so a retry can already use a tightened
+   * budget.
    */
-  beforeRequest(context: BeforeRequestContext): number;
+  beforeRequest(context: BeforeRequestContext): RequestBudget;
   /**
-   * Reports the outcome of the request that {@link beforeRequest} budgeted.
-   * Called once per attempt, regardless of outcome.
+   * Reports the outcome of the request that {@link beforeRequest} budgeted,
+   * passing back the budget it returned. Called once per attempt,
+   * regardless of outcome.
    */
   afterRequest(context: AfterRequestContext): void;
   /**
@@ -106,8 +118,8 @@ export class ConstantTimeoutPolicy implements TimeoutPolicy {
     }
   }
 
-  beforeRequest(_context: BeforeRequestContext): number {
-    return this.timeoutMs;
+  beforeRequest(_context: BeforeRequestContext): RequestBudget {
+    return { timeoutMs: this.timeoutMs };
   }
 
   afterRequest(_context: AfterRequestContext): void {
@@ -131,22 +143,6 @@ export interface AdaptiveTimeoutPolicyOptions {
   tightenAfterTimeouts: number;
 }
 
-interface EndpointState {
-  tightened: boolean;
-  /** Consecutive timeouts at the default budget since the last `ok`. */
-  consecutiveTimeouts: number;
-  /**
-   * Whether the next request re-probes a tightened endpoint at the default
-   * budget.
-   */
-  probeDue: boolean;
-  /**
-   * Whether a probe has been handed out and its outcome not yet reported,
-   * so concurrent requests keep the tightened budget meanwhile.
-   */
-  probeInFlight: boolean;
-}
-
 /**
  * Adaptive per-endpoint policy: after {@link AdaptiveTimeoutPolicyOptions.tightenAfterTimeouts}
  * consecutive timeouts on the same endpoint, subsequent requests use the
@@ -156,15 +152,16 @@ interface EndpointState {
  *
  * A timeout at the tightened budget says nothing about the endpoint’s
  * health – a healthy endpoint’s heavy query may simply need longer – so it
- * does not count toward tightening. Instead, the next request re-probes
- * the endpoint at the default budget, one probe at a time: concurrent
- * requests keep the tightened budget until the probe’s outcome is
- * reported. If the probe succeeds, the endpoint relaxes; if it fails, the
- * endpoint stays tightened until the next timeout at the tightened budget
- * schedules another probe. A healthy-but-slow endpoint therefore recovers
- * after one lost request. The price is paid by an endpoint that is
- * genuinely down: without re-probing, a tightened endpoint never waited
- * out the full default budget; now it does on about every other request.
+ * does not count toward tightening. Instead, it brings a re-probe at the
+ * default budget closer, one probe at a time: concurrent requests keep the
+ * tightened budget until the probe reports. The first timeout at the
+ * tightened budget makes a probe due. If the probe succeeds, the endpoint
+ * relaxes; if it times out, the gap until the next probe doubles – 1, 2, 4…
+ * timeouts at the tightened budget, up to 64. A probe that fails with an
+ * error keeps the current gap. A healthy-but-slow endpoint therefore
+ * recovers after one lost request, while an endpoint that is genuinely
+ * down waits out the full default budget only on a shrinking share of
+ * requests.
  *
  * State is in-memory and tied to the policy instance – Pipeline creates a
  * fresh instance per dataset so one offending dataset doesn’t poison the
@@ -209,29 +206,27 @@ export class AdaptiveTimeoutPolicy implements TimeoutPolicy {
     }
   }
 
-  beforeRequest(context: BeforeRequestContext): number {
-    const state = this.stateFor(context.endpoint);
-    if (!state.tightened) return this.options.defaultMs;
-    if (state.probeDue) {
-      state.probeDue = false;
-      state.probeInFlight = true;
-      return this.options.defaultMs;
+  beforeRequest(context: BeforeRequestContext): RequestBudget {
+    const { health } = this.stateFor(context.endpoint);
+    if (health.status === 'healthy') {
+      return { timeoutMs: this.options.defaultMs };
     }
-    return this.options.tightenedMs;
+    if (health.probe.status === 'due') {
+      const budget = { timeoutMs: this.options.defaultMs };
+      health.probe = { status: 'inFlight', budget };
+      return budget;
+    }
+    return { timeoutMs: this.options.tightenedMs };
   }
 
   afterRequest(context: AfterRequestContext): void {
     const state = this.stateFor(context.endpoint);
-    if (context.timeoutMs === this.options.defaultMs) {
-      state.probeInFlight = false;
-    }
+    const { health } = state;
     if (context.outcome === 'ok') {
-      const wasTightened = state.tightened;
       const priorCount = state.consecutiveTimeouts;
       state.consecutiveTimeouts = 0;
-      state.tightened = false;
-      state.probeDue = false;
-      if (wasTightened) {
+      state.health = { status: 'healthy' };
+      if (health.status === 'tightened') {
         this.notify('relax', {
           endpoint: context.endpoint,
           fromTimeoutMs: this.options.tightenedMs,
@@ -241,18 +236,45 @@ export class AdaptiveTimeoutPolicy implements TimeoutPolicy {
       }
       return;
     }
+    if (
+      health.status === 'tightened' &&
+      health.probe.status === 'inFlight' &&
+      health.probe.budget === context.budget
+    ) {
+      if (context.outcome === 'timeout') health.failedProbes += 1;
+      health.probe = {
+        status: 'waiting',
+        timeoutsUntilDue: timeoutsBetweenProbes(health.failedProbes),
+      };
+    }
     if (context.outcome === 'timeout') {
-      if (context.timeoutMs < this.options.defaultMs) {
-        // Too short a budget to judge the endpoint by: re-probe it instead.
-        if (state.tightened && !state.probeInFlight) state.probeDue = true;
+      if (context.budget.timeoutMs < this.options.defaultMs) {
+        // Too short a budget to judge the endpoint by: bring a re-probe
+        // closer instead.
+        if (
+          health.status === 'tightened' &&
+          health.probe.status === 'waiting'
+        ) {
+          health.probe.timeoutsUntilDue -= 1;
+          if (health.probe.timeoutsUntilDue === 0) {
+            health.probe = { status: 'due' };
+          }
+        }
         return;
       }
       state.consecutiveTimeouts += 1;
       if (
-        !state.tightened &&
+        health.status === 'healthy' &&
         state.consecutiveTimeouts >= this.options.tightenAfterTimeouts
       ) {
-        state.tightened = true;
+        state.health = {
+          status: 'tightened',
+          probe: {
+            status: 'waiting',
+            timeoutsUntilDue: timeoutsBetweenProbes(0),
+          },
+          failedProbes: 0,
+        };
         this.notify('tighten', {
           endpoint: context.endpoint,
           fromTimeoutMs: this.options.defaultMs,
@@ -275,12 +297,7 @@ export class AdaptiveTimeoutPolicy implements TimeoutPolicy {
     const key = endpoint.toString();
     let state = this.states.get(key);
     if (!state) {
-      state = {
-        tightened: false,
-        consecutiveTimeouts: 0,
-        probeDue: false,
-        probeInFlight: false,
-      };
+      state = { health: { status: 'healthy' }, consecutiveTimeouts: 0 };
       this.states.set(key, state);
     }
     return state;
@@ -324,4 +341,48 @@ export function adaptiveTimeoutPolicy(
 
   new AdaptiveTimeoutPolicy(options);
   return () => new AdaptiveTimeoutPolicy(options);
+}
+
+/**
+ * Upper bound on the number of timeouts at the tightened budget between two
+ * probes, so an endpoint that comes back late in a long run still gets
+ * re-probed.
+ */
+const maxTimeoutsBetweenProbes = 64;
+
+/**
+ * Timeouts at the tightened budget until the next probe is due, doubling
+ * with each failed probe.
+ */
+function timeoutsBetweenProbes(failedProbes: number): number {
+  return Math.min(2 ** failedProbes, maxTimeoutsBetweenProbes);
+}
+
+/**
+ * Where a tightened endpoint’s next re-probe stands.
+ *
+ * - `waiting` – that many more timeouts at the tightened budget make a probe
+ *   due.
+ * - `due` – the next request is the probe.
+ * - `inFlight` – the probe was handed out with this budget and has not
+ *   reported yet; concurrent requests keep the tightened budget meanwhile.
+ */
+type Probe =
+  | { status: 'waiting'; timeoutsUntilDue: number }
+  | { status: 'due' }
+  | { status: 'inFlight'; budget: RequestBudget };
+
+type EndpointHealth =
+  | { status: 'healthy' }
+  | {
+      status: 'tightened';
+      probe: Probe;
+      /** Probes that timed out since the endpoint tightened. */
+      failedProbes: number;
+    };
+
+interface EndpointState {
+  health: EndpointHealth;
+  /** Consecutive timeouts at the default budget since the last `ok`. */
+  consecutiveTimeouts: number;
 }

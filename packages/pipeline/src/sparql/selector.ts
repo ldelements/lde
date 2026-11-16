@@ -280,11 +280,12 @@ export class SparqlItemSelector implements ItemSelector {
     paginatedQuery: string,
     policy: TimeoutPolicy,
   ): Promise<Record<string, Term>[]> {
-    const timeoutMs = policy.beforeRequest({ endpoint });
-    const fetcher =
-      this.userFetcher ?? new SparqlEndpointFetcher({ timeout: timeoutMs });
+    const budget = policy.beforeRequest({ endpoint });
     const start = Date.now();
     try {
+      const fetcher =
+        this.userFetcher ??
+        new SparqlEndpointFetcher({ timeout: budget.timeoutMs });
       const stream = (await fetcher.fetchBindings(
         endpoint.toString(),
         paginatedQuery,
@@ -297,7 +298,7 @@ export class SparqlItemSelector implements ItemSelector {
         endpoint,
         outcome: 'ok',
         durationMs: Date.now() - start,
-        timeoutMs,
+        budget,
       });
       return page;
     } catch (error) {
@@ -305,7 +306,7 @@ export class SparqlItemSelector implements ItemSelector {
         endpoint,
         outcome: classifyOutcome(error),
         durationMs: Date.now() - start,
-        timeoutMs,
+        budget,
         error,
       });
       throw error;

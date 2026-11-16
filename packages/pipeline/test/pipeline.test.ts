@@ -2871,7 +2871,7 @@ describe('Pipeline', () => {
 
     it('invokes the factory once per dataset', async () => {
       const factory = vi.fn().mockImplementation(() => ({
-        beforeRequest: () => 300_000,
+        beforeRequest: () => ({ timeoutMs: 300_000 }),
         afterRequest: vi.fn(),
       }));
 
@@ -2895,7 +2895,7 @@ describe('Pipeline', () => {
       const policies: unknown[] = [];
       const factory = vi.fn().mockImplementation(() => {
         const policy = {
-          beforeRequest: () => 300_000,
+          beforeRequest: () => ({ timeoutMs: 300_000 }),
           afterRequest: vi.fn(),
         };
         policies.push(policy);
@@ -2936,7 +2936,7 @@ describe('Pipeline', () => {
         consecutiveTimeouts: 0,
       };
       const factory = vi.fn().mockImplementation(() => ({
-        beforeRequest: () => 300_000,
+        beforeRequest: () => ({ timeoutMs: 300_000 }),
         afterRequest: vi.fn(),
         subscribe(observer: {
           onTighten?: (event: unknown) => void;
