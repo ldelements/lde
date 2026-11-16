@@ -368,4 +368,77 @@ describe('a searchable reference’s referents, through their type’s transform
     // The same referent, read for a target with no transform: as stated.
     expect(werk2?.untransformed_search).toBe('kessel');
   });
+
+  it('applies it to an endpoint the graph states without its edge', async () => {
+    const placeRole = defineSearchType({
+      name: 'PlaceRole',
+      edgeClass: `${SCHEMA}Role`,
+      fields: [
+        {
+          name: 'roleName',
+          kind: 'keyword',
+          output: true,
+          path: `<${SCHEMA}roleName>`,
+        },
+        { ...reference('place', 'PlainPlace'), filterable: true },
+      ],
+    });
+    const roleWork = defineSearchType({
+      ...work,
+      fields: [
+        work.fields[0],
+        {
+          name: 'created',
+          kind: 'reference',
+          output: true,
+          path: `<${SCHEMA}locationCreated>`,
+          facetable: true,
+          ref: { strategy: 'inline', typeName: 'PlaceRole', identity: 'place' },
+        },
+      ],
+    });
+    const nameAlias = irAlias(plainPlace, plainPlace.fields[0]);
+    const [stage] = searchStages({
+      schema: searchSchema(roleWork, placeRole, plainPlace),
+      types: [
+        {
+          searchType: roleWork,
+          rootVariable: 'root',
+          itemSelector: selectByClass(roleWork),
+        },
+        {
+          searchType: plainPlace,
+          rootVariable: 'root',
+          itemSelector: selectByClass(plainPlace),
+          transform: async function* (quads) {
+            for await (const quad of quads) {
+              yield quad.predicate.value === nameAlias
+                ? DataFactory.quad(
+                    quad.subject,
+                    quad.predicate,
+                    DataFactory.literal(`${quad.object.value} (plaats)`),
+                  )
+                : quad;
+            }
+          },
+        },
+      ],
+    });
+    const documents: Record<string, unknown>[] = [];
+    await stage.run(dataset, distribution, {
+      write: async (_dataset, items) => {
+        for await (const item of items) {
+          documents.push(item.document);
+        }
+      },
+    });
+
+    // The work points straight at the place: no Role in between.
+    expect(
+      documents.find((document) => document.name_nl === 'Werk 2')?.created,
+    ).toEqual({
+      place: 'https://a/place/kessel',
+      place_search: 'kessel (plaats)',
+    });
+  });
 });

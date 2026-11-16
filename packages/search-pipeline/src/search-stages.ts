@@ -13,12 +13,15 @@ import {
 } from '@lde/pipeline';
 import {
   projectRoots,
+  type ReferenceType,
   type RootType,
   type SearchDocument,
+  type SearchField,
   type SearchSchema,
   type SearchType,
 } from '@lde/search';
 import {
+  endpointFieldOf,
   irAlias,
   isInlineReference,
   referencedTargetsOf,
@@ -174,11 +177,12 @@ export function searchStages(
   // Each type’s transforms, for the referring stages to apply to its
   // referents. A type with its own readers has none here: `transform`
   // attaches to the default reader only.
-  const transformsByName = new Map(
+  const transformsByClass = new Map(
     types.flatMap((type) =>
       type.transform === undefined
         ? []
-        : [[type.searchType.name, [type.transform].flat()] as const],
+        : // By class, as the schema resolves a class-equal lookalike.
+          [[type.searchType.class, [type.transform].flat()] as const],
     ),
   );
   return ordered.map((type) => {
@@ -215,7 +219,7 @@ export function searchStages(
         }),
         transform: [
           type.transform ?? [],
-          referentTransforms(searchType, schema, transformsByName) ?? [],
+          referentTransforms(searchType, schema, transformsByClass) ?? [],
         ].flat(),
       } satisfies AttachedReader);
     return new Stage<TypedSearchDocument>({
@@ -405,7 +409,7 @@ export const defaultBatchSize = { endpoint: 10, imported: 100 } as const;
 function referentTransforms(
   searchType: RootType,
   schema: SearchSchema,
-  transformsByName: ReadonlyMap<
+  transformsByClass: ReadonlyMap<
     string,
     readonly QuadTransform<ReaderContext>[]
   >,
@@ -417,18 +421,18 @@ function referentTransforms(
     RootType,
     { fields: Set<string>; aliases: Set<string> }
   >();
-  for (const { owner, field } of searchedReferences(searchType, schema)) {
+  for (const { alias, field } of searchedReferences(searchType, schema)) {
     for (const target of referencedTargetsOf(field, schema)) {
       // A reference to its own type: the type’s transform saw the batch.
       if (
         target !== searchType &&
-        transformsByName.get(target.name) !== undefined
+        transformsByClass.get(target.class) !== undefined
       ) {
         const route = routes.get(target) ?? {
           fields: new Set<string>(),
           aliases: new Set<string>(),
         };
-        route.fields.add(irAlias(owner, field));
+        route.fields.add(alias);
         for (const hopField of referentHopFields(field, target)) {
           route.aliases.add(irAlias(target, hopField));
         }
@@ -470,15 +474,17 @@ function referentTransforms(
         target !== undefined &&
         referents.get(target)?.has(termKey(quad.subject))
       ) {
-        inputs.set(target, [...(inputs.get(target) ?? []), quad]);
+        const input = inputs.get(target) ?? [];
+        input.push(quad);
+        inputs.set(target, input);
       } else {
         yield quad;
       }
     }
     for (const [target, input] of inputs) {
       let stream: AsyncIterable<Quad> = streamOf(input);
-      for (const transform of transformsByName.get(
-        target.name,
+      for (const transform of transformsByClass.get(
+        target.class,
       ) as readonly QuadTransform<ReaderContext>[]) {
         stream = transform(stream, context);
       }
@@ -487,23 +493,32 @@ function referentTransforms(
   };
 }
 
-/** The type’s `searchable` reference fields, with the type declaring each:
- *  its own, and those of the inline referents it nests. `searchSchema`
- *  refuses an inline cycle, so the descent ends. */
+/** The type’s `searchable` reference fields, each with the IR Alias whose
+ *  objects are its referents: its own, and those of the inline referents it
+ *  nests. A graph that leaves an edge out points at the endpoint through the
+ *  inline field itself, so an endpoint field is reached through both.
+ *  `searchSchema` refuses an inline cycle, so the descent ends. */
 function searchedReferences(
   owner: SearchType,
   schema: SearchSchema,
-): { owner: SearchType; field: SearchType['fields'][number] }[] {
+): { alias: string; field: SearchField }[] {
   return owner.fields.flatMap((field) => {
     if (isInlineReference(field)) {
       // Guaranteed declared: `searchSchema` resolves every inline `typeName`.
-      return searchedReferences(
-        referenceTypeNamed(schema, field.ref.typeName) as SearchType,
+      const referenceType = referenceTypeNamed(
         schema,
-      );
+        field.ref.typeName,
+      ) as ReferenceType;
+      const endpointField = endpointFieldOf(referenceType, field.ref.identity);
+      return [
+        ...searchedReferences(referenceType, schema),
+        ...(endpointField?.searchable === undefined
+          ? []
+          : [{ alias: irAlias(owner, field), field: endpointField }]),
+      ];
     }
     return field.kind === 'reference' && field.searchable !== undefined
-      ? [{ owner, field }]
+      ? [{ alias: irAlias(owner, field), field }]
       : [];
   });
 }
