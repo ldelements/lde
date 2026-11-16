@@ -258,14 +258,15 @@ function assertReferencesAndFacetCompanionsPresent(
         .map((companion) => `“${companion}”`)
         .join(
           ', ',
-        )} its search type facets on in place of the field itself – the id leaf of a nested object, one narrowed by a facet policy (“facetKeys”), or the nested path of a faceted leaf. A facet field cannot be added to a live collection here: drop “${name}” (and the collections that join to it) and let the next run rebuild them.`,
+        )} its search type facets on in place of the field itself – the id leaf of a nested object, one narrowed by a facet policy (“facetKeys”), the nested path of a faceted leaf, or the companion recording whether a field declaring “presence” holds a value. A facet field cannot be added to a live collection here: drop “${name}” (and the collections that join to it) and let the next run rebuild them.`,
     );
   }
 }
 
 /** The fields a type’s facets read instead of the fields themselves – one per
  *  facetable reference that stores a nested object or inherits a facet policy
- *  ({@link facetsOf}), and the nested path of each faceted leaf. */
+ *  ({@link facetsOf}), the nested path of each faceted leaf, and the presence
+ *  companion of each field declaring `presence`. */
 function facetCompanionsOf(
   searchType: SearchType,
   schema: SearchSchema | undefined,

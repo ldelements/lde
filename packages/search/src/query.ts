@@ -5,6 +5,7 @@ import {
   ID_FIELD,
   holdsNoIds,
   nestedReferenceType,
+  presenceFacetName,
   referencedTargetsOf,
   storedRangeBound,
   type FacetDeclaration,
@@ -136,7 +137,17 @@ export type Criterion =
       };
     })
   | (CriterionBase & { readonly is: boolean })
-  | (CriterionBase & { readonly entry: readonly Criterion[] });
+  | (CriterionBase & { readonly entry: readonly Criterion[] })
+  | PresenceCriterion;
+
+/**
+ * Whether the field holds a value: `exists: true` matches a document that
+ * holds one, `exists: false` a document that holds none. Taken by any field
+ * declaring {@link SearchFieldBase.presence}, whatever its kind, beside the
+ * operator its kind fixes – on the searched type’s own field, not yet through
+ * a join path or inside a weld.
+ */
+export type PresenceCriterion = CriterionBase & { readonly exists: boolean };
 
 /**
  * The conditions a criterion welds to **one entry** of the nested reference its
@@ -197,7 +208,13 @@ import type { FilterOperator } from './schema.js';
 
 /** The operator a {@link Criterion} carries, from its discriminating key. */
 export function filterOperator(criterion: Criterion): FilterOperator {
-  return 'in' in criterion ? 'in' : 'range' in criterion ? 'range' : 'is';
+  return 'in' in criterion
+    ? 'in'
+    : 'range' in criterion
+      ? 'range'
+      : 'exists' in criterion
+        ? 'exists'
+        : 'is';
 }
 
 /** A one-criterion clause – the ordinary single-field filter, and the shape a
@@ -255,7 +272,8 @@ export interface FacetSearch {
    *  `facets` the fields this search counts. */
   readonly query: SearchQuery;
   /** Per facet, the values its own clause selects. Only an own-filtered
-   *  facet has an entry, and only an `in` or `is` selection names values. */
+   *  facet has an entry, and only an `in`, `is` or `exists` selection names
+   *  values. */
   readonly selected: Readonly<Record<string, readonly string[]>>;
   /** The facet whose own clauses this search removed; absent on the search
    *  that every facet without a clause of its own shares. */
@@ -289,6 +307,10 @@ export interface FacetSearch {
  * faceted leaf owns. A weld of several conditions is nobody’s own: it
  * constrains two parts of one entry, as a clause spanning two fields
  * constrains two fields.
+ *
+ * An `exists` criterion is on the axis `‹field›.exists`, which the field’s
+ * presence facet owns. It owns nothing else: a range on the same field is
+ * another axis, and so a presence facet counts under it.
  *
  * A default a surface adds to `where` (a valid-only `status`) is a clause
  * like any other: its facet counts across every value and reports the
@@ -393,7 +415,19 @@ export interface QueryIssue {
      * `period` everything spanning the gap, and neither is what the caller
      * meant, so the caller is told.
      */
-    | 'inverted-range';
+    | 'inverted-range'
+    /**
+     * An `exists` criterion on a field that declares no
+     * {@link SearchFieldBase.presence}, so no document records whether it
+     * holds a value. A field of a Reference Type never declares one, which
+     * makes this the reason for an `exists` welded to an entry, too.
+     */
+    | 'no-presence'
+    /**
+     * An `exists` criterion reached through a join path. The joined type’s
+     * own field may declare presence, but no join reads its companion yet.
+     */
+    | 'joined-presence';
 }
 
 /**
@@ -417,6 +451,14 @@ function collectLeafIssues(
   const declared = fieldNamed(constrained, criterion.field);
   if (declared === undefined) {
     issues.push({ part: 'where', field, reason: 'unknown-field' });
+    return;
+  }
+  // Presence is a Role of its own: a field declaring it takes `exists`
+  // whether or not it is `filterable`, and whatever operator its kind fixes.
+  if ('exists' in criterion) {
+    if (declared.presence !== true) {
+      issues.push({ part: 'where', field, reason: 'no-presence' });
+    }
     return;
   }
   if (declared.filterable !== true) {
@@ -548,7 +590,9 @@ function issueField(criterion: Criterion): string {
  * always-filterable {@link ID_FIELD}, which takes `in`; every requested facet is
  * a declared, `facetable` field; every sort is `relevance` or a declared field.
  * Because each criterion is matched against its own field’s kind, one clause may
- * range over fields of different kinds. A `date` range is checked one step
+ * range over fields of different kinds. An `exists` criterion instead needs a
+ * field declaring {@link SearchFieldBase.presence} (`no-presence`), reached
+ * without a join (`joined-presence`). A `date` range is checked one step
  * further, on its **values**: a bound the storage codec cannot read is an
  * `unparseable-bound`, the one place a criterion is rejected for what it says
  * rather than for what it names. Sorting deliberately
@@ -605,6 +649,10 @@ export function validateQuery(
         }
         constrained = resolved.leafType;
         nested = resolved.nestedPath.length > 0;
+        if ('exists' in criterion && resolved.joinPath.length > 0) {
+          issues.push({ part: 'where', field, reason: 'joined-presence' });
+          continue;
+        }
       }
       // `id` is filterable on every type without being declared by any: it is
       // the document’s IRI, so the lookup exists wherever documents do.
@@ -819,6 +867,12 @@ function ownedField(filter: Filter): string | undefined {
  */
 function axisOf(criterion: Criterion): string | undefined {
   const path = [...(criterion.on ?? []), criterion.field];
+  // Whether a field holds a value is a question of its own, owned by the
+  // presence facet: a range on the same field is not its selection, nor is an
+  // `exists` the selection of a facet on the field’s values.
+  if ('exists' in criterion) {
+    return presenceFacetName(path.join('.'));
+  }
   if (!isWelded(criterion)) {
     return path.join('.');
   }
@@ -833,16 +887,18 @@ function axisOf(criterion: Criterion): string | undefined {
 
 /**
  * The clause that selects one bucket of a facet – the inverse of the axis a
- * facet owns ({@link facetSearches}): `is` on a boolean, `in` on anything
- * else, and for a faceted leaf a condition welded to one entry of the
+ * facet owns ({@link facetSearches}): `exists` on a presence facet, `is` on a
+ * boolean, `in` on anything else, and for a faceted leaf a condition welded to one entry of the
  * reference it is reached through.
  */
 export function selectionOf(facet: FacetDeclaration, value: string): Filter {
   const field = facet.field.name;
   const condition: Criterion =
-    facet.field.kind === 'boolean'
-      ? { field, is: value === 'true' }
-      : { field, in: [value] };
+    facet.presence === true
+      ? { field, exists: value === 'true' }
+      : facet.field.kind === 'boolean'
+        ? { field, is: value === 'true' }
+        : { field, in: [value] };
   return filterOn(
     facet.reference === undefined
       ? condition
@@ -860,5 +916,7 @@ function selectedValues(criterion: Criterion): readonly string[] {
     ? criterion.in
     : 'is' in criterion
       ? [String(criterion.is)]
-      : [];
+      : 'exists' in criterion
+        ? [String(criterion.exists)]
+        : [];
 }

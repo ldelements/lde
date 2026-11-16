@@ -31,8 +31,10 @@ export default mergeConfig(
           // the port, since `assertValidQuery` rejects such a query first.
           // They hold for a direct caller, and are exercised as one. Moved
           // again when an inline reference’s identity dropped its flat
-          // companion: covered branches deleted, nothing uncovered.
-          branches: 97.1,
+          // companion: covered branches deleted, nothing uncovered. And when
+          // a field declaring presence alone went back to being internal,
+          // deleting the covered branches that kept its value unindexed.
+          branches: 97.15,
           statements: 99.6,
         },
       },

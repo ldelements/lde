@@ -261,6 +261,25 @@ role: { in: ["etser"] } } }` asks for _this person in this role_, where the
   same two conditions written as sibling clauses could be satisfied by two
   different entries.
 
+  A field declaring [`presence`](./search#filtering-and-faceting-on-presence)
+  gains an **`exists: Boolean`** arm: `where: { dateCreated: { exists: true } }`
+  matches the documents that hold a value, `false` those that hold none. A
+  field that is also `filterable` takes a variant of its own filter named
+  `‹Filter›OrExists` – `DateRangeOrExists`, `KeywordFilterOrExists`,
+  `PersonFilterOrExists` – with the same keys plus `exists`, one variant per
+  filter and shared like it; a field declaring presence alone takes
+  `ExistsFilter`, which holds `exists` only. `exists` asks a question of its
+  own, so setting it beside another key of the same input is an error naming
+  the rewrite: write each as its own condition, or drop `exists`, since any
+  other condition already matches only documents that hold a value. A
+  reference’s variant is a type of its own, so the
+  [refined discovery strategy](#finding-which-fields-accept-an-iri) does not
+  reach it; its `in` element is still `IRI`, so the coarse one does. No join
+  reads a presence companion yet, so a type declaring presence is reached
+  through a join by `‹Type›JoinedWhere`: its own `where` without `exists`, and
+  without the keys of fields declaring presence alone. A type declaring none
+  keeps one `‹Type›Where` for both.
+
 - **`orderBy`**: `RELEVANCE` plus every `sortable` field, as an enum – field
   names SCREAMING_SNAKE_CASEd (`datePosted` → `DATE_POSTED`); `direction`
   defaults to `DESC`.
@@ -319,7 +338,12 @@ role: { in: ["etser"] } } }` asks for _this person in this role_, where the
 
   An inline reference’s [faceted leaves](./search#faceting-on-an-entry-s-leaf)
   are served one level down, under the reference: `facets { associatedMedia {
-license { buckets { value count } } } }`, typed `‹Type›‹Reference›Facets`.
+license { buckets { value count } } } }`, typed `‹Type›‹Reference›Facets`. A presence
+  facet is served the same way, under the field it counts: `facets {
+dateCreated { exists { value count } } }`, typed `‹Type›‹Field›Facets`
+  (`WorkDateCreatedFacets`) with `exists: [BooleanBucket!]!`. The object
+  leaves room for a field’s value buckets beside it, once a field may be both
+  `facetable` and declare presence.
 
   Selecting facet fields IS
   the request, and the whole selection is **batched per request**: one
