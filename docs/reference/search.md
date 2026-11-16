@@ -1155,7 +1155,10 @@ later:
   from. Only the consumer knows that `true` means “Met afbeelding”. Its bucket
   additionally carries **`is`**, the value as a real boolean, so it round-trips
   straight into the `is` filter that selects it;
-- a range-facet bin carries `min`/`max` instead – see below.
+- a range-facet bin carries `min`/`max` instead – see below;
+- a [presence](#filtering-and-faceting-on-presence) facet’s buckets are
+  `true` and `false` whatever the field’s kind, and carry `is` like a
+  `boolean` facet’s.
 
 ### Faceting on an entry’s leaf
 
@@ -1197,6 +1200,58 @@ a [facet policy](#facet-policy) is refused for now.
 A condition welded to one entry is owned by a faceted leaf, never by an
 `identity` facet: select an identity facet’s bucket through the reference’s
 `in` arm, `where: { contributor: { in: […] } }`.
+
+### Filtering and faceting on presence
+
+A field can be filtered and faceted on **whether the document holds a value**,
+without a second field beside it. Declare `presence`:
+
+```ts
+{
+  name: 'dateCreated',
+  kind: 'date',
+  path: 'https://schema.org/dateCreated',
+  output: true,
+  filterable: true,
+  presence: true,
+}
+```
+
+The field then takes the criterion `{ field: 'dateCreated', exists: true }`
+(or `false`), and serves the facet `dateCreated.exists`, with a `true` bucket
+for the documents that hold a value and a `false` bucket for those that hold
+none. Each bucket carries `is`, as a boolean facet’s does, and is selected by
+`exists`. `presence` is not a role: a query reads the companion, never the
+value, so a field declaring it alone stays an
+[internal field](#field-model) – projected, read for its companion, then
+pruned – and is not filterable by value.
+
+A document holds a value when its projected field does – a non-empty list or a
+defined scalar, which is what the response would serve. A value the field’s
+reader cannot read, such as a `period` stated as `onbekend`, is
+[reported and left out](#values-a-field-could-not-read), so a document whose
+only value is unreadable counts as holding none.
+
+An engine without a presence filter reads a boolean companion,
+`${name}_exists` (`physicalFields(field).exists`), which the projection writes on
+every document, `false` included – without the `false` the facet’s second
+bucket and `exists: false` would have nothing to read.
+
+The presence facet owns the `exists` clauses on its field, and nothing else: a
+`range` or `in` on the same field is another axis, so the presence facet counts
+under it, and `exists` is never the selection of a facet on the field’s values.
+`exists` is refused through a join path (`joined-presence`) and on a field
+declaring no presence (`no-presence`), which is also what a weld meets.
+
+`validateSearchType` accepts `presence` on a Root Type’s own field only, and
+`searchSchema` says why in full. It refuses
+it on a field of a Reference Type and on an inline reference, whose entries
+hold no companion yet ([#1091](https://github.com/ldelements/lde/issues/1091));
+on a `text` field, which stores its values per language; on a `boolean`, which
+states its own absence as `false`; and on a field that is already `facetable`,
+since its facet would have to become an object to hold both kinds of bucket
+([#1090](https://github.com/ldelements/lde/issues/1090))
+([ADR 38](../decisions/0038-filter-and-facet-a-field-on-whether-it-has-a-value.md)).
 
 ### Facet policy
 

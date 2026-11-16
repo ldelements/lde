@@ -600,6 +600,18 @@ export function buildGraphQLSchema(
       'Matches a field holding IRIs that belong to no collection this API serves.',
     fields: { in: { type: new GraphQLList(new GraphQLNonNull(iriScalar)) } },
   });
+  // The `exists` arm a field declaring presence takes: whether the document
+  // holds a value, whatever the field’s kind.
+  const existsKey: GraphQLInputFieldConfig = {
+    type: GraphQLBoolean,
+    description:
+      'true matches a document that holds a value for this field, false one that holds none.',
+  };
+  const existsFilter = new GraphQLInputObjectType({
+    name: 'ExistsFilter',
+    description: 'Matches a field on whether the document holds a value.',
+    fields: { exists: existsKey },
+  });
   /**
    * The filter input for IRIs of one named target, `‹TypeName›Filter` – created
    * once per target and shared by every field pointing at it, INCLUDING the
@@ -642,6 +654,7 @@ export function buildGraphQLSchema(
     if (
       name === keywordFilter.name ||
       name === iriFilter.name ||
+      name === existsFilter.name ||
       name === iriScalar.name ||
       takenTypeNames.has(name)
     ) {
@@ -661,6 +674,59 @@ export function buildGraphQLSchema(
   const intRange = rangeInput('IntRange', GraphQLInt);
   const floatRange = rangeInput('FloatRange', GraphQLFloat);
   const dateRange = rangeInput('DateRange', dateScalar);
+  const existsVariants = new Map<string, GraphQLInputObjectType>();
+  /**
+   * The filter a field declaring presence takes: `ExistsFilter` when it is
+   * not `filterable`, and otherwise its own filter with an `exists` arm beside
+   * the others, `‹Filter›OrExists` (`DateRangeOrExists`) – one variant per
+   * filter, shared like the filter itself. `exists` asks a question of its
+   * own, so setting it together with another key is refused when the query
+   * is compiled ({@link keyEntriesOf}).
+   *
+   * The variant is a type of its own, so a reference declaring presence no
+   * longer takes the `‹Target›Filter` its target’s `id` takes, and is found
+   * by the coarse discovery strategy only.
+   */
+  function presenceFilterFor(
+    field: SearchField,
+    owner: RootType,
+  ): GraphQLInputObjectType {
+    if (field.filterable !== true) {
+      return existsFilter;
+    }
+    // Never a bare `Boolean`: `searchSchema` refuses presence on a boolean.
+    const base = whereFieldType(field, owner) as GraphQLInputObjectType;
+    const existing = existsVariants.get(base.name);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const name = `${base.name}OrExists`;
+    // Checked like a target filter’s name, for the same reason: a declaration
+    // may name a type `DateRangeOrExists`, and graphql-js would only say so
+    // once the whole schema is assembled.
+    if (takenTypeNames.has(name)) {
+      throw new Error(
+        `Filter “${base.name}” would take “exists” through “${name}”, which is already the name of another type; rename that type.`,
+      );
+    }
+    takenTypeNames.add(name);
+    const created = new GraphQLInputObjectType({
+      name,
+      description: `${base.description ?? `Matches like ${base.name}.`} Or, through “exists”, whether the document holds a value at all.`,
+      isOneOf: base.isOneOf,
+      fields: () => ({
+        ...Object.fromEntries(
+          Object.values(base.getFields()).map((baseField) => [
+            baseField.name,
+            { type: baseField.type, description: baseField.description },
+          ]),
+        ),
+        exists: existsKey,
+      }),
+    });
+    existsVariants.set(base.name, created);
+    return created;
+  }
 
   const labelList = (
     resolveLabel: (source: Source) => LocalizedValue | undefined,
@@ -1394,7 +1460,7 @@ export function buildGraphQLSchema(
         // `[IRI!]` for. Typing it `String` here would make the join arm the
         // one place identity is not `IRI`-keyed.
         in: { type: new GraphQLList(new GraphQLNonNull(iriScalar)) },
-        where: { type: whereInputFor(target) },
+        where: { type: whereInputFor(target, true) },
       }),
     });
     referenceFilters.set(target.name, created);
@@ -1408,9 +1474,14 @@ export function buildGraphQLSchema(
    * single vocabulary every level of `where` is built from: the same keys
    * appear on the clause and on a criterion, so a field is never named a
    * second way.
+   *
+   * `joined` leaves presence out: no join reads a presence companion yet
+   * (`joined-presence`), so a `where` reached through a join offers no
+   * `exists`, and a field declaring presence alone no key at all.
    */
   function fieldKeys(
     searchType: RootType,
+    joined: boolean,
   ): Record<string, GraphQLInputFieldConfig> {
     const fields: Record<string, GraphQLInputFieldConfig> = {
       // Typed self-referentially – `TermWhere.id: TermFilter` – so a consumer
@@ -1419,9 +1490,15 @@ export function buildGraphQLSchema(
       // work without hardcoding a single domain name.
       [ID_FIELD]: { type: targetFilter(searchType.name) },
     };
-    for (const field of filterableFields(searchType)) {
+    for (const field of whereFieldsOf(searchType)) {
+      if (joined && field.filterable !== true) {
+        continue;
+      }
       fields[field.name] = {
-        type: whereFieldType(field, searchType),
+        type:
+          field.presence === true && !joined
+            ? presenceFilterFor(field, searchType)
+            : whereFieldType(field, searchType),
         description: field.description,
       };
     }
@@ -1435,9 +1512,21 @@ export function buildGraphQLSchema(
    * from another type. One input either way, so the vocabulary a consumer
    * learns for `datasets(where: …)` is the same one they write inside
    * `creativeWorks(where: { dataset: { where: … } })`.
+   *
+   * The one exception is presence, which no join reads yet: a type declaring
+   * it is reached through a join by `‹Type›JoinedWhere`, the same input without
+   * `exists` ({@link fieldKeys}). A type declaring none shares one input.
    */
-  function whereInputFor(searchType: RootType): GraphQLInputObjectType {
-    const existing = whereInputs.get(searchType.name);
+  function whereInputFor(
+    searchType: RootType,
+    joined = false,
+  ): GraphQLInputObjectType {
+    if (joined && !searchType.fields.some((field) => field.presence === true)) {
+      return whereInputFor(searchType);
+    }
+    const prefix = joined ? `${searchType.name}Joined` : searchType.name;
+    const key = joined ? `joined:${searchType.name}` : searchType.name;
+    const existing = whereInputs.get(key);
     if (existing !== undefined) {
       return existing;
     }
@@ -1448,11 +1537,11 @@ export function buildGraphQLSchema(
     // Created here rather than on its own, because it exists for exactly one
     // `where` and shares its memoization.
     const criterionInput = new GraphQLInputObjectType({
-      name: `${searchType.name}Criterion`,
+      name: `${prefix}Criterion`,
       description:
         'A condition on exactly one field. Used inside `or`, where the criteria are alternatives.',
       isOneOf: true,
-      fields: () => fieldKeys(searchType),
+      fields: () => fieldKeys(searchType, joined),
     });
     const orKey: GraphQLInputFieldConfig = {
       type: new GraphQLList(new GraphQLNonNull(criterionInput)),
@@ -1466,11 +1555,11 @@ export function buildGraphQLSchema(
     // disjunctions at any nesting depth, and a reader meets one input type
     // instead of two near-identical ones.
     const created: GraphQLInputObjectType = new GraphQLInputObjectType({
-      name: `${searchType.name}Where`,
+      name: `${prefix}Where`,
       description:
         'Sibling keys are combined with AND. Use `or` for a disjunction, and `and` when a query needs more than one of them.',
       fields: () => ({
-        ...fieldKeys(searchType),
+        ...fieldKeys(searchType, joined),
         [OR_KEY]: orKey,
         [AND_KEY]: {
           type: new GraphQLList(new GraphQLNonNull(created)),
@@ -1479,7 +1568,7 @@ export function buildGraphQLSchema(
         },
       }),
     });
-    whereInputs.set(searchType.name, created);
+    whereInputs.set(key, created);
     return created;
   }
 
@@ -1655,22 +1744,27 @@ export function buildGraphQLSchema(
    * The keyed facets object for one type (only called with ≥ 1 facet). A
    * faceted leaf is served one level down, under the reference it is reached
    * through – `facets { associatedMedia { license } }` – so a facet is named
-   * by the same path as the value it counts.
+   * by the same path as the value it counts. A presence facet is served one
+   * level down too, under the field it counts – `facets { dateCreated {
+   * exists } }` – in an object that has room for the field’s value buckets
+   * once a field may have both.
    */
   function facetsTypeFor(
     typeName: string,
     facets: readonly FacetDeclaration[],
   ): GraphQLObjectType {
     const own: FacetDeclaration[] = [];
-    const byReference = new Map<string, FacetDeclaration[]>();
+    const byGroup = new Map<string, FacetDeclaration[]>();
     for (const facet of facets) {
-      if (facet.reference === undefined) {
+      const group =
+        facet.presence === true ? facet.field.name : facet.reference?.name;
+      if (group === undefined) {
         own.push(facet);
         continue;
       }
-      const leaves = byReference.get(facet.reference.name) ?? [];
-      leaves.push(facet);
-      byReference.set(facet.reference.name, leaves);
+      const grouped = byGroup.get(group) ?? [];
+      grouped.push(facet);
+      byGroup.set(group, grouped);
     }
 
     return new GraphQLObjectType({
@@ -1678,16 +1772,17 @@ export function buildGraphQLSchema(
       fields: () => ({
         ...facetFieldsFor(own),
         ...Object.fromEntries(
-          [...byReference].map(([reference, leaves]) => [
-            reference,
+          [...byGroup].map(([group, grouped]) => [
+            group,
             {
               type: new GraphQLNonNull(
                 new GraphQLObjectType({
-                  name: `${typeName}${reference.charAt(0).toUpperCase()}${reference.slice(1)}Facets`,
-                  fields: () => facetFieldsFor(leaves),
+                  name: `${typeName}${group.charAt(0).toUpperCase()}${group.slice(1)}Facets`,
+                  fields: () => facetFieldsFor(grouped),
                 }),
               ),
-              // The source carries the facet loader; the leaves read it.
+              // The source carries the facet loader; the grouped facets read
+              // it.
               resolve: (source: Source) => source,
             },
           ]),
@@ -1696,8 +1791,8 @@ export function buildGraphQLSchema(
     });
   }
 
-  /** One GraphQL field per facet, keyed by its field’s name and loaded by the
-   *  facet’s logical name. */
+  /** One GraphQL field per facet, keyed by its field’s name – `exists` for a
+   *  presence facet – and loaded by the facet’s logical name. */
   function facetFieldsFor(
     facets: readonly FacetDeclaration[],
   ): Record<string, GraphQLFieldConfig<Source, SearchContext>> {
@@ -1708,9 +1803,19 @@ export function buildGraphQLSchema(
     // The keys share one engine round-trip, but each is its own facet
     // calculation in it.
     const facetCost = costExtensions(operationCost);
-    for (const { name, field } of facets) {
+    for (const { name, field, presence } of facets) {
       // The batching into one engine dispatch and the degrade-to-empty
       // error handling live in the loader (facet-batch.ts).
+      if (presence === true) {
+        fields.exists = {
+          type: nonNullListOf(booleanBucket),
+          extensions: facetCost,
+          description: `Documents that hold a value for “${field.name}”, and documents that hold none.`,
+          resolve: async (source: Source) =>
+            (await (source.loadFacet as FacetLoader)(name, 'matching')).buckets,
+        };
+        continue;
+      }
       if (isRangeFacet(field)) {
         fields[field.name] = {
           type: new GraphQLNonNull(rangeFacetTypeFor(field)),
@@ -2085,10 +2190,20 @@ function keyEntriesOf(
   if (id !== undefined && id !== null) {
     entries.push({ criterion: { field: ID_FIELD, in: id.in ?? [] } });
   }
-  for (const field of filterableFields(searchType)) {
+  for (const field of whereFieldsOf(searchType)) {
     const value = keyed[field.name];
     if (value === undefined || value === null) {
       continue;
+    }
+    if (field.presence === true) {
+      const presence = presenceCriterionOf(field.name, value);
+      if (presence !== undefined) {
+        entries.push({ criterion: presence });
+        continue;
+      }
+      if (field.filterable !== true) {
+        continue;
+      }
     }
     // Both hop kinds take the same `@oneOf` input – `in` (the ids this field
     // holds) or `where` (a condition one hop out) – so both are read here, and
@@ -2131,6 +2246,45 @@ function keyEntriesOf(
     }
   }
   return entries;
+}
+
+/** The fields a `where` input carries a key for, in declaration order: the
+ *  `filterable` ones, and those declaring presence, which take `exists`
+ *  whether or not they are filterable. */
+function whereFieldsOf(searchType: SearchType): readonly SearchField[] {
+  return searchType.fields.filter(
+    (field) => field.filterable === true || field.presence === true,
+  );
+}
+
+/**
+ * The `exists` criterion one key of a presence field sets, or `undefined`
+ * when it sets no `exists` – `null` reads as unset, like every other key. An
+ * `exists` beside another key of the same input is refused: the criterion is
+ * an atom, and the two ask different questions, so the caller says which by
+ * writing each as its own condition.
+ */
+function presenceCriterionOf(
+  name: string,
+  value: unknown,
+): Criterion | undefined {
+  const { exists, ...others } = value as Record<string, unknown>;
+  if (exists === undefined || exists === null) {
+    return undefined;
+  }
+  const also = Object.keys(others).filter(
+    (key) => others[key] !== undefined && others[key] !== null,
+  );
+  if (also.length > 0) {
+    throw userError(
+      `“${name}” sets “exists” together with ${also
+        .map((key) => `“${key}”`)
+        .join(
+          ' and ',
+        )}, which ask different questions of one field. Write each as its own condition – and: [{ ${name}: { exists: ${String(exists)} } }, { ${name}: { ${also[0]}: … } }] – or drop “exists”: any other condition already matches only documents that hold a value.`,
+    );
+  }
+  return { field: name, exists: exists as boolean };
 }
 
 /** A facet’s stored date served as a date-time, the one precision a value

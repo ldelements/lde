@@ -200,7 +200,9 @@ function compileFacetBy(
       if (facet === undefined) {
         return name;
       }
-      return isBinnedRangeFacet(facet.field)
+      // A presence facet counts its boolean companion, whatever the field’s
+      // own bins.
+      return facet.presence !== true && isBinnedRangeFacet(facet.field)
         ? compileRangeFacet(facet.engineField, storedFacetRanges(facet.field))
         : facet.engineField;
     })
@@ -562,6 +564,17 @@ function compileLeaf(
   const field = fieldNamed(searchType, criterion.field);
   if (field === undefined) {
     return UNUSABLE;
+  }
+  // Typesense cannot test a field for holding a value, so presence reads the
+  // boolean companion the projection writes on every root document – never
+  // inside an entry, so under a nesting prefix there is nothing to read.
+  // `assertValidQuery` rejects both first; this is the guard for a hand-built
+  // query.
+  if ('exists' in criterion) {
+    const exists = physicalFields(field).exists;
+    return exists === undefined || prefix !== ''
+      ? UNUSABLE
+      : `${exists}:=${criterion.exists}`;
   }
   // A criterion whose operator does not match the field's kind (e.g. `range` on
   // a keyword) would reach the engine as garbage syntax – skip it instead.

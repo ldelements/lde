@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  searchSchema,
   isoToUnixSeconds,
   type StoredDate,
   lastSecondOf,
@@ -811,5 +812,76 @@ describe('und locale', () => {
     // en is not declared: sort on the first locale's key rather than a
     // nonexistent physical field.
     expect(params.sort_by).toBe('title_sort_nl:asc');
+  });
+});
+
+describe('a field filtered and faceted on whether it has a value', () => {
+  const work: SearchType = {
+    name: 'Work',
+    class: 'https://schema.org/CreativeWork',
+    fields: [
+      {
+        name: 'dateCreated',
+        kind: 'date',
+        filterable: true,
+        presence: true,
+      },
+      { name: 'title', kind: 'keyword', filterable: true },
+    ],
+  };
+
+  it('filters the presence companion', () => {
+    const params = buildSearchParams(
+      {
+        ...base,
+        where: [{ or: [{ field: 'dateCreated', exists: false }] }],
+        facets: ['dateCreated.exists'],
+      },
+      work,
+    );
+    expect(params.filter_by).toBe('dateCreated_exists:=false');
+    expect(params.facet_by).toBe('dateCreated_exists');
+  });
+
+  it('compiles `exists` on a field declaring no presence to a term matching nothing', () => {
+    // `assertValidQuery` rejects it first; this is the guard for a direct
+    // caller.
+    const params = buildSearchParams(
+      { ...base, where: [{ or: [{ field: 'title', exists: true }] }] },
+      work,
+    );
+    expect(params.filter_by).toBe('id:=[]');
+  });
+
+  it('compiles `exists` inside an entry to a term matching nothing', () => {
+    // No entry holds a companion, and `searchSchema` refuses presence on a
+    // Reference Type’s field – so the declaration is changed after the fact,
+    // as a direct caller could.
+    const url = { name: 'url', kind: 'keyword', filterable: true } as const;
+    const media: SearchType = { name: 'Media', fields: [url] };
+    const withMedia: SearchType = {
+      name: 'Work',
+      class: 'https://schema.org/CreativeWork',
+      fields: [
+        {
+          name: 'media',
+          kind: 'reference',
+          filterable: true,
+          ref: { strategy: 'inline', typeName: 'Media' },
+        },
+      ],
+    };
+    const mediaSchema = searchSchema(withMedia, media);
+    Object.assign(url, { presence: true });
+
+    const params = buildSearchParams(
+      {
+        ...base,
+        where: [{ or: [{ on: ['media'], field: 'url', exists: true }] }],
+      },
+      withMedia,
+      { schema: mediaSchema },
+    );
+    expect(params.filter_by).toBe('id:=[]');
   });
 });

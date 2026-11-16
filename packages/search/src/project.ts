@@ -149,6 +149,16 @@ export function projectDocument(
     context,
     unreadableSink(context, key),
   ) as SearchDocument;
+  // After every field, so a presence reads what a later derive left too; on
+  // the root alone, since presence is declared only on a Root Type’s own field.
+  for (const field of searchType.fields) {
+    if (field.presence === true) {
+      document[physicalFields(field).exists as string] = holdsPresence(
+        document,
+        field,
+      );
+    }
+  }
   pruneInternalFields(document, searchType, schema);
   return document;
 }
@@ -460,6 +470,33 @@ function hasValue(document: ProjectedNode, field: SearchField): boolean {
       (search.includes(key) ||
         sort.includes(key) ||
         (Boolean(field.output) && displayLangOf(field, key) !== undefined)),
+  );
+}
+
+/** Whether a projected document holds a value for a field declaring presence:
+ *  in the field, or – for a lookup reading its literals as periods – in its
+ *  periods. Stricter than {@link hasValue}: `null`, which a derive may return
+ *  and an engine stores as no value, and an empty list, which a derived
+ *  `array` reference stores when its derive yields none, are no value.
+ *  Presence is refused on `text`, so no per-language fanout is read. */
+function holdsPresence(document: ProjectedNode, field: SearchField): boolean {
+  const periods =
+    literalKindOf(field) === 'period'
+      ? physicalFields(field).period?.values
+      : undefined;
+  return (
+    holdsValue(document[field.name]) ||
+    (periods !== undefined && holdsValue(document[periods]))
+  );
+}
+
+/** Whether a stored value is one: neither `undefined` nor `null`, nor an
+ *  empty list. */
+function holdsValue(value: unknown): boolean {
+  return (
+    value !== undefined &&
+    value !== null &&
+    !(Array.isArray(value) && value.length === 0)
   );
 }
 

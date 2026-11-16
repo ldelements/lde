@@ -1210,7 +1210,11 @@ export function parseSearchResponse(
   // its IRIs.
   const referenceFacets = new Set(
     facetsOf(searchType, schema)
-      .filter((facet) => labelTargetNamesOf(facet.field, schema).length > 0)
+      .filter(
+        (facet) =>
+          facet.presence !== true &&
+          labelTargetNamesOf(facet.field, schema).length > 0,
+      )
       .map((facet) => facet.name),
   );
   const facets: Record<string, Facet> = {};
@@ -1218,15 +1222,19 @@ export function parseSearchResponse(
     const labelled = referenceFacets.has(facet.field_name);
     // A binned facet echoes the declared range key as the bucket value; look
     // the bin’s half-open bounds back up by key, in stored terms, so the
-    // bucket is self-describing.
-    const field = facetNamed(searchType, facet.field_name, schema)?.field;
+    // bucket is self-describing. A presence facet counts a boolean, whatever
+    // its field’s kind.
+    const declared = facetNamed(searchType, facet.field_name, schema);
+    const field = declared?.presence === true ? undefined : declared?.field;
     const rangesByKey =
       field !== undefined && isBinnedRangeFacet(field)
         ? new Map(storedFacetRanges(field).map((range) => [range.key, range]))
         : undefined;
     // A boolean facet is reported with the values stringified; recover the
-    // boolean so the bucket carries the term the `is` filter expects.
-    const booleanFacet = field?.kind === 'boolean';
+    // boolean so the bucket carries the term the `is` filter expects – or,
+    // on a presence facet, the `exists` filter.
+    const booleanFacet =
+      declared?.presence === true || field?.kind === 'boolean';
     const buckets = facet.counts.map((bucket) => {
       const label = labelled ? labels.get(bucket.value) : undefined;
       const range = rangesByKey?.get(bucket.value);

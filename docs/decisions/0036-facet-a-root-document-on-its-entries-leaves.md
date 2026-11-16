@@ -71,3 +71,5 @@ An inline reference on a Root Type may list leaves of its Reference Type in
 - A derived judgement over entries, such as LOL’s `hasMedia` (“some
   reproduction has a thumbnail”), stays a `derive`. Typesense has no native
   presence filter, so a generic one would be the same index-time boolean.
+  (Superseded 2026-11-16 for a Root Type’s own field: [ADR 38](0038-filter-and-facet-a-field-on-whether-it-has-a-value.md)
+  writes that boolean once, in LDE.)

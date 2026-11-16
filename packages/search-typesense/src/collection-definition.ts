@@ -126,8 +126,8 @@ export function buildCollectionDefinition(
   const { defaultLocale, collectionNameFor = deriveCollectionName } = options;
   const collection: CollectionCreateSchema = {
     name: collectionNameFor(searchType),
-    fields: searchType.fields.flatMap((field) =>
-      typesenseFields(
+    fields: searchType.fields.flatMap((field) => [
+      ...typesenseFields(
         searchType,
         field,
         defaultLocale,
@@ -135,7 +135,8 @@ export function buildCollectionDefinition(
         options.schema,
         collectionNameFor,
       ),
-    ),
+      ...presenceFields(field),
+    ]),
   };
   // A faceted leaf, and an inline reference’s identity, are faceted on a
   // nested path, which Typesense flattens into one list per document – so a
@@ -434,6 +435,18 @@ function periodFields(
       optional: true,
     })),
   ];
+}
+
+/** The presence companion of a field declaring `presence`
+ *  ({@link physicalFields}): a boolean on every document, indexed and faceted,
+ *  since Typesense has no filter on a field holding a value. Declared whatever
+ *  the field stores – a value, a period, a nested object – and for a field
+ *  declaring presence alone, which is internal and stores nothing else. */
+function presenceFields(field: SearchField): CollectionFieldSchema[] {
+  const exists = physicalFields(field).exists;
+  return exists === undefined
+    ? []
+    : [{ name: exists, type: 'bool', facet: true }];
 }
 
 /** A `date` field’s precision companion ({@link physicalFields}): read back

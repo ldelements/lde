@@ -160,7 +160,8 @@ export interface FacetExtent {
 export type FacetFieldsOf<Type extends SearchType> = RootType extends Type
   ? string
   : | Extract<Type['fields'][number], { readonly facetable: true }>['name']
-    | FacetedLeavesOf<Type['fields'][number]>;
+    | FacetedLeavesOf<Type['fields'][number]>
+    | `${Extract<Type['fields'][number], { readonly presence: true }>['name']}.exists`;
 
 /** The `‹reference›.‹leaf›` facet names an inline reference declares through
  *  its faceted leaves (`ref.facetedLeaves`). */
@@ -304,12 +305,15 @@ export interface FacetBucket {
   /**
    * For a boolean-facet bucket: the value as a real boolean, so it round-trips
    * straight into the `is` filter that selects it rather than leaving a
-   * consumer to parse `value` back. Absent on every other kind of facet.
+   * consumer to parse `value` back – or, on a presence facet
+   * (`‹field›.exists`), into the `exists` filter. Absent on every other kind
+   * of facet.
    *
    * Optional only because one bucket type serves every kind: an adapter MUST
-   * set it on every bucket of a `boolean` facet, and the engine conformance
-   * suite checks that it does. A surface types it non-null, so omitting it
-   * fails the whole response rather than degrading the one facet.
+   * set it on every bucket of a `boolean` facet and of a presence facet, and
+   * the engine conformance suite checks that it does for both. A
+   * surface types it non-null, so omitting it fails the whole response rather
+   * than degrading the one facet.
    */
   readonly is?: boolean;
 }

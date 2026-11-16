@@ -132,6 +132,15 @@ the field itself is declared the facet and no companion is – the projection
 makes the same reading without a schema – so a deployment declaring a policy
 passes the schema to its writers, as `createSearchIndexer` does.
 
+A field declaring [presence](./search#filtering-and-faceting-on-presence) gets
+a `${name}_exists` companion of type `bool`, indexed and `facet: true`, beside
+whatever the field itself stores. Typesense has no filter on a field holding a
+value, so `exists` compiles to `${name}_exists:=true` or `:=false`, and the
+facet `‹field›.exists` counts the companion. The projection writes it on every
+document, `false` included, so the companion is not optional. A field
+declaring presence alone is internal, so the companion is all the collection
+declares for it.
+
 An `InPlaceRebuild` additionally refuses a type whose declared
 [dataset field](#provenance) inherits a policy: it enumerates the indexed
 datasets by faceting that field, and a facet narrowed to the admitted keys
@@ -404,7 +413,8 @@ alone – with one exception. If the collection exists but does not carry every
 [reference field](#joins-across-collections) the declaration asks for (a
 `joinable` added to a schema whose index predates it), or every
 [facet companion](#collection-schema-and-engine) its facets read (a `facetKeys`
-policy added to a type this one references), the run **fails** at open – after
+policy added to a type this one references, or `presence` added to a field),
+the run **fails** at open – after
 the lock, before any write – naming the drop-and-rebuild that fixes it. Without
 that it would index and commit happily and then fail on every join query, or
 on every facet over that reference: the values would be there, the reference

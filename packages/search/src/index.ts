@@ -83,6 +83,7 @@ export type {
   Filter,
   Criterion,
   CriterionBase,
+  PresenceCriterion,
   WeldedCriterion,
   Sort,
 } from './query.js';

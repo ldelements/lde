@@ -9,6 +9,7 @@ import {
 } from './query.js';
 import {
   facetableFields,
+  facetsOf,
   isRangeFacet,
   filterableFields,
   ID_FIELD,
@@ -162,7 +163,11 @@ export function describeSearchEngineContract(
 
     it('answers a searchFacets batch with one facets outcome per query, positionally', async () => {
       for (const searchType of types()) {
-        const facets = facetableFields(searchType).map((field) => field.name);
+        // Every facet the type serves, a presence facet’s `‹field›.exists`
+        // included.
+        const facets = facetsOf(searchType, engine().schema).map(
+          (facet) => facet.name,
+        );
         const queries: SearchQuery[] = [
           { ...browse(searchType), limit: 0, facets },
           // Facet-only regardless of the limit the query carries: this one
@@ -181,15 +186,19 @@ export function describeSearchEngineContract(
           }
           expect(outcome.facets).toBeTypeOf('object');
           const booleanFacets = new Set(
-            facetableFields(searchType)
-              .filter((field) => field.kind === 'boolean')
-              .map((field) => field.name),
+            facetsOf(searchType, engine().schema)
+              .filter(
+                (facet) =>
+                  facet.presence === true || facet.field.kind === 'boolean',
+              )
+              .map((facet) => facet.name),
           );
           for (const [name, facet] of Object.entries(outcome.facets)) {
             for (const bucket of facet?.buckets ?? []) {
               expect(typeof bucket.value).toBe('string');
               expect(typeof bucket.count).toBe('number');
-              // A boolean facet MUST carry `is`: a surface types it non-null
+              // A boolean facet – and a presence facet, whose buckets are
+              // booleans too – MUST carry `is`: a surface types it non-null
               // (GraphQL `Boolean!`), so an adapter that omits it nulls the
               // whole response rather than degrading one facet.
               if (booleanFacets.has(name)) {
