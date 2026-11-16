@@ -1,3 +1,27 @@
+## 0.45.0 (2026-11-16)
+
+### 🚀 Features
+
+- ⚠️  **search:** search a reference by its referents’ labels ([#1093](https://github.com/ldelements/lde/pull/1093))
+
+### ⚠️  Breaking Changes
+
+- **search:** search a reference by its referents’ labels  ([#1093](https://github.com/ldelements/lde/pull/1093))
+  a searchable reference naming a label source now holds
+  its referents’ folded labels in ${name}_search, not their IRIs, and
+  searchSchema refuses it when the label source’s label field has no
+  path. Give the label field a path, or drop searchable from the
+  reference."
+  A	docs/decisions/0038-search-a-document-by-its-referents-labels.md
+  M	docs/reference/search.md
+  M	packages/search-pipeline/src/extraction.ts
+  M	packages/search-pipeline/test/extraction.test.ts
+  M	packages/search-pipeline/test/keyed-roots.integration.test.ts
+  M	packages/search/src/project.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/test/project.test.ts
+  M	packages/search/test/schema.test.ts
+
 ## 0.44.0 (2026-11-16)
 
 ### 🚀 Features
