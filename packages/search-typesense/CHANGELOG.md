@@ -1,3 +1,41 @@
+## 0.64.0 (2026-11-16)
+
+### 🚀 Features
+
+- ⚠️  **search:** filter and facet a root document on whether an entry’s leaf has a value ([#1099](https://github.com/ldelements/lde/pull/1099), [#1097](https://github.com/ldelements/lde/issues/1097))
+
+### ⚠️  Breaking Changes
+
+- **search:** filter and facet a root document on whether an entry’s leaf has a value  ([#1099](https://github.com/ldelements/lde/pull/1099), [#1097](https://github.com/ldelements/lde/issues/1097))
+  `PhysicalFields` gains a required `leafExists` member, so code constructing a `PhysicalFields` must supply it. An engine adapter must declare each leaf boolean and compile a one-condition `exists` weld against it. A type whose inline reference declares presence leaves is reached through a join by `‹Type›JoinedWhere`, and that reference by `‹RefType›JoinedFilter`, without `exists`.
+  ---"
+  M	docs/decisions/0036-facet-a-root-document-on-its-entries-leaves.md
+  R095	docs/decisions/0038-filter-and-facet-a-field-on-whether-it-has-a-value.md	docs/decisions/0040-filter-and-facet-a-field-on-whether-it-has-a-value.md
+  A	docs/decisions/0041-filter-and-facet-a-root-document-on-whether-an-entrys-leaf-has-a-value.md
+  M	docs/reference/search-api-graphql.md
+  M	docs/reference/search-typesense.md
+  M	docs/reference/search.md
+  M	packages/search-api-graphql/src/build-schema.ts
+  A	packages/search-api-graphql/test/leaf-presence.test.ts
+  M	packages/search-api-graphql/vite.config.ts
+  M	packages/search-typesense/src/collection-definition.ts
+  M	packages/search-typesense/src/query-compiler.ts
+  M	packages/search-typesense/src/search.ts
+  A	packages/search-typesense/test/leaf-presence.integration.test.ts
+  M	packages/search-typesense/test/query-compiler.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/src/engine.ts
+  M	packages/search/src/project.ts
+  M	packages/search/src/query.ts
+  M	packages/search/src/schema.ts
+  A	packages/search/test/leaf-presence.test.ts
+  M	packages/search/test/presence.test.ts
+  M	packages/search/test/schema.test.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.48.0
+
 ## 0.63.0 (2026-11-16)
 
 ### 🩹 Fixes
