@@ -1,7 +1,10 @@
 /**
  * Another run already holds the index’s rebuild lock, so this run refuses to
  * open. Rebuilds are single-flight per index across pods: an engine port’s
- * rebuild writer throws this from `openRun` when its lock is held.
+ * rebuild writer throws this from `openRun` when its lock is held. The lock
+ * stays held while its run is open, however long that takes, and goes to
+ * another run only once its holder has died; a run that lost its lock does not
+ * go live, and never releases the lock of the run that took it over.
  * {@link requestRebuild} catches it to hand the request to the run holding the
  * lock; a caller driving a writer directly can catch it to treat a concurrent
  * rebuild as a graceful skip.

@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Client } from 'typesense';
-import { acquireLock, releaseLock } from '../src/lock.js';
+import { acquireLock, type HeldLock } from '../src/lock.js';
 import { typesenseError } from './helpers.js';
 
 /**
@@ -47,9 +47,10 @@ describe('acquireLock', () => {
       1000,
     );
 
-    expect(acquired).toBe(true);
+    expect(acquired).toBeDefined();
     expect(createDocument).toHaveBeenCalledOnce();
     expect(createCollection).not.toHaveBeenCalled();
+    await acquired?.release();
   });
 
   it('creates the lock collection on first use, tolerating a concurrent creator', async () => {
@@ -71,9 +72,10 @@ describe('acquireLock', () => {
       1000,
     );
 
-    expect(acquired).toBe(true);
+    expect(acquired).toBeDefined();
     expect(createCollection).toHaveBeenCalledOnce();
     expect(createDocument).toHaveBeenCalledTimes(2);
+    await acquired?.release();
   });
 
   it('rethrows an unexpected error from creating the lock collection', async () => {
@@ -82,6 +84,20 @@ describe('acquireLock', () => {
         fakeClient({
           createDocument: () => Promise.reject(typesenseError(404)),
           retrieveCollection: () => Promise.reject(typesenseError(500)),
+        }),
+        'datasets',
+        1000,
+      ),
+    ).rejects.toThrow('HTTP 500');
+  });
+
+  it('rethrows an unexpected error from creating the missing lock collection', async () => {
+    await expect(
+      acquireLock(
+        fakeClient({
+          createDocument: () => Promise.reject(typesenseError(404)),
+          retrieveCollection: () => Promise.reject(typesenseError(404)),
+          createCollection: () => Promise.reject(typesenseError(500)),
         }),
         'datasets',
         1000,
@@ -113,7 +129,7 @@ describe('acquireLock', () => {
       1000,
     );
 
-    expect(acquired).toBe(false);
+    expect(acquired).toBeUndefined();
   });
 
   it('rethrows an unexpected error from reading the current holder', async () => {
@@ -130,26 +146,244 @@ describe('acquireLock', () => {
   });
 });
 
-describe('releaseLock', () => {
-  it('tolerates a lock that is not held', async () => {
-    await expect(
-      releaseLock(
-        fakeClient({
-          deleteDocument: () => Promise.reject(typesenseError(404)),
-        }),
-        'datasets',
-      ),
-    ).resolves.toBeUndefined();
+/**
+ * A fake lock store that keeps the lock document, so a run can take, refresh,
+ * lose and release it like it would against Typesense.
+ */
+function statefulClient(
+  options: {
+    /** Replaces the refresh write; call `write` to let it land. */
+    upsert?: (write: () => void) => Promise<void>;
+  } = {},
+) {
+  const store = new Map<string, Record<string, unknown>>();
+  const client = {
+    collections: () => ({
+      documents: (id?: string) =>
+        id === undefined
+          ? {
+              create: async (document: { id: string }) => {
+                if (store.has(document.id)) {
+                  throw typesenseError(409);
+                }
+                store.set(document.id, document);
+              },
+              upsert: async (document: { id: string }) => {
+                const write = () => store.set(document.id, document);
+                if (options.upsert === undefined) {
+                  write();
+                } else {
+                  await options.upsert(write);
+                }
+              },
+            }
+          : {
+              retrieve: async () => {
+                const document = store.get(id);
+                if (document === undefined) {
+                  throw typesenseError(404);
+                }
+                return document;
+              },
+              delete: async () => {
+                if (!store.delete(id)) {
+                  throw typesenseError(404);
+                }
+              },
+            },
+    }),
+  } as unknown as Client;
+  /** Another run takes the lock over, as a reclaim would. */
+  const takeOver = (name: string) =>
+    store.set(name, {
+      id: name,
+      owner: 'another run',
+      acquired_at: Date.now(),
+    });
+  return { client, store, takeOver };
+}
+
+async function heldLock(client: Client, ttlMs = 3000): Promise<HeldLock> {
+  const lock = await acquireLock(client, 'datasets', ttlMs);
+  if (lock === undefined) {
+    throw new Error('Expected to take the lock');
+  }
+  return lock;
+}
+
+describe('a held lock', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
   });
 
-  it('rethrows an unexpected error', async () => {
-    await expect(
-      releaseLock(
-        fakeClient({
-          deleteDocument: () => Promise.reject(typesenseError(500)),
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('is refreshed while the run is open, so it never goes stale', async () => {
+    const { client } = statefulClient();
+    const lock = await heldLock(client);
+
+    // Far past the TTL: a holder that did not refresh would be reclaimed.
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(await acquireLock(client, 'datasets', 3000)).toBeUndefined();
+    await lock.release();
+  });
+
+  it('is reclaimed once its holder stops refreshing it', async () => {
+    const { client } = statefulClient();
+    await heldLock(client);
+    vi.clearAllTimers(); // the holder dies without releasing
+
+    await vi.advanceTimersByTimeAsync(3001);
+
+    expect(await acquireLock(client, 'datasets', 3000)).toBeDefined();
+  });
+
+  it('stops refreshing once released', async () => {
+    const { client, store } = statefulClient();
+    const lock = await heldLock(client);
+
+    await lock.release();
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(store.has('datasets')).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('stops refreshing once another run took it over', async () => {
+    const { client, store, takeOver } = statefulClient();
+    await heldLock(client);
+    takeOver('datasets');
+
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(store.get('datasets')).toMatchObject({ owner: 'another run' });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('skips a beat while the previous refresh is still in flight', async () => {
+    let landRefresh: (() => void) | undefined;
+    const upsert = vi.fn(
+      (write: () => void) =>
+        new Promise<void>((resolve) => {
+          landRefresh = () => {
+            write();
+            resolve();
+          };
         }),
-        'datasets',
-      ),
-    ).rejects.toThrow('HTTP 500');
+    );
+    const { client, store } = statefulClient({ upsert });
+    const lock = await heldLock(client);
+
+    // Several beats pass while the first refresh hangs.
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(upsert).toHaveBeenCalledOnce();
+
+    const released = lock.release();
+    landRefresh?.();
+    await released;
+
+    // The one refresh landed before the delete, so nothing recreates the lock.
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(store.has('datasets')).toBe(false);
+  });
+
+  it('remembers it was lost, without asking again', async () => {
+    const { client, store, takeOver } = statefulClient();
+    const lock = await heldLock(client);
+    takeOver('datasets');
+    await vi.advanceTimersByTimeAsync(1000);
+    const retrieve = vi.spyOn(store, 'get');
+
+    await expect(lock.assertHeld()).rejects.toThrow(
+      /Another run took over the rebuild lock on “datasets”/,
+    );
+    await lock.release();
+
+    expect(retrieve).not.toHaveBeenCalled();
+    expect(store.get('datasets')).toMatchObject({ owner: 'another run' });
+  });
+
+  it('caps the refresh interval at the longest timer delay', async () => {
+    const { client, store } = statefulClient();
+    const lock = await heldLock(client, 2 ** 40);
+    const retrieve = vi.spyOn(store, 'get');
+
+    // An unclamped interval overflows the timer, which then fires every 1 ms.
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(retrieve).not.toHaveBeenCalled();
+    await lock.release();
+  });
+
+  it('keeps refreshing after a failed refresh', async () => {
+    const { client, store } = statefulClient();
+    const lock = await heldLock(client);
+    const retrieve = vi.spyOn(store, 'get').mockImplementationOnce(() => {
+      throw typesenseError(503);
+    });
+
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(retrieve).toHaveBeenCalled();
+    expect(await acquireLock(client, 'datasets', 3000)).toBeUndefined();
+    await lock.release();
+  });
+
+  it('asserts it is still held', async () => {
+    const { client } = statefulClient();
+    const lock = await heldLock(client);
+
+    await expect(lock.assertHeld()).resolves.toBeUndefined();
+    await lock.release();
+  });
+
+  it('refuses to go live once another run took it over', async () => {
+    const { client, takeOver } = statefulClient();
+    const lock = await heldLock(client);
+    takeOver('datasets');
+
+    await expect(lock.assertHeld()).rejects.toThrow(
+      /Another run took over the rebuild lock on “datasets”/,
+    );
+    await lock.release();
+  });
+
+  it('leaves the lock alone on release once another run took it over', async () => {
+    const { client, store, takeOver } = statefulClient();
+    const lock = await heldLock(client);
+    takeOver('datasets');
+
+    await lock.release();
+
+    expect(store.get('datasets')).toMatchObject({ owner: 'another run' });
+  });
+
+  it('tolerates a release after the lock is already gone', async () => {
+    const { client, store } = statefulClient();
+    const lock = await heldLock(client);
+    store.delete('datasets');
+
+    await expect(lock.release()).resolves.toBeUndefined();
+  });
+
+  it('tolerates the lock going away between its check and its delete', async () => {
+    const { client, store } = statefulClient();
+    const lock = await heldLock(client);
+    vi.spyOn(store, 'delete').mockReturnValue(false);
+
+    await expect(lock.release()).resolves.toBeUndefined();
+  });
+
+  it('rethrows an unexpected error on release', async () => {
+    const { client, store } = statefulClient();
+    const lock = await heldLock(client);
+    vi.spyOn(store, 'delete').mockImplementation(() => {
+      throw typesenseError(500);
+    });
+
+    await expect(lock.release()).rejects.toThrow('HTTP 500');
   });
 });
