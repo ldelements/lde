@@ -1,3 +1,9 @@
+## 0.49.3 (2026-11-16)
+
+### 🩹 Fixes
+
+- **pipeline-void:** count only IRI licenses ([#1088](https://github.com/ldelements/lde/pull/1088))
+
 ## 0.49.2 (2026-11-15)
 
 ### 🧱 Updated Dependencies
