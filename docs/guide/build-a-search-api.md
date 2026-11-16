@@ -115,7 +115,7 @@ The `keyword` field was declared `facetable`, so the result also carries facets.
 ```sh
 curl -s http://localhost:4000/graphql \
   -H 'Content-Type: application/json' \
-  -d '{"query": "{ datasets(query: \"map\") { pagination { total } facets { keyword { value count } } } }"}'
+  -d '{"query": "{ datasets(query: \"map\") { pagination { total } facets { keyword { buckets { value count } totalValues } } } }"}'
 ```
 
 Feed the buckets to filter checkboxes and pass the chosen values back as `where: { keyword: { in: ["maps"] } }`; a facet’s own filter is skipped when computing its buckets, so the other options stay visible.

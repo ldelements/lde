@@ -406,7 +406,7 @@ describe('createSearchGraphQLHandler', () => {
 
     const response = await post(
       handler,
-      '{ datasets { items { id } facets { keyword { value } } } }',
+      '{ datasets { items { id } facets { keyword { buckets { value } } } } }',
     );
     const { data, errors } = await response.json();
 

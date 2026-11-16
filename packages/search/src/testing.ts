@@ -230,6 +230,38 @@ export function describeSearchEngineContract(
       }
     });
 
+    it('caps a value facet at its limit in facetLimits, and with nothing selected never reports fewer values than it returns', async () => {
+      // A selected value is reported even when no matching document holds it,
+      // so only a browse can promise this.
+      for (const searchType of types()) {
+        const fields = facetableFields(searchType).filter(
+          (field) => !isRangeFacet(field),
+        );
+        const [outcome] = await engine().searchFacets(searchType, [
+          {
+            ...browse(searchType),
+            limit: 0,
+            facets: fields.map((field) => field.name),
+            facetLimits: Object.fromEntries(
+              fields.map((field) => [field.name, 1]),
+            ),
+          },
+        ]);
+        if (outcome === undefined || 'error' in outcome) {
+          continue; // The batch test above fails on this already.
+        }
+        for (const field of fields) {
+          const facet = outcome.facets[field.name];
+          expect(facet?.buckets.length ?? 0).toBeLessThanOrEqual(1);
+          if (facet?.totalValues !== undefined) {
+            expect(facet.totalValues).toBeGreaterThanOrEqual(
+              facet.buckets.length,
+            );
+          }
+        }
+      }
+    });
+
     it('counts a facet without its own clause, and reports what that clause selects', async () => {
       // Selecting a value no document carries leaves no hits. The facet still
       // offers every other value, counted as if nothing were selected, and

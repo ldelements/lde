@@ -7,7 +7,11 @@ import type { Facet, RootType, SearchEngine, SearchQuery } from '@lde/search';
  * (skip-own-filter), `all` over the whole collection, ignoring the query’s
  * filters and text – the extent a range slider is drawn across.
  */
-export type FacetLoader = (field: string, scope: FacetScope) => Promise<Facet>;
+export type FacetLoader = (
+  field: string,
+  scope: FacetScope,
+  limit?: number,
+) => Promise<Facet>;
 
 /** Which documents a {@link FacetLoader} computes a facet over. */
 export type FacetScope = 'matching' | 'all';
@@ -17,9 +21,12 @@ export type FacetScope = 'matching' | 'all';
  * field’s resolver calls the loader; GraphQL resolves the sibling facet
  * fields synchronously, so the loads land in the same tick, where the
  * DataLoader collects them into one batch: one facet-only query over the
- * listing’s `query` for every `matching` load, and one over
+ * listing’s `query` for the `matching` loads, and one over
  * `unfilteredQuery` – the deployment’s policy without the caller’s filters –
- * for every `all` load, dispatched as ONE `engine.searchFacets` call. The
+ * for the `all` loads, dispatched as ONE `engine.searchFacets` call. Each
+ * load’s bucket `limit` travels in the query’s `facetLimits`; only the same
+ * field loaded twice with different limits (two aliases) needs a second
+ * query in its scope. The
  * engine counts each facet without its own filter (skip-own-filter) and keeps
  * its selected values among the buckets, so the whole sidebar costs one
  * engine round-trip.
@@ -39,25 +46,42 @@ export function createFacetLoader(
 ): FacetLoader {
   const loader = new DataLoader<FacetKey, Facet, string>(
     async (keys) => {
-      const queries = (
-        [
-          ['matching', query],
-          ['all', unfilteredQuery],
-        ] as const
-      )
-        .map(([scope, scopeQuery]) => ({
-          scope,
+      const scopeQueries = { matching: query, all: unfilteredQuery };
+      // The `matching` queries first; a key joins the first query of its
+      // scope that does not count its field yet. DataLoader has already
+      // deduplicated the keys.
+      const groups: { scope: FacetScope; keys: FacetKey[] }[] = [];
+      for (const scope of ['matching', 'all'] as const) {
+        for (const key of keys.filter((key) => key.scope === scope)) {
+          let group = groups.find(
+            (candidate) =>
+              candidate.scope === scope &&
+              !candidate.keys.some((other) => other.field === key.field),
+          );
+          if (group === undefined) {
+            group = { scope, keys: [] };
+            groups.push(group);
+          }
+          group.keys.push(key);
+        }
+      }
+      const queries = groups.map(({ scope, keys: groupKeys }) => {
+        const limited = groupKeys.filter((key) => key.limit !== undefined);
+        return {
+          keys: groupKeys,
           // `searchFacets` answers every query facet-only, whatever its
           // `orderBy`, `limit` and `offset`.
           facetQuery: {
-            ...scopeQuery,
-            // DataLoader has already deduplicated the keys.
-            facets: keys
-              .filter((key) => key.scope === scope)
-              .map((key) => key.field),
+            ...scopeQueries[scope],
+            facets: groupKeys.map((key) => key.field),
+            ...(limited.length > 0 && {
+              facetLimits: Object.fromEntries(
+                limited.map((key) => [key.field, key.limit as number]),
+              ),
+            }),
           },
-        }))
-        .filter(({ facetQuery }) => facetQuery.facets.length > 0);
+        };
+      });
       const facets = new Map<string, Facet>();
       // A range facet loaded in both scopes fails in two queries but is
       // reported once.
@@ -67,13 +91,13 @@ export function createFacetLoader(
           searchType,
           queries.map(({ facetQuery }) => facetQuery),
         );
-        queries.forEach(({ scope, facetQuery }, index) => {
+        queries.forEach(({ keys: groupKeys, facetQuery }, index) => {
           const outcome = outcomes[index];
           if (outcome !== undefined && !('error' in outcome)) {
-            for (const field of facetQuery.facets) {
+            for (const key of groupKeys) {
               facets.set(
-                cacheKeyOf({ field, scope }),
-                outcome.facets[field] ?? EMPTY_FACET,
+                cacheKeyOf(key),
+                outcome.facets[key.field] ?? EMPTY_FACET,
               );
             }
             return;
@@ -105,18 +129,20 @@ export function createFacetLoader(
     },
     { cacheKeyFn: cacheKeyOf },
   );
-  return (field, scope) => loader.load({ field, scope });
+  return (field, scope, limit) => loader.load({ field, scope, limit });
 }
 
-/** One facet load: a field, over the documents a scope names. */
+/** One facet load: a field, over the documents a scope names, capped at
+ *  `limit` buckets (absent: the engine’s default). */
 interface FacetKey {
   readonly field: string;
   readonly scope: FacetScope;
+  readonly limit?: number;
 }
 
 /** A field name never contains a space, so this cannot conflate two keys. */
 function cacheKeyOf(key: FacetKey): string {
-  return `${key.scope} ${key.field}`;
+  return `${key.scope} ${key.limit ?? ''} ${key.field}`;
 }
 
 /** What a facet degrades to: no buckets, and no extent. */

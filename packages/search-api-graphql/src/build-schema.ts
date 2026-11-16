@@ -132,6 +132,11 @@ export interface BuildGraphQLSchemaOptions {
    *  `1 ≤ perPage ≤ maxPerPage` or with `page < 1` is rejected with a clear
    *  error instead of reaching the engine. */
   readonly maxPerPage?: number;
+  /** Upper bound for a value facet’s `limit` argument (default 100). A
+   *  request outside `1 ≤ limit ≤ maxFacetLimit` is rejected with a clear
+   *  error instead of reaching the engine. A facet without `limit` gets the
+   *  engine’s own bucket cap, which this does not bound. */
+  readonly maxFacetLimit?: number;
 }
 
 type Source = Record<string, unknown>;
@@ -334,6 +339,12 @@ export function buildGraphQLSchema(
     return languageStrings;
   };
   const maxPerPage = options.maxPerPage ?? 100;
+  const maxFacetLimit = options.maxFacetLimit ?? 100;
+  if (!Number.isInteger(maxFacetLimit) || maxFacetLimit < 1) {
+    throw new Error(
+      `maxFacetLimit must be a positive integer; got ${maxFacetLimit}.`,
+    );
+  }
   const rootTypesByName = new Map(
     [...schema.values()].map((searchType) => [searchType.name, searchType]),
   );
@@ -433,6 +444,27 @@ export function buildGraphQLSchema(
       count: { type: new GraphQLNonNull(GraphQLInt) },
     },
   });
+  // A value facet: its buckets, and how many distinct values there are in all,
+  // so a client can show “10 of 195” and knows whether asking for a larger
+  // `limit` would bring more.
+  const facetTypeOf = (name: string, bucket: GraphQLObjectType) =>
+    new GraphQLObjectType({
+      name,
+      fields: {
+        buckets: {
+          type: nonNullListOf(bucket),
+          description:
+            'The values with the highest counts, at most `limit` of them, plus any value the query selects.',
+        },
+        totalValues: {
+          type: GraphQLInt,
+          description:
+            'How many distinct values the facet holds over the matching documents, however many buckets are returned. May be an estimate on large result sets; null when the engine does not report it.',
+        },
+      },
+    });
+  const valueFacet = facetTypeOf('ValueFacet', valueBucket);
+  const iriFacet = facetTypeOf('IRIFacet', iriBucket);
   // A range facet’s extent, in the type its field’s `range` filter takes
   // (IntRange, FloatRange, DateRange), so a slider’s bounds feed straight back
   // into the filter that selects them. A date is stored as Unix seconds and
@@ -733,6 +765,8 @@ export function buildGraphQLSchema(
     dateBucket.name,
     dateRangeBucket.name,
     booleanBucket.name,
+    valueFacet.name,
+    iriFacet.name,
     paginationType.name,
     sortDirection.name,
     intRange.name,
@@ -1502,7 +1536,7 @@ export function buildGraphQLSchema(
     // Keyed facets object: one field per facetable field, typed by its kind
     // (numeric fields → a ‹Kind›RangeFacet, or ‹Kind›BinnedRangeFacet with
     // bins; boolean fields → [BooleanBucket!], reference fields →
-    // [IRIBucket!], else [ValueBucket!]). Only the selected
+    // IRIFacet, else ValueFacet). Only the selected
     // fields are resolved (GraphQL prunes the rest), so the selection IS the
     // request; the batching into one engine dispatch lives in facet-batch.ts,
     // and skip-own-filter in the engine.
@@ -1617,16 +1651,6 @@ export function buildGraphQLSchema(
     };
   }
 
-  /** The bucket type a value facet’s kind earns: a real boolean for a
-   *  boolean one, an `IRI` key for a reference, a literal key
-   *  otherwise. The reference test is the one {@link whereFieldType} applies, so
-   *  a bucket and the filter it feeds cannot disagree about what the field keys
-   *  on. */
-  function bucketTypeFor(field: SearchField): GraphQLObjectType {
-    if (field.kind === 'boolean') return booleanBucket;
-    return field.kind === 'reference' ? iriBucket : valueBucket;
-  }
-
   /**
    * The keyed facets object for one type (only called with ≥ 1 facet). A
    * faceted leaf is served one level down, under the reference it is reached
@@ -1700,30 +1724,57 @@ export function buildGraphQLSchema(
         };
         continue;
       }
-      const bucketType = bucketTypeFor(field);
+      if (field.kind === 'boolean') {
+        // Two values at most: nothing to cap and nothing to total.
+        fields[field.name] = {
+          type: nonNullListOf(booleanBucket),
+          extensions: facetCost,
+          resolve: async (source: Source) =>
+            (await (source.loadFacet as FacetLoader)(name, 'matching')).buckets,
+        };
+        continue;
+      }
+      // `IRI`-keyed buckets for a reference, literal keys otherwise: the
+      // reference test {@link whereFieldType} applies, so a bucket and the
+      // filter it feeds cannot disagree about what the field keys on.
+      const reference = field.kind === 'reference';
       fields[field.name] = {
-        type: nonNullListOf(bucketType),
+        type: new GraphQLNonNull(reference ? iriFacet : valueFacet),
         extensions: facetCost,
-        resolve: async (source: Source) => {
-          const { buckets } = await (source.loadFacet as FacetLoader)(
-            name,
-            'matching',
-          );
-          if (bucketType !== iriBucket) {
-            return buckets;
+        args: {
+          limit: {
+            type: GraphQLInt,
+            description: `At most this many buckets, between 1 and ${maxFacetLimit}: the values with the highest counts. A larger limit returns a superset of a smaller one; there is no next page. Omit it for the deployment’s default.`,
+          },
+        },
+        resolve: async (source: Source, args: { limit?: number | null }) => {
+          const limit = args.limit ?? undefined;
+          if (limit !== undefined && (limit < 1 || limit > maxFacetLimit)) {
+            throw userError(
+              `limit must be between 1 and ${maxFacetLimit}; got ${limit}.`,
+            );
           }
-          // A bucket keyed on something that is not an IRI is not a
-          // selection key – it cannot be sent back as the filter that
-          // selects it – so it is dropped rather than served under `IRI`.
-          // Dropping, not throwing: `value: IRI!` sits inside a chain of
-          // non-nulls up to the root field, so a raising coercion here
-          // would null the WHOLE response and take `items` with it, which
-          // is exactly what facet-batch.ts’s degradation contract forbids
-          // a supplementary sidebar count from doing.
-          return buckets.filter(
-            (bucket) =>
-              typeof bucket.value === 'string' && isAbsoluteIri(bucket.value),
-          );
+          const { buckets, totalValues } = await (
+            source.loadFacet as FacetLoader
+          )(name, 'matching', limit);
+          return {
+            // A bucket keyed on something that is not an IRI is not a
+            // selection key – it cannot be sent back as the filter that
+            // selects it – so it is dropped rather than served under `IRI`.
+            // Dropping, not throwing: `value: IRI!` sits inside a chain of
+            // non-nulls up to the root field, so a raising coercion here
+            // would null the WHOLE response and take `items` with it, which
+            // is exactly what facet-batch.ts’s degradation contract forbids
+            // a supplementary sidebar count from doing.
+            buckets: reference
+              ? buckets.filter(
+                  (bucket) =>
+                    typeof bucket.value === 'string' &&
+                    isAbsoluteIri(bucket.value),
+                )
+              : buckets,
+            totalValues: totalValues ?? null,
+          };
         },
       };
     }

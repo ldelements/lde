@@ -1098,7 +1098,16 @@ sentence written here is the one that reaches the reader.
 ### Facet buckets
 
 A query’s facets come back as one `Facet` per requested field: its `buckets`,
-and for a [range facet](#range-facets) its `extent`.
+for a [range facet](#range-facets) its `extent`, and – when the engine
+reports it – `totalValues`, how many distinct values the facet holds however
+many buckets came back.
+
+A query’s `facetLimits` caps a facet at that many buckets, the values with the
+highest counts; a facet without an entry gets the engine’s own cap. It is a
+cap, not a page: a larger limit returns a superset of a smaller one, and there
+is no offset. `facetSearches` gives the facets of each distinct limit a search
+of their own, so an engine that caps a whole search alike still caps each
+facet at its own limit.
 
 Every engine computes a facet the same way. It counts the documents under
 every `where` clause **except its own** (skip-own-filter), so a facet the user
@@ -1151,7 +1160,7 @@ holds. List the leaves in `ref.facetedLeaves`:
 
 The facet is named by its path, `associatedMedia.license`, in
 `SearchQuery.facets` and in the result, and GraphQL serves it as
-`facets { associatedMedia { license { value count } } }`. A bucket counts
+`facets { associatedMedia { license { buckets { value count } } } }`. A bucket counts
 **root documents**: a work with three reproductions, two under CC BY, counts
 once under CC BY. That answers “which works have a reproduction under this
 licence?”, and it is how the engine counts a value stored under every entry,

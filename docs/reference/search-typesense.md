@@ -266,10 +266,15 @@ Beyond `collections`, `TypesenseSearchEngineOptions` carries:
 - **`maxFacetValues`** – the cap on buckets returned per facet
   (`max_facet_values`). Left unset, **Typesense defaults to 10**, so a
   high-cardinality facet (publisher, keyword) silently truncates to its top
-  ten buckets; a deployment with such facets must raise it. Range facets
+  ten buckets; a deployment with such facets must raise it. A query’s
+  `facetLimits` override it per facet. Range facets
   return one bucket per declared range regardless, but a value larger than
   the range count is still safe. A numeric facet’s extent comes from the
-  facet’s `stats`, which cover every matching value whatever the cap. A value
+  facet’s `stats`, which cover every matching value whatever the cap, and so
+  does every facet’s `totalValues`: the adapter counts facets with
+  `facet_strategy: exhaustive`, because under `top_values` – which
+  Typesense’s default `automatic` picks for some facets and not others –
+  `stats.total_values` is merely the number of buckets returned. A value
   a facet’s own filter selects is reported even past the cap: the adapter
   counts it with one extra search per value – as it does for a value a
   [facet policy](./search#facet-policy) keeps out of the facet – sent

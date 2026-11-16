@@ -99,6 +99,64 @@ describe('skip-own-filter', () => {
     expect(keyword?.per_page).toBe(0);
   });
 
+  it('counts a selected value past its facet’s own limit', async () => {
+    const { client, performs } = cappedClient(() => ({ found: 4, hits: [] }));
+    // The engine-wide cap is far above the one bucket returned; the query’s
+    // limit of 1 is what cut `atlas` off.
+    const engine = createTypesenseSearchEngine(client, schema, {
+      maxFacetValues: 250,
+    });
+    const [outcome] = await engine.searchFacets(datasetType, [
+      { ...selectingAtlas, facetLimits: { keyword: 1 } },
+    ]);
+    expect(outcome).toEqual({
+      facets: {
+        keyword: {
+          buckets: [
+            { value: 'atlas', count: 4 },
+            { value: 'kaarten', count: 2 },
+          ],
+        },
+      },
+    });
+    expect(performs.flat().filter(isCount)).toHaveLength(1);
+  });
+
+  it('trusts the facet’s total over the cap: a full facet that lost nothing needs no count', async () => {
+    const fake = fakeTypesenseClient({
+      multiSearch: (search) =>
+        'facet_by' in search
+          ? {
+              found: 2,
+              hits: [],
+              facet_counts: [
+                {
+                  field_name: 'keyword',
+                  counts: [{ value: 'kaarten', count: 2 }],
+                  stats: { total_values: 1 },
+                },
+              ],
+            }
+          : { found: 0, hits: [] },
+    });
+    const engine = createTypesenseSearchEngine(fake.client, schema, {
+      maxFacetValues: 1,
+    });
+    const [outcome] = await engine.searchFacets(datasetType, [selectingAtlas]);
+    expect(outcome).toEqual({
+      facets: {
+        keyword: {
+          buckets: [
+            { value: 'kaarten', count: 2 },
+            { value: 'atlas', count: 0 },
+          ],
+          totalValues: 1,
+        },
+      },
+    });
+    expect(fake.performs.flat().filter(isCount)).toHaveLength(0);
+  });
+
   it('rejects search() when counting a cut-off value fails', async () => {
     const { client } = cappedClient(() => ({ error: 'boom', code: 500 }));
     const engine = createTypesenseSearchEngine(client, schema, {

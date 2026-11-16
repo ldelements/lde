@@ -39,6 +39,16 @@ export interface SearchQuery {
    * {@link facetSearches} for what a clause owns.
    */
   readonly facets: readonly string[];
+  /**
+   * Per facet field, at most this many buckets: the values with the highest
+   * counts. A cap, not a page – a larger limit returns a superset of a
+   * smaller one, and there is no offset to ask for the next values. A facet
+   * without an entry gets the engine’s own default. A selected value is
+   * reported even past the cap. {@link facetSearches} gives each distinct
+   * limit a search of its own, so an engine capping a whole search alike
+   * still caps each facet at its own.
+   */
+  readonly facetLimits?: Readonly<Record<string, number>>;
   /** Selects the per-locale fields to query/sort on (from `Accept-Language`). */
   readonly locale: string;
   /**
@@ -256,8 +266,9 @@ export interface FacetSearch {
  * The fewest searches that compute a query’s {@link SearchQuery.facets} the way
  * the port defines them: each facet counts the documents under every `where`
  * clause except its own. Every facet whose field carries no clause of its own
- * shares the query’s `where` – one search for all of them, so an unfiltered
- * browse is a single search – and each own-filtered facet gets a search with
+ * shares the query’s `where` – one search for all of them that share a
+ * {@link SearchQuery.facetLimits} limit, so an unfiltered browse is a single
+ * search – and each own-filtered facet gets a search with
  * its own clauses removed, together with the values those clauses selected.
  * The searches keep the query’s text, paging and order; an adapter answering
  * facets alone strips the hits itself. An adapter answers each facet from the
@@ -289,11 +300,16 @@ export function facetSearches(query: SearchQuery): FacetSearch[] {
     owners.filter((field): field is string => field !== undefined),
   );
   const facets = [...new Set(query.facets)];
-  const shared = facets.filter((field) => !owned.has(field));
-  const searches: FacetSearch[] =
-    shared.length > 0
-      ? [{ query: { ...query, facets: shared }, selected: {} }]
-      : [];
+  // The facets without a clause of their own share a search per limit.
+  const shared = new Map<number | undefined, string[]>();
+  for (const field of facets.filter((field) => !owned.has(field))) {
+    const limit = query.facetLimits?.[field];
+    shared.set(limit, [...(shared.get(limit) ?? []), field]);
+  }
+  const searches: FacetSearch[] = [...shared.values()].map((fields) => ({
+    query: { ...query, facets: fields },
+    selected: {},
+  }));
   for (const field of facets.filter((field) => owned.has(field))) {
     const own = query.where.filter((_, index) => owners[index] === field);
     const selected = [

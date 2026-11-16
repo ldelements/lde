@@ -74,7 +74,7 @@ export interface BuildSearchParamsOptions {
    * unset, Typesense defaults to 10 – too few for high-cardinality facets
    * (publisher, keyword), so a deployment with such facets must raise it. Range
    * facets return one bucket per declared range regardless, but a value > the
-   * range count is still safe.
+   * range count is still safe. A query’s `facetLimits` override it per facet.
    */
   readonly maxFacetValues?: number;
   /**
@@ -147,11 +147,35 @@ export function buildSearchParams(
   }
   if (query.facets.length > 0) {
     params.facet_by = compileFacetBy(query.facets, searchType, options.schema);
-    if (options.maxFacetValues !== undefined) {
-      params.max_facet_values = options.maxFacetValues;
+    // Under `top_values` – which the default `automatic` strategy picks per
+    // facet – `stats.total_values` is merely the number of buckets returned,
+    // and the counts may be approximate. Exhaustive counting reports the
+    // facet’s real number of values; on 300,000 documents it cost ~2 ms.
+    params.facet_strategy = 'exhaustive';
+    const maxFacetValues = facetCapOf(query, options);
+    if (maxFacetValues !== undefined) {
+      params.max_facet_values = maxFacetValues;
     }
   }
   return params;
+}
+
+/**
+ * The bucket cap a query’s facets are compiled with (`max_facet_values`),
+ * which Typesense applies to every facet of a search alike: the largest
+ * {@link SearchQuery.facetLimits} limit among them, else the deployment’s
+ * `maxFacetValues`; `undefined` leaves Typesense’s own default. Through the
+ * engine every search carries one limit (`facetSearches`), so the largest is
+ * the only one.
+ */
+export function facetCapOf(
+  query: SearchQuery,
+  options: BuildSearchParamsOptions,
+): number | undefined {
+  const limits = query.facets
+    .map((field) => query.facetLimits?.[field])
+    .filter((limit): limit is number => limit !== undefined);
+  return limits.length > 0 ? Math.max(...limits) : options.maxFacetValues;
 }
 
 /**

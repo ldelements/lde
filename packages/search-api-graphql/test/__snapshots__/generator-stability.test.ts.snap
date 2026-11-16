@@ -66,18 +66,67 @@ type Pagination {
 }
 
 type ThingFacets {
-  keyword: [ValueBucket!]!
-  creator: [IRIBucket!]!
-  publisher: [IRIBucket!]!
-  sameAs: [IRIBucket!]!
-  status: [ValueBucket!]!
+  keyword(
+    """
+    At most this many buckets, between 1 and 100: the values with the highest counts. A larger limit returns a superset of a smaller one; there is no next page. Omit it for the deployment’s default.
+    """
+    limit: Int
+  ): ValueFacet!
+  creator(
+    """
+    At most this many buckets, between 1 and 100: the values with the highest counts. A larger limit returns a superset of a smaller one; there is no next page. Omit it for the deployment’s default.
+    """
+    limit: Int
+  ): IRIFacet!
+  publisher(
+    """
+    At most this many buckets, between 1 and 100: the values with the highest counts. A larger limit returns a superset of a smaller one; there is no next page. Omit it for the deployment’s default.
+    """
+    limit: Int
+  ): IRIFacet!
+  sameAs(
+    """
+    At most this many buckets, between 1 and 100: the values with the highest counts. A larger limit returns a superset of a smaller one; there is no next page. Omit it for the deployment’s default.
+    """
+    limit: Int
+  ): IRIFacet!
+  status(
+    """
+    At most this many buckets, between 1 and 100: the values with the highest counts. A larger limit returns a superset of a smaller one; there is no next page. Omit it for the deployment’s default.
+    """
+    limit: Int
+  ): ValueFacet!
   open: [BooleanBucket!]!
+}
+
+type ValueFacet {
+  """
+  The values with the highest counts, at most \`limit\` of them, plus any value the query selects.
+  """
+  buckets: [ValueBucket!]!
+
+  """
+  How many distinct values the facet holds over the matching documents, however many buckets are returned. May be an estimate on large result sets; null when the engine does not report it.
+  """
+  totalValues: Int
 }
 
 type ValueBucket {
   value: String!
   count: Int!
   label: [LanguageString!]
+}
+
+type IRIFacet {
+  """
+  The values with the highest counts, at most \`limit\` of them, plus any value the query selects.
+  """
+  buckets: [IRIBucket!]!
+
+  """
+  How many distinct values the facet holds over the matching documents, however many buckets are returned. May be an estimate on large result sets; null when the engine does not report it.
+  """
+  totalValues: Int
 }
 
 type IRIBucket {

@@ -17,6 +17,17 @@ describe('facetSearches', () => {
     ]);
   });
 
+  it('splits the shared search by facet limit, so each search caps its facets alike', () => {
+    const limited: SearchQuery = {
+      ...baseQuery,
+      facetLimits: { keyword: 50, publisher: 50 },
+    };
+    expect(facetSearches(limited)).toEqual([
+      { query: { ...limited, facets: ['keyword', 'publisher'] }, selected: {} },
+      { query: { ...limited, facets: ['status'] }, selected: {} },
+    ]);
+  });
+
   it('gives each own-filtered facet its own search, with that clause removed and its values selected', () => {
     const filtered: SearchQuery = {
       ...baseQuery,

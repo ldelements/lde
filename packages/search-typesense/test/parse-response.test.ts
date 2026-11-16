@@ -493,6 +493,25 @@ describe('parseSearchResponse range facets', () => {
     expect(result.facets.size?.extent).toEqual({ min: 3, max: 250 });
   });
 
+  it('reports the total number of values from the facet’s stats', () => {
+    const result = parseSearchResponse(
+      {
+        ...rangeResponse,
+        facet_counts: [
+          {
+            ...rangeResponse.facet_counts[0],
+            stats: { total_values: 195 },
+          },
+        ],
+      },
+      rangeSchema,
+      new Map(),
+      searchSchema(rangeSchema),
+    );
+    expect(result.facets.size?.totalValues).toBe(195);
+    expect(result.facets.size?.extent).toBeUndefined();
+  });
+
   it('reports no extent when no matching document holds a value', () => {
     const result = parseSearchResponse(
       {
