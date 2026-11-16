@@ -1,4 +1,4 @@
-# 38. Filter and facet a field on whether it has a value
+# 40. Filter and facet a field on whether it has a value
 
 Date: 2026-11-16
 
@@ -8,7 +8,8 @@ Accepted
 
 Supersedes the last consequence of
 [ADR 36](0036-facet-a-root-document-on-its-entries-leaves.md) for a Root
-Type’s own field.
+Type’s own field. Extended to an inline entry’s leaf by
+[ADR 41](0041-filter-and-facet-a-root-document-on-whether-an-entrys-leaf-has-a-value.md).
 
 ## Context
 
@@ -78,7 +79,8 @@ count } } }`, as `‹Type›‹Field›Facets`, the per-field grouping ADR 36 ga
   refuses it on:
   - a field of a Reference Type and an inline reference: presence on an
     entry’s leaf, counted per root document as ADR 36’s faceted leaves are,
-    is [#1091](https://github.com/ldelements/lde/issues/1091)’s second part;
+    is [#1091](https://github.com/ldelements/lde/issues/1091)’s second part
+    (done since in ADR 41, declared on the reference);
   - a field that is already `facetable`: its facet would have to become an
     object to hold both kinds of bucket, the shape change
     [#1090](https://github.com/ldelements/lde/issues/1090) makes once for

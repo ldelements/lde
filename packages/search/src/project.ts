@@ -150,7 +150,8 @@ export function projectDocument(
     unreadableSink(context, key),
   ) as SearchDocument;
   // After every field, so a presence reads what a later derive left too; on
-  // the root alone, since presence is declared only on a Root Type’s own field.
+  // the root alone, since presence is declared only on a Root Type’s own field
+  // and on its inline references’ leaves.
   for (const field of searchType.fields) {
     if (field.presence === true) {
       document[physicalFields(field).exists as string] = holdsPresence(
@@ -158,6 +159,7 @@ export function projectDocument(
         field,
       );
     }
+    writeLeafPresence(document, field, schema);
   }
   pruneInternalFields(document, searchType, schema);
   return document;
@@ -488,6 +490,38 @@ function holdsPresence(document: ProjectedNode, field: SearchField): boolean {
     holdsValue(document[field.name]) ||
     (periods !== undefined && holdsValue(document[periods]))
   );
+}
+
+/**
+ * Write whether any entry of an inline reference holds a value for each of
+ * its {@link ReferenceStrategy.presenceLeaves presence leaves}: one boolean
+ * per root document, `false` with no entries at all. Read before pruning, so
+ * a leaf declaring no Role of its own still counts. Without a schema the
+ * entries are not projected, so there is nothing to count – and nothing is
+ * written.
+ */
+function writeLeafPresence(
+  document: ProjectedNode,
+  field: SearchField,
+  schema: SearchSchema | undefined,
+): void {
+  const leaves = physicalFields(field).leafExists;
+  const referenceType =
+    schema === undefined || leaves.length === 0 || !isInlineReference(field)
+      ? undefined
+      : referenceTypeNamed(schema, field.ref.typeName);
+  if (referenceType === undefined) {
+    return;
+  }
+  const stored = document[field.name];
+  const entries = (
+    stored === undefined ? [] : Array.isArray(stored) ? stored : [stored]
+  ) as ProjectedNode[];
+  for (const { leaf: name, exists } of leaves) {
+    // `searchSchema` has resolved every presence leaf against the type.
+    const leaf = fieldNamed(referenceType, name) as SearchField;
+    document[exists] = entries.some((entry) => holdsPresence(entry, leaf));
+  }
 }
 
 /** Whether a stored value is one: neither `undefined` nor `null`, nor an

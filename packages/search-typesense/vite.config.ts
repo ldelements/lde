@@ -22,7 +22,7 @@ export default mergeConfig(
           // by-name map for the shared `rootTypeNamed`: one COVERED arrow fewer
           // over one function fewer, which lowers the ratio without uncovering
           // anything.
-          functions: 99.37,
+          functions: 99.38,
           // Lines, branches and statements moved the same way when the range
           // bound reading went to `@lde/search` as `storedRangeBound`.
           lines: 99.59,
@@ -34,7 +34,7 @@ export default mergeConfig(
           // companion: covered branches deleted, nothing uncovered. And when
           // a field declaring presence alone went back to being internal,
           // deleting the covered branches that kept its value unindexed.
-          branches: 97.15,
+          branches: 97.3,
           statements: 99.6,
         },
       },
