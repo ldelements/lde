@@ -768,7 +768,7 @@ describe('SparqlConstructReader', () => {
 
   describe('timeout policy', () => {
     function recordingPolicy() {
-      const before = vi.fn().mockReturnValue(1234);
+      const before = vi.fn().mockReturnValue({ timeoutMs: 1234 });
       const after = vi.fn();
       return {
         beforeRequest: before,
@@ -811,7 +811,12 @@ describe('SparqlConstructReader', () => {
         expect.objectContaining({
           endpoint: distribution.accessUrl,
           outcome: 'ok',
+          budget: { timeoutMs: 1234 },
         }),
+      );
+      // The policy tells attempts apart by identity, so no copy.
+      expect(policy.afterRequest.mock.calls[0][0].budget).toBe(
+        policy.beforeRequest.mock.results[0].value,
       );
     });
 
@@ -838,7 +843,10 @@ describe('SparqlConstructReader', () => {
       ).rejects.toThrow('504');
 
       expect(policy.afterRequest).toHaveBeenCalledWith(
-        expect.objectContaining({ outcome: 'timeout' }),
+        expect.objectContaining({
+          outcome: 'timeout',
+          budget: { timeoutMs: 1234 },
+        }),
       );
     });
 
@@ -862,7 +870,10 @@ describe('SparqlConstructReader', () => {
       ).rejects.toThrow();
 
       expect(policy.afterRequest).toHaveBeenCalledWith(
-        expect.objectContaining({ outcome: 'timeout' }),
+        expect.objectContaining({
+          outcome: 'timeout',
+          budget: { timeoutMs: 1234 },
+        }),
       );
     });
 
@@ -886,7 +897,10 @@ describe('SparqlConstructReader', () => {
       ).rejects.toThrow();
 
       expect(policy.afterRequest).toHaveBeenCalledWith(
-        expect.objectContaining({ outcome: 'timeout' }),
+        expect.objectContaining({
+          outcome: 'timeout',
+          budget: { timeoutMs: 1234 },
+        }),
       );
     });
 
@@ -912,7 +926,10 @@ describe('SparqlConstructReader', () => {
       ).rejects.toThrow();
 
       expect(policy.afterRequest).toHaveBeenCalledWith(
-        expect.objectContaining({ outcome: 'error' }),
+        expect.objectContaining({
+          outcome: 'error',
+          budget: { timeoutMs: 1234 },
+        }),
       );
     });
 
@@ -942,11 +959,14 @@ describe('SparqlConstructReader', () => {
       expect(policy.afterRequest).toHaveBeenCalledTimes(2);
       expect(policy.afterRequest).toHaveBeenNthCalledWith(
         1,
-        expect.objectContaining({ outcome: 'timeout' }),
+        expect.objectContaining({
+          outcome: 'timeout',
+          budget: { timeoutMs: 1234 },
+        }),
       );
       expect(policy.afterRequest).toHaveBeenNthCalledWith(
         2,
-        expect.objectContaining({ outcome: 'ok' }),
+        expect.objectContaining({ outcome: 'ok', budget: { timeoutMs: 1234 } }),
       );
     });
 
@@ -987,7 +1007,7 @@ describe('SparqlConstructReader', () => {
       });
 
       const policy = {
-        beforeRequest: vi.fn().mockReturnValue(10),
+        beforeRequest: vi.fn().mockReturnValue({ timeoutMs: 10 }),
         afterRequest: vi.fn(),
       };
       const reader = new SparqlConstructReader({
@@ -1003,7 +1023,10 @@ describe('SparqlConstructReader', () => {
       ).rejects.toThrow();
 
       expect(policy.afterRequest).toHaveBeenCalledWith(
-        expect.objectContaining({ outcome: 'timeout' }),
+        expect.objectContaining({
+          outcome: 'timeout',
+          budget: { timeoutMs: 10 },
+        }),
       );
       expect(slowFetch).toHaveBeenCalled();
       const init = slowFetch.mock.calls[0][1];

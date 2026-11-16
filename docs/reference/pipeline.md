@@ -349,7 +349,7 @@ By default, every SPARQL request uses the same 5-minute budget. When a pipeline 
 A `TimeoutPolicy` decides the budget for each SPARQL request and observes the outcome. Two are built in:
 
 - **`ConstantTimeoutPolicy(timeoutMs)`** – returns the same budget for every request. The implicit default when `PipelineOptions.timeout` is omitted (`constantTimeoutPolicy(300_000)`).
-- **`AdaptiveTimeoutPolicy({ defaultMs, tightenedMs, tightenAfterTimeouts })`** – per-endpoint state machine. Each endpoint is either _healthy_ (use `defaultMs`) or _tightened_ (use `tightenedMs`). After `tightenAfterTimeouts` consecutive `timeout` outcomes the endpoint flips to _tightened_; a single `ok` flips it back to _healthy_.
+- **`AdaptiveTimeoutPolicy({ defaultMs, tightenedMs, tightenAfterTimeouts })`** – per-endpoint state machine. Each endpoint is either _healthy_ (use `defaultMs`) or _tightened_ (use `tightenedMs`). After `tightenAfterTimeouts` consecutive `timeout` outcomes at `defaultMs` the endpoint flips to _tightened_; a single `ok` flips it back to _healthy_. A timeout at `tightenedMs` doesn’t count: it may just be a heavy query on a healthy endpoint, so the next request re-probes at `defaultMs`, one probe at a time. If that probe succeeds the endpoint relaxes; if it times out, the endpoint stays tightened and the gap until the next probe doubles – 1, 2, 4… timeouts at `tightenedMs`, up to 64 – while a probe that fails with another error keeps the gap. A healthy-but-slow endpoint therefore loses one request rather than every heavy query until a cheap one happens to pass, and an endpoint that is genuinely down waits out the full budget on fewer and fewer requests.
 
 `PipelineOptions.timeout` accepts a `() => TimeoutPolicy` factory. The pipeline invokes it once per dataset, so policy state resets between datasets and one bad dataset can’t poison the next:
 
@@ -376,7 +376,7 @@ Outcomes are classified as:
 
 Transitions are reported as `timeoutTightened` / `timeoutRelaxed` events; `ConsoleReporter` prints them as `↘ Tightened` / `↗ Relaxed` lines so operators can tell a fast-failed stage from an unexpected speedup.
 
-Implement `TimeoutPolicy` directly for custom strategies (closing over shared state in the factory if you want it to span datasets).
+Implement `TimeoutPolicy` directly for custom strategies (closing over shared state in the factory if you want it to span datasets). `beforeRequest` returns a `RequestBudget`, and the caller hands that same object back to `afterRequest` as `budget`, so a policy can tell by identity which request is reporting.
 
 Timeouts live at the pipeline level – neither `SparqlConstructReader` nor `SparqlItemSelector` accept their own `timeout` option. Per-endpoint state belongs in the adaptive policy, and per-stage budgets aren’t supported. Reusable stage facades ([@lde/pipeline-void](./pipeline-void), [@lde/pipeline-shacl-sampler](./pipeline-shacl-sampler)) follow the same convention.
 

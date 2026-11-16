@@ -669,7 +669,7 @@ describe('SparqlItemSelector', () => {
   describe('timeout policy', () => {
     function recordingPolicy() {
       return {
-        beforeRequest: vi.fn().mockReturnValue(5_000),
+        beforeRequest: vi.fn().mockReturnValue({ timeoutMs: 5_000 }),
         afterRequest: vi.fn(),
       };
     }
@@ -704,7 +704,11 @@ describe('SparqlItemSelector', () => {
       });
       expect(policy.afterRequest).toHaveBeenCalledTimes(2);
       expect(policy.afterRequest).toHaveBeenCalledWith(
-        expect.objectContaining({ outcome: 'ok' }),
+        expect.objectContaining({ outcome: 'ok', budget: { timeoutMs: 5000 } }),
+      );
+      // The policy tells attempts apart by identity, so no copy.
+      expect(policy.afterRequest.mock.calls[0][0].budget).toBe(
+        policy.beforeRequest.mock.results[0].value,
       );
     });
 
@@ -735,7 +739,10 @@ describe('SparqlItemSelector', () => {
 
       await expect(iterate()).rejects.toThrow('504');
       expect(policy.afterRequest).toHaveBeenCalledWith(
-        expect.objectContaining({ outcome: 'timeout' }),
+        expect.objectContaining({
+          outcome: 'timeout',
+          budget: { timeoutMs: 5000 },
+        }),
       );
     });
 
@@ -764,7 +771,10 @@ describe('SparqlItemSelector', () => {
       await expect(iterate()).rejects.toThrow('socket hang up');
       expect(policy.afterRequest).toHaveBeenCalledTimes(1);
       expect(policy.afterRequest).toHaveBeenCalledWith(
-        expect.objectContaining({ outcome: 'error' }),
+        expect.objectContaining({
+          outcome: 'error',
+          budget: { timeoutMs: 5000 },
+        }),
       );
     });
 
@@ -795,7 +805,10 @@ describe('SparqlItemSelector', () => {
 
       await expect(iterate()).rejects.toThrow();
       expect(policy.afterRequest).toHaveBeenCalledWith(
-        expect.objectContaining({ outcome: 'error' }),
+        expect.objectContaining({
+          outcome: 'error',
+          budget: { timeoutMs: 5000 },
+        }),
       );
     });
 
