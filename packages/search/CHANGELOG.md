@@ -1,3 +1,65 @@
+## 0.49.0 (2026-11-17)
+
+### 🚀 Features
+
+- ⚠️  **search:** filter and facet a root document on whether a referent’s leaf has a value ([#1101](https://github.com/ldelements/lde/pull/1101))
+
+### ⚠️  Breaking Changes
+
+- **search:** filter and facet a root document on whether a referent’s leaf has a value  ([#1101](https://github.com/ldelements/lde/pull/1101))
+  GraphQL facet objects are renamed and reshaped. The
+  ‹Type›‹Reference›Facets and ‹Type›‹Field›Facets objects become
+  ‹Type›‹Field›Facet, and a presence leaf’s ‹…›‹Leaf›Facets becomes
+  ‹Type›‹Field›‹Leaf›Facet. A field whose facet also counts its presence or a
+  leaf is served as ‹Type›‹Field›Facet { buckets totalValues exists ‹leaf› }
+  instead of IRIFacet or ValueFacet; select its buckets as
+  facetField(limit) { buckets { … } }. A reference counting faceted or presence
+  leaves takes ‹Type›‹Field›Filter, with ‹Type›‹Field›Where, instead of
+  ‹Edge›Filter or ‹Target›Filter, and ‹Edge›JoinedFilter becomes
+  ‹Type›‹Field›JoinedFilter; variables typed with the old names stop
+  validating, and adding leaves to a reference later changes its filter type
+  the same way. In @lde/search, PhysicalFields.leafExists covers a lookup’s
+  presence leaves too, PresenceCriterion takes an optional leaf, and the
+  SearchTypeIssue reasons presence-with-facetable, presence-leaves-not-inline,
+  presence-leaves-with-facetable and presence-leaf-faceted are gone, replaced
+  by presence-leaves-on-id-only, presence-leaves-with-several-targets,
+  presence-leaves-with-joinable, presence-leaves-with-literal,
+  presence-leaf-reserved-name and presence-leaf-without-path. A target type’s
+  transform also receives referents seeded as <referent> rdf:type <class>."
+  M	AGENTS.md
+  M	docs/decisions/0040-filter-and-facet-a-field-on-whether-it-has-a-value.md
+  M	docs/decisions/0041-filter-and-facet-a-root-document-on-whether-an-entrys-leaf-has-a-value.md
+  A	docs/decisions/0042-count-a-referents-leaf-and-a-fields-facets-in-one-object.md
+  M	docs/reference/search-api-graphql.md
+  M	docs/reference/search-pipeline.md
+  M	docs/reference/search-typesense.md
+  M	docs/reference/search.md
+  M	package-lock.json
+  M	packages/search-api-graphql/src/build-schema.ts
+  M	packages/search-api-graphql/test/faceted-leaves.test.ts
+  M	packages/search-api-graphql/test/leaf-presence.test.ts
+  A	packages/search-api-graphql/test/lookup-presence.test.ts
+  M	packages/search-api-graphql/test/presence.test.ts
+  M	packages/search-api-graphql/test/query-cost.test.ts
+  M	packages/search-api-graphql/vite.config.ts
+  M	packages/search-pipeline/package.json
+  M	packages/search-pipeline/src/extraction.ts
+  M	packages/search-pipeline/src/search-stages.ts
+  M	packages/search-pipeline/test/extraction.test.ts
+  A	packages/search-pipeline/test/fixtures/lookup-presence-sample.ttl
+  A	packages/search-pipeline/test/lookup-presence.integration.test.ts
+  M	packages/search-typesense/src/query-compiler.ts
+  A	packages/search-typesense/test/lookup-presence.integration.test.ts
+  M	packages/search-typesense/test/query-compiler.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/src/project.ts
+  M	packages/search/src/query.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/test/faceted-leaves.test.ts
+  M	packages/search/test/leaf-presence.test.ts
+  A	packages/search/test/lookup-presence.test.ts
+  M	packages/search/test/presence.test.ts
+
 ## 0.48.0 (2026-11-16)
 
 ### 🚀 Features
