@@ -814,6 +814,93 @@ describe('buildGraphQLSchema', () => {
     ]);
   });
 
+  it('searches a facet’s values with its query, beside its limit, in the one query', async () => {
+    const { engine, facetBatches } = fakeEngine({
+      total: 0,
+      hits: [],
+      facets: {},
+    });
+    const result = await run(
+      `{ datasets { facets {
+        keyword(query: "kaart", limit: 5) { totalValues }
+        publisher(query: "rijks") { totalValues }
+        status(query: " ") { totalValues }
+        terminologySource(query: "ka") { totalValues }
+      } } }`,
+      { engine, acceptLanguage: ['nl'] },
+    );
+    expect(result.errors).toBeUndefined();
+    expect(facetBatches()).toHaveLength(1);
+    const [batch] = facetBatches();
+    // A blank query is none, and so is one under three characters.
+    expect(
+      batch.map((query) => [
+        query.facets,
+        query.facetLimits,
+        query.facetQueries,
+      ]),
+    ).toEqual([
+      [
+        ['keyword', 'publisher', 'status', 'terminologySource'],
+        { keyword: 5 },
+        { keyword: 'kaart', publisher: 'rijks' },
+      ],
+    ]);
+  });
+
+  it('loads one facet under two queries in two queries of its scope', async () => {
+    const { engine, facetBatches } = fakeEngine({
+      total: 0,
+      hits: [],
+      facets: {},
+    });
+    const result = await run(
+      `{ datasets { facets {
+        all: keyword { totalValues }
+        matching: keyword(query: "kaart") { totalValues }
+      } } }`,
+      { engine, acceptLanguage: ['nl'] },
+    );
+    expect(result.errors).toBeUndefined();
+    const [batch] = facetBatches();
+    expect(batch.map((query) => query.facetQueries)).toEqual([
+      undefined,
+      { keyword: 'kaart' },
+    ]);
+  });
+
+  it('offers a query only on a facet whose values someone can type', () => {
+    const work: SearchType = {
+      name: 'Work',
+      class: 'https://example.org/Work',
+      fields: [
+        { name: 'keyword', kind: 'keyword', facetable: true },
+        {
+          name: 'publisher',
+          kind: 'reference',
+          facetable: true,
+          ref: { strategy: 'idOnly' },
+          labelSource: 'Organization',
+        },
+        {
+          name: 'class',
+          kind: 'reference',
+          facetable: true,
+          ref: { strategy: 'idOnly' },
+        },
+        { name: 'iiif', kind: 'boolean', facetable: true },
+      ],
+    };
+    const facets = printSchema(
+      buildGraphQLSchema(searchSchema(work, organization)),
+    ).match(/type WorkFacets \{[^}]*\}/)?.[0];
+    expect(facets).toContain('keyword(\n');
+    expect(facets).toMatch(/keyword\([^)]*query: String/);
+    expect(facets).toMatch(/publisher\([^)]*query: String/);
+    expect(facets).not.toMatch(/class\([^)]*query/);
+    expect(facets).toMatch(/iiif: \[BooleanBucket!\]!/);
+  });
+
   it('refuses a maxFacetLimit that is not a positive integer', () => {
     for (const maxFacetLimit of [0, 2.5]) {
       expect(() =>
@@ -1244,7 +1331,9 @@ describe('buildGraphQLSchema', () => {
     expect(sdl).toMatch(/SIZE/);
     // Facets are a keyed object, one field per facetable field, typed by kind.
     expect(sdl).toMatch(/type DatasetFacets/);
-    expect(sdl).toMatch(/keyword\([\s\S]*?limit: Int\s*\): ValueFacet!/);
+    expect(sdl).toMatch(
+      /keyword\([\s\S]*?limit: Int[\s\S]*?query: String\s*\): ValueFacet!/,
+    );
     // A numeric facet is a range facet: its extent, plus a bucket per bin
     // where the field declares bins and per distinct value where it doesn’t.
     expect(sdl).toMatch(/size: IntBinnedRangeFacet!/);
@@ -1274,7 +1363,9 @@ describe('buildGraphQLSchema', () => {
     // `value`, send it back as `where: { publisher: { in: [...] } }`. Both sides
     // are `IRI`, so no `String`-to-`IRI` boundary sits in the middle – the same
     // contract BooleanBucket keeps for `is`.
-    expect(sdl).toMatch(/publisher\([\s\S]*?limit: Int\s*\): IRIFacet!/);
+    expect(sdl).toMatch(
+      /publisher\([\s\S]*?limit: Int[\s\S]*?query: String\s*\): IRIFacet!/,
+    );
     expect(sdl).toMatch(/type IRIBucket \{\s+value: IRI!/);
     expect(sdl).toMatch(/publisher: OrganizationFilter/);
     // A literal-keyed facet keeps the literal-keyed bucket.

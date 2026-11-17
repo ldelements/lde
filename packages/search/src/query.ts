@@ -5,6 +5,7 @@ import {
   ID_FIELD,
   holdsNoIds,
   isInlineReference,
+  isQueryableFacet,
   nestedReferenceType,
   physicalFields,
   presenceFacetName,
@@ -52,6 +53,26 @@ export interface SearchQuery {
    * still caps each facet at its own.
    */
   readonly facetLimits?: Readonly<Record<string, number>>;
+  /**
+   * Per facet field, text to search that facet’s values with: only the values
+   * matching it come back, counted over the matching documents as without a
+   * query (skip-own-filter), highest count first and capped at the facet’s
+   * {@link facetLimits} limit. A literal facet matches its values’ own text; a
+   * reference facet matches its referents by the free-text search of the type
+   * they belong to – their labels, alternate names, whatever that type
+   * searches. Text shorter than {@link MIN_FACET_QUERY_LENGTH} characters,
+   * once trimmed, is no query ({@link facetQueryText}).
+   *
+   * Only a facet {@link isQueryableFacet} admits takes one: a keyword facet,
+   * or a reference facet whose values have a label source.
+   *
+   * Under a query, a facet reports only the values that match it, selected or
+   * not – the one exception to a facet reporting every value its own clause
+   * selects. The same facet without a query still does, so a selection can
+   * always be undone there. {@link facetSearches} gives each facet with a
+   * query a search of its own.
+   */
+  readonly facetQueries?: Readonly<Record<string, string>>;
   /** Selects the per-locale fields to query/sort on (from `Accept-Language`). */
   readonly locale: string;
   /**
@@ -278,6 +299,25 @@ export function isUnsatisfiable(query: SearchQuery): boolean {
 }
 
 /**
+ * The fewest characters a facet query must have, once trimmed, to be acted
+ * on. Below it, prefix and typo matching match next to nothing or nearly
+ * everything, so a shorter query counts as none.
+ */
+export const MIN_FACET_QUERY_LENGTH = 3;
+
+/**
+ * A {@link SearchQuery.facetQueries} entry as a search acts on it: the text,
+ * trimmed, or `undefined` when there is none or it is shorter than
+ * {@link MIN_FACET_QUERY_LENGTH} characters once trimmed.
+ */
+export function facetQueryText(text: string | undefined): string | undefined {
+  const trimmed = text?.trim();
+  return trimmed === undefined || trimmed.length < MIN_FACET_QUERY_LENGTH
+    ? undefined
+    : trimmed;
+}
+
+/**
  * One search a query’s facets need, with the values each of its facets must
  * report whatever their count. See {@link facetSearches}.
  */
@@ -290,7 +330,8 @@ export interface FacetSearch {
    *  values. */
   readonly selected: Readonly<Record<string, readonly string[]>>;
   /** The facet whose own clauses this search removed; absent on the search
-   *  that every facet without a clause of its own shares. */
+   *  that every facet without a clause of its own shares, and on a facet
+   *  query’s search when the facet has no clause of its own. */
   readonly own?: string;
 }
 
@@ -332,6 +373,11 @@ export interface FacetSearch {
  * A default a surface adds to `where` (a valid-only `status`) is a clause
  * like any other: its facet counts across every value and reports the
  * default’s values as selected.
+ *
+ * A facet with a {@link SearchQuery.facetQueries query} gets a search of its
+ * own as well, carrying that query alone and selecting nothing: under a
+ * query, a facet reports only the values matching it. Every other search
+ * carries no facet query.
  */
 export function facetSearches(query: SearchQuery): FacetSearch[] {
   const owners = query.where.map(ownedField);
@@ -339,27 +385,55 @@ export function facetSearches(query: SearchQuery): FacetSearch[] {
     owners.filter((field): field is string => field !== undefined),
   );
   const facets = [...new Set(query.facets)];
-  // The facets without a clause of their own share a search per limit.
+  const facetQueryOf = (field: string): string | undefined =>
+    facetQueryText(query.facetQueries?.[field]);
+  // A search without a facet query carries none, so a facet query is read
+  // only by the one search it belongs to.
+  const { facetQueries, ...unqueried } = query;
+  const base: SearchQuery =
+    facetQueries === undefined ? query : (unqueried as SearchQuery);
+  // The facets without a clause or a query of their own share a search per
+  // limit.
   const shared = new Map<number | undefined, string[]>();
-  for (const field of facets.filter((field) => !owned.has(field))) {
+  for (const field of facets.filter(
+    (field) => !owned.has(field) && facetQueryOf(field) === undefined,
+  )) {
     const limit = query.facetLimits?.[field];
     shared.set(limit, [...(shared.get(limit) ?? []), field]);
   }
   const searches: FacetSearch[] = [...shared.values()].map((fields) => ({
-    query: { ...query, facets: fields },
+    query: { ...base, facets: fields },
     selected: {},
   }));
-  for (const field of facets.filter((field) => owned.has(field))) {
+  for (const field of facets.filter(
+    (field) => owned.has(field) || facetQueryOf(field) !== undefined,
+  )) {
+    const text = facetQueryOf(field);
+    const ownClauses = owned.has(field);
+    const where = ownClauses
+      ? query.where.filter((_, index) => owners[index] !== field)
+      : query.where;
+    if (text !== undefined) {
+      // Under a query a facet reports only the values matching it, so it
+      // selects nothing: a selected value that does not match stays out.
+      searches.push({
+        query: {
+          ...base,
+          where,
+          facets: [field],
+          facetQueries: { [field]: text },
+        },
+        selected: {},
+        ...(ownClauses ? { own: field } : {}),
+      });
+      continue;
+    }
     const own = query.where.filter((_, index) => owners[index] === field);
     const selected = [
       ...new Set(own.flatMap((filter) => filter.or).flatMap(selectedValues)),
     ];
     searches.push({
-      query: {
-        ...query,
-        where: query.where.filter((_, index) => owners[index] !== field),
-        facets: [field],
-      },
+      query: { ...base, where, facets: [field] },
       selected: selected.length > 0 ? { [field]: selected } : {},
       own: field,
     });
@@ -388,6 +462,10 @@ export interface QueryIssue {
     | 'not-filterable'
     | 'operator-mismatch'
     | 'not-facetable'
+    /** A {@link SearchQuery.facetQueries facet query} on a facet that takes
+     *  none ({@link isQueryableFacet}): a boolean, range or presence facet, or
+     *  a reference facet whose values have no label source. */
+    | 'not-queryable'
     /** The criterion’s `on` path crosses more than {@link MAX_JOIN_DEPTH}
      *  *joins*. Nested hops cost no round trip and do not count. */
     | 'join-too-deep'
@@ -768,6 +846,25 @@ export function validateQuery(
       }
       collectLeafIssues(criterion, constrained, field, issues, schema);
     }
+  }
+  for (const [name, text] of Object.entries(query.facetQueries ?? {})) {
+    if (facetQueryText(text) === undefined) {
+      continue;
+    }
+    const facet = facetNamed(searchType, name, schema);
+    if (facet !== undefined && isQueryableFacet(facet, schema)) {
+      continue;
+    }
+    issues.push({
+      part: 'facets',
+      field: name,
+      reason:
+        facet !== undefined
+          ? 'not-queryable'
+          : fieldNamed(searchType, name) === undefined
+            ? 'unknown-field'
+            : 'not-facetable',
+    });
   }
   for (const name of query.facets) {
     if (facetNamed(searchType, name, schema) !== undefined) {

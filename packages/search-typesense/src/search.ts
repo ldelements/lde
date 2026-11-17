@@ -55,6 +55,7 @@ import {
   buildSearchParams,
   escapeFilterValue,
   facetCapOf,
+  facetQueryOf,
   type BuildSearchParamsOptions,
 } from './query-compiler.js';
 import { deriveCollectionName } from './collection-name.js';
@@ -99,6 +100,16 @@ export interface TypesenseSearchEngineOptions<
    * {@link fetchLabels} behaviour unchanged.
    */
   readonly labelCacheTtlMs?: number;
+  /**
+   * How many referents a query on a reference facet may match
+   * ({@link SearchQuery.facetQueries}), per type the reference names: the
+   * candidates whose counts the facet then reports. A referent matching
+   * beyond them is not counted, so a facet whose search filled this cap
+   * reports no `totalValues` – it cannot tell how many match. Between 1 and
+   * 250, Typesense’s `per_page` cap; defaults to 50. Each candidate costs a
+   * count search of its own.
+   */
+  readonly maxFacetQueryCandidates?: number;
 }
 
 /**
@@ -173,6 +184,17 @@ export function createTypesenseSearchEngine<
     };
   });
   assertNoAccidentalSharing(resolved);
+  const maxCandidates =
+    options.maxFacetQueryCandidates ?? DEFAULT_MAX_FACET_QUERY_CANDIDATES;
+  if (
+    !Number.isInteger(maxCandidates) ||
+    maxCandidates < 1 ||
+    maxCandidates > TYPESENSE_MAX_PER_PAGE
+  ) {
+    throw new Error(
+      `maxFacetQueryCandidates must be an integer between 1 and ${TYPESENSE_MAX_PER_PAGE}; got ${maxCandidates}.`,
+    );
+  }
   const collections = new Map<string, string>(
     resolved.map(({ searchType, collection }) => [
       searchType.class,
@@ -450,15 +472,25 @@ export function createTypesenseSearchEngine<
     callers: readonly (readonly PlannedSearch[])[],
   ): Promise<(TypesenseSearchResponse | Error)[]> {
     const collection = collections.get(searchType.class) as string;
-    const planned = callers.flat();
-    const dispatched = planned.filter(({ query }) => !isUnsatisfiable(query));
-    const results = await performInChunks(
+    const planned = await withCandidates(searchType, callers.flat());
+    // A query on a reference facet is answered by counting its candidates,
+    // never by a facet search of its own.
+    const counted = await countCandidates(
       client,
-      dispatched.map(({ query }) => ({
-        collection,
-        ...buildSearchParams(query, searchType, searchParamsOptions),
-      })),
+      collection,
+      searchType,
+      planned,
+      searchParamsOptions,
     );
+    const dispatched = planned.filter(
+      (search, index) =>
+        !counted.has(index) && answeredWithoutSearch(search) === undefined,
+    );
+    const paramsFor = (search: PlannedSearch) => ({
+      collection,
+      ...buildSearchParams(search.query, searchType, searchParamsOptions),
+    });
+    const results = await performInChunks(client, dispatched.map(paramsFor));
     const transportFailure = results.find((result) => result instanceof Error);
     if (transportFailure !== undefined) {
       throw transportFailure;
@@ -467,9 +499,10 @@ export function createTypesenseSearchEngine<
       searchType.class,
     ) as ReadonlyMap<string, string>;
     let entry = 0;
-    const responses = planned.map((search) => {
-      if (isUnsatisfiable(search.query)) {
-        return EMPTY_RESPONSE;
+    const responses = planned.map((search, index) => {
+      const answered = counted.get(index) ?? answeredWithoutSearch(search);
+      if (answered !== undefined) {
+        return answered;
       }
       const result = results[entry++] as
         TypesenseSearchResponse | TypesenseErrorEntry | undefined;
@@ -505,6 +538,99 @@ export function createTypesenseSearchEngine<
     });
   }
 
+  /**
+   * Step one of a query on a reference facet: each planned search whose facet
+   * query is on a reference gets the referents matching it – searched in the
+   * collection of every type the reference names, with that type’s own
+   * free-text search, as a search of that type for the same text would –
+   * at most {@link TypesenseSearchEngineOptions.maxFacetQueryCandidates}
+   * per type. Every such search travels in one `multi_search` round-trip.
+   * A failed search fails exactly the planned search it was for.
+   */
+  async function withCandidates(
+    searchType: RootType,
+    planned: readonly PlannedSearch[],
+  ): Promise<PlannedSearch[]> {
+    const steps = planned.map((search) => {
+      const facetQuery = facetQueryOf(search.query, searchType, schema);
+      if (
+        facetQuery === undefined ||
+        facetQuery.facet.field.kind !== 'reference' ||
+        isUnsatisfiable(search.query)
+      ) {
+        return undefined;
+      }
+      return {
+        ...facetQuery,
+        locale: search.query.locale,
+        // `assertValidQuery` admitted only a facet with label targets, and
+        // every target is a Root Type with a collection.
+        targets: labelTargetNamesOf(facetQuery.facet.field, schema).map(
+          (name) => typesByName.get(name) as RootType,
+        ),
+      };
+    });
+    const searches = steps.flatMap((step) =>
+      step === undefined
+        ? []
+        : step.targets.map((target) => ({
+            collection: collections.get(target.class) as string,
+            ...buildSearchParams(
+              {
+                text: step.text,
+                where: [],
+                orderBy: [],
+                limit: maxCandidates,
+                offset: 0,
+                facets: [],
+                locale: step.locale,
+              },
+              target,
+              searchParamsOptions,
+            ),
+            include_fields: 'id',
+          })),
+    );
+    if (searches.length === 0) {
+      return [...planned];
+    }
+    const results = await performInChunks(client, searches);
+    const transportFailure = results.find((result) => result instanceof Error);
+    if (transportFailure !== undefined) {
+      throw transportFailure;
+    }
+    let next = 0;
+    return planned.map((search, index) => {
+      const step = steps[index];
+      if (step === undefined) {
+        return search;
+      }
+      const answered = results.slice(next, (next += step.targets.length)) as (
+        TypesenseSearchResponse | TypesenseErrorEntry | undefined
+      )[];
+      const iris = new Set<string>();
+      let capped = false;
+      for (const [position, result] of answered.entries()) {
+        if (result === undefined || 'error' in result) {
+          const target = step.targets[position] as RootType;
+          return {
+            ...search,
+            candidates: entryError(
+              `search of “${collections.get(target.class) as string}” for values of facet “${step.facet.name}”`,
+              result,
+            ),
+          };
+        }
+        const hits = result.hits ?? [];
+        capped ||= result.found > hits.length;
+        for (const hit of hits) {
+          iris.add(String(hit.document.id));
+        }
+      }
+      return { ...search, candidates: { facet: step.facet, iris, capped } };
+    });
+  }
+
   const engine: TypesenseSearchEngine = {
     schema,
     collectionNameFor(searchType: RootType): string {
@@ -525,7 +651,12 @@ export function createTypesenseSearchEngine<
       // its `where`; each own-filtered facet is counted by a search of its own
       // (`facetSearches`), in the same round-trip.
       const searches = facetSearches(query);
-      const shared = searches.find((search) => search.own === undefined);
+      // A facet query’s search counts its facet alone and may narrow the
+      // documents it counts, so it never carries the hits.
+      const shared = searches.find(
+        (search) =>
+          search.own === undefined && search.query.facetQueries === undefined,
+      );
       const [response] = await answer(searchType, [
         [
           {
@@ -783,6 +914,162 @@ function withDeclaredFacetNames(
  *  counts facets alone or also returns the caller’s hits. */
 interface PlannedSearch extends FacetSearch {
   readonly facetOnly: boolean;
+  /** For a query on a reference facet, the referents matching it
+   *  (`withCandidates`), or why they could not be found. */
+  readonly candidates?: Candidates | Error;
+}
+
+/** The referents a query on a reference facet matches: the only values the
+ *  facet may report. */
+interface Candidates {
+  readonly facet: FacetDeclaration;
+  readonly iris: ReadonlySet<string>;
+  /** Whether a search for them filled its cap, so more may match. */
+  readonly capped: boolean;
+}
+
+/**
+ * The response a planned search has without being sent, or `undefined` when
+ * it must be sent: nothing for a search asking for no document (its only
+ * filter would compile away and hand back the whole collection,
+ * {@link isUnsatisfiable}), the failure of a search whose candidates could
+ * not be found, and an empty facet for one whose query matched no referent.
+ */
+function answeredWithoutSearch(
+  search: PlannedSearch,
+): TypesenseSearchResponse | Error | undefined {
+  if (isUnsatisfiable(search.query)) {
+    return EMPTY_RESPONSE;
+  }
+  const { candidates } = search;
+  if (candidates instanceof Error) {
+    return candidates;
+  }
+  if (candidates !== undefined && candidates.iris.size === 0) {
+    return {
+      found: 0,
+      facet_counts: [
+        {
+          field_name: candidates.facet.name,
+          counts: [],
+          stats: { total_values: 0 },
+        },
+      ],
+    };
+  }
+  return undefined;
+}
+
+/**
+ * Step two of a query on a reference facet: each candidate is counted by a
+ * search of its own – the facet’s search narrowed to that candidate on the
+ * field the facet buckets, asking for no document.
+ * The facet keeps the candidates that occur, the highest counts first and
+ * capped at its limit, and reports how many occur, unless step one filled its
+ * cap, when more may match than it found and no total is reported.
+ *
+ * Counting each candidate apart, rather than faceting the documents that carry
+ * any of them, keeps their other values from crowding a candidate out of the
+ * buckets, and bounds the work by the candidate cap instead of by the data.
+ * The counts travel together, in as few `multi_search` requests as Typesense
+ * accepts. A failed count fails exactly the search it was for.
+ *
+ * Returns the response per planned search index, for the searches it answers.
+ */
+async function countCandidates(
+  client: Pick<Client, 'multiSearch'>,
+  collection: string,
+  searchType: RootType,
+  planned: readonly PlannedSearch[],
+  options: BuildSearchParamsOptions,
+): Promise<Map<number, TypesenseSearchResponse | Error>> {
+  const toCount = planned.flatMap((search, entry) => {
+    const { candidates } = search;
+    // `withCandidates` sets none on a search asking for no document.
+    return candidates === undefined ||
+      candidates instanceof Error ||
+      candidates.iris.size === 0
+      ? []
+      : [...candidates.iris].map((iri) => ({ entry, candidates, iri }));
+  });
+  const results = await performInChunks(
+    client,
+    toCount.map(({ entry, candidates, iri }) => {
+      // The facet query is answered here; the count carries none.
+      const { facetQueries: _, ...query } = (planned[entry] as PlannedSearch)
+        .query;
+      const params = buildSearchParams(
+        { ...query, facets: [], orderBy: [], limit: 0, offset: 0 },
+        searchType,
+        options,
+      );
+      // On the field the facet buckets, not on the field itself: under a facet
+      // policy only that one leaves out the values the policy keeps out of the
+      // facet, which a query must not bring back.
+      const candidate = `${candidates.facet.engineField}:=${escapeFilterValue(iri)}`;
+      return {
+        collection,
+        ...params,
+        filter_by:
+          params.filter_by === undefined
+            ? candidate
+            : `(${params.filter_by}) && ${candidate}`,
+      };
+    }),
+  );
+  const counts = new Map<number, { value: string; count: number }[] | Error>();
+  toCount.forEach(({ entry, candidates, iri }, index) => {
+    const sofar = counts.get(entry) ?? [];
+    if (sofar instanceof Error) {
+      return;
+    }
+    const result = results[index];
+    if (result instanceof Error) {
+      counts.set(entry, result);
+    } else if (result === undefined || 'error' in result) {
+      counts.set(
+        entry,
+        entryError(
+          `count of facet value “${iri}” on “${candidates.facet.name}”`,
+          result,
+        ),
+      );
+    } else {
+      counts.set(entry, [...sofar, { value: iri, count: result.found }]);
+    }
+  });
+  const answered = new Map<number, TypesenseSearchResponse | Error>();
+  for (const [entry, found] of counts) {
+    if (found instanceof Error) {
+      answered.set(entry, found);
+      continue;
+    }
+    const search = planned[entry] as PlannedSearch;
+    const candidates = search.candidates as Candidates;
+    const occurring = found.filter(({ count }) => count > 0).sort(byCount);
+    answered.set(entry, {
+      found: 0,
+      facet_counts: [
+        {
+          field_name: candidates.facet.name,
+          counts: occurring.slice(0, bucketCapOf(search.query, options)),
+          ...(candidates.capped
+            ? {}
+            : { stats: { total_values: occurring.length } }),
+        },
+      ],
+    });
+  }
+  return answered;
+}
+
+/** The buckets a facet search returns at most: its limit, or Typesense’s
+ *  own default. */
+function bucketCapOf(
+  query: SearchQuery,
+  options: BuildSearchParamsOptions,
+): number {
+  return facetCapOf(query, options) ?? TYPESENSE_DEFAULT_MAX_FACET_VALUES;
 }
 
 /** A planned facet search as sent: no hits, and with no hits no ordering. */
@@ -857,6 +1144,13 @@ async function performInChunks(
 /** A response with nothing in it: the answer to a search that asks for no
  *  document, which is never dispatched. */
 const EMPTY_RESPONSE: TypesenseSearchResponse = { found: 0, hits: [] };
+
+/** The referents a query on a reference facet matches at most, per type,
+ *  unless a deployment says otherwise. */
+const DEFAULT_MAX_FACET_QUERY_CANDIDATES = 50;
+
+/** The most hits Typesense returns for one search (`per_page`). */
+const TYPESENSE_MAX_PER_PAGE = 250;
 
 /** The bucket cap Typesense applies when `max_facet_values` is unset. */
 const TYPESENSE_DEFAULT_MAX_FACET_VALUES = 10;

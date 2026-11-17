@@ -17,6 +17,7 @@ import {
   type GraphQLEnumValueConfigMap,
   type GraphQLFieldConfig,
   type GraphQLArgumentConfig,
+  type GraphQLFieldExtensions,
   type GraphQLInputFieldConfig,
   type GraphQLInputType,
   type GraphQLOutputType,
@@ -24,6 +25,7 @@ import {
 } from 'graphql';
 import {
   NESTED_DOCUMENT_TYPE,
+  facetQueryText,
   type Criterion,
   type FacetBucket,
   type Filter,
@@ -55,6 +57,7 @@ import {
   ID_FIELD,
   isAbsoluteIri,
   OR_KEY,
+  isQueryableFacet,
   isRangeFacet,
   isBinnedRangeFacet,
   isoToUnixSeconds,
@@ -82,7 +85,11 @@ import {
   type FacetScope,
 } from './facet-batch.js';
 import { projectionFor } from './projection.js';
-import { costExtensions, operationCost } from './query-cost.js';
+import {
+  costExtensions,
+  facetQueryCostExtensions,
+  operationCost,
+} from './query-cost.js';
 
 /** Populated per request by the transport; no framework type appears here. */
 export interface SearchContext {
@@ -144,6 +151,12 @@ export interface BuildGraphQLSchemaOptions {
 }
 
 type Source = Record<string, unknown>;
+
+/** What a value facet’s field takes ({@link valueArgumentsFor}). */
+interface ValueFacetArguments {
+  readonly limit?: number | null;
+  readonly query?: string | null;
+}
 
 const nonNullListOf = (type: GraphQLOutputType): GraphQLOutputType =>
   new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(type)));
@@ -1986,12 +1999,18 @@ export function buildGraphQLSchema(
           fields,
         }),
       ),
-      ...(limited && { args: { limit: limitArgument } }),
+      ...(limited && {
+        args: valueArgumentsFor(values as FacetDeclaration),
+        // Its `buckets` and `totalValues` are charged below; a query adds
+        // its own requests.
+        extensions: queryCostFor(values as FacetDeclaration, 0),
+      }),
       // Resolved synchronously, so what its keys load lands in the same batch
       // as the sibling facets. A range facet’s keys read `load`.
-      resolve: (source: Source, args: { limit?: number | null }) => ({
+      resolve: (source: Source, args: ValueFacetArguments) => ({
         loadFacet: source.loadFacet,
         limit: limited ? checkedLimit(args.limit) : undefined,
+        query: limited ? facetQueryText(args.query ?? undefined) : undefined,
         ...(range && {
           load: (scope: FacetScope) =>
             (source.loadFacet as FacetLoader)(
@@ -2036,11 +2055,51 @@ export function buildGraphQLSchema(
       type: new GraphQLNonNull(
         field.kind === 'reference' ? iriFacet : valueFacet,
       ),
-      extensions: facetCost,
-      args: { limit: limitArgument },
-      resolve: (source: Source, args: { limit?: number | null }) =>
-        valueFacetOf(source, facet, checkedLimit(args.limit)),
+      extensions: queryCostFor(facet, 1),
+      args: valueArgumentsFor(facet),
+      resolve: (source: Source, args: ValueFacetArguments) =>
+        valueFacetOf(
+          source,
+          facet,
+          checkedLimit(args.limit),
+          facetQueryText(args.query ?? undefined),
+        ),
     };
+  }
+
+  /** A value facet’s arguments: `limit`, and `query` on a facet whose values
+   *  are text someone can type – a literal one, or a reference whose values
+   *  have labels ({@link isQueryableFacet}). */
+  function valueArgumentsFor(
+    facet: FacetDeclaration,
+  ): Record<string, GraphQLArgumentConfig> {
+    return {
+      limit: limitArgument,
+      ...(isQueryableFacet(facet, schema) && {
+        query: {
+          type: GraphQLString,
+          description:
+            facet.field.kind === 'reference'
+              ? 'Only the values whose referent matches this text – by its label, alternate names or whatever else a search of its type matches – counted as without it and capped at `limit`. A selected value that does not match is left out. Text shorter than 3 characters is no query.'
+              : 'Only the values matching this text, counted as without it and capped at `limit`. A selected value that does not match is left out. Text shorter than 3 characters is no query.',
+        },
+      }),
+    };
+  }
+
+  /** What a value facet costs on top of `own`: under a query on a reference
+   *  facet, one more per target type – the search for its candidates and the
+   *  request that counts them. */
+  function queryCostFor(
+    facet: FacetDeclaration,
+    own: number,
+  ): GraphQLFieldExtensions<unknown, unknown> {
+    return facet.field.kind === 'reference' && isQueryableFacet(facet, schema)
+      ? facetQueryCostExtensions(
+          own,
+          labelTargetNamesOf(facet.field, schema).length,
+        )
+      : costExtensions(own * operationCost);
   }
 
   /**
@@ -2053,11 +2112,13 @@ export function buildGraphQLSchema(
     source: Source,
     facet: FacetDeclaration,
     limit: number | undefined,
+    query: string | undefined,
   ): Promise<{ buckets: readonly FacetBucket[]; totalValues: number | null }> {
     const { buckets, totalValues } = await (source.loadFacet as FacetLoader)(
       facet.name,
       'matching',
       limit,
+      query,
     );
     return {
       // A bucket keyed on something that is not an IRI is not a selection key
@@ -2087,7 +2148,12 @@ export function buildGraphQLSchema(
       facet.field.kind === 'reference' ? iriFacet : valueFacet
     ).toConfig().fields;
     const read = (source: Source) =>
-      valueFacetOf(source, facet, source.limit as number | undefined);
+      valueFacetOf(
+        source,
+        facet,
+        source.limit as number | undefined,
+        source.query as string | undefined,
+      );
     return {
       buckets: {
         ...shape.buckets,

@@ -1,0 +1,185 @@
+import { describe, expect, it } from 'vitest';
+import {
+  facetSearches,
+  validateQuery,
+  type SearchQuery,
+} from '../src/query.js';
+import {
+  facetNamed,
+  isQueryableFacet,
+  searchSchema,
+  type FacetDeclaration,
+  type SearchType,
+} from '../src/schema.js';
+
+const person: SearchType = {
+  name: 'Person',
+  class: 'https://schema.org/Person',
+  fields: [
+    {
+      name: 'label',
+      kind: 'text',
+      locales: ['nl'],
+      output: true,
+      searchable: { weight: 1 },
+    },
+  ],
+};
+
+const work: SearchType = {
+  name: 'CreativeWork',
+  class: 'https://schema.org/CreativeWork',
+  fields: [
+    { name: 'keyword', kind: 'keyword', facetable: true, filterable: true },
+    {
+      name: 'creator',
+      kind: 'reference',
+      facetable: true,
+      filterable: true,
+      ref: { strategy: 'idOnly' },
+      labelSource: 'Person',
+    },
+    {
+      name: 'class',
+      kind: 'reference',
+      facetable: true,
+      filterable: true,
+      ref: { strategy: 'idOnly' },
+    },
+    { name: 'iiif', kind: 'boolean', facetable: true, filterable: true },
+    { name: 'size', kind: 'integer', facetable: true, filterable: true },
+    { name: 'note', kind: 'keyword', output: true },
+    // A keyword, but its presence facet counts booleans.
+    { name: 'subtitle', kind: 'keyword', output: true, presence: true },
+  ],
+};
+
+const schema = searchSchema(person, work);
+
+const base: SearchQuery = {
+  where: [],
+  orderBy: [],
+  limit: 0,
+  offset: 0,
+  facets: [],
+  locale: 'nl',
+};
+
+const facet = (name: string): FacetDeclaration =>
+  facetNamed(work, name, schema) as FacetDeclaration;
+
+describe('isQueryableFacet', () => {
+  it('admits a keyword facet and a reference facet with a label source', () => {
+    expect(isQueryableFacet(facet('keyword'), schema)).toBe(true);
+    expect(isQueryableFacet(facet('creator'), schema)).toBe(true);
+  });
+
+  it('refuses a reference without a label source, a boolean, a range and a presence facet', () => {
+    expect(isQueryableFacet(facet('class'), schema)).toBe(false);
+    expect(isQueryableFacet(facet('iiif'), schema)).toBe(false);
+    expect(isQueryableFacet(facet('size'), schema)).toBe(false);
+    expect(isQueryableFacet(facet('subtitle.exists'), schema)).toBe(false);
+  });
+});
+
+describe('validateQuery on facet queries', () => {
+  it('accepts a query on a queryable facet, and ignores one too short to act on anywhere', () => {
+    expect(
+      validateQuery(
+        {
+          ...base,
+          facets: ['keyword', 'creator', 'class'],
+          facetQueries: { keyword: 'boe', creator: 'rem', class: 're' },
+        },
+        work,
+        schema,
+      ),
+    ).toEqual([]);
+  });
+
+  it('rejects a query on a facet that takes none, naming why', () => {
+    expect(
+      validateQuery(
+        {
+          ...base,
+          facets: ['class', 'iiif', 'size'],
+          facetQueries: {
+            class: 'xyz',
+            iiif: 'xyz',
+            size: 'xyz',
+            note: 'xyz',
+            nonexistent: 'xyz',
+          },
+        },
+        work,
+        schema,
+      ),
+    ).toEqual([
+      { part: 'facets', field: 'class', reason: 'not-queryable' },
+      { part: 'facets', field: 'iiif', reason: 'not-queryable' },
+      { part: 'facets', field: 'size', reason: 'not-queryable' },
+      { part: 'facets', field: 'note', reason: 'not-facetable' },
+      { part: 'facets', field: 'nonexistent', reason: 'unknown-field' },
+    ]);
+  });
+});
+
+describe('facetSearches with facet queries', () => {
+  it('gives a facet with a query a search of its own, and keeps the query off the others', () => {
+    const query: SearchQuery = {
+      ...base,
+      facets: ['keyword', 'creator', 'iiif'],
+      facetQueries: { creator: 'rem' },
+    };
+    const { facetQueries: _, ...unqueried } = query;
+    expect(facetSearches(query)).toEqual([
+      { query: { ...unqueried, facets: ['keyword', 'iiif'] }, selected: {} },
+      {
+        query: {
+          ...unqueried,
+          facets: ['creator'],
+          facetQueries: { creator: 'rem' },
+        },
+        selected: {},
+      },
+    ]);
+  });
+
+  it('removes the facet’s own clause under a query, and selects nothing', () => {
+    const query: SearchQuery = {
+      ...base,
+      facets: ['keyword'],
+      where: [
+        { or: [{ field: 'keyword', in: ['selected'] }] },
+        { or: [{ field: 'iiif', is: true }] },
+      ],
+      facetQueries: { keyword: 'boe' },
+    };
+    expect(facetSearches(query)).toEqual([
+      {
+        query: {
+          ...query,
+          where: [{ or: [{ field: 'iiif', is: true }] }],
+          facets: ['keyword'],
+        },
+        selected: {},
+        own: 'keyword',
+      },
+    ]);
+  });
+
+  it.each(['', '  ', 're', ' re '])(
+    'treats %j, shorter than three characters, as no query',
+    (text) => {
+      const query: SearchQuery = {
+        ...base,
+        facets: ['keyword'],
+        facetQueries: { keyword: text },
+      };
+      const { facetQueries: _, ...unqueried } = query;
+      expect(facetSearches(query)).toEqual([
+        { query: { ...unqueried, facets: ['keyword'] }, selected: {} },
+      ]);
+    },
+  );
+});

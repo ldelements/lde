@@ -36,7 +36,10 @@ import type {
  * value its own clause selects, at count 0 when nothing else leaves it a
  * document ({@link SearchQuery.facets}). An adapter plans the searches with
  * `facetSearches` from `@lde/search/adapter`, so ownership cannot drift
- * between engines.
+ * between engines. A facet with a {@link SearchQuery.facetQueries query}
+ * reports only the values matching it, selected or not, and its
+ * {@link Facet.totalValues} counts those values – absent where the engine
+ * cannot tell how many match.
  *
  * `Types` is the literal tuple {@link searchSchema} captured: with a
  * `defineSearchType` declaration, `search()` only accepts the deployment’s

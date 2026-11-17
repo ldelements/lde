@@ -71,6 +71,11 @@ type ThingFacets {
     At most this many buckets, between 1 and 100: the values with the highest counts. A larger limit returns a superset of a smaller one; there is no next page. Omit it for the deployment’s default.
     """
     limit: Int
+
+    """
+    Only the values matching this text, counted as without it and capped at \`limit\`. A selected value that does not match is left out. Text shorter than 3 characters is no query.
+    """
+    query: String
   ): ValueFacet!
   creator(
     """
@@ -95,6 +100,11 @@ type ThingFacets {
     At most this many buckets, between 1 and 100: the values with the highest counts. A larger limit returns a superset of a smaller one; there is no next page. Omit it for the deployment’s default.
     """
     limit: Int
+
+    """
+    Only the values matching this text, counted as without it and capped at \`limit\`. A selected value that does not match is left out. Text shorter than 3 characters is no query.
+    """
+    query: String
   ): ValueFacet!
   open: [BooleanBucket!]!
 }

@@ -276,6 +276,47 @@ rejects on engine failure.
 The pure halves `buildSearchParams` and `parseSearchResponse` are exported for
 direct use and testing.
 
+### Facet queries
+
+A query searching a facet’s values ([`facetQueries`](./search#searching-a-facet-s-values))
+compiles by what the facet holds.
+
+A **literal** (`keyword`) facet compiles to Typesense’s `facet_query` on the
+facet’s own search: Typesense matches the values by prefix, with typo
+tolerance, and returns the matching values with the highest counts. A colon
+in the text separates words like a space, because Typesense reads one as the
+separator between field and text.
+Non-matching values cannot crowd them out, and under `facet_query`
+`stats.total_values` counts the matching values only, so `totalValues` is
+exact.
+
+A **reference** facet’s values are IRIs, which `facet_query` would match
+instead of the labels someone types. It takes two steps:
+
+1. Search the collection of each type the reference names with the query,
+   using that type’s own free-text search – its searchable fields, weights,
+   typo tolerance and prefix matching – and take at most
+   `maxFacetQueryCandidates` ids from each. These are the candidates.
+2. Count each candidate with a search of its own: the facet’s search – the
+   query’s documents without the facet’s own filter – plus that candidate
+   selected, asking for no document. The facet keeps the candidates that
+   occur, the highest counts first, capped at the limit.
+
+Counting each candidate apart is what keeps the answer exact. A single facet
+search over the documents carrying any candidate would count their other
+values too, which can outnumber every candidate and crowd it out of the
+buckets – a match on two works that also carry twenty prolific creators would
+fall out of a top-ten – and fetching all of them instead makes the response
+grow with the data. The counts travel in `multi_search` requests of 50, so with the default cap
+of 50 a query costs one request of counts per type the reference names, beside
+step one’s: on a local index of 19694 works, 50 counts took 13 ms against
+10 ms for one facet search. A reference naming two types (`Person`,
+`Organization`) can need 100 counts.
+
+`totalValues` is the number of candidates that occur in the documents. It is
+exact only when no step-one search filled its cap; when one did, more
+referents may match than were found, and `totalValues` is absent.
+
 ### Engine options
 
 Beyond `collections`, `TypesenseSearchEngineOptions` carries:
@@ -297,6 +338,9 @@ Beyond `collections`, `TypesenseSearchEngineOptions` carries:
   [facet policy](./search#facet-policy) keeps out of the facet – sent
   together in as few `multi_search` requests as Typesense accepts (50
   searches each).
+- **`maxFacetQueryCandidates`** – how many referents a query on a reference
+  facet may match, per type the reference names (default 50, at most 250:
+  Typesense’s `per_page` cap). Each candidate costs a count search. See [facet queries](#facet-queries).
 - **`onLabelError`** – called when reference-label resolution fails; the
   search then degrades to id-only references (and reference-facet buckets to
   unlabelled ones) rather than failing. Omit it and the degradation is

@@ -3244,6 +3244,28 @@ export function facetNamed(
   return facetsOf(searchType, schema).find((facet) => facet.name === name);
 }
 
+/**
+ * Whether a facet takes a query (`SearchQuery.facetQueries`) – text to
+ * search its values with. A facet whose values are text a person can type
+ * against does: a `keyword` facet, matched on its values’ own text, and a
+ * reference facet whose values have a label source ({@link labelTargetNamesOf}),
+ * matched by the free-text search of the types they belong to. A reference
+ * without one holds bare IRIs, which nobody types; a boolean, range or presence
+ * facet has no values to search.
+ */
+export function isQueryableFacet(
+  facet: FacetDeclaration,
+  schema: SearchSchema | undefined,
+): boolean {
+  if (facet.presence === true) {
+    return false;
+  }
+  return (
+    facet.field.kind === 'keyword' ||
+    labelTargetNamesOf(facet.field, schema).length > 0
+  );
+}
+
 /** The logical name of the facet counting whether a field declaring
  *  {@link SearchFieldBase.presence} holds a value: `‹field›.exists`. */
 export function presenceFacetName(name: string): string {
