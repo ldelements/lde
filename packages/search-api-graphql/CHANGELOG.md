@@ -1,3 +1,13 @@
+## 0.53.1 (2026-11-17)
+
+### 🚀 Features
+
+- **search-api-graphql:** search within a facet’s values ([#1100](https://github.com/ldelements/lde/pull/1100))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.49.1
+
 ## 0.53.0 (2026-11-17)
 
 ### 🚀 Features
