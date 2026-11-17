@@ -20,7 +20,11 @@ import {
   referenceTypeNamed,
 } from '@lde/search/adapter';
 import type { SearchSchema, SearchType } from '@lde/search';
-import { extractionQuery, extractionQueryString } from '../src/extraction.js';
+import {
+  extractionQuery,
+  extractionQueryString,
+  referentHopFields,
+} from '../src/extraction.js';
 
 const SCHEMA = 'https://schema.org/';
 const RDF_TYPE = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
@@ -567,6 +571,26 @@ describe('references into a keyed type', () => {
     // Still one OPTIONAL: a referent without a label keeps its row.
     const [group] = unionBranches(query);
     expect(group.patterns[1]).toMatchObject({ subType: 'optional' });
+  });
+
+  it('reads a presence leaf that is also the key once', () => {
+    const counting = {
+      ...work.fields[0],
+      filterable: true,
+      searchable: { weight: 1 },
+      ref: {
+        strategy: 'lookup',
+        target: 'Place',
+        presenceLeaves: ['_sameAs'],
+      },
+    } as const;
+    const countingWork = defineSearchType({ ...work, fields: [counting] });
+    searchSchema(countingWork, place);
+
+    expect(referentHopFields(counting, place)).toEqual([
+      place.fields[1],
+      place.fields[0],
+    ]);
   });
 
   it('reads no label for a lookup that is not searchable', () => {

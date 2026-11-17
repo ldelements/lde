@@ -4,6 +4,7 @@ import {
   filterOperatorFor,
   ID_FIELD,
   holdsNoIds,
+  isInlineReference,
   nestedReferenceType,
   physicalFields,
   presenceFacetName,
@@ -147,8 +148,20 @@ export type Criterion =
  * declaring {@link SearchFieldBase.presence}, whatever its kind, beside the
  * operator its kind fixes – on the searched type’s own field, not yet through
  * a join path or inside a weld.
+ *
+ * With a `leaf`, whether **any referent** of the `lookup` the field names
+ * holds a value for that leaf, one of the lookup’s
+ * {@link ReferenceStrategy.presenceLeaves presence leaves}:
+ * `{ field: 'contentLocation', leaf: 'latitude', exists: true }`. Like the
+ * field’s own presence it is recorded on the root document, so it is a plain
+ * criterion, combined with others like any. An inline reference’s presence
+ * leaf is instead selected by a weld of that one condition, as its other
+ * leaves are.
  */
-export type PresenceCriterion = CriterionBase & { readonly exists: boolean };
+export type PresenceCriterion = CriterionBase & {
+  readonly exists: boolean;
+  readonly leaf?: string;
+};
 
 /**
  * The conditions a criterion welds to **one entry** of the nested reference its
@@ -312,8 +325,9 @@ export interface FacetSearch {
  * An `exists` criterion is on the axis `‹field›.exists`, which the field’s
  * presence facet owns. It owns nothing else: a range on the same field is
  * another axis, and so a presence facet counts under it. Welded alone to an
- * entry, `exists` is on the axis `‹reference›.‹leaf›.exists`, owned by that
- * presence leaf’s facet and never by a facet on the leaf’s values.
+ * entry – or naming a lookup’s `leaf` – `exists` is on the axis
+ * `‹reference›.‹leaf›.exists`, owned by that presence leaf’s facet and never
+ * by a facet on the leaf’s values.
  *
  * A default a surface adds to `where` (a valid-only `status`) is a clause
  * like any other: its facet counts across every value and reports the
@@ -421,8 +435,9 @@ export interface QueryIssue {
     | 'inverted-range'
     /**
      * An `exists` criterion on a field that declares no
-     * {@link SearchFieldBase.presence} – or, welded to one entry, on a leaf
-     * its inline reference does not name among its
+     * {@link SearchFieldBase.presence} – or on a leaf, welded to one entry of
+     * an inline reference or named by `leaf` on a lookup, that the reference
+     * does not name among its
      * {@link ReferenceStrategy.presenceLeaves presence leaves} – so no
      * document records whether it holds a value.
      */
@@ -465,10 +480,23 @@ function collectLeafIssues(
     return;
   }
   // Presence is a Role of its own: a field declaring it takes `exists`
-  // whether or not it is `filterable`, and whatever operator its kind fixes.
+  // whether or not it is `filterable`, and whatever operator its kind fixes –
+  // and a lookup takes it on each of its presence leaves.
   if ('exists' in criterion) {
-    if (declared.presence !== true) {
-      issues.push({ part: 'where', field, reason: 'no-presence' });
+    const recorded =
+      criterion.leaf === undefined
+        ? declared.presence === true
+        : !isInlineReference(declared) &&
+          physicalFields(declared).leafExists.some(
+            ({ leaf }) => leaf === criterion.leaf,
+          );
+    if (!recorded) {
+      issues.push({
+        part: 'where',
+        field:
+          criterion.leaf === undefined ? field : `${field}.${criterion.leaf}`,
+        reason: 'no-presence',
+      });
     }
     return;
   }
@@ -911,7 +939,11 @@ function axisOf(criterion: Criterion): string | undefined {
   // presence facet: a range on the same field is not its selection, nor is an
   // `exists` the selection of a facet on the field’s values.
   if ('exists' in criterion) {
-    return presenceFacetName(path.join('.'));
+    return presenceFacetName(
+      [...path, ...(criterion.leaf === undefined ? [] : [criterion.leaf])].join(
+        '.',
+      ),
+    );
   }
   if (!isWelded(criterion)) {
     return path.join('.');
@@ -937,6 +969,19 @@ function axisOf(criterion: Criterion): string | undefined {
  */
 export function selectionOf(facet: FacetDeclaration, value: string): Filter {
   const field = facet.field.name;
+  // A lookup’s presence leaf is recorded on the root document, and selected
+  // there, by the reference and the leaf.
+  if (
+    facet.presence === true &&
+    facet.reference !== undefined &&
+    !isInlineReference(facet.reference)
+  ) {
+    return filterOn({
+      field: facet.reference.name,
+      leaf: field,
+      exists: value === 'true',
+    });
+  }
   const condition: Criterion =
     facet.presence === true
       ? { field, exists: value === 'true' }

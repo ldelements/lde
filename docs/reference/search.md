@@ -601,7 +601,9 @@ label with an Authority’s, the referring document is searched by the
 Authority’s. A transform on a label source therefore also receives nodes that
 carry only those two fields, once per referring batch. A referent stated by IRI
 alone, with no triple of its own, gives a transform nothing to act on and adds
-nothing to search. A copied label changes when the document is reindexed.
+nothing to search – unless the reference also counts a
+[presence leaf](#on-a-lookup-s-referents), which seeds it. A copied label
+changes when the document is reindexed.
 
 A reference naming no label source still folds its IRIs, and a `derive`d or
 `from` reference reads no referent, so it is never searched by labels
@@ -1205,8 +1207,10 @@ nobody’s own, as a clause spanning two fields is not
 
 `searchSchema` holds each leaf to what that round trip needs: it is declared
 on the reference type, `filterable`, and a `keyword`, `boolean` or `reference`;
-the reference is `filterable`, not `facetable` itself (both facets would be
-named after it), and sits on a Root Type. A `lookup` leaf whose target declares
+the reference is `filterable` and sits on a Root Type, and a leaf is not named
+`buckets`, `totalValues` or `exists`, which name parts of the reference’s
+facet object. A reference that is `facetable` itself counts its own values
+beside its leaves, in one facet object. A `lookup` leaf whose target declares
 a [facet policy](#facet-policy) is refused for now.
 
 A condition welded to one entry is owned by a faceted leaf, never by an
@@ -1259,11 +1263,12 @@ declaring no presence (`no-presence`), which is also what a weld meets.
 `searchSchema` says why in full. It refuses
 it on a field of a Reference Type and on an inline reference, whose entries
 are counted through the reference’s
-[presence leaves](#presence-on-an-entry-s-leaf) instead; on a `text` field, which stores its values per language; on a `boolean`, which
-states its own absence as `false`; and on a field that is already `facetable`,
-since its facet would have to become an object to hold both kinds of bucket
-([#1090](https://github.com/ldelements/lde/issues/1090))
+[presence leaves](#presence-on-an-entry-s-leaf) instead; on a `text` field,
+which stores its values per language; and on a `boolean`, which states its own
+absence as `false`
 ([ADR 40](../decisions/0040-filter-and-facet-a-field-on-whether-it-has-a-value.md)).
+A field that is also `facetable` counts both, its values and its presence
+([ADR 42](../decisions/0042-count-a-referents-leaf-and-a-fields-facets-in-one-object.md)).
 
 ### Presence on an entry’s leaf
 
@@ -1307,15 +1312,62 @@ holds a value is recorded per document, so it cannot hold of the same entry
 as another condition. Through a join it is refused like any `exists`
 (`joined-presence`).
 
-The reference is `filterable`, sits on a Root Type and – for now – is not
-`facetable` itself; each leaf is declared by the reference type, named once,
-and neither `text`, `boolean`, an inline reference nor – for now – one of the
-reference’s faceted leaves. Every `filterable` inline reference on a Root
-Type nesting the same reference type declares the same presence leaves,
-because they share the type’s filter input. The two “for now” refusals and the
-shared leaves are lifted by per-field facet objects and per-reference filter
-inputs ([#1090](https://github.com/ldelements/lde/issues/1090))
-([ADR 41](../decisions/0041-filter-and-facet-a-root-document-on-whether-an-entrys-leaf-has-a-value.md)).
+The reference is `filterable` and sits on a Root Type; each leaf is declared
+by the reference type, named once, neither `text`, `boolean` nor an inline
+reference, and not named `buckets`, `totalValues` or `exists`. A leaf may be
+faceted on by value and by presence at once, and the reference may be
+`facetable` itself: everything counted on one field is served in one facet
+object
+([ADR 41](../decisions/0041-filter-and-facet-a-root-document-on-whether-an-entrys-leaf-has-a-value.md),
+[ADR 42](../decisions/0042-count-a-referents-leaf-and-a-fields-facets-in-one-object.md)).
+
+#### On a lookup’s referents
+
+A `lookup` stores only its referents’ ids, so it declares `presenceLeaves` to
+count a leaf of the documents it names – “a work with a place that has
+coordinates”:
+
+```ts
+{
+  name: 'contentLocation',
+  kind: 'reference',
+  path: 'https://schema.org/contentLocation',
+  array: true,
+  filterable: true,
+  ref: { strategy: 'lookup', target: 'Place', presenceLeaves: ['latitude'] },
+}
+```
+
+It is counted at index time, in the referring batch: the extraction reads
+each presence leaf one hop from the root, beside the target’s key and label,
+the target type’s transforms run on the referents
+([`@lde/search-pipeline`](./search-pipeline#referents-through-their-type-s-transforms)),
+and the projection writes `contentLocation_latitude_exists` from what they
+return. A referent the root’s graph states the leaf for counts; so does one a
+transform describes from its IRI alone – the type’s own transforms, for a
+lookup into its own type; one that neither states nor any transform describes
+– a failed lookup, say – counts as holding none. Only a referent with an IRI
+counts: a blank node is no id the lookup stores, so what the graph states of
+it does not count either.
+
+The facet is `contentLocation.latitude.exists`. Since the value is recorded on
+the root document, its criterion is a plain one on the root, naming the
+reference and the leaf:
+`{ field: 'contentLocation', leaf: 'latitude', exists: true }`
+(GraphQL: `where: { contentLocation: { where: { latitude: { exists: true } } } }`).
+It combines with other criteria like any: the keys of a lookup’s `where` are
+ANDed as sibling keys are, so `{ latitude: { exists: true }, longitude: {
+exists: true } }` asks for a work with a place that has a latitude and one
+that has a longitude, each counted on its own. A weld (`entry`) on a lookup is
+refused (`not-weldable`): a lookup has no entries.
+
+The lookup names one `target`, which declares each leaf, with a `path`: a leaf
+is read off the referent’s own node, never derived, through that target’s
+declaration. Refused on a lookup naming several targets
+(`presence-leaves-with-several-targets`), on a `joinable` lookup, whose `where`
+already joins, and on one reading its literals as periods. A reference’s
+values faceted by a leaf of a lookup’s referents (`facetedLeaves` on a lookup)
+are not offered.
 
 ### Facet policy
 

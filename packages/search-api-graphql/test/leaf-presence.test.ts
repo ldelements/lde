@@ -103,7 +103,7 @@ async function run(source: string) {
 describe('a root document filtered on whether an entry’s leaf has a value', () => {
   it('gives a presence leaf `exists` in the reference type’s where', () => {
     expect(printed).toMatch(
-      /input MediaObjectWhere \{[^}]*license: IRIFilter\n[^}]*thumbnailUrl: ExistsFilter\n[^}]*encodingFormat: KeywordFilterOrExists\n/,
+      /input WorkAssociatedMediaWhere \{[^}]*license: IRIFilter\n[^}]*thumbnailUrl: ExistsFilter\n[^}]*encodingFormat: KeywordFilterOrExists\n/,
     );
   });
 
@@ -159,10 +159,10 @@ describe('a root document filtered on whether an entry’s leaf has a value', ()
 describe('a root document faceted on whether an entry’s leaf has a value', () => {
   it('serves the facet under the leaf, beside the reference’s faceted leaves', () => {
     expect(printed).toMatch(
-      /type WorkAssociatedMediaFacets \{[^}]*\): IRIFacet!\s*thumbnailUrl: WorkAssociatedMediaThumbnailUrlFacets!\s*encodingFormat: WorkAssociatedMediaEncodingFormatFacets!\s*\}/,
+      /type WorkAssociatedMediaFacet \{[^}]*\): IRIFacet!\s*thumbnailUrl: WorkAssociatedMediaThumbnailUrlFacet!\s*encodingFormat: WorkAssociatedMediaEncodingFormatFacet!\s*\}/,
     );
     expect(printed).toMatch(
-      /type WorkAssociatedMediaThumbnailUrlFacets \{[^}]*exists: \[BooleanBucket!\]!\s*\}/,
+      /type WorkAssociatedMediaThumbnailUrlFacet \{[^}]*exists: \[BooleanBucket!\]!\s*\}/,
     );
   });
 
@@ -237,15 +237,15 @@ describe('a reference with presence leaves on a joined type', () => {
 
   it('reaches the entries through a join without `exists`, which no join reads', () => {
     expect(joinedPrinted).toMatch(
-      /input CollectionJoinedWhere \{[^}]*associatedMedia: MediaObjectJoinedFilter\n/,
+      /input CollectionJoinedWhere \{[^}]*associatedMedia: CollectionAssociatedMediaJoinedFilter\n/,
     );
-    const where = /input MediaObjectJoinedWhere \{([^}]*)\}/.exec(
+    const where = /input CollectionAssociatedMediaJoinedWhere \{([^}]*)\}/.exec(
       joinedPrinted,
     );
     expect(where?.[1]).toMatch(/encodingFormat: KeywordFilter\n/);
     expect(where?.[1]).not.toMatch(/thumbnailUrl|exists|OrExists/);
     expect(joinedPrinted).toMatch(
-      /input CollectionWhere \{[^}]*associatedMedia: MediaObjectFilter\n/,
+      /input CollectionWhere \{[^}]*associatedMedia: CollectionAssociatedMediaFilter\n/,
     );
   });
 });
@@ -273,13 +273,13 @@ describe('the names a presence leaf adds', () => {
           searchSchema(
             work,
             mediaObject,
-            clashing('WorkAssociatedMediaThumbnailUrlFacets'),
+            clashing('WorkAssociatedMediaThumbnailUrlFacet'),
           ),
           {},
         ),
       ),
     ).toThrow(
-      /“WorkAssociatedMediaThumbnailUrlFacets”, the type name of the presence facet of “associatedMedia.thumbnailUrl.exists”, is already the name of another type/,
+      /“WorkAssociatedMediaThumbnailUrlFacet”, the type name of the facet object of “WorkAssociatedMediaThumbnailUrl”, is already the name of another type/,
     );
   });
 
@@ -317,13 +317,13 @@ describe('the names a presence leaf adds', () => {
             labelled,
             item,
             mediaObject,
-            clashing('MediaObjectJoinedFilter'),
+            clashing('WorkAssociatedMediaJoinedFilter'),
           ),
           {},
         ),
       ),
     ).toThrow(
-      /“MediaObjectJoinedFilter”, the type name of the filter on “MediaObject” through a join, is already the name of another type/,
+      /“WorkAssociatedMediaJoinedFilter”, the type name of the filter on “Work.associatedMedia”, is already the name of another type/,
     );
   });
 });

@@ -78,10 +78,10 @@ describe('a root type faceted on its entries’ leaves', () => {
     const printed = printSchema(gqlSchema);
 
     expect(printed).toMatch(
-      /type WorkFacets \{\s*associatedMedia: WorkAssociatedMediaFacets!\s*\}/,
+      /type WorkFacets \{\s*associatedMedia: WorkAssociatedMediaFacet!\s*\}/,
     );
     expect(printed).toMatch(
-      /type WorkAssociatedMediaFacets \{\s*license\([\s\S]*?\): IRIFacet!\s*\}/,
+      /type WorkAssociatedMediaFacet \{\s*license\([\s\S]*?\): IRIFacet!\s*\}/,
     );
   });
 

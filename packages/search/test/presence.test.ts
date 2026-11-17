@@ -184,10 +184,14 @@ describe('declaring presence', () => {
     );
   });
 
-  it('refuses a facetable field until its facet can hold both', () => {
-    expect(() => withField({ facetable: true })).toThrow(
-      /and is “facetable”: its facet would have to become an object/,
-    );
+  it('counts a facetable field’s presence beside its values', () => {
+    const schema = withField({ facetable: true, filterable: true });
+    const thing = [...schema.values()][0] as SearchType;
+
+    expect(facetsOf(thing, schema).map((facet) => facet.name)).toEqual([
+      'field',
+      'field.exists',
+    ]);
   });
 
   it('files each refusal under a reason, for a declaration built outside TypeScript', () => {
@@ -214,9 +218,7 @@ describe('declaring presence', () => {
     expect(declared({ kind: 'boolean' })).toEqual([
       { field: 'field', reason: 'presence-on-boolean' },
     ]);
-    expect(declared({ facetable: true })).toEqual([
-      { field: 'field', reason: 'presence-with-facetable' },
-    ]);
+    expect(declared({ facetable: true })).toEqual([]);
     expect(declared({})).toEqual([]);
   });
 });

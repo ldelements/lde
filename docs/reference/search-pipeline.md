@@ -398,6 +398,38 @@ readers:
   the stage’s projected documents into the write. A projected document is far
   heavier than a quad, so lower it where documents are large.
 
+## Referents through their type’s transforms
+
+A stage passes the referents of its references through each target type’s own
+`transforms`, inside the batch, so memory stays bounded by `batchSize`: the
+quads the extraction read off each referent go in, under the target’s IR
+Aliases, and what the transforms return replaces them. Two kinds of reference
+are described this way:
+
+- a `searchable` reference, whose referents’ key and label are read, so it is
+  searched by the label the target’s transform leaves
+  ([ADR 39](../decisions/0039-apply-a-label-sources-transforms-to-its-referents.md));
+- a `lookup` declaring [presence leaves](./search#on-a-lookup-s-referents),
+  whose referents’ key and leaves are read, so the projection can write whether
+  any referent holds a leaf.
+
+A referent a presence leaf is counted for, named by IRI, and that the batch
+states nothing about – the root’s graph names it by IRI alone – enters its
+target’s transforms all the same, as `<referent> rdf:type <class>`, so a
+transform that describes a node from its key (an Authority’s coordinates for a
+GeoNames place) supplies the leaf. The seed is not kept. A transform on such a
+target therefore also receives nodes carrying a type alone, or only a key and
+a few leaves, once per referring batch; a transform doing I/O pays for that
+unless it caches. A blank-node referent is not seeded: the lookup stores no id
+for it, so it is not counted.
+
+A reference to the stage’s own type passes no referent’s quads through again,
+since its transforms already saw the batch – but a lookup into its own type
+declaring presence leaves still has the referents the batch states nothing
+about seeded through them. A target wired with its own `readers` has no
+transform to apply
+([ADR 42](../decisions/0042-count-a-referents-leaf-and-a-fields-facets-in-one-object.md)).
+
 ## Per-component isolation
 
 Each root type is an independent engine run – its own collection, alias and

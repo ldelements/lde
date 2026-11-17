@@ -1,0 +1,43 @@
+@prefix schema: <https://schema.org/> .
+
+# Works naming places, for a presence leaf (`latitude`) counted on the work.
+
+# Named by IRI alone; the place transform describes GeoNames places from
+# their IRI, coordinates included.
+<https://a/work/geonames> a schema:CreativeWork ;
+  schema:name "Geonames" ;
+  schema:contentLocation <https://sws.geonames.org/2745707> .
+
+# Named by IRI alone, and no transform describes it.
+<https://a/work/unknown> a schema:CreativeWork ;
+  schema:name "Unknown" ;
+  schema:contentLocation <https://a/place/unknown> .
+
+# The work’s own graph states the place’s coordinates.
+<https://a/work/stated> a schema:CreativeWork ;
+  schema:name "Stated" ;
+  schema:contentLocation <https://a/place/stated> .
+<https://a/place/stated> schema:latitude 51.37 .
+
+# No place at all.
+<https://a/work/bare> a schema:CreativeWork ;
+  schema:name "Bare" .
+
+# A place stated as a blank node: nothing to key a transform on.
+<https://a/work/blank> a schema:CreativeWork ;
+  schema:name "Blank" ;
+  schema:contentLocation [ schema:latitude 50.85 ] .
+
+# Places within places, for a presence leaf on a lookup into its own type.
+<https://a/place/village> a schema:Place ;
+  schema:name "Village" ;
+  schema:containedInPlace <https://sws.geonames.org/2751283> .
+<https://a/place/hamlet> a schema:Place ;
+  schema:name "Hamlet" ;
+  schema:containedInPlace <https://a/place/region> .
+<https://a/place/region> a schema:Place ;
+  schema:name "Region" ;
+  schema:latitude 50.9 .
+<https://a/place/isolated> a schema:Place ;
+  schema:name "Isolated" ;
+  schema:containedInPlace <https://a/place/nowhere> .
