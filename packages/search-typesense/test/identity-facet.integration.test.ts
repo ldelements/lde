@@ -81,6 +81,7 @@ const work = defineSearchType({
 describe('an identity faceted on its nested leaf', () => {
   const container = new TypesenseContainer();
   let engine: SearchEngine;
+  let client: Client;
   const schema = searchSchema(work, person, creatorRole);
   const base: SearchQuery = {
     where: [],
@@ -108,7 +109,7 @@ describe('an identity faceted on its nested leaf', () => {
   });
 
   beforeAll(async () => {
-    const client: Client = await container.start();
+    client = await container.start();
     const definition = buildCollectionDefinition(work, {
       collectionNameFor: () => 'works',
       schema,
@@ -206,5 +207,35 @@ describe('an identity faceted on its nested leaf', () => {
       'https://ex/anna': 1,
       'https://ex/bram': 1,
     });
+  });
+
+  it('searches the facet’s values by the label of each person', async () => {
+    const people = await client
+      .collections('people')
+      .documents()
+      .import(
+        [
+          {
+            id: 'https://ex/anna',
+            label_und: 'Anna Visscher',
+            label_search_und: 'anna visscher',
+          },
+          {
+            id: 'https://ex/bram',
+            label_und: 'Bram de Bie',
+            label_search_und: 'bram de bie',
+          },
+        ],
+        { action: 'create' },
+      );
+    expect(people.every((result) => result.success)).toBe(true);
+
+    const result = await engine.search(work, {
+      ...base,
+      where: [createdBy('https://ex/bram')],
+      facetQueries: { creator: 'visscher' },
+    });
+
+    expect(counts(result)).toEqual({ 'https://ex/anna': 1 });
   });
 });

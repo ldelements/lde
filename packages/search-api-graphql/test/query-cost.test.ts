@@ -219,6 +219,20 @@ describe('the cost of a query', () => {
     ).toBe(1 + 2);
   });
 
+  it('charges a query on a reference facet one more per target type, and a literal one nothing extra', async () => {
+    expect(
+      await costOf(
+        '{ creativeWorks(perPage: 0) { facets { author(query: "rem") { totalValues } genre(query: "kaa") { totalValues } } } }',
+      ),
+    ).toBe(1 + (1 + 1) + 1);
+    // Under three characters a query is none, and costs nothing extra.
+    expect(
+      await costOf(
+        '{ creativeWorks(perPage: 0) { facets { author(query: "re") { totalValues } } } }',
+      ),
+    ).toBe(1 + 1);
+  });
+
   it('charges one per selected facet key', async () => {
     expect(
       await costOf(

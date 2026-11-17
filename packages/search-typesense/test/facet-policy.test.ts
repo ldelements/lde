@@ -381,6 +381,32 @@ describe('facet policy end to end (integration)', () => {
     ]);
   });
 
+  it('leaves a value the policy keeps out of the facet out of a facet query too', async () => {
+    // Every Kessel matches “kes” in the place collection, and works carry
+    // them, but the policy admits none of them as a bucket.
+    const [kessel, venlo] = await engine.searchFacets(work, [
+      {
+        ...baseQuery,
+        limit: 0,
+        facets: ['locationCreated'],
+        facetQueries: { locationCreated: 'kes' },
+      },
+      {
+        ...baseQuery,
+        limit: 0,
+        facets: ['locationCreated'],
+        facetQueries: { locationCreated: 'ven' },
+      },
+    ]);
+    if ('error' in kessel || 'error' in venlo) {
+      throw new Error('Expected facets outcomes.');
+    }
+    expect(kessel.facets.locationCreated?.buckets).toEqual([]);
+    expect(venlo.facets.locationCreated?.buckets).toEqual([
+      { value: VENLO, count: 1, label: { und: ['Venlo'] } },
+    ]);
+  });
+
   it('keeps the field whole: a local place still displays and still filters exactly', async () => {
     const result = await engine.search(work, {
       ...baseQuery,

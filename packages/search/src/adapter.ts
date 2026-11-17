@@ -28,6 +28,7 @@ export {
   TARGET_FIELD,
   facetNamed,
   facetsOf,
+  isQueryableFacet,
   presenceFacetName,
   holdsNoIds,
   identityFieldOf,

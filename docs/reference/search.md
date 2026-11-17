@@ -1153,6 +1153,53 @@ like any other: the `status` facet counts across every status and reports
 `facetSearches` from `@lde/search/adapter`
 ([ADR 29](../decisions/0029-make-skip-own-filter-what-a-facet-means.md)).
 
+#### Searching a facet’s values
+
+A query’s `facetQueries` searches a facet’s values by text: type “rem” in the
+`creator` facet and get the creators matching it, counted over the current
+results. Where `facetLimits` shows only the values with the highest counts,
+this finds the one a person is looking for among thousands.
+
+```ts
+{
+  ...query,
+  facets: ['creator'],
+  facetQueries: { creator: 'rem' },
+  facetLimits: { creator: 10 },
+}
+```
+
+A facet that takes a query is one whose values are text someone can type
+(`isQueryableFacet`):
+
+- a **`keyword`** facet, matched on its values’ own text;
+- a **reference** facet whose values have a [label source](#field-model),
+  matched by the free-text search of the types its values belong to – their
+  labels, alternate names, whatever that type searches, as a search of that
+  type for the same text would. A label only the target’s collection holds,
+  supplied there by enrichment, finds the value too.
+
+A reference without a label source holds bare IRIs nobody types, and a
+boolean, range or presence facet has no values to search, so `validateQuery`
+rejects a query on any of them (`not-queryable`). Text shorter than three
+characters, once trimmed (`MIN_FACET_QUERY_LENGTH`), is no query: below that,
+prefix and typo matching match next to nothing or nearly everything.
+
+Under a query a facet counts as it does without one – over the documents
+every `where` clause except its own leaves – and returns only the values that
+match, highest count first, capped at its limit. Its `totalValues` is how many
+matching values occur in those documents, absent where the engine cannot tell.
+`facetSearches` gives each facet with a query a search of its own.
+
+::: warning A selected value that does not match is left out
+Under a query a facet reports only the values matching it, **selected or
+not**. This is the one exception to a facet reporting every value its own
+clause selects: a selection that does not match the text is absent. The same
+facet without a query still reports it, so a selection can always be undone
+there – show the selected values from the facet without a query, and the
+query’s matches beside them.
+:::
+
 A `FacetBucket` always carries its `value` and `count`; what else it carries is
 decided by the facet’s kind, and a surface types the bucket accordingly (see
 [bucket types](./search-api-graphql#what-it-builds-per-root-type)).

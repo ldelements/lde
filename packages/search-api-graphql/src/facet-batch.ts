@@ -11,6 +11,7 @@ export type FacetLoader = (
   field: string,
   scope: FacetScope,
   limit?: number,
+  query?: string,
 ) => Promise<Facet>;
 
 /** Which documents a {@link FacetLoader} computes a facet over. */
@@ -24,9 +25,10 @@ export type FacetScope = 'matching' | 'all';
  * listing’s `query` for the `matching` loads, and one over
  * `unfilteredQuery` – the deployment’s policy without the caller’s filters –
  * for the `all` loads, dispatched as ONE `engine.searchFacets` call. Each
- * load’s bucket `limit` travels in the query’s `facetLimits`; only the same
- * field loaded twice with different limits (two aliases) needs a second
- * query in its scope. The
+ * load’s bucket `limit` travels in the query’s `facetLimits`, and its text
+ * `query` in its `facetQueries`; only the same field loaded twice with
+ * different limits or queries (two aliases) needs a second query in its
+ * scope. The
  * engine counts each facet without its own filter (skip-own-filter) and keeps
  * its selected values among the buckets, so the whole sidebar costs one
  * engine round-trip.
@@ -67,6 +69,7 @@ export function createFacetLoader(
       }
       const queries = groups.map(({ scope, keys: groupKeys }) => {
         const limited = groupKeys.filter((key) => key.limit !== undefined);
+        const queried = groupKeys.filter((key) => key.query !== undefined);
         return {
           keys: groupKeys,
           // `searchFacets` answers every query facet-only, whatever its
@@ -77,6 +80,11 @@ export function createFacetLoader(
             ...(limited.length > 0 && {
               facetLimits: Object.fromEntries(
                 limited.map((key) => [key.field, key.limit as number]),
+              ),
+            }),
+            ...(queried.length > 0 && {
+              facetQueries: Object.fromEntries(
+                queried.map((key) => [key.field, key.query as string]),
               ),
             }),
           },
@@ -129,20 +137,28 @@ export function createFacetLoader(
     },
     { cacheKeyFn: cacheKeyOf },
   );
-  return (field, scope, limit) => loader.load({ field, scope, limit });
+  return (field, scope, limit, query) =>
+    loader.load({ field, scope, limit, query });
 }
 
 /** One facet load: a field, over the documents a scope names, capped at
- *  `limit` buckets (absent: the engine’s default). */
+ *  `limit` buckets (absent: the engine’s default) and, with a `query`,
+ *  only the values matching it. */
 interface FacetKey {
   readonly field: string;
   readonly scope: FacetScope;
   readonly limit?: number;
+  readonly query?: string;
 }
 
-/** A field name never contains a space, so this cannot conflate two keys. */
+/** Every part of the key, so no two loads are conflated. */
 function cacheKeyOf(key: FacetKey): string {
-  return `${key.scope} ${key.limit ?? ''} ${key.field}`;
+  return JSON.stringify([
+    key.scope,
+    key.limit ?? null,
+    key.query ?? null,
+    key.field,
+  ]);
 }
 
 /** What a facet degrades to: no buckets, and no extent. */

@@ -135,7 +135,7 @@ describe('one facet object per field', () => {
 
   it('gives a field counting more an object holding everything counted on it', () => {
     expect(printed).toMatch(
-      /contentLocation\(\s*"""[^"]*"""\s*limit: Int\s*\): WorkContentLocationFacet!/,
+      /contentLocation\(\s*"""[^"]*"""\s*limit: Int\s*"""[^"]*"""\s*query: String\s*\): WorkContentLocationFacet!/,
     );
     expect(printed).toMatch(
       /type WorkContentLocationFacet \{[^}]*buckets: \[IRIBucket!\]![^}]*totalValues: Int\s*latitude: WorkContentLocationLatitudeFacet!\s*longitude: WorkContentLocationLongitudeFacet!\s*\}/,
@@ -174,6 +174,17 @@ describe('one facet object per field', () => {
         },
       },
     });
+  });
+
+  it('searches the field’s own values with its query, beside its limit', async () => {
+    const { response, faceted } = await run(
+      `{ works { facets { contentLocation(limit: 5, query: "ven") { totalValues } } } }`,
+    );
+
+    expect(response.errors).toBeUndefined();
+    expect(
+      faceted.map((query) => [query.facetLimits, query.facetQueries]),
+    ).toEqual([[{ contentLocation: 5 }, { contentLocation: 'ven' }]]);
   });
 
   it('refuses a limit out of range', async () => {

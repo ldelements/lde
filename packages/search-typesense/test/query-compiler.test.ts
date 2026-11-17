@@ -697,6 +697,48 @@ describe('buildSearchParams', () => {
     ).toBe(50);
   });
 
+  it('searches a literal facet’s values with its facet query', () => {
+    expect(
+      buildSearchParams(
+        {
+          ...base,
+          facets: ['status', 'unknown', 'keyword'],
+          facetQueries: { status: ' ', unknown: 'x', keyword: 'kaart' },
+        },
+        schema,
+      ).facet_query,
+    ).toBe('keyword:kaart');
+  });
+
+  it('separates words at a colon in a facet query, as Typesense reads one as its field separator', () => {
+    expect(
+      buildSearchParams(
+        { ...base, facets: ['keyword'], facetQueries: { keyword: 'van:rijn' } },
+        schema,
+      ).facet_query,
+    ).toBe('keyword:van rijn');
+  });
+
+  it('leaves a reference facet’s query to the engine, which matches referents', () => {
+    const withReference: SearchType = {
+      ...schema,
+      fields: [
+        ...schema.fields,
+        { name: 'publisher', kind: 'reference', facetable: true },
+      ],
+    };
+    expect(
+      buildSearchParams(
+        {
+          ...base,
+          facets: ['publisher'],
+          facetQueries: { publisher: 'rijks' },
+        },
+        withReference,
+      ).facet_query,
+    ).toBeUndefined();
+  });
+
   it('caps a search at the largest limit among its facets', () => {
     expect(
       buildSearchParams(

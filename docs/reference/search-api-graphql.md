@@ -118,14 +118,15 @@ fails this – accepts. The endpoint path defaults to `/graphql`
   asks for, measured with
   [graphql-query-complexity](https://github.com/slicknode/graphql-query-complexity):
 
-  | Selection                                   | Cost              |
-  | ------------------------------------------- | ----------------- |
-  | A search field (each alias counts)          | 1                 |
-  | A joined reference (`lookup`), at any depth | 1 per target type |
-  | A facet key                                 | 1                 |
-  | A range facet’s `all` extent                | 1 more            |
-  | Each part of a `‹Type›‹Field›Facet` object  | 1                 |
-  | A plain stored field or an inline reference | 0, at any depth   |
+  | Selection                                   | Cost                   |
+  | ------------------------------------------- | ---------------------- |
+  | A search field (each alias counts)          | 1                      |
+  | A joined reference (`lookup`), at any depth | 1 per target type      |
+  | A facet key                                 | 1                      |
+  | A range facet’s `all` extent                | 1 more                 |
+  | Each part of a `‹Type›‹Field›Facet` object  | 1                      |
+  | A `query` on a reference facet              | 1 more per target type |
+  | A plain stored field or an inline reference | 0, at any depth        |
 
   In a field’s facet object every part selected is charged on its own –
   `buckets`, `totalValues`, `exists`, a range facet’s `all`, `matching` and
@@ -341,6 +342,20 @@ role: { in: ["etser"] } } }` asks for _this person in this role_, where the
   buckets came back, so a client can show “10 of 195” and knows whether a
   larger `limit` would bring more; it may be an estimate on large result
   sets, and is `null` when the engine does not report it;
+
+  A facet whose values are text someone can type – a plain value facet, or a
+  reference facet with a label source – also takes a `query` argument, which
+  searches its values: `creator(query: "rem", limit: 10)` returns the
+  creators matching “rem”, counted over the current results, highest count
+  first and capped at `limit`. A reference facet matches its referents by
+  their own type’s free-text search, so a label or alternate name finds them.
+  Under a query, `totalValues` is the number of matching values, and `null`
+  when the engine cannot tell. A selected value that does not match is left
+  out – the one exception to a facet reporting its selected values – so read
+  the selection from the facet without a query, which an alias can load in
+  the same request. Text shorter than three characters is no query. A reference facet without a
+  label source, and a boolean or range facet, has no `query` argument
+  ([facet queries](./search#searching-a-facet-s-values));
   - a numeric field is a [range facet](./search#range-facets) and returns an
     object rather than a list: `IntRangeFacet`, `FloatRangeFacet` or
     `DateRangeFacet`. Its `all` is the extent over the whole collection,

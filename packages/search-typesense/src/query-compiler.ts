@@ -1,6 +1,7 @@
 import type { SearchParams } from 'typesense/lib/Typesense/Documents.js';
 import { fold } from '@lde/text-normalization';
 import {
+  facetQueryText,
   type Criterion,
   type FacetRange,
   type Filter,
@@ -33,6 +34,7 @@ import {
   nestedReferenceType,
   resolvePath,
   searchableFields,
+  type FacetDeclaration,
 } from '@lde/search/adapter';
 
 /** One hop of a join path, resolved: the Root Type it reaches and the
@@ -156,8 +158,47 @@ export function buildSearchParams(
     if (maxFacetValues !== undefined) {
       params.max_facet_values = maxFacetValues;
     }
+    // A literal facet’s values are their own text, so Typesense matches them
+    // itself. A reference facet’s are IRIs nobody types: the engine finds the
+    // referents matching the query first, then counts those.
+    const facetQuery = facetQueryOf(query, searchType, options.schema);
+    if (
+      facetQuery !== undefined &&
+      facetQuery.facet.field.kind !== 'reference'
+    ) {
+      // Typesense reads a colon as the field separator, so one in the text
+      // would break the match; it separates words like a space does.
+      params.facet_query = `${facetQuery.facet.engineField}:${facetQuery.text.replaceAll(':', ' ')}`;
+    }
   }
   return params;
+}
+
+/**
+ * The facet a query searches the values of, with the text it searches them
+ * with: the first of the query’s facets carrying a
+ * {@link SearchQuery.facetQueries} entry long enough to act on
+ * (`facetQueryText`), or `undefined` when none does.
+ * Typesense takes one `facet_query` per search, and through the engine each
+ * facet query has a search of its own (`facetSearches`), so the first is the
+ * only one.
+ */
+export function facetQueryOf(
+  query: SearchQuery,
+  searchType: SearchType,
+  schema: SearchSchema | undefined,
+): { readonly facet: FacetDeclaration; readonly text: string } | undefined {
+  for (const name of query.facets) {
+    const text = facetQueryText(query.facetQueries?.[name]);
+    if (text === undefined) {
+      continue;
+    }
+    const facet = facetNamed(searchType, name, schema);
+    if (facet !== undefined) {
+      return { facet, text };
+    }
+  }
+  return undefined;
 }
 
 /**
