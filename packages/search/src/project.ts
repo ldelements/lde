@@ -151,7 +151,7 @@ export function projectDocument(
   ) as SearchDocument;
   // After every field, so a presence reads what a later derive left too; on
   // the root alone, since presence is declared only on a Root Type’s own field
-  // and on its inline references’ leaves.
+  // and on its references’ leaves.
   for (const field of searchType.fields) {
     if (field.presence === true) {
       document[physicalFields(field).exists as string] = holdsPresence(
@@ -159,7 +159,7 @@ export function projectDocument(
         field,
       );
     }
-    writeLeafPresence(document, field, schema);
+    writeLeafPresence(document, node, field, searchType, schema, context);
   }
   pruneInternalFields(document, searchType, schema);
   return document;
@@ -493,35 +493,77 @@ function holdsPresence(document: ProjectedNode, field: SearchField): boolean {
 }
 
 /**
- * Write whether any entry of an inline reference holds a value for each of
- * its {@link ReferenceStrategy.presenceLeaves presence leaves}: one boolean
- * per root document, `false` with no entries at all. Read before pruning, so
- * a leaf declaring no Role of its own still counts. Without a schema the
- * entries are not projected, so there is nothing to count – and nothing is
- * written.
+ * Write whether any referent of a reference holds a value for each of its
+ * {@link ReferenceStrategy.presenceLeaves presence leaves}: one boolean per
+ * root document, `false` with no referents at all. Without a schema there is
+ * no type to read a leaf through, so nothing is written.
+ *
+ * An inline reference’s entries are read as projected, before pruning, so a
+ * leaf declaring no Role of its own still counts. A lookup stores only ids, so
+ * its referents are read off the frame instead: each leaf is projected from
+ * the referent’s node as its target declares it – the quads the extraction
+ * read one hop from the root, after the target’s transforms
+ * (`@lde/search-pipeline`). Only a referent with an IRI counts: a blank node
+ * is no id the lookup stores. One the frame names by IRI alone holds no value.
  */
 function writeLeafPresence(
   document: ProjectedNode,
+  node: FramedNode,
   field: SearchField,
+  searchType: SearchType,
   schema: SearchSchema | undefined,
+  context: ProjectionContext,
 ): void {
   const leaves = physicalFields(field).leafExists;
-  const referenceType =
-    schema === undefined || leaves.length === 0 || !isInlineReference(field)
-      ? undefined
-      : referenceTypeNamed(schema, field.ref.typeName);
-  if (referenceType === undefined) {
+  if (schema === undefined || leaves.length === 0) {
     return;
   }
-  const stored = document[field.name];
-  const entries = (
-    stored === undefined ? [] : Array.isArray(stored) ? stored : [stored]
-  ) as ProjectedNode[];
-  for (const { leaf: name, exists } of leaves) {
-    // `searchSchema` has resolved every presence leaf against the type.
-    const leaf = fieldNamed(referenceType, name) as SearchField;
-    document[exists] = entries.some((entry) => holdsPresence(entry, leaf));
+  if (isInlineReference(field)) {
+    // Guaranteed declared: `searchSchema` resolves every inline `typeName`,
+    // and every presence leaf against it.
+    const referenceType = referenceTypeNamed(
+      schema,
+      field.ref.typeName,
+    ) as ReferenceType;
+    const stored = document[field.name];
+    const entries = (
+      stored === undefined ? [] : Array.isArray(stored) ? stored : [stored]
+    ) as ProjectedNode[];
+    for (const { leaf: name, exists } of leaves) {
+      const leaf = fieldNamed(referenceType, name) as SearchField;
+      document[exists] = entries.some((entry) => holdsPresence(entry, leaf));
+    }
+    return;
   }
+  const referents = valuesOf(node, irAlias(searchType, field)).filter(
+    (value) => isObject(value) && iriString(value) !== undefined,
+  ) as FramedNode[];
+  // `searchSchema` holds presence leaves to a lookup naming one target, and
+  // that target to declaring each leaf.
+  const [target] = referencedTargetsOf(field, schema);
+  for (const { leaf: name, exists } of leaves) {
+    const leaf = fieldNamed(target, name) as SearchField;
+    document[exists] = referents.some((referent) => {
+      const read: ProjectedNode = {};
+      applyField(
+        read,
+        referent,
+        leaf,
+        target,
+        schema,
+        context,
+        ignoreUnread,
+        true,
+      );
+      return holdsPresence(read, leaf);
+    });
+  }
+}
+
+/** A sink for a leaf read only to tell whether it holds a value: the
+ *  referent’s own document reports what it cannot read. */
+function ignoreUnread(): void {
+  // The referent’s own document reports it.
 }
 
 /** Whether a stored value is one: neither `undefined` nor `null`, nor an

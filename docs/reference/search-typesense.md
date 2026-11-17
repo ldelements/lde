@@ -139,11 +139,13 @@ value, so `exists` compiles to `${name}_exists:=true` or `:=false`, and the
 facet `‹field›.exists` counts the companion. The projection writes it on every
 document, `false` included, so the companion is not optional. A field
 declaring presence alone is internal, so the companion is all the collection
-declares for it. An inline reference’s
-[presence leaves](./search#presence-on-an-entry-s-leaf) each get a top-level
-`${reference}_${leaf}_exists` of the same kind, true when any entry holds a
-value: an `exists` welded alone to an entry compiles to it, never to a
-condition inside the nested object.
+declares for it. A reference’s presence leaves – an
+[inline entry’s](./search#presence-on-an-entry-s-leaf) or a
+[lookup’s referents’](./search#on-a-lookup-s-referents) – each get a top-level
+`${reference}_${leaf}_exists` of the same kind, true when any entry or
+referent holds a value: an `exists` welded alone to an inline reference, and a
+lookup’s `{ field, leaf, exists }`, compile to it, never to a condition inside
+the nested object.
 
 An `InPlaceRebuild` additionally refuses a type whose declared
 [dataset field](#provenance) inherits a policy: it enumerates the indexed

@@ -9,7 +9,9 @@ Accepted
 Supersedes the last consequence of
 [ADR 36](0036-facet-a-root-document-on-its-entries-leaves.md) for a Root
 Type’s own field. Extended to an inline entry’s leaf by
-[ADR 41](0041-filter-and-facet-a-root-document-on-whether-an-entrys-leaf-has-a-value.md).
+[ADR 41](0041-filter-and-facet-a-root-document-on-whether-an-entrys-leaf-has-a-value.md);
+its refusal of a facetable field lifted by
+[ADR 42](0042-count-a-referents-leaf-and-a-fields-facets-in-one-object.md).
 
 ## Context
 

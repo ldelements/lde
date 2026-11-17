@@ -154,14 +154,24 @@ describe('declaring presence leaves', () => {
     ]);
     expect(
       issues({
-        ref: {
-          strategy: 'lookup',
-          target: 'MediaObject',
-          presenceLeaves: ['thumbnailUrl'],
-        },
+        ref: { strategy: 'idOnly', presenceLeaves: ['thumbnailUrl'] },
       }),
     ).toEqual([
-      { field: 'associatedMedia', reason: 'presence-leaves-not-inline' },
+      { field: 'associatedMedia', reason: 'presence-leaves-on-id-only' },
+    ]);
+    const lookup = {
+      strategy: 'lookup',
+      target: 'Place',
+      presenceLeaves: ['latitude'],
+    };
+    expect(issues({ ref: lookup })).toEqual([]);
+    expect(
+      issues({ ref: lookup, labelSource: 'Place', joinable: true }),
+    ).toEqual([
+      { field: 'associatedMedia', reason: 'presence-leaves-with-joinable' },
+    ]);
+    expect(issues({ ref: { ...lookup, literal: 'period' } })).toEqual([
+      { field: 'associatedMedia', reason: 'presence-leaves-with-literal' },
     ]);
     expect(issues({ filterable: undefined })).toEqual([
       {
@@ -180,9 +190,7 @@ describe('declaring presence leaves', () => {
     ).toEqual([
       { field: 'associatedMedia', reason: 'presence-leaves-duplicate' },
     ]);
-    expect(issues({ facetable: true })).toEqual([
-      { field: 'associatedMedia', reason: 'presence-leaves-with-facetable' },
-    ]);
+    expect(issues({ facetable: true })).toEqual([]);
     // A leaf is resolved against the reference type, which one declaration
     // cannot see: `searchSchema` checks it.
     expect(
@@ -197,17 +205,68 @@ describe('declaring presence leaves', () => {
     expect(issues({})).toEqual([]);
   });
 
-  it('refuses a facetable reference, whose facet would collide with its leaves’ until #1090', () => {
-    expect(() =>
-      searchSchema(
-        workWith(
-          { presenceLeaves: ['thumbnailUrl'], identity: 'license' },
-          { facetable: true },
-        ),
-        mediaObject,
+  it('accepts a facetable reference, whose own facet sits beside its leaves’', () => {
+    const licence = defineSearchType({
+      name: 'Licence',
+      class: `${SCHEMA_ORG}CreativeWork`,
+      fields: [
+        {
+          name: 'label',
+          kind: 'text',
+          path: `${SCHEMA_ORG}name`,
+          locales: ['nl'],
+          output: true,
+          searchable: { weight: 1 },
+        },
+      ],
+    });
+    const licensed = defineSearchType({
+      ...mediaObject,
+      fields: [
+        ...mediaObject.fields.filter((field) => field.name !== 'license'),
+        {
+          name: 'license',
+          kind: 'reference',
+          path: `${SCHEMA_ORG}license`,
+          filterable: true,
+          ref: { strategy: 'lookup', target: 'Licence' },
+        },
+      ],
+    });
+    const facetable = {
+      ...workWith(
+        { presenceLeaves: ['thumbnailUrl'], identity: 'license' },
+        { facetable: true },
       ),
+      class: `${SCHEMA_ORG}VisualArtwork`,
+    } as SearchType;
+    const schema = searchSchema(facetable, licensed, licence);
+    expect(facetsOf(facetable, schema).map((facet) => facet.name)).toEqual([
+      'associatedMedia',
+      'associatedMedia.thumbnailUrl.exists',
+    ]);
+  });
+
+  it('refuses a leaf named like a part of the facet object', () => {
+    const named = defineSearchType({
+      name: 'MediaObject',
+      fields: [
+        { name: 'exists', kind: 'keyword', path: `${SCHEMA_ORG}exists` },
+        { name: 'buckets', kind: 'keyword', path: `${SCHEMA_ORG}buckets` },
+      ],
+    });
+    expect(() =>
+      searchSchema(workWith({ presenceLeaves: ['exists'] }), named),
     ).toThrow(
-      /declares “presenceLeaves” and is “facetable”: its facet would have to become an object.*issues\/1090/,
+      /names presence leaf “exists”: “buckets”, “totalValues” and “exists”/,
+    );
+    expect(() =>
+      searchSchema(workWith({ facetedLeaves: ['buckets'] }), {
+        ...named,
+        fields: [{ ...named.fields[1], filterable: true }],
+      } as SearchType),
+    ).toThrow(
+      /names faceted leaf “buckets”: “buckets”, “totalValues” and “exists”/,
     );
   });
 
@@ -259,7 +318,7 @@ describe('declaring presence leaves', () => {
         },
         mediaObject,
       ),
-    ).toThrow(/but is no inline reference.*issues\/1090/);
+    ).toThrow(/names no type its referents are read through/);
   });
 
   it('refuses a leaf the reference type does not declare', () => {
@@ -313,15 +372,16 @@ describe('declaring presence leaves', () => {
     ).toThrow(/presence leaf “thumbnail”, which is itself an inline reference/);
   });
 
-  it('refuses a leaf that is also faceted on, until its facet can hold both', () => {
-    expect(() =>
-      searchSchema(
-        workWith({ presenceLeaves: ['license'], facetedLeaves: ['license'] }),
-        mediaObject,
+  it('accepts a leaf counted both by value and by presence', () => {
+    const both = workWith({
+      presenceLeaves: ['license'],
+      facetedLeaves: ['license'],
+    });
+    expect(
+      facetsOf(both, searchSchema(both, mediaObject)).map(
+        (facet) => facet.name,
       ),
-    ).toThrow(
-      /presence leaf “license”, which is also one of its faceted leaves/,
-    );
+    ).toEqual(['associatedMedia.license', 'associatedMedia.license.exists']);
   });
 
   it('refuses one on a reference type, which has no documents to count', () => {
@@ -347,55 +407,13 @@ describe('declaring presence leaves', () => {
     );
   });
 
-  it('refuses two references that nest one type with different leaves', () => {
+  it('accepts two references that nest one type with different leaves, each filtered by its own input', () => {
     const collection = {
       ...workWith({}),
       name: 'Collection',
       class: `${SCHEMA_ORG}Collection`,
     } as SearchType;
-    expect(() => searchSchema(work, collection, mediaObject)).toThrow(
-      /“Work.associatedMedia” and “Collection.associatedMedia” both nest “MediaObject” but declare different “presenceLeaves” \(thumbnailUrl; none\)/,
-    );
-    expect(() => searchSchema(collection, work, mediaObject)).toThrow(
-      /declare different “presenceLeaves” \(none; thumbnailUrl\)/,
-    );
-  });
-
-  it('compares only the references that get a filter input', () => {
-    // Not filterable: no filter input, so nothing to share.
-    const unfiltered = {
-      ...workWith({}, { filterable: undefined }),
-      name: 'Collection',
-      class: `${SCHEMA_ORG}Collection`,
-    } as SearchType;
-    expect(() => searchSchema(work, unfiltered, mediaObject)).not.toThrow();
-    // On a Reference Type: its references are never filtered through.
-    const edge = defineSearchType({
-      name: 'Edge',
-      fields: [
-        {
-          name: 'media',
-          kind: 'reference',
-          path: `${SCHEMA_ORG}associatedMedia`,
-          output: true,
-          ref: { strategy: 'inline', typeName: 'MediaObject' },
-        },
-      ],
-    });
-    const withEdge = defineSearchType({
-      name: 'Agent',
-      class: `${SCHEMA_ORG}Person`,
-      fields: [
-        {
-          name: 'edge',
-          kind: 'reference',
-          path: `${SCHEMA_ORG}subjectOf`,
-          output: true,
-          ref: { strategy: 'inline', typeName: 'Edge' },
-        },
-      ],
-    });
-    expect(() => searchSchema(work, withEdge, edge, mediaObject)).not.toThrow();
+    expect(() => searchSchema(work, collection, mediaObject)).not.toThrow();
   });
 });
 

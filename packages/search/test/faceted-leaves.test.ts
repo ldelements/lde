@@ -134,7 +134,7 @@ describe('declaring the leaves a root document is faceted on', () => {
     ).toThrow(/“creator”, which stores a nested object/);
   });
 
-  it('rejects a reference that is facetable itself, whose facet shares its name', () => {
+  it('accepts a reference that is facetable itself, its facet beside its leaves’', () => {
     const person = defineSearchType({
       name: 'Person',
       class: `${SCHEMA_ORG}Person`,
@@ -174,9 +174,10 @@ describe('declaring the leaves a root document is faceted on', () => {
       ],
     } as never;
 
-    expect(() => searchSchema(withIdentity, role, person)).toThrow(
-      /is “facetable” and declares “facetedLeaves”/,
-    );
+    const schema = searchSchema(withIdentity, role, person);
+    expect(
+      facetsOf(withIdentity as SearchType, schema).map((facet) => facet.name),
+    ).toEqual(['associatedMedia', 'associatedMedia.license']);
   });
 
   it('rejects a reference that is not filterable', () => {

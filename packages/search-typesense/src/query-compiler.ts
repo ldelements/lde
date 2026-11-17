@@ -566,12 +566,19 @@ function compileLeaf(
     return UNUSABLE;
   }
   // Typesense cannot test a field for holding a value, so presence reads the
-  // boolean companion the projection writes on every root document – never
-  // inside an entry, so under a nesting prefix there is nothing to read.
+  // boolean companion the projection writes on every root document – the
+  // field’s own, or a lookup’s for one of its presence leaves – never inside
+  // an entry, so under a nesting prefix there is nothing to read.
   // `assertValidQuery` rejects both first; this is the guard for a hand-built
   // query.
   if ('exists' in criterion) {
-    const exists = physicalFields(field).exists;
+    const { leaf } = criterion;
+    const exists =
+      leaf === undefined
+        ? physicalFields(field).exists
+        : physicalFields(field).leafExists.find(
+            (companion) => companion.leaf === leaf,
+          )?.exists;
     return exists === undefined || prefix !== ''
       ? UNUSABLE
       : `${exists}:=${criterion.exists}`;

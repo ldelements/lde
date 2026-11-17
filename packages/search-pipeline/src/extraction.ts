@@ -18,6 +18,7 @@ import {
   isInlineReference,
   labelFieldOf,
   localLookupTargetsOf,
+  physicalFields,
   referencedTargetsOf,
   referenceTypeNamed,
 } from '@lde/search/adapter';
@@ -143,20 +144,27 @@ export function extractionQueryString(
 
 /**
  * The fields a reference reads off a referent of a target it does not expand
- * `local`ly: the target’s key field, where it is keyed, and – for a
- * `searchable` reference – its label field, by which the reference is searched.
+ * `local`ly: the target’s key field, where it is keyed; – for a `searchable`
+ * reference – its label field, by which the reference is searched; and each of
+ * the reference’s presence leaves, whose companions say whether any referent
+ * holds one. Each field once, though it plays several of these parts.
  */
 export function referentHopFields(
   field: SearchField,
   target: RootType,
 ): PathField[] {
-  return [
+  const hopFields = [
     keyedFieldOf(target),
     // `searchSchema` guarantees a searchable reference’s label a path.
     field.searchable === undefined
       ? undefined
       : (labelFieldOf(target) as PathField),
+    // …and a lookup’s target each presence leaf, with a path.
+    ...physicalFields(field).leafExists.map(
+      ({ leaf }) => fieldNamed(target, leaf) as PathField,
+    ),
   ].filter((hopField) => hopField !== undefined);
+  return [...new Set(hopFields)];
 }
 
 /** A per-query counter minting distinct value/referent variable names. */

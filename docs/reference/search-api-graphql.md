@@ -124,7 +124,13 @@ fails this – accepts. The endpoint path defaults to `/graphql`
   | A joined reference (`lookup`), at any depth | 1 per target type |
   | A facet key                                 | 1                 |
   | A range facet’s `all` extent                | 1 more            |
+  | Each part of a `‹Type›‹Field›Facet` object  | 1                 |
   | A plain stored field or an inline reference | 0, at any depth   |
+
+  In a field’s facet object every part selected is charged on its own –
+  `buckets`, `totalValues`, `exists`, a range facet’s `all`, `matching` and
+  `buckets`, and each part of a leaf’s – so `buckets` with `totalValues`
+  costs 2 where the same pair on a plain `IRIFacet` costs 1.
 
   A lookup fetches the referents of a whole page in one request, and the facet
   keys of a search share one request, so `perPage` does not enter the cost.
@@ -280,22 +286,41 @@ role: { in: ["etser"] } } }` asks for _this person in this role_, where the
   without the keys of fields declaring presence alone. A type declaring none
   keeps one `‹Type›Where` for both.
 
-  An inline reference’s
-  [presence leaves](./search#presence-on-an-entry-s-leaf) take `exists` in its
-  reference type’s `‹Edge›Where`, typed as a field of the root’s own is
-  (`ExistsFilter`, or `‹Filter›OrExists` for a `filterable` leaf):
-  `where: { associatedMedia: { where: { thumbnailUrl: { exists: true } } } }`.
-  Whether any entry holds a value is recorded per document, so `exists` is
-  welded to nothing else: setting it beside another key of the same
-  `‹Edge›Where` is an error naming the rewrite into two conditions. Every
-  reference nesting one reference type declares the same presence leaves, so
-  `‹Edge›Where` stays shared; through a join, where no companion is read, a
-  reference with presence leaves takes `‹Edge›JoinedFilter`, without `exists`.
+  A reference counting leaves of its referents – an inline reference’s
+  [faceted](./search#faceting-on-an-entry-s-leaf) or
+  [presence leaves](./search#presence-on-an-entry-s-leaf), a lookup’s
+  [presence leaves](./search#on-a-lookup-s-referents) – takes a filter of its
+  own, **`‹Type›‹Field›Filter`**: `@oneOf` over `in` (the ids it holds, for a
+  lookup or an inline reference naming an identity) and `where`, typed
+  **`‹Type›‹Field›Where`**. For an inline reference that `where` names the
+  entries’ filterable leaves, as the shared `‹Edge›Where` does; for both
+  kinds it names each presence leaf, taking `exists` – `ExistsFilter`, or
+  `‹Filter›OrExists` for an inline entry’s filterable leaf:
+  `where: { contentLocation: { where: { latitude: { exists: true } } } }`.
+  A lookup’s `where` names its presence leaves alone, and each key is a plain
+  criterion on the root document, ANDed like sibling keys:
+  `{ latitude: { exists: true }, longitude: { exists: true } }` is two
+  conditions, each on whether any referent holds that leaf; inside an `or`
+  alternative it sets one key, as a joined condition does. In an inline
+  reference’s `where`, whether any entry holds a value is recorded per
+  document, so `exists` is welded to nothing else: setting it beside another
+  key of the same `where` is an error naming the rewrite into two conditions.
+  Through a join, where no companion is read, an inline reference with
+  presence leaves takes `‹Type›‹Field›JoinedFilter`, without `exists`, and a
+  lookup its plain `‹Target›Filter`.
+
+  **Adding leaves changes the reference’s filter type.** A reference that
+  gains faceted or presence leaves moves from the shared `‹Edge›Filter` or
+  `‹Target›Filter` to its own `‹Type›‹Field›Filter`, so a client’s variables
+  typed with the old name stop validating – a breaking change to the API,
+  even where the reference’s `in` arm is unchanged. Like `‹Filter›OrExists`,
+  the per-reference filter is a type of its own, so the refined discovery
+  strategy does not reach it.
 
 - **`orderBy`**: `RELEVANCE` plus every `sortable` field, as an enum – field
   names SCREAMING_SNAKE_CASEd (`datePosted` → `DATE_POSTED`); `direction`
   defaults to `DESC`.
-- **Facets**: a keyed object with one field per `facetable` field, typed by
+- **Facets**: a keyed object with one key per field anything is counted on, typed by
   the field’s declaration:
   - a **reference** facet returns an `IRIFacet!` – `buckets: [IRIBucket!]!`,
     each a `value` (an `IRI`) + `count` + the resolved data `label`, and
@@ -348,18 +373,33 @@ role: { in: ["etser"] } } }` asks for _this person in this role_, where the
     the engine counted documents for it, so a uniform result set yields one
     bucket, not two.
 
-  An inline reference’s [faceted leaves](./search#faceting-on-an-entry-s-leaf)
-  are served one level down, under the reference: `facets { associatedMedia {
-license { buckets { value count } } } }`, typed `‹Type›‹Reference›Facets`. A presence
-  facet is served the same way, under the field it counts: `facets {
-dateCreated { exists { value count } } }`, typed `‹Type›‹Field›Facets`
-  (`WorkDateCreatedFacets`) with `exists: [BooleanBucket!]!`. The object
-  leaves room for a field’s value buckets beside it, once a field may be both
-  `facetable` and declare presence. A presence leaf’s facet sits under the
-  reference, one level further down: `facets { associatedMedia { thumbnailUrl {
-exists { value count } } } }`, typed `‹Type›‹Reference›‹Leaf›Facets`
-  (`WorkAssociatedMediaThumbnailUrlFacets`), beside the reference’s faceted
-  leaves.
+  **One object per field.** A field counting more than its own values –
+  its presence, or a leaf of its referents – is served as an object of its
+  own, **`‹Type›‹Field›Facet`**, holding everything counted on it:
+
+  ```graphql
+  facets {
+    material(limit: 20) { buckets { value count } totalValues }
+    dateCreated { exists { value count } }
+    contentLocation(limit: 20) {
+      buckets { value count }
+      totalValues
+      latitude { exists { value count } }
+    }
+    associatedMedia { license(limit: 5) { buckets { value count } } }
+  }
+  ```
+
+  Its own values are `buckets` and `totalValues` (a numeric field’s `all`,
+  `matching` and `buckets` instead), capped by the field’s `limit`, which caps
+  nothing else; `exists` counts its presence. Each leaf is a key of its own: a
+  leaf counted only by value keeps its plain facet type (`license(limit):
+IRIFacet!`), and a leaf whose presence is counted is an object again,
+  **`‹Type›‹Field›‹Leaf›Facet`** (`WorkContentLocationLatitudeFacet`), with
+  `exists` and – when it is faceted by value too – its `buckets`,
+  `totalValues` and `limit`. A field counting only its own values keeps
+  `IRIFacet`, `ValueFacet`, its range facet type or `[BooleanBucket!]!`. A
+  name a declaration took already is refused with a clear error.
 
   Selecting facet fields IS
   the request, and the whole selection is **batched per request**: one

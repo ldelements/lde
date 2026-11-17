@@ -165,9 +165,9 @@ describe('a field faceted on whether it has a value', () => {
   it('serves the facet under the field it counts', () => {
     const printed = printSchema(gqlSchema);
 
-    expect(printed).toMatch(/dateCreated: WorkDateCreatedFacets!/);
+    expect(printed).toMatch(/dateCreated: WorkDateCreatedFacet!/);
     expect(printed).toMatch(
-      /type WorkDateCreatedFacets \{[^}]*exists: \[BooleanBucket!\]!\s*\}/,
+      /type WorkDateCreatedFacet \{[^}]*exists: \[BooleanBucket!\]!\s*\}/,
     );
   });
 

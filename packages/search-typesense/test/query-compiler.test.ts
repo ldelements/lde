@@ -943,6 +943,26 @@ describe('`exists` welded to an inline entry', () => {
       ]),
     ).toBe('id:=[]');
     expect(filterBy([{ field: 'format', exists: true }])).toBe('id:=[]');
+    // Nor a reference the type does not declare.
+    expect(
+      buildSearchParams(
+        {
+          ...base,
+          where: [
+            {
+              or: [
+                {
+                  field: 'nope',
+                  entry: [{ field: 'thumbnailUrl', exists: true }],
+                },
+              ],
+            },
+          ],
+        },
+        work,
+        { schema: mediaSchema },
+      ).filter_by,
+    ).toBe('id:=[]');
   });
 
   it('compiles to a term matching nothing under a nesting, where no boolean is written', () => {
@@ -998,6 +1018,61 @@ describe('`exists` welded to an inline entry', () => {
         root,
         { schema: nestedSchema },
       ).filter_by,
+    ).toBe('id:=[]');
+  });
+});
+
+describe('`exists` on a lookup’s leaf', () => {
+  const place: SearchType = {
+    name: 'Place',
+    class: 'https://schema.org/Place',
+    fields: [
+      {
+        name: 'label',
+        kind: 'text',
+        path: 'https://schema.org/name',
+        locales: ['nl'],
+        output: true,
+        searchable: { weight: 1 },
+      },
+      { name: 'latitude', kind: 'number', path: 'https://schema.org/latitude' },
+    ],
+  };
+  const work: SearchType = {
+    name: 'Work',
+    class: 'https://schema.org/CreativeWork',
+    fields: [
+      {
+        name: 'contentLocation',
+        kind: 'reference',
+        filterable: true,
+        ref: {
+          strategy: 'lookup',
+          target: 'Place',
+          presenceLeaves: ['latitude'],
+        },
+      },
+    ],
+  };
+  const placeSchema = searchSchema(work, place);
+  const filterBy = (criterion: Record<string, unknown>) =>
+    buildSearchParams(
+      { ...base, where: [{ or: [criterion] } as never] },
+      work,
+      { schema: placeSchema },
+    ).filter_by;
+
+  it('reads the root document’s boolean, a plain criterion', () => {
+    expect(
+      filterBy({ field: 'contentLocation', leaf: 'latitude', exists: true }),
+    ).toBe('contentLocation_latitude_exists:=true');
+  });
+
+  it('compiles to a term matching nothing on a leaf named no presence', () => {
+    // `assertValidQuery` rejects it first; this is the guard for a direct
+    // caller.
+    expect(
+      filterBy({ field: 'contentLocation', leaf: 'label', exists: true }),
     ).toBe('id:=[]');
   });
 });

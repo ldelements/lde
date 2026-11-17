@@ -1,4 +1,5 @@
-import type { Quad, Term } from '@rdfjs/types';
+import type { NamedNode, Quad, Term } from '@rdfjs/types';
+import { DataFactory } from 'n3';
 import { Distribution, type Dataset } from '@lde/dataset';
 import {
   SparqlConstructReader,
@@ -23,6 +24,7 @@ import {
 import {
   endpointFieldOf,
   irAlias,
+  physicalFields,
   isInlineReference,
   referencedTargetsOf,
   referenceTypeNamed,
@@ -397,10 +399,13 @@ export function registrySource(
 export const defaultBatchSize = { endpoint: 10, imported: 100 } as const;
 
 /**
- * A transform passing each referent of the type’s `searchable` references,
- * its inline referents’ included, through its target type’s transforms: the
+ * A transform passing each referent of the type’s `searchable` references –
+ * its inline referents’ included – and of its lookups declaring presence
+ * leaves, through its target type’s transforms: the
  * quads the extraction read off the referent ({@link referentHopFields}) go
  * in, and what the target’s transforms make of them comes back in their place.
+ * A lookup’s referent named by IRI alone is seeded for its presence leaves,
+ * through the type’s own transforms too where the lookup names its own type.
  * `undefined` where no such reference names a target with transforms.
  *
  * The batch is buffered to find the referents, so memory stays bounded by the
@@ -414,33 +419,41 @@ function referentTransforms(
     readonly QuadTransform<ReaderContext>[]
   >,
 ): QuadTransform<ReaderContext> | undefined {
-  // Per target with transforms: the reference fields naming it, and the
-  // aliases its referents carry. A target’s aliases are its own, so no quad
-  // belongs to two targets.
+  // Per target with transforms other than the type itself: the reference
+  // fields naming it, and the aliases its referents carry. A target’s aliases
+  // are its own, so no quad belongs to two targets.
   const routes = new Map<
     RootType,
     { fields: Set<string>; aliases: Set<string> }
   >();
-  for (const { alias, field } of searchedReferences(searchType, schema)) {
+  // Per reference counting presence leaves: the one target (`searchSchema`
+  // refuses several) its referents named by IRI alone are seeded through.
+  const countedTargetByField = new Map<string, RootType>();
+  for (const { alias, field } of describedReferences(searchType, schema)) {
     for (const target of referencedTargetsOf(field, schema)) {
-      // A reference to its own type: the type’s transform saw the batch.
-      if (
-        target !== searchType &&
-        transformsByClass.get(target.class) !== undefined
-      ) {
-        const route = routes.get(target) ?? {
-          fields: new Set<string>(),
-          aliases: new Set<string>(),
-        };
-        route.fields.add(alias);
-        for (const hopField of referentHopFields(field, target)) {
-          route.aliases.add(irAlias(target, hopField));
-        }
-        routes.set(target, route);
+      if (transformsByClass.get(target.class) === undefined) {
+        continue;
       }
+      if (physicalFields(field).leafExists.length > 0) {
+        countedTargetByField.set(alias, target);
+      }
+      // A reference to its own type: the type’s transform saw the batch, its
+      // referents’ quads included.
+      if (target === searchType) {
+        continue;
+      }
+      const route = routes.get(target) ?? {
+        fields: new Set<string>(),
+        aliases: new Set<string>(),
+      };
+      route.fields.add(alias);
+      for (const hopField of referentHopFields(field, target)) {
+        route.aliases.add(irAlias(target, hopField));
+      }
+      routes.set(target, route);
     }
   }
-  if (routes.size === 0) {
+  if (routes.size === 0 && countedTargetByField.size === 0) {
     return undefined;
   }
   const targetsByField = new Map<string, RootType[]>();
@@ -455,15 +468,26 @@ function referentTransforms(
   }
   return async function* referentTransforms(quads, context) {
     const batch: Quad[] = [];
+    // Every node the batch states anything of.
+    const subjects = new Set<string>();
     // Each target’s referents in this batch: the objects of the references
-    // naming it.
+    // naming it – and, by IRI, the ones a presence leaf is counted for.
     const referents = new Map<RootType, Set<string>>();
+    const counted = new Map<RootType, Map<string, NamedNode>>();
     for await (const quad of quads) {
       batch.push(quad);
+      subjects.add(termKey(quad.subject));
       for (const target of targetsByField.get(quad.predicate.value) ?? []) {
         const keys = referents.get(target) ?? new Set<string>();
         keys.add(termKey(quad.object));
         referents.set(target, keys);
+      }
+      const countedTarget = countedTargetByField.get(quad.predicate.value);
+      if (countedTarget !== undefined && quad.object.termType === 'NamedNode') {
+        const nodes =
+          counted.get(countedTarget) ?? new Map<string, NamedNode>();
+        nodes.set(termKey(quad.object), quad.object);
+        counted.set(countedTarget, nodes);
       }
     }
     // One pass sorting each quad into its target’s input, or keeping it.
@@ -481,24 +505,68 @@ function referentTransforms(
         yield quad;
       }
     }
+    // A referent a presence leaf is counted for, and that its target’s
+    // transforms would see nothing of, enters them as `<referent> rdf:type
+    // <class>`: a transform describing a node from its key then sees it. A
+    // referent of another target is described by its input; one of the type’s
+    // own by anything the batch states of it, which the type’s transforms
+    // have already seen. The seed itself is not kept.
+    const seeds = new Map<RootType, Set<string>>();
+    for (const [target, nodes] of counted) {
+      const input = inputs.get(target) ?? [];
+      const described =
+        target === searchType
+          ? subjects
+          : new Set(input.map((quad) => termKey(quad.subject)));
+      const seeded = new Set<string>();
+      for (const [key, node] of nodes) {
+        if (!described.has(key)) {
+          input.push(
+            factory.quad(node, RDF_TYPE, factory.namedNode(target.class)),
+          );
+          seeded.add(key);
+        }
+      }
+      seeds.set(target, seeded);
+      inputs.set(target, input);
+    }
     for (const [target, input] of inputs) {
+      if (input.length === 0) {
+        continue;
+      }
       let stream: AsyncIterable<Quad> = streamOf(input);
       for (const transform of transformsByClass.get(
         target.class,
       ) as readonly QuadTransform<ReaderContext>[]) {
         stream = transform(stream, context);
       }
-      yield* stream;
+      const seeded = seeds.get(target);
+      for await (const quad of stream) {
+        if (
+          seeded?.has(termKey(quad.subject)) &&
+          quad.predicate.equals(RDF_TYPE) &&
+          quad.object.value === target.class
+        ) {
+          continue;
+        }
+        yield quad;
+      }
     }
   };
 }
 
-/** The type’s `searchable` reference fields, each with the IR Alias whose
+const factory = DataFactory;
+const RDF_TYPE = factory.namedNode(
+  'http://www.w3.org/1999/02/22-rdf-syntax-ns#type',
+);
+
+/** The type’s reference fields whose referents are described – `searchable`
+ *  ones, and lookups declaring presence leaves – each with the IR Alias whose
  *  objects are its referents: its own, and those of the inline referents it
  *  nests. A graph that leaves an edge out points at the endpoint through the
  *  inline field itself, so an endpoint field is reached through both.
  *  `searchSchema` refuses an inline cycle, so the descent ends. */
-function searchedReferences(
+function describedReferences(
   owner: SearchType,
   schema: SearchSchema,
 ): { alias: string; field: SearchField }[] {
@@ -511,13 +579,17 @@ function searchedReferences(
       ) as ReferenceType;
       const endpointField = endpointFieldOf(referenceType, field.ref.identity);
       return [
-        ...searchedReferences(referenceType, schema),
+        ...describedReferences(referenceType, schema),
         ...(endpointField?.searchable === undefined
           ? []
           : [{ alias: irAlias(owner, field), field: endpointField }]),
       ];
     }
-    return field.kind === 'reference' && field.searchable !== undefined
+    // A reference’s referents are described when it is searched by their
+    // labels, or counted for a presence leaf.
+    return field.kind === 'reference' &&
+      (field.searchable !== undefined ||
+        physicalFields(field).leafExists.length > 0)
       ? [{ alias: irAlias(owner, field), field }]
       : [];
   });

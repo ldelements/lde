@@ -7,7 +7,9 @@ Date: 2026-11-16
 Accepted
 
 Extends [ADR 40](0040-filter-and-facet-a-field-on-whether-it-has-a-value.md)
-to a leaf of an inline reference.
+to a leaf of an inline reference. Extended to a lookup’s referents, and its
+refusals for the facet shape lifted, by
+[ADR 42](0042-count-a-referents-leaf-and-a-fields-facets-in-one-object.md).
 
 ## Context
 
