@@ -21,15 +21,15 @@ const parent = new Stage({
 });
 ```
 
-## Keep a stage’s output out of the result
+## Write only the last stage’s output
 
-By default the output of every stage in the chain ends up in the pipeline’s output. If a stage’s output is only input for the next stage, set `emitOutput: false` on it:
+By default the output of every stage in the chain ends up in the pipeline’s output. If the earlier stages only produce input for the next stage, set `chainOutput: 'last'` on the parent stage to keep only the last chained stage’s output:
 
 ```typescript
 const parent = new Stage({
   name: 'extract',
   readers: await SparqlConstructReader.fromFile('extract.rq'),
-  emitOutput: false, // only 'aggregate' reads this
+  chainOutput: 'last', // only 'aggregate' reaches the writers
   stages: [
     new Stage({
       name: 'aggregate',
@@ -38,8 +38,6 @@ const parent = new Stage({
   ],
 });
 ```
-
-The last stage in a chain must emit its output, because no stage reads it.
 
 ## Implement a stage output resolver
 
@@ -90,7 +88,7 @@ For each dataset:
 
 1. The parent stage runs against the dataset’s resolved distribution and writes N-Triples to a scratch file under `<outputDir>/<stage name>/`.
 2. `resolve()` turns that file into a `Distribution`; the first sub-stage runs against it, writing its own scratch file. Each further sub-stage chains off the previous one’s output the same way.
-3. The scratch files of the chain’s stages that emit output are concatenated and written to the pipeline’s [writers](../reference/pipeline#writer) under the parent stage’s name.
+3. The scratch files the parent’s `chainOutput` selects – all of them by default, or only the last stage’s – are concatenated and written to the pipeline’s [writers](../reference/pipeline#writer) under the parent stage’s name.
 4. `cleanup()` runs when the chain finishes, on success and on failure.
 
 Two constraints apply:

@@ -1122,11 +1122,11 @@ describe('Pipeline', () => {
       expect(stageOutputResolver.cleanup).toHaveBeenCalledTimes(1);
     });
 
-    describe('emitOutput', () => {
+    describe('chainOutput', () => {
       /** A stage whose run writes one quad with subject `http://<name>`. */
       function writingStage(
         name: string,
-        options: { emitOutput?: boolean; stages?: Stage[] } = {},
+        options: { chainOutput?: 'all' | 'last'; stages?: Stage[] } = {},
       ): Stage {
         const stage = new Stage({ name, readers: [], ...options });
         vi.spyOn(stage, 'run').mockImplementation(
@@ -1184,45 +1184,18 @@ describe('Pipeline', () => {
         ]);
       });
 
-      it('leaves a parent that does not emit output out of the writers, while its child still runs', async () => {
-        const child = writingStage('child');
-        const parent = writingStage('parent', {
-          emitOutput: false,
-          stages: [child],
-        });
-
-        expect(await writtenSubjects(parent)).toEqual(['http://child']);
-        expect(child.run).toHaveBeenCalledTimes(1);
-      });
-
-      it('leaves a middle child that does not emit output out of the writers, while the next child still chains off it', async () => {
-        const middle = writingStage('middle', { emitOutput: false });
+      it('writes only the last chained stage’s output when set to last, while every stage still runs', async () => {
+        const middle = writingStage('middle');
         const last = writingStage('last');
-        const parent = writingStage('parent', { stages: [middle, last] });
-
-        expect(await writtenSubjects(parent)).toEqual([
-          'http://parent',
-          'http://last',
-        ]);
-        expect(last.run).toHaveBeenCalledTimes(1);
-      });
-
-      it('rejects a top-level stage without sub-stages that does not emit output', () => {
-        const stage = new Stage({
-          name: 'lonely',
-          readers: [],
-          emitOutput: false,
+        const parent = writingStage('parent', {
+          chainOutput: 'last',
+          stages: [middle, last],
         });
 
-        expect(
-          () =>
-            new Pipeline({
-              datasetSelector: makeDatasetSelector(dataset),
-              stages: [stage],
-              writers: writer,
-              distributionResolver: makeResolver(makeResolvedDistribution()),
-            }),
-        ).toThrow(/Stage 'lonely' sets 'emitOutput: false'/);
+        expect(await writtenSubjects(parent)).toEqual(['http://last']);
+        expect(parent.run).toHaveBeenCalledTimes(1);
+        expect(middle.run).toHaveBeenCalledTimes(1);
+        expect(last.run).toHaveBeenCalledTimes(1);
       });
     });
 

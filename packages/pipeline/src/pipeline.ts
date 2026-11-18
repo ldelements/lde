@@ -440,16 +440,6 @@ export class Pipeline<Out = Quad> {
     if (hasSubStages && !options.chaining) {
       throw new Error('chaining is required when any stage has sub-stages');
     }
-    // No stage reads a non-chained stage's output. Checked here because a
-    // stage cannot tell whether it is top-level or a chained child.
-    const silentStage = options.stages.find(
-      (stage) => !stage.emitOutput && stage.stages.length === 0,
-    );
-    if (silentStage) {
-      throw new Error(
-        `Stage '${silentStage.name}' sets 'emitOutput: false' but has no chained 'stages' – no stage reads its output, so it would be discarded.`,
-      );
-    }
 
     if (options.provenanceStore && options.pipelineVersion === undefined) {
       throw new Error(
@@ -1186,8 +1176,8 @@ export class Pipeline<Out = Quad> {
     timeout?: TimeoutPolicy,
   ): Promise<void> {
     const { stageOutputResolver, outputDir } = this.chaining!;
-    // Scratch files of the stages that emit output: every stage writes one for
-    // the next stage to read, but only these reach the writers.
+    // Scratch files of every stage in the chain, in order; `chainOutput`
+    // decides which of them reach the writers.
     const outputFiles: string[] = [];
 
     // Chaining is a quad-only concern: every stage in a chain writes N-Triples
@@ -1229,27 +1219,30 @@ export class Pipeline<Out = Quad> {
         stage as unknown as Stage<Quad>,
         distribution,
       );
-      if (stage.emitOutput) outputFiles.push(parentOutput);
+      outputFiles.push(parentOutput);
 
       // 2. Chain through children.
       let currentDistribution = await stageOutputResolver.resolve(parentOutput);
       for (let i = 0; i < stage.stages.length; i++) {
         const child = stage.stages[i];
         const childOutput = await runScratchStage(child, currentDistribution);
-        if (child.emitOutput) outputFiles.push(childOutput);
+        outputFiles.push(childOutput);
 
         if (i < stage.stages.length - 1) {
           currentDistribution = await stageOutputResolver.resolve(childOutput);
         }
       }
 
-      // 3. Concatenate the emitted output files → the open run, applying the plugins'
-      // beforeStageWrite transforms once for the chain under the parent stage.
-      // The concatenation is quads (per the quad-only contract above), written
-      // to the `Out`-typed run writer – sound because chaining implies `Quad`.
+      // 3. Concatenate the output files `chainOutput` selects → the open run,
+      // applying the plugins' beforeStageWrite transforms once for the chain
+      // under the parent stage. The concatenation is quads (per the quad-only
+      // contract above), written to the `Out`-typed run writer – sound because
+      // chaining implies `Quad`.
+      const emitted =
+        stage.chainOutput === 'last' ? outputFiles.slice(-1) : outputFiles;
       await this.stageWriter(runWriter, stage.name).write(
         dataset,
-        this.readFiles(outputFiles) as unknown as AsyncIterable<Out>,
+        this.readFiles(emitted) as unknown as AsyncIterable<Out>,
       );
     } finally {
       await stageOutputResolver.cleanup();
