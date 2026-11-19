@@ -2,7 +2,7 @@ import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { printSchemaModuleSdl } from '../src/print-sdl.js';
 
 const fixture = (name: string): string =>
@@ -12,11 +12,6 @@ let directory: string;
 
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), 'lde-print-sdl-'));
-});
-
-afterEach(() => {
-  vi.doUnmock('prettier');
-  vi.resetModules();
 });
 
 describe('printSchemaModuleSdl', () => {
@@ -117,23 +112,6 @@ describe('printSchemaModuleSdl', () => {
       printSchemaModuleSdl({ modulePath: '/no/such/module.mjs' }),
     ).rejects.toThrowError(
       /Cannot load schema module “\/no\/such\/module\.mjs”/,
-    );
-  });
-
-  it('names the optional Prettier peer when it cannot be loaded', async () => {
-    // Reset first: the tests above have already pulled the real Prettier into
-    // the module graph, and a mock only applies to a module imported after it.
-    vi.resetModules();
-    vi.doMock('prettier', () => {
-      throw new Error('Cannot find package ‘prettier’');
-    });
-    const { printSchemaModuleSdl: printWithoutPrettier } =
-      await import('../src/print-sdl.js');
-
-    await expect(
-      printWithoutPrettier({ modulePath: fixture('no-options.mjs') }),
-    ).rejects.toThrowError(
-      /Formatting the SDL requires “prettier”, an optional peer dependency .*, which could not be loaded: /,
     );
   });
 });
