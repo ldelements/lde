@@ -257,16 +257,17 @@ general drift detection is a separate feature.
   up never resolved – not delayed, never – with the documents themselves all
   present. Which edge loses varies per run.
 
-  The consequence is that a **single** indexing run does not yet guarantee
-  resolved joins for a component built from scratch. A subsequent run does: it
-  meets referents that already exist, so every reference resolves at write time.
-  A steady-state deployment (daily runs over a mostly-stable corpus) is
-  therefore fine; a first build should be run twice. `async_reference` is still
-  strictly right – without it those documents would be rejected outright and,
-  under `throwOnFail: false`, dropped in silence.
+  ~~The consequence is that a **single** indexing run does not yet guarantee
+  resolved joins for a component built from scratch; a first build should be
+  run twice.~~ Amended by
+  [ADR 39](./0039-serialise-imports-across-a-join-components-collections.md):
+  the writers no longer import into two collections of a component at once, so
+  one run resolves every join, blue/green included. `async_reference` is still
+  strictly right – without it a referrer imported before its referent would be
+  rejected outright and, under `throwOnFail: false`, dropped in silence.
 
   Not ours to fix, and worth re-testing on every engine upgrade: when it is
-  fixed, the second run and this note both go.
+  fixed, the import lock and this note both go.
 
 - **Only one edge per (type, target type) can be joinable.** Other edges keep
   their labels, facets and id filtering; they just do not gain cross-collection

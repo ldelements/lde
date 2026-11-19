@@ -15,6 +15,7 @@ import {
   missingRequiredFields,
   physicalFields,
 } from '@lde/search/adapter';
+import { importLockFor, type ImportLock } from './import-lock.js';
 import { escapeFilterValue } from './query-compiler.js';
 
 /** The private field carrying the dataset IRI a document came from, in a
@@ -354,6 +355,7 @@ function ownedDocuments<TDocument extends { id: string }>(
   options: RunDocumentsOptions,
 ): RunDocuments<TDocument> {
   const { searchType, runId, batchSize } = options;
+  const importLock = importLockFor(searchType, options.schema);
   const field = provenanceFieldOf(searchType);
   const buffer = new Batch<Record<string, unknown>>(batchSize);
   const writes = new WriteTally();
@@ -366,7 +368,7 @@ function ownedDocuments<TDocument extends { id: string }>(
     if (batch.length === 0) {
       return;
     }
-    const errors = await upsertDocuments(client, collection, batch);
+    const errors = await upsertDocuments(client, collection, batch, importLock);
     errors.forEach((error, index) => {
       if (error !== undefined) {
         const document = batch[index];
@@ -449,6 +451,7 @@ function sharedDocuments<TDocument extends { id: string }>(
   options: RunDocumentsOptions,
 ): RunDocuments<TDocument> {
   const { searchType, batchSize } = options;
+  const importLock = importLockFor(searchType, options.schema);
   const writes = new WriteTally();
   const run = Date.parse(options.startedAt);
   const facet = `${REFERENCED_BY_FIELD}.dataset`;
@@ -508,6 +511,7 @@ function sharedDocuments<TDocument extends { id: string }>(
           ...datasets.map((dataset) => ({ dataset, run })),
         ],
       })),
+      importLock,
     );
     // A refused document is refused for every write merged into it.
     errors.forEach((error, index) => {
@@ -569,7 +573,7 @@ function sharedDocuments<TDocument extends { id: string }>(
         );
       }
       if (keeping.length > 0) {
-        await updateDocuments(client, collection, keeping);
+        await updateDocuments(client, collection, keeping, importLock);
       }
       for (const chunk of chunked(emptied.map(escapeFilterValue))) {
         await deleteByFilter(client, collection, `id:=[${chunk.join(',')}]`);
@@ -866,8 +870,11 @@ async function upsertDocuments(
   client: Client,
   collection: string,
   batch: readonly Record<string, unknown>[],
+  importLock: ImportLock,
 ): Promise<readonly (string | undefined)[]> {
-  const results = await importBatch(client, collection, batch, 'upsert');
+  const results = await importLock(() =>
+    importBatch(client, collection, batch, 'upsert'),
+  );
   const failed = results.find(
     (result) => !result.success && !(result.code >= 400 && result.code < 500),
   );
@@ -888,8 +895,11 @@ async function updateDocuments(
   client: Client,
   collection: string,
   batch: readonly Record<string, unknown>[],
+  importLock: ImportLock,
 ): Promise<void> {
-  const results = await importBatch(client, collection, batch, 'update');
+  const results = await importLock(() =>
+    importBatch(client, collection, batch, 'update'),
+  );
   const failures = results.flatMap((result) =>
     result.success ? [] : [result.error],
   );
