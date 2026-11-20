@@ -1,3 +1,9 @@
+## 0.51.1 (2026-11-20)
+
+### 🚀 Features
+
+- **pipeline:** add chainOutput option to write only a chain’s last stage ([#1057](https://github.com/ldelements/lde/pull/1057))
+
 ## 0.51.0 (2026-11-16)
 
 ### 🩹 Fixes
