@@ -460,7 +460,7 @@ export function describeSearchEngineContract(
       }
     });
 
-    it('under a facet query, finds a value by its text and reports only values the facet holds, by count, capped at the limit', async () => {
+    it('under a facet query, reports only values the facet holds, by count, capped at the limit – a literal one found by its text', async () => {
       // The text a person would type for a bucket: a literal value’s own text,
       // a reference’s label.
       const textOf = (
@@ -515,9 +515,14 @@ export function describeSearchEngineContract(
             throw new Error(`Expected facets for a query on ${facet.name}.`);
           }
           const queried = outcome.facets[facet.name]?.buckets ?? [];
-          expect(queried).toContainEqual(
-            expect.objectContaining({ value: top.value, count: top.count }),
-          );
+          // A literal value is its own text. A reference is matched on the
+          // labels its documents state, which may differ from the label it is
+          // shown with, so only what does match is checked below.
+          if (facet.field.kind !== 'reference') {
+            expect(queried).toContainEqual(
+              expect.objectContaining({ value: top.value, count: top.count }),
+            );
+          }
           expect(queried.length).toBeLessThanOrEqual(limit);
           const counts = queried.map((bucket) => bucket.count);
           expect(counts).toEqual(

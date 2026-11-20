@@ -702,6 +702,26 @@ describe('faceting a local lookup over several targets', () => {
     ]);
   });
 
+  it('pairs a key with the labels of every node naming it, whichever states one', () => {
+    const unnamed = {
+      '@id': 'https://unnamed.example/rembrandt',
+      '@type': `${SCHEMA_ORG}Person`,
+      [alias('Person', 'sameAs')]: [{ '@id': RKD }],
+    };
+    const withUnnamedFirst = projectDocument(
+      {
+        '@id': 'https://ex/work/4',
+        [alias('DirectWork', 'creator')]: [unnamed, rembrandt],
+      },
+      directWork,
+      directSchema,
+    );
+
+    expect(withUnnamedFirst.creator_id_match).toEqual([
+      `Rembrandt \u001f0q0x0z0${RKD}`,
+    ]);
+  });
+
   it('pairs each admitted endpoint’s label with its key, for a facet searched by label', () => {
     expect(physicalFields(creator, directSchema).match).toBe(
       'creator_id_match',

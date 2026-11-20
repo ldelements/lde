@@ -2080,7 +2080,7 @@ export function buildGraphQLSchema(
           type: GraphQLString,
           description:
             facet.field.kind === 'reference'
-              ? 'Only the values whose referent matches this text – by its label, alternate names or whatever else a search of its type matches – counted as without it and capped at `limit`. A selected value that does not match is left out. Text shorter than 3 characters is no query.'
+              ? 'Only the values whose referent matches this text – by the label each document states for it – counted as without it and capped at `limit`. A selected value that does not match is left out. Text shorter than 3 characters is no query.'
               : 'Only the values matching this text, counted as without it and capped at `limit`. A selected value that does not match is left out. Text shorter than 3 characters is no query.',
         },
       }),

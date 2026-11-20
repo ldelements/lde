@@ -326,7 +326,8 @@ works, 50 counts took 13 ms against 10 ms for one facet search.
 
 Each companion value is built so `facet_query` matches its labels and nothing
 else. Punctuation in a label becomes a space, so “sphinx” matches
-“Regout/Sphinx)”. The id follows a separator and a guard – digits alternating
+“Regout/Sphinx)”, and the query’s text is split the same way, so “regout/sphinx”
+typed as the label shows matches too. The id follows a separator and a guard – digits alternating
 with letters – which make it one word no query starts with or comes within a
 typo of, so “https” or a path segment does not match every value. The collection declares no
 `token_separators` on the companion, as they would split the id into words.

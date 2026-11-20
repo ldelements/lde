@@ -1586,14 +1586,16 @@ function applyLocalIdentity(
   // the narrowed facet: the companion counts root documents.
   if (names.match !== undefined && !nested) {
     const labelsById = new Map<string, string[]>();
+    // Every endpoint keyed to an id adds its labels: two nodes for one
+    // referent may each state some, or one none.
     for (const endpoint of stored) {
-      if (typeof endpoint.id !== 'string' || labelsById.has(endpoint.id)) {
+      if (typeof endpoint.id !== 'string') {
         continue;
       }
-      labelsById.set(
-        endpoint.id,
-        endpointLabels(endpoint, storedTargetOf(endpoint, targets)),
-      );
+      labelsById.set(endpoint.id, [
+        ...(labelsById.get(endpoint.id) ?? []),
+        ...endpointLabels(endpoint, storedTargetOf(endpoint, targets)),
+      ]);
     }
     const matches = labelMatches(
       admittedIds(targetById, field, targets, schema),

@@ -365,6 +365,24 @@ describe('a facet query', () => {
     expect(counts(facetOf(nearGuard, 'creator'))).toEqual([]);
   });
 
+  it('matches a label typed as it shows, punctuation included', async () => {
+    const [typed, punctuation] = await engine.searchFacets(work, [
+      {
+        ...base,
+        facets: ['creator'],
+        facetQueries: { creator: 'Regout/Sphinx' },
+      },
+      { ...base, facets: ['creator'], facetQueries: { creator: '(-)' } },
+    ]);
+
+    expect(counts(facetOf(typed, 'creator'))).toEqual([[timor, 1]]);
+    // No word to match, so no label matches.
+    expect(facetOf(punctuation, 'creator')).toEqual({
+      buckets: [],
+      totalValues: 0,
+    });
+  });
+
   it('answers a query over documents no filter leaves with an empty facet', async () => {
     const [outcome] = await engine.searchFacets(work, [
       {

@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { idOfLabelMatch, labelMatchValue } from '../src/label-match.js';
+import {
+  idOfLabelMatch,
+  labelMatchText,
+  labelMatchValue,
+} from '../src/label-match.js';
 
 const IRI = 'https://n2t.net/ark:/61567/abc';
 
@@ -32,5 +36,12 @@ describe('idOfLabelMatch', () => {
   it('reads nothing from a value it did not write', () => {
     expect(idOfLabelMatch('Boerenbont')).toBeUndefined();
     expect(idOfLabelMatch('Boerenbont \u001f0q0x0z0')).toBeUndefined();
+  });
+});
+
+describe('labelMatchText', () => {
+  it('splits typed text into words as the values store them', () => {
+    expect(labelMatchText(' Regout/Sphinx) ')).toBe('Regout Sphinx');
+    expect(labelMatchText('(-)')).toBe('');
   });
 });

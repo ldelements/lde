@@ -586,7 +586,7 @@ describe('references into a keyed type', () => {
     const countingWork = defineSearchType({ ...work, fields: [counting] });
     const countingSchema = searchSchema(countingWork, place);
 
-    expect(referentHopFields(counting, place, countingSchema)).toEqual([
+    expect(referentHopFields(counting, place, countingSchema, true)).toEqual([
       place.fields[1],
       place.fields[0],
     ]);

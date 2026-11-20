@@ -146,22 +146,26 @@ export function extractionQueryString(
 /**
  * The fields a reference reads off a referent of a target it does not expand
  * `local`ly: the target’s key field, where it is keyed; – for a `searchable`
- * reference, or one whose facet is searched by label – its label field; and
- * each of the reference’s presence leaves, whose companions say whether any
- * referent holds one. Each field once, though it plays several of these parts.
+ * reference, or a root document’s reference whose facet is searched by label
+ * – its label field; and each of the reference’s presence leaves, whose
+ * companions say whether any referent holds one. Each field once, though it
+ * plays several of these parts. `root` says whether the field is the root
+ * type’s own, the only place the label-match companion is written.
  */
 export function referentHopFields(
   field: SearchField,
   target: RootType,
   schema: SearchSchema,
+  root: boolean,
 ): PathField[] {
   const hopFields = [
     keyedFieldOf(target),
     // `searchSchema` guarantees a searchable reference’s label a path, and
     // `facetMatchesLabels` admits only labels with one.
-    field.searchable === undefined && !facetMatchesLabels(field, schema)
-      ? undefined
-      : (labelFieldOf(target) as PathField),
+    field.searchable !== undefined ||
+    (root && facetMatchesLabels(field, schema))
+      ? (labelFieldOf(target) as PathField)
+      : undefined,
     // …and a lookup’s target each presence leaf, with a path.
     ...physicalFields(field).leafExists.map(
       ({ leaf }) => fieldNamed(target, leaf) as PathField,
@@ -206,6 +210,8 @@ function buildFor(
   const template: TripleNesting[] = [];
   const branches: PatternGroup[] = [];
   const onPath = new Set(visiting).add(searchType.name);
+  // The root type’s own fields, at the top of the recursion.
+  const root = visiting.size === 0;
   for (const field of searchType.fields) {
     if (field.path === undefined) {
       continue;
@@ -242,6 +248,7 @@ function buildFor(
           schema,
           counter,
           onPath,
+          false,
         );
         template.push(...hops.template);
         nestedBranches.push(...hops.expansions);
@@ -286,7 +293,14 @@ function buildFor(
         template.push(typeHop.triple);
         expansions.push(typeHop.pattern);
       }
-      const hops = buildReferentHops(field, value, schema, counter, onPath);
+      const hops = buildReferentHops(
+        field,
+        value,
+        schema,
+        counter,
+        onPath,
+        root,
+      );
       template.push(...hops.template);
       expansions.push(...hops.expansions);
       // `OPTIONAL`, unlike an inline reference’s conjoined nesting: this
@@ -467,6 +481,7 @@ function buildReferentHops(
   schema: SearchSchema,
   counter: VariableCounter,
   onPath: ReadonlySet<string>,
+  root: boolean,
 ): { readonly template: TripleNesting[]; readonly expansions: PatternGroup[] } {
   const template: TripleNesting[] = [];
   const expansions: PatternGroup[] = [];
@@ -479,7 +494,7 @@ function buildReferentHops(
       // is one of them, so emitting the hop as well would state it twice.
       // A searchable reference is searched by its referents’ labels, so it
       // reads them off the referent beside the key.
-      for (const hopField of referentHopFields(field, target, schema)) {
+      for (const hopField of referentHopFields(field, target, schema, root)) {
         const built = buildFieldHop(target, hopField, referent, counter);
         template.push(built.triple);
         expansions.push(built.pattern);

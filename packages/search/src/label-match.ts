@@ -21,15 +21,21 @@ export function labelMatchValue(
   id: string,
 ): string | undefined {
   const words = [
-    ...new Set(
-      labels
-        .map((label) => label.replace(NOT_A_WORD, ' ').trim())
-        .filter((label) => label !== ''),
-    ),
+    ...new Set(labels.map(labelMatchText).filter((label) => label !== '')),
   ];
   return words.length === 0
     ? undefined
     : `${words.join(' ')} ${SEPARATOR}${GUARD}${id}`;
+}
+
+/**
+ * Text as a {@link labelMatchValue} stores it, punctuation turned into spaces:
+ * what a query on the companion must search with too, so “Kessel-Centrum”
+ * typed as shown matches the words it is stored as. Empty where the text has
+ * no word in it.
+ */
+export function labelMatchText(text: string): string {
+  return text.replace(NOT_A_WORD, ' ').trim();
 }
 
 /** The id a {@link labelMatchValue} pairs its labels with, or `undefined` for a

@@ -28,6 +28,7 @@ import {
   facetSearches,
   facetsOf,
   idOfLabelMatch,
+  labelMatchText,
   selectionOf,
   type FacetDeclaration,
   fieldNamed,
@@ -568,10 +569,14 @@ export function createTypesenseSearchEngine<
       // which is what names the companion.
       const match = physicalFields(facetQuery.facet.field, schema)
         .match as string;
-      return { ...facetQuery, search, match };
+      // Split into words as the companion stores its labels, so text typed
+      // as a label shows it, punctuation included, matches.
+      const text = labelMatchText(facetQuery.text);
+      return { ...facetQuery, text, search, match };
     });
     const searches = steps.flatMap((step) => {
-      if (step === undefined) {
+      // Text with no word in it matches no label, and is not sent.
+      if (step === undefined || step.text === '') {
         return [];
       }
       // The facet query is answered here; this search carries none.
@@ -604,6 +609,12 @@ export function createTypesenseSearchEngine<
       const step = steps[index];
       if (step === undefined) {
         return search;
+      }
+      if (step.text === '') {
+        return {
+          ...search,
+          candidates: { facet: step.facet, iris: new Set(), capped: false },
+        };
       }
       const result = results[next++] as
         TypesenseSearchResponse | TypesenseErrorEntry | undefined;
