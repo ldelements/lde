@@ -41,6 +41,8 @@ import {
   labelFieldOf,
   labelSourceNamesOf,
   labelTargetNamesOf,
+  facetQueryMatchOf,
+  type FacetQueryMatch,
   literalKindOf,
   localLookupTargetsOf,
   nestedReferenceType,
@@ -107,7 +109,10 @@ export interface TypesenseSearchEngineOptions<
    * How many values a query on a reference facet
    * ({@link SearchQuery.facetQueries}) may select: the most frequent values
    * of the facet’s label-match companion that match the query, whose
-   * referents are the candidates the facet then counts exactly. A referent
+   * referents are the candidates the facet then counts exactly – or, for a
+   * facet without that companion, the referents the types the reference
+   * names return for the query, this many in all, shared evenly across the
+   * types. A referent
    * matching beyond them is not counted, so a facet whose search filled this
    * cap reports no `totalValues` – it cannot tell how many match. Between 1
    * and 250; defaults to 50. Each candidate costs a count search of its own.
@@ -543,63 +548,31 @@ export function createTypesenseSearchEngine<
 
   /**
    * Step one of a query on a reference facet: each planned search whose facet
-   * query is on a reference gets the referents matching it – the values of the
-   * facet’s {@link PhysicalFields.match label-match companion} that
-   * `facet_query` matches, over the facet’s own search, so only referents the
-   * documents it counts carry: at most
-   * {@link TypesenseSearchEngineOptions.maxFacetQueryCandidates} values, the
-   * most frequent first. Every such search travels in one `multi_search`
-   * round-trip. A failed search fails exactly the planned search it was for.
+   * query is on a reference gets the referents matching it, at most
+   * {@link TypesenseSearchEngineOptions.maxFacetQueryCandidates} of them.
+   *
+   * A facet with a {@link PhysicalFields.match label-match companion} takes
+   * the companion’s values that `facet_query` matches, over the facet’s own
+   * search, so only referents the documents it counts carry, the most
+   * frequent first. Any other – a derived or `from` reference, or an inline
+   * reference’s identity, which store no labels – searches the collection of
+   * every type the reference names with that type’s own free-text search, as
+   * a search of that type for the same text would, the cap shared evenly
+   * across the types and ranked by relevance, not by count.
+   *
+   * Every such search travels in one `multi_search` round-trip. A failed
+   * search fails exactly the planned search it was for.
    */
   async function withCandidates(
     searchType: RootType,
     planned: readonly PlannedSearch[],
   ): Promise<PlannedSearch[]> {
-    const collection = collections.get(searchType.class) as string;
-    const steps = planned.map((search) => {
-      const facetQuery = facetQueryOf(search.query, searchType, schema);
-      if (
-        facetQuery === undefined ||
-        facetQuery.facet.field.kind !== 'reference' ||
-        isUnsatisfiable(search.query)
-      ) {
-        return undefined;
-      }
-      // `assertValidQuery` admitted a query only on a facet searched by label,
-      // which is what names the companion.
-      const match = physicalFields(facetQuery.facet.field, schema)
-        .match as string;
-      // Split into words as the companion stores its labels, so text typed
-      // as a label shows it, punctuation included, matches.
-      const text = labelMatchText(facetQuery.text);
-      return { ...facetQuery, text, search, match };
-    });
-    const searches = steps.flatMap((step) => {
-      // Text with no word in it matches no label, and is not sent.
-      if (step === undefined || step.text === '') {
-        return [];
-      }
-      // The facet query is answered here; this search carries none.
-      const { facetQueries: _, ...query } = step.search.query;
-      return [
-        {
-          collection,
-          ...buildSearchParams(
-            { ...query, facets: [], orderBy: [], limit: 0, offset: 0 },
-            searchType,
-            searchParamsOptions,
-          ),
-          facet_by: step.match,
-          facet_query: facetQueryParam(step.match, step.text),
-          max_facet_values: maxCandidates,
-          facet_strategy: 'exhaustive',
-        },
-      ];
-    });
-    if (searches.length === 0) {
+    const steps = planned.map((search) => candidateStep(searchType, search));
+    if (steps.every((step) => step === undefined)) {
       return [...planned];
     }
-    const results = await performInChunks(client, searches);
+    const sent = steps.flatMap((step) => step?.searches ?? []);
+    const results = await performInChunks(client, sent);
     const transportFailure = results.find((result) => result instanceof Error);
     if (transportFailure !== undefined) {
       throw transportFailure;
@@ -610,42 +583,163 @@ export function createTypesenseSearchEngine<
       if (step === undefined) {
         return search;
       }
-      if (step.text === '') {
-        return {
-          ...search,
-          candidates: { facet: step.facet, iris: new Set(), capped: false },
-        };
+      const first = next;
+      next += step.searches.length;
+      for (let position = first; position < next; position++) {
+        const result = results[position] as
+          TypesenseSearchResponse | TypesenseErrorEntry | undefined;
+        if (result === undefined || 'error' in result) {
+          return {
+            ...search,
+            candidates: entryError(
+              `search of “${(sent[position] as { collection: string }).collection}” for values of facet “${step.facet.name}”`,
+              result,
+            ),
+          };
+        }
       }
-      const result = results[next++] as
-        TypesenseSearchResponse | TypesenseErrorEntry | undefined;
-      if (result === undefined || 'error' in result) {
-        return {
-          ...search,
-          candidates: entryError(
-            `search of “${collection}” for values of facet “${step.facet.name}”`,
-            result,
-          ),
-        };
-      }
-      // A search faceting one field reports exactly that facet.
-      const [matched] = result.facet_counts as NonNullable<
-        TypesenseSearchResponse['facet_counts']
-      >;
-      const iris = new Set(
-        matched.counts
-          .map(({ value }) => idOfLabelMatch(value))
-          .filter((iri): iri is string => iri !== undefined),
-      );
-      // More may match than were returned. One referent may carry several
-      // values – each label its documents state – so a cut list says nothing
-      // about the referents beyond it.
-      const total = matched.stats?.total_values;
-      const capped =
-        total === undefined
-          ? matched.counts.length >= maxCandidates
-          : total > matched.counts.length;
-      return { ...search, candidates: { facet: step.facet, iris, capped } };
+      const answered = results.slice(first, next) as TypesenseSearchResponse[];
+      return {
+        ...search,
+        candidates: { facet: step.facet, ...step.candidates(answered) },
+      };
     });
+  }
+
+  /**
+   * The searches step one sends for a planned search’s query on a reference
+   * facet, and how their results become candidates – or `undefined` when the
+   * search has no such query. Text with no word in it matches no referent,
+   * and sends nothing.
+   */
+  function candidateStep(
+    searchType: RootType,
+    search: PlannedSearch,
+  ):
+    | {
+        readonly facet: FacetDeclaration;
+        readonly searches: readonly Record<string, unknown>[];
+        readonly candidates: (
+          results: readonly TypesenseSearchResponse[],
+        ) => Omit<Candidates, 'facet'>;
+      }
+    | undefined {
+    const facetQuery = facetQueryOf(search.query, searchType, schema);
+    if (
+      facetQuery === undefined ||
+      facetQuery.facet.field.kind !== 'reference' ||
+      isUnsatisfiable(search.query)
+    ) {
+      return undefined;
+    }
+    const { facet } = facetQuery;
+    // Split into words as the companion stores its labels, so text typed as a
+    // label shows it, punctuation included, matches.
+    const words = labelMatchText(facetQuery.text);
+    // `assertValidQuery` admitted only a facet with a reference match.
+    const match = facetQueryMatchOf(facet, schema) as Exclude<
+      FacetQueryMatch,
+      { by: 'values' }
+    >;
+    if (words === '') {
+      return {
+        facet,
+        searches: [],
+        candidates: () => ({ iris: new Set(), capped: false }),
+      };
+    }
+    if (match.by === 'targets') {
+      // The cap is shared across the target types, so the count searches
+      // step two sends stay within it.
+      const perTarget = Math.ceil(maxCandidates / match.targets.length);
+      return {
+        facet,
+        searches: match.targets.map((name) => {
+          // Every target is a Root Type with a collection.
+          const target = typesByName.get(name) as RootType;
+          return {
+            collection: collections.get(target.class) as string,
+            ...buildSearchParams(
+              {
+                text: facetQuery.text,
+                where: [],
+                orderBy: [],
+                limit: perTarget,
+                offset: 0,
+                facets: [],
+                locale: search.query.locale,
+              },
+              target,
+              searchParamsOptions,
+            ),
+            include_fields: 'id',
+          };
+        }),
+        candidates: targetCandidates,
+      };
+    }
+    // The facet query is answered here; this search carries none.
+    const { facetQueries: _, ...query } = search.query;
+    return {
+      facet,
+      searches: [
+        {
+          collection: collections.get(searchType.class) as string,
+          ...buildSearchParams(
+            { ...query, facets: [], orderBy: [], limit: 0, offset: 0 },
+            searchType,
+            searchParamsOptions,
+          ),
+          facet_by: match.match,
+          facet_query: facetQueryParam(match.match, words),
+          max_facet_values: maxCandidates,
+          facet_strategy: 'exhaustive',
+        },
+      ],
+      candidates: labelCandidates,
+    };
+  }
+
+  /** The referents the free-text searches of a reference’s target types
+   *  return, and whether any found more than it returned. */
+  function targetCandidates(
+    results: readonly TypesenseSearchResponse[],
+  ): Omit<Candidates, 'facet'> {
+    const iris = new Set<string>();
+    let capped = false;
+    for (const result of results) {
+      const hits = result.hits ?? [];
+      capped ||= result.found > hits.length;
+      for (const hit of hits) {
+        iris.add(String(hit.document.id));
+      }
+    }
+    return { iris, capped };
+  }
+
+  /** The referents of the label-match values a `facet_query` returned, and
+   *  whether more matched than were returned. */
+  function labelCandidates([result]: readonly TypesenseSearchResponse[]): Omit<
+    Candidates,
+    'facet'
+  > {
+    // A search faceting one field reports exactly that facet.
+    const [matched] = (result as TypesenseSearchResponse)
+      .facet_counts as NonNullable<TypesenseSearchResponse['facet_counts']>;
+    const iris = new Set(
+      matched.counts
+        .map(({ value }) => idOfLabelMatch(value))
+        .filter((iri): iri is string => iri !== undefined),
+    );
+    // More may match than were returned. One referent may carry several
+    // values – each label its documents state – so a cut list says nothing
+    // about the referents beyond it.
+    const total = matched.stats?.total_values;
+    const capped =
+      total === undefined
+        ? matched.counts.length >= maxCandidates
+        : total > matched.counts.length;
+    return { iris, capped };
   }
 
   const engine: TypesenseSearchEngine = {

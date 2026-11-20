@@ -1170,7 +1170,7 @@ this finds the one a person is looking for among thousands.
 ```
 
 A facet that takes a query is one whose values are text someone can type
-(`isQueryableFacet`):
+(`isQueryableFacet`). `facetQueryMatchOf` says how it is matched:
 
 - a **`keyword`** facet, matched on its values’ own text;
 - a **reference** facet of the type’s own whose label sources read their
@@ -1182,10 +1182,18 @@ A facet that takes a query is one whose values are text someone can type
   Only those labels match: an alternate name, a label only an enrichment
   supplies to the target’s collection, or a referent its documents state by
   IRI alone is not found, though the facet without a query still counts it.
+- any other **reference** facet of the type’s own with a label source – one
+  that `derive`s its values or reads them with `from`, an inline reference’s
+  identity, or one whose label source derives its label. Its documents store
+  no labels, so it is matched by the free-text search of the types it names,
+  as a search of those types for the same text would: labels, alternate names
+  and whatever else they search. The engine takes the most relevant referents
+  and counts each, so a match ranked below them is missed even when the
+  results use it most ([ADR 44](../decisions/0044-search-a-reference-facet-that-stores-no-labels-by-its-targets.md)).
 
-A reference without a label source holds bare IRIs nobody types, nor does an
-inline reference’s identity or a faceted leaf store labels beside its ids; a
-boolean, range or presence facet has no values to search. `validateQuery`
+A reference without a label source holds bare IRIs nobody types, nor does a
+faceted leaf store labels beside its ids; a boolean, range or presence facet
+has no values to search. `validateQuery`
 rejects a query on any of them (`not-queryable`). Text shorter than three
 characters, once trimmed (`MIN_FACET_QUERY_LENGTH`), is no query: below that,
 prefix and typo matching match next to nothing or nearly everything.

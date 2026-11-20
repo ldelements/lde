@@ -3286,26 +3286,56 @@ export function facetNamed(
 }
 
 /**
- * Whether a facet takes a query (`SearchQuery.facetQueries`) – text to
- * search its values with. A facet whose values are text a person can type
- * against does: a `keyword` facet, matched on its values’ own text, and a
- * reference facet of the type’s own searched by its referents’ labels
- * ({@link facetMatchesLabels}), matched on the labels its documents store
- * beside each id. Any other reference holds bare IRIs as far as a query can
- * see – a faceted leaf or an inline reference’s identity stores no labels –
- * and a boolean, range or presence facet has no values to search.
+ * How a query on a facet (`SearchQuery.facetQueries`) – text to search its
+ * values with – is matched, or `undefined` for a facet that takes none. A facet
+ * whose values are text a person can type takes one:
+ *
+ * - `values`: a `keyword` facet, matched on its values’ own text;
+ * - `labels`: a reference facet of the type’s own whose documents store their
+ *   referents’ labels in a label-match companion (`match`,
+ *   {@link facetMatchesLabels}), matched on those labels;
+ * - `targets`: any other reference facet of the type’s own with a label source
+ *   – a derived or `from` reference, an inline reference’s identity, or one
+ *   whose label source derives its label – matched by the free-text search of
+ *   the types it names (`targets`, {@link labelTargetNamesOf}).
+ *
+ * A reference without a label source holds bare IRIs nobody types, nor does a
+ * faceted leaf store labels; a boolean, range or presence facet has no values
+ * to search.
  */
+export function facetQueryMatchOf(
+  facet: FacetDeclaration,
+  schema: SearchSchema | undefined,
+): FacetQueryMatch | undefined {
+  if (facet.presence === true) {
+    return undefined;
+  }
+  if (facet.field.kind === 'keyword') {
+    return { by: 'values' };
+  }
+  if (facet.reference !== undefined) {
+    return undefined;
+  }
+  const { match } = physicalFields(facet.field, schema);
+  if (match !== undefined) {
+    return { by: 'labels', match };
+  }
+  const targets = labelTargetNamesOf(facet.field, schema);
+  return targets.length > 0 ? { by: 'targets', targets } : undefined;
+}
+
+/** How a facet’s query is matched ({@link facetQueryMatchOf}). */
+export type FacetQueryMatch =
+  | { readonly by: 'values' }
+  | { readonly by: 'labels'; readonly match: string }
+  | { readonly by: 'targets'; readonly targets: readonly string[] };
+
+/** Whether a facet takes a query: one {@link facetQueryMatchOf} can match. */
 export function isQueryableFacet(
   facet: FacetDeclaration,
   schema: SearchSchema | undefined,
 ): boolean {
-  if (facet.presence === true) {
-    return false;
-  }
-  return (
-    facet.field.kind === 'keyword' ||
-    (facet.reference === undefined && facetMatchesLabels(facet.field, schema))
-  );
+  return facetQueryMatchOf(facet, schema) !== undefined;
 }
 
 /** The logical name of the facet counting whether a field declaring

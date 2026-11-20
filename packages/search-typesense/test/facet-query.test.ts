@@ -36,6 +36,17 @@ const work: SearchType = {
       ref: { strategy: 'idOnly' },
       labelSource: 'Person',
     },
+    {
+      // Derived, so its documents store no labels to match: a query on its
+      // facet searches the people collection instead.
+      name: 'contributor',
+      kind: 'reference',
+      array: true,
+      facetable: true,
+      ref: { strategy: 'idOnly' },
+      labelSource: 'Person',
+      derive: () => [],
+    },
   ],
 };
 
@@ -282,5 +293,140 @@ describe('a query on a reference facet', () => {
     const [outcome] = await engine.searchFacets(work, [query]);
 
     expect(outcome).toEqual({ error: new Error('Connection reset') });
+  });
+});
+
+describe('a query on a reference facet that stores no labels', () => {
+  const contributorQuery: SearchQuery = {
+    ...query,
+    facets: ['contributor'],
+    facetQueries: { contributor: 'rem' },
+    facetLimits: { contributor: 1 },
+  };
+
+  /** Step one’s search: the people the query’s text finds. */
+  const isPeopleSearch = (search: Record<string, unknown>) =>
+    search.collection === 'people' && search.q === 'rem';
+
+  function answerPeople(
+    search: Record<string, unknown>,
+  ): Record<string, unknown> {
+    if (isPeopleSearch(search)) {
+      return {
+        found: 3,
+        hits: Object.keys(occurrences).map((id) => ({ document: { id } })),
+      };
+    }
+    return answer(search);
+  }
+
+  it('takes its candidates from the search of the type it names, and counts each', async () => {
+    const { client, performs } = fakeTypesenseClient({
+      multiSearch: answerPeople,
+    });
+    const engine = createTypesenseSearchEngine(client, schema, { collections });
+
+    const [outcome] = await engine.searchFacets(work, [contributorQuery]);
+
+    expect(outcome).toEqual({
+      facets: {
+        contributor: {
+          buckets: [{ value: 'https://ex/rembrandt', count: 5 }],
+          totalValues: 2,
+        },
+      },
+    });
+    const sent = performs.flat();
+    expect(sent.filter(isPeopleSearch)).toEqual([
+      expect.objectContaining({ per_page: 50, include_fields: 'id' }),
+    ]);
+    expect(sent.filter(isCountSearch)).toHaveLength(3);
+  });
+
+  it('answers a batch mixing it with a facet that stores labels', async () => {
+    const { client } = fakeTypesenseClient({ multiSearch: answerPeople });
+    const engine = createTypesenseSearchEngine(client, schema, { collections });
+
+    const [contributors, creators] = await engine.searchFacets(work, [
+      contributorQuery,
+      query,
+    ]);
+
+    expect(contributors).toEqual({
+      facets: {
+        contributor: {
+          buckets: [{ value: 'https://ex/rembrandt', count: 5 }],
+          totalValues: 2,
+        },
+      },
+    });
+    expect(creators).toEqual({
+      facets: {
+        creator: {
+          buckets: [{ value: 'https://ex/rembrandt', count: 5 }],
+          totalValues: 2,
+        },
+      },
+    });
+  });
+
+  it('reports no total when the search found more people than it returned', async () => {
+    const { client } = fakeTypesenseClient({
+      multiSearch: (search) =>
+        isPeopleSearch(search)
+          ? { ...answerPeople(search), found: 300 }
+          : answerPeople(search),
+    });
+    const engine = createTypesenseSearchEngine(client, schema, { collections });
+
+    const [outcome] = await engine.searchFacets(work, [contributorQuery]);
+
+    expect(outcome).toEqual({
+      facets: {
+        contributor: {
+          buckets: [{ value: 'https://ex/rembrandt', count: 5 }],
+        },
+      },
+    });
+  });
+
+  it('matches nothing, on either path, for text with no word in it', async () => {
+    const { client, performs } = fakeTypesenseClient({
+      multiSearch: answerPeople,
+    });
+    const engine = createTypesenseSearchEngine(client, schema, { collections });
+
+    const outcomes = await engine.searchFacets(work, [
+      { ...contributorQuery, facetQueries: { contributor: '---' } },
+      { ...query, facetQueries: { creator: '!!!' } },
+    ]);
+
+    expect(outcomes).toEqual([
+      { facets: { contributor: { buckets: [], totalValues: 0 } } },
+      { facets: { creator: { buckets: [], totalValues: 0 } } },
+    ]);
+    expect(performs.flat().filter((search) => search.q === '---')).toEqual([]);
+  });
+
+  it('fails exactly its own query, naming the collection searched, when that search fails', async () => {
+    const { client } = fakeTypesenseClient({
+      multiSearch: (search) =>
+        isPeopleSearch(search)
+          ? { error: 'Not found', code: 404 }
+          : answerPeople(search),
+    });
+    const engine = createTypesenseSearchEngine(client, schema, { collections });
+
+    const [queried, unqueried] = await engine.searchFacets(work, [
+      contributorQuery,
+      { ...contributorQuery, facetQueries: undefined },
+    ]);
+
+    expect(queried).toEqual({
+      error: new Error(
+        'Typesense search of “people” for values of facet “contributor” failed (404): Not found',
+      ),
+    });
+    expect(unqueried).not.toHaveProperty('error');
   });
 });

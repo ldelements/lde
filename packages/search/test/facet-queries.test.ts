@@ -7,6 +7,7 @@ import {
 import {
   facetNamed,
   isQueryableFacet,
+  facetMatchesLabels,
   searchSchema,
   type FacetDeclaration,
   type SearchType,
@@ -67,6 +68,16 @@ const work: SearchType = {
       ref: { strategy: 'idOnly' },
       labelSource: 'Concept',
     },
+    // Read off the run, not the graph: its documents store no labels.
+    {
+      name: 'harvestedBy',
+      kind: 'reference',
+      from: 'dataset',
+      facetable: true,
+      filterable: true,
+      ref: { strategy: 'idOnly' },
+      labelSource: 'Person',
+    },
     {
       name: 'class',
       kind: 'reference',
@@ -109,8 +120,24 @@ describe('isQueryableFacet', () => {
     expect(isQueryableFacet(facet('subtitle.exists'), schema)).toBe(false);
   });
 
-  it('refuses a reference whose label source derives its label, which no referent can be read for', () => {
-    expect(isQueryableFacet(facet('about'), schema)).toBe(false);
+  it('admits a reference storing no labels, matched by its types’ search', () => {
+    // Its label source derives its label.
+    expect(isQueryableFacet(facet('about'), schema)).toBe(true);
+    expect(facetMatchesLabels(facet('about').field, schema)).toBe(false);
+    // It is read with `from`.
+    expect(isQueryableFacet(facet('harvestedBy'), schema)).toBe(true);
+    expect(facetMatchesLabels(facet('harvestedBy').field, schema)).toBe(false);
+    // Against one that stores them.
+    expect(facetMatchesLabels(facet('creator').field, schema)).toBe(true);
+  });
+
+  it('refuses a faceted leaf, which stores no labels beside its ids', () => {
+    const leaf: FacetDeclaration = {
+      ...facet('creator'),
+      name: 'about.creator',
+      reference: facet('about').field,
+    };
+    expect(isQueryableFacet(leaf, schema)).toBe(false);
   });
 });
 

@@ -516,8 +516,9 @@ export function describeSearchEngineContract(
           }
           const queried = outcome.facets[facet.name]?.buckets ?? [];
           // A literal value is its own text. A reference is matched on the
-          // labels its documents state, which may differ from the label it is
-          // shown with, so only what does match is checked below.
+          // labels its documents state or by its types’ search, either of
+          // which may differ from the label it is shown with, so only what
+          // does match is checked below.
           if (facet.field.kind !== 'reference') {
             expect(queried).toContainEqual(
               expect.objectContaining({ value: top.value, count: top.count }),

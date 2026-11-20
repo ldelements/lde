@@ -29,6 +29,8 @@ export {
   facetNamed,
   facetsOf,
   isQueryableFacet,
+  facetQueryMatchOf,
+  type FacetQueryMatch,
   facetMatchesLabels,
   presenceFacetName,
   holdsNoIds,

@@ -30,7 +30,8 @@ export default mergeConfig(
           // (an unresolvable target, an absent field list) are reachable only
           // from a direct caller, since GraphQL validates the query first.
           // Re-anchored when facet grouping moved to `@lde/search`, taking its
-          // covered branches with it.
+          // covered branches with it, and when a facet query’s description
+          // became a lookup by how it is matched, dropping two covered ones.
           branches: 99.19,
           statements: 100,
         },

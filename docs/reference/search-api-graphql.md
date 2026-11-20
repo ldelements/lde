@@ -118,15 +118,16 @@ fails this – accepts. The endpoint path defaults to `/graphql`
   asks for, measured with
   [graphql-query-complexity](https://github.com/slicknode/graphql-query-complexity):
 
-  | Selection                                   | Cost              |
-  | ------------------------------------------- | ----------------- |
-  | A search field (each alias counts)          | 1                 |
-  | A joined reference (`lookup`), at any depth | 1 per target type |
-  | A facet key                                 | 1                 |
-  | A range facet’s `all` extent                | 1 more            |
-  | Each part of a `‹Type›‹Field›Facet` object  | 1                 |
-  | A `query` on a reference facet              | 1 more            |
-  | A plain stored field or an inline reference | 0, at any depth   |
+  | Selection                                     | Cost                   |
+  | --------------------------------------------- | ---------------------- |
+  | A search field (each alias counts)            | 1                      |
+  | A joined reference (`lookup`), at any depth   | 1 per target type      |
+  | A facet key                                   | 1                      |
+  | A range facet’s `all` extent                  | 1 more                 |
+  | Each part of a `‹Type›‹Field›Facet` object    | 1                      |
+  | A `query` on a reference facet storing labels | 1 more                 |
+  | A `query` on any other reference facet        | 1 more per target type |
+  | A plain stored field or an inline reference   | 0, at any depth        |
 
   In a field’s facet object every part selected is charged on its own –
   `buckets`, `totalValues`, `exists`, a range facet’s `all`, `matching` and
@@ -344,12 +345,16 @@ role: { in: ["etser"] } } }` asks for _this person in this role_, where the
   sets, and is `null` when the engine does not report it;
 
   A facet whose values are text someone can type – a plain value facet, or a
-  reference facet whose referents’ labels its documents store – also takes a
+  reference facet whose referents have a label source – also takes a
   `query` argument, which searches its values: `creator(query: "rem", limit:
 10)` returns the creators matching “rem”, counted over the current results,
-  highest count first and capped at `limit`. A reference facet matches the
-  label each document states for its referent, not an alternate name or a
-  label only an enrichment supplies.
+  highest count first and capped at `limit`. A reference facet whose
+  documents store their referents’ labels matches the label each document
+  states, not an alternate name or a label only an enrichment supplies. Any
+  other reference facet matches through the search of its referents’ types,
+  alternate names included, but takes only the most relevant matches, so it
+  can miss one the results use often; such a query costs one more per target
+  type.
   Under a query, `totalValues` is the number of matching values, and `null`
   when the engine cannot tell. A selected value that does not match is left
   out – the one exception to a facet reporting its selected values – so read

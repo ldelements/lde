@@ -306,6 +306,15 @@ A query takes two steps:
    candidate selected, asking for no document. The facet keeps the candidates
    that occur, the highest counts first, capped at the limit.
 
+A reference facet without a companion – derived, read with `from`, an
+inline reference’s identity, or one whose label source derives its label –
+takes its candidates in step one from the collection of each type it names
+instead: that type’s free-text search for the query’s text, with
+`maxFacetQueryCandidates` shared evenly across the types and ranked by
+relevance rather than by how often the documents carry them
+([ADR 44](../decisions/0044-search-a-reference-facet-that-stores-no-labels-by-its-targets.md)).
+Step two counts them the same way.
+
 The companion’s own counts are not the answer, because a referent’s label is
 whatever each referring graph states. One referent may carry “Boerenbont” on
 some documents, “Boerenbont decor” on others and nothing on the rest, which
@@ -358,8 +367,10 @@ Beyond `collections`, `TypesenseSearchEngineOptions` carries:
   together in as few `multi_search` requests as Typesense accepts (50
   searches each).
 - **`maxFacetQueryCandidates`** – how many label-match values a query on a
-  reference facet selects (default 50, at most 250). Each candidate costs a
-  count search. See [facet queries](#facet-queries).
+  reference facet selects, or, for a facet without a label-match companion,
+  how many referents it takes from its target types together (default 50, at
+  most 250). Each
+  candidate costs a count search. See [facet queries](#facet-queries).
 - **`onLabelError`** – called when reference-label resolution fails; the
   search then degrades to id-only references (and reference-facet buckets to
   unlabelled ones) rather than failing. Omit it and the degradation is

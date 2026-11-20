@@ -57,7 +57,8 @@ import {
   ID_FIELD,
   isAbsoluteIri,
   OR_KEY,
-  isQueryableFacet,
+  facetQueryMatchOf,
+  type FacetQueryMatch,
   isRangeFacet,
   isBinnedRangeFacet,
   isoToUnixSeconds,
@@ -2065,34 +2066,52 @@ export function buildGraphQLSchema(
 
   /** A value facet’s arguments: `limit`, and `query` on a facet whose values
    *  are text someone can type – a literal one, or a reference whose values
-   *  have labels ({@link isQueryableFacet}). */
+   *  have a label source ({@link facetQueryMatchOf}). */
   function valueArgumentsFor(
     facet: FacetDeclaration,
   ): Record<string, GraphQLArgumentConfig> {
+    const match = facetQueryMatchOf(facet, schema);
     return {
       limit: limitArgument,
-      ...(isQueryableFacet(facet, schema) && {
+      ...(match !== undefined && {
         query: {
           type: GraphQLString,
-          description:
-            facet.field.kind === 'reference'
-              ? 'Only the values whose referent matches this text – by the label each document states for it – counted as without it and capped at `limit`. A selected value that does not match is left out. Text shorter than 3 characters is no query.'
-              : 'Only the values matching this text, counted as without it and capped at `limit`. A selected value that does not match is left out. Text shorter than 3 characters is no query.',
+          description: queryArgumentDescription(match),
         },
       }),
     };
   }
 
+  /** The `query` argument’s description: what a facet’s values are matched
+   *  by ({@link facetQueryMatchOf}). */
+  function queryArgumentDescription(match: FacetQueryMatch): string {
+    const matched = {
+      values: 'Only the values matching this text,',
+      labels:
+        'Only the values whose referent matches this text – by the label each document states for it –',
+      targets:
+        'Only the values whose referent matches this text – by its label, alternate names or whatever else a search of its type matches, at most the most relevant ones –',
+    }[match.by];
+    return `${matched} counted as without it and capped at \`limit\`. A selected value that does not match is left out. Text shorter than 3 characters is no query.`;
+  }
+
   /** What a value facet costs on top of `own`: under a query on a reference
-   *  facet, one more – the search for its candidates and the request that
-   *  counts them. */
+   *  facet, the searches for its candidates and the request that counts them
+   *  – one over the labels its documents store, or one per target type for a
+   *  facet that stores none. */
   function queryCostFor(
     facet: FacetDeclaration,
     own: number,
   ): GraphQLFieldExtensions<unknown, unknown> {
-    return facet.field.kind === 'reference' && isQueryableFacet(facet, schema)
-      ? facetQueryCostExtensions(own)
-      : costExtensions(own * operationCost);
+    const match = facetQueryMatchOf(facet, schema);
+    switch (match?.by) {
+      case 'labels':
+        return facetQueryCostExtensions(own, 1);
+      case 'targets':
+        return facetQueryCostExtensions(own, match.targets.length);
+      default:
+        return costExtensions(own * operationCost);
+    }
   }
 
   /**

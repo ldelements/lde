@@ -112,6 +112,17 @@ const work: SearchType = {
       output: true,
       ref: { strategy: 'lookup', target: ['Person', 'Organization'] },
     },
+    // Derived, so its documents store no labels: a query on its facet
+    // searches each target type instead.
+    {
+      name: 'contributor',
+      kind: 'reference',
+      array: true,
+      output: true,
+      facetable: true,
+      ref: { strategy: 'lookup', target: ['Person', 'Organization'] },
+      derive: () => [],
+    },
     // Fields whose facet counts more than their own values, served as one
     // object each.
     {
@@ -227,6 +238,12 @@ describe('the cost of a query', () => {
         '{ creativeWorks(perPage: 0) { facets { author(query: "rem") { totalValues } genre(query: "kaa") { totalValues } } } }',
       ),
     ).toBe(1 + (1 + 1) + 1);
+    // A facet storing no labels searches each of its target types.
+    expect(
+      await costOf(
+        '{ creativeWorks(perPage: 0) { facets { contributor(query: "rem") { totalValues } } } }',
+      ),
+    ).toBe(1 + (1 + 2));
     // Under three characters a query is none, and costs nothing extra.
     expect(
       await costOf(
