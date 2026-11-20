@@ -1,3 +1,4 @@
+import { stripVTControlCharacters } from 'node:util';
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import logSymbols from 'log-symbols';
 import { ConsoleReporter } from '../src/consoleReporter.js';
@@ -410,8 +411,9 @@ describe('ConsoleReporter', () => {
 
       const output = spy.mock.calls.map((c) => String(c[0])).join('');
       expect(output).toContain('No items selected');
-      expect(output).toContain(logSymbols.info);
-      expect(output).not.toContain(logSymbols.error);
+      // Ora strips the symbols’ colors when stderr is not a TTY.
+      expect(output).toContain(stripVTControlCharacters(logSymbols.info));
+      expect(output).not.toContain(stripVTControlCharacters(logSymbols.error));
     });
   });
 
