@@ -2080,7 +2080,7 @@ export function buildGraphQLSchema(
           type: GraphQLString,
           description:
             facet.field.kind === 'reference'
-              ? 'Only the values whose referent matches this text – by its label, alternate names or whatever else a search of its type matches – counted as without it and capped at `limit`. A selected value that does not match is left out. Text shorter than 3 characters is no query.'
+              ? 'Only the values whose referent matches this text – by the label each document states for it – counted as without it and capped at `limit`. A selected value that does not match is left out. Text shorter than 3 characters is no query.'
               : 'Only the values matching this text, counted as without it and capped at `limit`. A selected value that does not match is left out. Text shorter than 3 characters is no query.',
         },
       }),
@@ -2088,17 +2088,14 @@ export function buildGraphQLSchema(
   }
 
   /** What a value facet costs on top of `own`: under a query on a reference
-   *  facet, one more per target type – the search for its candidates and the
-   *  request that counts them. */
+   *  facet, one more – the search for its candidates and the request that
+   *  counts them. */
   function queryCostFor(
     facet: FacetDeclaration,
     own: number,
   ): GraphQLFieldExtensions<unknown, unknown> {
     return facet.field.kind === 'reference' && isQueryableFacet(facet, schema)
-      ? facetQueryCostExtensions(
-          own,
-          labelTargetNamesOf(facet.field, schema).length,
-        )
+      ? facetQueryCostExtensions(own)
       : costExtensions(own * operationCost);
   }
 

@@ -392,6 +392,9 @@ function typesenseFields(
       optional: true,
     });
   }
+  if (names.match !== undefined) {
+    fields.push(matchField(names.match, valueType));
+  }
   if (names.precision !== undefined) {
     fields.push(precisionField(names.precision));
   }
@@ -714,7 +717,24 @@ function identityCompanionFields(
       optional: true,
     });
   }
+  if (names.match !== undefined) {
+    fields.push(matchField(names.match, 'string[]'));
+  }
   return fields;
+}
+
+/**
+ * The label-match companion of a facet searched by its referents’ labels
+ * ({@link physicalFields}): faceted, so a facet query searches its values with
+ * `facet_query`, and optional, since a document whose referents state no label
+ * carries none. It declares no `token_separators`: one would split the id each
+ * value ends with into words a query could match.
+ */
+function matchField(
+  name: string,
+  type: CollectionFieldSchema['type'],
+): CollectionFieldSchema {
+  return { name, type, facet: true, optional: true };
 }
 
 /** The identity companion of a nested field that stores an object: a flat leaf

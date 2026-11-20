@@ -58,13 +58,14 @@ export interface SearchQuery {
    * matching it come back, counted over the matching documents as without a
    * query (skip-own-filter), highest count first and capped at the facet’s
    * {@link facetLimits} limit. A literal facet matches its values’ own text; a
-   * reference facet matches its referents by the free-text search of the type
-   * they belong to – their labels, alternate names, whatever that type
-   * searches. Text shorter than {@link MIN_FACET_QUERY_LENGTH} characters,
+   * reference facet matches the labels its documents state for each referent,
+   * not an alternate name or a label only the target’s collection holds. Text
+   * shorter than {@link MIN_FACET_QUERY_LENGTH} characters,
    * once trimmed, is no query ({@link facetQueryText}).
    *
    * Only a facet {@link isQueryableFacet} admits takes one: a keyword facet,
-   * or a reference facet whose values have a label source.
+   * or a reference facet of the type’s own whose label sources read their
+   * label from a path (`facetMatchesLabels`).
    *
    * Under a query, a facet reports only the values that match it, selected or
    * not – the one exception to a facet reporting every value its own clause

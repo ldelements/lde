@@ -44,6 +44,7 @@ import {
   type StoredDate,
   type TextField,
 } from './schema.js';
+import { labelMatchValue } from './label-match.js';
 import { periodCovering, periodOf, type StoredPeriod } from './period.js';
 import {
   describeValue,
@@ -707,6 +708,7 @@ function applyField(
         field,
         schema,
         unread,
+        nested,
       );
     }
     case 'integer':
@@ -834,21 +836,20 @@ function referenceValues(
                 : [],
             );
       // Remembered only where there was a choice: a single-target reference
-      // stays byte-identical to what it was, symbol keys included – and its
-      // labels only where the field is searched by them. Both keyed by what
-      // the field STORES – the value after its own `transform`, which
-      // `applyFacet` applies before it reads these maps.
-      if (
-        keyed !== undefined &&
-        (targets.length > 1 || labelsById !== undefined)
-      ) {
-        const stored =
-          field.transform === undefined ? keyed : field.transform(keyed);
-        if (targets.length > 1) {
-          targetsById.set(stored, target);
-        }
-        labelsById?.set(stored, [
-          ...(labelsById.get(stored) ?? []),
+      // stays byte-identical to what it was, symbol keys included. Keyed by
+      // what the field STORES – the value after its own `transform`, which
+      // `applyFacet` applies before it reads this map.
+      if (keyed !== undefined && targets.length > 1) {
+        targetsById.set(
+          field.transform === undefined ? keyed : field.transform(keyed),
+          target,
+        );
+      }
+      // Its labels only where the field is searched by them, keyed by the
+      // value before its `transform`, which `applyFacet` runs once for both.
+      if (keyed !== undefined && labelsById !== undefined) {
+        labelsById.set(keyed, [
+          ...(labelsById.get(keyed) ?? []),
           ...labelsOf(value, target),
         ]);
       }
@@ -866,13 +867,19 @@ function applyReferents(
   field: ReferenceField,
   schema: SearchSchema | undefined,
   unread: Unread,
+  nested: boolean,
 ): void {
   const targetsById = new Map<string, RootType>();
-  // A reference naming a target is searched by its referents’ labels, which
-  // the extraction read off each referent beside its key.
+  // A facet searched by label pairs each id with its referent’s labels – on a
+  // root document only: the companion counts root documents.
+  const match = nested ? undefined : physicalFields(field, schema).match;
+  // A reference naming a target is searched by its referents’ labels, and the
+  // label-match companion holds them; the extraction read them off each
+  // referent beside its key.
   const labelsById =
-    field.searchable !== undefined &&
-    referencedTargetsOf(field, schema).length > 0
+    (field.searchable !== undefined &&
+      referencedTargetsOf(field, schema).length > 0) ||
+    match !== undefined
       ? new Map<string, string[]>()
       : undefined;
   const ids = referenceValues(
@@ -884,7 +891,7 @@ function applyReferents(
     labelsById,
   );
   rememberTargets(document, targetsById);
-  applyFacet(document, ids, field, schema, targetsById, labelsById);
+  applyFacet(document, ids, field, schema, targetsById, labelsById, match);
 }
 
 /**
@@ -938,7 +945,7 @@ function applyReferentsOrPeriods(
     unread,
   );
   if (field.array === true) {
-    applyReferents(document, referents, field, schema, unread);
+    applyReferents(document, referents, field, schema, unread, nested);
     storePeriods(document, field, periods, nested);
     return;
   }
@@ -951,7 +958,7 @@ function applyReferentsOrPeriods(
     return;
   }
   if (isReferent(first)) {
-    applyReferents(document, referents, field, schema, unread);
+    applyReferents(document, referents, field, schema, unread, nested);
   } else {
     storePeriods(document, field, periods, nested);
   }
@@ -1186,6 +1193,7 @@ function applyFacet(
   schema: SearchSchema | undefined,
   targetsById?: ReadonlyMap<string, RootType>,
   labelsById?: ReadonlyMap<string, readonly string[]>,
+  match?: string,
 ): void {
   // A `reference` stores identity, so what it stores must be an IRI whatever
   // route the value arrived by. {@link iriString} guards the graph path, but a
@@ -1194,6 +1202,18 @@ function applyFacet(
   // the surface would promise `IRI` over a value the projection let through.
   const referenced = field.kind === 'reference';
   const transformed = field.transform ? raw.map(field.transform) : raw;
+  // The labels {@link referenceValues} recorded per value before its
+  // `transform` – one entry for every value it returned – filed under what
+  // the field stores.
+  const labelsOfStored = new Map<string, string[]>();
+  if (labelsById !== undefined) {
+    transformed.forEach((value, index) => {
+      labelsOfStored.set(value, [
+        ...(labelsOfStored.get(value) ?? []),
+        ...(labelsById.get(raw[index] as string) as readonly string[]),
+      ]);
+    });
+  }
   const values = dedupe(
     referenced ? transformed.filter(isAbsoluteIri) : transformed,
   );
@@ -1214,7 +1234,7 @@ function applyFacet(
   const folded = dedupe(
     (labelsById === undefined
       ? values
-      : stored.flatMap((id) => labelsById.get(id) as readonly string[])
+      : stored.flatMap((id) => labelsOfStored.get(id) as readonly string[])
     ).map((value) => fold(value)),
   );
   const targets = referencedTargetsOf(field, schema);
@@ -1223,6 +1243,16 @@ function applyFacet(
     : stored.filter((id) =>
         admitsFacet(policies, targets, targetsById?.get(id)?.name, id),
       );
+  // The label-match companion, where the caller names it, pairs each id the
+  // facet counts with that referent’s labels – the admitted ones under a
+  // policy, so a query never selects a value the facet keeps out.
+  const matches =
+    match === undefined
+      ? []
+      : labelMatches(
+          inherited ? admitted : stored,
+          (id) => labelsOfStored.get(id) as readonly string[],
+        );
   if (field.array === true) {
     setArray(document, field.name, stored);
     if (field.searchable) {
@@ -1230,6 +1260,9 @@ function applyFacet(
     }
     if (inherited) {
       setArray(document, facetField, admitted);
+    }
+    if (match !== undefined) {
+      setArray(document, match, matches);
     }
     return;
   }
@@ -1245,6 +1278,20 @@ function applyFacet(
   if (inherited) {
     setString(document, facetField, admitted[0]);
   }
+  if (match !== undefined) {
+    setString(document, match, matches[0]);
+  }
+}
+
+/** The {@link labelMatchValue} of each id that has a label to match, in the
+ *  order given. */
+function labelMatches(
+  ids: readonly string[],
+  labelsOfId: (id: string) => readonly string[],
+): string[] {
+  return ids
+    .map((id) => labelMatchValue(labelsOfId(id), id))
+    .filter((value): value is string => value !== undefined);
 }
 
 /**
@@ -1524,15 +1571,66 @@ function applyLocalIdentity(
     return;
   }
   setIdentity(document, names.identity, ids, field, nested);
+  const targets = referencedTargetsOf(field, schema);
   writeNarrowedFacet(
     document,
     names,
     targetById,
     field,
-    referencedTargetsOf(field, schema),
+    targets,
     schema,
     nested,
   );
+  // A facet searched by label reads each endpoint’s labels off the endpoint
+  // itself, which the target’s own declaration projected. Top level only, like
+  // the narrowed facet: the companion counts root documents.
+  if (names.match !== undefined && !nested) {
+    const labelsById = new Map<string, string[]>();
+    // Every endpoint keyed to an id adds its labels: two nodes for one
+    // referent may each state some, or one none.
+    for (const endpoint of stored) {
+      if (typeof endpoint.id !== 'string') {
+        continue;
+      }
+      labelsById.set(endpoint.id, [
+        ...(labelsById.get(endpoint.id) ?? []),
+        ...endpointLabels(endpoint, storedTargetOf(endpoint, targets)),
+      ]);
+    }
+    const matches = labelMatches(
+      admittedIds(targetById, field, targets, schema),
+      // Every id is an endpoint’s, so each has an entry.
+      (id) => labelsById.get(id) as readonly string[],
+    );
+    // A list whatever the field declares, like the identity companion beside
+    // it, which a collection declares as one.
+    setArray(document, names.match, matches);
+  }
+}
+
+/**
+ * The labels a projected endpoint of a local lookup carries in its target’s
+ * label field, in that field’s declared locales – the same labels
+ * {@link labelsOf} reads off a framed referent, read back from the display
+ * fields the target’s declaration wrote them to.
+ */
+function endpointLabels(endpoint: ProjectedNode, target: RootType): string[] {
+  // `searchSchema` guarantees every reference’s target a label field.
+  const labelField = labelFieldOf(target) as TextField;
+  return Object.entries(endpoint).flatMap(([key, value]) => {
+    const lang = displayLangOf(labelField, key);
+    if (
+      lang === undefined ||
+      matchLanguage(lang, labelField.locales)[0] === undefined
+    ) {
+      return [];
+    }
+    return [value]
+      .flat()
+      .filter((label): label is string => typeof label === 'string')
+      .map((label) => label.trim())
+      .filter((label) => label !== '');
+  });
 }
 
 /**
@@ -1558,13 +1656,24 @@ function writeNarrowedFacet(
   if (nested || names.facet === undefined || names.facet === names.filter) {
     return;
   }
-  const policies = inheritedFacetPolicies(field, schema);
   setArray(
     document,
     names.facet,
-    [...targetById.keys()].filter((id) =>
-      admitsFacet(policies, targets, targetById.get(id), id),
-    ),
+    admittedIds(targetById, field, targets, schema),
+  );
+}
+
+/** The ids, each with the target it was resolved through, that the field’s
+ *  facet policies admit – every one where the field inherits none. */
+function admittedIds(
+  targetById: ReadonlyMap<string, string | undefined>,
+  field: ReferenceField,
+  targets: readonly RootType[],
+  schema: SearchSchema,
+): string[] {
+  const policies = inheritedFacetPolicies(field, schema);
+  return [...targetById.keys()].filter((id) =>
+    admitsFacet(policies, targets, targetById.get(id), id),
   );
 }
 

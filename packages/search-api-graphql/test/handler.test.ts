@@ -414,7 +414,7 @@ describe('createSearchGraphQLHandler', () => {
     expect(response.status).toBe(200);
     expect(data).toBeUndefined();
     expect(errors[0].message).toBe(
-      'Query costs 2; at most 1 is allowed. Each search, facet calculation and joined reference lookup per target type costs 1, and a query on a reference facet 1 more per target type.',
+      'Query costs 2; at most 1 is allowed. Each search, facet calculation and joined reference lookup per target type costs 1, and a query on a reference facet 1 more.',
     );
   });
 

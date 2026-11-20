@@ -166,12 +166,20 @@ export function buildSearchParams(
       facetQuery !== undefined &&
       facetQuery.facet.field.kind !== 'reference'
     ) {
-      // Typesense reads a colon as the field separator, so one in the text
-      // would break the match; it separates words like a space does.
-      params.facet_query = `${facetQuery.facet.engineField}:${facetQuery.text.replaceAll(':', ' ')}`;
+      params.facet_query = facetQueryParam(
+        facetQuery.facet.engineField,
+        facetQuery.text,
+      );
     }
   }
   return params;
+}
+
+/** The `facet_query` searching `field`’s values for `text`. Typesense reads a
+ *  colon as the field separator, so one in the text would break the match; it
+ *  separates words like a space does. */
+export function facetQueryParam(field: string, text: string): string {
+  return `${field}:${text.replaceAll(':', ' ')}`;
 }
 
 /**

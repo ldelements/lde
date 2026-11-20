@@ -7,6 +7,7 @@ import {
   type SearchQuery,
   type SearchType,
 } from '@lde/search';
+import { labelMatchValue } from '@lde/search/adapter';
 import { describeSearchEngineContract } from '@lde/search/testing';
 import { buildCollectionDefinition } from '../src/collection-definition.js';
 import { createTypesenseSearchEngine } from '../src/search.js';
@@ -22,6 +23,7 @@ const organizationSchema: SearchType = {
     {
       name: 'label',
       kind: 'text',
+      path: 'https://schema.org/name',
       locales: ['nl', 'en'],
       output: true,
       searchable: { weight: 1 },
@@ -80,6 +82,7 @@ const datasetSchema: SearchType = {
     {
       name: 'publisher',
       kind: 'reference',
+      path: 'http://purl.org/dc/terms/publisher',
       array: true,
       facetable: true,
       filterable: true,
@@ -146,6 +149,9 @@ const documents = [
     keyword: ['kaarten'],
     keyword_search: ['kaarten'],
     publisher: ['https://org/1'],
+    publisher_match: [
+      labelMatchValue(['Het Utrechts Archief'], 'https://org/1'),
+    ],
     // A surfaced inline reference: one nested document per referent, exactly as
     // the projection nests them. The second referent is a blank node in the
     // source, so it carries no `id`, and it has no width.
@@ -179,6 +185,7 @@ const documents = [
     keyword: ['atlas'],
     keyword_search: ['atlas'],
     publisher: ['https://org/2'],
+    publisher_match: [labelMatchValue(['Rijksmuseum'], 'https://org/2')],
     status: 'valid',
     statusRank: 0,
     // The negative case, so the facet reports both buckets.
@@ -193,6 +200,9 @@ const documents = [
     keyword: ['kaarten'],
     keyword_search: ['kaarten'],
     publisher: ['https://org/1'],
+    publisher_match: [
+      labelMatchValue(['Het Utrechts Archief'], 'https://org/1'),
+    ],
     status: 'invalid',
     statusRank: 3,
     iiif: true,

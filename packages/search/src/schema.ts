@@ -2920,12 +2920,53 @@ export interface PhysicalFields {
     readonly leaf: string;
     readonly exists: string;
   }[];
+  /**
+   * The **label-match companion** of a reference whose facet is searched by
+   * its referents’ labels ({@link facetMatchesLabels}): `${name}_match`, or
+   * `${name}_id_match` for a local lookup – one {@link labelMatchValue} per
+   * referent the facet counts, pairing the labels the referring graph states
+   * for it with its id. Indexed and faceted, so an engine can search a facet’s
+   * values by label and still tell which referent each value is; never served.
+   * `undefined` for every other field.
+   */
+  readonly match: string | undefined;
 }
 
 /** The physical name of a {@link ReferenceStrategy.local local} lookup’s
  *  {@link PhysicalFields.identity identity companion}. */
 export function identityFieldName(name: string): string {
   return `${name}_id`;
+}
+
+/**
+ * Whether a reference’s facet is searched by its referents’ labels, which the
+ * referring document then stores in a {@link PhysicalFields.match label-match
+ * companion}: a facetable reference read off the graph (a `path`, no
+ * `derive`) that stores ids at the top level – a `lookup`, `local` or not, or
+ * an `idOnly` naming a `labelSource`, never an inline reference – and whose
+ * every label source reads its label from a path, so the extraction can read
+ * each referent’s label beside its id. The one reading the extraction (which
+ * reads the labels), the projection (which writes the companion), a collection
+ * definition (which declares it) and {@link isQueryableFacet} share.
+ */
+export function facetMatchesLabels(
+  field: SearchField,
+  schema: SearchSchema | undefined,
+): field is ReferenceField {
+  if (
+    field.kind !== 'reference' ||
+    field.facetable !== true ||
+    field.path === undefined ||
+    field.derive !== undefined ||
+    isInlineReference(field)
+  ) {
+    return false;
+  }
+  const targets = referencedTargetsOf(field, schema);
+  return (
+    targets.length > 0 &&
+    targets.every((target) => labelFieldOf(target)?.path !== undefined)
+  );
 }
 
 /**
@@ -3248,10 +3289,11 @@ export function facetNamed(
  * Whether a facet takes a query (`SearchQuery.facetQueries`) – text to
  * search its values with. A facet whose values are text a person can type
  * against does: a `keyword` facet, matched on its values’ own text, and a
- * reference facet whose values have a label source ({@link labelTargetNamesOf}),
- * matched by the free-text search of the types they belong to. A reference
- * without one holds bare IRIs, which nobody types; a boolean, range or presence
- * facet has no values to search.
+ * reference facet of the type’s own searched by its referents’ labels
+ * ({@link facetMatchesLabels}), matched on the labels its documents store
+ * beside each id. Any other reference holds bare IRIs as far as a query can
+ * see – a faceted leaf or an inline reference’s identity stores no labels –
+ * and a boolean, range or presence facet has no values to search.
  */
 export function isQueryableFacet(
   facet: FacetDeclaration,
@@ -3262,7 +3304,7 @@ export function isQueryableFacet(
   }
   return (
     facet.field.kind === 'keyword' ||
-    labelTargetNamesOf(facet.field, schema).length > 0
+    (facet.reference === undefined && facetMatchesLabels(facet.field, schema))
   );
 }
 
@@ -3881,6 +3923,7 @@ export function physicalFields(
       // Nor does it declare presence (`searchSchema`).
       exists: undefined,
       leafExists: [],
+      match: undefined,
     };
   }
   // A field storing a nested OBJECT cannot be filtered or faceted as itself, so
@@ -3929,6 +3972,9 @@ export function physicalFields(
       ? (field.ref?.presenceLeaves ?? [])
       : []
     ).map((leaf) => ({ leaf, exists: `${field.name}_${leaf}_exists` })),
+    match: facetMatchesLabels(field, schema)
+      ? `${identity ?? field.name}_match`
+      : undefined,
   };
 }
 

@@ -742,6 +742,35 @@ describe('faceting a local lookup over several targets', () => {
     ).toMatchObject({ type: 'string[]', facet: true, optional: true });
   });
 
+  it('declares the label-match companion beside it, for a facet query', () => {
+    // Every target reads its label off the referent, and so does the lookup.
+    const readName = (type: typeof person | typeof organization) =>
+      defineSearchType({
+        ...type,
+        fields: type.fields.map((field) =>
+          field.name === 'name'
+            ? { ...field, path: 'https://schema.org/name' }
+            : field,
+        ),
+      });
+    const read = defineSearchType({
+      ...sculpture,
+      fields: [{ ...sculpture.fields[0], path: 'https://schema.org/creator' }],
+    });
+    const definition = buildCollectionDefinition(read, {
+      schema: searchSchema(read, readName(person), readName(organization)),
+    });
+
+    expect(
+      definition.fields?.find((field) => field.name === 'creator_id_match'),
+    ).toEqual({
+      name: 'creator_id_match',
+      type: 'string[]',
+      facet: true,
+      optional: true,
+    });
+  });
+
   it('labels each bucket from whichever collection holds its key', async () => {
     const { fake } = client({
       found: 0,

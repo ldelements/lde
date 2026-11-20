@@ -209,33 +209,13 @@ describe('an identity faceted on its nested leaf', () => {
     });
   });
 
-  it('searches the facet’s values by the label of each person', async () => {
-    const people = await client
-      .collections('people')
-      .documents()
-      .import(
-        [
-          {
-            id: 'https://ex/anna',
-            label_und: 'Anna Visscher',
-            label_search_und: 'anna visscher',
-          },
-          {
-            id: 'https://ex/bram',
-            label_und: 'Bram de Bie',
-            label_search_und: 'bram de bie',
-          },
-        ],
-        { action: 'create' },
-      );
-    expect(people.every((result) => result.success)).toBe(true);
-
-    const result = await engine.search(work, {
-      ...base,
-      where: [createdBy('https://ex/bram')],
-      facetQueries: { creator: 'visscher' },
-    });
-
-    expect(counts(result)).toEqual({ 'https://ex/anna': 1 });
+  it('takes no query: its entries store no labels beside the ids', async () => {
+    await expect(
+      engine.search(work, {
+        ...base,
+        where: [createdBy('https://ex/bram')],
+        facetQueries: { creator: 'visscher' },
+      }),
+    ).rejects.toThrow(/not-queryable/);
   });
 });

@@ -17,6 +17,7 @@ const person: SearchType = {
     {
       name: 'name',
       kind: 'text',
+      path: 'https://schema.org/name',
       locales: ['nl'],
       output: true,
       searchable: { weight: 1 },
@@ -97,6 +98,7 @@ const work: SearchType = {
     {
       name: 'author',
       kind: 'reference',
+      path: 'https://schema.org/author',
       array: true,
       output: true,
       filterable: true,
@@ -219,7 +221,7 @@ describe('the cost of a query', () => {
     ).toBe(1 + 2);
   });
 
-  it('charges a query on a reference facet one more per target type, and a literal one nothing extra', async () => {
+  it('charges a query on a reference facet one more, and a literal one nothing extra', async () => {
     expect(
       await costOf(
         '{ creativeWorks(perPage: 0) { facets { author(query: "rem") { totalValues } genre(query: "kaa") { totalValues } } } }',
