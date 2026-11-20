@@ -170,6 +170,10 @@ and an `identity` without either is a companion nothing reads.
 > an `identity`, filtered only by conditions welded to one entry on its own
 > filterable fields. `facetable` still needs one.
 
+> Amended by [ADR 37](0037-filter-and-facet-an-identity-on-its-nested-leaf.md):
+> the flat `${name}_id` companion is gone. The engine filters and facets the
+> identity’s leaf inside each entry, which counts each document once.
+
 The ids are harvested from the entries rather than read from a second path.
 A path that reaches the endpoint through the edge (`<…/creator>/<…/creator>`)
 also matches the **edge itself** wherever the edge is a named node, which would

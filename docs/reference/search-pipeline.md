@@ -72,7 +72,11 @@ const pipeline = searchIndexerPipeline({
   datasets,
   // Import each dataset’s data dump into a local QLever and query that.
   distributionResolver: new ImportResolver(new SparqlDistributionResolver(), {
-    ...createQlever({ mode: 'docker', image: 'adfreiburg/qlever:latest' }),
+    ...createQlever({
+      mode: 'docker',
+      image: 'adfreiburg/qlever:latest',
+      dataDir: './data',
+    }),
     strategy: 'import',
   }),
   writerFor: (searchType, schema) =>
@@ -137,8 +141,26 @@ registry-sourced type, a pattern that does not mention `?root` or one that does
 not parse throws at wiring time. The restrictions extend `pipelineVersion`, so
 changing one re-indexes every dataset instead of skipping it.
 
+To change how the stages read, pass `tuning` for every type and `tuningByType`
+per type name: a `batchSize` (roots per Extraction CONSTRUCT) and a
+`maxConcurrency` (see [per-stage tuning](#per-stage-tuning)). A field set per
+type wins over the same field in `tuning`; a key the schema does not declare
+throws at wiring time. The batch size applies to imported dumps only: a live
+endpoint always takes 10 roots per batch, since other users share it and it may
+fail on larger queries.
+
+```ts
+searchIndexerPipeline({
+  schema,
+  datasets,
+  writerFor,
+  tuning: { maxConcurrency: 4 },
+  tuningByType: { Object: { batchSize: 200 } },
+});
+```
+
 A deployment that needs more – a bespoke root selector (where the entry point
-is a domain fact, not a class), per-stage tuning, non-SPARQL readers, or
+is a domain fact, not a class), non-SPARQL readers, or
 quad-level plugins – composes the parts directly, as below, restating the
 registry sourcing, provenance and reporting this convenience wires; beyond
 those it owns no capability of its own.
@@ -276,7 +298,13 @@ blank-node subjects (`FILTER(!isBlank(?root))`): a blank node has no stable
 document key, so it can never become a search document – a custom selector
 should exclude them too. It also selects `DISTINCT` roots, so a root typed in
 several named graphs is selected once on an engine whose default graph is their
-union – a custom selector on such an engine should select `DISTINCT` too.
+union – a custom selector on such an engine should select `DISTINCT` too. And it
+orders the roots (`ORDER BY ?root`), so its `LIMIT`/`OFFSET` pages neither skip
+nor repeat a root while the data does not change during the selection – a custom
+selector needs a total order over its projected variables too (see
+[`SparqlItemSelector`](./pipeline#item-selector)). A skipped
+root is worse than a missing document under a rebuild: the run does not write
+it, so it is deleted.
 `selectByClass(searchType, rootVariable, pattern)` adds a graph pattern, in a
 group of its own, to restrict the selection.
 
@@ -355,14 +383,52 @@ declaration serves a deployment that sources it differently.
 Each `SearchStageType` entry carries three knobs beyond its selector and
 readers:
 
-- **`batchSize`** (default 10) – roots (and so documents) per batch: **the
-  memory bound**. Under a root-bound selector it moves memory and request
-  count, never output.
+- **`batchSize`** (default `{ endpoint: 10, imported: 100 }`) – roots (and so
+  documents) per batch: **the memory bound**. Under a root-bound selector it
+  moves memory and request count, never output. Each batch is one Extraction
+  CONSTRUCT, whose planning costs the same however many roots it binds, so a
+  larger batch finishes a type sooner: on a QLever import of 17574 roots, 100
+  per batch ran 5.5 times faster than 10, and past 100 the query grew faster
+  than it saved. A dump the pipeline imported serves this run alone, so it gets
+  100; a live endpoint may be shared and fail on large queries, so it keeps 10. Pass a single number to use it for both
+  ([source kinds](./pipeline#batch-size)).
 - **`maxConcurrency`** (default 10) – maximum concurrent in-flight SPARQL
   queries for the stage.
 - **`queueCapacity`** (default 128) – capacity of the bounded queue funnelling
   the stage’s projected documents into the write. A projected document is far
   heavier than a quad, so lower it where documents are large.
+
+## Referents through their type’s transforms
+
+A stage passes the referents of its references through each target type’s own
+`transforms`, inside the batch, so memory stays bounded by `batchSize`: the
+quads the extraction read off each referent go in, under the target’s IR
+Aliases, and what the transforms return replaces them. Two kinds of reference
+are described this way:
+
+- a `searchable` reference, whose referents’ key and label are read, so it is
+  searched by the label the target’s transform leaves
+  ([ADR 39](../decisions/0039-apply-a-label-sources-transforms-to-its-referents.md));
+- a `lookup` declaring [presence leaves](./search#on-a-lookup-s-referents),
+  whose referents’ key and leaves are read, so the projection can write whether
+  any referent holds a leaf.
+
+A referent a presence leaf is counted for, named by IRI, and that the batch
+states nothing about – the root’s graph names it by IRI alone – enters its
+target’s transforms all the same, as `<referent> rdf:type <class>`, so a
+transform that describes a node from its key (an Authority’s coordinates for a
+GeoNames place) supplies the leaf. The seed is not kept. A transform on such a
+target therefore also receives nodes carrying a type alone, or only a key and
+a few leaves, once per referring batch; a transform doing I/O pays for that
+unless it caches. A blank-node referent is not seeded: the lookup stores no id
+for it, so it is not counted.
+
+A reference to the stage’s own type passes no referent’s quads through again,
+since its transforms already saw the batch – but a lookup into its own type
+declaring presence leaves still has the referents the batch states nothing
+about seeded through them. A target wired with its own `readers` has no
+transform to apply
+([ADR 42](../decisions/0042-count-a-referents-leaf-and-a-fields-facets-in-one-object.md)).
 
 ## Per-component isolation
 

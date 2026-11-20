@@ -54,7 +54,12 @@ const place: SearchType = {
       output: true,
       searchable: { weight: 1 },
     },
-    { name: 'postalCode', kind: 'keyword', output: true },
+    {
+      name: 'postalCode',
+      kind: 'keyword',
+      path: 'https://schema.org/postalCode',
+      output: true,
+    },
     {
       name: 'containedIn',
       kind: 'reference',
@@ -104,6 +109,36 @@ const work: SearchType = {
       array: true,
       output: true,
       ref: { strategy: 'lookup', target: ['Person', 'Organization'] },
+    },
+    // Fields whose facet counts more than their own values, served as one
+    // object each.
+    {
+      name: 'material',
+      kind: 'keyword',
+      output: true,
+      filterable: true,
+      facetable: true,
+      presence: true,
+    },
+    {
+      name: 'pages',
+      kind: 'integer',
+      output: true,
+      filterable: true,
+      facetable: true,
+      presence: true,
+    },
+    {
+      name: 'location',
+      kind: 'reference',
+      output: true,
+      filterable: true,
+      facetable: true,
+      ref: {
+        strategy: 'lookup',
+        target: 'Place',
+        presenceLeaves: ['postalCode'],
+      },
     },
   ],
 };
@@ -184,11 +219,25 @@ describe('the cost of a query', () => {
     ).toBe(1 + 2);
   });
 
+  it('charges a query on a reference facet one more per target type, and a literal one nothing extra', async () => {
+    expect(
+      await costOf(
+        '{ creativeWorks(perPage: 0) { facets { author(query: "rem") { totalValues } genre(query: "kaa") { totalValues } } } }',
+      ),
+    ).toBe(1 + (1 + 1) + 1);
+    // Under three characters a query is none, and costs nothing extra.
+    expect(
+      await costOf(
+        '{ creativeWorks(perPage: 0) { facets { author(query: "re") { totalValues } } } }',
+      ),
+    ).toBe(1 + 1);
+  });
+
   it('charges one per selected facet key', async () => {
     expect(
       await costOf(
         // `year.all` is a second facet query, next to the `matching` one.
-        '{ creativeWorks(perPage: 0) { facets { genre { value count } author { value count } year { all { min max } buckets { value } } } } }',
+        '{ creativeWorks(perPage: 0) { facets { genre { buckets { value count } } author { buckets { value count } } year { all { min max } buckets { value } } } } }',
       ),
     ).toBe(1 + 3 + 1);
   });
@@ -199,6 +248,32 @@ describe('the cost of a query', () => {
         '{ creativeWorks(perPage: 0) { facets { year { matching { min } buckets { value } } } } }',
       ),
     ).toBe(1 + 1);
+  });
+
+  it('charges each part of a field’s facet object it selects', async () => {
+    const facets = (selection: string) =>
+      costOf(`{ creativeWorks(perPage: 0) { facets { ${selection} } } }`);
+
+    expect(await facets('material { buckets { value } }')).toBe(1 + 1);
+    expect(await facets('material { totalValues }')).toBe(1 + 1);
+    expect(await facets('material { exists { value } }')).toBe(1 + 1);
+    // Each part is charged on its own, so the values’ two parts cost two.
+    expect(
+      await facets(
+        'material { buckets { value } totalValues exists { value } }',
+      ),
+    ).toBe(1 + 3);
+    expect(await facets('pages { matching { min } }')).toBe(1 + 1);
+    expect(await facets('pages { buckets { value } }')).toBe(1 + 1);
+    expect(await facets('pages { all { min } exists { value } }')).toBe(1 + 2);
+    expect(await facets('location { postalCode { exists { value } } }')).toBe(
+      1 + 1,
+    );
+    expect(
+      await facets(
+        'location { buckets { value } postalCode { exists { value } } }',
+      ),
+    ).toBe(1 + 2);
   });
 
   it('charges a lookup inside a fragment like an inlined one', async () => {

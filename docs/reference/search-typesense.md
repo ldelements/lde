@@ -110,14 +110,17 @@ both handled here rather than left to a caller:
   under an `index: false` parent is silently ignored – no error, and every query
   answering empty – so the parent’s flag is computed from its children.
 - **A value under a multi-valued ancestor arrives as a list**, however
-  single-valued its own declaration. An indexed field’s declared type is checked
-  against what is stored, so it is widened (`int64` → `int64[]`); an unindexed
-  one is not.
+  single-valued its own declaration. Once the parent is indexed, Typesense
+  checks every declared child against what is stored, unindexed ones included,
+  so each is widened (`int64` → `int64[]`).
 
-An inline reference declaring `filterable` or `facetable` also emits its
-[identity companion](./search#data-on-the-edge) – a flat `${name}_id` field,
-faceted in the nested object’s place, since an engine can filter and facet
-neither an object nor per array element.
+An inline reference naming an [`identity`](./search#data-on-the-edge) is
+filtered and faceted on that identity’s leaf inside each entry, declared with
+`facet: true` where the facet reads it. Typesense flattens a leaf under an
+`object[]` into one list per document, so a bucket counts each document once.
+A `local` lookup declaring `filterable` or `facetable` emits a flat `${name}_id`
+companion beside its endpoints instead, since their own `id` is a level deeper
+than a condition on one entry reaches.
 
 A **reference inheriting a [facet policy](./search#facet-policy)** – a facetable
 `lookup`/`labelSource` reference to a type declaring `facetKeys` – is declared
@@ -128,6 +131,21 @@ operator. Only the `schema` option can resolve the policy: built without it,
 the field itself is declared the facet and no companion is – the projection
 makes the same reading without a schema – so a deployment declaring a policy
 passes the schema to its writers, as `createSearchIndexer` does.
+
+A field declaring [presence](./search#filtering-and-faceting-on-presence) gets
+a `${name}_exists` companion of type `bool`, indexed and `facet: true`, beside
+whatever the field itself stores. Typesense has no filter on a field holding a
+value, so `exists` compiles to `${name}_exists:=true` or `:=false`, and the
+facet `‹field›.exists` counts the companion. The projection writes it on every
+document, `false` included, so the companion is not optional. A field
+declaring presence alone is internal, so the companion is all the collection
+declares for it. A reference’s presence leaves – an
+[inline entry’s](./search#presence-on-an-entry-s-leaf) or a
+[lookup’s referents’](./search#on-a-lookup-s-referents) – each get a top-level
+`${reference}_${leaf}_exists` of the same kind, true when any entry or
+referent holds a value: an `exists` welded alone to an inline reference, and a
+lookup’s `{ field, leaf, exists }`, compile to it, never to a condition inside
+the nested object.
 
 An `InPlaceRebuild` additionally refuses a type whose declared
 [dataset field](#provenance) inherits a policy: it enumerates the indexed
@@ -221,9 +239,11 @@ down.
   reimplementing it. A projected lookup naming several targets fetches from
   each target’s collection concurrently, still one round-trip per level, and
   marks each nested document with the target whose collection answered for it
-  (`NESTED_DOCUMENT_TYPE`, a symbol key, so it never surfaces as a field); a
-  stored referent no collection answers for is read through the target its
-  stored discriminator names.
+  (`NESTED_DOCUMENT_TYPE`, a symbol key, so it never surfaces as a field). A
+  stored referent is read through the target its stored discriminator names –
+  that target’s collection’s answer where it holds the IRI, what was stored
+  where it does not, even if another target’s collection holds the IRI. A bare
+  IRI two collections hold takes the target declared first.
 
 A label source is just another `SearchType` in the schema (with an `output`,
 `searchable` text field under its
@@ -256,6 +276,47 @@ rejects on engine failure.
 The pure halves `buildSearchParams` and `parseSearchResponse` are exported for
 direct use and testing.
 
+### Facet queries
+
+A query searching a facet’s values ([`facetQueries`](./search#searching-a-facet-s-values))
+compiles by what the facet holds.
+
+A **literal** (`keyword`) facet compiles to Typesense’s `facet_query` on the
+facet’s own search: Typesense matches the values by prefix, with typo
+tolerance, and returns the matching values with the highest counts. A colon
+in the text separates words like a space, because Typesense reads one as the
+separator between field and text.
+Non-matching values cannot crowd them out, and under `facet_query`
+`stats.total_values` counts the matching values only, so `totalValues` is
+exact.
+
+A **reference** facet’s values are IRIs, which `facet_query` would match
+instead of the labels someone types. It takes two steps:
+
+1. Search the collection of each type the reference names with the query,
+   using that type’s own free-text search – its searchable fields, weights,
+   typo tolerance and prefix matching – and take at most
+   `maxFacetQueryCandidates` ids from each. These are the candidates.
+2. Count each candidate with a search of its own: the facet’s search – the
+   query’s documents without the facet’s own filter – plus that candidate
+   selected, asking for no document. The facet keeps the candidates that
+   occur, the highest counts first, capped at the limit.
+
+Counting each candidate apart is what keeps the answer exact. A single facet
+search over the documents carrying any candidate would count their other
+values too, which can outnumber every candidate and crowd it out of the
+buckets – a match on two works that also carry twenty prolific creators would
+fall out of a top-ten – and fetching all of them instead makes the response
+grow with the data. The counts travel in `multi_search` requests of 50, so with the default cap
+of 50 a query costs one request of counts per type the reference names, beside
+step one’s: on a local index of 19694 works, 50 counts took 13 ms against
+10 ms for one facet search. A reference naming two types (`Person`,
+`Organization`) can need 100 counts.
+
+`totalValues` is the number of candidates that occur in the documents. It is
+exact only when no step-one search filled its cap; when one did, more
+referents may match than were found, and `totalValues` is absent.
+
 ### Engine options
 
 Beyond `collections`, `TypesenseSearchEngineOptions` carries:
@@ -263,15 +324,23 @@ Beyond `collections`, `TypesenseSearchEngineOptions` carries:
 - **`maxFacetValues`** – the cap on buckets returned per facet
   (`max_facet_values`). Left unset, **Typesense defaults to 10**, so a
   high-cardinality facet (publisher, keyword) silently truncates to its top
-  ten buckets; a deployment with such facets must raise it. Range facets
+  ten buckets; a deployment with such facets must raise it. A query’s
+  `facetLimits` override it per facet. Range facets
   return one bucket per declared range regardless, but a value larger than
   the range count is still safe. A numeric facet’s extent comes from the
-  facet’s `stats`, which cover every matching value whatever the cap. A value
+  facet’s `stats`, which cover every matching value whatever the cap, and so
+  does every facet’s `totalValues`: the adapter counts facets with
+  `facet_strategy: exhaustive`, because under `top_values` – which
+  Typesense’s default `automatic` picks for some facets and not others –
+  `stats.total_values` is merely the number of buckets returned. A value
   a facet’s own filter selects is reported even past the cap: the adapter
   counts it with one extra search per value – as it does for a value a
   [facet policy](./search#facet-policy) keeps out of the facet – sent
   together in as few `multi_search` requests as Typesense accepts (50
   searches each).
+- **`maxFacetQueryCandidates`** – how many referents a query on a reference
+  facet may match, per type the reference names (default 50, at most 250:
+  Typesense’s `per_page` cap). Each candidate costs a count search. See [facet queries](#facet-queries).
 - **`onLabelError`** – called when reference-label resolution fails; the
   search then degrades to id-only references (and reference-facet buckets to
   unlabelled ones) rather than failing. Omit it and the degradation is
@@ -396,7 +465,8 @@ alone – with one exception. If the collection exists but does not carry every
 [reference field](#joins-across-collections) the declaration asks for (a
 `joinable` added to a schema whose index predates it), or every
 [facet companion](#collection-schema-and-engine) its facets read (a `facetKeys`
-policy added to a type this one references), the run **fails** at open – after
+policy added to a type this one references, or `presence` added to a field),
+the run **fails** at open – after
 the lock, before any write – naming the drop-and-rebuild that fixes it. Without
 that it would index and commit happily and then fail on every join query, or
 on every facet over that reference: the values would be there, the reference
@@ -514,7 +584,7 @@ one would delete the other’s in-flight build.
 Limitations to design around:
 
 - **Advisory, not a strict mutex.** The lock is built on Typesense, not a
-  consensus store. Under a TTL-reclaim race two rebuilds can briefly run at
+  consensus store. Under a reclaim race two rebuilds can briefly run at
   once; this is safe because blue/green is idempotent (worst case: redundant
   work and a transient orphaned collection) and in-place upserts are
   idempotent.
@@ -522,9 +592,26 @@ Limitations to design around:
   is _not_ queued. To capture a change made mid-build, request the rebuild
   through [`requestRebuild`](#requesting-a-rebuild) instead of running it
   directly.
-- **Lock TTL.** Nothing refreshes a held lock, so a rebuild running longer
-  than `lockTtlMs` (default 10 minutes) can be reclaimed by another caller and
-  run concurrently; size the TTL above your longest rebuild.
+- **Lock TTL.** A run refreshes its lock every third of `lockTtlMs` (default
+  10 minutes) while it is open, so the TTL does not limit how long a rebuild
+  may take: another caller reclaims the lock only once its holder has stopped
+  refreshing it – because the process died. The lock records which run holds
+  it. A run whose lock was taken over refuses to commit – blue/green does not
+  swap the alias, in-place does not sweep – and releasing never deletes
+  another run’s lock. `lockTtlMs` must be positive and finite.
+- **Ownership is checked, then acted on.** Refreshing, releasing and
+  committing first read who holds the lock and then write, delete or go
+  live. Typesense has no conditional write that could make this one step, so
+  a run whose lock is taken over between the two can still refresh, delete
+  or commit once more – the advisory limit above, in another place.
+- **An open run holds its lock for as long as its process lives.** The
+  heartbeat stops only on `commit`, `abort` or process exit, so a run that is
+  opened and then neither committed nor aborted blocks the index until its
+  process exits.
+- **Mixed-version rollouts.** A pod on a version without the heartbeat
+  neither refreshes its lock nor checks who holds it, so until every pod runs
+  a version with it, an older pod’s long run can still overlap a newer one,
+  and its release can delete the newer run’s lock.
 - **Membership-sweep cap.** The in-place membership sweep enumerates distinct
   sources via a single facet, capped at `maxSweepableSources` (default
   10 000); beyond that the commit throws rather than sweeping blind. Raise the

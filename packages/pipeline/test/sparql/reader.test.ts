@@ -342,8 +342,9 @@ describe('SparqlConstructReader', () => {
   describe('when the endpoint fails', () => {
     const endpoint = 'http://example.org/sparql';
     const distribution = Distribution.sparql(new URL(endpoint));
+    // The dataset IRI is on another host than its endpoint.
     const dataset = new Dataset({
-      iri: new URL('http://example.org/dataset'),
+      iri: new URL('http://data.example.com/dataset'),
       distributions: [distribution],
     });
     const query = 'CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }';
@@ -361,13 +362,15 @@ describe('SparqlConstructReader', () => {
       Math.round((untilMs - Date.now()) / 1000);
 
     it.each([
+      ['HTTP 408', () => httpError(408)],
+      ['HTTP 429', () => httpError(429)],
       ['HTTP 502', () => httpError(502)],
       ['HTTP 503', () => httpError(503)],
       ['HTTP 504', () => httpError(504)],
       ['a network error', () => new TypeError('fetch failed')],
       ['a reset connection', connectionReset],
     ])(
-      'pauses the dataset on %s, lowers its limit and tries again',
+      'pauses the endpoint on %s, lowers its limit and tries again',
       async (_name, failure) => {
         const fetcher = new SparqlEndpointFetcher();
         const spy = vi
@@ -386,7 +389,7 @@ describe('SparqlConstructReader', () => {
         // Paused before the failed query frees its slot.
         expect(log).toEqual(['pause', 'overloaded', 'success']);
         expect(pauses).toHaveLength(1);
-        expect(pauses[0].host).toBe('http://example.org/dataset');
+        expect(pauses[0].host).toBe('example.org/sparql');
         expect(secondsUntil(pauses[0].untilMs)).toBe(5);
       },
     );
@@ -413,7 +416,7 @@ describe('SparqlConstructReader', () => {
     it.each([
       ['30', 30],
       ['0', 5],
-      ['86400', 405],
+      ['405', 405],
     ])('pauses for Retry-After: %s as %i s', async (retryAfter, seconds) => {
       const answers = [
         new Response('down', {
@@ -444,6 +447,33 @@ describe('SparqlConstructReader', () => {
       expect(pauses.map(({ untilMs }) => secondsUntil(untilMs))).toEqual([
         seconds,
       ]);
+    });
+
+    it('fails the read at once when Retry-After outlasts the longest step', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(
+          async () =>
+            new Response('slow down', {
+              status: 429,
+              headers: { 'Retry-After': '3600' },
+            }),
+        ),
+      );
+      const { limiter, pauses } = recordingLimiter();
+
+      try {
+        await expect(
+          new SparqlConstructReader({ query }).read(dataset, distribution, {
+            limiter,
+          }),
+        ).rejects.toThrow('HTTP status 429');
+        expect(fetch).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+
+      expect(pauses).toEqual([]);
     });
 
     it('lowers the limit on a timeout, without trying again', async () => {
@@ -738,7 +768,7 @@ describe('SparqlConstructReader', () => {
 
   describe('timeout policy', () => {
     function recordingPolicy() {
-      const before = vi.fn().mockReturnValue(1234);
+      const before = vi.fn().mockReturnValue({ timeoutMs: 1234 });
       const after = vi.fn();
       return {
         beforeRequest: before,
@@ -781,7 +811,12 @@ describe('SparqlConstructReader', () => {
         expect.objectContaining({
           endpoint: distribution.accessUrl,
           outcome: 'ok',
+          budget: { timeoutMs: 1234 },
         }),
+      );
+      // The policy tells attempts apart by identity, so no copy.
+      expect(policy.afterRequest.mock.calls[0][0].budget).toBe(
+        policy.beforeRequest.mock.results[0].value,
       );
     });
 
@@ -808,7 +843,10 @@ describe('SparqlConstructReader', () => {
       ).rejects.toThrow('504');
 
       expect(policy.afterRequest).toHaveBeenCalledWith(
-        expect.objectContaining({ outcome: 'timeout' }),
+        expect.objectContaining({
+          outcome: 'timeout',
+          budget: { timeoutMs: 1234 },
+        }),
       );
     });
 
@@ -832,7 +870,10 @@ describe('SparqlConstructReader', () => {
       ).rejects.toThrow();
 
       expect(policy.afterRequest).toHaveBeenCalledWith(
-        expect.objectContaining({ outcome: 'timeout' }),
+        expect.objectContaining({
+          outcome: 'timeout',
+          budget: { timeoutMs: 1234 },
+        }),
       );
     });
 
@@ -856,7 +897,10 @@ describe('SparqlConstructReader', () => {
       ).rejects.toThrow();
 
       expect(policy.afterRequest).toHaveBeenCalledWith(
-        expect.objectContaining({ outcome: 'timeout' }),
+        expect.objectContaining({
+          outcome: 'timeout',
+          budget: { timeoutMs: 1234 },
+        }),
       );
     });
 
@@ -882,7 +926,10 @@ describe('SparqlConstructReader', () => {
       ).rejects.toThrow();
 
       expect(policy.afterRequest).toHaveBeenCalledWith(
-        expect.objectContaining({ outcome: 'error' }),
+        expect.objectContaining({
+          outcome: 'error',
+          budget: { timeoutMs: 1234 },
+        }),
       );
     });
 
@@ -912,11 +959,14 @@ describe('SparqlConstructReader', () => {
       expect(policy.afterRequest).toHaveBeenCalledTimes(2);
       expect(policy.afterRequest).toHaveBeenNthCalledWith(
         1,
-        expect.objectContaining({ outcome: 'timeout' }),
+        expect.objectContaining({
+          outcome: 'timeout',
+          budget: { timeoutMs: 1234 },
+        }),
       );
       expect(policy.afterRequest).toHaveBeenNthCalledWith(
         2,
-        expect.objectContaining({ outcome: 'ok' }),
+        expect.objectContaining({ outcome: 'ok', budget: { timeoutMs: 1234 } }),
       );
     });
 
@@ -957,7 +1007,7 @@ describe('SparqlConstructReader', () => {
       });
 
       const policy = {
-        beforeRequest: vi.fn().mockReturnValue(10),
+        beforeRequest: vi.fn().mockReturnValue({ timeoutMs: 10 }),
         afterRequest: vi.fn(),
       };
       const reader = new SparqlConstructReader({
@@ -973,7 +1023,10 @@ describe('SparqlConstructReader', () => {
       ).rejects.toThrow();
 
       expect(policy.afterRequest).toHaveBeenCalledWith(
-        expect.objectContaining({ outcome: 'timeout' }),
+        expect.objectContaining({
+          outcome: 'timeout',
+          budget: { timeoutMs: 10 },
+        }),
       );
       expect(slowFetch).toHaveBeenCalled();
       const init = slowFetch.mock.calls[0][1];

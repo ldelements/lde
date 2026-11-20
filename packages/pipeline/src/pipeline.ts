@@ -1,12 +1,16 @@
 import { createReadStream } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { Dataset, Distribution } from '@lde/dataset';
-import type { HostLimiter } from '@lde/host-limiter';
+import {
+  createHostLimiter,
+  positiveIntOrDefault,
+  type HostLimiter,
+} from '@lde/host-limiter';
 import type { Quad } from '@rdfjs/types';
 import { StreamParser } from 'n3';
 import type { DatasetSelector } from './selector.js';
 import { Stage } from './stage.js';
-import type { QuadTransform } from './stage.js';
+import type { QuadTransform, SourceKind } from './stage.js';
 import { AsyncQueue } from './asyncQueue.js';
 import type {
   DatasetOutcome,
@@ -173,17 +177,6 @@ export interface PipelineOptions<Out = Quad> {
    * once per dataset so state resets between datasets.
    */
   timeout?: () => TimeoutPolicy;
-  /**
-   * The limiter every stage’s readers run their queries on, keyed on the
-   * dataset’s IRI. Each dataset’s limit adapts to how its endpoint responds,
-   * up to the limiter’s per-host ceiling; see {@link SparqlConstructReader}.
-   *
-   * Pass the limiter you also give a resolver that loads the same backend –
-   * keyed on the dataset too – so the two share one limit.
-   *
-   * Left out, the readers share a default: `createHostLimiter(10, 10)`.
-   */
-  limiter?: HostLimiter;
 }
 
 /**
@@ -429,7 +422,13 @@ export class Pipeline<Out = Quad> {
   private readonly chaining?: PipelineOptions<Out>['chaining'];
   private readonly reporters: readonly Reporter[];
   private readonly timeoutFactory: () => TimeoutPolicy;
-  private readonly limiter?: HostLimiter;
+  /**
+   * The limiter every stage’s readers run their queries on, keyed on the
+   * endpoint, so each endpoint’s limit adapts to how it responds and carries
+   * over to the next dataset it serves; see {@link SparqlConstructReader}.
+   * Its ceiling is the highest `maxConcurrency` of any stage.
+   */
+  private readonly limiter: HostLimiter;
   private readonly provenanceStore?: ProvenanceStore;
   private readonly pipelineVersion?: string;
 
@@ -486,7 +485,13 @@ export class Pipeline<Out = Quad> {
     this.reporters = [options.reporter ?? []].flat();
     this.timeoutFactory =
       options.timeout ?? (() => new ConstantTimeoutPolicy(300_000));
-    this.limiter = options.limiter;
+    const ceiling = positiveIntOrDefault(
+      Math.max(
+        ...[...allStages(options.stages)].map((stage) => stage.maxConcurrency),
+      ),
+      10,
+    );
+    this.limiter = createHostLimiter(ceiling, ceiling);
     this.provenanceStore = options.provenanceStore;
     this.pipelineVersion = options.pipelineVersion;
   }
@@ -740,6 +745,7 @@ export class Pipeline<Out = Quad> {
       ({ stageFailed, unread } = await this.runStages(
         dataset,
         resolved.distribution,
+        sourceKindOf(resolved),
         timeout,
         runWriter,
         context,
@@ -792,6 +798,7 @@ export class Pipeline<Out = Quad> {
             ({ stageFailed, unread } = await this.runStages(
               dataset,
               fallback.distribution,
+              sourceKindOf(fallback),
               timeout,
               runWriter,
               context,
@@ -934,7 +941,7 @@ export class Pipeline<Out = Quad> {
     dataset: Dataset,
   ): Promise<void> {
     const validators = new Set<Validator>();
-    for (const stage of this.collectStages(this.stages)) {
+    for (const stage of allStages(this.stages)) {
       if (stage.validator) validators.add(stage.validator);
     }
     for (const validator of validators) {
@@ -945,14 +952,6 @@ export class Pipeline<Out = Quad> {
 
   // Walks every stage and sub-stage to collect validators; it reads only
   // `validator`/`stages`, never output, so it is agnostic to the item type.
-  private *collectStages(
-    stages: readonly Stage<unknown>[],
-  ): Iterable<Stage<unknown>> {
-    for (const stage of stages) {
-      yield stage;
-      if (stage.stages.length > 0) yield* this.collectStages(stage.stages);
-    }
-  }
 
   /**
    * The writer a stage's merged output is written through: the open run
@@ -1026,6 +1025,7 @@ export class Pipeline<Out = Quad> {
   private async runStages(
     dataset: Dataset,
     distribution: Distribution,
+    source: SourceKind,
     timeout: TimeoutPolicy,
     runWriter: RunWriter<Out>,
     context: RunContext,
@@ -1038,6 +1038,7 @@ export class Pipeline<Out = Quad> {
           await this.runChain(
             dataset,
             distribution,
+            source,
             stage,
             runWriter,
             context,
@@ -1050,6 +1051,7 @@ export class Pipeline<Out = Quad> {
             distribution,
             stage,
             this.stageWriter(runWriter, stage.name),
+            source,
             timeout,
             unread,
           );
@@ -1072,6 +1074,7 @@ export class Pipeline<Out = Quad> {
     distribution: Distribution,
     stage: Stage<Item>,
     writer: DatasetWriter<Item>,
+    source: SourceKind,
     timeout?: TimeoutPolicy,
     unread?: UnreadValueTally,
   ): Promise<boolean> {
@@ -1083,6 +1086,7 @@ export class Pipeline<Out = Quad> {
     let summary: StageSummary | undefined;
 
     const result = await stage.run(dataset, distribution, writer, {
+      source,
       onProgress: (items, quads) => {
         itemsProcessed = items;
         quadsGenerated = quads;
@@ -1150,6 +1154,7 @@ export class Pipeline<Out = Quad> {
     distribution: Distribution,
     stage: Stage<Item>,
     writer: DatasetWriter<Item>,
+    source: SourceKind,
     timeout?: TimeoutPolicy,
   ): Promise<void> {
     const supported = await this.runStage(
@@ -1158,6 +1163,7 @@ export class Pipeline<Out = Quad> {
       distribution,
       stage,
       writer,
+      source,
       timeout,
     );
     if (!supported) {
@@ -1170,6 +1176,7 @@ export class Pipeline<Out = Quad> {
   private async runChain(
     dataset: Dataset,
     distribution: Distribution,
+    source: SourceKind,
     stage: Stage<Out>,
     runWriter: RunWriter<Out>,
     context: RunContext,
@@ -1189,6 +1196,7 @@ export class Pipeline<Out = Quad> {
     const runScratchStage = async (
       chainedStage: Stage<Quad>,
       stageDistribution: Distribution,
+      stageSource: SourceKind,
     ): Promise<string> => {
       const scratchWriter = new FileWriter({
         outputDir: `${outputDir}/${chainedStage.name}`,
@@ -1202,6 +1210,7 @@ export class Pipeline<Out = Quad> {
           stageDistribution,
           chainedStage,
           scratchRun,
+          stageSource,
           timeout,
         );
         await scratchRun.flush(dataset, 'success');
@@ -1218,14 +1227,20 @@ export class Pipeline<Out = Quad> {
       const parentOutput = await runScratchStage(
         stage as unknown as Stage<Quad>,
         distribution,
+        source,
       );
       outputFiles.push(parentOutput);
 
       // 2. Chain through children.
       let currentDistribution = await stageOutputResolver.resolve(parentOutput);
       for (let i = 0; i < stage.stages.length; i++) {
-        const child = stage.stages[i];
-        const childOutput = await runScratchStage(child, currentDistribution);
+        // A child reads its parent’s output, which the pipeline serves from
+        // a store of its own, as it does an imported dump.
+        const childOutput = await runScratchStage(
+          stage.stages[i],
+          currentDistribution,
+          'imported',
+        );
         outputFiles.push(childOutput);
 
         if (i < stage.stages.length - 1) {
@@ -1265,6 +1280,16 @@ export class Pipeline<Out = Quad> {
   }
 }
 
+/** Every stage, with the stages chained under it. */
+function* allStages(
+  stages: readonly Stage<unknown>[],
+): Iterable<Stage<unknown>> {
+  for (const stage of stages) {
+    yield stage;
+    yield* allStages(stage.stages);
+  }
+}
+
 function mapProbeResult(
   distribution: Distribution,
   result: ProbeResultType,
@@ -1290,4 +1315,9 @@ function mapProbeResult(
     warnings: result.warnings,
     fingerprint,
   };
+}
+
+/** What kind of source a resolved distribution serves the stages. */
+function sourceKindOf(resolved: ResolvedDistribution): SourceKind {
+  return resolved.imported === undefined ? 'endpoint' : 'imported';
 }

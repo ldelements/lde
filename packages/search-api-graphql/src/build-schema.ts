@@ -16,6 +16,8 @@ import {
   responsePathAsArray,
   type GraphQLEnumValueConfigMap,
   type GraphQLFieldConfig,
+  type GraphQLArgumentConfig,
+  type GraphQLFieldExtensions,
   type GraphQLInputFieldConfig,
   type GraphQLInputType,
   type GraphQLOutputType,
@@ -23,7 +25,9 @@ import {
 } from 'graphql';
 import {
   NESTED_DOCUMENT_TYPE,
+  facetQueryText,
   type Criterion,
+  type FacetBucket,
   type Filter,
   type LocalizedValue,
   type NestedDocument,
@@ -53,6 +57,7 @@ import {
   ID_FIELD,
   isAbsoluteIri,
   OR_KEY,
+  isQueryableFacet,
   isRangeFacet,
   isBinnedRangeFacet,
   isoToUnixSeconds,
@@ -60,6 +65,8 @@ import {
   nestedReferenceType,
   outputFields,
   pageForOffset,
+  isInlineReference,
+  physicalFields,
   sortableFields,
   unixSecondsToIso,
   type FacetDeclaration,
@@ -78,7 +85,11 @@ import {
   type FacetScope,
 } from './facet-batch.js';
 import { projectionFor } from './projection.js';
-import { costExtensions, operationCost } from './query-cost.js';
+import {
+  costExtensions,
+  facetQueryCostExtensions,
+  operationCost,
+} from './query-cost.js';
 
 /** Populated per request by the transport; no framework type appears here. */
 export interface SearchContext {
@@ -132,9 +143,20 @@ export interface BuildGraphQLSchemaOptions {
    *  `1 ≤ perPage ≤ maxPerPage` or with `page < 1` is rejected with a clear
    *  error instead of reaching the engine. */
   readonly maxPerPage?: number;
+  /** Upper bound for a value facet’s `limit` argument (default 100). A
+   *  request outside `1 ≤ limit ≤ maxFacetLimit` is rejected with a clear
+   *  error instead of reaching the engine. A facet without `limit` gets the
+   *  engine’s own bucket cap, which this does not bound. */
+  readonly maxFacetLimit?: number;
 }
 
 type Source = Record<string, unknown>;
+
+/** What a value facet’s field takes ({@link valueArgumentsFor}). */
+interface ValueFacetArguments {
+  readonly limit?: number | null;
+  readonly query?: string | null;
+}
 
 const nonNullListOf = (type: GraphQLOutputType): GraphQLOutputType =>
   new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(type)));
@@ -334,6 +356,12 @@ export function buildGraphQLSchema(
     return languageStrings;
   };
   const maxPerPage = options.maxPerPage ?? 100;
+  const maxFacetLimit = options.maxFacetLimit ?? 100;
+  if (!Number.isInteger(maxFacetLimit) || maxFacetLimit < 1) {
+    throw new Error(
+      `maxFacetLimit must be a positive integer; got ${maxFacetLimit}.`,
+    );
+  }
   const rootTypesByName = new Map(
     [...schema.values()].map((searchType) => [searchType.name, searchType]),
   );
@@ -433,6 +461,34 @@ export function buildGraphQLSchema(
       count: { type: new GraphQLNonNull(GraphQLInt) },
     },
   });
+  // A value facet: its buckets, and how many distinct values there are in all,
+  // so a client can show “10 of 195” and knows whether asking for a larger
+  // `limit` would bring more.
+  const facetTypeOf = (name: string, bucket: GraphQLObjectType) =>
+    new GraphQLObjectType({
+      name,
+      fields: {
+        buckets: {
+          type: nonNullListOf(bucket),
+          description:
+            'The values with the highest counts, at most `limit` of them, plus any value the query selects.',
+        },
+        totalValues: {
+          type: GraphQLInt,
+          description:
+            'How many distinct values the facet holds over the matching documents, however many buckets are returned. May be an estimate on large result sets; null when the engine does not report it.',
+        },
+      },
+    });
+  const valueFacet = facetTypeOf('ValueFacet', valueBucket);
+  const iriFacet = facetTypeOf('IRIFacet', iriBucket);
+  // The keys share one engine round-trip, but each is its own facet
+  // calculation in it.
+  const facetCost = costExtensions(operationCost);
+  const limitArgument: GraphQLArgumentConfig = {
+    type: GraphQLInt,
+    description: `At most this many buckets, between 1 and ${maxFacetLimit}: the values with the highest counts. A larger limit returns a superset of a smaller one; there is no next page. Omit it for the deployment’s default.`,
+  };
   // A range facet’s extent, in the type its field’s `range` filter takes
   // (IntRange, FloatRange, DateRange), so a slider’s bounds feed straight back
   // into the filter that selects them. A date is stored as Unix seconds and
@@ -568,6 +624,18 @@ export function buildGraphQLSchema(
       'Matches a field holding IRIs that belong to no collection this API serves.',
     fields: { in: { type: new GraphQLList(new GraphQLNonNull(iriScalar)) } },
   });
+  // The `exists` arm a field declaring presence takes: whether the document
+  // holds a value, whatever the field’s kind.
+  const existsKey: GraphQLInputFieldConfig = {
+    type: GraphQLBoolean,
+    description:
+      'true matches a document that holds a value for this field, false one that holds none.',
+  };
+  const existsFilter = new GraphQLInputObjectType({
+    name: 'ExistsFilter',
+    description: 'Matches a field on whether the document holds a value.',
+    fields: { exists: existsKey },
+  });
   /**
    * The filter input for IRIs of one named target, `‹TypeName›Filter` – created
    * once per target and shared by every field pointing at it, INCLUDING the
@@ -610,6 +678,7 @@ export function buildGraphQLSchema(
     if (
       name === keywordFilter.name ||
       name === iriFilter.name ||
+      name === existsFilter.name ||
       name === iriScalar.name ||
       takenTypeNames.has(name)
     ) {
@@ -629,6 +698,59 @@ export function buildGraphQLSchema(
   const intRange = rangeInput('IntRange', GraphQLInt);
   const floatRange = rangeInput('FloatRange', GraphQLFloat);
   const dateRange = rangeInput('DateRange', dateScalar);
+  const existsVariants = new Map<string, GraphQLInputObjectType>();
+  /**
+   * The filter a field declaring presence takes: `ExistsFilter` when it is
+   * not `filterable`, and otherwise its own filter with an `exists` arm beside
+   * the others, `‹Filter›OrExists` (`DateRangeOrExists`) – one variant per
+   * filter, shared like the filter itself. `exists` asks a question of its
+   * own, so setting it together with another key is refused when the query
+   * is compiled ({@link keyEntriesOf}).
+   *
+   * The variant is a type of its own, so a reference declaring presence no
+   * longer takes the `‹Target›Filter` its target’s `id` takes, and is found
+   * by the coarse discovery strategy only.
+   */
+  function presenceFilterFor(
+    field: SearchField,
+    owner: SearchType,
+  ): GraphQLInputObjectType {
+    if (field.filterable !== true) {
+      return existsFilter;
+    }
+    // Never a bare `Boolean`: `searchSchema` refuses presence on a boolean.
+    const base = whereFieldType(field, owner) as GraphQLInputObjectType;
+    const existing = existsVariants.get(base.name);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const name = `${base.name}OrExists`;
+    // Checked like a target filter’s name, for the same reason: a declaration
+    // may name a type `DateRangeOrExists`, and graphql-js would only say so
+    // once the whole schema is assembled.
+    if (takenTypeNames.has(name)) {
+      throw new Error(
+        `Filter “${base.name}” would take “exists” through “${name}”, which is already the name of another type; rename that type.`,
+      );
+    }
+    takenTypeNames.add(name);
+    const created = new GraphQLInputObjectType({
+      name,
+      description: `${base.description ?? `Matches like ${base.name}.`} Or, through “exists”, whether the document holds a value at all.`,
+      isOneOf: base.isOneOf,
+      fields: () => ({
+        ...Object.fromEntries(
+          Object.values(base.getFields()).map((baseField) => [
+            baseField.name,
+            { type: baseField.type, description: baseField.description },
+          ]),
+        ),
+        exists: existsKey,
+      }),
+    });
+    existsVariants.set(base.name, created);
+    return created;
+  }
 
   const labelList = (
     resolveLabel: (source: Source) => LocalizedValue | undefined,
@@ -733,12 +855,29 @@ export function buildGraphQLSchema(
     dateBucket.name,
     dateRangeBucket.name,
     booleanBucket.name,
+    valueFacet.name,
+    iriFacet.name,
     paginationType.name,
     sortDirection.name,
     intRange.name,
     floatRange.name,
     dateRange.name,
   ]);
+  /**
+   * Claim a generated type name, throwing a clear error when a declaration
+   * already took it – graphql-js would reject the duplicate too, but only once
+   * the whole schema is assembled and without saying what caused it. `what`
+   * says what the name is for.
+   */
+  function claimTypeName(name: string, what: string): string {
+    if (takenTypeNames.has(name)) {
+      throw new Error(
+        `“${name}”, the type name of ${what}, is already the name of another type; rename that type.`,
+      );
+    }
+    takenTypeNames.add(name);
+    return name;
+  }
 
   // The declared joins, and the input types they make shareable. Each map is
   // keyed by the SearchType `name`, so a type reached as a join target and the
@@ -746,6 +885,32 @@ export function buildGraphQLSchema(
   const joins = joinGraph(schema);
   const whereInputs = new Map<string, GraphQLInputObjectType>();
   const nestedFilters = new Map<string, GraphQLInputObjectType>();
+  const leafFilters = new Map<string, GraphQLInputObjectType>();
+  const leafCountingReferences = new Map<
+    SearchType,
+    ReadonlySet<SearchField>
+  >();
+
+  /** The references of a Root Type counting leaves of their referents –
+   *  faceted or presence leaves – computed once per type. None for a
+   *  Reference Type. */
+  function leafCountingReferencesOf(
+    owner: SearchType,
+  ): ReadonlySet<SearchField> {
+    const existing = leafCountingReferences.get(owner);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const counting = new Set(
+      owner.class === undefined
+        ? []
+        : facetsOf(owner, schema).flatMap((facet) =>
+            facet.reference === undefined ? [] : [facet.reference],
+          ),
+    );
+    leafCountingReferences.set(owner, counting);
+    return counting;
+  }
   const referenceFilters = new Map<string, GraphQLInputObjectType>();
 
   /** The name a reference’s emitted type is keyed under: a `lookup`’s target
@@ -1209,9 +1374,15 @@ export function buildGraphQLSchema(
   function whereFieldType(
     field: SearchField,
     owner: SearchType,
+    joined = false,
   ): GraphQLInputType {
+    // A reference counting leaves of its referents takes a filter of its own,
+    // whose `where` names exactly the keys a condition on it can take.
+    if (leafCountingReferencesOf(owner).has(field)) {
+      return leafFilterFor(field, owner as RootType, joined);
+    }
     // An inline reference is filterable in two ways at once, exactly as a
-    // joinable one is: by the ids its entries hold (its identity companion),
+    // joinable one is: by the ids its entries hold (its identity),
     // and by a condition on an entry. Same input shape, because it is the same
     // question one hop out – only what the hop costs differs.
     const nested = nestedReferenceType(schema, field);
@@ -1231,14 +1402,93 @@ export function buildGraphQLSchema(
   }
 
   /**
+   * The filter input of a reference counting leaves of its referents –
+   * faceted or presence leaves – `‹Type›‹Field›Filter`: `@oneOf` over its `in`
+   * (the ids it holds, for a lookup or an inline reference naming an
+   * identity) and a `where` of its own, `‹Type›‹Field›Where`. For an inline
+   * reference that `where` names the entries’ filterable leaves, as the
+   * shared `‹Edge›Where` does; for both kinds it names each presence leaf,
+   * taking `exists` – `ExistsFilter`, or `‹Filter›OrExists` for an inline
+   * entry’s filterable leaf. A lookup’s `where` holds its presence leaves
+   * alone, each recorded on the root document, so its keys combine with AND
+   * like any sibling keys rather than holding of one referent.
+   *
+   * Through a join no presence companion is read yet, so a reference with
+   * presence leaves takes `‹Type›‹Field›JoinedFilter` there, without `exists`
+   * – or, for a lookup, which then has nothing left to name, its plain
+   * filter.
+   */
+  function leafFilterFor(
+    field: SearchField,
+    owner: RootType,
+    joined: boolean,
+  ): GraphQLInputType {
+    const nested = nestedReferenceType(schema, field);
+    const presenceLeaves = joined ? [] : presenceLeavesOf(field);
+    if (nested === undefined && presenceLeaves.length === 0) {
+      return plainWhereFieldType(field);
+    }
+    const base = `${owner.name}${capitalized(field.name)}`;
+    const variant =
+      joined && presenceLeavesOf(field).length > 0 ? `${base}Joined` : base;
+    const existing = leafFilters.get(variant);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const at = `“${owner.name}.${field.name}”`;
+    const where = new GraphQLInputObjectType({
+      name: claimTypeName(`${variant}Where`, `the condition on ${at}`),
+      description:
+        nested === undefined
+          ? 'Whether any referent holds a value for a leaf. Sibling keys are combined with AND.'
+          : 'Sibling keys are combined with AND, and all of them must hold of the SAME entry.',
+      fields: () =>
+        nested === undefined
+          ? Object.fromEntries(
+              presenceLeaves.map((leaf) => [leaf, { type: existsFilter }]),
+            )
+          : Object.fromEntries(
+              whereFieldsOf(nested, presenceLeaves).map((leaf) => [
+                leaf.name,
+                {
+                  type: presenceLeaves.includes(leaf.name)
+                    ? presenceFilterFor(leaf, nested)
+                    : whereFieldType(leaf, nested),
+                  description: leaf.description,
+                },
+              ]),
+            ),
+    });
+    const ids =
+      nested === undefined || labelTargetNamesOf(field, schema).length > 0;
+    const created = new GraphQLInputObjectType({
+      name: claimTypeName(`${variant}Filter`, `the filter on ${at}`),
+      description: ids
+        ? `A condition on ${at}: the ids it holds, or a condition on its referents.`
+        : `A condition on one ${at} entry.`,
+      isOneOf: true,
+      fields: () => ({
+        ...(ids && {
+          in: { type: new GraphQLList(new GraphQLNonNull(iriScalar)) },
+        }),
+        where: { type: where },
+      }),
+    });
+    leafFilters.set(variant, created);
+    return created;
+  }
+
+  /**
    * The filter input an inline reference takes: the ids its entries hold, or a
    * condition on one entry. `@oneOf`, so a criterion stays an atom.
    *
    * The `in` arm is typed by the target the reference’s
-   * {@link ReferenceStrategy.identity identity companion} names, so a bucket a
+   * {@link ReferenceStrategy.identity identity} names, so a bucket a
    * consumer clicks feeds straight back in – the same round trip an ordinary
    * facetable reference already guarantees. A reference declaring no identity
-   * has no ids to filter, so it offers the `where` arm alone.
+   * has no ids to filter, so it offers the `where` arm alone. Shared by every
+   * reference nesting the type that counts no leaf of it
+   * ({@link leafFilterFor}).
    */
   function nestedFilterFor(
     referenceType: ReferenceType,
@@ -1252,7 +1502,10 @@ export function buildGraphQLSchema(
     const nestedWhere = nestedWhereInputFor(referenceType);
     const created = new GraphQLInputObjectType({
       name: `${referenceType.name}Filter`,
-      description: `A condition on ${referenceType.name}: the ids its entries reference, or a condition on one entry.`,
+      description:
+        identityTargets.length > 0
+          ? `A condition on ${referenceType.name}: the ids its entries reference, or a condition on one entry.`
+          : `A condition on one ${referenceType.name} entry.`,
       isOneOf: true,
       fields: () => ({
         ...(identityTargets.length > 0 && {
@@ -1357,7 +1610,7 @@ export function buildGraphQLSchema(
         // `[IRI!]` for. Typing it `String` here would make the join arm the
         // one place identity is not `IRI`-keyed.
         in: { type: new GraphQLList(new GraphQLNonNull(iriScalar)) },
-        where: { type: whereInputFor(target) },
+        where: { type: whereInputFor(target, true) },
       }),
     });
     referenceFilters.set(target.name, created);
@@ -1371,9 +1624,14 @@ export function buildGraphQLSchema(
    * single vocabulary every level of `where` is built from: the same keys
    * appear on the clause and on a criterion, so a field is never named a
    * second way.
+   *
+   * `joined` leaves presence out: no join reads a presence companion yet
+   * (`joined-presence`), so a `where` reached through a join offers no
+   * `exists`, and a field declaring presence alone no key at all.
    */
   function fieldKeys(
     searchType: RootType,
+    joined: boolean,
   ): Record<string, GraphQLInputFieldConfig> {
     const fields: Record<string, GraphQLInputFieldConfig> = {
       // Typed self-referentially – `TermWhere.id: TermFilter` – so a consumer
@@ -1382,9 +1640,15 @@ export function buildGraphQLSchema(
       // work without hardcoding a single domain name.
       [ID_FIELD]: { type: targetFilter(searchType.name) },
     };
-    for (const field of filterableFields(searchType)) {
+    for (const field of whereFieldsOf(searchType)) {
+      if (joined && field.filterable !== true) {
+        continue;
+      }
       fields[field.name] = {
-        type: whereFieldType(field, searchType),
+        type:
+          field.presence === true && !joined
+            ? presenceFilterFor(field, searchType)
+            : whereFieldType(field, searchType, joined),
         description: field.description,
       };
     }
@@ -1398,9 +1662,28 @@ export function buildGraphQLSchema(
    * from another type. One input either way, so the vocabulary a consumer
    * learns for `datasets(where: …)` is the same one they write inside
    * `creativeWorks(where: { dataset: { where: … } })`.
+   *
+   * The one exception is presence, which no join reads yet: a type declaring
+   * it – on a field or on an inline reference’s leaves – is reached through a
+   * join by `‹Type›JoinedWhere`, the same input without `exists`
+   * ({@link fieldKeys}). A type declaring none shares one input.
    */
-  function whereInputFor(searchType: RootType): GraphQLInputObjectType {
-    const existing = whereInputs.get(searchType.name);
+  function whereInputFor(
+    searchType: RootType,
+    joined = false,
+  ): GraphQLInputObjectType {
+    if (
+      joined &&
+      !searchType.fields.some(
+        (field) =>
+          field.presence === true || presenceLeavesOf(field).length > 0,
+      )
+    ) {
+      return whereInputFor(searchType);
+    }
+    const prefix = joined ? `${searchType.name}Joined` : searchType.name;
+    const key = joined ? `joined:${searchType.name}` : searchType.name;
+    const existing = whereInputs.get(key);
     if (existing !== undefined) {
       return existing;
     }
@@ -1411,11 +1694,11 @@ export function buildGraphQLSchema(
     // Created here rather than on its own, because it exists for exactly one
     // `where` and shares its memoization.
     const criterionInput = new GraphQLInputObjectType({
-      name: `${searchType.name}Criterion`,
+      name: `${prefix}Criterion`,
       description:
         'A condition on exactly one field. Used inside `or`, where the criteria are alternatives.',
       isOneOf: true,
-      fields: () => fieldKeys(searchType),
+      fields: () => fieldKeys(searchType, joined),
     });
     const orKey: GraphQLInputFieldConfig = {
       type: new GraphQLList(new GraphQLNonNull(criterionInput)),
@@ -1429,11 +1712,11 @@ export function buildGraphQLSchema(
     // disjunctions at any nesting depth, and a reader meets one input type
     // instead of two near-identical ones.
     const created: GraphQLInputObjectType = new GraphQLInputObjectType({
-      name: `${searchType.name}Where`,
+      name: `${prefix}Where`,
       description:
         'Sibling keys are combined with AND. Use `or` for a disjunction, and `and` when a query needs more than one of them.',
       fields: () => ({
-        ...fieldKeys(searchType),
+        ...fieldKeys(searchType, joined),
         [OR_KEY]: orKey,
         [AND_KEY]: {
           type: new GraphQLList(new GraphQLNonNull(created)),
@@ -1442,7 +1725,7 @@ export function buildGraphQLSchema(
         },
       }),
     });
-    whereInputs.set(searchType.name, created);
+    whereInputs.set(key, created);
     return created;
   }
 
@@ -1499,7 +1782,7 @@ export function buildGraphQLSchema(
     // Keyed facets object: one field per facetable field, typed by its kind
     // (numeric fields → a ‹Kind›RangeFacet, or ‹Kind›BinnedRangeFacet with
     // bins; boolean fields → [BooleanBucket!], reference fields →
-    // [IRIBucket!], else [ValueBucket!]). Only the selected
+    // IRIFacet, else ValueFacet). Only the selected
     // fields are resolved (GraphQL prunes the rest), so the selection IS the
     // request; the batching into one engine dispatch lives in facet-batch.ts,
     // and skip-own-filter in the engine.
@@ -1614,117 +1897,304 @@ export function buildGraphQLSchema(
     };
   }
 
-  /** The bucket type a value facet’s kind earns: a real boolean for a
-   *  boolean one, an `IRI` key for a reference, a literal key
-   *  otherwise. The reference test is the one {@link whereFieldType} applies, so
-   *  a bucket and the filter it feeds cannot disagree about what the field keys
-   *  on. */
-  function bucketTypeFor(field: SearchField): GraphQLObjectType {
-    if (field.kind === 'boolean') return booleanBucket;
-    return field.kind === 'reference' ? iriBucket : valueBucket;
-  }
-
   /**
-   * The keyed facets object for one type (only called with ≥ 1 facet). A
-   * faceted leaf is served one level down, under the reference it is reached
-   * through – `facets { associatedMedia { license } }` – so a facet is named
-   * by the same path as the value it counts.
+   * The keyed facets object for one type (only called with ≥ 1 facet): one
+   * key per field anything is counted on. A field counting only its own values
+   * keeps its plain facet type (`IRIFacet`, `ValueFacet`, a range facet, a
+   * boolean bucket list). A field counting more – whether it holds a value,
+   * or a leaf of its referents – gets one object of its own,
+   * `‹Type›‹Field›Facet`, holding everything counted on it
+   * ({@link fieldFacetFor}).
    */
   function facetsTypeFor(
     typeName: string,
     facets: readonly FacetDeclaration[],
   ): GraphQLObjectType {
-    const own: FacetDeclaration[] = [];
-    const byReference = new Map<string, FacetDeclaration[]>();
+    const groups = new Map<string, FacetGroup>();
     for (const facet of facets) {
-      if (facet.reference === undefined) {
-        own.push(facet);
-        continue;
+      const name = facet.reference?.name ?? facet.field.name;
+      const group: FacetGroup = groups.get(name) ?? { leaves: new Map() };
+      groups.set(name, group);
+      if (facet.reference !== undefined) {
+        const leaf = group.leaves.get(facet.field.name) ?? {};
+        group.leaves.set(facet.field.name, leaf);
+        if (facet.presence === true) {
+          leaf.presence = facet;
+        } else {
+          leaf.values = facet;
+        }
+      } else if (facet.presence === true) {
+        group.presence = facet;
+      } else {
+        group.values = facet;
       }
-      const leaves = byReference.get(facet.reference.name) ?? [];
-      leaves.push(facet);
-      byReference.set(facet.reference.name, leaves);
     }
-
     return new GraphQLObjectType({
       name: `${typeName}Facets`,
-      fields: () => ({
-        ...facetFieldsFor(own),
-        ...Object.fromEntries(
-          [...byReference].map(([reference, leaves]) => [
-            reference,
-            {
-              type: new GraphQLNonNull(
-                new GraphQLObjectType({
-                  name: `${typeName}${reference.charAt(0).toUpperCase()}${reference.slice(1)}Facets`,
-                  fields: () => facetFieldsFor(leaves),
-                }),
-              ),
-              // The source carries the facet loader; the leaves read it.
-              resolve: (source: Source) => source,
-            },
+      fields: () =>
+        Object.fromEntries(
+          [...groups].map(([name, group]) => [
+            name,
+            group.presence === undefined && group.leaves.size === 0
+              ? valueFacetFieldFor(group.values as FacetDeclaration)
+              : fieldFacetFor(`${typeName}${capitalized(name)}`, group),
           ]),
         ),
-      }),
     });
   }
 
-  /** One GraphQL field per facet, keyed by its field’s name and loaded by the
-   *  facet’s logical name. */
-  function facetFieldsFor(
-    facets: readonly FacetDeclaration[],
-  ): Record<string, GraphQLFieldConfig<Source, SearchContext>> {
+  /**
+   * The facet object of a field counting more than its own values, typed
+   * `‹Base›Facet` (`WorkContentLocationFacet`, `WorkDateCreatedFacet`): its
+   * own values in `buckets` and `totalValues` – or, for a numeric field, its
+   * range facet’s `all`, `matching` and `buckets` – capped by the field’s
+   * `limit`; `exists` for its presence; and one key per leaf of its
+   * referents, which is a plain facet type again for a leaf counting only its
+   * values, and `‹Base›‹Leaf›Facet` for one whose presence is counted.
+   */
+  function fieldFacetFor(
+    baseName: string,
+    group: FacetGroup,
+  ): GraphQLFieldConfig<Source, SearchContext> {
+    const values = group.values;
+    const range = values !== undefined && isRangeFacet(values.field);
+    const limited = values !== undefined && !range;
     const fields: Record<
       string,
       GraphQLFieldConfig<Source, SearchContext>
     > = {};
-    // The keys share one engine round-trip, but each is its own facet
-    // calculation in it.
-    const facetCost = costExtensions(operationCost);
-    for (const { name, field } of facets) {
-      // The batching into one engine dispatch and the degrade-to-empty
-      // error handling live in the loader (facet-batch.ts).
-      if (isRangeFacet(field)) {
-        fields[field.name] = {
-          type: new GraphQLNonNull(rangeFacetTypeFor(field)),
-          extensions: facetCost,
-          // Resolved synchronously, so the scopes its fields load land in
-          // the same batch as the sibling facets.
-          resolve: (source: Source) => ({
-            load: (scope: FacetScope) =>
-              (source.loadFacet as FacetLoader)(name, scope),
-          }),
+    if (values !== undefined && range) {
+      // Each part is charged as the facet key it stands in for is – `all`
+      // already is, a facet query of its own.
+      const rangeFields = rangeFacetTypeFor(
+        values.field as NumericField,
+      ).toConfig().fields;
+      for (const [name, rangeField] of Object.entries(rangeFields)) {
+        fields[name] = {
+          ...rangeField,
+          extensions: { ...facetCost, ...rangeField.extensions },
         };
-        continue;
       }
-      const bucketType = bucketTypeFor(field);
-      fields[field.name] = {
-        type: nonNullListOf(bucketType),
+    } else if (values !== undefined) {
+      Object.assign(fields, valueFieldsFor(values));
+    }
+    if (group.presence !== undefined) {
+      fields.exists = existsFieldFor(group.presence);
+    }
+    for (const [leafName, leaf] of group.leaves) {
+      fields[leafName] =
+        leaf.presence === undefined
+          ? valueFacetFieldFor(leaf.values as FacetDeclaration)
+          : fieldFacetFor(`${baseName}${capitalized(leafName)}`, {
+              values: leaf.values,
+              presence: leaf.presence,
+              leaves: new Map(),
+            });
+    }
+    const name = `${baseName}Facet`;
+    return {
+      type: new GraphQLNonNull(
+        new GraphQLObjectType({
+          name: claimTypeName(name, `the facet object of “${baseName}”`),
+          fields,
+        }),
+      ),
+      ...(limited && {
+        args: valueArgumentsFor(values as FacetDeclaration),
+        // Its `buckets` and `totalValues` are charged below; a query adds
+        // its own requests.
+        extensions: queryCostFor(values as FacetDeclaration, 0),
+      }),
+      // Resolved synchronously, so what its keys load lands in the same batch
+      // as the sibling facets. A range facet’s keys read `load`.
+      resolve: (source: Source, args: ValueFacetArguments) => ({
+        loadFacet: source.loadFacet,
+        limit: limited ? checkedLimit(args.limit) : undefined,
+        query: limited ? facetQueryText(args.query ?? undefined) : undefined,
+        ...(range && {
+          load: (scope: FacetScope) =>
+            (source.loadFacet as FacetLoader)(
+              (values as FacetDeclaration).name,
+              scope,
+            ),
+        }),
+      }),
+    };
+  }
+
+  /** A field counting only its own values, typed by its kind, as the facets
+   *  object has always served it. */
+  function valueFacetFieldFor(
+    facet: FacetDeclaration,
+  ): GraphQLFieldConfig<Source, SearchContext> {
+    const { name, field } = facet;
+    // The batching into one engine dispatch and the degrade-to-empty error
+    // handling live in the loader (facet-batch.ts).
+    if (isRangeFacet(field)) {
+      return {
+        type: new GraphQLNonNull(rangeFacetTypeFor(field)),
         extensions: facetCost,
-        resolve: async (source: Source) => {
-          const { buckets } = await (source.loadFacet as FacetLoader)(
-            name,
-            'matching',
-          );
-          if (bucketType !== iriBucket) {
-            return buckets;
-          }
-          // A bucket keyed on something that is not an IRI is not a
-          // selection key – it cannot be sent back as the filter that
-          // selects it – so it is dropped rather than served under `IRI`.
-          // Dropping, not throwing: `value: IRI!` sits inside a chain of
-          // non-nulls up to the root field, so a raising coercion here
-          // would null the WHOLE response and take `items` with it, which
-          // is exactly what facet-batch.ts’s degradation contract forbids
-          // a supplementary sidebar count from doing.
-          return buckets.filter(
-            (bucket) =>
-              typeof bucket.value === 'string' && isAbsoluteIri(bucket.value),
-          );
-        },
+        // Resolved synchronously, so the scopes its fields load land in the
+        // same batch as the sibling facets.
+        resolve: (source: Source) => ({
+          load: (scope: FacetScope) =>
+            (source.loadFacet as FacetLoader)(name, scope),
+        }),
       };
     }
-    return fields;
+    if (field.kind === 'boolean') {
+      // Two values at most: nothing to cap and nothing to total.
+      return {
+        type: nonNullListOf(booleanBucket),
+        extensions: facetCost,
+        resolve: async (source: Source) =>
+          (await (source.loadFacet as FacetLoader)(name, 'matching')).buckets,
+      };
+    }
+    return {
+      type: new GraphQLNonNull(
+        field.kind === 'reference' ? iriFacet : valueFacet,
+      ),
+      extensions: queryCostFor(facet, 1),
+      args: valueArgumentsFor(facet),
+      resolve: (source: Source, args: ValueFacetArguments) =>
+        valueFacetOf(
+          source,
+          facet,
+          checkedLimit(args.limit),
+          facetQueryText(args.query ?? undefined),
+        ),
+    };
+  }
+
+  /** A value facet’s arguments: `limit`, and `query` on a facet whose values
+   *  are text someone can type – a literal one, or a reference whose values
+   *  have labels ({@link isQueryableFacet}). */
+  function valueArgumentsFor(
+    facet: FacetDeclaration,
+  ): Record<string, GraphQLArgumentConfig> {
+    return {
+      limit: limitArgument,
+      ...(isQueryableFacet(facet, schema) && {
+        query: {
+          type: GraphQLString,
+          description:
+            facet.field.kind === 'reference'
+              ? 'Only the values whose referent matches this text – by its label, alternate names or whatever else a search of its type matches – counted as without it and capped at `limit`. A selected value that does not match is left out. Text shorter than 3 characters is no query.'
+              : 'Only the values matching this text, counted as without it and capped at `limit`. A selected value that does not match is left out. Text shorter than 3 characters is no query.',
+        },
+      }),
+    };
+  }
+
+  /** What a value facet costs on top of `own`: under a query on a reference
+   *  facet, one more per target type – the search for its candidates and the
+   *  request that counts them. */
+  function queryCostFor(
+    facet: FacetDeclaration,
+    own: number,
+  ): GraphQLFieldExtensions<unknown, unknown> {
+    return facet.field.kind === 'reference' && isQueryableFacet(facet, schema)
+      ? facetQueryCostExtensions(
+          own,
+          labelTargetNamesOf(facet.field, schema).length,
+        )
+      : costExtensions(own * operationCost);
+  }
+
+  /**
+   * A value facet’s `buckets` and `totalValues`, read through the loader.
+   * `IRI`-keyed buckets for a reference, literal keys otherwise: the reference
+   * test {@link whereFieldType} applies, so a bucket and the filter it feeds
+   * cannot disagree about what the field keys on.
+   */
+  async function valueFacetOf(
+    source: Source,
+    facet: FacetDeclaration,
+    limit: number | undefined,
+    query: string | undefined,
+  ): Promise<{ buckets: readonly FacetBucket[]; totalValues: number | null }> {
+    const { buckets, totalValues } = await (source.loadFacet as FacetLoader)(
+      facet.name,
+      'matching',
+      limit,
+      query,
+    );
+    return {
+      // A bucket keyed on something that is not an IRI is not a selection key
+      // – it cannot be sent back as the filter that selects it – so it is
+      // dropped rather than served under `IRI`. Dropping, not throwing:
+      // `value: IRI!` sits inside a chain of non-nulls up to the root field,
+      // so a raising coercion here would null the WHOLE response and take
+      // `items` with it, which is exactly what facet-batch.ts’s degradation
+      // contract forbids a supplementary sidebar count from doing.
+      buckets:
+        facet.field.kind === 'reference'
+          ? buckets.filter(
+              (bucket) =>
+                typeof bucket.value === 'string' && isAbsoluteIri(bucket.value),
+            )
+          : buckets,
+      totalValues: totalValues ?? null,
+    };
+  }
+
+  /** `buckets` and `totalValues` of a field’s own values, inside its facet
+   *  object, capped by the `limit` the field took ({@link fieldFacetFor}). */
+  function valueFieldsFor(
+    facet: FacetDeclaration,
+  ): Record<string, GraphQLFieldConfig<Source, SearchContext>> {
+    const shape = (
+      facet.field.kind === 'reference' ? iriFacet : valueFacet
+    ).toConfig().fields;
+    const read = (source: Source) =>
+      valueFacetOf(
+        source,
+        facet,
+        source.limit as number | undefined,
+        source.query as string | undefined,
+      );
+    return {
+      buckets: {
+        ...shape.buckets,
+        extensions: facetCost,
+        resolve: async (source: Source) => (await read(source)).buckets,
+      },
+      totalValues: {
+        ...shape.totalValues,
+        extensions: facetCost,
+        resolve: async (source: Source) => (await read(source)).totalValues,
+      },
+    };
+  }
+
+  /** `exists`: the documents that hold a value – for a leaf, with a referent
+   *  that holds one – and the documents that hold none. */
+  function existsFieldFor(
+    facet: FacetDeclaration,
+  ): GraphQLFieldConfig<Source, SearchContext> {
+    return {
+      type: nonNullListOf(booleanBucket),
+      extensions: facetCost,
+      description:
+        facet.reference === undefined
+          ? `Documents that hold a value for “${facet.field.name}”, and documents that hold none.`
+          : `Documents with a referent that holds a value for “${facet.field.name}”, and documents with none.`,
+      resolve: async (source: Source) =>
+        (await (source.loadFacet as FacetLoader)(facet.name, 'matching'))
+          .buckets,
+    };
+  }
+
+  /** A value facet’s `limit` argument, between 1 and `maxFacetLimit`. */
+  function checkedLimit(limit: number | null | undefined): number | undefined {
+    const checked = limit ?? undefined;
+    if (checked !== undefined && (checked < 1 || checked > maxFacetLimit)) {
+      throw userError(
+        `limit must be between 1 and ${maxFacetLimit}; got ${checked}.`,
+      );
+    }
+    return checked;
   }
 
   const queryFields: Record<
@@ -1851,6 +2321,16 @@ function whereToFilters(
   // whole AND/OR mapping: which bucket a criterion lands in, never a combinator
   // inferred from how deeply it is nested.
   for (const entry of keyEntriesOf(where, searchType, joins, schema)) {
+    // A lookup’s presence leaves are recorded on this document, so each key
+    // of its `where` is a criterion of its own, ANDed like sibling keys.
+    if ('leafPresence' in entry) {
+      filters.push(
+        ...entry.leafPresence.map((criterion) =>
+          filterOn(withPath(criterion, on)),
+        ),
+      );
+      continue;
+    }
     if ('nested' in entry) {
       // A NESTING hop welds: every condition inside one edge's `where` must
       // hold of the SAME entry, which is the whole point of indexing an edge.
@@ -1903,12 +2383,17 @@ function whereToFilters(
  * a resolver runs: a disjunction inside a weld is not a weld, and the flat IR
  * has nowhere to put one. `undefined` when the `where` states nothing, which
  * constrains nothing and so contributes no clause.
+ *
+ * `exists` on a presence leaf is the root document’s, not one entry’s, so it
+ * is welded to nothing else: beside another key it is refused, naming the
+ * rewrite into two conditions.
  */
 function weldedCriterionOf(
   entry: {
     readonly name: string;
     readonly nested: Record<string, unknown>;
     readonly target: SearchType;
+    readonly presenceLeaves: readonly string[];
   },
   joins: JoinGraph,
   schema: SearchSchema,
@@ -1923,7 +2408,16 @@ function weldedCriterionOf(
     entry.target,
     joins,
     schema,
+    entry.presenceLeaves,
   ).map((nested) => (nested as { readonly criterion: Criterion }).criterion);
+  const presence = conditions.find((condition) => 'exists' in condition);
+  if (presence !== undefined && conditions.length > 1) {
+    const other = conditions.find((condition) => condition !== presence)
+      ?.field as string;
+    throw userError(
+      `“${entry.name}” welds “exists” on “${presence.field}” to “${other}” on one entry, but whether any entry holds a value for “${presence.field}” is recorded per document, not per entry. Write each as its own condition – and: [{ ${entry.name}: { where: { ${presence.field}: { exists: ${String((presence as { exists: boolean }).exists)} } } } }, { ${entry.name}: { where: { ${other}: … } } }].`,
+    );
+  }
   return conditions.length === 0
     ? undefined
     : withPath({ field: entry.name, entry: conditions }, on);
@@ -1955,8 +2449,25 @@ function criteriaOf(
 ): Criterion[] {
   const criteria: Criterion[] = [];
   for (const entry of keyEntriesOf(keyed, searchType, joins, schema)) {
-    if (!('nested' in entry)) {
+    if ('criterion' in entry) {
       criteria.push(withPath(entry.criterion, on));
+      continue;
+    }
+    // A lookup’s `where` ANDs its keys, so in an `or` alternative it must set
+    // exactly one, as a joined condition must.
+    if ('leafPresence' in entry) {
+      const [only, ...more] = entry.leafPresence;
+      if (only === undefined) {
+        throw userError(
+          `The condition on “${entry.name}” states no criterion, so it constrains nothing – and an “or” alternative that constrains nothing would make the whole disjunction match everything. Give it a condition, or leave the alternative out.`,
+        );
+      }
+      if (more.length > 0) {
+        throw userError(
+          `The condition on “${entry.name}” states more than one criterion, so it is a conjunction – which cannot sit inside an “or”. Write one “or” alternative per criterion, or move the conjunction into “and”.`,
+        );
+      }
+      criteria.push(withPath(only, on));
       continue;
     }
     // A NESTING hop welds, in an `or` alternative exactly as anywhere else –
@@ -1998,16 +2509,26 @@ function criteriaOf(
   return criteria;
 }
 
-/** One key of a `Where`/`Criterion` input, compiled: either a leaf criterion or
- *  a joined `where` to recurse into. */
+/** One key of a `Where`/`Criterion` input, compiled: a leaf criterion, a
+ *  lookup’s presence-leaf criteria, or a joined or nested `where` to recurse
+ *  into. */
 type KeyEntry =
   | { readonly criterion: Criterion }
+  | {
+      readonly name: string;
+      // One criterion per presence leaf the lookup’s `where` sets, each on
+      // the root document’s companion.
+      readonly leafPresence: readonly Criterion[];
+    }
   | {
       readonly name: string;
       readonly nested: Record<string, unknown>;
       // A Root Type for a JOIN hop, a Reference Type for a NESTING hop. Both
       // extend the `on` path the same way; only the compiler tells them apart.
       readonly target: SearchType;
+      // The presence leaves of a NESTING hop’s reference, whose keys in the
+      // entry’s `where` take `exists`; none for a join.
+      readonly presenceLeaves: readonly string[];
     };
 
 /**
@@ -2025,15 +2546,47 @@ function keyEntriesOf(
   searchType: SearchType,
   joins: JoinGraph,
   schema: SearchSchema,
+  presenceLeaves: readonly string[] = [],
 ): KeyEntry[] {
   const entries: KeyEntry[] = [];
   const id = keyed[ID_FIELD] as { in?: string[] } | undefined | null;
   if (id !== undefined && id !== null) {
     entries.push({ criterion: { field: ID_FIELD, in: id.in ?? [] } });
   }
-  for (const field of filterableFields(searchType)) {
+  for (const field of whereFieldsOf(searchType, presenceLeaves)) {
     const value = keyed[field.name];
     if (value === undefined || value === null) {
+      continue;
+    }
+    if (field.presence === true || presenceLeaves.includes(field.name)) {
+      const presence = presenceCriterionOf(field.name, value);
+      if (presence !== undefined) {
+        entries.push({ criterion: presence });
+        continue;
+      }
+      if (field.filterable !== true) {
+        continue;
+      }
+    }
+    const nested = (value as { where?: Record<string, unknown> | null }).where;
+    // A lookup’s `where` names its presence leaves, each a plain criterion on
+    // the root document’s companion – no entry, and no join.
+    if (
+      !isInlineReference(field) &&
+      presenceLeavesOf(field).length > 0 &&
+      nested !== undefined &&
+      nested !== null
+    ) {
+      entries.push({
+        name: field.name,
+        leafPresence: presenceLeavesOf(field).flatMap((leaf): Criterion[] => {
+          const exists = (nested[leaf] as { exists?: boolean | null } | null)
+            ?.exists;
+          return exists === undefined || exists === null
+            ? []
+            : [{ field: field.name, leaf, exists }];
+        }),
+      });
       continue;
     }
     // Both hop kinds take the same `@oneOf` input – `in` (the ids this field
@@ -2043,13 +2596,14 @@ function keyEntriesOf(
     const target =
       nestedReferenceType(schema, field) ??
       joins.resolve(searchType, [field.name]);
-    if (target !== undefined) {
-      const nested = (value as { where?: Record<string, unknown> | null })
-        .where;
-      if (nested !== undefined && nested !== null) {
-        entries.push({ name: field.name, nested, target });
-        continue;
-      }
+    if (target !== undefined && nested !== undefined && nested !== null) {
+      entries.push({
+        name: field.name,
+        nested,
+        target,
+        presenceLeaves: presenceLeavesOf(field),
+      });
+      continue;
     }
     switch (filterOperatorFor(field)) {
       case 'in':
@@ -2077,6 +2631,52 @@ function keyEntriesOf(
     }
   }
   return entries;
+}
+
+/** The fields a `where` input carries a key for, in declaration order: the
+ *  `filterable` ones, and those declaring presence – or, for a reference
+ *  type’s `where`, named among the presence leaves of the references nesting
+ *  it – which take `exists` whether or not they are filterable. */
+function whereFieldsOf(
+  searchType: SearchType,
+  presenceLeaves: readonly string[] = [],
+): readonly SearchField[] {
+  return searchType.fields.filter(
+    (field) =>
+      field.filterable === true ||
+      field.presence === true ||
+      presenceLeaves.includes(field.name),
+  );
+}
+
+/**
+ * The `exists` criterion one key of a presence field sets, or `undefined`
+ * when it sets no `exists` – `null` reads as unset, like every other key. An
+ * `exists` beside another key of the same input is refused: the criterion is
+ * an atom, and the two ask different questions, so the caller says which by
+ * writing each as its own condition.
+ */
+function presenceCriterionOf(
+  name: string,
+  value: unknown,
+): Criterion | undefined {
+  const { exists, ...others } = value as Record<string, unknown>;
+  if (exists === undefined || exists === null) {
+    return undefined;
+  }
+  const also = Object.keys(others).filter(
+    (key) => others[key] !== undefined && others[key] !== null,
+  );
+  if (also.length > 0) {
+    throw userError(
+      `“${name}” sets “exists” together with ${also
+        .map((key) => `“${key}”`)
+        .join(
+          ' and ',
+        )}, which ask different questions of one field. Write each as its own condition – and: [{ ${name}: { exists: ${String(exists)} } }, { ${name}: { ${also[0]}: … } }] – or drop “exists”: any other condition already matches only documents that hold a value.`,
+    );
+  }
+  return { field: name, exists: exists as boolean };
 }
 
 /** A facet’s stored date served as a date-time, the one precision a value
@@ -2118,6 +2718,30 @@ function rangeInput(
     name,
     fields: { min: { type: bound }, max: { type: bound } },
   });
+}
+
+/** The presence leaves a reference declares, inline or `lookup`, read off
+ *  the physical companions that record them – none for any other field. */
+function presenceLeavesOf(field: SearchField): readonly string[] {
+  return physicalFields(field).leafExists.map(({ leaf }) => leaf);
+}
+
+/** What one field of a root type counts, gathered for its facet object: its
+ *  own values, its presence, and – per leaf of its referents – the leaf’s
+ *  values and presence. */
+interface FacetGroup {
+  values?: FacetDeclaration;
+  presence?: FacetDeclaration;
+  readonly leaves: Map<
+    string,
+    { values?: FacetDeclaration; presence?: FacetDeclaration }
+  >;
+}
+
+/** A name with its first letter upper-cased, as it is spelled inside a type
+ *  name: `associatedMedia` → `AssociatedMedia`. */
+function capitalized(name: string): string {
+  return `${name.charAt(0).toUpperCase()}${name.slice(1)}`;
 }
 
 /** Type names as prose, with no article to get wrong: `Person`,

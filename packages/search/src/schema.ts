@@ -19,11 +19,13 @@ export type FieldKind =
   | 'reference';
 
 /** The `where` operator a kind accepts, or `undefined` when it is not filterable
- *  through `where` (`text` feeds the free-text `query` instead). */
-export type FilterOperator = 'in' | 'range' | 'is';
+ *  through `where` (`text` feeds the free-text `query` instead) – and `exists`,
+ *  which no kind fixes: a field declaring {@link SearchFieldBase.presence}
+ *  takes it beside its kind’s own. */
+export type FilterOperator = 'in' | 'range' | 'is' | 'exists';
 
 const OPERATOR_BY_KIND: Readonly<
-  Record<FieldKind, FilterOperator | undefined>
+  Record<FieldKind, Exclude<FilterOperator, 'exists'> | undefined>
 > = {
   text: undefined,
   keyword: 'in',
@@ -136,6 +138,32 @@ export interface SearchFieldBase {
   /** Publicly selectable in `orderBy`; localized text also emits a folded sort key. */
   readonly sortable?: boolean;
   /**
+   * Filter and facet the field on **whether the document holds a value** –
+   * `where: { dateCreated: { exists: true } }` and the facet
+   * `dateCreated.exists`, with one bucket for documents that hold a value and
+   * one for those that hold none.
+   *
+   * A document holds a value when its projected field does: what the response
+   * would serve, so a non-empty list or a defined scalar. A value the field’s
+   * reader cannot read is reported and left out ({@link ProjectionContext.onUnreadable}),
+   * so it counts as no value.
+   *
+   * An engine without a presence filter of its own is served from a boolean
+   * companion written on every document, `false` included
+   * ({@link PhysicalFields.exists}). Not a Role: the companion is what is
+   * queried, so a field declaring presence alone stays an
+   * {@link isInternalField internal field} – projected, read for its
+   * companion, then pruned, its value stored nowhere.
+   *
+   * Only on a Root Type’s own field, and not on an inline reference (whose
+   * entries’ leaves declare it through
+   * {@link ReferenceStrategy.presenceLeaves}), a `text` field or a `boolean`,
+   * which states its own absence as `false` ({@link validateSearchType}
+   * enforces all of them). A field that is also `facetable` serves both
+   * facets.
+   */
+  readonly presence?: boolean;
+  /**
    * Compute this field’s value instead of projecting it from a `path` – a
    * status token, a compatibility boolean, a count over an earlier field.
    * Mutually exclusive with `path`. Runs in declaration order during
@@ -185,7 +213,9 @@ export interface SearchFieldBase {
 export type ProjectionValue = 'dataset';
 
 /** Full-text inclusion with a `query_by` weight (folded; per-locale for
- *  localized text). Presence is what makes a field searchable. */
+ *  localized text). Presence is what makes a field searchable. A reference
+ *  naming a label source is searched by its referents’ labels, read off each
+ *  referent at index time; any other reference by its folded values. */
 export interface Searchable {
   readonly searchable?: { readonly weight: number };
 }
@@ -254,6 +284,7 @@ export type ReferenceStrategy =
       readonly target?: never;
       readonly identity?: never;
       readonly facetedLeaves?: never;
+      readonly presenceLeaves?: never;
     }
   | {
       readonly strategy: 'lookup';
@@ -321,6 +352,23 @@ export type ReferenceStrategy =
       readonly literal?: LiteralKind;
       readonly identity?: never;
       readonly facetedLeaves?: never;
+      /**
+       * The `name`s of **leaf fields** of the target the root document is
+       * filtered and faceted on by whether **any referent** holds a value –
+       * as an inline reference’s {@link presenceLeaves} are, read here from
+       * each referent’s own node one hop from the root, after the target’s
+       * transforms (`@lde/search-pipeline`). Only a referent named by IRI
+       * counts, since a blank node is no id the lookup stores; one the graph
+       * names by IRI alone, and no transform describes, holds no value.
+       *
+       * Only on a lookup naming one `target`, which must declare each leaf,
+       * with a `path`; neither on a `joinable` lookup, whose `where` already
+       * states a condition on the joined document, nor on one reading its
+       * literals as periods ({@link searchSchema} enforces all of it). A
+       * criterion selects the leaf by `exists`, naming the reference and the
+       * `leaf`: `{ field, leaf, exists }`.
+       */
+      readonly presenceLeaves?: readonly string[];
     }
   | {
       readonly strategy: 'inline';
@@ -334,12 +382,12 @@ export type ReferenceStrategy =
        * the reference type’s own filterable fields.
        *
        * A nested object is not something an engine can filter or facet by id,
-       * so an inline reference naming an identity fans out an **identity
-       * companion**: a flat physical field holding the ids its entries
-       * reference ({@link physicalFields}), which the engine filters and facets
-       * in the nested object’s place. The same mechanism `${name}_facet`
-       * already uses – one logical field, two physical fields, one holding a
-       * derived subset of the other.
+       * so the engine filters and facets the named field’s **leaf inside each
+       * entry** in the nested object’s place ({@link PhysicalFields.filter}).
+       * Typesense flattens a leaf under an `object[]` into one list per
+       * document, so a facet on it counts each document once, however many of
+       * its entries name the same endpoint. The named field must therefore be
+       * `filterable`, which is what indexes that leaf.
        *
        * Declared rather than inferred, because a reference type may carry more
        * than one nested reference and only the schema author knows which one
@@ -348,7 +396,7 @@ export type ReferenceStrategy =
        * these ids are, which is what a facet policy is inherited through
        * ({@link inheritedFacetPolicies}) and what types the filter at the surface.
        *
-       * The companion holds ids only, so a facet over it is exact and
+       * The leaf holds ids only, so a facet over it is exact and
        * identity-keyed: an entry whose endpoint the graph named inline – a
        * literal, a blank node – contributes no bucket rather than a bucket
        * keyed on a label, so two endpoints that share a label are never merged.
@@ -373,6 +421,28 @@ export type ReferenceStrategy =
        * ({@link searchSchema} enforces it), and the reference must be too.
        */
       readonly facetedLeaves?: readonly string[];
+      /**
+       * The `name`s of **leaf fields** of this reference type the root
+       * document is filtered and faceted on by whether **any entry** holds a
+       * value: `where: { associatedMedia: { where: { thumbnailUrl: { exists:
+       * true } } } }` and the facet `‹reference›.‹leaf›.exists`.
+       *
+       * One boolean per root document, `${reference}_${leaf}_exists`
+       * ({@link PhysicalFields.leafExists}), true when any entry holds a value for
+       * the leaf – in the sense of {@link SearchFieldBase.presence} – and false
+       * otherwise, a document with no entries included. A boolean inside each
+       * entry would not answer the question: an engine flattens it into one
+       * list per document, so a work with one entry that has the leaf and one
+       * that lacks it would count in both buckets.
+       *
+       * Declared on the reference, like {@link facetedLeaves}, because the
+       * count is a fact about the root. The reference must be `filterable` and
+       * sit on a Root Type; each leaf is neither `text`, `boolean`, an inline
+       * reference, nor named `buckets`, `totalValues` or `exists`, which name
+       * parts of the reference’s facet object ({@link searchSchema} enforces
+       * all of it).
+       */
+      readonly presenceLeaves?: readonly string[];
     };
 
 /** The `literal` kinds a declaration may name, checked at runtime for one
@@ -880,6 +950,9 @@ export function searchSchema<const Types extends readonly SearchType[]>(
 ): SearchSchema<Types> {
   const typeIris = new Set<string>();
   const names = new Set<string>();
+  // First, so a refused presence gets its full sentence rather than the
+  // reason `validateSearchType` files it under.
+  assertServiceablePresence(types);
   for (const searchType of types) {
     assertValidSearchType(searchType);
     if (isRootType(searchType)) {
@@ -1001,8 +1074,8 @@ export function isInlineReference(
  * Role is a reading device, pruned before the writer
  * ({@link isInternalField}), while one that is `filterable` or `facetable`
  * without being `output` still has its entries stored – they are what a nested
- * filter constrains and what the
- * {@link ReferenceStrategy.identity identity companion} is harvested from. Only
+ * filter constrains and what a
+ * {@link ReferenceStrategy.identity identity} is filtered and faceted on. Only
  * `output` decides whether they are *surfaced*, which is the surfaces’ own
  * question ({@link outputFields}).
  *
@@ -1224,8 +1297,8 @@ function assertResolvableInlineReferences(
       }
       // An inline reference’s stored value is a nested object, which an engine
       // can neither tokenize for free text nor order by. `filterable` and
-      // `facetable` it CAN serve – through the identity companion below – so
-      // only the roles no companion could answer are refused here.
+      // `facetable` it CAN serve – through its identity’s leaf below – so only
+      // the roles no leaf could answer are refused here.
       const extraRoles = unserviceableInlineRoles(field);
       if (extraRoles.length > 0) {
         throw new Error(
@@ -1236,7 +1309,7 @@ function assertResolvableInlineReferences(
             )}, which it cannot serve: its value is a nested object, not a token an engine can search, sort or join on.`,
         );
       }
-      assertIdentityCompanion(searchType, field, referenceType);
+      assertIdentity(searchType, field, referenceType);
       assertFacetedLeaves(searchType, field, referenceType);
     }
   }
@@ -1300,20 +1373,20 @@ function assertLiteralField(referenceType: ReferenceType): void {
 }
 
 /**
- * An inline reference’s {@link ReferenceStrategy.identity identity companion}
- * holds together in both directions: `facetable` needs an `identity` to point
- * the engine at, and an `identity` with neither Role is a companion nothing
- * reads. `filterable` without one is served by conditions welded to one entry
- * alone, so it needs a filterable field on the entry instead.
+ * An inline reference’s {@link ReferenceStrategy.identity identity} holds
+ * together in both directions: `facetable` needs an `identity` to point the
+ * engine at, and an `identity` with neither Role is a leaf nothing reads.
+ * `filterable` without one is served by conditions welded to one entry alone,
+ * so it needs a filterable field on the entry instead.
  *
  * The named field must be a nested **reference that names a target** – a
  * `lookup`’s `target` or an `idOnly`’s `labelSource` – because naming one is
- * exactly the claim the companion rests on: *these values are ids of documents
+ * exactly the claim the identity rests on: *these values are ids of documents
  * in that collection* (ADR 20). That the target resolves to a declared Root
  * Type needs no rule here: {@link assertResolvableLabelSources} walks Reference
  * Types too, so the nested reference this names is resolved with every other.
  */
-function assertIdentityCompanion(
+function assertIdentity(
   searchType: SearchType,
   field: ReferenceField & { readonly ref: { readonly typeName: string } },
   referenceType: ReferenceType,
@@ -1346,26 +1419,30 @@ function assertIdentityCompanion(
         `${where} declares “filterable” without an “identity”, but “${searchType.name}” is a reference type: a condition on one entry cannot be welded inside another. Declare it on a Root Type’s reference, or drop “filterable”.`,
       );
     }
-    if (filterableFields(referenceType).length === 0) {
+    // A presence leaf is a key a condition on one entry can name too.
+    if (
+      filterableFields(referenceType).length === 0 &&
+      physicalFields(field).leafExists.length === 0
+    ) {
       throw new Error(
-        `${where} declares “filterable” without an “identity”, but “${field.ref.typeName}” declares no “filterable” field: a condition on one entry is the only filter it can take, and there is nothing for one to name. Declare “filterable” on a field of “${field.ref.typeName}”, or name an “identity”.`,
+        `${where} declares “filterable” without an “identity”, but “${field.ref.typeName}” declares no “filterable” field: a condition on one entry is the only filter it can take, and there is nothing for one to name. Declare “filterable” on a field of “${field.ref.typeName}”, name one in “presenceLeaves”, or name an “identity”.`,
       );
     }
     return;
   }
   if (!filters) {
     throw new Error(
-      `${where} declares an “identity” but neither “filterable” nor “facetable”: the companion it names would be indexed and never read. Declare a Role for it, or drop the “identity”.`,
+      `${where} declares an “identity” but neither “filterable” nor “facetable”: the leaf it names would be indexed and never read. Declare a Role for it, or drop the “identity”.`,
     );
   }
-  // A companion is a FLAT field beside the reference, and only a Root Type has
-  // somewhere flat to put one: inside a Reference Type it would be written into
-  // each entry and declared nowhere, so a filter on it would name a field the
-  // collection does not carry. An edge nested inside another edge is not a
-  // shape anything has needed; refusing it is better than serving it wrong.
+  // The identity’s leaf is one level in from the Root Type, which is as deep as
+  // a facet counts documents and a condition on one entry reaches. Inside a
+  // Reference Type it would be two levels in. An edge nested inside another
+  // edge is not a shape anything has needed; refusing it is better than
+  // serving it wrong.
   if (searchType.class === undefined) {
     throw new Error(
-      `${where} declares an “identity”, but “${searchType.name}” is a reference type: an identity companion is a flat field beside the reference, and a nested one has nowhere to live. Declare the companion on the reference that carries this type.`,
+      `${where} declares an “identity”, but “${searchType.name}” is a reference type: a filter and a facet read the identity one level in from a Root Type, and inside a reference type it would be two. Declare the identity on the reference that carries this type.`,
     );
   }
   const identityField = fieldNamed(referenceType, identity);
@@ -1379,7 +1456,14 @@ function assertIdentityCompanion(
     labelSourceNamesOf(identityField).length === 0
   ) {
     throw new Error(
-      `${where} names identity “${identity}”, which names no target: an identity companion holds ids of documents in a collection, so the field it harvests must be a reference declaring a “lookup” target or a label source.`,
+      `${where} names identity “${identity}”, which names no target: an identity holds ids of documents in a collection, so the field it names must be a reference declaring a “lookup” target or a label source.`,
+    );
+  }
+  // A filter and a facet on the reference read this field’s leaf inside each
+  // entry, which the engine indexes only for a field with a query Role.
+  if (identityField.filterable !== true) {
+    throw new Error(
+      `${where} names identity “${identity}”, which is not “filterable”: the reference filters and facets on that field inside each entry, so it must be indexed. Declare “filterable” on “${field.ref.typeName}.${identity}”.`,
     );
   }
   // An endpoint stated without its edge carries the identity field alone, so
@@ -1428,11 +1512,6 @@ function assertFacetedLeaves(
       `${where} declares “facetedLeaves”, but “${searchType.name}” is a reference type: a faceted leaf counts root documents, and an entry is not one. Declare it on the Root Type’s reference instead.`,
     );
   }
-  if (field.facetable === true) {
-    throw new Error(
-      `${where} is “facetable” and declares “facetedLeaves”: its facet and its leaves’ facets would both be named after “${field.name}”. Facet the reference or its leaves, not both.`,
-    );
-  }
   if (field.filterable !== true) {
     throw new Error(
       `${where} declares “facetedLeaves” without “filterable”: a bucket is selected by a condition on one entry, which the reference must accept. Declare “filterable” on it.`,
@@ -1444,6 +1523,11 @@ function assertFacetedLeaves(
       throw new Error(`${where} names faceted leaf “${name}” twice.`);
     }
     seen.add(name);
+    if (RESERVED_LEAF_NAMES.has(name)) {
+      throw new Error(
+        `${where} names faceted leaf “${name}”: “buckets”, “totalValues” and “exists” name parts of the reference’s facet object.`,
+      );
+    }
     const leaf = fieldNamed(referenceType, name);
     if (leaf === undefined) {
       throw new Error(
@@ -1470,6 +1554,177 @@ function assertFacetedLeaves(
       );
     }
   }
+}
+
+/**
+ * {@link SearchFieldBase.presence Presence} counts what one field of a root
+ * document holds, and a reference’s
+ * {@link ReferenceStrategy.presenceLeaves presence leaves} what any of its
+ * referents holds, each written to a companion. Throws the first refusal
+ * {@link presenceIssues} files – resolving each presence leaf against the
+ * types the reference names – as a sentence.
+ */
+function assertServiceablePresence(types: readonly SearchType[]): void {
+  const typesByName = new Map(
+    types.map((searchType) => [searchType.name, searchType]),
+  );
+  for (const searchType of types) {
+    const [issue] = presenceIssues(searchType, typesByName);
+    if (issue === undefined) {
+      continue;
+    }
+    const [name, leaf] = issue.field.split('.');
+    const at = `“${searchType.name}.${name}”`;
+    const field = `Field ${at} declares “presence”`;
+    const leaves = `Reference ${at} declares “presenceLeaves”`;
+    const named = `Reference ${at} names presence leaf “${leaf}”`;
+    // Only a presence leaf’s issue names a reference whose type it is read
+    // through; every sentence below is built, so it is read here alone.
+    const owner =
+      issue.reason === 'presence-leaf-unknown'
+        ? presenceLeafOwnerName(fieldNamed(searchType, name) as SearchField)
+        : undefined;
+    throw new Error(
+      {
+        'presence-on-reference-type': `${field}, but “${searchType.name}” is a reference type: presence is counted on a root document. To count whether any entry holds a value for this leaf, name it in the “presenceLeaves” of the Root Type’s inline reference instead.`,
+        'presence-with-inline-ref': `${field} on an inline reference, which stores entries rather than a value. To count whether any entry holds a value for one of their leaves, name the leaf in the reference’s “presenceLeaves”.`,
+        'presence-on-text': `${field} on a “text” field, which stores its values per language for display and search, so no one stored value says whether it has one. Declare presence on a “keyword” field over the same path.`,
+        'presence-on-boolean': `${field} on a “boolean”, which states its own absence as “false”: filter it with “is” instead.`,
+        'presence-leaves-on-reference-type': `${leaves}, but “${searchType.name}” is a reference type: presence is counted on a root document, and an entry is not one. Declare it on the Root Type’s reference instead.`,
+        'presence-leaves-on-id-only': `${leaves} but names no type its referents are read through: declare it on an “inline” reference or a “lookup”.`,
+        'presence-leaves-with-several-targets': `${leaves} and names several targets: a leaf is read through one target’s declaration, so declare presence leaves on a lookup naming one.`,
+        'presence-leaves-with-joinable': `${leaves} and is “joinable”: its “where” already states a condition on the joined document, so a leaf’s presence is not offered there yet.`,
+        'presence-leaves-with-literal': `${leaves} and reads its literals as periods: a literal has no leaves to count.`,
+        'presence-leaves-without-filterable': `${leaves} without “filterable”: a bucket is selected by a condition on the reference, which it must accept. Declare “filterable” on it.`,
+        'presence-leaves-duplicate': `${leaves} and names one leaf twice.`,
+        'presence-leaf-unknown': `${named}, which “${owner}” does not declare.`,
+        'presence-leaf-reserved-name': `${named}: “buckets”, “totalValues” and “exists” name parts of the reference’s facet object.`,
+        'presence-leaf-on-text': `${named}, a “text”: it stores its values per language, so no one stored value says whether it has one.`,
+        'presence-leaf-on-boolean': `${named}, a “boolean”: it states its own absence as “false”.`,
+        'presence-leaf-inline-ref': `${named}, which is itself an inline reference: a leaf of an entry’s entries is not counted.`,
+        'presence-leaf-without-path': `${named}, which declares no “path”: a lookup reads its referents’ leaves one hop from the root, so the leaf must be read from the graph.`,
+      }[issue.reason as PresenceIssueReason],
+    );
+  }
+}
+
+/** The reasons {@link presenceIssues} files a refused presence under. */
+type PresenceIssueReason = Extract<
+  SearchTypeIssue['reason'],
+  `presence-${string}`
+>;
+
+/**
+ * The issues a type’s presence declarations carry – a field’s
+ * {@link SearchFieldBase.presence presence}, refused wherever a root
+ * document’s companion cannot answer it, and a reference’s
+ * {@link ReferenceStrategy.presenceLeaves presence leaves}. One issue per
+ * field, the first rule it breaks; a presence leaf’s is filed under
+ * `‹reference›.‹leaf›`. The leaves are checked against the types the
+ * reference names only where `typesByName` resolves them – one declaration
+ * cannot see them.
+ */
+function presenceIssues(
+  searchType: SearchType,
+  typesByName?: ReadonlyMap<string, SearchType>,
+): readonly SearchTypeIssue[] {
+  return searchType.fields.flatMap((field): SearchTypeIssue[] => {
+    const reason: PresenceIssueReason | undefined =
+      field.presence !== true
+        ? undefined
+        : searchType.class === undefined
+          ? 'presence-on-reference-type'
+          : field.kind === 'reference' && field.ref?.strategy === 'inline'
+            ? 'presence-with-inline-ref'
+            : field.kind === 'text'
+              ? 'presence-on-text'
+              : field.kind === 'boolean'
+                ? 'presence-on-boolean'
+                : undefined;
+    const issues: SearchTypeIssue[] =
+      reason === undefined ? [] : [{ field: field.name, reason }];
+    return [...issues, ...presenceLeavesIssues(searchType, field, typesByName)];
+  });
+}
+
+/** The name of the one type the presence leaves of an inline reference or a
+ *  lookup are read through: the reference type, or the lookup’s single
+ *  target. */
+function presenceLeafOwnerName(field: SearchField): string {
+  const ref = (field as FlatField).ref as NonNullable<FlatField['ref']>;
+  return ref.strategy === 'inline'
+    ? ref.typeName
+    : (labelSourceNamesOf(field as ReferenceField)[0] as string);
+}
+
+/** The leaf names a reference’s facet object holds of its own. */
+const RESERVED_LEAF_NAMES: ReadonlySet<string> = new Set([
+  'buckets',
+  'totalValues',
+  'exists',
+]);
+
+/** The issues a reference’s
+ *  {@link ReferenceStrategy.presenceLeaves presence leaves} carry: the
+ *  reference’s own first, then – where the type it names resolves – each
+ *  leaf’s. */
+function presenceLeavesIssues(
+  searchType: SearchType,
+  field: SearchField,
+  typesByName: ReadonlyMap<string, SearchType> | undefined,
+): readonly SearchTypeIssue[] {
+  const flat = field as FlatField;
+  const leaves = flat.ref?.presenceLeaves;
+  if (leaves === undefined || leaves.length === 0) {
+    return [];
+  }
+  const lookup = flat.ref?.strategy === 'lookup';
+  const reason: PresenceIssueReason | undefined =
+    searchType.class === undefined
+      ? 'presence-leaves-on-reference-type'
+      : flat.kind !== 'reference' ||
+          (flat.ref?.strategy !== 'inline' && !lookup)
+        ? 'presence-leaves-on-id-only'
+        : lookup && labelSourceNamesOf(field as ReferenceField).length > 1
+          ? 'presence-leaves-with-several-targets'
+          : flat.joinable === true
+            ? 'presence-leaves-with-joinable'
+            : literalKindOf(flat) !== undefined
+              ? 'presence-leaves-with-literal'
+              : field.filterable !== true
+                ? 'presence-leaves-without-filterable'
+                : new Set(leaves).size !== leaves.length
+                  ? 'presence-leaves-duplicate'
+                  : undefined;
+  if (reason !== undefined) {
+    return [{ field: field.name, reason }];
+  }
+  // The reason checks above leave an inline reference or a lookup.
+  const owner = typesByName?.get(presenceLeafOwnerName(field));
+  if (owner === undefined) {
+    return [];
+  }
+  return leaves.flatMap((name): SearchTypeIssue[] => {
+    const leaf = fieldNamed(owner, name);
+    const leafReason: PresenceIssueReason | undefined = RESERVED_LEAF_NAMES.has(
+      name,
+    )
+      ? 'presence-leaf-reserved-name'
+      : leaf === undefined
+        ? 'presence-leaf-unknown'
+        : leaf.kind === 'text'
+          ? 'presence-leaf-on-text'
+          : leaf.kind === 'boolean'
+            ? 'presence-leaf-on-boolean'
+            : isInlineReference(leaf)
+              ? 'presence-leaf-inline-ref'
+              : lookup && leaf.path === undefined
+                ? 'presence-leaf-without-path'
+                : undefined;
+    return leafReason === undefined
+      ? []
+      : [{ field: `${field.name}.${name}`, reason: leafReason }];
+  });
 }
 
 /**
@@ -1623,8 +1878,8 @@ function assertNoInlineCycle(
  *   a bucket counts every entry of every matching document, including the
  *   entries that did not satisfy the filter. The count is therefore wrong in a
  *   way no work on our side recovers. Facet a qualified edge through its
- *   {@link ReferenceStrategy.identity identity companion}, which is a flat
- *   field an engine facets exactly.
+ *   Root Type’s reference and its {@link ReferenceStrategy.identity identity},
+ *   which counts documents.
  * - **`sortable`** – there is no such thing as sorting *into* an element of an
  *   array; a document holds many entries and a sort key is one value.
  *
@@ -1660,7 +1915,7 @@ function assertServiceableNestedFields(
             .map((role) => `“${role}”`)
             .join(
               ', ',
-            )}, which nesting cannot serve: an engine facets a nested field per document rather than per entry, sorts on one value rather than into an array, and has no collection to join to from inside an entry. Facet the edge through the inline reference’s “identity” companion, or the root document on this leaf through the reference’s “facetedLeaves”, instead.`,
+            )}, which nesting cannot serve: an engine facets a nested field per document rather than per entry, sorts on one value rather than into an array, and has no collection to join to from inside an entry. Facet the edge through the inline reference’s “identity”, or the root document on this leaf through the reference’s “facetedLeaves”, instead.`,
         );
       }
       if (
@@ -1720,7 +1975,7 @@ const UNSERVICEABLE_NESTED_ROLES = [
 /** The Roles the **inline reference itself** declares that it cannot serve, in
  *  declaration order. Its value is a nested object, which an engine can neither
  *  tokenize for free text nor order by; `filterable` and `facetable` it serves
- *  through its {@link ReferenceStrategy.identity identity companion}. */
+ *  through its {@link ReferenceStrategy.identity identity}. */
 function unserviceableInlineRoles(
   field: ReferenceField,
 ): readonly (typeof UNSERVICEABLE_INLINE_ROLES)[number][] {
@@ -1817,8 +2072,8 @@ export function referencedTargetsOf(
  * Reference Types are walked too, so a **nested** `lookup` has its `target`
  * resolved by the same pass a top-level one does. That is also what validates
  * the target behind an inline reference’s
- * {@link ReferenceStrategy.identity identity companion}, since the companion
- * harvests a nested reference that names one.
+ * {@link ReferenceStrategy.identity identity}, since the identity names a
+ * nested reference that names one.
  */
 function assertResolvableLabelSources(
   types: readonly SearchType[],
@@ -1863,6 +2118,18 @@ function assertResolvableLabelSources(
         if (labelFieldOf(source) === undefined) {
           throw new Error(
             `Reference “${searchType.name}.${field.name}” uses label source “${sourceName}”, which must declare an output, searchable text field “${labelFieldNameOf(source)}”.`,
+          );
+        }
+        // A searchable reference read from the graph is searched by its
+        // referents’ labels, which the extraction reads off each referent along
+        // the label field’s path; a label without one has nothing to read there.
+        if (
+          field.searchable !== undefined &&
+          field.path !== undefined &&
+          labelFieldOf(source)?.path === undefined
+        ) {
+          throw new Error(
+            `Reference “${searchType.name}.${field.name}” is searchable, so its label source “${sourceName}” must read its label field “${labelFieldNameOf(source)}” from a path.`,
           );
         }
         sources.push(source);
@@ -1962,6 +2229,10 @@ export function storedTargetOf(
  */
 export interface SearchTypeIssue {
   readonly field: string;
+  /** The other field a clash is with, for a reason that names a pair –
+   *  `display-field-name`: the output text field whose display fields
+   *  {@link field} would be read as. */
+  readonly clashesWith?: string;
   readonly reason:
     | 'duplicate-field-name'
     | 'invalid-field-name'
@@ -1996,6 +2267,7 @@ export interface SearchTypeIssue {
     | 'duplicate-target'
     | 'empty-target'
     | 'reserved-field-name'
+    | 'display-field-name'
     | 'key-field-unknown'
     | 'key-field-not-reference'
     | 'key-field-without-path'
@@ -2004,7 +2276,24 @@ export interface SearchTypeIssue {
     | 'key-pick-not-a-function'
     | 'key-not-allowed'
     | 'facet-keys-only-not-a-function'
-    | 'facet-keys-not-allowed';
+    | 'facet-keys-not-allowed'
+    | 'presence-on-reference-type'
+    | 'presence-with-inline-ref'
+    | 'presence-on-text'
+    | 'presence-on-boolean'
+    | 'presence-leaves-on-reference-type'
+    | 'presence-leaves-on-id-only'
+    | 'presence-leaves-with-several-targets'
+    | 'presence-leaves-with-joinable'
+    | 'presence-leaves-with-literal'
+    | 'presence-leaves-without-filterable'
+    | 'presence-leaves-duplicate'
+    | 'presence-leaf-unknown'
+    | 'presence-leaf-reserved-name'
+    | 'presence-leaf-on-text'
+    | 'presence-leaf-on-boolean'
+    | 'presence-leaf-inline-ref'
+    | 'presence-leaf-without-path';
 }
 
 /**
@@ -2043,10 +2332,12 @@ export const OR_KEY = 'or';
  * **several** targets records which of them it belongs to: the `name` of the
  * Root Type whose `class` its `rdf:type` matched first, or the first target
  * declared where none did. Written by the projection, read by an engine
- * adapter to reconstruct the referent through the right declaration when no
- * collection answers for it – an unidentified referent, or an identified one
- * whose document is not indexed. A single-target lookup stores none: there is
- * nothing to tell apart.
+ * adapter to reconstruct the referent through the right declaration: when the
+ * collection of the target it names does not answer for it – an unidentified
+ * referent, or an identified one whose document is not indexed there, even if
+ * another target’s collection holds it – and, when that collection does, to
+ * take its answer rather than the one declared first. A single-target
+ * lookup stores none: there is nothing to tell apart.
  *
  * Reserved schema-wide ({@link validateSearchType} rejects a field of this
  * name), so it can never shadow a declared field of a stored entry.
@@ -2106,7 +2397,9 @@ const LOCALE_PATTERN = /^[A-Za-z0-9]+(-[A-Za-z0-9]+)*$/;
  *   identifier (the name is interpolated into physical field names and the
  *   display RE2 pattern), and is not the reserved {@link ID_FIELD}, nor the
  *   precision companion a `date` field stores beside itself
- *   ({@link PhysicalFields.precision});
+ *   ({@link PhysicalFields.precision}), nor matches an `output` text sibling’s
+ *   {@link displayFieldPattern} – a field that does would be read back as one
+ *   of the sibling’s languages;
  * - a `text` field’s declared locales are BCP-47-shaped (no `_`, which is the
  *   reserved name↔locale separator);
  * - a `reference` field that is `output` declares `ref` (the API surfaces
@@ -2149,6 +2442,11 @@ const LOCALE_PATTERN = /^[A-Za-z0-9]+(-[A-Za-z0-9]+)*$/;
  * - a {@link RootType.facetKeys} policy’s `only` is a function
  *   ({@link facetKeysIssues}); a {@link ReferenceType} declares no policy at
  *   all.
+ * - {@link SearchFieldBase.presence presence} sits on a Root Type’s own field
+ *   that is neither an inline reference, `text`, `boolean` nor `facetable`,
+ *   and {@link ReferenceStrategy.presenceLeaves presence leaves} on a Root
+ *   Type’s `filterable` inline reference, each named once
+ *   ({@link presenceIssues}).
  *
  * Pure and total: returns every issue rather than throwing;
  * {@link assertValidSearchType} is the throwing entry point.
@@ -2161,15 +2459,37 @@ export function validateSearchType(
   const seenProjectionValues = new Set<string>();
   // A `date` field stores its precision under `${name}_precision`, and a
   // `period` its bounds under `${name}_start` and `${name}_end`, so a declared
-  // field of such a name would overwrite one, and be overwritten.
-  const companionFields = new Set(searchType.fields.flatMap(companionNames));
+  // field of such a name would overwrite one, and be overwritten – as would
+  // the `${name}_exists` presence companion. (Text declares no presence.)
+  const companionFields = new Set(
+    searchType.fields.flatMap((field) => [
+      ...companionNames(field),
+      ...(field.kind === 'text' || physicalFields(field).exists === undefined
+        ? []
+        : [physicalFields(field).exists as string]),
+      ...(field.kind === 'text'
+        ? []
+        : physicalFields(field).leafExists.map(({ exists }) => exists)),
+    ]),
+  );
+  // An `output` text field stores its display under every `${name}_${lang}`
+  // ({@link displayFieldPattern}), so a sibling of such a name would be read
+  // back as one of its languages.
+  const displayTextFields = searchType.fields.filter(
+    (field): field is TextField =>
+      field.kind === 'text' && Boolean(field.output),
+  );
   for (const declared of searchType.fields) {
     // Validation guards declarations built OUTSIDE TypeScript (a SHACL
     // generator, plain JS), so it inspects the uniform flat shape rather
     // than trusting the discriminated union.
     const field = declared as FlatField;
-    const issue = (reason: SearchTypeIssue['reason']) =>
-      issues.push({ field: field.name, reason });
+    const issue = (reason: SearchTypeIssue['reason'], clashesWith?: string) =>
+      issues.push({
+        field: field.name,
+        reason,
+        ...(clashesWith === undefined ? {} : { clashesWith }),
+      });
     if (seen.has(field.name)) {
       issue('duplicate-field-name');
     }
@@ -2188,6 +2508,11 @@ export function validateSearchType(
       companionFields.has(field.name)
     ) {
       issue('reserved-field-name');
+    }
+    for (const textField of displayTextFields) {
+      if (displayLangOf(textField, field.name) !== undefined) {
+        issue('display-field-name', textField.name);
+      }
     }
     // Every kind-dependent rule below would silently pass for a kind outside
     // the union, so a typo’d kind in a plain-JS declaration must fail here.
@@ -2372,7 +2697,11 @@ export function validateSearchType(
       }
     }
   }
-  issues.push(...keyIssues(searchType), ...facetKeysIssues(searchType));
+  issues.push(
+    ...keyIssues(searchType),
+    ...facetKeysIssues(searchType),
+    ...presenceIssues(searchType),
+  );
   return issues;
 }
 
@@ -2492,7 +2821,14 @@ export function assertValidSearchType(searchType: SearchType): void {
   const issues = validateSearchType(searchType);
   if (issues.length > 0) {
     const detail = issues
-      .map((issue) => `“${issue.field}” (${issue.reason})`)
+      .map(
+        (issue) =>
+          `“${issue.field}” (${issue.reason}${
+            issue.clashesWith === undefined
+              ? ''
+              : `, clashes with “${issue.clashesWith}”`
+          })`,
+      )
       .join(', ');
     throw new Error(`Invalid search type “${searchType.name}”: ${detail}.`);
   }
@@ -2511,20 +2847,28 @@ export interface PhysicalFields {
   /** Per-locale folded sort keys `${name}_sort_${locale}` (localized text,
    *  `sortable`); a non-localized field sorts on its own `name` field. */
   readonly sort: readonly string[];
-  /** The field a facet on this field reads, when `facetable`: the field’s own
-   *  `name`, or the `${name}_facet` companion holding the subset its target’s
-   *  {@link FacetKeys facet policy} admits. `undefined` for a field that is
-   *  not facetable. */
+  /** The field a facet on this field reads, when `facetable`: the field a
+   *  {@link filter} reads, or the `_facet` companion holding the subset its
+   *  target’s {@link FacetKeys facet policy} admits. `undefined` for a field
+   *  that is not facetable. */
   readonly facet: string | undefined;
   /**
-   * The **identity companion** an inline reference filters and facets through:
-   * `${name}_id`, holding the ids its entries reference
-   * ({@link ReferenceStrategy.identity}). `undefined` for every other field –
-   * an ordinary field filters on its own `name`.
+   * The field a membership filter on this field reads: its own `name`, the
+   * {@link identity} companion of a `local` lookup, or – for an inline
+   * reference naming an {@link ReferenceStrategy.identity identity} – the
+   * nested id leaf of that identity in each entry (`${name}.${leaf}`).
    *
    * A nested object is not a value an engine filters or facets, so this is the
-   * flat field it filters and facets in its place. The logical field keeps one
-   * name at the surface; only the physical fanout knows there are two.
+   * field it filters and facets in its place. The logical field keeps one name
+   * at the surface; only the physical fanout knows they differ.
+   */
+  readonly filter: string;
+  /**
+   * The **identity companion** of a {@link ReferenceStrategy.local local}
+   * lookup that is `filterable` or `facetable`: `${name}_id`, a leaf beside the
+   * nested endpoints holding their ids, because an endpoint’s own `id` is a
+   * level further in than a condition on one entry reaches. `undefined` for
+   * every other field.
    */
   readonly identity: string | undefined;
   /**
@@ -2555,10 +2899,31 @@ export interface PhysicalFields {
   readonly period:
     | { readonly values: string; readonly start: string; readonly end: string }
     | undefined;
+  /**
+   * The **presence companion** of a field declaring
+   * {@link SearchFieldBase.presence}: `${name}_exists`, a boolean stating
+   * whether the document holds a value, written on every document – `false`
+   * included, so the facet’s “without” bucket and an `exists: false` filter
+   * have something to read. Indexed and faceted; never served. `undefined` for
+   * every other field.
+   */
+  readonly exists: string | undefined;
+  /**
+   * The **presence leaf companions** of a reference – inline or `lookup` –
+   * declaring {@link ReferenceStrategy.presenceLeaves presence leaves}: per
+   * leaf, `${name}_${leaf}_exists`, a top-level boolean of the root document
+   * stating whether any entry or referent holds a value for the leaf, written
+   * on every document – `false` with none. Indexed and faceted; never served.
+   * Empty for every other field.
+   */
+  readonly leafExists: readonly {
+    readonly leaf: string;
+    readonly exists: string;
+  }[];
 }
 
-/** The physical name of an inline reference’s
- *  {@link ReferenceStrategy.identity identity companion}. */
+/** The physical name of a {@link ReferenceStrategy.local local} lookup’s
+ *  {@link PhysicalFields.identity identity companion}. */
 export function identityFieldName(name: string): string {
   return `${name}_id`;
 }
@@ -2566,11 +2931,11 @@ export function identityFieldName(name: string): string {
 /**
  * The Root Types whose labels a reference’s **facet buckets** read, by name and
  * in order of precedence – its own label sources, or, for an inline reference,
- * those its {@link ReferenceStrategy.identity identity companion} points at.
+ * those its {@link ReferenceStrategy.identity identity} points at.
  * Empty for a field that labels no bucket.
  *
  * The same one-level-in reading {@link inheritedFacetPolicies} makes, and for
- * the same reason: the companion holds that field’s ids, so the types that
+ * the same reason: the facet counts that field’s ids, so the types that
  * name those ids are the types that can label them. Kept together with it so a
  * facet cannot inherit a policy from one type and its labels from another –
  * or, as happened first, inherit the policy and no labels at all.
@@ -2627,7 +2992,7 @@ export function holdsNoIds(
 
 /**
  * The nested reference an inline reference’s
- * {@link ReferenceStrategy.identity identity companion} harvests, or
+ * {@link ReferenceStrategy.identity identity} names, or
  * `undefined` where the field declares none (or the schema cannot resolve its
  * reference type). The one reading of *which nested field identifies the edge*,
  * so the projection (which harvests it), {@link inheritedFacetPolicies} (which
@@ -2649,7 +3014,7 @@ export function identityFieldOf(
   if (referenceType === undefined) {
     return undefined;
   }
-  // `assertIdentityCompanion` guarantees the named field is declared and is a
+  // `assertIdentity` guarantees the named field is declared and is a
   // reference, so this is a read rather than a search.
   return fieldNamed(referenceType, identity) as ReferenceField | undefined;
 }
@@ -2734,17 +3099,20 @@ export function facetableFields(
 }
 
 /**
- * One facet a Root Type serves: a facetable field of its own, or a leaf of an
+ * One facet a Root Type serves: a facetable field of its own, a leaf of an
  * inline reference the type is faceted on
- * ({@link ReferenceStrategy.facetedLeaves}).
+ * ({@link ReferenceStrategy.facetedLeaves}), or the presence of a value in a
+ * field declaring {@link SearchFieldBase.presence}.
  */
 export interface FacetDeclaration {
   /** The logical name a query asks for and a result files buckets under: the
-   *  field’s own name, or `‹reference›.‹leaf›`. */
+   *  field’s own name, `‹reference›.‹leaf›`, `‹field›.exists`, or
+   *  `‹reference›.‹leaf›.exists`. */
   readonly name: string;
   /** The field whose values the buckets are – the facetable field, or the
    *  faceted leaf. Its kind types the buckets, and its label source labels
-   *  them. */
+   *  them – except on a {@link presence} facet, whose buckets are booleans
+   *  whatever the field’s kind. */
   readonly field: SearchField;
   /** The inline reference a faceted leaf is reached through; absent for a
    *  field of the type’s own. */
@@ -2752,11 +3120,18 @@ export interface FacetDeclaration {
   /** The physical field the engine facets ({@link physicalFields}): the field
    *  itself or one of its companions, or the nested path of a leaf. */
   readonly engineField: string;
+  /** Set on the facet counting whether {@link field} holds a value – for a
+   *  leaf reached through {@link reference}, whether any entry holds one: its
+   *  two buckets are `true` and `false`, selected by an `exists` criterion
+   *  (welded to one entry, for a leaf), and carry no label or bin. Absent on
+   *  every other facet. */
+  readonly presence?: true;
 }
 
 /**
  * Every facet a Root Type serves, in declaration order: each facetable field,
- * then each reference’s faceted leaves after it. The one place a logical facet
+ * then each reference’s faceted leaves after it, and each field’s presence
+ * facet in its place. The one place a logical facet
  * name is mapped to what an engine facets, so a surface, a validator and an
  * adapter enumerate the same facets.
  */
@@ -2783,14 +3158,11 @@ export function facetsOf(
 }
 
 /** The {@link ReferenceStrategy.facetedLeaves faceted leaves} an inline
- *  reference declares, or none. */
-function facetedLeavesOf(inlineReference: SearchField): readonly string[] {
+ *  reference declares, or none – for any other field too. */
+function facetedLeavesOf(field: SearchField): readonly string[] {
   return (
-    (
-      inlineReference as {
-        readonly ref: { readonly facetedLeaves?: readonly string[] };
-      }
-    ).ref.facetedLeaves ?? []
+    (field as { readonly ref?: { readonly facetedLeaves?: readonly string[] } })
+      .ref?.facetedLeaves ?? []
   );
 }
 
@@ -2814,25 +3186,51 @@ function declaredFacets(
             },
           ]
         : [];
-    const referenceType =
-      schema === undefined ? undefined : nestedReferenceType(schema, field);
-    if (referenceType === undefined) {
-      return own;
+    const { exists, leafExists } = physicalFields(field, schema);
+    // A presence facet of the field’s own, beside its value facet if any.
+    const presence: FacetDeclaration[] =
+      exists === undefined
+        ? []
+        : [
+            {
+              name: presenceFacetName(field.name),
+              field,
+              engineField: exists,
+              presence: true,
+            },
+          ];
+    // The type a leaf is read through: the nested reference type, or a
+    // lookup’s one target (`searchSchema` refuses presence leaves on a lookup
+    // naming several).
+    const leafOwner: SearchType | undefined =
+      schema === undefined
+        ? undefined
+        : (nestedReferenceType(schema, field) ??
+          referencedTargetsOf(field, schema)[0]);
+    if (leafOwner === undefined) {
+      return [...own, ...presence];
     }
-    // Only an inline reference nests a reference type, and `searchSchema`
-    // has resolved every faceted leaf against it.
-    const leaves = facetedLeavesOf(field);
+    // `searchSchema` has resolved every faceted and presence leaf against it;
+    // only an inline reference declares faceted leaves.
     return [
       ...own,
-      ...leaves.map((leafName): FacetDeclaration => {
+      ...presence,
+      ...facetedLeavesOf(field).map((leafName): FacetDeclaration => {
         const path = nestedFieldName(field.name, leafName);
         return {
           name: path,
-          field: fieldNamed(referenceType, leafName) as SearchField,
+          field: fieldNamed(leafOwner, leafName) as SearchField,
           reference: field,
           engineField: path,
         };
       }),
+      ...leafExists.map(({ leaf, exists: companion }): FacetDeclaration => ({
+        name: presenceFacetName(nestedFieldName(field.name, leaf)),
+        field: fieldNamed(leafOwner, leaf) as SearchField,
+        reference: field,
+        engineField: companion,
+        presence: true,
+      })),
     ];
   });
 }
@@ -2844,6 +3242,34 @@ export function facetNamed(
   schema?: SearchSchema,
 ): FacetDeclaration | undefined {
   return facetsOf(searchType, schema).find((facet) => facet.name === name);
+}
+
+/**
+ * Whether a facet takes a query (`SearchQuery.facetQueries`) – text to
+ * search its values with. A facet whose values are text a person can type
+ * against does: a `keyword` facet, matched on its values’ own text, and a
+ * reference facet whose values have a label source ({@link labelTargetNamesOf}),
+ * matched by the free-text search of the types they belong to. A reference
+ * without one holds bare IRIs, which nobody types; a boolean, range or presence
+ * facet has no values to search.
+ */
+export function isQueryableFacet(
+  facet: FacetDeclaration,
+  schema: SearchSchema | undefined,
+): boolean {
+  if (facet.presence === true) {
+    return false;
+  }
+  return (
+    facet.field.kind === 'keyword' ||
+    labelTargetNamesOf(facet.field, schema).length > 0
+  );
+}
+
+/** The logical name of the facet counting whether a field declaring
+ *  {@link SearchFieldBase.presence} holds a value: `‹field›.exists`. */
+export function presenceFacetName(name: string): string {
+  return `${name}.exists`;
 }
 
 /** Fields usable in `where`, in declaration order. */
@@ -3422,14 +3848,16 @@ function deepTimeDate(year: number): StoredDate | undefined {
  * localized `text` field’s display fields are pattern-based and not enumerated
  * here – see {@link displayFieldName} and its siblings.
  *
- * The facet is the one member that depends on more than the declaration. A
- * field storing a nested object facets its `${name}_id` identity companion
- * rather than itself, and a facetable reference whose target declares a
- * {@link FacetKeys facet policy} facets a `_facet` companion of whichever field
- * it would otherwise facet – `${name}_facet` or `${name}_id_facet`. Only the
- * `schema` can resolve either ({@link inheritedFacetPolicies}). Without one the
- * field facets on its own name – the same reading the projection makes without
- * a schema, where it cannot re-key a reference either.
+ * The filter and facet are the members that depend on more than the
+ * declaration. A field storing a nested object filters and facets an id leaf
+ * rather than itself – a local lookup its `${name}_id` companion, an inline
+ * reference its identity’s leaf inside each entry – and a facetable reference
+ * whose target declares a {@link FacetKeys facet policy} facets a top-level
+ * `_facet` companion instead: `${name}_facet`, or `${name}_id_facet` for a
+ * local lookup. Only the `schema` can resolve any of these
+ * ({@link inheritedFacetPolicies}). Without one the field filters and facets
+ * its own name – the same reading the projection makes without a schema,
+ * where it cannot re-key a reference either.
  */
 export function physicalFields(
   field: SearchField,
@@ -3446,32 +3874,46 @@ export function physicalFields(
         : [],
       // Text is never facetable (`validateSearchType`).
       facet: undefined,
+      filter: field.name,
       identity: undefined,
       precision: undefined,
       period: undefined,
+      // Nor does it declare presence (`searchSchema`).
+      exists: undefined,
+      leafExists: [],
     };
   }
   // A field storing a nested OBJECT cannot be filtered or faceted as itself, so
-  // everything an engine indexes for it reads the identity companion instead –
-  // the facet included, which is why the facet name is derived from the
-  // companion rather than from `name`. Two shapes store one: an inline
-  // reference that names an `identity`, and a `local` lookup, whose own id is
-  // otherwise a level further in than an engine can weld a condition to.
-  const nestsAnObject =
-    identityFieldOf(field, schema) !== undefined ||
-    (localLookupTargetsOf(field, schema).length > 0 &&
-      (field.filterable === true || field.facetable === true));
-  const identity = nestsAnObject ? identityFieldName(field.name) : undefined;
-  const filtered = identity ?? field.name;
+  // what an engine filters and facets for it is an id leaf. A `local` lookup’s
+  // own id is a level further in than a condition on one entry reaches, so it
+  // gets a companion leaf beside the endpoints; an inline reference naming an
+  // `identity` reads that identity’s leaf inside each entry, which Typesense
+  // flattens into one list per document – the count a facet wants.
+  const identity =
+    localLookupTargetsOf(field, schema).length > 0 &&
+    (field.filterable === true || field.facetable === true)
+      ? identityFieldName(field.name)
+      : undefined;
+  const identityField = identityFieldOf(field, schema);
+  const filter =
+    identityField === undefined
+      ? (identity ?? field.name)
+      : nestedFieldName(
+          field.name,
+          physicalFields(identityField, schema).filter,
+        );
   return {
     search: field.searchable !== undefined ? [`${field.name}_search`] : [],
     sort: [],
+    // The narrowed companion is a top-level field even where the filter reads
+    // a nested leaf: it holds the admitted ids of the whole document.
     facet:
       field.facetable !== true
         ? undefined
         : inheritedFacetPolicies(field, schema).size === 0
-          ? filtered
-          : `${filtered}_facet`,
+          ? filter
+          : `${identity ?? field.name}_facet`,
+    filter,
     identity,
     precision: field.kind === 'date' ? `${field.name}_precision` : undefined,
     period: storesPeriods(field)
@@ -3482,12 +3924,18 @@ export function physicalFields(
           end: `${field.name}_end`,
         }
       : undefined,
+    exists: field.presence === true ? `${field.name}_exists` : undefined,
+    leafExists: (field.kind === 'reference'
+      ? (field.ref?.presenceLeaves ?? [])
+      : []
+    ).map((leaf) => ({ leaf, exists: `${field.name}_${leaf}_exists` })),
   };
 }
 
 /** The value companions a field stores beside its own name: a `date`’s
  *  precision, a `period`’s two bounds, and the periods a lookup reads its
- *  literals as. */
+ *  literals as. Not the presence companion, which outlives the value: an
+ *  internal field’s value and these are pruned, its presence is not. */
 export function companionNames(field: SearchField): string[] {
   // Text stores none, and a declaration without `locales` – which validation
   // reports – has no per-locale fanout to compute.
@@ -3519,8 +3967,8 @@ export function companionNames(field: SearchField): string[] {
  * companion) and {@link physicalFields} (which names it) share.
  *
  * An **inline** reference names its target one level in, through the nested
- * reference its {@link ReferenceStrategy.identity identity companion} harvests
- * ({@link identityFieldOf}). The boundary is the same one: the companion holds
+ * reference its {@link ReferenceStrategy.identity identity} names
+ * ({@link identityFieldOf}). The boundary is the same one: the facet counts
  * that field’s ids, so the policy that narrows a facet over those ids is the
  * policy of the type that field names. Reading it through the nested field
  * rather than declaring it twice is what keeps *which of a type’s ids deserve

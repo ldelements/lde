@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { SearchEngine } from './engine.js';
 import {
+  facetQueryText,
   filterOn,
   filterOperatorFor,
   type Filter,
@@ -9,6 +10,8 @@ import {
 } from './query.js';
 import {
   facetableFields,
+  facetsOf,
+  isQueryableFacet,
   isRangeFacet,
   filterableFields,
   ID_FIELD,
@@ -17,6 +20,7 @@ import {
   referencedTargetsOf,
   nestedReferenceType,
   outputFields,
+  type FacetDeclaration,
   type RootType,
   type SearchField,
   type SearchType,
@@ -162,7 +166,11 @@ export function describeSearchEngineContract(
 
     it('answers a searchFacets batch with one facets outcome per query, positionally', async () => {
       for (const searchType of types()) {
-        const facets = facetableFields(searchType).map((field) => field.name);
+        // Every facet the type serves, a presence facet’s `‹field›.exists`
+        // included.
+        const facets = facetsOf(searchType, engine().schema).map(
+          (facet) => facet.name,
+        );
         const queries: SearchQuery[] = [
           { ...browse(searchType), limit: 0, facets },
           // Facet-only regardless of the limit the query carries: this one
@@ -181,15 +189,19 @@ export function describeSearchEngineContract(
           }
           expect(outcome.facets).toBeTypeOf('object');
           const booleanFacets = new Set(
-            facetableFields(searchType)
-              .filter((field) => field.kind === 'boolean')
-              .map((field) => field.name),
+            facetsOf(searchType, engine().schema)
+              .filter(
+                (facet) =>
+                  facet.presence === true || facet.field.kind === 'boolean',
+              )
+              .map((facet) => facet.name),
           );
           for (const [name, facet] of Object.entries(outcome.facets)) {
             for (const bucket of facet?.buckets ?? []) {
               expect(typeof bucket.value).toBe('string');
               expect(typeof bucket.count).toBe('number');
-              // A boolean facet MUST carry `is`: a surface types it non-null
+              // A boolean facet – and a presence facet, whose buckets are
+              // booleans too – MUST carry `is`: a surface types it non-null
               // (GraphQL `Boolean!`), so an adapter that omits it nulls the
               // whole response rather than degrading one facet.
               if (booleanFacets.has(name)) {
@@ -225,6 +237,38 @@ export function describeSearchEngineContract(
           if (extent !== undefined) {
             expect(typeof extent.min).toBe('number');
             expect(extent.min <= extent.max).toBe(true);
+          }
+        }
+      }
+    });
+
+    it('caps a value facet at its limit in facetLimits, and with nothing selected never reports fewer values than it returns', async () => {
+      // A selected value is reported even when no matching document holds it,
+      // so only a browse can promise this.
+      for (const searchType of types()) {
+        const fields = facetableFields(searchType).filter(
+          (field) => !isRangeFacet(field),
+        );
+        const [outcome] = await engine().searchFacets(searchType, [
+          {
+            ...browse(searchType),
+            limit: 0,
+            facets: fields.map((field) => field.name),
+            facetLimits: Object.fromEntries(
+              fields.map((field) => [field.name, 1]),
+            ),
+          },
+        ]);
+        if (outcome === undefined || 'error' in outcome) {
+          continue; // The batch test above fails on this already.
+        }
+        for (const field of fields) {
+          const facet = outcome.facets[field.name];
+          expect(facet?.buckets.length ?? 0).toBeLessThanOrEqual(1);
+          if (facet?.totalValues !== undefined) {
+            expect(facet.totalValues).toBeGreaterThanOrEqual(
+              facet.buckets.length,
+            );
           }
         }
       }
@@ -392,6 +436,144 @@ export function describeSearchEngineContract(
             expect(referenceIds(hit.document[field.name])).toContain(excluded);
           }
         }
+      }
+    });
+
+    it('rejects a facet query on a facet that takes none', async () => {
+      for (const searchType of types()) {
+        const facet = facetsOf(searchType, engine().schema).find(
+          (candidate) => !isQueryableFacet(candidate, engine().schema),
+        );
+        if (facet === undefined) {
+          continue;
+        }
+        await expect(
+          engine().searchFacets(searchType, [
+            {
+              ...browse(searchType),
+              limit: 0,
+              facets: [facet.name],
+              facetQueries: { [facet.name]: 'xyz' },
+            },
+          ]),
+        ).rejects.toThrow(/not-queryable/);
+      }
+    });
+
+    it('under a facet query, finds a value by its text and reports only values the facet holds, by count, capped at the limit', async () => {
+      // The text a person would type for a bucket: a literal value’s own text,
+      // a reference’s label.
+      const textOf = (
+        facet: FacetDeclaration,
+        bucket: {
+          readonly value: unknown;
+          readonly label?: Readonly<Record<string, readonly string[]>>;
+        },
+      ): string | undefined =>
+        facet.field.kind === 'reference'
+          ? Object.values(bucket.label ?? {})[0]?.[0]
+          : typeof bucket.value === 'string'
+            ? bucket.value
+            : undefined;
+      for (const searchType of types()) {
+        const facets = facetsOf(searchType, engine().schema).filter((facet) =>
+          isQueryableFacet(facet, engine().schema),
+        );
+        if (facets.length === 0) {
+          continue;
+        }
+        const [unqueried] = await engine().searchFacets(searchType, [
+          {
+            ...browse(searchType),
+            limit: 0,
+            facets: facets.map((facet) => facet.name),
+          },
+        ]);
+        if (unqueried === undefined || 'error' in unqueried) {
+          continue; // The batch test above fails on this already.
+        }
+        for (const facet of facets) {
+          const all = unqueried.facets[facet.name];
+          const [top] = all?.buckets ?? [];
+          // A value too short to search by says nothing about matching.
+          const text =
+            top === undefined ? undefined : facetQueryText(textOf(facet, top));
+          if (all === undefined || top === undefined || text === undefined) {
+            continue;
+          }
+          const limit = all.buckets.length;
+          const [outcome] = await engine().searchFacets(searchType, [
+            {
+              ...browse(searchType),
+              limit: 0,
+              facets: [facet.name],
+              facetQueries: { [facet.name]: text },
+              facetLimits: { [facet.name]: limit },
+            },
+          ]);
+          if (outcome === undefined || 'error' in outcome) {
+            throw new Error(`Expected facets for a query on ${facet.name}.`);
+          }
+          const queried = outcome.facets[facet.name]?.buckets ?? [];
+          expect(queried).toContainEqual(
+            expect.objectContaining({ value: top.value, count: top.count }),
+          );
+          expect(queried.length).toBeLessThanOrEqual(limit);
+          const counts = queried.map((bucket) => bucket.count);
+          expect(counts).toEqual(
+            [...counts].sort((left, right) => right - left),
+          );
+          const totalValues = outcome.facets[facet.name]?.totalValues;
+          if (totalValues !== undefined) {
+            expect(totalValues).toBeGreaterThanOrEqual(queried.length);
+          }
+          // Where the facet without a query reported every value, each match
+          // is one of them, at the same count.
+          if (all.totalValues !== undefined && all.totalValues <= limit) {
+            for (const bucket of queried) {
+              expect(all.buckets).toContainEqual(
+                expect.objectContaining({
+                  value: bucket.value,
+                  count: bucket.count,
+                }),
+              );
+            }
+          }
+        }
+      }
+    });
+
+    it('under a facet query, leaves out a selected value that does not match', async () => {
+      // The one exception to a facet reporting every value its own clause
+      // selects: under a query only matches come back. Without the query the
+      // value is reported at count 0, which the test above pins.
+      const absent = 'urn:lde:testing:absent-facet-value';
+      for (const searchType of types()) {
+        const facet = facetsOf(searchType, engine().schema).find(
+          (candidate) =>
+            isQueryableFacet(candidate, engine().schema) &&
+            candidate.reference === undefined &&
+            candidate.field.filterable === true &&
+            filterOperatorFor(candidate.field) === 'in',
+        );
+        if (facet === undefined) {
+          continue;
+        }
+        const [outcome] = await engine().searchFacets(searchType, [
+          {
+            ...browse(searchType),
+            limit: 0,
+            where: [filterOn({ field: facet.name, in: [absent] })],
+            facets: [facet.name],
+            facetQueries: { [facet.name]: 'qxzvj' },
+          },
+        ]);
+        if (outcome === undefined || 'error' in outcome) {
+          throw new Error(`Expected facets for a query on ${facet.name}.`);
+        }
+        expect(outcome.facets[facet.name]?.buckets ?? []).not.toContainEqual(
+          expect.objectContaining({ value: absent }),
+        );
       }
     });
 

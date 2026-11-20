@@ -16,7 +16,9 @@ import {
   fieldNamed,
   irAlias,
   isInlineReference,
+  labelFieldOf,
   localLookupTargetsOf,
+  physicalFields,
   referencedTargetsOf,
   referenceTypeNamed,
 } from '@lde/search/adapter';
@@ -85,6 +87,9 @@ export interface ExtractionOptions {
  *   `OPTIONAL`, so a referent with no key candidate keeps its row. The root side
  *   needs nothing: a key field is a declared field, so its own read and
  *   template triple are already there.
+ * - **searchable references**: a `searchable` reference naming a target reads
+ *   the referent’s label field the same way, in a hop of its own, so the
+ *   projection can fold the labels into the referrer’s search companion.
  * - **references naming several targets**: the referent may be of any of them,
  *   so its branch also reads the referent’s `rdf:type` (`OPTIONAL`, emitted
  *   as is – framing carries it as `@type`), which is what the projection
@@ -135,6 +140,31 @@ export function extractionQueryString(
   options?: ExtractionOptions,
 ): string {
   return generator.generate(extractionQuery(searchType, schema, options));
+}
+
+/**
+ * The fields a reference reads off a referent of a target it does not expand
+ * `local`ly: the target’s key field, where it is keyed; – for a `searchable`
+ * reference – its label field, by which the reference is searched; and each of
+ * the reference’s presence leaves, whose companions say whether any referent
+ * holds one. Each field once, though it plays several of these parts.
+ */
+export function referentHopFields(
+  field: SearchField,
+  target: RootType,
+): PathField[] {
+  const hopFields = [
+    keyedFieldOf(target),
+    // `searchSchema` guarantees a searchable reference’s label a path.
+    field.searchable === undefined
+      ? undefined
+      : (labelFieldOf(target) as PathField),
+    // …and a lookup’s target each presence leaf, with a path.
+    ...physicalFields(field).leafExists.map(
+      ({ leaf }) => fieldNamed(target, leaf) as PathField,
+    ),
+  ].filter((hopField) => hopField !== undefined);
+  return [...new Set(hopFields)];
 }
 
 /** A per-query counter minting distinct value/referent variable names. */
@@ -444,9 +474,10 @@ function buildReferentHops(
       // Only where no local expansion follows: a `local` lookup reads the
       // target’s every path-bearing field, and a keyed target’s key field
       // is one of them, so emitting the hop as well would state it twice.
-      const keyed = keyedFieldOf(target);
-      if (keyed !== undefined) {
-        const built = buildKeyHop(target, keyed, referent, counter);
+      // A searchable reference is searched by its referents’ labels, so it
+      // reads them off the referent beside the key.
+      for (const hopField of referentHopFields(field, target)) {
+        const built = buildFieldHop(target, hopField, referent, counter);
         template.push(built.triple);
         expansions.push(built.pattern);
       }
@@ -481,13 +512,13 @@ function localTargetsOf(
  * reads the same declarations rather than a rule of its own: a reference that
  * names no target keeps the node IRI, and needs no hop.
  */
-function keyedFieldOf(target: RootType): KeyedField | undefined {
+function keyedFieldOf(target: RootType): PathField | undefined {
   if (target.key === undefined) {
     return undefined;
   }
   // `searchSchema` guarantees a declared, path-bearing key field, so the target
   // – which came out of the schema – always has one.
-  return fieldNamed(target, target.key.field) as KeyedField;
+  return fieldNamed(target, target.key.field) as PathField;
 }
 
 /**
@@ -517,37 +548,38 @@ function buildTypeHop(
   };
 }
 
-/** A key field as the schema guarantees it: path-bearing. */
-type KeyedField = SearchField & { readonly path: string };
+/** A field the extraction reads off a referent: path-bearing. */
+type PathField = SearchField & { readonly path: string };
 
 /**
- * The one-field hop that reads a referent’s key: a template triple emitting the
- * key field under the **target’s** IR Alias, and a branch binding it. The
- * referent recursion an inline reference already performs, for a single field –
- * bound by the caller inside the reference’s `OPTIONAL` union rather than
- * conjoined, so a referent with no key candidate keeps its row and still stores
- * its own IRI, instead of the whole reference dropping out of the CONSTRUCT.
+ * The one-field hop that reads a referent’s key or label: a template triple
+ * emitting the field under the **target’s** IR Alias, and a branch binding it.
+ * The referent recursion an inline reference already performs, for a single
+ * field – bound by the caller inside the reference’s `OPTIONAL` union rather
+ * than conjoined, so a referent with no key candidate or label keeps its row
+ * and still stores its own IRI, instead of the whole reference dropping out of
+ * the CONSTRUCT.
  *
  * It is a branch of its own in that union, or a row of its merged plain reads,
  * so it multiplies against nothing.
  */
-function buildKeyHop(
+function buildFieldHop(
   target: RootType,
-  keyField: KeyedField,
+  hopField: PathField,
   referent: TermVariable,
   counter: VariableCounter,
 ): { readonly triple: TripleNesting; readonly pattern: PatternGroup } {
-  const key = factory.termVariable(`k${counter.next++}`, factory.gen());
+  const value = factory.termVariable(`h${counter.next++}`, factory.gen());
   return {
     triple: factory.triple(
       referent,
-      factory.termNamed(factory.gen(), irAlias(target, keyField)),
-      key,
+      factory.termNamed(factory.gen(), irAlias(target, hopField)),
+      value,
     ),
     pattern: factory.patternGroup(
       [
         factory.patternBgp(
-          [factory.triple(referent, liftPath(keyField.path), key)],
+          [factory.triple(referent, liftPath(hopField.path), value)],
           factory.gen(),
         ),
       ],

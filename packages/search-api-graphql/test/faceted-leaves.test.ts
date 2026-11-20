@@ -78,10 +78,10 @@ describe('a root type faceted on its entries’ leaves', () => {
     const printed = printSchema(gqlSchema);
 
     expect(printed).toMatch(
-      /type WorkFacets \{\s*associatedMedia: WorkAssociatedMediaFacets!\s*\}/,
+      /type WorkFacets \{\s*associatedMedia: WorkAssociatedMediaFacet!\s*\}/,
     );
     expect(printed).toMatch(
-      /type WorkAssociatedMediaFacets \{\s*license: \[IRIBucket!\]!\s*\}/,
+      /type WorkAssociatedMediaFacet \{\s*license\([\s\S]*?\): IRIFacet!\s*\}/,
     );
   });
 
@@ -90,7 +90,7 @@ describe('a root type faceted on its entries’ leaves', () => {
 
     const response = await graphql({
       schema: gqlSchema,
-      source: `{ works { facets { associatedMedia { license { value count } } } } }`,
+      source: `{ works { facets { associatedMedia { license { buckets { value count } } } } } }`,
       contextValue: { engine, acceptLanguage: ['nl'] } as SearchContext,
     });
 
@@ -100,7 +100,11 @@ describe('a root type faceted on its entries’ leaves', () => {
     ]);
     expect(response.data).toEqual({
       works: {
-        facets: { associatedMedia: { license: [{ value: CC_BY, count: 2 }] } },
+        facets: {
+          associatedMedia: {
+            license: { buckets: [{ value: CC_BY, count: 2 }] },
+          },
+        },
       },
     });
   });

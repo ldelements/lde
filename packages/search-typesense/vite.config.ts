@@ -22,16 +22,20 @@ export default mergeConfig(
           // by-name map for the shared `rootTypeNamed`: one COVERED arrow fewer
           // over one function fewer, which lowers the ratio without uncovering
           // anything.
-          functions: 99.36,
+          functions: 99.43,
           // Lines, branches and statements moved the same way when the range
           // bound reading went to `@lde/search` as `storedRangeBound`.
-          lines: 99.58,
+          lines: 99.7,
           // Re-anchored for the projection lookup: its guards against a
           // projection naming what no lookup reaches are unreachable through
           // the port, since `assertValidQuery` rejects such a query first.
-          // They hold for a direct caller, and are exercised as one.
-          branches: 97.08,
-          statements: 99.59,
+          // They hold for a direct caller, and are exercised as one. Moved
+          // again when an inline reference’s identity dropped its flat
+          // companion: covered branches deleted, nothing uncovered. And when
+          // a field declaring presence alone went back to being internal,
+          // deleting the covered branches that kept its value unindexed.
+          branches: 97.66,
+          statements: 99.71,
         },
       },
     },

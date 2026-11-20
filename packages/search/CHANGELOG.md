@@ -1,3 +1,292 @@
+## 0.49.1 (2026-11-17)
+
+### 🚀 Features
+
+- **search-api-graphql:** search within a facet’s values ([#1100](https://github.com/ldelements/lde/pull/1100))
+
+## 0.49.0 (2026-11-17)
+
+### 🚀 Features
+
+- ⚠️  **search:** filter and facet a root document on whether a referent’s leaf has a value ([#1101](https://github.com/ldelements/lde/pull/1101))
+
+### ⚠️  Breaking Changes
+
+- **search:** filter and facet a root document on whether a referent’s leaf has a value  ([#1101](https://github.com/ldelements/lde/pull/1101))
+  GraphQL facet objects are renamed and reshaped. The
+  ‹Type›‹Reference›Facets and ‹Type›‹Field›Facets objects become
+  ‹Type›‹Field›Facet, and a presence leaf’s ‹…›‹Leaf›Facets becomes
+  ‹Type›‹Field›‹Leaf›Facet. A field whose facet also counts its presence or a
+  leaf is served as ‹Type›‹Field›Facet { buckets totalValues exists ‹leaf› }
+  instead of IRIFacet or ValueFacet; select its buckets as
+  facetField(limit) { buckets { … } }. A reference counting faceted or presence
+  leaves takes ‹Type›‹Field›Filter, with ‹Type›‹Field›Where, instead of
+  ‹Edge›Filter or ‹Target›Filter, and ‹Edge›JoinedFilter becomes
+  ‹Type›‹Field›JoinedFilter; variables typed with the old names stop
+  validating, and adding leaves to a reference later changes its filter type
+  the same way. In @lde/search, PhysicalFields.leafExists covers a lookup’s
+  presence leaves too, PresenceCriterion takes an optional leaf, and the
+  SearchTypeIssue reasons presence-with-facetable, presence-leaves-not-inline,
+  presence-leaves-with-facetable and presence-leaf-faceted are gone, replaced
+  by presence-leaves-on-id-only, presence-leaves-with-several-targets,
+  presence-leaves-with-joinable, presence-leaves-with-literal,
+  presence-leaf-reserved-name and presence-leaf-without-path. A target type’s
+  transform also receives referents seeded as <referent> rdf:type <class>."
+  M	AGENTS.md
+  M	docs/decisions/0040-filter-and-facet-a-field-on-whether-it-has-a-value.md
+  M	docs/decisions/0041-filter-and-facet-a-root-document-on-whether-an-entrys-leaf-has-a-value.md
+  A	docs/decisions/0042-count-a-referents-leaf-and-a-fields-facets-in-one-object.md
+  M	docs/reference/search-api-graphql.md
+  M	docs/reference/search-pipeline.md
+  M	docs/reference/search-typesense.md
+  M	docs/reference/search.md
+  M	package-lock.json
+  M	packages/search-api-graphql/src/build-schema.ts
+  M	packages/search-api-graphql/test/faceted-leaves.test.ts
+  M	packages/search-api-graphql/test/leaf-presence.test.ts
+  A	packages/search-api-graphql/test/lookup-presence.test.ts
+  M	packages/search-api-graphql/test/presence.test.ts
+  M	packages/search-api-graphql/test/query-cost.test.ts
+  M	packages/search-api-graphql/vite.config.ts
+  M	packages/search-pipeline/package.json
+  M	packages/search-pipeline/src/extraction.ts
+  M	packages/search-pipeline/src/search-stages.ts
+  M	packages/search-pipeline/test/extraction.test.ts
+  A	packages/search-pipeline/test/fixtures/lookup-presence-sample.ttl
+  A	packages/search-pipeline/test/lookup-presence.integration.test.ts
+  M	packages/search-typesense/src/query-compiler.ts
+  A	packages/search-typesense/test/lookup-presence.integration.test.ts
+  M	packages/search-typesense/test/query-compiler.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/src/project.ts
+  M	packages/search/src/query.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/test/faceted-leaves.test.ts
+  M	packages/search/test/leaf-presence.test.ts
+  A	packages/search/test/lookup-presence.test.ts
+  M	packages/search/test/presence.test.ts
+
+## 0.48.0 (2026-11-16)
+
+### 🚀 Features
+
+- ⚠️  **search:** filter and facet a root document on whether an entry’s leaf has a value ([#1099](https://github.com/ldelements/lde/pull/1099), [#1097](https://github.com/ldelements/lde/issues/1097))
+
+### ⚠️  Breaking Changes
+
+- **search:** filter and facet a root document on whether an entry’s leaf has a value  ([#1099](https://github.com/ldelements/lde/pull/1099), [#1097](https://github.com/ldelements/lde/issues/1097))
+  `PhysicalFields` gains a required `leafExists` member, so code constructing a `PhysicalFields` must supply it. An engine adapter must declare each leaf boolean and compile a one-condition `exists` weld against it. A type whose inline reference declares presence leaves is reached through a join by `‹Type›JoinedWhere`, and that reference by `‹RefType›JoinedFilter`, without `exists`.
+  ---"
+  M	docs/decisions/0036-facet-a-root-document-on-its-entries-leaves.md
+  R095	docs/decisions/0038-filter-and-facet-a-field-on-whether-it-has-a-value.md	docs/decisions/0040-filter-and-facet-a-field-on-whether-it-has-a-value.md
+  A	docs/decisions/0041-filter-and-facet-a-root-document-on-whether-an-entrys-leaf-has-a-value.md
+  M	docs/reference/search-api-graphql.md
+  M	docs/reference/search-typesense.md
+  M	docs/reference/search.md
+  M	packages/search-api-graphql/src/build-schema.ts
+  A	packages/search-api-graphql/test/leaf-presence.test.ts
+  M	packages/search-api-graphql/vite.config.ts
+  M	packages/search-typesense/src/collection-definition.ts
+  M	packages/search-typesense/src/query-compiler.ts
+  M	packages/search-typesense/src/search.ts
+  A	packages/search-typesense/test/leaf-presence.integration.test.ts
+  M	packages/search-typesense/test/query-compiler.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/src/engine.ts
+  M	packages/search/src/project.ts
+  M	packages/search/src/query.ts
+  M	packages/search/src/schema.ts
+  A	packages/search/test/leaf-presence.test.ts
+  M	packages/search/test/presence.test.ts
+  M	packages/search/test/schema.test.ts
+
+## 0.47.0 (2026-11-16)
+
+### 🩹 Fixes
+
+- ⚠️  **search-typesense:** keep the rebuild lock alive while a run is open ([#1080](https://github.com/ldelements/lde/pull/1080))
+
+### ⚠️  Breaking Changes
+
+- **search-typesense:** keep the rebuild lock alive while a run is open  ([#1080](https://github.com/ldelements/lde/pull/1080))
+  the rebuild writers now throw when lockTtlMs is not a positive,
+  finite number. Replace lockTtlMs: Infinity with a finite TTL: the heartbeat keeps a
+  long run’s lock alive, so the TTL no longer needs to outlast the run."
+  M	docs/reference/search-typesense.md
+  M	docs/reference/search.md
+  M	packages/search-typesense/src/blue-green-rebuild.ts
+  M	packages/search-typesense/src/in-place-rebuild.ts
+  M	packages/search-typesense/src/lock.ts
+  M	packages/search-typesense/src/rebuild-support.ts
+  M	packages/search-typesense/test/blue-green-rebuild.test.ts
+  M	packages/search-typesense/test/in-place-rebuild.test.ts
+  M	packages/search-typesense/test/joins.test.ts
+  M	packages/search-typesense/test/lock.test.ts
+  M	packages/search-typesense/test/rebuild-error-paths.test.ts
+  M	packages/search-typesense/test/rebuild-support.test.ts
+  M	packages/search/src/rebuild.ts
+
+## 0.46.1 (2026-11-16)
+
+### 🩹 Fixes
+
+- **search-typesense:** type a referent several collections hold by its stored target ([#1075](https://github.com/ldelements/lde/pull/1075))
+
+## 0.46.0 (2026-11-16)
+
+### 🚀 Features
+
+- ⚠️  **search:** filter and facet a field on whether it has a value ([#1095](https://github.com/ldelements/lde/pull/1095))
+
+### ⚠️  Breaking Changes
+
+- **search:** filter and facet a field on whether it has a value  ([#1095](https://github.com/ldelements/lde/pull/1095))
+  `Criterion` gains `PresenceCriterion` (`{ field, exists }`), `FilterOperator` gains `'exists'` and `PhysicalFields` gains a required `exists`. An engine adapter must compile an `exists` criterion against `PhysicalFields.exists`, declare that companion, and set `is` on presence buckets; an exhaustive switch over `Criterion` or `FilterOperator` needs the new case. In GraphQL, a type declaring presence is reached through a join by `‹Type›JoinedWhere` instead of `‹Type›Where`, and a filterable field declaring presence takes `‹Filter›OrExists` instead of its old filter type, so variables typed with the old names stop validating. Collections built before this lack the companion, so a schema declaring `presence` needs a full rebuild; the in-place check refuses to run over them.
+  ---"
+  M	docs/decisions/0036-facet-a-root-document-on-its-entries-leaves.md
+  A	docs/decisions/0038-filter-and-facet-a-field-on-whether-it-has-a-value.md
+  M	docs/reference/search-api-graphql.md
+  M	docs/reference/search-typesense.md
+  M	docs/reference/search.md
+  M	packages/search-api-graphql/src/build-schema.ts
+  A	packages/search-api-graphql/test/presence.test.ts
+  M	packages/search-api-graphql/vite.config.ts
+  M	packages/search-typesense/src/collection-definition.ts
+  M	packages/search-typesense/src/in-place-rebuild.ts
+  M	packages/search-typesense/src/query-compiler.ts
+  M	packages/search-typesense/src/search.ts
+  A	packages/search-typesense/test/presence.integration.test.ts
+  M	packages/search-typesense/test/query-compiler.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/src/adapter.ts
+  M	packages/search/src/engine.ts
+  M	packages/search/src/index.ts
+  M	packages/search/src/project.ts
+  M	packages/search/src/query.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/src/testing.ts
+  A	packages/search/test/presence.test.ts
+
+## 0.45.0 (2026-11-16)
+
+### 🚀 Features
+
+- ⚠️  **search:** search a reference by its referents’ labels ([#1093](https://github.com/ldelements/lde/pull/1093))
+
+### ⚠️  Breaking Changes
+
+- **search:** search a reference by its referents’ labels  ([#1093](https://github.com/ldelements/lde/pull/1093))
+  a searchable reference naming a label source now holds
+  its referents’ folded labels in ${name}_search, not their IRIs, and
+  searchSchema refuses it when the label source’s label field has no
+  path. Give the label field a path, or drop searchable from the
+  reference."
+  A	docs/decisions/0038-search-a-document-by-its-referents-labels.md
+  M	docs/reference/search.md
+  M	packages/search-pipeline/src/extraction.ts
+  M	packages/search-pipeline/test/extraction.test.ts
+  M	packages/search-pipeline/test/keyed-roots.integration.test.ts
+  M	packages/search/src/project.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/test/project.test.ts
+  M	packages/search/test/schema.test.ts
+
+## 0.44.0 (2026-11-16)
+
+### 🚀 Features
+
+- ⚠️  **search-api-graphql:** let a client cap each facet and see its total number of values ([#1092](https://github.com/ldelements/lde/pull/1092))
+
+### ⚠️  Breaking Changes
+
+- **search-api-graphql:** let a client cap each facet and see its total number of values  ([#1092](https://github.com/ldelements/lde/pull/1092))
+  a non-boolean value facet is an object instead of a bucket list.
+  Before: facets { creator { value count } }
+  After: facets { creator(limit: 50) { buckets { value count } totalValues } }
+  Boolean and range facets are unchanged."
+  M	docs/guide/build-a-search-api.md
+  M	docs/reference/search-api-graphql.md
+  M	docs/reference/search-typesense.md
+  M	docs/reference/search.md
+  M	packages/search-api-graphql/src/build-schema.ts
+  M	packages/search-api-graphql/src/facet-batch.ts
+  M	packages/search-api-graphql/test/__snapshots__/generator-stability.test.ts.snap
+  M	packages/search-api-graphql/test/build-schema.test.ts
+  M	packages/search-api-graphql/test/faceted-leaves.test.ts
+  M	packages/search-api-graphql/test/handler.test.ts
+  M	packages/search-api-graphql/test/query-cost.test.ts
+  M	packages/search-api-graphql/vite.config.ts
+  M	packages/search-typesense/src/query-compiler.ts
+  M	packages/search-typesense/src/search.ts
+  M	packages/search-typesense/test/parse-response.test.ts
+  M	packages/search-typesense/test/query-compiler.test.ts
+  M	packages/search-typesense/test/search-engine.test.ts
+  M	packages/search-typesense/test/skip-own-filter.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/src/engine.ts
+  M	packages/search/src/query.ts
+  M	packages/search/src/testing.ts
+  M	packages/search/test/facet-searches.test.ts
+
+## 0.43.0 (2026-11-15)
+
+### 🩹 Fixes
+
+- ⚠️  **search:** reject a field named like an output text sibling’s display field ([#1071](https://github.com/ldelements/lde/pull/1071))
+
+### ⚠️  Breaking Changes
+
+- **search:** reject a field named like an output text sibling’s display field  ([#1071](https://github.com/ldelements/lde/pull/1071))
+  searchSchema() now throws for a field named like an output text
+  sibling’s display field (e.g. title_tags beside title). Rename the sibling so it no
+  longer matches <text field>_<language>, for example titleTags or title_tag_list."
+  M	docs/reference/search.md
+  M	packages/search/src/project.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/test/missing-required-fields.test.ts
+  M	packages/search/test/schema.test.ts
+  M	packages/search/vite.config.ts
+
+## 0.42.0 (2026-11-13)
+
+### 🚀 Features
+
+- ⚠️  **search:** filter and facet an identity on its nested leaf ([#1068](https://github.com/ldelements/lde/pull/1068))
+
+### ⚠️  Breaking Changes
+
+- **search:** filter and facet an identity on its nested leaf  ([#1068](https://github.com/ldelements/lde/pull/1068))
+  an inline reference’s identity no longer writes ${name}_id;
+  filters and facets read its nested leaf, so every deployment with an identity
+  needs a full reindex (the in-place rebuild refuses the old collection). The
+  field an identity names must be filterable, and can no longer be an array. The
+  narrowed facet companion is renamed to ${name}_facet."
+  M	docs/decisions/0024-carry-data-on-a-reference-edge.md
+  A	docs/decisions/0037-filter-and-facet-an-identity-on-its-nested-leaf.md
+  M	docs/reference/search-api-graphql.md
+  M	docs/reference/search-typesense.md
+  M	docs/reference/search.md
+  M	packages/search-api-graphql/src/build-schema.ts
+  M	packages/search-pipeline/test/extraction-roundtrip.integration.test.ts
+  M	packages/search-pipeline/test/extraction.test.ts
+  M	packages/search-pipeline/test/nested-fanout.integration.test.ts
+  M	packages/search-typesense/src/collection-definition.ts
+  M	packages/search-typesense/src/documents.ts
+  M	packages/search-typesense/src/in-place-rebuild.ts
+  M	packages/search-typesense/src/query-compiler.ts
+  M	packages/search-typesense/src/search.ts
+  A	packages/search-typesense/test/identity-facet.integration.test.ts
+  M	packages/search-typesense/test/polymorphic-lookup.test.ts
+  M	packages/search-typesense/test/qualified-lookup.test.ts
+  M	packages/search-typesense/test/qualified-relation.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/src/project.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/test/literal-referent.test.ts
+  M	packages/search/test/polymorphic-lookup.test.ts
+  M	packages/search/test/qualified-relation.test.ts
+  M	packages/search/test/schema.test.ts
+
 ## 0.41.3 (2026-11-11)
 
 ### 🚀 Features

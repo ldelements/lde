@@ -33,7 +33,7 @@ describe('the QLever server’s memory cap', () => {
         QLEVER_IMAGE: 'adfreiburg/qlever:latest',
         QLEVER_MEMORY_MAX_SIZE: '8G',
       }),
-    ).toEqual({ 'memory-max-size': '8G' });
+    ).toEqual({ 'memory-max-size': '8G', 'num-simultaneous-queries': 4 });
   });
 
   it('passes it on a Docker network and to a sidecar alike', () => {
@@ -43,15 +43,57 @@ describe('the QLever server’s memory cap', () => {
         QLEVER_NETWORK: 'app_default',
         QLEVER_MEMORY_MAX_SIZE: '8G',
       }),
-    ).toEqual({ 'memory-max-size': '8G' });
+    ).toEqual({ 'memory-max-size': '8G', 'num-simultaneous-queries': 4 });
     expect(
       serverOptionsFor({ QLEVER_MODE: 'remote', QLEVER_MEMORY_MAX_SIZE: '8G' }),
-    ).toEqual({ 'memory-max-size': '8G' });
+    ).toEqual({ 'memory-max-size': '8G', 'num-simultaneous-queries': 4 });
   });
 
   it('leaves the server its own default when unset', () => {
     expect(
       serverOptionsFor({ QLEVER_IMAGE: 'adfreiburg/qlever:latest' }),
-    ).toBeUndefined();
+    ).not.toHaveProperty('memory-max-size');
+  });
+});
+
+describe('the QLever server’s simultaneous queries', () => {
+  const docker = { QLEVER_IMAGE: 'adfreiburg/qlever:latest' };
+
+  it('answers 4 queries at once by default', () => {
+    expect(serverOptionsFor(docker)).toEqual({
+      'num-simultaneous-queries': 4,
+    });
+  });
+
+  it('follows a lower extraction concurrency', () => {
+    expect(
+      serverOptionsFor({ ...docker, EXTRACTION_CONCURRENCY: '2' }),
+    ).toEqual({ 'num-simultaneous-queries': 2 });
+  });
+
+  it('follows the busiest type', () => {
+    expect(
+      serverOptionsFor({
+        ...docker,
+        EXTRACTION_CONCURRENCY: '1',
+        EXTRACTION_TUNING: '{"CreativeWork": {"maxConcurrency": 3}}',
+      }),
+    ).toEqual({ 'num-simultaneous-queries': 3 });
+  });
+
+  it('ignores a type that sets no concurrency of its own', () => {
+    expect(
+      serverOptionsFor({
+        ...docker,
+        EXTRACTION_CONCURRENCY: '2',
+        EXTRACTION_TUNING: '{"CreativeWork": {"batchSize": 200}}',
+      }),
+    ).toEqual({ 'num-simultaneous-queries': 2 });
+  });
+
+  it('caps at 4', () => {
+    expect(
+      serverOptionsFor({ ...docker, EXTRACTION_CONCURRENCY: '10' }),
+    ).toEqual({ 'num-simultaneous-queries': 4 });
   });
 });

@@ -1,3 +1,194 @@
+## 0.53.1 (2026-11-17)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.65.1
+- Updated @lde/search-pipeline to 0.63.1
+- Updated @lde/search to 0.49.1
+
+## 0.53.0 (2026-11-17)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.65.0
+- Updated @lde/search-pipeline to 0.63.0
+- Updated @lde/search to 0.49.0
+
+## 0.52.0 (2026-11-16)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.64.0
+- Updated @lde/search-pipeline to 0.62.0
+- Updated @lde/search to 0.48.0
+
+## 0.51.0 (2026-11-16)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.63.0
+- Updated @lde/search-pipeline to 0.61.0
+- Updated @lde/search to 0.47.0
+
+## 0.50.0 (2026-11-16)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline-console-reporter to 0.42.0
+- Updated @lde/search-typesense to 0.62.0
+- Updated @lde/search-pipeline to 0.60.0
+- Updated @lde/pipeline to 0.51.0
+
+## 0.49.0 (2026-11-16)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.61.2
+- Updated @lde/search-pipeline to 0.59.0
+- Updated @lde/search to 0.46.1
+
+## 0.48.1 (2026-11-16)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline-console-reporter to 0.41.3
+- Updated @lde/search-typesense to 0.61.1
+- Updated @lde/search-pipeline to 0.58.1
+- Updated @lde/pipeline to 0.50.3
+
+## 0.48.0 (2026-11-16)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.61.0
+- Updated @lde/search-pipeline to 0.58.0
+- Updated @lde/search to 0.46.0
+
+## 0.47.0 (2026-11-16)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.60.0
+- Updated @lde/search-pipeline to 0.57.0
+- Updated @lde/search to 0.45.0
+
+## 0.46.0 (2026-11-16)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.59.0
+- Updated @lde/search-pipeline to 0.56.0
+- Updated @lde/search to 0.44.0
+
+## 0.45.0 (2026-11-15)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.58.0
+- Updated @lde/search-pipeline to 0.55.0
+- Updated @lde/sparql-qlever to 0.23.0
+- Updated @lde/search to 0.43.0
+
+## 0.44.3 (2026-11-15)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline-console-reporter to 0.41.2
+- Updated @lde/search-typesense to 0.57.3
+- Updated @lde/search-pipeline to 0.54.3
+- Updated @lde/pipeline to 0.50.2
+
+## 0.44.2 (2026-11-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.57.2
+- Updated @lde/search-pipeline to 0.54.2
+
+## 0.44.1 (2026-11-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline-console-reporter to 0.41.1
+- Updated @lde/search-typesense to 0.57.1
+- Updated @lde/search-pipeline to 0.54.1
+- Updated @lde/pipeline to 0.50.1
+
+## 0.44.0 (2026-11-14)
+
+### 🚀 Features
+
+- ⚠️  **search-indexer:** batch imported extraction at 100 roots ([#1081](https://github.com/ldelements/lde/pull/1081))
+
+### ⚠️  Breaking Changes
+
+- **search-indexer:** batch imported extraction at 100 roots  ([#1081](https://github.com/ldelements/lde/pull/1081))
+  IndexerConfig has a required extraction field; a config
+  built by hand must add one (extraction: { byType: {} } keeps the defaults).
+  Search stages that set no batchSize now batch 100 roots from an imported
+  dump; pass batchSize: 10 to keep the old size.
+  * fix(search-pipeline): apply a tuned batch size to imported dumps only
+  - Keep live endpoints, the registry included, at 10 roots per extraction
+    query when tuning or tuningByType sets a batch size
+  - Document EXTRACTION_BATCH_SIZE and EXTRACTION_TUNING as import-only"
+  M	docs/reference/pipeline.md
+  M	docs/reference/search-indexer.md
+  M	docs/reference/search-pipeline.md
+  M	docs/reference/sparql-qlever.md
+  M	packages/pipeline/src/pipeline.ts
+  M	packages/pipeline/src/stage.ts
+  M	packages/pipeline/test/pipeline.test.ts
+  M	packages/pipeline/test/stage.test.ts
+  M	packages/pipeline/vite.config.ts
+  M	packages/search-indexer/src/composition.ts
+  M	packages/search-indexer/src/config.ts
+  M	packages/search-indexer/src/index.ts
+  M	packages/search-indexer/src/indexer.ts
+  M	packages/search-indexer/test/config.test.ts
+  M	packages/search-indexer/test/indexer.test.ts
+  M	packages/search-indexer/test/qlever-server-options.test.ts
+  M	packages/search-pipeline/src/index.ts
+  M	packages/search-pipeline/src/search-indexer-pipeline.ts
+  M	packages/search-pipeline/src/search-stages.ts
+  M	packages/search-pipeline/test/search-indexer-pipeline.test.ts
+  M	packages/sparql-qlever/src/server.ts
+  M	packages/sparql-qlever/test/server-command.test.ts
+  M	packages/sparql-qlever/vite.config.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline-console-reporter to 0.41.0
+- Updated @lde/search-typesense to 0.57.0
+- Updated @lde/search-pipeline to 0.54.0
+- Updated @lde/sparql-qlever to 0.22.0
+- Updated @lde/pipeline to 0.50.0
+
+## 0.43.0 (2026-11-13)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline-console-reporter to 0.40.0
+- Updated @lde/search-typesense to 0.56.0
+- Updated @lde/search-pipeline to 0.53.0
+- Updated @lde/pipeline to 0.49.0
+
+## 0.42.0 (2026-11-13)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.55.0
+- Updated @lde/search-pipeline to 0.52.0
+- Updated @lde/search to 0.42.0
+
+## 0.41.0 (2026-11-13)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline-console-reporter to 0.39.0
+- Updated @lde/search-typesense to 0.54.0
+- Updated @lde/search-pipeline to 0.51.0
+- Updated @lde/pipeline to 0.48.0
+
 ## 0.40.0 (2026-11-11)
 
 ### 🧱 Updated Dependencies

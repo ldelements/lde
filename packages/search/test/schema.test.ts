@@ -110,6 +110,8 @@ describe('physicalFields', () => {
     expect(physicalFields(title)).toEqual({
       search: ['title_search_nl', 'title_search_en'],
       sort: ['title_sort_nl', 'title_sort_en'],
+      filter: 'title',
+      leafExists: [],
     });
   });
 
@@ -127,6 +129,8 @@ describe('physicalFields', () => {
       search: ['keyword_search'],
       sort: [],
       facet: 'keyword',
+      filter: 'keyword',
+      leafExists: [],
     });
   });
 
@@ -141,6 +145,8 @@ describe('physicalFields', () => {
     expect(physicalFields(creator)).toEqual({
       search: ['creator_search_nl', 'creator_search_en'],
       sort: [],
+      filter: 'creator',
+      leafExists: [],
     });
   });
 
@@ -157,6 +163,8 @@ describe('physicalFields', () => {
     expect(physicalFields(title)).toEqual({
       search: [],
       sort: [],
+      filter: 'title',
+      leafExists: [],
     });
   });
 
@@ -174,6 +182,8 @@ describe('physicalFields', () => {
       search: [],
       sort: [],
       facet: 'publisher',
+      filter: 'publisher',
+      leafExists: [],
     });
   });
 
@@ -659,6 +669,46 @@ describe('validateSearchType', () => {
         ],
       }),
     ).toEqual([{ field: 'created_precision', reason: 'reserved-field-name' }]);
+  });
+
+  it('rejects a field named like an output text sibling’s display field', () => {
+    // `title_tags` matches `title_[^_]+`, so it would be read back as the
+    // display value of `title` in language `tags`.
+    const searchType: SearchType = {
+      name: 'Dataset',
+      class: 'https://example.org/Dataset',
+      fields: [
+        { name: 'title', kind: 'text', locales: ['nl'], output: true },
+        { name: 'title_tags', kind: 'keyword', array: true, output: true },
+      ],
+    };
+    expect(validateSearchType(searchType)).toEqual([
+      {
+        field: 'title_tags',
+        reason: 'display-field-name',
+        clashesWith: 'title',
+      },
+    ]);
+    expect(() => assertValidSearchType(searchType)).toThrow(
+      'Invalid search type “Dataset”: “title_tags” (display-field-name, clashes with “title”).',
+    );
+  });
+
+  it('accepts a field named like a text sibling that has no display', () => {
+    // A text field that is not `output` stores no display fields, and a name
+    // with a second underscore is never one.
+    expect(
+      validateSearchType({
+        name: 'Dataset',
+        class: 'https://example.org/Dataset',
+        fields: [
+          { name: 'title', kind: 'text', locales: ['nl'], sortable: true },
+          { name: 'title_tags', kind: 'keyword', output: true },
+          { name: 'label', kind: 'text', locales: ['nl'], output: true },
+          { name: 'label_search_x', kind: 'keyword', output: true },
+        ],
+      }),
+    ).toEqual([]);
   });
 
   it('rejects a declared locale containing an underscore', () => {
@@ -1630,6 +1680,58 @@ describe('searchSchema validation', () => {
             fields: [{ name: 'theme', kind: 'reference', labelSource: 'Term' }],
           },
         ),
+      ).not.toThrow();
+    });
+
+    it('rejects a searchable reference whose label source has no label path', () => {
+      // The reference is searched by its referents’ labels, read off each
+      // referent along that path – a derived label leaves nothing to read.
+      const withLabel =
+        (
+          label: Record<string, unknown>,
+          theme: Record<string, unknown> = {
+            path: '<https://schema.org/about>',
+          },
+        ) =>
+        () =>
+          searchSchema(
+            {
+              name: 'Term',
+              class: 'https://example.org/DefinedTerm',
+              labelField: 'name',
+              fields: [
+                {
+                  name: 'name',
+                  kind: 'text',
+                  locales: ['und'],
+                  output: true,
+                  searchable: { weight: 1 },
+                  ...label,
+                } as never,
+              ],
+            },
+            {
+              name: 'Dataset',
+              class: DATASET,
+              fields: [
+                {
+                  name: 'theme',
+                  kind: 'reference',
+                  labelSource: 'Term',
+                  searchable: { weight: 1 },
+                  ...theme,
+                } as never,
+              ],
+            },
+          );
+
+      expect(withLabel({ derive: () => 'x' })).toThrow(
+        /“Dataset.theme” is searchable, so its label source “Term” must read its label field “name” from a path/,
+      );
+      expect(withLabel({ path: '<https://schema.org/name>' })).not.toThrow();
+      // A derived reference reads no referent, so it needs no label path.
+      expect(
+        withLabel({ derive: () => 'x' }, { derive: () => 'urn:x' }),
       ).not.toThrow();
     });
 

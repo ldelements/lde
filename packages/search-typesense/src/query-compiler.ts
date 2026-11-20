@@ -1,6 +1,7 @@
 import type { SearchParams } from 'typesense/lib/Typesense/Documents.js';
 import { fold } from '@lde/text-normalization';
 import {
+  facetQueryText,
   type Criterion,
   type FacetRange,
   type Filter,
@@ -33,6 +34,7 @@ import {
   nestedReferenceType,
   resolvePath,
   searchableFields,
+  type FacetDeclaration,
 } from '@lde/search/adapter';
 
 /** One hop of a join path, resolved: the Root Type it reaches and the
@@ -74,7 +76,7 @@ export interface BuildSearchParamsOptions {
    * unset, Typesense defaults to 10 – too few for high-cardinality facets
    * (publisher, keyword), so a deployment with such facets must raise it. Range
    * facets return one bucket per declared range regardless, but a value > the
-   * range count is still safe.
+   * range count is still safe. A query’s `facetLimits` override it per facet.
    */
   readonly maxFacetValues?: number;
   /**
@@ -147,11 +149,74 @@ export function buildSearchParams(
   }
   if (query.facets.length > 0) {
     params.facet_by = compileFacetBy(query.facets, searchType, options.schema);
-    if (options.maxFacetValues !== undefined) {
-      params.max_facet_values = options.maxFacetValues;
+    // Under `top_values` – which the default `automatic` strategy picks per
+    // facet – `stats.total_values` is merely the number of buckets returned,
+    // and the counts may be approximate. Exhaustive counting reports the
+    // facet’s real number of values; on 300,000 documents it cost ~2 ms.
+    params.facet_strategy = 'exhaustive';
+    const maxFacetValues = facetCapOf(query, options);
+    if (maxFacetValues !== undefined) {
+      params.max_facet_values = maxFacetValues;
+    }
+    // A literal facet’s values are their own text, so Typesense matches them
+    // itself. A reference facet’s are IRIs nobody types: the engine finds the
+    // referents matching the query first, then counts those.
+    const facetQuery = facetQueryOf(query, searchType, options.schema);
+    if (
+      facetQuery !== undefined &&
+      facetQuery.facet.field.kind !== 'reference'
+    ) {
+      // Typesense reads a colon as the field separator, so one in the text
+      // would break the match; it separates words like a space does.
+      params.facet_query = `${facetQuery.facet.engineField}:${facetQuery.text.replaceAll(':', ' ')}`;
     }
   }
   return params;
+}
+
+/**
+ * The facet a query searches the values of, with the text it searches them
+ * with: the first of the query’s facets carrying a
+ * {@link SearchQuery.facetQueries} entry long enough to act on
+ * (`facetQueryText`), or `undefined` when none does.
+ * Typesense takes one `facet_query` per search, and through the engine each
+ * facet query has a search of its own (`facetSearches`), so the first is the
+ * only one.
+ */
+export function facetQueryOf(
+  query: SearchQuery,
+  searchType: SearchType,
+  schema: SearchSchema | undefined,
+): { readonly facet: FacetDeclaration; readonly text: string } | undefined {
+  for (const name of query.facets) {
+    const text = facetQueryText(query.facetQueries?.[name]);
+    if (text === undefined) {
+      continue;
+    }
+    const facet = facetNamed(searchType, name, schema);
+    if (facet !== undefined) {
+      return { facet, text };
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The bucket cap a query’s facets are compiled with (`max_facet_values`),
+ * which Typesense applies to every facet of a search alike: the largest
+ * {@link SearchQuery.facetLimits} limit among them, else the deployment’s
+ * `maxFacetValues`; `undefined` leaves Typesense’s own default. Through the
+ * engine every search carries one limit (`facetSearches`), so the largest is
+ * the only one.
+ */
+export function facetCapOf(
+  query: SearchQuery,
+  options: BuildSearchParamsOptions,
+): number | undefined {
+  const limits = query.facets
+    .map((field) => query.facetLimits?.[field])
+    .filter((limit): limit is number => limit !== undefined);
+  return limits.length > 0 ? Math.max(...limits) : options.maxFacetValues;
 }
 
 /**
@@ -176,7 +241,9 @@ function compileFacetBy(
       if (facet === undefined) {
         return name;
       }
-      return isBinnedRangeFacet(facet.field)
+      // A presence facet counts its boolean companion, whatever the field’s
+      // own bins.
+      return facet.presence !== true && isBinnedRangeFacet(facet.field)
         ? compileRangeFacet(facet.engineField, storedFacetRanges(facet.field))
         : facet.engineField;
     })
@@ -539,6 +606,24 @@ function compileLeaf(
   if (field === undefined) {
     return UNUSABLE;
   }
+  // Typesense cannot test a field for holding a value, so presence reads the
+  // boolean companion the projection writes on every root document – the
+  // field’s own, or a lookup’s for one of its presence leaves – never inside
+  // an entry, so under a nesting prefix there is nothing to read.
+  // `assertValidQuery` rejects both first; this is the guard for a hand-built
+  // query.
+  if ('exists' in criterion) {
+    const { leaf } = criterion;
+    const exists =
+      leaf === undefined
+        ? physicalFields(field).exists
+        : physicalFields(field).leafExists.find(
+            (companion) => companion.leaf === leaf,
+          )?.exists;
+    return exists === undefined || prefix !== ''
+      ? UNUSABLE
+      : `${exists}:=${criterion.exists}`;
+  }
   // A criterion whose operator does not match the field's kind (e.g. `range` on
   // a keyword) would reach the engine as garbage syntax – skip it instead.
   // Nor can membership on entries that hold no ids, which would test the
@@ -599,6 +684,19 @@ function compileWelded(
   if (entryType === undefined) {
     return UNUSABLE;
   }
+  // Presence on a leaf is recorded once per root document, not inside an
+  // entry: a weld of that one condition reads the root’s companion. Welded to
+  // anything else, or under a nesting prefix, it has no entry to hold of –
+  // `assertValidQuery` rejects both first.
+  const [only, ...more] = criterion.entry;
+  if (only !== undefined && 'exists' in only) {
+    const companion = physicalFields(
+      fieldNamed(searchType, criterion.field) as SearchField,
+    ).leafExists.find(({ leaf }) => leaf === only.field);
+    return more.length === 0 && prefix === '' && companion !== undefined
+      ? `${companion.exists}:=${only.exists}`
+      : UNUSABLE;
+  }
   const conditions: string[] = [];
   for (const condition of criterion.entry) {
     const compiled = compileLeaf(condition, entryType, schema);
@@ -633,11 +731,10 @@ function compileMembership(
 ): string {
   const list = `[${values.map(escapeFilterValue).join(',')}]`;
   const names = physicalFields(field, schema);
-  // An inline reference stores a nested object, which an engine cannot filter.
-  // Its identity companion is the flat id field standing in for it – so the
-  // logical name a consumer writes and the physical name the engine reads
-  // differ here, and only here.
-  const name = qualify(prefix, names.identity ?? field.name);
+  // A field storing a nested object, which an engine cannot filter, is read
+  // through an id leaf standing in for it – so the logical name a consumer
+  // writes and the physical name the engine reads differ here, and only here.
+  const name = qualify(prefix, names.filter);
   return names.facet === name ? `${name}:${list}` : `${name}:=${list}`;
 }
 

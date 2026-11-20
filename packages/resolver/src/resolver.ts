@@ -12,8 +12,6 @@ import type { FactOutcome, FactStore } from './store.js';
 const DEFAULT_CONCURRENCY = 4;
 /** References per outbound call – one, until a source says it takes a list. */
 const DEFAULT_BATCH_SIZE = 1;
-/** References a single resolver may fetch, so a cold store warms over runs. */
-const DEFAULT_FETCHES_PER_RESOLVER = 500;
 /** Retries of a {@link RetryableError}, on top of the first attempt. */
 const RETRIES = 2;
 /** Delay before the first such retry when the source names none; doubled after. */
@@ -26,9 +24,6 @@ const DEFAULT_ABSENCE_TTL_MS = 7 * 24 * 3_600_000;
 const DEFAULT_HOST_FAILURE_THRESHOLD = 5;
 /** The version stamped on rows when a caller declares none. */
 const DEFAULT_VERSION = '1';
-/** Why a key was not fetched when the resolver had already spent its budget. */
-const BUDGET_SPENT =
-  'this resolver’s fetch budget is spent; construct a resolver per run, or raise fetchesPerResolver';
 
 /**
  * What became of one reference.
@@ -61,8 +56,9 @@ export type Resolution<Fact> =
  * `fetched` or `absent` when the source answered this run, `from store` when
  * the store answered and the key was not due a fetch, `failed` when a fetch
  * failed, `written off` when the key’s host had already failed its way out of
- * the run, and `deferred` when the key was due a fetch but the budget was
- * spent. A stored fact may still stand in for the last three.
+ * the run, and `deferred` when the key was due a fetch but its batch had not
+ * started when the {@link ResolverLimits.fetchWindowMs | fetch window} passed.
+ * A stored fact may still stand in for the last three.
  */
 export type ResolutionCount =
   'fetched' | 'absent' | 'from store' | 'failed' | 'written off' | 'deferred';
@@ -106,24 +102,24 @@ export interface ResolverLimits {
    */
   batchSize?: number;
   /**
-   * References this **resolver** may fetch over its whole life, refreshes
-   * included. Default 500.
+   * How long after the resolver is created, in milliseconds, it may still
+   * **start** a batch. Default: no limit – a cold or purged store is fetched
+   * in full, as fast as its hosts allow.
    *
-   * The point is a cold or purged store: without a cap, the first run after one
-   * hands an upstream service the entire backlog at once. With it, the store
-   * warms over successive runs and every run still completes – what is not
-   * fetched degrades to the stored value, or is reported unresolved.
+   * Set it to bound how long a run spends fetching. Once the window has passed,
+   * a batch that has not started is not sent: each of its keys is served from
+   * the store where a usable fact is stored, and otherwise answered
+   * `unresolved`, so the run still completes and a later run fetches what this
+   * one did not. A batch that started within the window finishes, retries
+   * included. Missing keys are queued before stale ones, so the window goes to
+   * the keys that cost the caller a value first.
    *
-   * The counter never resets, so **a resolver is a run-scoped object**:
-   * construct one, use it, discard it. A resolver kept alive across runs stops
-   * fetching when its budget is gone and never starts again.
-   *
-   * References written off with a failed host cost no outbound call and are
-   * refunded, so a dead host cannot spend a budget it never sent a packet for.
-   * The budget counts references, not requests: a second attempt after a
-   * timeout, or a retry the source asked for, costs nothing more.
+   * Measured from the resolver’s creation on {@link ResolverOptions.now}, not
+   * from its first fetch or per call: it bounds the run, so time the caller
+   * spends before its first {@link Resolver.resolveAll} counts too, and a
+   * resolver kept alive past its window never fetches again.
    */
-  fetchesPerResolver?: number;
+  fetchWindowMs?: number;
   /**
    * How long one attempt may take before it is abandoned and treated as a
    * failure. Default 10 000 – six times what a slow IIIF manifest took when
@@ -147,7 +143,8 @@ export interface ResolverLimits {
    * How long a stored fact is served without refetching. Default: forever.
    *
    * A TTL **marks stale, never evicts**. An elapsed one makes the key a
-   * candidate for a refresh this run; if the budget or the source denies it,
+   * candidate for a refresh this run; if the fetch fails, or the
+   * {@link ResolverLimits.fetchWindowMs | fetch window} passes before it starts,
    * the stored fact is still served. Removing a fact is
    * {@link Resolver.purge}’s job and nothing else’s – the store is the only
    * place the fact lives, so eviction is data loss, not cache management.
@@ -274,9 +271,9 @@ export interface ResolverOptions<Reference, Fact> {
    * Bump it in the same commit that changes what you derive. A stored row
    * stamped with another version reads as missing and is fetched afresh: the
    * fact is not old, it is the wrong shape, so no TTL can express it and
-   * {@link Resolver.purge} would need the caller to enumerate every key. Expect
-   * a re-warm to want a raised {@link ResolverLimits.fetchesPerResolver} for a
-   * few runs.
+   * {@link Resolver.purge} would need the caller to enumerate every key. A
+   * bump makes every row missing at once, so the next run re-fetches them all –
+   * over several runs, if a {@link ResolverLimits.fetchWindowMs} cuts it short.
    */
   version?: string;
   /** The bounds this resolver works within. */
@@ -298,18 +295,19 @@ export interface ResolverOptions<Reference, Fact> {
   limiter?: HostLimiter;
   /**
    * Called once per reference that failed or degraded: a fetch that threw,
-   * timed out or was written off with its host. Not called for a key the
-   * budget merely deferred – that is the cap working, the caller already learns
-   * it from the `unresolved` resolution, and on a cold register-scale store it
-   * would be a callback per deferred key.
+   * timed out or was written off with its host. Not called for a key deferred
+   * because the {@link ResolverLimits.fetchWindowMs | fetch window} passed –
+   * that is the cap working, the caller already learns it from the resolution,
+   * and on a cold register-scale store it would be a callback per deferred key.
    *
    * A callback rather than a reporter interface, so this package depends on
    * nothing that knows what a pipeline is.
    */
   report?: (failure: ResolutionFailure) => void;
   /**
-   * The clock, for `fetchedAt` and for staleness. Injected so a test can age a
-   * stored fact without waiting for it.
+   * The clock, for `fetchedAt`, for staleness and for the
+   * {@link ResolverLimits.fetchWindowMs | fetch window}. Injected so a test can
+   * age a stored fact, or close the window, without waiting for it.
    */
   now?: () => Date;
 }
@@ -325,9 +323,10 @@ export interface Resolver<Reference, Fact> {
    * carries what the previous batch learned, so batching costs nothing but the
    * first run’s requests.
    *
-   * Fresh work is spent where it counts: a key with no stored row is fetched
-   * before one that is merely stale, because a missing fact costs the caller a
-   * value while a stale one only ages it.
+   * A key with no stored row is fetched before one that is merely stale,
+   * because a missing fact costs the caller a value while a stale one only ages
+   * it – which decides what a {@link ResolverLimits.fetchWindowMs | fetch
+   * window} spends its time on.
    */
   resolveAll(
     references: readonly Reference[],
@@ -364,6 +363,12 @@ export function urlHost(key: string): string {
  * Build a {@link Resolver}: everything around fetching a fact from outside the
  * graph, so a caller writes only the fetch and what to do with the answer.
  *
+ * **A resolver is a run-scoped object**: construct one per run, use it, discard
+ * it. A host its breaker writes off stays written off for the resolver’s life,
+ * and a {@link ResolverLimits.fetchWindowMs | fetch window} is measured from its
+ * creation, so a resolver kept across runs never retries the one and stops
+ * fetching once the other has passed.
+ *
  * *Transforms rewrite what the graph said; resolvers fetch what it only pointed
  * at.* This package knows references, keys and facts – not quads, documents,
  * stages or pipelines – so a pipeline calls it from inside a transform, and
@@ -377,7 +382,7 @@ export function urlHost(key: string): string {
  *     (await lookup(iris, { signal })).map((term) => [term.uri, coordinatesOf(term)]),
  *   store: sqliteFactStore({ path: '/data/terms.sqlite' }),
  *   version: '1',
- *   limits: { batchSize: 25, fetchesPerResolver: 5_000, ttlMs: 30 * 24 * 3_600_000 },
+ *   limits: { batchSize: 25, ttlMs: 30 * 24 * 3_600_000 },
  *   report: (failure) => console.warn(failure.key, failure.reason),
  * });
  *
@@ -391,9 +396,9 @@ export function createResolver<Reference, Fact>(
   const now = options.now ?? (() => new Date());
   const version = options.version ?? DEFAULT_VERSION;
   const limits = options.limits ?? {};
-  // At least one limiter per resolver, for the reason the budget below is: a
-  // stage calls resolveAll from batches running in parallel, and the caps bound
-  // them together.
+  // At least one limiter per resolver, not one per resolveAll: a stage calls
+  // resolveAll from batches running in parallel, and the caps bound them
+  // together.
   const limiter =
     options.limiter ??
     createHostLimiter(DEFAULT_CONCURRENCY, DEFAULT_CONCURRENCY);
@@ -410,12 +415,19 @@ export function createResolver<Reference, Fact>(
   );
   // How many of a host’s latest batches the breaker looks at.
   const failureWindow = 2 * hostFailureThreshold;
-  // The budget spans the resolver, not one resolveAll: a caller passing many
-  // batches is one run, and the cap exists to bound the run.
-  let fetchesLeft = positiveIntOrDefault(
-    limits.fetchesPerResolver,
-    DEFAULT_FETCHES_PER_RESOLVER,
-  );
+  // The window spans the resolver, not one resolveAll: a caller passing many
+  // batches is one run, and the window exists to bound the run. Any positive,
+  // finite number of milliseconds; anything else sets no window.
+  const fetchWindowMs =
+    typeof limits.fetchWindowMs === 'number' &&
+    Number.isFinite(limits.fetchWindowMs) &&
+    limits.fetchWindowMs > 0
+      ? limits.fetchWindowMs
+      : undefined;
+  const fetchDeadline =
+    fetchWindowMs === undefined
+      ? Number.POSITIVE_INFINITY
+      : now().getTime() + fetchWindowMs;
   // Hosts written off for the rest of this resolver’s life, and whether each of
   // a host’s recent batches failed, newest last – at most
   // `2 × hostFailureThreshold` of them. Kept per resolver rather than per call:
@@ -474,29 +486,7 @@ export function createResolver<Reference, Fact>(
       }
       // Missing first: a key with nothing stored costs the caller a value,
       // where a stale one only ages. Within each group, input order.
-      let queued: Keyed<Reference>[] = [...missing, ...stale];
-      const fetched = new Map<string, FetchOutcome<Fact>>();
-      // Spend, then re-spend what came back. A reference written off with a
-      // dead host sends nothing, so its budget is refunded – and the refund has
-      // to be usable *here*, or one dead host denies live hosts the allowance
-      // it never spent and answers them with a budget that was handed straight
-      // back. Each pass takes at least one reference, so this terminates.
-      while (queued.length > 0 && fetchesLeft > 0) {
-        const affordable = queued.slice(0, fetchesLeft);
-        queued = queued.slice(affordable.length);
-        fetchesLeft -= affordable.length;
-
-        const pass = await fetchInBatches(affordable);
-        for (const [key, outcome] of pass.outcomes) {
-          fetched.set(key, outcome);
-        }
-        fetchesLeft += pass.skipped;
-        if (pass.skipped === 0) {
-          break; // Nothing refunded, so nothing more is affordable.
-        }
-      }
-      // Due a fetch, but the budget ran out before it was sent.
-      const deferred = new Set(queued.map(({ key }) => key));
+      const fetched = await fetchInBatches([missing, stale]);
 
       const resolutions = new Map<string, Resolution<Fact>>();
       const learned = new Map<string, FactOutcome<Fact>>();
@@ -504,7 +494,7 @@ export function createResolver<Reference, Fact>(
 
       for (const key of keys) {
         const outcome = fetched.get(key);
-        count(countOf(outcome, deferred.has(key)));
+        count(countOf(outcome));
         if (outcome?.kind === 'present') {
           learned.set(key, { status: 'present', fact: outcome.fact });
           resolutions.set(key, {
@@ -517,14 +507,16 @@ export function createResolver<Reference, Fact>(
         }
         if (outcome?.kind === 'absent') {
           // The source answered and has nothing. Remember it, or every run
-          // spends its budget asking a question already answered.
+          // spends a fetch asking a question already answered.
           learned.set(key, { status: 'absent' });
           resolutions.set(key, { outcome: 'absent', fetchedAt });
           continue;
         }
         // Not answered freshly – because it was not tried (served from the
-        // store, denied by the budget, or written off with its host), or
-        // because the attempt failed.
+        // store, deferred by the fetch window, or written off with its host),
+        // or because the attempt failed. Only a failure is reported: a
+        // deferral is the window working.
+        const failure = outcome?.kind === 'failed' ? outcome : undefined;
         const held = stored.get(key);
         const usable = held !== undefined && held.version === version;
         if (usable && held.status === 'present') {
@@ -536,10 +528,10 @@ export function createResolver<Reference, Fact>(
           });
           // Serving a fact that was never up for refresh is the store doing its
           // job, not a failure: report only when a fetch actually failed.
-          if (outcome !== undefined) {
+          if (failure !== undefined) {
             options.report?.({
               key,
-              reason: outcome.reason,
+              reason: failure.reason,
               degradedToStore: true,
             });
           }
@@ -550,34 +542,36 @@ export function createResolver<Reference, Fact>(
             outcome: 'absent',
             fetchedAt: held.fetchedAt,
           });
-          if (outcome !== undefined) {
+          if (failure !== undefined) {
             options.report?.({
               key,
-              reason: outcome.reason,
+              reason: failure.reason,
               degradedToStore: true,
             });
           }
           continue;
         }
-        // Nothing usable stored: the key was wanted, and either failed or was
-        // never attempted.
-        if (outcome !== undefined) {
+        // Nothing usable stored, so the key was queued as missing: deferred by
+        // the fetch window, or failed.
+        if (outcome?.kind === 'deferred') {
           resolutions.set(key, {
             outcome: 'unresolved',
-            reason: outcome.reason,
-          });
-          options.report?.({
-            key,
-            reason: outcome.reason,
-            degradedToStore: false,
+            reason: `this resolver’s fetch window of ${fetchWindowMs}ms passed before the reference was fetched; a later run fetches it`,
           });
           continue;
         }
-        // Deferred by the budget – the only way left to arrive here, since a
-        // key with nothing usable stored is always wanted, and a wanted key is
-        // either fetched (an outcome above) or denied. Not a failure, so not
-        // reported: the caller is holding the answer already.
-        resolutions.set(key, { outcome: 'unresolved', reason: BUDGET_SPENT });
+        // What is left is a failure: a key with nothing usable stored was
+        // queued, so it has an outcome, and the others are handled above.
+        const failed = outcome as Extract<
+          FetchOutcome<Fact>,
+          { kind: 'failed' }
+        >;
+        resolutions.set(key, { outcome: 'unresolved', reason: failed.reason });
+        options.report?.({
+          key,
+          reason: failed.reason,
+          degradedToStore: false,
+        });
       }
 
       // Persist before answering, so a caller that crashes applying the facts
@@ -589,45 +583,51 @@ export function createResolver<Reference, Fact>(
 
   /**
    * Fetch the wanted references in host-homogeneous batches, under both caps,
-   * and answer per key: the fact, the absence, or why there is neither. Also
-   * answers how many references were written off with a failed host, which
-   * their caller refunds – they cost no outbound call.
+   * and answer per key: the fact, the absence, why there is neither, or that
+   * the fetch window passed before its batch started.
    */
-  async function fetchInBatches(wanted: readonly Keyed<Reference>[]): Promise<{
-    outcomes: Map<string, FetchOutcome<Fact>>;
-    skipped: number;
-  }> {
+  async function fetchInBatches(
+    tiers: readonly (readonly Keyed<Reference>[])[],
+  ): Promise<Map<string, FetchOutcome<Fact>>> {
     const outcomes = new Map<string, FetchOutcome<Fact>>();
-    // Group by host first, so a batch never mixes hosts – a mixed batch would
-    // make the per-host cap a fiction, since one call would touch two hosts.
-    const byHost = new Map<string, Keyed<Reference>[]>();
-    for (const entry of wanted) {
-      const host = hostOf(entry.reference);
-      const group = byHost.get(host);
-      if (group === undefined) {
-        byHost.set(host, [entry]);
-      } else {
-        group.push(entry);
-      }
-    }
+    // Batched tier by tier – every host’s missing keys before any host’s stale
+    // ones – so the limiter, which starts batches in the order they queue,
+    // spends a fetch window on what costs the caller a value first.
     const batches: Array<{ host: string; entries: Keyed<Reference>[] }> = [];
-    for (const [host, group] of byHost) {
-      for (let start = 0; start < group.length; start += batchSize) {
-        batches.push({ host, entries: group.slice(start, start + batchSize) });
+    for (const tier of tiers) {
+      // Group by host, so a batch never mixes hosts – a mixed batch would make
+      // the per-host cap a fiction, since one call would touch two hosts.
+      const byHost = new Map<string, Keyed<Reference>[]>();
+      for (const entry of tier) {
+        const host = hostOf(entry.reference);
+        const group = byHost.get(host);
+        if (group === undefined) {
+          byHost.set(host, [entry]);
+        } else {
+          group.push(entry);
+        }
+      }
+      for (const [host, group] of byHost) {
+        for (let start = 0; start < group.length; start += batchSize) {
+          batches.push({
+            host,
+            entries: group.slice(start, start + batchSize),
+          });
+        }
       }
     }
 
-    let skipped = 0;
     const results = await Promise.all(batches.map(runBatch));
     for (const answered of results) {
       for (const [key, outcome] of answered) {
         outcomes.set(key, outcome);
       }
     }
-    return { outcomes, skipped };
+    return outcomes;
 
     /**
-     * One batch to its end: answered, failed, or written off with its host.
+     * One batch to its end: answered, failed, written off with its host, or
+     * deferred because the fetch window passed before it started.
      *
      * What an attempt means – for the breaker, for a pause, for the host’s
      * limit – is settled inside the slot, before the next queued batch can
@@ -656,12 +656,22 @@ export function createResolver<Reference, Fact>(
         if (writtenOff.has(batch.host)) {
           return writtenOffStep().done;
         }
+        // Likewise for the fetch window, so a batch it closed on takes no slot.
+        if (windowClosedOn()) {
+          return everyKey({ kind: 'deferred' }).done;
+        }
         const step = await limiter.run(batch.host, async (slot) => {
           // Queued before the host was written off: no request goes out, so the
           // slot says nothing about the host’s limit either way.
           if (writtenOff.has(batch.host)) {
             slot.ignore();
             return writtenOffStep();
+          }
+          // Checked again here, since a batch can wait in the queue past the
+          // window’s end.
+          if (windowClosedOn()) {
+            slot.ignore();
+            return everyKey({ kind: 'deferred' });
           }
           attempts++;
           startedAt = ++tick;
@@ -677,18 +687,24 @@ export function createResolver<Reference, Fact>(
         await delay(step.waitMs);
       }
 
+      /**
+       * Whether the fetch window has passed before this batch started. A batch
+       * that has made an attempt is under way, and finishes.
+       */
+      function windowClosedOn(): boolean {
+        return attempts === 0 && now().getTime() >= fetchDeadline;
+      }
+
       function writtenOffStep(): Done<Fact> {
         if (lastFailure !== undefined) {
           // Contacted already, and waiting to try again – after a stall or a
-          // request to come back later: it keeps its charge and the reason it
-          // actually failed for.
+          // request to come back later: it keeps the reason it actually
+          // failed for.
           return everyKey(lastFailure);
         }
         // The host has already failed its way out of this run. Answering
         // without a request is the whole point: retrying every reference
-        // against a host that is down is the stampede, not the remedy. It sent
-        // nothing, so it is refunded.
-        skipped += batch.entries.length;
+        // against a host that is down is the stampede, not the remedy.
         return everyKey({
           kind: 'failed',
           writtenOff: true,
@@ -744,8 +760,7 @@ export function createResolver<Reference, Fact>(
         }
         if (stalled === undefined && isPassing(error)) {
           // A stall that may pass gets one more attempt at the back of the
-          // queue, at no second unit of the budget, which counts references,
-          // not requests. It counts against the host now, not after that
+          // queue. It counts against the host now, not after that
           // attempt, or a host that times out on everything would cost every
           // reference a full timeout before the breaker could see it.
           stallCounted = noteFailure();
@@ -958,10 +973,14 @@ interface Keyed<Reference> {
   readonly reference: Reference;
 }
 
-/** What a fetch made of a key: a fact, an absence, or a failure. */
+/**
+ * What a fetch made of a key: a fact, an absence, a failure, or nothing yet
+ * because the fetch window passed before its batch started.
+ */
 type FetchOutcome<Fact> =
   | { readonly kind: 'present'; readonly fact: Fact }
   | { readonly kind: 'absent' }
+  | { readonly kind: 'deferred' }
   | {
       readonly kind: 'failed';
       readonly reason: string;
@@ -970,18 +989,16 @@ type FetchOutcome<Fact> =
     };
 
 /**
- * What to count a key as, from its fetch outcome – none when it was not
- * fetched – and whether it was due a fetch the budget did not allow.
+ * What to count a key as, from its fetch outcome – none when it was not due a
+ * fetch.
  */
 function countOf<Fact>(
   outcome: FetchOutcome<Fact> | undefined,
-  deferred: boolean,
 ): ResolutionCount {
-  if (outcome === undefined) {
-    return deferred ? 'deferred' : 'from store';
-  }
+  if (outcome === undefined) return 'from store';
   if (outcome.kind === 'present') return 'fetched';
   if (outcome.kind === 'absent') return 'absent';
+  if (outcome.kind === 'deferred') return 'deferred';
   return outcome.writtenOff ? 'written off' : 'failed';
 }
 

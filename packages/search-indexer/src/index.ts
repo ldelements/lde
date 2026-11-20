@@ -18,6 +18,7 @@ export {
 } from './composition.js';
 export { configFromEnvironment } from './config.js';
 export type {
+  ExtractionConfig,
   IndexerConfig,
   ProvenanceConfig,
   QleverConfig,

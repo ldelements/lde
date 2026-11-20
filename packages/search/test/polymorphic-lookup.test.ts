@@ -109,6 +109,7 @@ const creatorEdge = defineSearchType({
       kind: 'reference',
       path: `${SCHEMA_ORG}creator`,
       output: true,
+      filterable: true,
       ref: {
         strategy: 'lookup',
         target: ['Person', 'Organization'],
@@ -589,16 +590,18 @@ describe('projecting a local lookup over several targets', () => {
     });
   });
 
-  it('admits each harvested id to the facet by the policy of its own target', () => {
-    expect(document.creator_id).toEqual([
+  it('admits each entry’s id to the facet by the policy of its own target', () => {
+    expect(document).not.toHaveProperty('creator_id');
+    expect(
+      (document.creator as readonly SearchDocument[]).flatMap(
+        (entry) => entry.creator_id ?? [],
+      ),
+    ).toEqual([
       RKD,
       'https://id.example/zusters',
       'https://id.example/unknown',
     ]);
-    expect(document.creator_id_facet).toEqual([
-      RKD,
-      'https://id.example/zusters',
-    ]);
+    expect(document.creator_facet).toEqual([RKD, 'https://id.example/zusters']);
   });
 
   it('stores no discriminator for a lookup naming one target', () => {

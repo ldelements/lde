@@ -63,6 +63,7 @@ const creatorEdge = defineSearchType({
       kind: 'reference',
       path: `${SCHEMA_ORG}creator`,
       output: true,
+      filterable: true,
       ref: { strategy: 'lookup', target: 'Person', local: true },
     },
   ],
@@ -333,6 +334,7 @@ describe('fanning an edge out into one entry per tuple', () => {
           kind: 'reference',
           path: `${SCHEMA_ORG}creator`,
           output: true,
+          filterable: true,
           ref: { strategy: 'lookup', target: 'Person', local: true },
         },
       ],
@@ -378,6 +380,7 @@ describe('fanning an edge out into one entry per tuple', () => {
           kind: 'reference',
           path: `${SCHEMA_ORG}creator`,
           output: true,
+          filterable: true,
           ref: { strategy: 'lookup', target: 'Person', local: true },
         },
       ],
@@ -401,30 +404,12 @@ describe('fanning an edge out into one entry per tuple', () => {
     expect(entries).toEqual([{ role: 'etser' }]);
   });
 
-  it('treats the identity field as a tuple position', () => {
-    // Nothing welds the identity field by name, but the flat companion
-    // harvested from it is the leaf a weld uses to name the endpoint. An entry
-    // whose identity field holds three ids stands for three endpoints at once –
-    // the same tuple problem, one field further in – and the companion would
-    // otherwise keep the first and drop the rest, silently.
+  it('refuses a multi-valued identity field', () => {
+    // The identity is what a filter reads inside each entry, so it must be
+    // `filterable` – and a filterable nested field holds one value per entry.
+    // An edge the graph gave three endpoints is three entries instead.
     const endpointEdge = defineSearchType({
       name: 'CreatorEdge',
-      fields: [
-        {
-          name: 'creator',
-          kind: 'reference',
-          path: `${SCHEMA_ORG}creator`,
-          // Multi-valued, and NOT filterable – so only its role as the
-          // reference's identity makes it a tuple position.
-          array: true,
-          output: true,
-          ref: { strategy: 'lookup', target: 'Person' },
-        },
-      ],
-    });
-    const identityWork = defineSearchType({
-      name: 'Work',
-      class: `${SCHEMA_ORG}CreativeWork`,
       fields: [
         {
           name: 'creator',
@@ -433,45 +418,14 @@ describe('fanning an edge out into one entry per tuple', () => {
           array: true,
           output: true,
           filterable: true,
-          ref: {
-            strategy: 'inline',
-            typeName: 'CreatorEdge',
-            identity: 'creator',
-          },
+          ref: { strategy: 'lookup', target: 'Person' },
         },
       ],
     });
-    const threeEndpoints = {
-      '@id': 'https://ex/work/14',
-      [workKey('creator')]: [
-        {
-          [edgeKey('creator')]: [
-            { '@id': 'https://a/1' },
-            { '@id': 'https://a/2' },
-            { '@id': 'https://a/3' },
-          ],
-        },
-      ],
-    };
-    const document = projectDocument(
-      threeEndpoints,
-      identityWork,
-      searchSchema(identityWork, person, endpointEdge),
-    );
-    const entries = entriesOf(document);
 
-    // One endpoint per entry, and every id still reachable.
-    expect(entries).toHaveLength(3);
-    expect(entries.map((entry) => entry.creator)).toEqual([
-      ['https://a/1'],
-      ['https://a/2'],
-      ['https://a/3'],
-    ]);
-    expect(document.creator_id).toEqual([
-      'https://a/1',
-      'https://a/2',
-      'https://a/3',
-    ]);
+    expect(() => searchSchema(work, person, endpointEdge)).toThrow(
+      /declares both “filterable” and “array”/,
+    );
   });
 
   it('does not fan a local lookup out over the endpoint’s own fields', () => {
@@ -500,23 +454,29 @@ describe('fanning an edge out into one entry per tuple', () => {
 });
 
 describe('the identity companion', () => {
-  it('harvests the ids the entries reference', () => {
-    // The flat field an engine filters and facets in the nested object’s
-    // place, holding the RE-KEYED ids – so filter and facet agree with what
-    // the entries carry rather than with what the graph said.
+  it('is not written beside an inline reference', () => {
+    // A filter and a facet read the identity inside each entry, so the ids
+    // stay with the entries that carry them – RE-KEYED, as the entries store
+    // them – rather than in a flat copy beside the reference.
     const document = projectDocument(node, work, schema);
+    const [identified] = entriesOf(document);
 
-    expect(document.creator_id).toEqual([RKD]);
+    expect(document).not.toHaveProperty('creator_id');
+    expect(identified.creator_id).toBe(RKD);
+    expect(physicalFields(work.fields[0], schema)).toMatchObject({
+      filter: 'creator.creator_id',
+      facet: 'creator.creator_id',
+      identity: undefined,
+    });
   });
 
   it('leaves an unidentified endpoint out', () => {
     // Facets stay keyed on identity: an endpoint with no id contributes no
     // bucket, rather than one keyed on its label – which would merge two
     // different people who happen to share a name.
-    const document = projectDocument(node, work, schema);
+    const [, unidentified] = entriesOf(projectDocument(node, work, schema));
 
-    expect(document.creator_id).toHaveLength(1);
-    expect(document.creator_id).not.toContain('Jan Jansen');
+    expect(unidentified).not.toHaveProperty('creator_id');
   });
 
   it('is absent for an inline reference that declares no identity', () => {
@@ -697,19 +657,26 @@ describe('addressing a nested field from a criterion', () => {
   });
 
   it('holds a nested field to its own filterability', () => {
-    // The edge’s endpoint reference is `output` but not `filterable`, so it is
-    // not addressable in `where`. Nesting grants no Role by itself.
+    // The edge’s role is `output` but not `filterable`, so it is not
+    // addressable in `where`. Nesting grants no Role by itself.
+    const unfilterableRole = defineSearchType({
+      ...creatorEdge,
+      fields: creatorEdge.fields.map((field) =>
+        field.name === 'role' ? { ...field, filterable: undefined } : field,
+      ),
+    });
+
     expect(
       validateQuery(
         {
           ...base,
-          where: [{ or: [{ on: ['creator'], field: 'creator', in: ['x'] }] }],
+          where: [{ or: [{ on: ['creator'], field: 'role', in: ['x'] }] }],
         },
         work,
-        schema,
+        searchSchema(work, person, unfilterableRole),
       ),
     ).toEqual([
-      { part: 'where', field: 'creator.creator', reason: 'not-filterable' },
+      { part: 'where', field: 'creator.role', reason: 'not-filterable' },
     ]);
   });
 });
@@ -796,6 +763,7 @@ describe('nesting is where a node is projected, not what type it is', () => {
         kind: 'reference',
         path: `${SCHEMA_ORG}memberOf`,
         output: true,
+        filterable: true,
         ref: { strategy: 'lookup', target: 'Person' },
       },
     ],
@@ -843,11 +811,9 @@ describe('nesting is where a node is projected, not what type it is', () => {
     ],
   });
 
-  it('keeps every id where only facetable earned the companion', () => {
-    // An identity is earned by `filterable` OR `facetable`, and fan-out splits
-    // weldable leaves only. A facetable-only companion is therefore never
-    // split, so narrowing it to one id would drop the rest – silently, since
-    // the collection declares it a list.
+  it('keeps every id in the entries where only facetable reads them', () => {
+    // A facet reads the identity inside each entry, so a locally-nested root
+    // type carries no flat companion to narrow – every id stays with its entry.
     const facetedRoot = defineSearchType({
       name: 'Person',
       class: `${SCHEMA_ORG}Person`,
@@ -903,10 +869,14 @@ describe('nesting is where a node is projected, not what type it is', () => {
     );
     const endpoint = document.creator as SearchDocument;
 
-    expect(endpoint.affiliation_id).toEqual(['https://o/1', 'https://o/2']);
+    expect(endpoint).not.toHaveProperty('affiliation_id');
+    expect(endpoint.affiliation).toEqual([
+      { org: 'https://o/1' },
+      { org: 'https://o/2' },
+    ]);
   });
 
-  it('writes a single-valued companion inside a locally-nested root type', () => {
+  it('writes no companion inside a locally-nested root type', () => {
     const node = {
       '@id': 'https://ex/work/10',
       [workKey('creator')]: [
@@ -926,9 +896,9 @@ describe('nesting is where a node is projected, not what type it is', () => {
     );
     const endpoint = document.creator as SearchDocument;
 
-    // A single value, matching what the collection declares for this path -
-    // not the one-element list a root-level companion would carry.
-    expect(endpoint.affiliation_id).toBe('https://o/1');
+    // The single-valued entry carries the id where the collection declares it.
+    expect(endpoint).not.toHaveProperty('affiliation_id');
+    expect(endpoint.affiliation).toEqual({ org: 'https://o/1' });
   });
 });
 
@@ -1287,11 +1257,24 @@ describe('declaring the companion', () => {
     ).toThrow(/names no target/);
   });
 
+  it('rejects an identity naming a field that is not filterable', () => {
+    // A filter and a facet read the identity inside each entry, so the engine
+    // has to index it there.
+    const unindexedEdge = defineSearchType({
+      ...creatorEdge,
+      fields: creatorEdge.fields.map((field) =>
+        field.name === 'creator' ? { ...field, filterable: undefined } : field,
+      ),
+    });
+
+    expect(() =>
+      searchSchema(workWith({ identity: 'creator' }), person, unindexedEdge),
+    ).toThrow(/is not “filterable”/);
+  });
+
   it('rejects an identity declared inside a reference type', () => {
-    // A companion is a flat field beside the reference, and only a Root Type
-    // has somewhere flat to put one. Nested, the projection would write it into
-    // each entry while the collection declared it nowhere – so a filter on it
-    // would name a field the engine does not carry.
+    // A filter and a facet read the identity one level in from a Root Type;
+    // declared inside a reference type it would be two levels in.
     const innerEdge = defineSearchType({
       name: 'InnerEdge',
       fields: [
@@ -1300,6 +1283,7 @@ describe('declaring the companion', () => {
           kind: 'reference',
           path: `${SCHEMA_ORG}creator`,
           output: true,
+          filterable: true,
           ref: { strategy: 'lookup', target: 'Person' },
         },
       ],
@@ -1338,7 +1322,7 @@ describe('declaring the companion', () => {
     });
 
     expect(() => searchSchema(nesting, person, outerEdge, innerEdge)).toThrow(
-      /is a reference type: an identity companion is a flat field/,
+      /is a reference type: a filter and a facet read the identity one level in/,
     );
   });
 
@@ -1369,7 +1353,7 @@ describe('declaring the companion', () => {
 });
 
 describe('a facet policy over the companion', () => {
-  it('narrows the companion the engine facets', () => {
+  it('narrows the facet field the engine counts', () => {
     // The policy belongs to the endpoint’s type, and is inherited one level in
     // through the identity – so an excluded id is never seen by the engine.
     const alignedPerson = defineSearchType({
@@ -1381,8 +1365,9 @@ describe('a facet policy over the companion', () => {
     const faceted = searchSchema(work, alignedPerson, creatorEdge);
     const document = projectDocument(node, work, faceted);
 
-    expect(document.creator_id).toEqual([RKD]);
-    expect(document.creator_id_facet).toEqual([RKD]);
+    expect(document).not.toHaveProperty('creator_id');
+    expect(document.creator_facet).toEqual([RKD]);
+    expect(physicalFields(work.fields[0], faceted).facet).toBe('creator_facet');
   });
 
   it('writes no companion when no endpoint is identified', () => {
@@ -1422,18 +1407,38 @@ describe('an edge whose endpoint is stored as a bare id', () => {
         kind: 'reference',
         path: `${SCHEMA_ORG}creator`,
         output: true,
+        filterable: true,
         ref: { strategy: 'lookup', target: 'Person' },
       },
     ],
   });
   const idOnlySchema = searchSchema(work, person, idOnlyEdge);
 
-  it('harvests the id the entry stores directly', () => {
+  it('filters on the id the entry stores directly', () => {
     const document = projectDocument(node, work, idOnlySchema);
     const entries = document.creator as readonly SearchDocument[];
 
     expect(entries[0].creator).toBe(RKD);
-    expect(document.creator_id).toEqual([RKD]);
+    expect(document).not.toHaveProperty('creator_id');
+    expect(physicalFields(work.fields[0], idOnlySchema).filter).toBe(
+      'creator.creator',
+    );
+  });
+
+  it('narrows the facet from the ids the entries store directly', () => {
+    const alignedPerson = defineSearchType({
+      ...person,
+      facetKeys: {
+        only: (id: string) => id.startsWith('https://rkd.example/'),
+      },
+    });
+    const document = projectDocument(
+      node,
+      work,
+      searchSchema(work, alignedPerson, idOnlyEdge),
+    );
+
+    expect(document.creator_facet).toEqual([RKD]);
   });
 
   it('still frames the hop its target’s key is read from', () => {
@@ -1462,41 +1467,6 @@ describe('the label target a facet reads', () => {
     const foreign = searchSchema(person);
 
     expect(labelTargetNamesOf(work.fields[0], foreign)).toEqual([]);
-  });
-});
-
-describe('an edge whose identity holds several endpoints', () => {
-  it('harvests every id the entry stores', () => {
-    // A multi-valued nested reference: the entry holds a list, so the
-    // companion holds all of it rather than only the first.
-    const multiEdge = defineSearchType({
-      name: 'CreatorEdge',
-      fields: [
-        {
-          name: 'creator',
-          kind: 'reference',
-          path: `${SCHEMA_ORG}creator`,
-          array: true,
-          output: true,
-          ref: { strategy: 'lookup', target: 'Person' },
-        },
-      ],
-    });
-    const multiSchema = searchSchema(work, person, multiEdge);
-    const twoEndpoints = {
-      '@id': 'https://ex/work/3',
-      [workKey('creator')]: [
-        {
-          [edgeKey('creator')]: [
-            { '@id': 'https://a/1', [personKey('sameAs')]: [{ '@id': RKD }] },
-            { '@id': 'https://a/2' },
-          ],
-        },
-      ],
-    };
-    const document = projectDocument(twoEndpoints, work, multiSchema);
-
-    expect(document.creator_id).toEqual([RKD, 'https://a/2']);
   });
 });
 
@@ -1649,6 +1619,7 @@ describe('what the companion may harvest', () => {
           path: `${SCHEMA_ORG}creator`,
           output: true,
           filterable: true,
+          facetable: true,
           ref: {
             strategy: 'inline',
             typeName: 'CreatorEdge',
@@ -1657,14 +1628,61 @@ describe('what the companion may harvest', () => {
         },
       ],
     });
+    const admitAll = defineSearchType({
+      ...person,
+      facetKeys: { only: () => true },
+    });
+    const twoIdentified = {
+      '@id': 'https://ex/work/19',
+      [workKey('creator')]: [
+        {
+          [edgeKey('role')]: [{ '@value': 'etser' }],
+          [edgeKey('creator')]: [
+            { '@id': 'https://a/1', [personKey('sameAs')]: [{ '@id': RKD }] },
+          ],
+        },
+        {
+          [edgeKey('role')]: [{ '@value': 'auteur' }],
+          [edgeKey('creator')]: [{ '@id': 'https://a/2' }],
+        },
+      ],
+    };
     const document = projectDocument(
-      node,
+      twoIdentified,
       single,
-      searchSchema(single, person, creatorEdge),
+      searchSchema(single, admitAll, creatorEdge),
     );
 
     expect(document.creator).not.toBeInstanceOf(Array);
-    expect(document.creator_id).toEqual([RKD]);
+    expect((document.creator as SearchDocument).creator_id).toBe(RKD);
+    expect(document).not.toHaveProperty('creator_id');
+    expect(document.creator_facet).toEqual([RKD]);
+  });
+
+  it('counts an endpoint once however many entries name it', () => {
+    const admitAll = defineSearchType({
+      ...person,
+      facetKeys: { only: () => true },
+    });
+    const twoRoles = {
+      '@id': 'https://ex/work/20',
+      [workKey('creator')]: [
+        {
+          [edgeKey('role')]: [{ '@value': 'etser' }, { '@value': 'drukker' }],
+          [edgeKey('creator')]: [
+            { '@id': 'https://a/1', [personKey('sameAs')]: [{ '@id': RKD }] },
+          ],
+        },
+      ],
+    };
+    const document = projectDocument(
+      twoRoles,
+      work,
+      searchSchema(work, admitAll, creatorEdge),
+    );
+
+    expect(entriesOf(document)).toHaveLength(2);
+    expect(document.creator_facet).toEqual([RKD]);
   });
 });
 
@@ -1749,8 +1767,12 @@ describe('an edge the graph may leave out', () => {
     expect(entries[2]).toEqual({ role: 'fabrikant' });
   });
 
-  it('harvests both endpoints into the identity companion', () => {
-    expect(document.creator_id).toEqual([RKD, RKD_OTHER]);
+  it('identifies both endpoints in their entries', () => {
+    expect(document).not.toHaveProperty('creator_id');
+    expect(entries.flatMap((entry) => entry.creator_id ?? [])).toEqual([
+      RKD,
+      RKD_OTHER,
+    ]);
   });
 
   it('requires an identity on every reference nesting the type', () => {

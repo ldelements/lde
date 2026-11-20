@@ -98,10 +98,11 @@ describe('the collection an edge is stored in', () => {
     });
   });
 
-  it('emits the identity companion as a flat, facetable id field', () => {
-    // A nested object is not something an engine filters or facets; this is
-    // the flat field it filters and facets in its place.
-    expect(named('creator_id')).toMatchObject({
+  it('facets the identity on its nested leaf, with no flat companion', () => {
+    // A filter and a facet read the identity inside each entry, so the leaf
+    // there is the facet field and nothing flat stands in for it.
+    expect(named('creator_id')).toBeUndefined();
+    expect(named('creator.creator_id')).toMatchObject({
       type: 'string[]',
       facet: true,
     });
@@ -547,12 +548,11 @@ describe('nested fields of other kinds', () => {
     expect(companion(false)).toMatchObject({ type: 'string' });
   });
 
-  it('declares a multi-valued nested companion as a list, unflattened', () => {
-    // The companion's other route to a list: the reference itself is `array`,
-    // so one entry harvests several ids even where no ancestor multiplies the
-    // entries. Reachable through a locally-nested Root Type, whose fields the
-    // single-valued rule does not constrain – and the projection writes a list
-    // there, so declaring `string` rejects the document at import.
+  it('declares the identity leaf of a multi-valued nested reference as a list', () => {
+    // The reference itself is `array`, so its entries arrive as a list even
+    // where no ancestor multiplies them. Reachable through a locally-nested
+    // Root Type, whose fields the single-valued rule does not constrain – and
+    // the identity is read from that list, with no companion beside it.
     const org = defineSearchType({
       name: 'Membership',
       fields: [
@@ -561,6 +561,7 @@ describe('nested fields of other kinds', () => {
           kind: 'reference',
           path: `${SCHEMA_ORG}memberOf`,
           output: true,
+          filterable: true,
           ref: { strategy: 'lookup', target: 'Person' },
         },
       ],
@@ -610,13 +611,16 @@ describe('nested fields of other kinds', () => {
 
     expect(
       fields.find((field) => field.name === 'creator.affiliation_id'),
+    ).toBeUndefined();
+    expect(
+      fields.find((field) => field.name === 'creator.affiliation.org'),
     ).toMatchObject({ type: 'string[]', index: true });
   });
 
-  it('declares a facetable-only companion as a list', () => {
-    // An identity is earned by `filterable` OR `facetable`, and only a weldable
-    // leaf fans out – so a facetable-only companion still harvests every id its
-    // entry references, and must be declared as the list the projection writes.
+  it('indexes the identity leaf of a facetable-only reference', () => {
+    // A facet reads the identity inside each entry, so a facetable-only
+    // reference needs its identity leaf indexed, and nothing flat beside it.
+    // Neither the reference nor its ancestor is `array`, so the leaf is one id.
     const org = defineSearchType({
       name: 'Membership',
       fields: [
@@ -625,6 +629,7 @@ describe('nested fields of other kinds', () => {
           kind: 'reference',
           path: `${SCHEMA_ORG}memberOf`,
           output: true,
+          filterable: true,
           ref: { strategy: 'lookup', target: 'Person' },
         },
       ],
@@ -671,7 +676,10 @@ describe('nested fields of other kinds', () => {
 
     expect(
       fields.find((field) => field.name === 'creator.affiliation_id'),
-    ).toMatchObject({ type: 'string[]' });
+    ).toBeUndefined();
+    expect(
+      fields.find((field) => field.name === 'creator.affiliation.org'),
+    ).toMatchObject({ type: 'string', index: true });
   });
 
   it('widens an indexed nested leaf of a local lookup’s own root type', () => {
@@ -754,11 +762,12 @@ describe('a facet policy over the companion', () => {
       }).fields ?? [];
 
     expect(
-      fields.find((field) => field.name === 'creator_id_facet'),
+      fields.find((field) => field.name === 'creator_facet'),
     ).toMatchObject({ facet: true });
-    expect(fields.find((field) => field.name === 'creator_id')).toMatchObject({
-      facet: false,
-    });
+    expect(
+      fields.find((field) => field.name === 'creator.creator_id')?.facet,
+    ).not.toBe(true);
+    expect(fields.find((field) => field.name === 'creator_id')).toBeUndefined();
   });
 });
 
@@ -805,11 +814,11 @@ describe('compiling a filter over an edge', () => {
     locale: 'nl',
   } as const;
 
-  it('filters an inline reference through its identity companion', () => {
+  it('filters an inline reference on its identity’s nested leaf', () => {
     // The logical name a consumer writes is `creator`; the physical field the
-    // engine reads is the companion. This is the one place the two differ.
+    // engine reads is the identity inside each entry.
     //
-    // `:` rather than `:=` because the companion is the facet field, and a
+    // `:` rather than `:=` because that leaf is the facet field, and a
     // facet field is stored whole rather than tokenized – so `:` is already
     // exact on it. The same reading every facetable reference gets.
     const params = buildSearchParams(
@@ -821,7 +830,9 @@ describe('compiling a filter over an edge', () => {
       { schema },
     );
 
-    expect(params.filter_by).toBe('creator_id:[`https://id.example/1`]');
+    expect(params.filter_by).toBe(
+      'creator.creator_id:[`https://id.example/1`]',
+    );
   });
 
   it('qualifies a nested field with the path walked to reach it', () => {
@@ -1105,11 +1116,11 @@ describe('compiling a filter over an edge', () => {
     expect(params.filter_by).toBe(expected);
   });
 
-  it('facets an inline reference on its companion', () => {
+  it('facets an inline reference on its identity’s nested leaf', () => {
     const params = buildSearchParams({ ...base, facets: ['creator'] }, work, {
       schema,
     });
 
-    expect(params.facet_by).toBe('creator_id');
+    expect(params.facet_by).toBe('creator.creator_id');
   });
 });

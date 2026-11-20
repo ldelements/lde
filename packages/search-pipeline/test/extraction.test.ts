@@ -20,7 +20,11 @@ import {
   referenceTypeNamed,
 } from '@lde/search/adapter';
 import type { SearchSchema, SearchType } from '@lde/search';
-import { extractionQuery, extractionQueryString } from '../src/extraction.js';
+import {
+  extractionQuery,
+  extractionQueryString,
+  referentHopFields,
+} from '../src/extraction.js';
 
 const SCHEMA = 'https://schema.org/';
 const RDF_TYPE = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
@@ -117,8 +121,8 @@ const creatorRole = defineSearchType({
     {
       name: 'agent',
       kind: 'reference',
-      array: true,
       output: true,
+      filterable: true,
       path: `<${SCHEMA}creator>`,
       ref: { strategy: 'lookup', target: 'Agent', local: true },
     },
@@ -542,6 +546,57 @@ describe('references into a keyed type', () => {
     expect(group.patterns[0]).toMatchObject({ subType: 'bgp' });
     expect(group.patterns[1]).toMatchObject({ subType: 'optional' });
     expect(extractionQueryString(work, keyedSchema)).toContain('OPTIONAL');
+  });
+
+  it('reads a searchable lookup’s labels off the referent, under the target’s alias', () => {
+    // A work found by the name of the place it references: the label is read
+    // one hop from the work, beside the key, so the work’s own document can
+    // hold it for the query to match.
+    const searchableWork = defineSearchType({
+      ...work,
+      fields: [{ ...work.fields[0], searchable: { weight: 1 } }],
+    });
+    const query = extractionQuery(
+      searchableWork,
+      searchSchema(searchableWork, place),
+    );
+
+    expect(templatePredicates(query)).toEqual([
+      irAlias(searchableWork, searchableWork.fields[0]),
+      irAlias(place, place.fields[1]),
+      irAlias(place, place.fields[0]),
+    ]);
+    const [referenceTriple, , labelTriple] = templateTriples(query);
+    expect(labelTriple.subject).toEqual(referenceTriple.object);
+    // Still one OPTIONAL: a referent without a label keeps its row.
+    const [group] = unionBranches(query);
+    expect(group.patterns[1]).toMatchObject({ subType: 'optional' });
+  });
+
+  it('reads a presence leaf that is also the key once', () => {
+    const counting = {
+      ...work.fields[0],
+      filterable: true,
+      searchable: { weight: 1 },
+      ref: {
+        strategy: 'lookup',
+        target: 'Place',
+        presenceLeaves: ['_sameAs'],
+      },
+    } as const;
+    const countingWork = defineSearchType({ ...work, fields: [counting] });
+    searchSchema(countingWork, place);
+
+    expect(referentHopFields(counting, place)).toEqual([
+      place.fields[1],
+      place.fields[0],
+    ]);
+  });
+
+  it('reads no label for a lookup that is not searchable', () => {
+    expect(
+      templatePredicates(extractionQuery(work, keyedSchema)),
+    ).not.toContain(irAlias(place, place.fields[0]));
   });
 
   it('leaves the keyed type’s own extraction unchanged', () => {

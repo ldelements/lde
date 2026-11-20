@@ -1,3 +1,168 @@
+## 0.51.0 (2026-11-16)
+
+### 🩹 Fixes
+
+- ⚠️  **pipeline:** re-probe a tightened endpoint at the default budget ([#1077](https://github.com/ldelements/lde/pull/1077))
+
+### ⚠️  Breaking Changes
+
+- **pipeline:** re-probe a tightened endpoint at the default budget  ([#1077](https://github.com/ldelements/lde/pull/1077))
+  AfterRequestContext has a required timeoutMs property:
+  the budget beforeRequest returned for the attempt. Code that calls
+  TimeoutPolicy.afterRequest itself must pass it.
+  * fix(pipeline): hand out one re-probe at a time
+  Track a probe in flight so timeouts at the tightened budget can’t schedule a second probe
+  while one is still running; any outcome at the default budget clears it. Assert that
+  readers and selectors report the budget they were given, and state the dead-endpoint
+  cost of re-probing plainly.
+  * fix(pipeline)!: tell the probe by its budget and back off between probes
+  - Have beforeRequest return a RequestBudget and afterRequest receive that same
+    object, so the adaptive policy recognises its probe by identity; a request
+    budgeted before tightening no longer releases the probe slot
+  - Double the gap between probes after each timed-out probe (1, 2, 4… timeouts
+    at the tightened budget, up to 64), so an endpoint that is down rarely waits
+    out the full default budget; a probe that errors keeps the gap
+  - Model endpoint health and probe state as one discriminated union instead of
+    loose booleans
+  BREAKING CHANGE: TimeoutPolicy.beforeRequest returns a RequestBudget
+  ({ timeoutMs }) instead of a number, and AfterRequestContext.timeoutMs is
+  replaced by budget, which must be the object beforeRequest returned. Custom
+  policies return { timeoutMs } and read context.budget.timeoutMs."
+  M	docs/guide/adapt-timeouts-to-endpoint-health.md
+  M	docs/reference/pipeline.md
+  M	packages/pipeline/src/sparql/index.ts
+  M	packages/pipeline/src/sparql/reader.ts
+  M	packages/pipeline/src/sparql/selector.ts
+  M	packages/pipeline/src/sparql/timeoutPolicy.ts
+  M	packages/pipeline/test/pipeline.test.ts
+  M	packages/pipeline/test/sparql/reader.test.ts
+  M	packages/pipeline/test/sparql/selector.test.ts
+  M	packages/pipeline/test/sparql/timeoutPolicy.test.ts
+  M	packages/pipeline/vite.config.ts
+
+## 0.50.3 (2026-11-16)
+
+### 🩹 Fixes
+
+- **search-pipeline:** order the roots selectByClass pages through ([#1076](https://github.com/ldelements/lde/pull/1076))
+
+## 0.50.2 (2026-11-15)
+
+### 🚀 Features
+
+- **pipeline:** fetch roots from imported dumps in pages of 1000 ([#1079](https://github.com/ldelements/lde/pull/1079))
+
+## 0.50.1 (2026-11-14)
+
+### 🩹 Fixes
+
+- **pipeline:** retry SPARQL queries on HTTP 408 and 429 ([#1073](https://github.com/ldelements/lde/pull/1073))
+
+## 0.50.0 (2026-11-14)
+
+### 🚀 Features
+
+- ⚠️  **search-indexer:** batch imported extraction at 100 roots ([#1081](https://github.com/ldelements/lde/pull/1081))
+
+### ⚠️  Breaking Changes
+
+- **search-indexer:** batch imported extraction at 100 roots  ([#1081](https://github.com/ldelements/lde/pull/1081))
+  IndexerConfig has a required extraction field; a config
+  built by hand must add one (extraction: { byType: {} } keeps the defaults).
+  Search stages that set no batchSize now batch 100 roots from an imported
+  dump; pass batchSize: 10 to keep the old size.
+  * fix(search-pipeline): apply a tuned batch size to imported dumps only
+  - Keep live endpoints, the registry included, at 10 roots per extraction
+    query when tuning or tuningByType sets a batch size
+  - Document EXTRACTION_BATCH_SIZE and EXTRACTION_TUNING as import-only"
+  M	docs/reference/pipeline.md
+  M	docs/reference/search-indexer.md
+  M	docs/reference/search-pipeline.md
+  M	docs/reference/sparql-qlever.md
+  M	packages/pipeline/src/pipeline.ts
+  M	packages/pipeline/src/stage.ts
+  M	packages/pipeline/test/pipeline.test.ts
+  M	packages/pipeline/test/stage.test.ts
+  M	packages/pipeline/vite.config.ts
+  M	packages/search-indexer/src/composition.ts
+  M	packages/search-indexer/src/config.ts
+  M	packages/search-indexer/src/index.ts
+  M	packages/search-indexer/src/indexer.ts
+  M	packages/search-indexer/test/config.test.ts
+  M	packages/search-indexer/test/indexer.test.ts
+  M	packages/search-indexer/test/qlever-server-options.test.ts
+  M	packages/search-pipeline/src/index.ts
+  M	packages/search-pipeline/src/search-indexer-pipeline.ts
+  M	packages/search-pipeline/src/search-stages.ts
+  M	packages/search-pipeline/test/search-indexer-pipeline.test.ts
+  M	packages/sparql-qlever/src/server.ts
+  M	packages/sparql-qlever/test/server-command.test.ts
+  M	packages/sparql-qlever/vite.config.ts
+
+## 0.49.0 (2026-11-13)
+
+### 🚀 Features
+
+- ⚠️  **pipeline:** give each pipeline a reader limiter of its own ([#1069](https://github.com/ldelements/lde/pull/1069))
+
+### ⚠️  Breaking Changes
+
+- **pipeline:** give each pipeline a reader limiter of its own  ([#1069](https://github.com/ldelements/lde/pull/1069))
+  PipelineOptions.limiter is removed. A pipeline now builds its own
+  limiter; raise a stage's maxConcurrency to raise the per-endpoint ceiling.
+  * fix(pipeline): clamp the limiter ceiling and share one per standalone stage run
+  - Clamp the ceiling with positiveIntOrDefault, so maxConcurrency 0 or no stages cannot hang a run
+  - Give a Stage run outside a pipeline one limiter for all its batches
+  - Walk stages with one module-level generator instead of two"
+  M	docs/reference/pipeline.md
+  M	packages/pipeline/src/pipeline.ts
+  M	packages/pipeline/src/sparql/reader.ts
+  M	packages/pipeline/src/stage.ts
+  M	packages/pipeline/test/pipeline.test.ts
+  M	packages/pipeline/vite.config.ts
+
+## 0.48.0 (2026-11-13)
+
+### 🚀 Features
+
+- ⚠️  **pipeline:** key the reader limiter on the endpoint, not the dataset ([#1053](https://github.com/ldelements/lde/pull/1053))
+
+### ⚠️  Breaking Changes
+
+- **pipeline:** key the reader limiter on the endpoint, not the dataset  ([#1053](https://github.com/ldelements/lde/pull/1053))
+  the pipeline’s limiter is keyed on the endpoint’s host
+  instead of the dataset’s IRI. Key a resolver that shares it on
+  hostKeyOf(distribution.accessUrl).
+  * feat(pipeline)!: key the reader limiter on the endpoint’s host and path
+  - Add endpointKeyOf: host and path, without query string or fragment
+  - Separate endpoints on one host, such as one SPARQL server per dataset,
+    each get their own limit and pauses
+  - Datasets served by one endpoint still share its key
+  BREAKING CHANGE: the pipeline’s limiter is keyed on endpointKeyOf(accessUrl)
+  instead of the endpoint’s host. Key a resolver that shares it the same way.
+  * docs(pipeline): tidy the endpoint key’s docs
+  - Import what the resolver example uses
+  - Say the carry-over lasts while the limiter remembers the endpoint
+  - Fix a stale mention of pausing the dataset
+  * feat(host-limiter): add endpointKeyOf next to hostKeyOf
+  - Move endpointKeyOf from the pipeline into the host-limiter, so a resolver
+    keys on it without depending on the pipeline
+  - Fall back to the full href for a URL without authority, like hostKeyOf"
+  M	docs/reference/host-limiter.md
+  M	docs/reference/pipeline.md
+  M	packages/host-limiter/src/index.ts
+  M	packages/host-limiter/src/mapHostLimited.ts
+  M	packages/host-limiter/test/mapHostLimited.test.ts
+  M	packages/pipeline/src/pipeline.ts
+  M	packages/pipeline/src/sparql/reader.ts
+  M	packages/pipeline/test/sparql/reader.test.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/distribution-health to 0.10.0
+- Updated @lde/distribution-probe to 0.8.0
+- Updated @lde/host-limiter to 0.5.0
+
 ## 0.47.0 (2026-11-11)
 
 ### 🚀 Features

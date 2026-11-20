@@ -1,3 +1,57 @@
+## 0.50.0 (2026-11-16)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.51.0
+
+## 0.49.5 (2026-11-16)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.50.3
+
+## 0.49.4 (2026-11-16)
+
+### 🩹 Fixes
+
+- **pipeline-void:** read licenses from dcterms:license ([#1094](https://github.com/ldelements/lde/pull/1094))
+
+## 0.49.3 (2026-11-16)
+
+### 🩹 Fixes
+
+- **pipeline-void:** count only IRI licenses ([#1088](https://github.com/ldelements/lde/pull/1088))
+
+## 0.49.2 (2026-11-15)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.50.2
+
+## 0.49.1 (2026-11-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.50.1
+
+## 0.49.0 (2026-11-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.50.0
+
+## 0.48.0 (2026-11-13)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.49.0
+
+## 0.47.0 (2026-11-13)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.48.0
+
 ## 0.46.0 (2026-11-11)
 
 ### 🧱 Updated Dependencies

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  searchSchema,
   isoToUnixSeconds,
   type StoredDate,
   lastSecondOf,
@@ -678,6 +679,78 @@ describe('buildSearchParams', () => {
       }).max_facet_values,
     ).toBe(250);
   });
+
+  it('counts facets exhaustively, so their total number of values is real', () => {
+    expect(
+      buildSearchParams({ ...base, facets: ['keyword'] }, schema)
+        .facet_strategy,
+    ).toBe('exhaustive');
+  });
+
+  it('lets a facet’s limit override the configured max_facet_values', () => {
+    expect(
+      buildSearchParams(
+        { ...base, facets: ['keyword'], facetLimits: { keyword: 50 } },
+        schema,
+        { maxFacetValues: 250 },
+      ).max_facet_values,
+    ).toBe(50);
+  });
+
+  it('searches a literal facet’s values with its facet query', () => {
+    expect(
+      buildSearchParams(
+        {
+          ...base,
+          facets: ['status', 'unknown', 'keyword'],
+          facetQueries: { status: ' ', unknown: 'x', keyword: 'kaart' },
+        },
+        schema,
+      ).facet_query,
+    ).toBe('keyword:kaart');
+  });
+
+  it('separates words at a colon in a facet query, as Typesense reads one as its field separator', () => {
+    expect(
+      buildSearchParams(
+        { ...base, facets: ['keyword'], facetQueries: { keyword: 'van:rijn' } },
+        schema,
+      ).facet_query,
+    ).toBe('keyword:van rijn');
+  });
+
+  it('leaves a reference facet’s query to the engine, which matches referents', () => {
+    const withReference: SearchType = {
+      ...schema,
+      fields: [
+        ...schema.fields,
+        { name: 'publisher', kind: 'reference', facetable: true },
+      ],
+    };
+    expect(
+      buildSearchParams(
+        {
+          ...base,
+          facets: ['publisher'],
+          facetQueries: { publisher: 'rijks' },
+        },
+        withReference,
+      ).facet_query,
+    ).toBeUndefined();
+  });
+
+  it('caps a search at the largest limit among its facets', () => {
+    expect(
+      buildSearchParams(
+        {
+          ...base,
+          facets: ['keyword', 'status'],
+          facetLimits: { keyword: 50, status: 5, other: 500 },
+        },
+        schema,
+      ).max_facet_values,
+    ).toBe(50);
+  });
 });
 
 describe('und locale', () => {
@@ -781,5 +854,267 @@ describe('und locale', () => {
     // en is not declared: sort on the first locale's key rather than a
     // nonexistent physical field.
     expect(params.sort_by).toBe('title_sort_nl:asc');
+  });
+});
+
+describe('a field filtered and faceted on whether it has a value', () => {
+  const work: SearchType = {
+    name: 'Work',
+    class: 'https://schema.org/CreativeWork',
+    fields: [
+      {
+        name: 'dateCreated',
+        kind: 'date',
+        filterable: true,
+        presence: true,
+      },
+      { name: 'title', kind: 'keyword', filterable: true },
+    ],
+  };
+
+  it('filters the presence companion', () => {
+    const params = buildSearchParams(
+      {
+        ...base,
+        where: [{ or: [{ field: 'dateCreated', exists: false }] }],
+        facets: ['dateCreated.exists'],
+      },
+      work,
+    );
+    expect(params.filter_by).toBe('dateCreated_exists:=false');
+    expect(params.facet_by).toBe('dateCreated_exists');
+  });
+
+  it('compiles `exists` on a field declaring no presence to a term matching nothing', () => {
+    // `assertValidQuery` rejects it first; this is the guard for a direct
+    // caller.
+    const params = buildSearchParams(
+      { ...base, where: [{ or: [{ field: 'title', exists: true }] }] },
+      work,
+    );
+    expect(params.filter_by).toBe('id:=[]');
+  });
+
+  it('compiles `exists` inside an entry to a term matching nothing', () => {
+    // No entry holds a companion, and `searchSchema` refuses presence on a
+    // Reference Type’s field – so the declaration is changed after the fact,
+    // as a direct caller could.
+    const url = { name: 'url', kind: 'keyword', filterable: true } as const;
+    const media: SearchType = { name: 'Media', fields: [url] };
+    const withMedia: SearchType = {
+      name: 'Work',
+      class: 'https://schema.org/CreativeWork',
+      fields: [
+        {
+          name: 'media',
+          kind: 'reference',
+          filterable: true,
+          ref: { strategy: 'inline', typeName: 'Media' },
+        },
+      ],
+    };
+    const mediaSchema = searchSchema(withMedia, media);
+    Object.assign(url, { presence: true });
+
+    const params = buildSearchParams(
+      {
+        ...base,
+        where: [{ or: [{ on: ['media'], field: 'url', exists: true }] }],
+      },
+      withMedia,
+      { schema: mediaSchema },
+    );
+    expect(params.filter_by).toBe('id:=[]');
+  });
+});
+
+describe('`exists` welded to an inline entry', () => {
+  const media: SearchType = {
+    name: 'Media',
+    fields: [
+      { name: 'thumbnailUrl', kind: 'keyword' },
+      { name: 'format', kind: 'keyword', filterable: true },
+    ],
+  };
+  const work: SearchType = {
+    name: 'Work',
+    class: 'https://schema.org/CreativeWork',
+    fields: [
+      {
+        name: 'media',
+        kind: 'reference',
+        filterable: true,
+        ref: {
+          strategy: 'inline',
+          typeName: 'Media',
+          presenceLeaves: ['thumbnailUrl'],
+        },
+      },
+    ],
+  };
+  const mediaSchema = searchSchema(work, media);
+  const filterBy = (entry: Record<string, unknown>[]) =>
+    buildSearchParams(
+      {
+        ...base,
+        where: [{ or: [{ field: 'media', entry }] } as never],
+      },
+      work,
+      { schema: mediaSchema },
+    ).filter_by;
+
+  it('reads the root document’s boolean when welded alone', () => {
+    expect(filterBy([{ field: 'thumbnailUrl', exists: false }])).toBe(
+      'media_thumbnailUrl_exists:=false',
+    );
+  });
+
+  it('compiles to a term matching nothing beside another condition, or on a leaf named no presence', () => {
+    // `assertValidQuery` rejects both first; this is the guard for a direct
+    // caller.
+    expect(
+      filterBy([
+        { field: 'thumbnailUrl', exists: true },
+        { field: 'format', in: ['image/png'] },
+      ]),
+    ).toBe('id:=[]');
+    expect(
+      filterBy([
+        { field: 'format', in: ['image/png'] },
+        { field: 'thumbnailUrl', exists: true },
+      ]),
+    ).toBe('id:=[]');
+    expect(filterBy([{ field: 'format', exists: true }])).toBe('id:=[]');
+    // Nor a reference the type does not declare.
+    expect(
+      buildSearchParams(
+        {
+          ...base,
+          where: [
+            {
+              or: [
+                {
+                  field: 'nope',
+                  entry: [{ field: 'thumbnailUrl', exists: true }],
+                },
+              ],
+            },
+          ],
+        },
+        work,
+        { schema: mediaSchema },
+      ).filter_by,
+    ).toBe('id:=[]');
+  });
+
+  it('compiles to a term matching nothing under a nesting, where no boolean is written', () => {
+    // `searchSchema` refuses presence leaves, and a filterable reference, on
+    // a Reference Type, so the declaration is changed after the fact, as a
+    // direct caller could.
+    const nestedRef = { strategy: 'inline', typeName: 'Media' } as const;
+    const nestedMedia = {
+      name: 'media',
+      kind: 'reference',
+      output: true,
+      ref: nestedRef,
+    } as const;
+    const edge: SearchType = {
+      name: 'Edge',
+      fields: [
+        nestedMedia,
+        { name: 'role', kind: 'keyword', filterable: true },
+      ],
+    };
+    const root: SearchType = {
+      name: 'Work',
+      class: 'https://schema.org/CreativeWork',
+      fields: [
+        {
+          name: 'edges',
+          kind: 'reference',
+          filterable: true,
+          ref: { strategy: 'inline', typeName: 'Edge' },
+        },
+      ],
+    };
+    const nestedSchema = searchSchema(root, edge, media);
+    Object.assign(nestedRef, { presenceLeaves: ['thumbnailUrl'] });
+    Object.assign(nestedMedia, { filterable: true });
+
+    expect(
+      buildSearchParams(
+        {
+          ...base,
+          where: [
+            {
+              or: [
+                {
+                  on: ['edges'],
+                  field: 'media',
+                  entry: [{ field: 'thumbnailUrl', exists: true }],
+                },
+              ],
+            },
+          ],
+        },
+        root,
+        { schema: nestedSchema },
+      ).filter_by,
+    ).toBe('id:=[]');
+  });
+});
+
+describe('`exists` on a lookup’s leaf', () => {
+  const place: SearchType = {
+    name: 'Place',
+    class: 'https://schema.org/Place',
+    fields: [
+      {
+        name: 'label',
+        kind: 'text',
+        path: 'https://schema.org/name',
+        locales: ['nl'],
+        output: true,
+        searchable: { weight: 1 },
+      },
+      { name: 'latitude', kind: 'number', path: 'https://schema.org/latitude' },
+    ],
+  };
+  const work: SearchType = {
+    name: 'Work',
+    class: 'https://schema.org/CreativeWork',
+    fields: [
+      {
+        name: 'contentLocation',
+        kind: 'reference',
+        filterable: true,
+        ref: {
+          strategy: 'lookup',
+          target: 'Place',
+          presenceLeaves: ['latitude'],
+        },
+      },
+    ],
+  };
+  const placeSchema = searchSchema(work, place);
+  const filterBy = (criterion: Record<string, unknown>) =>
+    buildSearchParams(
+      { ...base, where: [{ or: [criterion] } as never] },
+      work,
+      { schema: placeSchema },
+    ).filter_by;
+
+  it('reads the root document’s boolean, a plain criterion', () => {
+    expect(
+      filterBy({ field: 'contentLocation', leaf: 'latitude', exists: true }),
+    ).toBe('contentLocation_latitude_exists:=true');
+  });
+
+  it('compiles to a term matching nothing on a leaf named no presence', () => {
+    // `assertValidQuery` rejects it first; this is the guard for a direct
+    // caller.
+    expect(
+      filterBy({ field: 'contentLocation', leaf: 'label', exists: true }),
+    ).toBe('id:=[]');
   });
 });

@@ -26,6 +26,7 @@ export {
   type AdaptiveTimeoutPolicyOptions,
   type AfterRequestContext,
   type BeforeRequestContext,
+  type RequestBudget,
   type TimeoutOutcome,
   type TimeoutPolicy,
   type TimeoutPolicyObserver,

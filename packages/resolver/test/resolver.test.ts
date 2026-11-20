@@ -57,6 +57,17 @@ function storeHolding(
   return memoryFactStore(held);
 }
 
+/** A clock a test moves by hand, for a resolver’s `now`. */
+function clockAt(start: string) {
+  let current = Date.parse(start);
+  return {
+    now: () => new Date(current),
+    advance: (milliseconds: number) => {
+      current += milliseconds;
+    },
+  };
+}
+
 /** A store holding these keys as absences – the source answered and had none. */
 function storeAbsences(
   keys: readonly string[],
@@ -368,7 +379,7 @@ describe('a failure', () => {
     expect(attemptedAt[1] - attemptedAt[0]).toBeGreaterThanOrEqual(495);
   });
 
-  it('keeps its charge and its reason when the host is written off during its pause', async () => {
+  it('keeps the reason it failed for when the host is written off during its pause', async () => {
     // Maastricht was sent and told to come back later; Venlo’s 502 writes the
     // host off meanwhile. Maastricht must not read as never contacted.
     const asked: string[] = [];
@@ -385,22 +396,17 @@ describe('a failure', () => {
       },
       {
         limiter: createHostLimiter(4, 2),
-        limits: {
-          hostFailureThreshold: 1,
-          fetchesPerResolver: 2,
-        },
+        limits: { hostFailureThreshold: 1 },
       },
     );
 
     const resolved = await resolver.resolveAll([MAASTRICHT, VENLO]);
-    const later = await resolver.resolveAll([ELSEWHERE]);
 
     expect(asked).toEqual([MAASTRICHT, VENLO]);
     expect(resolved.get(MAASTRICHT)).toEqual({
       outcome: 'unresolved',
       reason: 'resolution failed after 1 attempt(s): HTTP 429',
     });
-    expect(later.get(ELSEWHERE)).toMatchObject({ outcome: 'unresolved' });
   });
 
   it('is recognised as a timeout even when the caller’s own abort error wins the race', async () => {
@@ -600,8 +606,8 @@ describe('an absence', () => {
   });
 
   it('does not crowd out a key that has never been asked', async () => {
-    // The budget is the scarce thing: an absence re-asked every run would spend
-    // it on a question already answered, and a cold store would never warm.
+    // An absence re-asked every run would spend a fetch on a question already
+    // answered, every run.
     const asked: string[][] = [];
     const { resolver } = resolverOver(
       async (iris) => {
@@ -611,7 +617,6 @@ describe('an absence', () => {
       {
         store: storeAbsences([ELSEWHERE], '2026-08-24T00:00:00.000Z'),
         now: () => new Date('2026-08-24T00:00:01.000Z'),
-        limits: { fetchesPerResolver: 1 },
       },
     );
 
@@ -661,69 +666,158 @@ describe('an absence', () => {
   });
 });
 
-describe('the resolver’s fetch budget', () => {
-  it('spends it on the keys with nothing stored before the merely stale ones', async () => {
+describe('the resolver’s fetch window', () => {
+  it('fetches a cold store in full in one run when no window is set', async () => {
+    const iris = Array.from(
+      { length: 600 },
+      (_, index) => `https://sws.geonames.org/${index}/`,
+    );
+    const fetch = vi.fn(async (references: readonly string[]) =>
+      references.map((iri): [string, Place] => [iri, { name: 'fetched' }]),
+    );
+    const { resolver } = resolverOver(fetch);
+
+    const resolved = await resolver.resolveAll(iris);
+
+    expect(fetch).toHaveBeenCalledTimes(600);
+    expect(
+      [...resolved.values()].every(({ outcome }) => outcome === 'resolved'),
+    ).toBe(true);
+  });
+
+  it('defers what has not started once it has passed, missing keys first', async () => {
+    // VENLO is stale; MAASTRICHT is not stored at all. One batch per host at a
+    // time, and the first one outlasts the window.
+    const clock = clockAt('2026-08-24T00:00:00.000Z');
     const asked: string[][] = [];
-    const { resolver } = resolverOver(
+    const { resolver, failures } = resolverOver(
       async (iris) => {
         asked.push([...iris]);
+        // Pass the window only once VENLO’s batch has queued, so it is caught
+        // in its slot rather than before queueing.
+        await Promise.resolve();
+        clock.advance(1_000);
         return iris.map((iri) => [iri, { name: 'fresh' }]);
       },
       {
-        // VENLO is stale; MAASTRICHT is not stored at all. One fetch to spend.
         store: storeHolding(
           { [VENLO]: { name: 'stored' } },
           '2020-01-01T00:00:00.000Z',
         ),
-        limits: { fetchesPerResolver: 1, ttlMs: 1 },
+        now: clock.now,
+        limiter: createHostLimiter(4, 1),
+        limits: { fetchWindowMs: 500, ttlMs: 1 },
       },
     );
 
     const resolved = await resolver.resolveAll([VENLO, MAASTRICHT]);
 
     expect(asked).toEqual([[MAASTRICHT]]);
-    expect(resolved.get(MAASTRICHT)).toMatchObject({ fromStore: false });
+    // The batch in flight when the window closed still completes.
+    expect(resolved.get(MAASTRICHT)).toMatchObject({
+      outcome: 'resolved',
+      fromStore: false,
+    });
     // The stale one still answers – from the store, ageing rather than absent.
     expect(resolved.get(VENLO)).toMatchObject({
       fromStore: true,
       fact: { name: 'stored' },
     });
+    // The cap working as designed is not a failure, and on a cold store this
+    // would be a callback per deferred key.
+    expect(failures).toEqual([]);
   });
 
-  it('warms a cold store over successive runs rather than in one burst', async () => {
-    const store = memoryFactStore<Place>();
+  it('starts every host’s missing keys before any host’s stale ones', async () => {
+    // On geonames, MAASTRICHT is missing and VENLO stale; ELSEWHERE, on another
+    // host, is missing. One batch in flight overall, each taking a second, and
+    // a window of one and a half: two batches start, the third is deferred.
+    // Batched host by host, VENLO’s refresh would take ELSEWHERE’s turn.
+    const clock = clockAt('2026-08-24T00:00:00.000Z');
     const asked: string[][] = [];
     const { resolver } = resolverOver(
       async (iris) => {
         asked.push([...iris]);
-        return iris.map((iri) => [iri, { name: 'fetched' }]);
+        clock.advance(1_000);
+        return iris.map((iri) => [iri, { name: 'fresh' }]);
       },
-      { store, limits: { fetchesPerResolver: 1 } },
+      {
+        store: storeHolding(
+          { [VENLO]: { name: 'stored' } },
+          '2020-01-01T00:00:00.000Z',
+        ),
+        now: clock.now,
+        limiter: createHostLimiter(1, 1),
+        limits: { fetchWindowMs: 1_500, ttlMs: 1 },
+      },
     );
 
-    // The budget spans the resolver, not one call: a second resolveAll does not
-    // hand the source a fresh allowance.
-    await resolver.resolveAll([MAASTRICHT]);
-    const second = await resolver.resolveAll([VENLO]);
+    const resolved = await resolver.resolveAll([MAASTRICHT, VENLO, ELSEWHERE]);
 
-    expect(asked).toEqual([[MAASTRICHT]]);
-    expect(second.get(VENLO)).toMatchObject({ outcome: 'unresolved' });
-    expect(second.get(VENLO)).toMatchObject({
-      reason: expect.stringContaining('fetchesPerResolver'),
-    });
+    expect(asked).toEqual([[MAASTRICHT], [ELSEWHERE]]);
+    expect(resolved.get(VENLO)).toMatchObject({ fromStore: true });
   });
 
-  it('does not report a key the budget merely deferred', async () => {
-    // The cap working as designed is not a failure, and on a cold store this
-    // would be a callback per deferred key.
+  it('answers a deferred key with nothing stored as unresolved, unreported', async () => {
+    const clock = clockAt('2026-08-24T00:00:00.000Z');
     const { resolver, failures } = resolverOver(
-      async (iris) => iris.map((iri) => [iri, { name: 'fetched' }]),
-      { limits: { fetchesPerResolver: 1 } },
+      async (iris) => {
+        clock.advance(1_000);
+        return iris.map((iri) => [iri, { name: 'fetched' }]);
+      },
+      {
+        now: clock.now,
+        limiter: createHostLimiter(4, 1),
+        limits: { fetchWindowMs: 500 },
+      },
     );
 
-    await resolver.resolveAll([MAASTRICHT, VENLO]);
+    const resolved = await resolver.resolveAll([MAASTRICHT, VENLO]);
 
+    expect(resolved.get(VENLO)).toEqual({
+      outcome: 'unresolved',
+      reason: expect.stringContaining('fetch window of 500ms passed'),
+    });
     expect(failures).toEqual([]);
+  });
+
+  it('spans the resolver, not one call', async () => {
+    const clock = clockAt('2026-08-24T00:00:00.000Z');
+    const fetch = vi.fn(async (iris: readonly string[]) =>
+      iris.map((iri): [string, Place] => [iri, { name: 'fetched' }]),
+    );
+    const { resolver } = resolverOver(fetch, {
+      now: clock.now,
+      limits: { fetchWindowMs: 500 },
+    });
+
+    await resolver.resolveAll([MAASTRICHT]);
+    clock.advance(1_000);
+    const second = await resolver.resolveAll([VENLO]);
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(second.get(VENLO)).toMatchObject({ outcome: 'unresolved' });
+  });
+
+  it('lets a batch that started within it finish its retries', async () => {
+    const clock = clockAt('2026-08-24T00:00:00.000Z');
+    let attempts = 0;
+    const { resolver } = resolverOver(
+      async (iris) => {
+        attempts++;
+        if (attempts === 1) {
+          clock.advance(1_000);
+          throw new RetryableError('HTTP 429', { retryAfterMs: 1 });
+        }
+        return iris.map((iri) => [iri, { name: 'a place' }]);
+      },
+      { now: clock.now, limits: { fetchWindowMs: 500 } },
+    );
+
+    const resolved = await resolver.resolveAll([MAASTRICHT]);
+
+    expect(attempts).toBe(2);
+    expect(resolved.get(MAASTRICHT)).toMatchObject({ outcome: 'resolved' });
   });
 });
 
@@ -869,27 +963,6 @@ describe('an attempt that outruns its deadline', () => {
     expect(failures).toEqual([]);
   });
 
-  it('spends no second unit of the budget on its second attempt', async () => {
-    // The budget counts references, so a stall does not cost a cold store the
-    // reference behind it.
-    let stalled = false;
-    const { resolver } = resolverOver(
-      async (iris) => {
-        if (!stalled) {
-          stalled = true;
-          return new Promise(() => undefined);
-        }
-        return iris.map((iri) => [iri, { name: 'a place' }]);
-      },
-      { limits: { timeoutMs: 5, fetchesPerResolver: 2 } },
-    );
-
-    await resolver.resolveAll([MAASTRICHT]);
-    const second = await resolver.resolveAll([VENLO]);
-
-    expect(second.get(VENLO)).toMatchObject({ outcome: 'resolved' });
-  });
-
   it('aborts the signal it handed the caller, so the request can be cancelled', async () => {
     let aborted = false;
     const { resolver } = resolverOver(
@@ -945,12 +1018,18 @@ describe('counting', () => {
     });
   });
 
-  it('counts a failed fetch and a reference the budget deferred', async () => {
+  it('counts a failed fetch and a reference the fetch window deferred', async () => {
+    const clock = clockAt('2026-08-24T00:00:00.000Z');
     const { resolver } = resolverOver(
       async () => {
+        clock.advance(1_000);
         throw new Error('HTTP 500');
       },
-      { limits: { fetchesPerResolver: 1 } },
+      {
+        now: clock.now,
+        limiter: createHostLimiter(4, 1),
+        limits: { fetchWindowMs: 500 },
+      },
     );
 
     expect(await countsOf(resolver, [MAASTRICHT, VENLO])).toEqual({
@@ -1000,16 +1079,21 @@ describe('counting', () => {
     expect(await countsOf(resolver, [VENLO])).toEqual({ failed: 1 });
   });
 
-  it('counts a stale fact the budget left unrefreshed as deferred', async () => {
+  it('counts a stale fact the fetch window left unrefreshed as deferred', async () => {
+    const clock = clockAt('2026-08-24T00:00:00.000Z');
     const { resolver } = resolverOver(
-      async (iris) =>
-        iris.map((iri): [string, Place] => [iri, { name: 'fetched' }]),
+      async (iris) => {
+        clock.advance(1_000);
+        return iris.map((iri): [string, Place] => [iri, { name: 'fetched' }]);
+      },
       {
         store: storeHolding(
           { [VENLO]: { name: 'stored' } },
           '2020-01-01T00:00:00.000Z',
         ),
-        limits: { ttlMs: 1, fetchesPerResolver: 1 },
+        now: clock.now,
+        limiter: createHostLimiter(4, 1),
+        limits: { ttlMs: 1, fetchWindowMs: 500 },
       },
     );
 
@@ -1273,10 +1357,10 @@ describe('a host that is down', () => {
     expect(asked).toEqual([MAASTRICHT, VENLO, 'https://sws.geonames.org/1/']);
   });
 
-  it('gives a stall no second attempt once its host is written off, nor a refund', async () => {
+  it('gives a stall no second attempt once its host is written off', async () => {
     // Maastricht stalls and waits at the back of the queue; Venlo’s 502 then
-    // writes the host off. Maastricht was sent once, so it keeps its charge and
-    // the reason it actually failed for.
+    // writes the host off. Maastricht was sent once, so it keeps the reason it
+    // actually failed for.
     const asked: string[] = [];
     const { resolver } = resolverOver(
       async (iris) => {
@@ -1294,20 +1378,17 @@ describe('a host that is down', () => {
         limits: {
           timeoutMs: 5,
           hostFailureThreshold: 2,
-          fetchesPerResolver: 2,
         },
       },
     );
 
     const resolved = await resolver.resolveAll([MAASTRICHT, VENLO]);
-    const later = await resolver.resolveAll([ELSEWHERE]);
 
     expect(asked).toEqual([MAASTRICHT, VENLO]);
     expect(resolved.get(MAASTRICHT)).toEqual({
       outcome: 'unresolved',
       reason: 'resolution failed after 1 attempt(s): timed out after 5ms',
     });
-    expect(later.get(ELSEWHERE)).toMatchObject({ outcome: 'unresolved' });
   });
 
   it('is written off while it times out, not after every reference has had its turn', async () => {
@@ -1383,95 +1464,6 @@ describe('a host that is down', () => {
     const resolved = await resolver.resolveAll([MAASTRICHT, VENLO, ELSEWHERE]);
 
     expect(resolved.get(ELSEWHERE)).toMatchObject({ outcome: 'resolved' });
-  });
-
-  it('spends no budget on the references it never contacted', async () => {
-    // Written-off references send nothing, so charging them would let one dead
-    // host consume a whole run’s allowance without a packet leaving the process.
-    const asked: string[][] = [];
-    const { resolver } = resolverOver(
-      async (iris) => {
-        asked.push([...iris]);
-        if (iris.some((iri) => iri.includes('geonames'))) {
-          throw new Error('connection refused');
-        }
-        return iris.map((iri) => [iri, { name: 'elsewhere' }]);
-      },
-      {
-        limits: {
-          batchSize: 1,
-          fetchesPerResolver: 3,
-          hostFailureThreshold: 2,
-        },
-      },
-    );
-
-    await resolver.resolveAll([
-      MAASTRICHT,
-      VENLO,
-      'https://sws.geonames.org/1/',
-    ]);
-    const second = await resolver.resolveAll([ELSEWHERE]);
-
-    // The third geonames reference was written off and refunded, so the healthy
-    // host is still affordable afterwards.
-    expect(second.get(ELSEWHERE)).toMatchObject({ outcome: 'resolved' });
-    expect(asked).toContainEqual([ELSEWHERE]);
-  });
-
-  it('does not deny a live host the budget a dead one never spent', async () => {
-    // The refund has to land inside this call: charging up front and refunding
-    // afterwards would let a dead host answer a live one with a budget that was
-    // handed straight back – and a deferral is not reported, so nothing would
-    // say so.
-    const asked: string[][] = [];
-    const { resolver } = resolverOver(
-      async (iris) => {
-        asked.push([...iris]);
-        if (iris.some((iri) => iri.includes('geonames'))) {
-          throw new Error('connection refused');
-        }
-        return iris.map((iri) => [iri, { name: 'elsewhere' }]);
-      },
-      {
-        limits: {
-          batchSize: 1,
-          hostFailureThreshold: 2,
-          fetchesPerResolver: 4,
-        },
-      },
-    );
-
-    const resolved = await resolver.resolveAll([
-      MAASTRICHT,
-      VENLO,
-      'https://sws.geonames.org/1/',
-      'https://sws.geonames.org/2/',
-      ELSEWHERE,
-    ]);
-
-    // Two dead references are contacted, the breaker trips, the other two are
-    // written off and refunded – which pays for the live host in this same call.
-    expect(resolved.get(ELSEWHERE)).toMatchObject({ outcome: 'resolved' });
-    expect(asked).toContainEqual([ELSEWHERE]);
-  });
-
-  it('stops re-spending when nothing was refunded', async () => {
-    // Every reference was contacted, so there is no refund to re-spend and the
-    // rest stay deferred rather than looping.
-    const asked: string[][] = [];
-    const { resolver } = resolverOver(
-      async (iris) => {
-        asked.push([...iris]);
-        return iris.map((iri) => [iri, { name: 'a place' }]);
-      },
-      { limits: { batchSize: 1, fetchesPerResolver: 1 } },
-    );
-
-    const resolved = await resolver.resolveAll([MAASTRICHT, ELSEWHERE]);
-
-    expect(asked).toEqual([[MAASTRICHT]]);
-    expect(resolved.get(ELSEWHERE)).toMatchObject({ outcome: 'unresolved' });
   });
 
   it('takes a caller’s own threshold for writing a host off', async () => {

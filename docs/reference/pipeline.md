@@ -30,7 +30,7 @@ const pipeline = new Pipeline({
     new Stage({
       name: 'per-class',
       itemSelector: new SparqlItemSelector({
-        query: 'SELECT DISTINCT ?class WHERE { ?s a ?class }',
+        query: 'SELECT DISTINCT ?class WHERE { ?s a ?class } ORDER BY ?class',
       }),
       readers: new SparqlConstructReader({
         query:
@@ -132,7 +132,7 @@ A stage groups an item selector, one or more readers, and configuration:
 new Stage({
   name: 'per-class',
   itemSelector: new SparqlItemSelector({
-    query: 'SELECT DISTINCT ?class WHERE { ?s a ?class }',
+    query: 'SELECT DISTINCT ?class WHERE { ?s a ?class } ORDER BY ?class',
   }),
   readers: reader,
   batchSize: 100,
@@ -142,38 +142,28 @@ new Stage({
 
 #### Batch size
 
-`batchSize` (default: 10) controls how many variable bindings are passed to each reader call as a `VALUES` clause. It also sets the page size for the item selector's SPARQL requests, so that each paginated request fills exactly one reader batch.
+`batchSize` (default: 10) controls how many variable bindings are passed to each reader call as a `VALUES` clause. The stage cuts the item selector’s output into batches of this size. From a live endpoint, `SparqlItemSelector` fetches one batch per SELECT; from an imported dump it fetches larger pages, so the stage does not wait on a SELECT before every batch (see [page size](#page-size)).
 
-Some SPARQL endpoints enforce different result limits for SELECT and CONSTRUCT queries. Since the selector uses SELECT and the reader uses CONSTRUCT, a `LIMIT` clause in the selector query overrides `batchSize` as the page size. Use this when the endpoint caps SELECT results below your desired batch size:
+A source the pipeline imported for this run answers larger batches than a live endpoint that others share. Give `batchSize` a value per source kind to use both well:
 
 ```typescript
-// Endpoint caps SELECT results at 500, but each CONSTRUCT can handle 1000 bindings.
 new Stage({
-  name: 'per-class',
-  itemSelector: new SparqlItemSelector({
-    query: 'SELECT DISTINCT ?class WHERE { ?s a ?class } LIMIT 500',
-  }),
+  name: 'extract',
+  itemSelector,
   readers: reader,
-  batchSize: 1000, // Two SELECT pages fill one CONSTRUCT batch.
+  batchSize: { endpoint: 10, imported: 100 },
 });
 ```
+
+The pipeline tells the stage which kind it reads: `imported` when the [distribution resolver](#distribution-resolver) imported a data dump, `endpoint` otherwise. A stage whose `sourceFor` substitutes another distribution reads a source the pipeline did not resolve, so it takes the `endpoint` value. A [chained](#chaining-stages) child reads its parent’s output, which the pipeline serves itself, so it takes the `imported` value.
 
 #### Concurrency
 
 `maxConcurrency` (default: 10) limits the total number of concurrent SPARQL queries. Within each batch, all readers run in parallel; the number of concurrent batches is automatically reduced to `⌊maxConcurrency / readerCount⌋` so the total query pressure stays within the limit. For example, with `maxConcurrency: 10` and two readers per stage, up to 5 batches run concurrently (10 SPARQL queries total).
 
-How many of those queries reach the endpoint at once is up to the pipeline’s `limiter`, a [`HostLimiter`](host-limiter) keyed on the dataset’s IRI. Each dataset starts at one query in flight, and its limit then adapts to how the endpoint responds, up to the limiter’s per-host ceiling; see [the adaptive limit](host-limiter#an-adaptive-per-host-limit). Without one, every reader shares a default `createHostLimiter(10, 10)`, so a `maxConcurrency` above 10 needs a limiter with a higher ceiling to make a difference. A weak endpoint that falls over at two queries is therefore asked one at a time, while a strong one climbs to the ceiling within a few batches.
+How many of those queries reach the endpoint at once is up to the pipeline’s own limiter, a [`HostLimiter`](host-limiter) keyed on the endpoint: [`endpointKeyOf(distribution.accessUrl)`](host-limiter#contract), its host and path. Each endpoint starts at one query in flight, and its limit then adapts to how it responds, up to the highest `maxConcurrency` of any stage. A weak endpoint that falls over at two queries is therefore asked one at a time, while a strong one climbs to the ceiling within a few batches; see [the adaptive limit](host-limiter#an-adaptive-per-host-limit).
 
-To share one limit with a [resolver](resolver) that loads the same backend – IIIF manifests served by the endpoint’s own server, say – create the limiter once and pass it to both, and key the resolver on the dataset too:
-
-```typescript
-const limiter = createHostLimiter(10, 8);
-const pipeline = new Pipeline({ /* … */ limiter });
-const manifests = createResolver({
-  /* … */ limiter,
-  host: (reference) => reference.dataset,
-});
-```
+Datasets served by one endpoint share its limit and its pauses, while separate endpoints on one host – one SPARQL server per dataset, say – each get their own. The next dataset on an endpoint starts at the limit the previous one left, as long as the limiter still remembers it: it keeps its last 1,000 idle keys. Each pipeline has a limiter of its own, so nothing it learned carries over to another pipeline in the same process.
 
 #### Queue capacity
 
@@ -235,11 +225,36 @@ The distribution is received at run time, so selectors don't need the endpoint U
 
 ```typescript
 new SparqlItemSelector({
-  query: 'SELECT DISTINCT ?class WHERE { ?s a ?class }',
+  query: 'SELECT DISTINCT ?class WHERE { ?s a ?class } ORDER BY ?class',
 });
 ```
 
+**Order the query totally over its projected variables.** The selector pages with `LIMIT`/`OFFSET`, and SPARQL leaves solution order unspecified without `ORDER BY`, so an endpoint may answer each page in a different order – skipping or repeating rows between pages, and making a [`maxResults`](#capping-total-results-with-maxresults) sample unreproducible. A skipped row is an item never read. An engine may happen to answer a plain triple-pattern scan in a stable order, but a `DISTINCT` over a join is commonly answered from a hash table whose order can vary between requests, so add `ORDER BY` over every projected variable (e.g. `ORDER BY ?class`, or `ORDER BY ?s ?o` for two). A total order keeps pages from skipping or repeating rows only while the data does not change during the selection: `OFFSET` counts rows, so a row added or removed before the current offset shifts every later page by one. `selectByClass` in [@lde/search-pipeline](./search-pipeline) orders by its root variable.
+
 A row is yielded only when **every** projected variable binds a `NamedNode` – binding values double as stable item identities downstream, which a blank-node label or literal cannot provide. Other rows are dropped client-side but still count toward pagination, so they are fetched first; to skip them at the endpoint, filter in the query itself (e.g. `FILTER(isIRI(?s))`, as `selectByClass` in [@lde/search-pipeline](./search-pipeline) does with `FILTER(!isBlank(?root))`).
+
+#### Page size
+
+`SparqlItemSelector` fetches its bindings in pages of `pageSize` per SELECT, and the stage cuts each page into batches. The default depends on what the stage reads ([source kinds](#batch-size)):
+
+- From an **imported dump**, a page holds 1000 bindings, or the stage’s `batchSize` when that is larger. The dump serves this run alone, and fewer pages mean fewer round trips: on a QLever import of 17574 roots, a stage ran 25–30% faster with pages of 1000 than with one page per batch.
+- From a **live endpoint**, a page holds one batch, as many bindings as the stage’s `batchSize`. An endpoint that streams results stops early on a small `LIMIT`, so a larger page of a heavy SELECT may time out where small pages would not.
+
+From an imported dump the default page is also no larger than [`maxResults`](#capping-total-results-with-maxresults) needs, or one batch when that is larger, so a small sample fetches no rows it never yields. Each page is read in full before its first binding is yielded, so a page’s response is closed before the stage extracts its batches; memory is bounded by the page size.
+
+Some SPARQL endpoints enforce different result limits for SELECT and CONSTRUCT queries. A `LIMIT` clause in the selector query overrides `pageSize`; use it when the endpoint caps SELECT results below the page size you want:
+
+```typescript
+// Endpoint caps SELECT results at 500, but each CONSTRUCT can handle 1000 bindings.
+new Stage({
+  name: 'per-class',
+  itemSelector: new SparqlItemSelector({
+    query: 'SELECT DISTINCT ?class WHERE { ?s a ?class } LIMIT 500',
+  }),
+  readers: reader,
+  batchSize: 1000, // Two SELECT pages fill one CONSTRUCT batch.
+});
+```
 
 #### Capping total results with `maxResults`
 
@@ -247,7 +262,8 @@ By default, `SparqlItemSelector` paginates through **all** matching rows: any `L
 
 ```typescript
 new SparqlItemSelector({
-  query: 'SELECT DISTINCT ?s WHERE { ?s a <http://example.com/Class> }',
+  query:
+    'SELECT DISTINCT ?s WHERE { ?s a <http://example.com/Class> } ORDER BY ?s',
   maxResults: 50,
 });
 ```
@@ -297,14 +313,14 @@ The query is templated per dataset and distribution, in order:
 
 Each query waits for a slot in the [pipeline’s limiter](#concurrency) and holds it until the endpoint starts answering. What the reader does then depends on the answer:
 
-| Answer                                       | Means                                 | Limit      | Then                                                                                                                   |
-| -------------------------------------------- | ------------------------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------- |
-| HTTP 502, 503 or 504, or a network error     | The endpoint is down or struggling    | Lowered    | Pause the dataset and try again, at most five times: 5, 15, 45, 135 and 405 s, or what `Retry-After` says, up to 405 s |
-| A timeout                                    | The query took longer than its budget | Lowered    | Fail the read                                                                                                          |
-| HTTP 500                                     | This query failed, not the endpoint   | Left alone | Split the batch, down to one root, which is reported as `rootSkipped` and left out                                     |
-| Anything else, such as a 400 for a bad query | The query is wrong                    | Left alone | Fail the read                                                                                                          |
+| Answer                                             | Means                                          | Limit      | Then                                                                                                                                                           |
+| -------------------------------------------------- | ---------------------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| HTTP 408, 429, 502, 503 or 504, or a network error | The endpoint is down, struggling or throttling | Lowered    | Pause the endpoint and try again, at most five times: 5, 15, 45, 135 and 405 s, or what `Retry-After` says; fail the read at once if that is longer than 405 s |
+| A timeout                                          | The query took longer than its budget          | Lowered    | Fail the read                                                                                                                                                  |
+| HTTP 500                                           | This query failed, not the endpoint            | Left alone | Split the batch, down to one root, which is reported as `rootSkipped` and left out                                                                             |
+| Anything else, such as a 400 for a bad query       | The query is wrong                             | Left alone | Fail the read                                                                                                                                                  |
 
-The backoff adds up to about 10 minutes, long enough to outlast a backend restart; a failed read then fails its stage, and the [reactive dump fallback](#distribution-resolver) takes over if configured. A pause drops the dataset’s limit to 1, so after it only one query goes out, and that query is the probe: if it is answered, the limit climbs back; if not, the next, longer pause follows.
+The backoff adds up to about 10 minutes, long enough to outlast a backend restart; a failed read then fails its stage, and the [reactive dump fallback](#distribution-resolver) takes over if configured. A pause drops the endpoint’s limit to 1, for every dataset and resolver keyed on it, so after it only one query goes out, and that query is the probe: if it is answered, the limit climbs back; if not, the next, longer pause follows.
 
 A 500 that keeps coming back usually means the query does not fit in the endpoint’s memory for these roots, at any load. The reader reads each half of the batch, one after the other, splitting again where a half still fails, so a single root that will not extract does not cost the rest of its batch. A batch of 10 with one such root costs at most 19 queries. Each half is asked for only once the one before it has been read, so a split adds no load of its own. When not one root of the batch answers, the endpoint fails this query whatever the roots, and the read fails rather than coming out empty. A read without bindings has nothing to split, and fails.
 
@@ -337,7 +353,7 @@ By default, every SPARQL request uses the same 5-minute budget. When a pipeline 
 A `TimeoutPolicy` decides the budget for each SPARQL request and observes the outcome. Two are built in:
 
 - **`ConstantTimeoutPolicy(timeoutMs)`** – returns the same budget for every request. The implicit default when `PipelineOptions.timeout` is omitted (`constantTimeoutPolicy(300_000)`).
-- **`AdaptiveTimeoutPolicy({ defaultMs, tightenedMs, tightenAfterTimeouts })`** – per-endpoint state machine. Each endpoint is either _healthy_ (use `defaultMs`) or _tightened_ (use `tightenedMs`). After `tightenAfterTimeouts` consecutive `timeout` outcomes the endpoint flips to _tightened_; a single `ok` flips it back to _healthy_.
+- **`AdaptiveTimeoutPolicy({ defaultMs, tightenedMs, tightenAfterTimeouts })`** – per-endpoint state machine. Each endpoint is either _healthy_ (use `defaultMs`) or _tightened_ (use `tightenedMs`). After `tightenAfterTimeouts` consecutive `timeout` outcomes at `defaultMs` the endpoint flips to _tightened_; a single `ok` flips it back to _healthy_. A timeout at `tightenedMs` doesn’t count: it may just be a heavy query on a healthy endpoint, so the next request re-probes at `defaultMs`, one probe at a time. If that probe succeeds the endpoint relaxes; if it times out, the endpoint stays tightened and the gap until the next probe doubles – 1, 2, 4… timeouts at `tightenedMs`, up to 64 – while a probe that fails with another error keeps the gap. A healthy-but-slow endpoint therefore loses one request rather than every heavy query until a cheap one happens to pass, and an endpoint that is genuinely down waits out the full budget on fewer and fewer requests.
 
 `PipelineOptions.timeout` accepts a `() => TimeoutPolicy` factory. The pipeline invokes it once per dataset, so policy state resets between datasets and one bad dataset can’t poison the next:
 
@@ -364,7 +380,7 @@ Outcomes are classified as:
 
 Transitions are reported as `timeoutTightened` / `timeoutRelaxed` events; `ConsoleReporter` prints them as `↘ Tightened` / `↗ Relaxed` lines so operators can tell a fast-failed stage from an unexpected speedup.
 
-Implement `TimeoutPolicy` directly for custom strategies (closing over shared state in the factory if you want it to span datasets).
+Implement `TimeoutPolicy` directly for custom strategies (closing over shared state in the factory if you want it to span datasets). `beforeRequest` returns a `RequestBudget`, and the caller hands that same object back to `afterRequest` as `budget`, so a policy can tell by identity which request is reporting.
 
 Timeouts live at the pipeline level – neither `SparqlConstructReader` nor `SparqlItemSelector` accept their own `timeout` option. Per-endpoint state belongs in the adaptive policy, and per-stage budgets aren’t supported. Reusable stage facades ([@lde/pipeline-void](./pipeline-void), [@lde/pipeline-shacl-sampler](./pipeline-shacl-sampler)) follow the same convention.
 

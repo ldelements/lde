@@ -118,13 +118,20 @@ fails this – accepts. The endpoint path defaults to `/graphql`
   asks for, measured with
   [graphql-query-complexity](https://github.com/slicknode/graphql-query-complexity):
 
-  | Selection                                   | Cost              |
-  | ------------------------------------------- | ----------------- |
-  | A search field (each alias counts)          | 1                 |
-  | A joined reference (`lookup`), at any depth | 1 per target type |
-  | A facet key                                 | 1                 |
-  | A range facet’s `all` extent                | 1 more            |
-  | A plain stored field or an inline reference | 0, at any depth   |
+  | Selection                                   | Cost                   |
+  | ------------------------------------------- | ---------------------- |
+  | A search field (each alias counts)          | 1                      |
+  | A joined reference (`lookup`), at any depth | 1 per target type      |
+  | A facet key                                 | 1                      |
+  | A range facet’s `all` extent                | 1 more                 |
+  | Each part of a `‹Type›‹Field›Facet` object  | 1                      |
+  | A `query` on a reference facet              | 1 more per target type |
+  | A plain stored field or an inline reference | 0, at any depth        |
+
+  In a field’s facet object every part selected is charged on its own –
+  `buckets`, `totalValues`, `exists`, a range facet’s `all`, `matching` and
+  `buckets`, and each part of a leaf’s – so `buckets` with `totalValues`
+  costs 2 where the same pair on a plain `IRIFacet` costs 1.
 
   A lookup fetches the referents of a whole page in one request, and the facet
   keys of a search share one request, so `perPage` does not enter the cost.
@@ -136,7 +143,8 @@ fails this – accepts. The endpoint path defaults to `/graphql`
   error such as `Query costs 112; at most 100 is allowed.`
 
 - **Result limits**: `maxPerPage` (a `buildGraphQLSchema` option, default 100)
-  rejects a larger `perPage`, and `maxSearches` (default 10) rejects an
+  rejects a larger `perPage`, `maxFacetLimit` (default 100) a larger facet
+  `limit`, and `maxSearches` (default 10) rejects an
   operation that selects more root fields – each alias counts, as does a custom
   field merged in; fragments are flattened, and introspection is exempt.
 
@@ -247,7 +255,7 @@ editor.
 
   An **inline reference** takes the same two-armed input, because it asks the
   same question one hop out – `in` for the ids its entries hold (its
-  [identity companion](./search#data-on-the-edge)), `where` for a condition on
+  [identity](./search#data-on-the-edge)), `where` for a condition on
   an entry, typed `‹Edge›Where`. Only the cost differs: a join crosses into
   another collection, a nesting stays inside the document.
 
@@ -260,18 +268,94 @@ role: { in: ["etser"] } } }` asks for _this person in this role_, where the
   same two conditions written as sibling clauses could be satisfied by two
   different entries.
 
+  A field declaring [`presence`](./search#filtering-and-faceting-on-presence)
+  gains an **`exists: Boolean`** arm: `where: { dateCreated: { exists: true } }`
+  matches the documents that hold a value, `false` those that hold none. A
+  field that is also `filterable` takes a variant of its own filter named
+  `‹Filter›OrExists` – `DateRangeOrExists`, `KeywordFilterOrExists`,
+  `PersonFilterOrExists` – with the same keys plus `exists`, one variant per
+  filter and shared like it; a field declaring presence alone takes
+  `ExistsFilter`, which holds `exists` only. `exists` asks a question of its
+  own, so setting it beside another key of the same input is an error naming
+  the rewrite: write each as its own condition, or drop `exists`, since any
+  other condition already matches only documents that hold a value. A
+  reference’s variant is a type of its own, so the
+  [refined discovery strategy](#finding-which-fields-accept-an-iri) does not
+  reach it; its `in` element is still `IRI`, so the coarse one does. No join
+  reads a presence companion yet, so a type declaring presence is reached
+  through a join by `‹Type›JoinedWhere`: its own `where` without `exists`, and
+  without the keys of fields declaring presence alone. A type declaring none
+  keeps one `‹Type›Where` for both.
+
+  A reference counting leaves of its referents – an inline reference’s
+  [faceted](./search#faceting-on-an-entry-s-leaf) or
+  [presence leaves](./search#presence-on-an-entry-s-leaf), a lookup’s
+  [presence leaves](./search#on-a-lookup-s-referents) – takes a filter of its
+  own, **`‹Type›‹Field›Filter`**: `@oneOf` over `in` (the ids it holds, for a
+  lookup or an inline reference naming an identity) and `where`, typed
+  **`‹Type›‹Field›Where`**. For an inline reference that `where` names the
+  entries’ filterable leaves, as the shared `‹Edge›Where` does; for both
+  kinds it names each presence leaf, taking `exists` – `ExistsFilter`, or
+  `‹Filter›OrExists` for an inline entry’s filterable leaf:
+  `where: { contentLocation: { where: { latitude: { exists: true } } } }`.
+  A lookup’s `where` names its presence leaves alone, and each key is a plain
+  criterion on the root document, ANDed like sibling keys:
+  `{ latitude: { exists: true }, longitude: { exists: true } }` is two
+  conditions, each on whether any referent holds that leaf; inside an `or`
+  alternative it sets one key, as a joined condition does. In an inline
+  reference’s `where`, whether any entry holds a value is recorded per
+  document, so `exists` is welded to nothing else: setting it beside another
+  key of the same `where` is an error naming the rewrite into two conditions.
+  Through a join, where no companion is read, an inline reference with
+  presence leaves takes `‹Type›‹Field›JoinedFilter`, without `exists`, and a
+  lookup its plain `‹Target›Filter`.
+
+  **Adding leaves changes the reference’s filter type.** A reference that
+  gains faceted or presence leaves moves from the shared `‹Edge›Filter` or
+  `‹Target›Filter` to its own `‹Type›‹Field›Filter`, so a client’s variables
+  typed with the old name stop validating – a breaking change to the API,
+  even where the reference’s `in` arm is unchanged. Like `‹Filter›OrExists`,
+  the per-reference filter is a type of its own, so the refined discovery
+  strategy does not reach it.
+
 - **`orderBy`**: `RELEVANCE` plus every `sortable` field, as an enum – field
   names SCREAMING_SNAKE_CASEd (`datePosted` → `DATE_POSTED`); `direction`
   defaults to `DESC`.
-- **Facets**: a keyed object with one field per `facetable` field, typed by
+- **Facets**: a keyed object with one key per field anything is counted on, typed by
   the field’s declaration:
-  - a **reference** facet returns `[IRIBucket!]!` – `value` (an `IRI`) +
-    `count` + the resolved data `label`. `value` is typed as the
-    `‹Target›Filter` that selects it takes, so a bucket feeds that filter
-    back without a cast;
-  - a plain value facet returns `[ValueBucket!]!` – the same shape with a
-    `String` `value` and a `null` `label`, for token/free-string facets whose
-    display the consumer owns (its own i18n, or the value itself);
+  - a **reference** facet returns an `IRIFacet!` – `buckets: [IRIBucket!]!`,
+    each a `value` (an `IRI`) + `count` + the resolved data `label`, and
+    `totalValues`. `value` is typed as the `‹Target›Filter` that selects it
+    takes, so a bucket feeds that filter back without a cast;
+  - a plain value facet returns a `ValueFacet!` – the same shape with
+    `[ValueBucket!]!` buckets: a `String` `value` and a `null` `label`, for
+    token/free-string facets whose display the consumer owns (its own i18n,
+    or the value itself);
+
+  Both take a `limit` argument: at most that many buckets, the values with
+  the highest counts, between 1 and the `maxFacetLimit` schema option
+  (default 100); omitted, the engine’s own cap applies. `limit` is a cap, not
+  a page: `limit: 100` returns a superset of what `limit: 10` returned, and
+  there is no offset. A “show more” panel asks for a larger `limit` on that
+  one facet in a follow-up query with `perPage: 0`. `totalValues` is how many
+  distinct values the facet holds over the same documents, however many
+  buckets came back, so a client can show “10 of 195” and knows whether a
+  larger `limit` would bring more; it may be an estimate on large result
+  sets, and is `null` when the engine does not report it;
+
+  A facet whose values are text someone can type – a plain value facet, or a
+  reference facet with a label source – also takes a `query` argument, which
+  searches its values: `creator(query: "rem", limit: 10)` returns the
+  creators matching “rem”, counted over the current results, highest count
+  first and capped at `limit`. A reference facet matches its referents by
+  their own type’s free-text search, so a label or alternate name finds them.
+  Under a query, `totalValues` is the number of matching values, and `null`
+  when the engine cannot tell. A selected value that does not match is left
+  out – the one exception to a facet reporting its selected values – so read
+  the selection from the facet without a query, which an alias can load in
+  the same request. Text shorter than three characters is no query. A reference facet without a
+  label source, and a boolean or range facet, has no `query` argument
+  ([facet queries](./search#searching-a-facet-s-values));
   - a numeric field is a [range facet](./search#range-facets) and returns an
     object rather than a list: `IntRangeFacet`, `FloatRangeFacet` or
     `DateRangeFacet`. Its `all` is the extent over the whole collection,
@@ -304,14 +388,39 @@ role: { in: ["etser"] } } }` asks for _this person in this role_, where the
     the engine counted documents for it, so a uniform result set yields one
     bucket, not two.
 
-  An inline reference’s [faceted leaves](./search#faceting-on-an-entry-s-leaf)
-  are served one level down, under the reference: `facets { associatedMedia {
-license { value count } } }`, typed `‹Type›‹Reference›Facets`.
+  **One object per field.** A field counting more than its own values –
+  its presence, or a leaf of its referents – is served as an object of its
+  own, **`‹Type›‹Field›Facet`**, holding everything counted on it:
+
+  ```graphql
+  facets {
+    material(limit: 20) { buckets { value count } totalValues }
+    dateCreated { exists { value count } }
+    contentLocation(limit: 20) {
+      buckets { value count }
+      totalValues
+      latitude { exists { value count } }
+    }
+    associatedMedia { license(limit: 5) { buckets { value count } } }
+  }
+  ```
+
+  Its own values are `buckets` and `totalValues` (a numeric field’s `all`,
+  `matching` and `buckets` instead), capped by the field’s `limit`, which caps
+  nothing else; `exists` counts its presence. Each leaf is a key of its own: a
+  leaf counted only by value keeps its plain facet type (`license(limit):
+IRIFacet!`), and a leaf whose presence is counted is an object again,
+  **`‹Type›‹Field›‹Leaf›Facet`** (`WorkContentLocationLatitudeFacet`), with
+  `exists` and – when it is faceted by value too – its `buckets`,
+  `totalValues` and `limit`. A field counting only its own values keeps
+  `IRIFacet`, `ValueFacet`, its range facet type or `[BooleanBucket!]!`. A
+  name a declaration took already is refused with a clear error.
 
   Selecting facet fields IS
   the request, and the whole selection is **batched per request**: one
   facet query over the listing’s filters, plus one unfiltered query when an
-  `all` is selected, dispatched as one `engine.searchFacets` call, so a
+  `all` is selected, and one more when a facet is loaded under two `limit`s
+  (two aliases), dispatched as one `engine.searchFacets` call, so a
   typical page costs the listing search plus one batched facet round-trip.
   The engine computes each facet with its own `where`-filter removed
   (skip-own-filter) and keeps every value that filter selects among its

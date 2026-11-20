@@ -1,3 +1,45 @@
+## 0.8.0 (2026-11-16)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.51.0
+
+## 0.7.3 (2026-11-16)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.50.3
+
+## 0.7.2 (2026-11-15)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.50.2
+
+## 0.7.1 (2026-11-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.50.1
+
+## 0.7.0 (2026-11-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.50.0
+
+## 0.6.0 (2026-11-13)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.49.0
+
+## 0.5.0 (2026-11-13)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/pipeline to 0.48.0
+
 ## 0.4.0 (2026-11-11)
 
 ### 🧱 Updated Dependencies

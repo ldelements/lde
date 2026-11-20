@@ -1,0 +1,14 @@
+@prefix schema: <http://schema.org/> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+
+# Licenses given as IRIs are counted.
+<http://example.org/record/1> schema:license <http://creativecommons.org/publicdomain/zero/1.0/> .
+<http://example.org/record/2> schema:license <http://creativecommons.org/publicdomain/zero/1.0/> .
+
+# dcterms:license, the Dublin Core (and DCAT) license property, is counted too.
+<http://example.org/record/5> dcterms:license <http://creativecommons.org/licenses/by/4.0/> .
+
+# Licenses given as text literals, as in Bonnefanten and RKD, are not IRIs:
+# they are not counted and must not fail the stage.
+<http://example.org/record/3> schema:license "CC0 1.0" .
+<http://example.org/record/4> schema:license "Gebruik vrij van rechten" .

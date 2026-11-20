@@ -323,6 +323,18 @@ export function hostKeyOf(url: URL): string {
 }
 
 /**
+ * The contention key of a service endpoint: its host and path, such as
+ * `sparql.example.org/dataset`, without query string or fragment. Separate
+ * services on one host – one SPARQL server per path behind a proxy, say – each
+ * get their own key, where {@link hostKeyOf} would tie them together. Like
+ * {@link hostKeyOf}, it falls back to the full href when the URL has no
+ * authority.
+ */
+export function endpointKeyOf(url: URL): string {
+  return url.host ? url.host + url.pathname : url.href;
+}
+
+/**
  * Coerce an optional concurrency budget to a usable value: a positive integer
  * is taken as-is; `undefined`, zero, negative, fractional or `NaN` falls back
  * to `fallback`.

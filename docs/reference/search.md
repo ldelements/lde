@@ -278,7 +278,10 @@ time).
 **Declarations are also validated at runtime** (for declarations built
 outside TypeScript – a SHACL generator, plain JS): `searchSchema()`
 rejects a structurally invalid declaration (duplicate or non-identifier field
-names, a field named `id` – see [Lookup by IRI](#lookup-by-iri) –, a locale containing `_`, an `output`
+names, a field named `id` – see [Lookup by IRI](#lookup-by-iri) –, a field
+named like an `output` text sibling’s display field, such as `title_tags`
+beside `title`, which would be read back as its language `tags`, a locale
+containing `_`, an `output`
 reference without `ref`, `text` without locales, `locales` on a non-text kind,
 `facetRanges` on a non-numeric kind, `facetable` on a `period`, `searchable`/`transform` on a kind whose
 projection cannot honour it, `filterable`/`facetable` on `text`, two types
@@ -524,7 +527,8 @@ declare `facetable` or `sortable`, and `searchSchema` rejects those naming the
 field: an engine's facet counts over a nested field are computed per _document_
 rather than per entry, so a bucket would count entries that did not match the
 filter, and there is no sorting _into_ an element of an array. Facet an edge
-through its [identity companion](#data-on-the-edge) instead.
+through its [identity](#data-on-the-edge) instead, or list the leaf in
+[`facetedLeaves`](#faceting-on-an-entry-s-leaf).
 
 A field's **capabilities** – `output`, `filterable`, `facetable`, `sortable`,
 `searchable`, `joinable`; the code calls them Roles – are independent opt-ins,
@@ -537,8 +541,8 @@ for the one.
 A referent needs no identity of its own: the nesting carries its fields, not a
 document key. An entry of a Reference Type carries **no `id` at all** – named
 node or blank – because nothing resolves an entry by key: it is kept in no
-collection, a weld names the flat identity companion beside it, and an entry's
-own key answers no query. So a profile that allows a blank node here needs no
+collection, a filter reads the ids its fields hold, and an entry's own key
+answers no query. So a profile that allows a blank node here needs no
 flattening workaround, and an entry's shape never depends on whether a publisher
 minted an IRI for the thing it describes.
 
@@ -581,6 +585,30 @@ type, but its facet buckets are still labelled). A Root Type specifically, since
 the labels are read from that collection: it must declare an `output`,
 `searchable` text field named by its label field (below), and `searchSchema`
 validates this schema-wide, so a dangling or unsuitable source fails at startup.
+
+A **`searchable`** reference that names a label source finds the document by
+its referents’ **labels**, not by their IRIs: a work whose `about`
+points at the term “Starluster” matches the query `starluster`. The extraction
+reads each referent’s label field off the referent, one hop from the document,
+beside its key. The projection folds the labels in the label field’s own
+`locales` into the reference’s `${name}_search` companion, so a query still
+searches one collection. The label field must therefore have a `path`.
+
+Before projecting, `@lde/search-pipeline` passes each referent’s key and label,
+as read, through the target type’s own transforms, so the reference is searched
+by the labels the target’s documents get: where a transform replaces a term’s
+label with an Authority’s, the referring document is searched by the
+Authority’s. A transform on a label source therefore also receives nodes that
+carry only those two fields, once per referring batch. A referent stated by IRI
+alone, with no triple of its own, gives a transform nothing to act on and adds
+nothing to search – unless the reference also counts a
+[presence leaf](#on-a-lookup-s-referents), which seeds it. A copied label
+changes when the document is reindexed.
+
+A reference naming no label source still folds its IRIs, and a `derive`d or
+`from` reference reads no referent, so it is never searched by labels
+([ADR 38](../decisions/0038-search-a-document-by-its-referents-labels.md),
+[ADR 39](../decisions/0039-apply-a-label-sources-transforms-to-its-referents.md)).
 
 The resolved label carries **one word** wherever it surfaces: on the label
 source’s own type, on the reference that resolves against it (`dataset { id
@@ -660,14 +688,17 @@ Two declarations make that work.
 
 **`identity`** names the nested reference whose ids identify each entry. A
 nested object is not something an engine can filter or facet by id, so a
-reference naming an `identity` fans out a flat **identity companion**
-holding those ids, which the engine filters and facets in its place. The logical
-field keeps one name; only the physical fanout knows there are two. It is
-declared rather than inferred – an edge may carry several references, and only
-you know which one identifies it – and naming it is also what supplies the
-target that types the filter and carries the facet's labels. Both directions are
-enforced: `facetable` without an `identity` has nothing to count, and an
-`identity` without `filterable` or `facetable` is a companion nothing reads.
+reference naming an `identity` filters and facets that reference's leaf inside
+each entry in its place. A work naming one person in two roles counts once
+under that person: the engine counts the leaf per document. The logical field
+keeps one name; only the physical fanout knows they differ. It is declared
+rather than inferred – an edge may carry several references, and only you know
+which one identifies it – and naming it is also what supplies the target that
+types the filter and carries the facet's labels. The named reference must be
+`filterable`, which is what indexes its leaf, and therefore names one endpoint
+per entry: an entry naming several endpoints is several entries. Both directions are enforced:
+`facetable` without an `identity` has nothing to count, and an `identity`
+without `filterable` or `facetable` is a leaf nothing reads.
 
 A reference type made of literals alone, such as a `PropertyValue` with a
 `value` and a `propertyID`, has no ids to name. Without an `identity` it can
@@ -679,7 +710,7 @@ declares no filterable field.
 where: { identifier: { where: { value: { in: ["G11125-19"] } } } }
 ```
 
-Because the companion holds ids only, its facet is **exact**: an endpoint the
+Because the leaf holds ids only, its facet is **exact**: an endpoint the
 source named inline contributes no bucket rather than a bucket keyed on a label,
 so two people who share a name are never merged. The cost is stated rather than
 hidden – the buckets do not sum to the result count, and that belongs in the
@@ -703,10 +734,10 @@ only where there is no id, because the two failures differ – at index time the
 question is _is this endpoint identified_, at query time it is _is that document
 indexed_.
 
-A `local` lookup stores an object, so it filters and facets the way an inline
-reference does: `filterable` or `facetable` fans out a flat `${name}_id`
-companion holding the endpoints’ document keys, and the engine filters and
-facets that instead. Its buckets are keyed exactly like the target’s
+A `local` lookup stores an object, and its endpoints’ ids are a level further
+in than a condition on one entry reaches. So `filterable` or `facetable` fans
+out a flat `${name}_id` companion beside it, holding the endpoints’ document
+keys, and the engine filters and facets that instead. Its buckets are keyed exactly like the target’s
 documents – two datasets’ nodes aligned to one authority record count in one
 bucket, labelled from the target’s collection – and an endpoint without an id
 contributes none. A target’s [facet policy](#facet-policy) narrows the facet as it
@@ -870,9 +901,10 @@ fragment reaches the fields only one kind has. The interface itself carries
 `id` and whatever every target declares alike.
 
 **Order is precedence.** A referent two collections hold – two Root Types
-whose `class` selections overlap – belongs to the first target listed, and so
-does a stored referent whose `rdf:type` matches none of them. List the most
-specific type first.
+whose `class` selections overlap – belongs to the first target listed unless
+the referring document stored which kind it is (see below), and a stored
+referent whose `rdf:type` matches none of them belongs to the first target too.
+List the most specific type first.
 
 **A stored referent says which kind it is.** A [`local`](#data-on-the-edge)
 lookup stores what the referring document states, and most such referents are
@@ -882,7 +914,11 @@ each target’s `class`, projecting the entry through the matching declaration
 and recording which under a reserved physical name (`_target`, which no type
 may declare). A stored referent that no collection answers for – unidentified,
 or identified but not indexed – is then still served as the kind it was stated
-to be. The nested object declares the union of the targets’ fields, so two
+to be. A stored referent other collections answer for is served as the kind it
+was stored as too, not as the first one listed: it takes the answer of its own
+kind’s collection, or what was stored where that collection holds no record of
+it. Two documents can type the same IRI differently, and each keeps its own
+reading. The nested object declares the union of the targets’ fields, so two
 targets that both declare a field must declare it alike – same `kind`, same
 arity, same Roles, and for a reference the same strategy and referent;
 `searchSchema` rejects the pair otherwise.
@@ -1091,7 +1127,16 @@ sentence written here is the one that reaches the reader.
 ### Facet buckets
 
 A query’s facets come back as one `Facet` per requested field: its `buckets`,
-and for a [range facet](#range-facets) its `extent`.
+for a [range facet](#range-facets) its `extent`, and – when the engine
+reports it – `totalValues`, how many distinct values the facet holds however
+many buckets came back.
+
+A query’s `facetLimits` caps a facet at that many buckets, the values with the
+highest counts; a facet without an entry gets the engine’s own cap. It is a
+cap, not a page: a larger limit returns a superset of a smaller one, and there
+is no offset. `facetSearches` gives the facets of each distinct limit a search
+of their own, so an engine that caps a whole search alike still caps each
+facet at its own limit.
 
 Every engine computes a facet the same way. It counts the documents under
 every `where` clause **except its own** (skip-own-filter), so a facet the user
@@ -1107,6 +1152,53 @@ like any other: the `status` facet counts across every status and reports
 `valid` as selected. An adapter plans the searches this takes with
 `facetSearches` from `@lde/search/adapter`
 ([ADR 29](../decisions/0029-make-skip-own-filter-what-a-facet-means.md)).
+
+#### Searching a facet’s values
+
+A query’s `facetQueries` searches a facet’s values by text: type “rem” in the
+`creator` facet and get the creators matching it, counted over the current
+results. Where `facetLimits` shows only the values with the highest counts,
+this finds the one a person is looking for among thousands.
+
+```ts
+{
+  ...query,
+  facets: ['creator'],
+  facetQueries: { creator: 'rem' },
+  facetLimits: { creator: 10 },
+}
+```
+
+A facet that takes a query is one whose values are text someone can type
+(`isQueryableFacet`):
+
+- a **`keyword`** facet, matched on its values’ own text;
+- a **reference** facet whose values have a [label source](#field-model),
+  matched by the free-text search of the types its values belong to – their
+  labels, alternate names, whatever that type searches, as a search of that
+  type for the same text would. A label only the target’s collection holds,
+  supplied there by enrichment, finds the value too.
+
+A reference without a label source holds bare IRIs nobody types, and a
+boolean, range or presence facet has no values to search, so `validateQuery`
+rejects a query on any of them (`not-queryable`). Text shorter than three
+characters, once trimmed (`MIN_FACET_QUERY_LENGTH`), is no query: below that,
+prefix and typo matching match next to nothing or nearly everything.
+
+Under a query a facet counts as it does without one – over the documents
+every `where` clause except its own leaves – and returns only the values that
+match, highest count first, capped at its limit. Its `totalValues` is how many
+matching values occur in those documents, absent where the engine cannot tell.
+`facetSearches` gives each facet with a query a search of its own.
+
+::: warning A selected value that does not match is left out
+Under a query a facet reports only the values matching it, **selected or
+not**. This is the one exception to a facet reporting every value its own
+clause selects: a selection that does not match the text is absent. The same
+facet without a query still reports it, so a selection can always be undone
+there – show the selected values from the facet without a query, and the
+query’s matches beside them.
+:::
 
 A `FacetBucket` always carries its `value` and `count`; what else it carries is
 decided by the facet’s kind, and a surface types the bucket accordingly (see
@@ -1124,7 +1216,10 @@ later:
   from. Only the consumer knows that `true` means “Met afbeelding”. Its bucket
   additionally carries **`is`**, the value as a real boolean, so it round-trips
   straight into the `is` filter that selects it;
-- a range-facet bin carries `min`/`max` instead – see below.
+- a range-facet bin carries `min`/`max` instead – see below;
+- a [presence](#filtering-and-faceting-on-presence) facet’s buckets are
+  `true` and `false` whatever the field’s kind, and carry `is` like a
+  `boolean` facet’s.
 
 ### Faceting on an entry’s leaf
 
@@ -1144,7 +1239,7 @@ holds. List the leaves in `ref.facetedLeaves`:
 
 The facet is named by its path, `associatedMedia.license`, in
 `SearchQuery.facets` and in the result, and GraphQL serves it as
-`facets { associatedMedia { license { value count } } }`. A bucket counts
+`facets { associatedMedia { license { buckets { value count } } } }`. A bucket counts
 **root documents**: a work with three reproductions, two under CC BY, counts
 once under CC BY. That answers “which works have a reproduction under this
 licence?”, and it is how the engine counts a value stored under every entry,
@@ -1159,13 +1254,167 @@ nobody’s own, as a clause spanning two fields is not
 
 `searchSchema` holds each leaf to what that round trip needs: it is declared
 on the reference type, `filterable`, and a `keyword`, `boolean` or `reference`;
-the reference is `filterable`, not `facetable` itself (both facets would be
-named after it), and sits on a Root Type. A `lookup` leaf whose target declares
+the reference is `filterable` and sits on a Root Type, and a leaf is not named
+`buckets`, `totalValues` or `exists`, which name parts of the reference’s
+facet object. A reference that is `facetable` itself counts its own values
+beside its leaves, in one facet object. A `lookup` leaf whose target declares
 a [facet policy](#facet-policy) is refused for now.
 
 A condition welded to one entry is owned by a faceted leaf, never by an
 `identity` facet: select an identity facet’s bucket through the reference’s
 `in` arm, `where: { contributor: { in: […] } }`.
+
+### Filtering and faceting on presence
+
+A field can be filtered and faceted on **whether the document holds a value**,
+without a second field beside it. Declare `presence`:
+
+```ts
+{
+  name: 'dateCreated',
+  kind: 'date',
+  path: 'https://schema.org/dateCreated',
+  output: true,
+  filterable: true,
+  presence: true,
+}
+```
+
+The field then takes the criterion `{ field: 'dateCreated', exists: true }`
+(or `false`), and serves the facet `dateCreated.exists`, with a `true` bucket
+for the documents that hold a value and a `false` bucket for those that hold
+none. Each bucket carries `is`, as a boolean facet’s does, and is selected by
+`exists`. `presence` is not a role: a query reads the companion, never the
+value, so a field declaring it alone stays an
+[internal field](#field-model) – projected, read for its companion, then
+pruned – and is not filterable by value.
+
+A document holds a value when its projected field does – a non-empty list or a
+defined scalar, which is what the response would serve. A value the field’s
+reader cannot read, such as a `period` stated as `onbekend`, is
+[reported and left out](#values-a-field-could-not-read), so a document whose
+only value is unreadable counts as holding none.
+
+An engine without a presence filter reads a boolean companion,
+`${name}_exists` (`physicalFields(field).exists`), which the projection writes on
+every document, `false` included – without the `false` the facet’s second
+bucket and `exists: false` would have nothing to read.
+
+The presence facet owns the `exists` clauses on its field, and nothing else: a
+`range` or `in` on the same field is another axis, so the presence facet counts
+under it, and `exists` is never the selection of a facet on the field’s values.
+`exists` is refused through a join path (`joined-presence`) and on a field
+declaring no presence (`no-presence`), which is also what a weld meets.
+
+`validateSearchType` accepts `presence` on a Root Type’s own field only, and
+`searchSchema` says why in full. It refuses
+it on a field of a Reference Type and on an inline reference, whose entries
+are counted through the reference’s
+[presence leaves](#presence-on-an-entry-s-leaf) instead; on a `text` field,
+which stores its values per language; and on a `boolean`, which states its own
+absence as `false`
+([ADR 40](../decisions/0040-filter-and-facet-a-field-on-whether-it-has-a-value.md)).
+A field that is also `facetable` counts both, its values and its presence
+([ADR 42](../decisions/0042-count-a-referents-leaf-and-a-fields-facets-in-one-object.md)).
+
+### Presence on an entry’s leaf
+
+A root document can be filtered and faceted on whether **any entry** of an
+inline reference holds a value for a leaf – “a work with a reproduction that
+has a thumbnail”. List the leaves in `ref.presenceLeaves`, beside
+[`facetedLeaves`](#faceting-on-an-entry-s-leaf):
+
+```ts
+{
+  name: 'associatedMedia',
+  kind: 'reference',
+  array: true,
+  output: true,
+  filterable: true,
+  ref: {
+    strategy: 'inline',
+    typeName: 'MediaObject',
+    presenceLeaves: ['thumbnailUrl'],
+  },
+}
+```
+
+The projection writes one boolean per root document,
+`associatedMedia_thumbnailUrl_exists` (`physicalFields(field).leafExists`): `true` when
+any entry holds a value for the leaf, in the sense above, and `false`
+otherwise – a document with no entries included. It is read before pruning, so
+a leaf declaring no role of its own still counts. A boolean inside each entry
+would not answer the question: an engine flattens it into one list per
+document, so a work with one entry that has a thumbnail and one that lacks it
+would count in both buckets.
+
+The facet is `associatedMedia.thumbnailUrl.exists`, and a bucket is selected
+by `exists` welded to one entry alone:
+`{ field: 'associatedMedia', entry: [{ field: 'thumbnailUrl', exists: true }] }`
+(GraphQL: `where: { associatedMedia: { where: { thumbnailUrl: { exists: true } } } }`).
+That weld is the facet’s own clause; a condition on the leaf’s value is not,
+nor is `exists` the selection of a facet on the leaf’s values. `exists`
+welded to other conditions is refused (`exists-in-weld`): whether any entry
+holds a value is recorded per document, so it cannot hold of the same entry
+as another condition. Through a join it is refused like any `exists`
+(`joined-presence`).
+
+The reference is `filterable` and sits on a Root Type; each leaf is declared
+by the reference type, named once, neither `text`, `boolean` nor an inline
+reference, and not named `buckets`, `totalValues` or `exists`. A leaf may be
+faceted on by value and by presence at once, and the reference may be
+`facetable` itself: everything counted on one field is served in one facet
+object
+([ADR 41](../decisions/0041-filter-and-facet-a-root-document-on-whether-an-entrys-leaf-has-a-value.md),
+[ADR 42](../decisions/0042-count-a-referents-leaf-and-a-fields-facets-in-one-object.md)).
+
+#### On a lookup’s referents
+
+A `lookup` stores only its referents’ ids, so it declares `presenceLeaves` to
+count a leaf of the documents it names – “a work with a place that has
+coordinates”:
+
+```ts
+{
+  name: 'contentLocation',
+  kind: 'reference',
+  path: 'https://schema.org/contentLocation',
+  array: true,
+  filterable: true,
+  ref: { strategy: 'lookup', target: 'Place', presenceLeaves: ['latitude'] },
+}
+```
+
+It is counted at index time, in the referring batch: the extraction reads
+each presence leaf one hop from the root, beside the target’s key and label,
+the target type’s transforms run on the referents
+([`@lde/search-pipeline`](./search-pipeline#referents-through-their-type-s-transforms)),
+and the projection writes `contentLocation_latitude_exists` from what they
+return. A referent the root’s graph states the leaf for counts; so does one a
+transform describes from its IRI alone – the type’s own transforms, for a
+lookup into its own type; one that neither states nor any transform describes
+– a failed lookup, say – counts as holding none. Only a referent with an IRI
+counts: a blank node is no id the lookup stores, so what the graph states of
+it does not count either.
+
+The facet is `contentLocation.latitude.exists`. Since the value is recorded on
+the root document, its criterion is a plain one on the root, naming the
+reference and the leaf:
+`{ field: 'contentLocation', leaf: 'latitude', exists: true }`
+(GraphQL: `where: { contentLocation: { where: { latitude: { exists: true } } } }`).
+It combines with other criteria like any: the keys of a lookup’s `where` are
+ANDed as sibling keys are, so `{ latitude: { exists: true }, longitude: {
+exists: true } }` asks for a work with a place that has a latitude and one
+that has a longitude, each counted on its own. A weld (`entry`) on a lookup is
+refused (`not-weldable`): a lookup has no entries.
+
+The lookup names one `target`, which declares each leaf, with a `path`: a leaf
+is read off the referent’s own node, never derived, through that target’s
+declaration. Refused on a lookup naming several targets
+(`presence-leaves-with-several-targets`), on a `joinable` lookup, whose `where`
+already joins, and on one reading its literals as periods. A reference’s
+values faceted by a leaf of a lookup’s referents (`facetedLeaves` on a lookup)
+are not offered.
 
 ### Facet policy
 
@@ -1859,6 +2108,9 @@ signatures, and `engine.schema` exposes the bound declaration for routing.
 
 An engine port’s rebuild writers are single-flight per index across pods: a
 run opened while another holds the index’s lock throws `RebuildAlreadyRunning`.
+The lock stays held for as long as its run is open, however long that takes,
+and goes to another run only once its holder has died. A run that lost its lock
+does not go live, and never releases the lock of the run that took it over.
 A rebuild started for a change that landed mid-run would then be dropped, and
 the change stay out of the index until something rebuilds again.
 

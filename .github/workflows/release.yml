@@ -7,6 +7,11 @@ on:
   # Manual trigger: releases whatever releasable conventional commits have
   # accumulated since the last tags; a no-op when there are none.
   workflow_dispatch:
+    inputs:
+      publish-only:
+        description: Publish versions already tagged but missing from npm, without versioning
+        type: boolean
+        default: false
 
 # One run at a time. A group holds a single pending run, so a newer push
 # replaces an older pending one – harmless, because each run pulls main and
@@ -48,12 +53,33 @@ jobs:
       - name: Pull latest main (a previous release run may have pushed)
         run: git pull --rebase origin main
 
-      - run: npx nx release --skip-publish
-        env:
-          GITHUB_TOKEN: ${{ secrets.PAT }} # Needed for pushing release commits.
-
+      # Versions, tags, pushes and publishes in one command, so the publish step
+      # gets this run’s version data and publishes only the projects it gave a
+      # new version. A run with nothing to version – such as the one a release
+      # commit triggers – publishes nothing, instead of asking the registry what
+      # is missing: the registry lists a new version only minutes after a
+      # publish, so asking it made that run publish the same versions again and
+      # fail with a 409.
+      #
       # Publishes via npm OIDC trusted publishing (see id-token: write above), which
       # mints a short-lived credential per run – no long-lived npm token needed.
-      - run: npx nx release publish --access public
+      - name: Release
+        if: ${{ !inputs.publish-only }}
+        run: npx nx release --yes
         env:
+          GITHUB_TOKEN: ${{ secrets.PAT }} # Needed for pushing release commits.
+          NPM_CONFIG_ACCESS: public
+          NPM_CONFIG_PROVENANCE: true
+
+      # Recovery for a run that tagged versions but failed to publish some: a
+      # later run versions nothing new and so publishes nothing. This publishes
+      # every project’s current version, skipping those already on npm.
+      - name: Build
+        if: ${{ inputs.publish-only }}
+        run: npx nx run-many -t build
+      - name: Publish only
+        if: ${{ inputs.publish-only }}
+        run: npx nx release publish
+        env:
+          NPM_CONFIG_ACCESS: public
           NPM_CONFIG_PROVENANCE: true

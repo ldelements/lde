@@ -1,6 +1,6 @@
 {
   "name": "@lde/distribution-probe",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
     "directory": "packages/distribution-probe"
@@ -25,7 +25,7 @@
   ],
   "dependencies": {
     "@lde/dataset": "^0.10.1",
-    "@lde/host-limiter": "^0.4.0",
+    "@lde/host-limiter": "^0.5.0",
     "jsonld-context-parser": "^2.4.0",
     "rdf-parse": "^5.0.0",
     "tslib": "^2.3.0"

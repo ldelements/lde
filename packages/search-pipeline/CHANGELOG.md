@@ -1,3 +1,344 @@
+## 0.63.1 (2026-11-17)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.65.1
+- Updated @lde/search to 0.49.1
+
+## 0.63.0 (2026-11-17)
+
+### 🚀 Features
+
+- ⚠️  **search:** filter and facet a root document on whether a referent’s leaf has a value ([#1101](https://github.com/ldelements/lde/pull/1101))
+
+### ⚠️  Breaking Changes
+
+- **search:** filter and facet a root document on whether a referent’s leaf has a value  ([#1101](https://github.com/ldelements/lde/pull/1101))
+  GraphQL facet objects are renamed and reshaped. The
+  ‹Type›‹Reference›Facets and ‹Type›‹Field›Facets objects become
+  ‹Type›‹Field›Facet, and a presence leaf’s ‹…›‹Leaf›Facets becomes
+  ‹Type›‹Field›‹Leaf›Facet. A field whose facet also counts its presence or a
+  leaf is served as ‹Type›‹Field›Facet { buckets totalValues exists ‹leaf› }
+  instead of IRIFacet or ValueFacet; select its buckets as
+  facetField(limit) { buckets { … } }. A reference counting faceted or presence
+  leaves takes ‹Type›‹Field›Filter, with ‹Type›‹Field›Where, instead of
+  ‹Edge›Filter or ‹Target›Filter, and ‹Edge›JoinedFilter becomes
+  ‹Type›‹Field›JoinedFilter; variables typed with the old names stop
+  validating, and adding leaves to a reference later changes its filter type
+  the same way. In @lde/search, PhysicalFields.leafExists covers a lookup’s
+  presence leaves too, PresenceCriterion takes an optional leaf, and the
+  SearchTypeIssue reasons presence-with-facetable, presence-leaves-not-inline,
+  presence-leaves-with-facetable and presence-leaf-faceted are gone, replaced
+  by presence-leaves-on-id-only, presence-leaves-with-several-targets,
+  presence-leaves-with-joinable, presence-leaves-with-literal,
+  presence-leaf-reserved-name and presence-leaf-without-path. A target type’s
+  transform also receives referents seeded as <referent> rdf:type <class>."
+  M	AGENTS.md
+  M	docs/decisions/0040-filter-and-facet-a-field-on-whether-it-has-a-value.md
+  M	docs/decisions/0041-filter-and-facet-a-root-document-on-whether-an-entrys-leaf-has-a-value.md
+  A	docs/decisions/0042-count-a-referents-leaf-and-a-fields-facets-in-one-object.md
+  M	docs/reference/search-api-graphql.md
+  M	docs/reference/search-pipeline.md
+  M	docs/reference/search-typesense.md
+  M	docs/reference/search.md
+  M	package-lock.json
+  M	packages/search-api-graphql/src/build-schema.ts
+  M	packages/search-api-graphql/test/faceted-leaves.test.ts
+  M	packages/search-api-graphql/test/leaf-presence.test.ts
+  A	packages/search-api-graphql/test/lookup-presence.test.ts
+  M	packages/search-api-graphql/test/presence.test.ts
+  M	packages/search-api-graphql/test/query-cost.test.ts
+  M	packages/search-api-graphql/vite.config.ts
+  M	packages/search-pipeline/package.json
+  M	packages/search-pipeline/src/extraction.ts
+  M	packages/search-pipeline/src/search-stages.ts
+  M	packages/search-pipeline/test/extraction.test.ts
+  A	packages/search-pipeline/test/fixtures/lookup-presence-sample.ttl
+  A	packages/search-pipeline/test/lookup-presence.integration.test.ts
+  M	packages/search-typesense/src/query-compiler.ts
+  A	packages/search-typesense/test/lookup-presence.integration.test.ts
+  M	packages/search-typesense/test/query-compiler.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/src/project.ts
+  M	packages/search/src/query.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/test/faceted-leaves.test.ts
+  M	packages/search/test/leaf-presence.test.ts
+  A	packages/search/test/lookup-presence.test.ts
+  M	packages/search/test/presence.test.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.65.0
+- Updated @lde/search to 0.49.0
+
+## 0.62.0 (2026-11-16)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.64.0
+- Updated @lde/search to 0.48.0
+
+## 0.61.0 (2026-11-16)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.63.0
+- Updated @lde/search to 0.47.0
+
+## 0.60.0 (2026-11-16)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.62.0
+- Updated @lde/pipeline to 0.51.0
+
+## 0.59.0 (2026-11-16)
+
+### 🚀 Features
+
+- ⚠️  **search-pipeline:** apply a label source’s transforms to its referents ([#1096](https://github.com/ldelements/lde/pull/1096))
+
+### ⚠️  Breaking Changes
+
+- **search-pipeline:** apply a label source’s transforms to its referents  ([#1096](https://github.com/ldelements/lde/pull/1096))
+  a root type’s transforms also run on its referents in
+  the stages of types whose searchable references name it, receiving
+  nodes that carry only the key and label field. Make such a transform
+  cope with that input, or drop searchable from the referring reference.
+  * fix(search-pipeline): pass an endpoint stated without its edge
+  - Route the referents of an inline reference whose graph leaves the edge
+    out, read off the inline node itself, through the endpoint’s target
+  - Key the referents’ transforms by class, as the schema resolves a
+    class-equal lookalike
+  - Append routed quads in place instead of copying the array per quad
+  - Move referentHopFields above the private helpers and restore
+    keyedFieldOf’s doc comment"
+  A	docs/decisions/0039-apply-a-label-sources-transforms-to-its-referents.md
+  M	docs/reference/search.md
+  M	package-lock.json
+  M	packages/search-pipeline/package.json
+  M	packages/search-pipeline/src/extraction.ts
+  M	packages/search-pipeline/src/search-indexer-pipeline.ts
+  M	packages/search-pipeline/src/search-stages.ts
+  M	packages/search-pipeline/test/keyed-roots.integration.test.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.61.2
+- Updated @lde/search to 0.46.1
+
+## 0.58.1 (2026-11-16)
+
+### 🩹 Fixes
+
+- **search-pipeline:** order the roots selectByClass pages through ([#1076](https://github.com/ldelements/lde/pull/1076))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.61.1
+- Updated @lde/pipeline to 0.50.3
+
+## 0.58.0 (2026-11-16)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.61.0
+- Updated @lde/search to 0.46.0
+
+## 0.57.0 (2026-11-16)
+
+### 🚀 Features
+
+- ⚠️  **search:** search a reference by its referents’ labels ([#1093](https://github.com/ldelements/lde/pull/1093))
+
+### ⚠️  Breaking Changes
+
+- **search:** search a reference by its referents’ labels  ([#1093](https://github.com/ldelements/lde/pull/1093))
+  a searchable reference naming a label source now holds
+  its referents’ folded labels in ${name}_search, not their IRIs, and
+  searchSchema refuses it when the label source’s label field has no
+  path. Give the label field a path, or drop searchable from the
+  reference."
+  A	docs/decisions/0038-search-a-document-by-its-referents-labels.md
+  M	docs/reference/search.md
+  M	packages/search-pipeline/src/extraction.ts
+  M	packages/search-pipeline/test/extraction.test.ts
+  M	packages/search-pipeline/test/keyed-roots.integration.test.ts
+  M	packages/search/src/project.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/test/project.test.ts
+  M	packages/search/test/schema.test.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.60.0
+- Updated @lde/search to 0.45.0
+
+## 0.56.0 (2026-11-16)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.59.0
+- Updated @lde/search to 0.44.0
+
+## 0.55.0 (2026-11-15)
+
+### 🩹 Fixes
+
+- ⚠️  **sparql-qlever:** require dataDir in docker mode ([#1072](https://github.com/ldelements/lde/pull/1072))
+
+### ⚠️  Breaking Changes
+
+- **sparql-qlever:** require dataDir in docker mode  ([#1072](https://github.com/ldelements/lde/pull/1072))
+  createQlever({ mode: 'docker' }) now requires dataDir.
+  Pass an absolute host directory, e.g. dataDir: '/data'.
+  * fix(sparql-qlever): resolve a relative docker dataDir and reject an empty one
+  Docker reads a relative bind source as a named volume while the downloader resolves it
+  against the working directory, so docker mode now resolves dataDir to an absolute path
+  for both. A missing or empty dataDir throws a clear error for untyped callers.
+  Type-check the test directory so the @ts-expect-error tests actually check, declare
+  the docker dataDir once, and use ./data in the examples.
+  * test(sparql-qlever): update coverage thresholds"
+  M	docs/reference/search-pipeline.md
+  M	docs/reference/sparql-qlever.md
+  M	packages/search-pipeline/src/search-indexer-pipeline.ts
+  M	packages/sparql-qlever/README.md
+  M	packages/sparql-qlever/src/createQlever.ts
+  M	packages/sparql-qlever/test/createQlever.test.ts
+  M	packages/sparql-qlever/tsconfig.spec.json
+  M	packages/sparql-qlever/vite.config.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.58.0
+- Updated @lde/search to 0.43.0
+
+## 0.54.3 (2026-11-15)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.57.3
+- Updated @lde/pipeline to 0.50.2
+
+## 0.54.2 (2026-11-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.57.2
+
+## 0.54.1 (2026-11-14)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.57.1
+- Updated @lde/pipeline to 0.50.1
+
+## 0.54.0 (2026-11-14)
+
+### 🚀 Features
+
+- ⚠️  **search-indexer:** batch imported extraction at 100 roots ([#1081](https://github.com/ldelements/lde/pull/1081))
+
+### ⚠️  Breaking Changes
+
+- **search-indexer:** batch imported extraction at 100 roots  ([#1081](https://github.com/ldelements/lde/pull/1081))
+  IndexerConfig has a required extraction field; a config
+  built by hand must add one (extraction: { byType: {} } keeps the defaults).
+  Search stages that set no batchSize now batch 100 roots from an imported
+  dump; pass batchSize: 10 to keep the old size.
+  * fix(search-pipeline): apply a tuned batch size to imported dumps only
+  - Keep live endpoints, the registry included, at 10 roots per extraction
+    query when tuning or tuningByType sets a batch size
+  - Document EXTRACTION_BATCH_SIZE and EXTRACTION_TUNING as import-only"
+  M	docs/reference/pipeline.md
+  M	docs/reference/search-indexer.md
+  M	docs/reference/search-pipeline.md
+  M	docs/reference/sparql-qlever.md
+  M	packages/pipeline/src/pipeline.ts
+  M	packages/pipeline/src/stage.ts
+  M	packages/pipeline/test/pipeline.test.ts
+  M	packages/pipeline/test/stage.test.ts
+  M	packages/pipeline/vite.config.ts
+  M	packages/search-indexer/src/composition.ts
+  M	packages/search-indexer/src/config.ts
+  M	packages/search-indexer/src/index.ts
+  M	packages/search-indexer/src/indexer.ts
+  M	packages/search-indexer/test/config.test.ts
+  M	packages/search-indexer/test/indexer.test.ts
+  M	packages/search-indexer/test/qlever-server-options.test.ts
+  M	packages/search-pipeline/src/index.ts
+  M	packages/search-pipeline/src/search-indexer-pipeline.ts
+  M	packages/search-pipeline/src/search-stages.ts
+  M	packages/search-pipeline/test/search-indexer-pipeline.test.ts
+  M	packages/sparql-qlever/src/server.ts
+  M	packages/sparql-qlever/test/server-command.test.ts
+  M	packages/sparql-qlever/vite.config.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.57.0
+- Updated @lde/pipeline to 0.50.0
+
+## 0.53.0 (2026-11-13)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.56.0
+- Updated @lde/pipeline to 0.49.0
+
+## 0.52.0 (2026-11-13)
+
+### 🚀 Features
+
+- ⚠️  **search:** filter and facet an identity on its nested leaf ([#1068](https://github.com/ldelements/lde/pull/1068))
+
+### ⚠️  Breaking Changes
+
+- **search:** filter and facet an identity on its nested leaf  ([#1068](https://github.com/ldelements/lde/pull/1068))
+  an inline reference’s identity no longer writes ${name}_id;
+  filters and facets read its nested leaf, so every deployment with an identity
+  needs a full reindex (the in-place rebuild refuses the old collection). The
+  field an identity names must be filterable, and can no longer be an array. The
+  narrowed facet companion is renamed to ${name}_facet."
+  M	docs/decisions/0024-carry-data-on-a-reference-edge.md
+  A	docs/decisions/0037-filter-and-facet-an-identity-on-its-nested-leaf.md
+  M	docs/reference/search-api-graphql.md
+  M	docs/reference/search-typesense.md
+  M	docs/reference/search.md
+  M	packages/search-api-graphql/src/build-schema.ts
+  M	packages/search-pipeline/test/extraction-roundtrip.integration.test.ts
+  M	packages/search-pipeline/test/extraction.test.ts
+  M	packages/search-pipeline/test/nested-fanout.integration.test.ts
+  M	packages/search-typesense/src/collection-definition.ts
+  M	packages/search-typesense/src/documents.ts
+  M	packages/search-typesense/src/in-place-rebuild.ts
+  M	packages/search-typesense/src/query-compiler.ts
+  M	packages/search-typesense/src/search.ts
+  A	packages/search-typesense/test/identity-facet.integration.test.ts
+  M	packages/search-typesense/test/polymorphic-lookup.test.ts
+  M	packages/search-typesense/test/qualified-lookup.test.ts
+  M	packages/search-typesense/test/qualified-relation.test.ts
+  M	packages/search-typesense/vite.config.ts
+  M	packages/search/src/project.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/test/literal-referent.test.ts
+  M	packages/search/test/polymorphic-lookup.test.ts
+  M	packages/search/test/qualified-relation.test.ts
+  M	packages/search/test/schema.test.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.55.0
+- Updated @lde/search to 0.42.0
+
+## 0.51.0 (2026-11-13)
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.54.0
+- Updated @lde/pipeline to 0.48.0
+
 ## 0.50.0 (2026-11-11)
 
 ### 🧱 Updated Dependencies

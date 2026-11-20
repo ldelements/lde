@@ -1,4 +1,9 @@
 import { Dataset, Distribution } from '@lde/dataset';
+import {
+  createHostLimiter,
+  positiveIntOrDefault,
+  type HostLimiter,
+} from '@lde/host-limiter';
 import type { Quad } from '@rdfjs/types';
 import type { ReadOptions, Reader, VariableBindings } from './sparql/reader.js';
 import { NoItemsSelected, NotSupported } from './sparql/reader.js';
@@ -126,13 +131,24 @@ export interface StageOptions<Out = Quad> {
   /**
    * Maximum number of bindings per reader call.
    *
-   * Also used as the selector's page size so that each paginated request
-   * fills exactly one batch. A `LIMIT` clause in the selector query
-   * overrides this for endpoints with hard result limits.
+   * Also the item selector’s page size for a live endpoint, so that each
+   * paginated request fills one batch. From an imported dump,
+   * `SparqlItemSelector` fetches pages of 1000 bindings by default (its
+   * `pageSize`) and the stage cuts them into batches of this size.
+   *
+   * Give a value per {@link SourceKind} where the two kinds of source want
+   * different sizes: an engine that imported a dump for this run alone
+   * answers a large batch easily, while a live endpoint shared with others
+   * may fail on one. The pipeline tells the stage which kind it reads
+   * ({@link RunOptions.source}).
+   *
+   * ```ts
+   * batchSize: { endpoint: 10, imported: 100 }
+   * ```
    *
    * @default 10
    */
-  batchSize?: number;
+  batchSize?: number | Readonly<Record<SourceKind, number>>;
   /**
    * Maximum concurrent in-flight SPARQL queries. Within each batch, all
    * readers run in parallel; the number of concurrent batches is
@@ -213,11 +229,27 @@ export interface StageOptions<Out = Quad> {
   };
 }
 
+/**
+ * What a stage reads: a live SPARQL `endpoint` the dataset publishes, or a
+ * data dump the pipeline `imported` into a store of its own for the run.
+ */
+export type SourceKind = 'endpoint' | 'imported';
+
 export interface RunOptions extends Pick<
   ReadOptions,
   'limiter' | 'onRootSkipped'
 > {
   onProgress?: (itemsProcessed: number, quadsGenerated: number) => void;
+  /**
+   * What the distribution handed to {@link Stage.run} serves, which picks the
+   * {@link StageOptions.batchSize} of a stage that gives one per kind. A stage
+   * whose {@link StageOptions.sourceFor} substitutes another distribution reads
+   * a source the pipeline did not resolve, so it reads that as an `endpoint`
+   * whatever this says.
+   *
+   * @default 'endpoint'
+   */
+  source?: SourceKind;
   /**
    * Per-dataset {@link TimeoutPolicy} threaded through to readers and
    * item selectors. The Pipeline owns lifecycle (factory invocation per
@@ -237,6 +269,14 @@ export interface RunOptions extends Pick<
 export interface SelectOptions {
   /** Per-call timeout policy. */
   timeout?: TimeoutPolicy;
+  /**
+   * What the distribution handed to {@link ItemSelector.select} serves, as the
+   * stage reads it ({@link RunOptions.source}). A selector may page an
+   * imported dump in larger requests than a live endpoint.
+   *
+   * @default 'endpoint'
+   */
+  source?: SourceKind;
 }
 
 export class Stage<Out = Quad> {
@@ -247,13 +287,16 @@ export class Stage<Out = Quad> {
   /** Whether this stage reads a source of its own rather than the dataset’s
    *  resolved distribution. @see {@link StageOptions.sourceFor} */
   readonly sourcesOwnData: boolean;
-  /** Which outputs of this stage's chain reach the pipeline's writers.
+  /** Which outputs of this stage’s chain reach the pipeline’s writers.
    *  @see {@link StageOptions.chainOutput} */
   readonly chainOutput: 'all' | 'last';
+  /** Maximum concurrent in-flight SPARQL queries. @see {@link StageOptions.maxConcurrency} */
+  readonly maxConcurrency: number;
   private readonly readers: NormalizedReader[];
   private readonly itemSelector?: ItemSelector;
-  private readonly batchSize: number;
-  private readonly maxConcurrency: number;
+  private readonly batchSize: number | Readonly<Record<SourceKind, number>>;
+  /** The limiter of a run not given one, so its batches back off together. */
+  private readonly limiter: HostLimiter;
   private readonly validation?: StageOptions<Out>['validation'];
   private readonly project?: BatchTransform<Out>;
   private readonly queueCapacity?: number;
@@ -286,6 +329,8 @@ export class Stage<Out = Quad> {
     this.itemSelector = options.itemSelector;
     this.batchSize = options.batchSize ?? 10;
     this.maxConcurrency = options.maxConcurrency ?? 10;
+    const ceiling = positiveIntOrDefault(this.maxConcurrency, 10);
+    this.limiter = createHostLimiter(ceiling, ceiling);
     this.validation = options.validation;
     this.expectsOutput = options.expectsOutput ?? false;
     this.project = options.project;
@@ -309,7 +354,7 @@ export class Stage<Out = Quad> {
     const timeout = options?.timeout;
     const readOptions: ReadOptions = {
       timeout,
-      limiter: options?.limiter,
+      limiter: options?.limiter ?? this.limiter,
       onRootSkipped: options?.onRootSkipped,
     };
     // Substituted once, before anything reads: the selector and the readers
@@ -319,12 +364,24 @@ export class Stage<Out = Quad> {
       : resolved;
     const tally = new StageTally(this.transformNames);
     if (this.itemSelector) {
+      // A substituted source is one the pipeline did not resolve; one handed
+      // back unchanged is still the source the pipeline resolved.
+      const source =
+        distribution === resolved
+          ? (options?.source ?? 'endpoint')
+          : 'endpoint';
+      const batchSize =
+        typeof this.batchSize === 'number'
+          ? this.batchSize
+          : this.batchSize[source];
       const result = await this.runWithSelector(
         tally.selected(
-          this.itemSelector.select(distribution, this.batchSize, {
+          this.itemSelector.select(distribution, batchSize, {
             timeout,
+            source,
           }),
         ),
+        batchSize,
         dataset,
         distribution,
         writer,
@@ -426,6 +483,7 @@ export class Stage<Out = Quad> {
 
   private async runWithSelector(
     selector: AsyncIterable<VariableBindings>,
+    batchSize: number,
     dataset: Dataset,
     distribution: Distribution,
     writer: DatasetWriter<Out>,
@@ -435,7 +493,7 @@ export class Stage<Out = Quad> {
   ): Promise<NotSupported | void> {
     // Peek the first batch to detect an empty selector before starting the
     // writer (important because e.g. SparqlUpdateWriter does CLEAR GRAPH).
-    const batches = batch(selector, this.batchSize);
+    const batches = batch(selector, batchSize);
     const iter = batches[Symbol.asyncIterator]();
     const first = await iter.next();
     if (first.done) {
@@ -761,7 +819,15 @@ async function* countQuads(
   onCount(count);
 }
 
-/** Selects items (as variable bindings) for readers to process. Pagination is an implementation detail. */
+/**
+ * Selects items (as variable bindings) for readers to process. Pagination is an
+ * implementation detail.
+ *
+ * A selector that pages through its source must yield each item exactly once
+ * across pages: an item skipped between pages is never read, and an item
+ * repeated is read twice. A paginated SPARQL query therefore needs a total
+ * order over its projected variables (see `SparqlItemSelector`).
+ */
 export interface ItemSelector {
   select(
     distribution: Distribution,

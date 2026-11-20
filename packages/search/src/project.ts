@@ -21,6 +21,7 @@ import {
   isAbsoluteIri,
   isInternalField,
   isInlineReference,
+  labelFieldOf,
   literalKindOf,
   localLookupTargetsOf,
   physicalFields,
@@ -31,6 +32,7 @@ import {
   TARGET_FIELD,
   unixSecondsToIso,
   type KeywordField,
+  type PhysicalFields,
   type ProjectionValue,
   type FacetKeys,
   type ReferenceField,
@@ -147,6 +149,18 @@ export function projectDocument(
     context,
     unreadableSink(context, key),
   ) as SearchDocument;
+  // After every field, so a presence reads what a later derive left too; on
+  // the root alone, since presence is declared only on a Root Type’s own field
+  // and on its references’ leaves.
+  for (const field of searchType.fields) {
+    if (field.presence === true) {
+      document[physicalFields(field).exists as string] = holdsPresence(
+        document,
+        field,
+      );
+    }
+    writeLeafPresence(document, node, field, searchType, schema, context);
+  }
   pruneInternalFields(document, searchType, schema);
   return document;
 }
@@ -169,8 +183,8 @@ export function projectDocument(
  *
  * A Reference Type entry’s `id` is pruned here too. It is a reading device of
  * the same kind: the node IRI a derive on the referrer may read, and never a
- * document key – an entry is kept in no collection, a weld names the flat
- * identity companion beside it, and an entry’s own key answers no query (ADR
+ * document key – an entry is kept in no collection, a weld names the identity
+ * field inside it, and an entry’s own key answers no query (ADR
  * 24). Left in, it would make an entry’s shape depend on whether a publisher
  * minted an IRI for a relationship, and be a field the collection never
  * declared. A Root Type keeps its `id` wherever it nests: that is the key its
@@ -407,7 +421,7 @@ export function missingRequiredFields(
       field.required === true &&
       field.array !== true &&
       field.kind !== 'boolean' &&
-      !hasValue(document, field, searchType)
+      !hasValue(document, field)
     ) {
       missing.add(field.name);
     }
@@ -435,14 +449,12 @@ export function missingRequiredFields(
 }
 
 /** Whether a projected document carries a value for `field`: for text, in any
- *  of the physical fields it spreads over – never in a sibling field whose
- *  name only looks like one of them (`title_short` beside `title`); for a
- *  lookup reading its literals as periods, a referent or a period. */
-function hasValue(
-  document: ProjectedNode,
-  field: SearchField,
-  searchType: SearchType,
-): boolean {
+ *  of the physical fields it spreads over – display fields only when it is
+ *  `output`, so a sibling named like one (`title_short` beside a non-output
+ *  `title`) never counts, and validation rejects such a sibling beside an
+ *  `output` one; for a lookup reading its literals as periods, a referent or a
+ *  period. */
+function hasValue(document: ProjectedNode, field: SearchField): boolean {
   if (field.kind !== 'text') {
     const periods =
       literalKindOf(field) === 'period'
@@ -459,8 +471,108 @@ function hasValue(
       document[key] !== undefined &&
       (search.includes(key) ||
         sort.includes(key) ||
-        (displayLangOf(field, key) !== undefined &&
-          fieldNamed(searchType, key) === undefined)),
+        (Boolean(field.output) && displayLangOf(field, key) !== undefined)),
+  );
+}
+
+/** Whether a projected document holds a value for a field declaring presence:
+ *  in the field, or – for a lookup reading its literals as periods – in its
+ *  periods. Stricter than {@link hasValue}: `null`, which a derive may return
+ *  and an engine stores as no value, and an empty list, which a derived
+ *  `array` reference stores when its derive yields none, are no value.
+ *  Presence is refused on `text`, so no per-language fanout is read. */
+function holdsPresence(document: ProjectedNode, field: SearchField): boolean {
+  const periods =
+    literalKindOf(field) === 'period'
+      ? physicalFields(field).period?.values
+      : undefined;
+  return (
+    holdsValue(document[field.name]) ||
+    (periods !== undefined && holdsValue(document[periods]))
+  );
+}
+
+/**
+ * Write whether any referent of a reference holds a value for each of its
+ * {@link ReferenceStrategy.presenceLeaves presence leaves}: one boolean per
+ * root document, `false` with no referents at all. Without a schema there is
+ * no type to read a leaf through, so nothing is written.
+ *
+ * An inline reference’s entries are read as projected, before pruning, so a
+ * leaf declaring no Role of its own still counts. A lookup stores only ids, so
+ * its referents are read off the frame instead: each leaf is projected from
+ * the referent’s node as its target declares it – the quads the extraction
+ * read one hop from the root, after the target’s transforms
+ * (`@lde/search-pipeline`). Only a referent with an IRI counts: a blank node
+ * is no id the lookup stores. One the frame names by IRI alone holds no value.
+ */
+function writeLeafPresence(
+  document: ProjectedNode,
+  node: FramedNode,
+  field: SearchField,
+  searchType: SearchType,
+  schema: SearchSchema | undefined,
+  context: ProjectionContext,
+): void {
+  const leaves = physicalFields(field).leafExists;
+  if (schema === undefined || leaves.length === 0) {
+    return;
+  }
+  if (isInlineReference(field)) {
+    // Guaranteed declared: `searchSchema` resolves every inline `typeName`,
+    // and every presence leaf against it.
+    const referenceType = referenceTypeNamed(
+      schema,
+      field.ref.typeName,
+    ) as ReferenceType;
+    const stored = document[field.name];
+    const entries = (
+      stored === undefined ? [] : Array.isArray(stored) ? stored : [stored]
+    ) as ProjectedNode[];
+    for (const { leaf: name, exists } of leaves) {
+      const leaf = fieldNamed(referenceType, name) as SearchField;
+      document[exists] = entries.some((entry) => holdsPresence(entry, leaf));
+    }
+    return;
+  }
+  const referents = valuesOf(node, irAlias(searchType, field)).filter(
+    (value) => isObject(value) && iriString(value) !== undefined,
+  ) as FramedNode[];
+  // `searchSchema` holds presence leaves to a lookup naming one target, and
+  // that target to declaring each leaf.
+  const [target] = referencedTargetsOf(field, schema);
+  for (const { leaf: name, exists } of leaves) {
+    const leaf = fieldNamed(target, name) as SearchField;
+    document[exists] = referents.some((referent) => {
+      const read: ProjectedNode = {};
+      applyField(
+        read,
+        referent,
+        leaf,
+        target,
+        schema,
+        context,
+        ignoreUnread,
+        true,
+      );
+      return holdsPresence(read, leaf);
+    });
+  }
+}
+
+/** A sink for a leaf read only to tell whether it holds a value: the
+ *  referent’s own document reports what it cannot read. */
+function ignoreUnread(): void {
+  // The referent’s own document reports it.
+}
+
+/** Whether a stored value is one: neither `undefined` nor `null`, nor an
+ *  empty list. */
+function holdsValue(value: unknown): boolean {
+  return (
+    value !== undefined &&
+    value !== null &&
+    !(Array.isArray(value) && value.length === 0)
   );
 }
 
@@ -568,8 +680,7 @@ function applyField(
       // A `local` lookup stores an object, so its own id is a level deeper than
       // a filter can reach – an engine welds conditions on an entry's LEAF
       // fields only, and facets flat values. `filterable` and `facetable`
-      // therefore fan out the id beside the object, exactly as an inline
-      // reference’s identity companion does.
+      // therefore fan out the id beside the object.
       applyLocalIdentity(document, endpoints, field, schema, nested);
       return;
     }
@@ -683,6 +794,7 @@ function referenceValues(
   schema: SearchSchema | undefined,
   targetsById: Map<string, RootType>,
   unread: Unread,
+  labelsById?: Map<string, string[]>,
 ): readonly string[] {
   // A literal where a referent belongs states no IRI to store. A node without
   // one – a blank node – carries no value a publisher could look up, so only
@@ -722,14 +834,23 @@ function referenceValues(
                 : [],
             );
       // Remembered only where there was a choice: a single-target reference
-      // stays byte-identical to what it was, symbol keys included. Keyed by
-      // what the field STORES – the value after its own `transform`, which
-      // `applyFacet` applies before it reads this map.
-      if (keyed !== undefined && targets.length > 1) {
-        targetsById.set(
-          field.transform === undefined ? keyed : field.transform(keyed),
-          target,
-        );
+      // stays byte-identical to what it was, symbol keys included – and its
+      // labels only where the field is searched by them. Both keyed by what
+      // the field STORES – the value after its own `transform`, which
+      // `applyFacet` applies before it reads these maps.
+      if (
+        keyed !== undefined &&
+        (targets.length > 1 || labelsById !== undefined)
+      ) {
+        const stored =
+          field.transform === undefined ? keyed : field.transform(keyed);
+        if (targets.length > 1) {
+          targetsById.set(stored, target);
+        }
+        labelsById?.set(stored, [
+          ...(labelsById.get(stored) ?? []),
+          ...labelsOf(value, target),
+        ]);
       }
       return keyed;
     })
@@ -747,9 +868,44 @@ function applyReferents(
   unread: Unread,
 ): void {
   const targetsById = new Map<string, RootType>();
-  const ids = referenceValues(values, field, schema, targetsById, unread);
+  // A reference naming a target is searched by its referents’ labels, which
+  // the extraction read off each referent beside its key.
+  const labelsById =
+    field.searchable !== undefined &&
+    referencedTargetsOf(field, schema).length > 0
+      ? new Map<string, string[]>()
+      : undefined;
+  const ids = referenceValues(
+    values,
+    field,
+    schema,
+    targetsById,
+    unread,
+    labelsById,
+  );
   rememberTargets(document, targetsById);
-  applyFacet(document, ids, field, schema, targetsById);
+  applyFacet(document, ids, field, schema, targetsById, labelsById);
+}
+
+/**
+ * The labels a framed referent states in its target’s label field, in that
+ * field’s declared locales – the same values the target’s own search companion
+ * holds. A referent stated by IRI alone, or one whose label only an
+ * enrichment or another dataset supplies, has none here.
+ */
+function labelsOf(value: unknown, target: RootType): string[] {
+  if (!isObject(value)) {
+    return [];
+  }
+  // `searchSchema` guarantees every reference’s target a label field.
+  const labelField = labelFieldOf(target) as TextField;
+  return langValuesOf(value as FramedNode, irAlias(target, labelField))
+    .filter(
+      ({ lang, value: label }) =>
+        label.trim() !== '' &&
+        matchLanguage(lang, labelField.locales)[0] !== undefined,
+    )
+    .map(({ value: label }) => label.trim());
 }
 
 /**
@@ -999,7 +1155,9 @@ function foldedSearchValue(values: readonly string[]): string {
  * Project a faceted field: dedupe (after the optional transform), write the
  * value field, and – when `searchable` – its folded `${name}_search` companion.
  * `keyword` reads literals; `reference` reads IRIs (the caller passes the
- * already-read raw values).
+ * already-read raw values). A reference passing `labelsById` – one naming a
+ * target – folds its stored referents’ labels into that companion instead of
+ * their IRIs, so a query finds the document by what the referent is called.
  *
  * A reference inheriting a {@link FacetKeys facet policy} from the type it
  * names ({@link inheritedFacetPolicies}) also writes the `${name}_facet` companion
@@ -1027,6 +1185,7 @@ function applyFacet(
   field: KeywordField | ReferenceField,
   schema: SearchSchema | undefined,
   targetsById?: ReadonlyMap<string, RootType>,
+  labelsById?: ReadonlyMap<string, readonly string[]>,
 ): void {
   // A `reference` stores identity, so what it stores must be an IRI whatever
   // route the value arrived by. {@link iriString} guards the graph path, but a
@@ -1038,7 +1197,6 @@ function applyFacet(
   const values = dedupe(
     referenced ? transformed.filter(isAbsoluteIri) : transformed,
   );
-  const folded = dedupe(values.map((value) => fold(value)));
   const names = physicalFields(field, schema);
   const searchField = names.search[0];
   const policies = inheritedFacetPolicies(field, schema);
@@ -1050,6 +1208,15 @@ function applyFacet(
   // field its first value, not the first admitted of all of them, or the facet
   // would count a value no filter on the field can reproduce.
   const stored = field.array === true ? values : values.slice(0, 1);
+  // What a query matches: the stored values themselves, or – for a reference
+  // searched by its referents’ labels – the labels of the referents it stores,
+  // which {@link referenceValues} recorded for every id it returned.
+  const folded = dedupe(
+    (labelsById === undefined
+      ? values
+      : stored.flatMap((id) => labelsById.get(id) as readonly string[])
+    ).map((value) => fold(value)),
+  );
   const targets = referencedTargetsOf(field, schema);
   const admitted = !inherited
     ? []
@@ -1068,7 +1235,12 @@ function applyFacet(
   }
   setString(document, field.name, stored[0]);
   if (field.searchable) {
-    setString(document, searchField, folded[0]);
+    setString(
+      document,
+      searchField,
+      // A single referent may state its label in several languages.
+      labelsById === undefined ? folded[0] : folded.join(' '),
+    );
   }
   if (inherited) {
     setString(document, facetField, admitted[0]);
@@ -1151,7 +1323,7 @@ function applyInlineReference(
     context,
     sink,
   );
-  applyIdentityCompanion(document, referents, field, schema, nested);
+  applyNarrowedFacet(document, referents, field, schema, nested);
 }
 
 /**
@@ -1209,10 +1381,12 @@ function literalReader(
 }
 
 /**
- * Write the {@link ReferenceStrategy.identity identity companion} of an inline
- * reference: the ids its entries reference, flattened out of the nested
- * documents just projected, under the flat physical name an engine filters and
- * facets ({@link physicalFields}).
+ * Write the narrowed facet companion of an inline reference naming an
+ * {@link ReferenceStrategy.identity identity}, where its target declares a
+ * {@link FacetKeys facet policy}: the admitted ids its entries reference,
+ * flattened out of the nested documents just projected. Nothing to write
+ * otherwise – the engine filters and facets the identity’s leaf inside each
+ * entry, which the entries already hold ({@link physicalFields}).
  *
  * Harvested from the entries rather than read from a second path, so what the
  * companion holds is exactly what the entries hold – including the re-keying
@@ -1224,7 +1398,7 @@ function literalReader(
  * `id`. Both are read here, because which one a deployment declares is about
  * how much of the referent it wants to display – not about what identifies it.
  */
-function applyIdentityCompanion(
+function applyNarrowedFacet(
   document: ProjectedNode,
   referents: readonly ProjectedNode[],
   field: ReferenceField,
@@ -1232,7 +1406,7 @@ function applyIdentityCompanion(
   nested: boolean,
 ): void {
   const names = physicalFields(field, schema);
-  if (names.identity === undefined) {
+  if (nested || names.facet === undefined || names.facet === names.filter) {
     return;
   }
   const identity = (field.ref as { readonly identity: string }).identity;
@@ -1246,22 +1420,23 @@ function applyIdentityCompanion(
   const targetById = new Map<string, string | undefined>();
   for (const referent of stored) {
     const remembered = (referent as WithReferentTargets)[REFERENT_TARGETS];
-    const raw = referent[identity];
-    for (const value of Array.isArray(raw) ? raw : [raw]) {
-      const id = identityValue(value);
-      if (id === undefined || targetById.has(id)) {
-        continue;
-      }
-      targetById.set(
-        id,
-        isObject(value) && typeof value[TARGET_FIELD] === 'string'
-          ? value[TARGET_FIELD]
-          : remembered?.get(id)?.name,
-      );
+    // Single-valued: the identity field is `filterable`, and a filterable
+    // nested field states one value per entry.
+    const value = referent[identity];
+    const id = identityValue(value);
+    if (id === undefined || targetById.has(id)) {
+      continue;
     }
+    targetById.set(
+      id,
+      isObject(value) && typeof value[TARGET_FIELD] === 'string'
+        ? value[TARGET_FIELD]
+        : remembered?.get(id)?.name,
+    );
   }
-  writeIdentityCompanions(
+  writeNarrowedFacet(
     document,
+    names,
     targetById,
     field,
     referencedTargetsOf(identityFieldOf(field, schema) as SearchField, schema),
@@ -1271,9 +1446,9 @@ function applyIdentityCompanion(
 }
 
 /**
- * Write an identity companion under the arity of the reference it belongs to –
- * `array` decides the shape here exactly as it does for every other kind
- * ({@link applyFacet}).
+ * Write a local lookup’s identity companion under the arity of the reference it
+ * belongs to – `array` decides the shape here exactly as it does for every
+ * other kind ({@link applyFacet}).
  *
  * It matters most where the companion is a **nested** leaf. That is the field a
  * weld actually names – the endpoint's own id is a level deeper than a weld can
@@ -1294,12 +1469,10 @@ function setIdentity(
   field: ReferenceField,
   nested: boolean,
 ): void {
-  // `filterable` is the whole condition, and it is about the COMPANION rather
-  // than about the split. `tuplesOf` splits the identity field whatever Role
-  // earned it, so an entry holds one id either way – but only a `filterable`
-  // reference has a weld to serve, and only there is the single value worth the
-  // narrower declared type the collection then matches. A `facetable`-only
-  // companion stays a list, which is what a facet reads.
+  // `filterable` is the whole condition: only a `filterable` reference has a
+  // weld to serve, and {@link tuplesOf} splits only `filterable` fields, so
+  // only there does an entry hold the single id the narrower declared type
+  // matches. A `facetable`-only companion stays a list, which a facet reads.
   if (!nested || field.array === true || field.filterable !== true) {
     setArray(document, name, ids);
     return;
@@ -1346,8 +1519,14 @@ function applyLocalIdentity(
       typeof target === 'string' ? target : undefined,
     );
   }
-  writeIdentityCompanions(
+  const ids = [...targetById.keys()];
+  if (ids.length === 0) {
+    return;
+  }
+  setIdentity(document, names.identity, ids, field, nested);
+  writeNarrowedFacet(
     document,
+    names,
     targetById,
     field,
     referencedTargetsOf(field, schema),
@@ -1357,40 +1536,35 @@ function applyLocalIdentity(
 }
 
 /**
- * Write an identity companion – the ids, each with the target it was resolved
- * through – and, where a target declares a facet policy, the narrowed
- * companion the facet reads instead: the same rule as every other facetable
- * reference, so an excluded id is never seen by the engine rather than merely
- * unlabelled.
+ * Write the narrowed facet companion of a local lookup or an inline reference’s
+ * identity, where a target declares a facet policy: the admitted ids, each
+ * judged by the target it was resolved through – the same rule as every other
+ * facetable reference, so an excluded id is never seen by the engine rather
+ * than merely unlabelled. Nothing to write without a policy, where the facet
+ * reads the filter field itself.
  *
- * The narrowed companion is written at the top level only. A nested field is
- * never faceted – an engine facets per document, not per entry – so no
- * collection declares one there for it to fill.
+ * Written at the top level only: the companion counts root documents, so no
+ * collection declares one inside an entry for it to fill.
  */
-function writeIdentityCompanions(
+function writeNarrowedFacet(
   document: ProjectedNode,
+  names: PhysicalFields,
   targetById: ReadonlyMap<string, string | undefined>,
   field: ReferenceField,
   targets: readonly RootType[],
   schema: SearchSchema,
   nested: boolean,
 ): void {
-  const names = physicalFields(field, schema);
-  const ids = [...targetById.keys()];
-  if (names.identity === undefined || ids.length === 0) {
+  if (nested || names.facet === undefined || names.facet === names.filter) {
     return;
   }
-  setIdentity(document, names.identity, ids, field, nested);
   const policies = inheritedFacetPolicies(field, schema);
-  if (nested || policies.size === 0) {
-    return;
-  }
-  setIdentity(
+  setArray(
     document,
-    names.facet as string,
-    ids.filter((id) => admitsFacet(policies, targets, targetById.get(id), id)),
-    field,
-    nested,
+    names.facet,
+    [...targetById.keys()].filter((id) =>
+      admitsFacet(policies, targets, targetById.get(id), id),
+    ),
   );
 }
 
@@ -1531,15 +1705,10 @@ function tuplesOf(
   if (!isInlineReference(field)) {
     return [node];
   }
-  // `filterable` names the leaves a weld can condition on directly. The
-  // reference's `identity` field joins them: nothing welds it by name, but the
-  // flat companion harvested FROM it is the leaf a weld uses to name the
-  // endpoint ({@link applyIdentityCompanion}). An entry whose identity field
-  // holds three ids stands for three endpoints at once – the same tuple
-  // problem, one field further in – so it is a tuple position like any other.
-  const identity = field.ref.identity;
+  // `filterable` names the leaves a weld can condition on directly – the
+  // reference's `identity` field among them, which must be filterable.
   const weldable = nestedType.fields
-    .filter((nested) => nested.filterable === true || nested.name === identity)
+    .filter((nested) => nested.filterable === true)
     .map((nested) => irAlias(nestedType, nested))
     // A leaf the frame carries at most one value for is already a tuple
     // position; splitting it would copy the node to no purpose.

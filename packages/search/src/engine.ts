@@ -36,7 +36,10 @@ import type {
  * value its own clause selects, at count 0 when nothing else leaves it a
  * document ({@link SearchQuery.facets}). An adapter plans the searches with
  * `facetSearches` from `@lde/search/adapter`, so ownership cannot drift
- * between engines.
+ * between engines. A facet with a {@link SearchQuery.facetQueries query}
+ * reports only the values matching it, selected or not, and its
+ * {@link Facet.totalValues} counts those values – absent where the engine
+ * cannot tell how many match.
  *
  * `Types` is the literal tuple {@link searchSchema} captured: with a
  * `defineSearchType` declaration, `search()` only accepts the deployment’s
@@ -130,6 +133,14 @@ export interface Facet {
    * value.
    */
   readonly extent?: FacetExtent;
+  /**
+   * How many distinct values the facet holds over the matching documents,
+   * however many {@link buckets} the bucket cap let through – so a consumer
+   * can tell “10 of 195”. May be an estimate: an engine that samples or
+   * approximates its facet counts reports its approximation. Absent when the
+   * engine does not report it.
+   */
+  readonly totalValues?: number;
 }
 
 /**
@@ -152,7 +163,20 @@ export interface FacetExtent {
 export type FacetFieldsOf<Type extends SearchType> = RootType extends Type
   ? string
   : | Extract<Type['fields'][number], { readonly facetable: true }>['name']
-    | FacetedLeavesOf<Type['fields'][number]>;
+    | FacetedLeavesOf<Type['fields'][number]>
+    | PresenceLeavesOf<Type['fields'][number]>
+    | `${Extract<Type['fields'][number], { readonly presence: true }>['name']}.exists`;
+
+/** The `‹reference›.‹leaf›.exists` facet names an inline reference declares
+ *  through its presence leaves (`ref.presenceLeaves`). */
+type PresenceLeavesOf<Field> = Field extends {
+  readonly name: infer Name extends string;
+  readonly ref: {
+    readonly presenceLeaves: readonly (infer Leaf extends string)[];
+  };
+}
+  ? `${Name}.${Leaf}.exists`
+  : never;
 
 /** The `‹reference›.‹leaf›` facet names an inline reference declares through
  *  its faceted leaves (`ref.facetedLeaves`). */
@@ -296,12 +320,15 @@ export interface FacetBucket {
   /**
    * For a boolean-facet bucket: the value as a real boolean, so it round-trips
    * straight into the `is` filter that selects it rather than leaving a
-   * consumer to parse `value` back. Absent on every other kind of facet.
+   * consumer to parse `value` back – or, on a presence facet
+   * (`‹field›.exists`), into the `exists` filter. Absent on every other kind
+   * of facet.
    *
    * Optional only because one bucket type serves every kind: an adapter MUST
-   * set it on every bucket of a `boolean` facet, and the engine conformance
-   * suite checks that it does. A surface types it non-null, so omitting it
-   * fails the whole response rather than degrading the one facet.
+   * set it on every bucket of a `boolean` facet and of a presence facet, and
+   * the engine conformance suite checks that it does for both. A
+   * surface types it non-null, so omitting it fails the whole response rather
+   * than degrading the one facet.
    */
   readonly is?: boolean;
 }

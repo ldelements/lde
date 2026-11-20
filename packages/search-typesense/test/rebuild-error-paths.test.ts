@@ -29,6 +29,7 @@ function fakeClient(behaviour: {
 }) {
   const releasedLocks = vi.fn().mockResolvedValue({});
   const deletedFilters = vi.fn().mockResolvedValue({});
+  let lockDocument: unknown;
   const client = {
     aliases: () => ({
       retrieve: () => Promise.reject(typesenseError(404)),
@@ -50,8 +51,16 @@ function fakeClient(behaviour: {
           retrieve: () => Promise.resolve({}),
           documents: (id?: string) =>
             id === undefined
-              ? { create: () => Promise.resolve({}) }
-              : { delete: releasedLocks },
+              ? {
+                  create: (document: unknown) => {
+                    lockDocument = document;
+                    return Promise.resolve({});
+                  },
+                }
+              : {
+                  retrieve: () => Promise.resolve(lockDocument),
+                  delete: releasedLocks,
+                },
         };
       }
       return {
@@ -88,6 +97,33 @@ describe('BlueGreenRebuild error paths', () => {
     expect(releasedLocks).toHaveBeenCalledOnce();
   });
 
+  it('surfaces the setup failure, not a failed release', async () => {
+    const { client, releasedLocks } = fakeClient({
+      createDataCollection: () => Promise.reject(typesenseError(500)),
+    });
+    releasedLocks.mockRejectedValue(typesenseError(503));
+    const writer = new BlueGreenRebuild(client, searchType, {
+      collectionNameFor: () => 'datasets',
+    });
+
+    await expect(writer.openRun(makeRunContext())).rejects.toThrow('HTTP 500');
+  });
+
+  it('aborts without throwing when releasing the lock fails', async () => {
+    const { client, releasedLocks } = fakeClient({});
+    releasedLocks.mockRejectedValue(typesenseError(503));
+    const writer = new BlueGreenRebuild(client, searchType, {
+      collectionNameFor: () => 'datasets',
+    });
+
+    const run = await writer.openRun(makeRunContext());
+    // The caller aborts over an error of its own, which must stay the one it sees.
+    await expect(run.abort(new Error('extraction failed'))).resolves.toBe(
+      undefined,
+    );
+    expect(releasedLocks).toHaveBeenCalledOnce();
+  });
+
   it('stays committed when releasing the lock fails after the alias swap', async () => {
     const { client, releasedLocks } = fakeClient({});
     // The alias has already swapped (the new collection is live); only the
@@ -116,6 +152,20 @@ describe('InPlaceRebuild error paths', () => {
     });
 
     await expect(writer.openRun(makeRunContext())).rejects.toThrow('HTTP 500');
+    expect(releasedLocks).toHaveBeenCalledOnce();
+  });
+
+  it('aborts without throwing when releasing the lock fails', async () => {
+    const { client, releasedLocks } = fakeClient({});
+    releasedLocks.mockRejectedValue(typesenseError(503));
+    const writer = new InPlaceRebuild(client, searchType, {
+      collectionNameFor: () => 'objects',
+    });
+
+    const run = await writer.openRun(makeRunContext());
+    await expect(run.abort(new Error('extraction failed'))).resolves.toBe(
+      undefined,
+    );
     expect(releasedLocks).toHaveBeenCalledOnce();
   });
 

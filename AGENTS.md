@@ -86,7 +86,7 @@ Each package uses conditional exports with a `development` condition for local d
 - Test files use `.test.ts` suffix in `test/` directory
 - Fixtures in `test/fixtures/`
 - HTTP mocking with Nock
-- Tests that start a local SPARQL endpoint (`@lde/local-sparql-endpoint`) must use unique ports across packages to avoid conflicts when Nx runs tests in parallel. Current port allocations: `dataset-registry-client` (3002), `pipeline` sparqlQuery (3001), `pipeline` executor (3003), `pipeline` provenance store (3004), `pipeline-void` namespace-normalization (3005), `search-pipeline` extraction round-trip (3007), `search-pipeline` searchIndexerPipeline end-to-end (3008), `search-pipeline` registry-sourced extraction (3009), `search-pipeline` joins end-to-end (3010), `search-pipeline` keyed roots (3011), `search-pipeline` nested fan-out (3012), `pipeline-void` per-property partitions (3013), `pipeline-void` subject URI spaces (3014), `pipeline-void` distinct counts (3016), `change-detection` content hash reader (3017), `sparql-qlever` remote mode (3015 for QLever, 7070 for the task agent)
+- Tests that start a local SPARQL endpoint (`@lde/local-sparql-endpoint`) must use unique ports across packages to avoid conflicts when Nx runs tests in parallel. Current port allocations: `dataset-registry-client` (3002), `pipeline` sparqlQuery (3001), `pipeline` executor (3003), `pipeline` provenance store (3004), `pipeline-void` namespace-normalization (3005), `search-pipeline` extraction round-trip (3007), `search-pipeline` searchIndexerPipeline end-to-end (3008), `search-pipeline` registry-sourced extraction (3009), `search-pipeline` joins end-to-end (3010), `search-pipeline` keyed roots (3011), `search-pipeline` nested fan-out (3012), `pipeline-void` per-property partitions (3013), `pipeline-void` subject URI spaces (3014), `pipeline-void` distinct counts (3016), `change-detection` content hash reader (3017), `search-pipeline` referents’ label transforms (3019), `search-pipeline` lookup presence (3020), `sparql-qlever` remote mode (3015 for QLever, 7070 for the task agent)
 
 ### Key Dependencies
 
@@ -142,7 +142,7 @@ npm trust github --repo ldelements/lde --file release.yml --allow-publish
 npm access set mfa=publish
 ```
 
-Do not re-run the failed release action afterwards – the next push to main releases normally (nx skips already-published versions).
+Do not re-run the failed release action afterwards: the version you published by hand is the one it failed on, and the next push to main releases normally. For any other version a release run tagged but failed to publish, run the Release workflow manually with “publish only” checked; a later push does not retry it, because a run publishes only the versions it creates.
 
 <!-- nx configuration start-->
 <!-- Leave the start & end comments to automatically receive updates. -->

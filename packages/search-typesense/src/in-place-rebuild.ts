@@ -10,7 +10,7 @@ import type {
   Writer,
 } from '@lde/pipeline';
 import { buildCollectionDefinition } from './collection-definition.js';
-import { ensureCollectionExists, openLockedRun, releaseLock } from './lock.js';
+import { ensureCollectionExists, openLockedRun } from './lock.js';
 import {
   assertBookkeepingPresent,
   assertWritableType,
@@ -117,7 +117,7 @@ export class InPlaceRebuild<
       this.resolved;
     const name = this.collectionName;
 
-    return openLockedRun(this.client, name, lockTtlMs, async () => {
+    return openLockedRun(this.client, name, lockTtlMs, async (lock) => {
       // Create the collection on demand: the SearchType’s schema plus whatever
       // bookkeeping its membership regime keeps.
       const definition = buildCollectionDefinition(
@@ -187,12 +187,17 @@ export class InPlaceRebuild<
 
         commit: async () => {
           await documents.flush();
+          // A run that lost its lock must not sweep what the run that took
+          // it over has written.
+          await lock.assertHeld();
           await documents.dropUnselected(context.selectedSources());
-          await releaseLock(this.client, name);
+          await lock.release();
         },
 
         abort: async () => {
-          await releaseLock(this.client, name);
+          // The caller is aborting over an error of its own, which a failed
+          // release must not replace; the lock goes stale on its TTL instead.
+          await lock.release().catch(() => undefined);
         },
       };
     });
@@ -258,14 +263,15 @@ function assertReferencesAndFacetCompanionsPresent(
         .map((companion) => `“${companion}”`)
         .join(
           ', ',
-        )} its search type facets on in place of the field itself – an identity companion, one narrowed by a facet policy (“facetKeys”), or the nested path of a faceted leaf. A facet field cannot be added to a live collection here: drop “${name}” (and the collections that join to it) and let the next run rebuild them.`,
+        )} its search type facets on in place of the field itself – the id leaf of a nested object, one narrowed by a facet policy (“facetKeys”), the nested path of a faceted leaf, or the companion recording whether a field declaring “presence” holds a value. A facet field cannot be added to a live collection here: drop “${name}” (and the collections that join to it) and let the next run rebuild them.`,
     );
   }
 }
 
 /** The fields a type’s facets read instead of the fields themselves – one per
  *  facetable reference that stores a nested object or inherits a facet policy
- *  ({@link facetsOf}), and the nested path of each faceted leaf. */
+ *  ({@link facetsOf}), the nested path of each faceted leaf, and the presence
+ *  companion of each field declaring `presence`. */
 function facetCompanionsOf(
   searchType: SearchType,
   schema: SearchSchema | undefined,

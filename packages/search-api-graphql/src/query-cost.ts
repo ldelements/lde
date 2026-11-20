@@ -7,6 +7,7 @@ import {
   type GraphQLFieldExtensions,
 } from 'graphql';
 import type { Plugin } from 'graphql-yoga';
+import { facetQueryText } from '@lde/search';
 import {
   fieldExtensionsEstimator,
   getComplexity,
@@ -58,7 +59,7 @@ export function queryCostPlugin(maxCost: number): Plugin {
         setResultAndStopExecution({
           errors: [
             new GraphQLError(
-              `Query costs ${cost}; at most ${maxCost} is allowed. Each search, facet calculation and joined reference lookup per target type costs ${operationCost}.`,
+              `Query costs ${cost}; at most ${maxCost} is allowed. Each search, facet calculation and joined reference lookup per target type costs ${operationCost}, and a query on a reference facet ${operationCost} more per target type.`,
             ),
           ],
         });
@@ -78,6 +79,32 @@ export function costExtensions(
   cost: number,
 ): GraphQLFieldExtensions<unknown, unknown> {
   return { complexity: cost };
+}
+
+/**
+ * The field extensions of a reference facet that takes a `query`: `own` facet
+ * calculations, and under a query one more per target type – the search for
+ * its candidates and the request that counts them.
+ */
+export function facetQueryCostExtensions(
+  own: number,
+  targets: number,
+): GraphQLFieldExtensions<unknown, unknown> {
+  return {
+    complexity: ({
+      args,
+      childComplexity,
+    }: {
+      args: { query?: string | null };
+      childComplexity: number;
+    }) =>
+      childComplexity +
+      operationCost *
+        (own +
+          (facetQueryText(args.query ?? undefined) === undefined
+            ? 0
+            : targets)),
+  };
 }
 
 /**

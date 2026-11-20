@@ -76,13 +76,14 @@ export type { JoinGraph } from './join-graph.js';
 // `filterOn` builds the ordinary one-criterion clause – the shape a consumer
 // policy (`queryDefaults`) appends to `where`, so it belongs on the authoring
 // surface and not only on the adapter one.
-export { filterOn } from './query.js';
+export { filterOn, facetQueryText, MIN_FACET_QUERY_LENGTH } from './query.js';
 export type {
   SearchQuery,
   ReferenceProjection,
   Filter,
   Criterion,
   CriterionBase,
+  PresenceCriterion,
   WeldedCriterion,
   Sort,
 } from './query.js';

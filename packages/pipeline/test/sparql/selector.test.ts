@@ -1,5 +1,5 @@
 import { SparqlItemSelector } from '../../src/sparql/selector.js';
-import type { ItemSelector } from '../../src/stage.js';
+import type { ItemSelector, SelectOptions } from '../../src/stage.js';
 import type { VariableBindings } from '../../src/sparql/reader.js';
 import { Distribution } from '@lde/dataset';
 import { describe, it, expect, vi } from 'vitest';
@@ -48,9 +48,10 @@ function pagedFetcher(pages: MockRecord[][]) {
 async function selectAll(
   selector: ItemSelector,
   batchSize?: number,
+  options?: SelectOptions,
 ): Promise<VariableBindings[]> {
   const rows: VariableBindings[] = [];
-  for await (const row of selector.select(distribution, batchSize)) {
+  for await (const row of selector.select(distribution, batchSize, options)) {
     rows.push(row);
   }
   return rows;
@@ -91,6 +92,7 @@ describe('SparqlItemSelector', () => {
     const selector = new SparqlItemSelector({
       query,
       fetcher: fetcher as never,
+      pageSize: 2,
     });
 
     const rows = await selectAll(selector, 2);
@@ -106,6 +108,29 @@ describe('SparqlItemSelector', () => {
     expect(queries[0]).not.toMatch(/OFFSET\s+[1-9]/);
     expect(queries[1]).toMatch(/LIMIT\s+2/);
     expect(queries[1]).toMatch(/OFFSET\s+2/);
+  });
+
+  it('keeps the query’s ORDER BY on every page', async () => {
+    // Without a total order, LIMIT/OFFSET pages may skip or repeat rows.
+    const { fetcher, queries } = pagedFetcher([
+      [
+        { uri: namedNode('http://example.com/1') },
+        { uri: namedNode('http://example.com/2') },
+      ],
+      [{ uri: namedNode('http://example.com/3') }],
+    ]);
+
+    const selector = new SparqlItemSelector({
+      query: `${query} ORDER BY ?uri`,
+      fetcher: fetcher as never,
+    });
+
+    await selectAll(selector, 2);
+
+    expect(queries).toHaveLength(2);
+    for (const pageQuery of queries) {
+      expect(pageQuery).toMatch(/ORDER\s+BY\s+ASC\s*\(\s*\?uri\s*\)/);
+    }
   });
 
   it('yields nothing for empty results', async () => {
@@ -153,6 +178,7 @@ describe('SparqlItemSelector', () => {
     const selector = new SparqlItemSelector({
       query,
       fetcher: fetcher as never,
+      pageSize: 2,
     });
 
     const rows = await selectAll(selector, 2);
@@ -176,6 +202,7 @@ describe('SparqlItemSelector', () => {
     const selector = new SparqlItemSelector({
       query,
       fetcher: fetcher as never,
+      pageSize: 2,
     });
 
     const rows = await selectAll(selector, 2);
@@ -185,30 +212,125 @@ describe('SparqlItemSelector', () => {
     expect(queries[1]).toMatch(/OFFSET\s+2/);
   });
 
-  it('defaults page size to 10', async () => {
+  /** The LIMIT of the first SELECT a fresh selector sends. */
+  async function firstLimit(
+    batchSize?: number,
+    options?: SelectOptions,
+  ): Promise<string | undefined> {
+    const { fetcher, queries } = pagedFetcher([]);
+    const selector = new SparqlItemSelector({
+      query,
+      fetcher: fetcher as never,
+    });
+    await selectAll(selector, batchSize, options);
+    return /LIMIT\s+(\d+)/.exec(queries[0] ?? '')?.[1];
+  }
+
+  it('pages a live endpoint in the batchSize', async () => {
+    // A streaming endpoint stops early on a small LIMIT; a larger page of a
+    // heavy SELECT may time out where small pages would not.
+    expect(await firstLimit(25)).toBe('25');
+    expect(await firstLimit(25, { source: 'endpoint' })).toBe('25');
+  });
+
+  it('pages a live endpoint in 10 without a batchSize', async () => {
+    expect(await firstLimit()).toBe('10');
+  });
+
+  it('pages an imported dump in 1000 when the batchSize is smaller', async () => {
+    // Batches are cut from the page, so a page per batch would cost the stage
+    // a SELECT round trip before every batch.
+    expect(await firstLimit(10, { source: 'imported' })).toBe('1000');
+    expect(await firstLimit(undefined, { source: 'imported' })).toBe('1000');
+  });
+
+  it('caps an imported dump’s page at what maxResults needs, but not below a batch', async () => {
+    const limitFor = async (maxResults: number, batchSize: number) => {
+      const { fetcher, queries } = pagedFetcher([]);
+      const selector = new SparqlItemSelector({
+        query,
+        maxResults,
+        fetcher: fetcher as never,
+      });
+      await selectAll(selector, batchSize, { source: 'imported' });
+      return /LIMIT\s+(\d+)/.exec(queries[0] ?? '')?.[1];
+    };
+    expect(await limitFor(50, 10)).toBe('50');
+    // Smaller than a batch would crawl dropped rows a few per request.
+    expect(await limitFor(5, 10)).toBe('10');
+    expect(await limitFor(5000, 10)).toBe('1000');
+  });
+
+  it('validates the batchSize even when maxResults is 0', async () => {
+    const selector = new SparqlItemSelector({ query, maxResults: 0 });
+    await expect(selectAll(selector, 0)).rejects.toThrow(
+      'Batch size must be a positive integer',
+    );
+  });
+
+  it('pages an imported dump in the batchSize when it is larger than 1000', async () => {
+    expect(await firstLimit(1500, { source: 'imported' })).toBe('1500');
+  });
+
+  it('uses pageSize over the batchSize', async () => {
     const { fetcher, queries } = pagedFetcher([]);
 
     const selector = new SparqlItemSelector({
       query,
+      pageSize: 5,
+      fetcher: fetcher as never,
+    });
+
+    await selectAll(selector, 10);
+
+    expect(queries[0]).toMatch(/LIMIT\s+5\b/);
+  });
+
+  it('prefers query LIMIT over pageSize', async () => {
+    const { fetcher, queries } = pagedFetcher([]);
+
+    const selector = new SparqlItemSelector({
+      query: 'SELECT ?class WHERE { ?s a ?class } LIMIT 25',
+      pageSize: 500,
       fetcher: fetcher as never,
     });
 
     await selectAll(selector);
 
-    expect(queries[0]).toMatch(/LIMIT\s+10/);
+    expect(queries[0]).toMatch(/LIMIT\s+25\b/);
   });
 
-  it('uses batchSize from select()', async () => {
-    const { fetcher, queries } = pagedFetcher([]);
+  it.each([0, Number.NaN, 2.5])('rejects pageSize %s', (pageSize) => {
+    expect(() => new SparqlItemSelector({ query, pageSize })).toThrow(
+      'pageSize must be a positive integer',
+    );
+  });
+
+  it('reads the whole page before yielding its first binding', async () => {
+    // A stage takes a batch, then extracts it before taking the next: were the
+    // page streamed, its response would stay open for the whole page’s
+    // extraction.
+    let stream: Readable | undefined;
+    const fetcher = {
+      fetchBindings: vi.fn().mockImplementation(async () => {
+        stream = await bindingsStream([
+          { uri: namedNode('http://example.com/1') },
+          { uri: namedNode('http://example.com/2') },
+        ]);
+        return stream;
+      }),
+    };
 
     const selector = new SparqlItemSelector({
       query,
       fetcher: fetcher as never,
     });
 
-    await selectAll(selector, 500);
+    const rows = selector.select(distribution, 1);
+    await rows.next();
+    await rows.return?.(undefined);
 
-    expect(queries[0]).toMatch(/LIMIT\s+500/);
+    expect(stream?.readableEnded).toBe(true);
   });
 
   it('uses query LIMIT as page size', async () => {
@@ -242,11 +364,10 @@ describe('SparqlItemSelector', () => {
     expect(queries[0]).toMatch(/LIMIT\s+25/);
   });
 
-  it('rejects a non-positive page size instead of querying pointlessly', async () => {
-    // batchSize 0 (or a query LIMIT 0) is a configuration error: a LIMIT 0
-    // request can never terminate pagination meaningfully, and silently
-    // yielding nothing would make a misconfigured stage look like an empty
-    // source.
+  it('rejects a non-positive batchSize instead of querying pointlessly', async () => {
+    // batchSize 0 is a configuration error: a batch of 0 would never fill, and
+    // silently yielding nothing would make a misconfigured stage look like an
+    // empty source.
     const { fetcher } = pagedFetcher([]);
 
     const selector = new SparqlItemSelector({
@@ -255,9 +376,15 @@ describe('SparqlItemSelector', () => {
     });
 
     await expect(selectAll(selector, 0)).rejects.toThrow(
-      'Page size must be positive',
+      'Batch size must be a positive integer',
     );
     expect(fetcher.fetchBindings).not.toHaveBeenCalled();
+  });
+
+  it('rejects a query LIMIT 0 as the page size', () => {
+    expect(() => new SparqlItemSelector({ query: `${query} LIMIT 0` })).toThrow(
+      'Page size must be positive',
+    );
   });
 
   it('collects all projected variables per row', async () => {
@@ -414,6 +541,7 @@ describe('SparqlItemSelector', () => {
       const selector = new SparqlItemSelector({
         query,
         fetcher: fetcher as never,
+        pageSize: 100,
         maxResults: 5,
       });
 
@@ -421,7 +549,7 @@ describe('SparqlItemSelector', () => {
 
       // The first page asks for the configured page size (100), even though
       // we only yield 5 rows from it.
-      expect(queries[0]).toMatch(/LIMIT\s+100/);
+      expect(queries[0]).toMatch(/LIMIT\s+100\b/);
       expect(rows).toHaveLength(5);
     });
 
@@ -440,13 +568,14 @@ describe('SparqlItemSelector', () => {
       const selector = new SparqlItemSelector({
         query,
         fetcher: fetcher as never,
+        pageSize: 10,
         maxResults: 12,
       });
 
       const rows = await selectAll(selector, 10);
 
-      expect(queries[0]).toMatch(/LIMIT\s+10/);
-      expect(queries[1]).toMatch(/LIMIT\s+2/);
+      expect(queries[0]).toMatch(/LIMIT\s+10\b/);
+      expect(queries[1]).toMatch(/LIMIT\s+2\b/);
       expect(rows).toHaveLength(12);
     });
 
@@ -471,6 +600,7 @@ describe('SparqlItemSelector', () => {
       const selector = new SparqlItemSelector({
         query,
         fetcher: fetcher as never,
+        pageSize: 3,
         maxResults: 3,
       });
 
@@ -539,7 +669,7 @@ describe('SparqlItemSelector', () => {
   describe('timeout policy', () => {
     function recordingPolicy() {
       return {
-        beforeRequest: vi.fn().mockReturnValue(5_000),
+        beforeRequest: vi.fn().mockReturnValue({ timeoutMs: 5_000 }),
         afterRequest: vi.fn(),
       };
     }
@@ -557,6 +687,7 @@ describe('SparqlItemSelector', () => {
       const selector = new SparqlItemSelector({
         query,
         fetcher: fetcher as never,
+        pageSize: 2,
       });
 
       const rows: VariableBindings[] = [];
@@ -573,7 +704,11 @@ describe('SparqlItemSelector', () => {
       });
       expect(policy.afterRequest).toHaveBeenCalledTimes(2);
       expect(policy.afterRequest).toHaveBeenCalledWith(
-        expect.objectContaining({ outcome: 'ok' }),
+        expect.objectContaining({ outcome: 'ok', budget: { timeoutMs: 5000 } }),
+      );
+      // The policy tells attempts apart by identity, so no copy.
+      expect(policy.afterRequest.mock.calls[0][0].budget).toBe(
+        policy.beforeRequest.mock.results[0].value,
       );
     });
 
@@ -604,7 +739,42 @@ describe('SparqlItemSelector', () => {
 
       await expect(iterate()).rejects.toThrow('504');
       expect(policy.afterRequest).toHaveBeenCalledWith(
-        expect.objectContaining({ outcome: 'timeout' }),
+        expect.objectContaining({
+          outcome: 'timeout',
+          budget: { timeoutMs: 5000 },
+        }),
+      );
+    });
+
+    it('reports a page that fails mid-body as an error, not ok', async () => {
+      const stream = new Readable({
+        objectMode: true,
+        read() {
+          this.push({ uri: namedNode('http://example.com/1') });
+          this.destroy(new Error('socket hang up'));
+        },
+      });
+      const policy = recordingPolicy();
+      const selector = new SparqlItemSelector({
+        query,
+        fetcher: { fetchBindings: vi.fn().mockResolvedValue(stream) } as never,
+      });
+
+      const iterate = async () => {
+        for await (const _row of selector.select(distribution, 10, {
+          timeout: policy,
+        })) {
+          // consume
+        }
+      };
+
+      await expect(iterate()).rejects.toThrow('socket hang up');
+      expect(policy.afterRequest).toHaveBeenCalledTimes(1);
+      expect(policy.afterRequest).toHaveBeenCalledWith(
+        expect.objectContaining({
+          outcome: 'error',
+          budget: { timeoutMs: 5000 },
+        }),
       );
     });
 
@@ -635,7 +805,10 @@ describe('SparqlItemSelector', () => {
 
       await expect(iterate()).rejects.toThrow();
       expect(policy.afterRequest).toHaveBeenCalledWith(
-        expect.objectContaining({ outcome: 'error' }),
+        expect.objectContaining({
+          outcome: 'error',
+          budget: { timeoutMs: 5000 },
+        }),
       );
     });
 
@@ -716,6 +889,7 @@ describe('SparqlItemSelector', () => {
       const selector = new SparqlItemSelector({
         query,
         fetcher: fetcher as never,
+        pageSize: 2,
       });
 
       for await (const _row of selector.select(

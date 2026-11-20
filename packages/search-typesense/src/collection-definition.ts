@@ -113,9 +113,10 @@ export interface CollectionDefinitionOptions {
  * the display labels; one that opts into `filterable` or `searchable` is
  * indexed, and its parent object with it (see {@link nestedFields}).
  *
- * An inline reference declaring `filterable` or `facetable` also emits its
- * {@link ReferenceStrategy.identity identity companion} – a flat id field the
- * engine can filter and facet, which a nested object is not
+ * An inline reference naming an {@link ReferenceStrategy.identity identity}
+ * filters and facets that identity’s leaf inside each entry, which a nested
+ * object is not; a `local` lookup that is `filterable` or `facetable` emits a
+ * flat id companion beside its endpoints instead
  * ({@link identityCompanionFields}).
  */
 export function buildCollectionDefinition(
@@ -125,8 +126,8 @@ export function buildCollectionDefinition(
   const { defaultLocale, collectionNameFor = deriveCollectionName } = options;
   const collection: CollectionCreateSchema = {
     name: collectionNameFor(searchType),
-    fields: searchType.fields.flatMap((field) =>
-      typesenseFields(
+    fields: searchType.fields.flatMap((field) => [
+      ...typesenseFields(
         searchType,
         field,
         defaultLocale,
@@ -134,14 +135,14 @@ export function buildCollectionDefinition(
         options.schema,
         collectionNameFor,
       ),
-    ),
+      ...presenceFields(field),
+    ]),
   };
-  // A faceted leaf is faceted on its nested path, which Typesense flattens
-  // into one list per document – so a bucket counts documents, not entries.
+  // A faceted leaf, and an inline reference’s identity, are faceted on a
+  // nested path, which Typesense flattens into one list per document – so a
+  // bucket counts documents, not entries.
   const facetedPaths = new Set(
-    facetsOf(searchType, options.schema)
-      .filter((facet) => facet.reference !== undefined)
-      .map((facet) => facet.engineField),
+    facetsOf(searchType, options.schema).map((facet) => facet.engineField),
   );
   for (const field of collection.fields as CollectionFieldSchema[]) {
     if (facetedPaths.has(field.name)) {
@@ -436,6 +437,21 @@ function periodFields(
   ];
 }
 
+/** The presence companion of a field declaring `presence`
+ *  ({@link physicalFields}): a boolean on every document, indexed and faceted,
+ *  since Typesense has no filter on a field holding a value. Declared whatever
+ *  the field stores – a value, a period, a nested object – and for a field
+ *  declaring presence alone, which is internal and stores nothing else. */
+function presenceFields(field: SearchField): CollectionFieldSchema[] {
+  const { exists, leafExists } = physicalFields(field);
+  return [
+    ...(exists === undefined ? [] : [exists]),
+    // One per presence leaf of an inline reference: whether any entry holds
+    // a value, a top-level boolean of the root document.
+    ...leafExists.map((companion) => companion.exists),
+  ].map((name) => ({ name, type: 'bool', facet: true }));
+}
+
 /** A `date` field’s precision companion ({@link physicalFields}): read back
  *  with the hit to format the value, never queried, so stored but not
  *  indexed – it costs disk, not RAM. */
@@ -544,8 +560,8 @@ function nestedFields(
   const walked = new Set(onPath).add(nestedType.name);
   // Typesense flattens a nested object, so a value under a multi-valued
   // ancestor arrives as an array however single-valued the declaration is.
-  // That only matters for an INDEXED field, whose declared type is checked
-  // against what is stored; an unindexed one is stored as-is.
+  // Once the parent is indexed, every declared child is checked against that
+  // array – stored-only ones too – so each is declared a list ({@link asList}).
   const flattensToArray = withinArray || array;
   const children: CollectionFieldSchema[] = [];
   // A `local` lookup nests its endpoint’s own document, which carries the `id`
@@ -639,17 +655,39 @@ function nestedFields(
       index: children.some((child) => child.index !== false),
       optional: reference.required !== true,
     },
-    ...children,
+    ...(flattensToArray ? children.map(asList) : children),
   ];
 }
 
 /**
- * The **identity companion** of an inline reference: the flat field holding the
- * ids its entries reference, which the engine filters and facets in place of
- * the nested object it cannot. Empty for an inline reference declaring no
- * `identity` – a display-only nesting keeps costing no RAM.
+ * The list form of a nested field under an `object[]`, which flattens every
+ * value beneath it into one list per document. Applied to every child in one
+ * place, because Typesense checks each declared child of an indexed parent
+ * against that list – stored-only ones too – and rejects the whole document
+ * on a scalar declaration.
+ */
+function asList(field: CollectionFieldSchema): CollectionFieldSchema {
+  const list = LIST_TYPES[field.type as keyof typeof LIST_TYPES];
+  return list === undefined ? field : { ...field, type: list };
+}
+
+/** The scalar types a nested declaration can carry, each with its list form. */
+const LIST_TYPES = {
+  string: 'string[]',
+  int64: 'int64[]',
+  float: 'float[]',
+  bool: 'bool[]',
+  object: 'object[]',
+} as const satisfies Record<string, CollectionFieldSchema['type']>;
+
+/**
+ * The top-level companions of a field storing nested objects: a `local`
+ * lookup’s **identity companion**, the flat field holding the ids of its
+ * endpoints, which the engine filters and facets in place of the nested object
+ * it cannot. An inline reference needs none – it reads its identity’s leaf
+ * inside each entry – and a display-only nesting keeps costing no RAM.
  *
- * A second, narrowed field joins it where the target declares a facet policy,
+ * A narrowed field joins them where the target declares a facet policy,
  * exactly as it does for a top-level facetable reference: the facet then reads
  * the admitted subset, so an excluded id is never seen by the engine rather
  * than merely unlabelled.
@@ -659,18 +697,16 @@ function identityCompanionFields(
   schema: SearchSchema,
 ): CollectionFieldSchema[] {
   const names = physicalFields(field, schema);
-  if (names.identity === undefined) {
-    return [];
-  }
-  const fields: CollectionFieldSchema[] = [
-    {
+  const fields: CollectionFieldSchema[] = [];
+  if (names.identity !== undefined) {
+    fields.push({
       name: names.identity,
       type: 'string[]',
       facet: names.facet === names.identity,
       optional: true,
-    },
-  ];
-  if (names.facet !== undefined && names.facet !== names.identity) {
+    });
+  }
+  if (names.facet !== undefined && names.facet !== names.filter) {
     fields.push({
       name: names.facet,
       type: 'string[]',
@@ -824,7 +860,7 @@ function nestedLeafFields(
   const storesAList = flattensToArray || field.array === true;
   fields.push({
     name: nestedFieldName(prefix, field.name),
-    type: indexed && storesAList ? arrayValueType(valueType) : valueType,
+    type: storesAList ? arrayValueType(valueType) : valueType,
     index: indexed,
     // Always optional: `required` is a promise about the *referent* (this value
     // is on every referent), while Typesense’s flag is about the document.
@@ -845,14 +881,11 @@ function nestedLeafFields(
   return fields;
 }
 
-/** The Typesense field type for a non-localized field, from its `kind`. 64-bit
- *  integers (and dates, stored as Unix seconds) so large counts never overflow. */
 /**
- * The array form of a value type, for a nested field that an ancestor’s
- * `object[]` flattens into a list. Only an **indexed** field needs it: Typesense
- * checks a declared type against what is stored, and a value under a
- * multi-valued ancestor arrives as an array however single-valued its own
- * declaration is. Enumerated rather than string-appended so an invalid
+ * The array form of a value type, for a nested field that holds a list: one
+ * an ancestor’s `object[]` flattens, or one declaring `array` itself. Typesense
+ * checks every declared child of an indexed parent against what is stored,
+ * indexed or not. Enumerated rather than string-appended so an invalid
  * combination cannot be built.
  */
 function arrayValueType(type: ValueType): CollectionFieldSchema['type'] {
@@ -883,6 +916,8 @@ function arrayValueType(type: ValueType): CollectionFieldSchema['type'] {
  */
 type ValueType = 'string' | 'string[]' | 'int64' | 'float' | 'bool';
 
+/** The Typesense field type for a non-localized field, from its `kind`. 64-bit
+ *  integers (and dates, stored as Unix seconds) so large counts never overflow. */
 function typesenseValueType(field: SearchField): ValueType {
   switch (field.kind) {
     case 'integer':

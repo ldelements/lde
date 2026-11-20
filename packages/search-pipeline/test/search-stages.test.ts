@@ -475,6 +475,12 @@ describe('selectByClass', () => {
     expect(await sentQuery()).toMatch(/SELECTDISTINCT\?root/i);
   });
 
+  it('orders the roots, so pages neither skip nor repeat one', async () => {
+    // SPARQL leaves solution order unspecified without ORDER BY, so LIMIT/OFFSET
+    // pages could otherwise shift between requests.
+    expect(await sentQuery()).toMatch(/ORDERBYASC\(\?root\)/i);
+  });
+
   it('restricts the roots by a graph pattern, keeping blank nodes out', async () => {
     const query = await sentQuery(
       '?root <https://example.org/about> <https://example.org/term/1>',

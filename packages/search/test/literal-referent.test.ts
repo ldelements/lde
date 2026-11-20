@@ -194,6 +194,7 @@ describe('a node the graph may state as a bare literal', () => {
           kind: 'reference',
           path: `${SCHEMA_ORG}contributor`,
           output: true,
+          filterable: true,
           ref: { strategy: 'lookup', target: 'Person' },
         },
       ],
