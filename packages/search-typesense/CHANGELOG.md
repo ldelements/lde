@@ -1,3 +1,13 @@
+## 0.66.1 (2026-11-20)
+
+### 🚀 Features
+
+- **search:** search the target types for a facet whose documents store no labels ([#1112](https://github.com/ldelements/lde/pull/1112))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.50.1
+
 ## 0.66.0 (2026-11-20)
 
 ### 🩹 Fixes
