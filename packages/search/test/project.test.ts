@@ -2217,6 +2217,37 @@ describe('document keys (a type keyed on a declared field)', () => {
     expect(document.unnamed_search).toEqual(['https://ex/thing']);
   });
 
+  it('pairs each referent’s labels with the key it stores, for a facet searched by label', () => {
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/work/1',
+        [workKey('locationCreated')]: {
+          '@id': 'https://ex/place/1',
+          [placeKey('_sameAs')]: [{ '@id': `${GEONAMES}2751283` }],
+          [placeKey('name')]: [{ '@value': 'Kessel (Limburg)' }],
+        },
+        [workKey('about')]: [
+          { '@id': 'https://ex/place/2', [placeKey('name')]: 'Roermond' },
+          // Stated by IRI alone: counted by the facet, with nothing to match.
+          'https://ex/place/3',
+        ],
+        [workKey('unnamed')]: [{ '@id': 'https://ex/Thing' }],
+      },
+      work,
+      keyedSchema,
+    );
+
+    // Punctuation becomes a space; the key sits behind the separator.
+    expect(document.locationCreated_match).toBe(
+      `Kessel Limburg \u001f0q0x0z0${GEONAMES}2751283`,
+    );
+    expect(document.about_match).toEqual([
+      'Roermond \u001f0q0x0z0https://ex/place/2',
+    ]);
+    // Nothing names a label source, so nothing is searched by label.
+    expect(document).not.toHaveProperty('unnamed_match');
+  });
+
   it('stores the referent’s own IRI when it offers no key', () => {
     // An unaligned place: the reference still resolves, against the document
     // that place is written under.
@@ -2503,6 +2534,29 @@ describe('facet policy (a type narrowing the facets that reference it)', () => {
     // The policy is applied to the KEY the reference stores, never to the
     // referent’s node IRI – the aligned place’s node is as local as Kessel’s.
     expect(document.about_facet).toEqual([`${GEONAMES}2751283`]);
+  });
+
+  it('pairs labels only with the keys the policy admits, after the field’s transform', () => {
+    const named = (ref: object, name: string) => ({
+      ...ref,
+      [placeKey('name')]: [{ '@value': name }],
+    });
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/work/1',
+        [workKey('about')]: [
+          named(kessel, 'Kessel'),
+          named(aligned, 'Kessel aan de Maas'),
+        ],
+      },
+      work,
+      schema,
+    );
+
+    // A query never selects a value the facet keeps out.
+    expect(document.about_match).toEqual([
+      `Kessel aan de Maas \u001f0q0x0z0${GEONAMES}2751283`,
+    ]);
   });
 
   it('narrows a single-valued reference to a string companion, absent when excluded', () => {

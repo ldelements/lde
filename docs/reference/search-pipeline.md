@@ -403,12 +403,17 @@ readers:
 A stage passes the referents of its references through each target type’s own
 `transforms`, inside the batch, so memory stays bounded by `batchSize`: the
 quads the extraction read off each referent go in, under the target’s IR
-Aliases, and what the transforms return replaces them. Two kinds of reference
-are described this way:
+Aliases, and what the transforms return replaces them. Three kinds of
+reference are described this way:
 
 - a `searchable` reference, whose referents’ key and label are read, so it is
   searched by the label the target’s transform leaves
   ([ADR 39](../decisions/0039-apply-a-label-sources-transforms-to-its-referents.md));
+- a facetable reference whose facet is searched by its referents’ labels –
+  not a `local` lookup, which reads its referents through the target’s whole
+  declaration – so a facet query matches the label the target’s transform
+  leaves
+  ([ADR 43](../decisions/0043-select-a-reference-facets-matches-by-the-labels-its-documents-carry.md));
 - a `lookup` declaring [presence leaves](./search#on-a-lookup-s-referents),
   whose referents’ key and leaves are read, so the projection can write whether
   any referent holds a leaf.

@@ -23,7 +23,9 @@ import {
 } from '@lde/search';
 import {
   endpointFieldOf,
+  facetMatchesLabels,
   irAlias,
+  localLookupTargetsOf,
   physicalFields,
   isInlineReference,
   referencedTargetsOf,
@@ -447,7 +449,7 @@ function referentTransforms(
         aliases: new Set<string>(),
       };
       route.fields.add(alias);
-      for (const hopField of referentHopFields(field, target)) {
+      for (const hopField of referentHopFields(field, target, schema)) {
         route.aliases.add(irAlias(target, hopField));
       }
       routes.set(target, route);
@@ -561,7 +563,9 @@ const RDF_TYPE = factory.namedNode(
 );
 
 /** The type’s reference fields whose referents are described – `searchable`
- *  ones, and lookups declaring presence leaves – each with the IR Alias whose
+ *  ones, those whose facet is searched by label (not a `local` lookup’s, which
+ *  reads its referents through the target’s whole declaration), and lookups
+ *  declaring presence leaves – each with the IR Alias whose
  *  objects are its referents: its own, and those of the inline referents it
  *  nests. A graph that leaves an edge out points at the endpoint through the
  *  inline field itself, so an endpoint field is reached through both.
@@ -586,9 +590,11 @@ function describedReferences(
       ];
     }
     // A reference’s referents are described when it is searched by their
-    // labels, or counted for a presence leaf.
+    // labels, its facet is, or they are counted for a presence leaf.
     return field.kind === 'reference' &&
       (field.searchable !== undefined ||
+        (facetMatchesLabels(field, schema) &&
+          localLookupTargetsOf(field, schema).length === 0) ||
         physicalFields(field).leafExists.length > 0)
       ? [{ alias: irAlias(owner, field), field }]
       : [];

@@ -19,9 +19,27 @@ const person: SearchType = {
     {
       name: 'label',
       kind: 'text',
+      path: '<https://schema.org/name>',
       locales: ['nl'],
       output: true,
       searchable: { weight: 1 },
+    },
+  ],
+};
+
+// A label source deriving its label: the extraction has no path to read the
+// label off a referent by.
+const concept: SearchType = {
+  name: 'Concept',
+  class: 'https://schema.org/DefinedTerm',
+  fields: [
+    {
+      name: 'label',
+      kind: 'text',
+      locales: ['nl'],
+      output: true,
+      searchable: { weight: 1 },
+      derive: () => 'derived',
     },
   ],
 };
@@ -34,10 +52,20 @@ const work: SearchType = {
     {
       name: 'creator',
       kind: 'reference',
+      path: '<https://schema.org/creator>',
       facetable: true,
       filterable: true,
       ref: { strategy: 'idOnly' },
       labelSource: 'Person',
+    },
+    {
+      name: 'about',
+      kind: 'reference',
+      path: '<https://schema.org/about>',
+      facetable: true,
+      filterable: true,
+      ref: { strategy: 'idOnly' },
+      labelSource: 'Concept',
     },
     {
       name: 'class',
@@ -54,7 +82,7 @@ const work: SearchType = {
   ],
 };
 
-const schema = searchSchema(person, work);
+const schema = searchSchema(person, concept, work);
 
 const base: SearchQuery = {
   where: [],
@@ -79,6 +107,10 @@ describe('isQueryableFacet', () => {
     expect(isQueryableFacet(facet('iiif'), schema)).toBe(false);
     expect(isQueryableFacet(facet('size'), schema)).toBe(false);
     expect(isQueryableFacet(facet('subtitle.exists'), schema)).toBe(false);
+  });
+
+  it('refuses a reference whose label source derives its label, which no referent can be read for', () => {
+    expect(isQueryableFacet(facet('about'), schema)).toBe(false);
   });
 });
 

@@ -29,6 +29,7 @@ export {
   facetNamed,
   facetsOf,
   isQueryableFacet,
+  facetMatchesLabels,
   presenceFacetName,
   holdsNoIds,
   identityFieldOf,
@@ -69,6 +70,7 @@ export type {
 } from './schema.js';
 export { missingRequiredFields } from './project.js';
 export { physicalNameTokens } from './physical-name.js';
+export { labelMatchValue, idOfLabelMatch } from './label-match.js';
 export { matchLanguage } from './language.js';
 export { joinGraph, MAX_JOIN_DEPTH } from './join-graph.js';
 export type { JoinGraph } from './join-graph.js';

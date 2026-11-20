@@ -26,6 +26,7 @@ const labelledTarget = (name: string, iri: string): SearchType => ({
     {
       name: 'label',
       kind: 'text',
+      path: '<https://schema.org/name>',
       locales: ['nl', 'en'],
       output: true,
       searchable: { weight: 1 },
@@ -61,6 +62,7 @@ const schema: SearchType = {
     {
       name: 'publisher',
       kind: 'reference',
+      path: '<http://purl.org/dc/terms/publisher>',
       facetable: true,
       filterable: true,
       output: true,
@@ -90,6 +92,7 @@ const schema: SearchType = {
     {
       name: 'terminologySource',
       kind: 'reference',
+      path: '<https://example.org/terminologySource>',
       array: true,
       facetable: true,
       output: true,
@@ -878,6 +881,7 @@ describe('buildGraphQLSchema', () => {
         {
           name: 'publisher',
           kind: 'reference',
+          path: '<http://purl.org/dc/terms/publisher>',
           facetable: true,
           ref: { strategy: 'idOnly' },
           labelSource: 'Organization',

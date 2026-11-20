@@ -2088,17 +2088,14 @@ export function buildGraphQLSchema(
   }
 
   /** What a value facet costs on top of `own`: under a query on a reference
-   *  facet, one more per target type – the search for its candidates and the
-   *  request that counts them. */
+   *  facet, one more – the search for its candidates and the request that
+   *  counts them. */
   function queryCostFor(
     facet: FacetDeclaration,
     own: number,
   ): GraphQLFieldExtensions<unknown, unknown> {
     return facet.field.kind === 'reference' && isQueryableFacet(facet, schema)
-      ? facetQueryCostExtensions(
-          own,
-          labelTargetNamesOf(facet.field, schema).length,
-        )
+      ? facetQueryCostExtensions(own)
       : costExtensions(own * operationCost);
   }
 

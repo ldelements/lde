@@ -13,8 +13,10 @@ import {
 } from '@traqula/rules-sparql-1-1';
 import { defineSearchType, searchSchema } from '@lde/search';
 import {
+  facetMatchesLabels,
   fieldNamed,
   irAlias,
+  labelFieldOf,
   localLookupTargetsOf,
   referencedTargetsOf,
   referenceTypeNamed,
@@ -72,8 +74,6 @@ const creativeWork = defineSearchType({
       name: 'creator',
       kind: 'reference',
       path: `<${SCHEMA}creator>`,
-
-      facetable: true,
       output: true,
       ref: { strategy: 'lookup', target: 'Person' },
     },
@@ -519,7 +519,6 @@ describe('references into a keyed type', () => {
         name: 'locationCreated',
         kind: 'reference',
         path: `<${SCHEMA}locationCreated>`,
-        facetable: true,
         output: true,
         ref: { strategy: 'lookup', target: 'Place' },
       },
@@ -585,15 +584,28 @@ describe('references into a keyed type', () => {
       },
     } as const;
     const countingWork = defineSearchType({ ...work, fields: [counting] });
-    searchSchema(countingWork, place);
+    const countingSchema = searchSchema(countingWork, place);
 
-    expect(referentHopFields(counting, place)).toEqual([
+    expect(referentHopFields(counting, place, countingSchema)).toEqual([
       place.fields[1],
       place.fields[0],
     ]);
   });
 
-  it('reads no label for a lookup that is not searchable', () => {
+  it('reads a faceted lookup’s labels off the referent, for its facet query', () => {
+    const facetedWork = defineSearchType({
+      ...work,
+      fields: [{ ...work.fields[0], facetable: true }],
+    });
+
+    expect(
+      templatePredicates(
+        extractionQuery(facetedWork, searchSchema(facetedWork, place)),
+      ),
+    ).toContain(irAlias(place, place.fields[0]));
+  });
+
+  it('reads no label for a lookup neither searchable nor faceted', () => {
     expect(
       templatePredicates(extractionQuery(work, keyedSchema)),
     ).not.toContain(irAlias(place, place.fields[0]));
@@ -916,6 +928,15 @@ describe('extraction ⟷ projection contract', () => {
             : fieldNamed(target, target.key.field);
         if (keyField !== undefined) {
           aliases.add(irAlias(target, keyField));
+        }
+        // A reference searched, or faceted, by its referents’ labels: the
+        // projection reads each referent’s label under the TARGET’s alias.
+        const labelField = labelFieldOf(target);
+        if (
+          labelField !== undefined &&
+          (field.searchable !== undefined || facetMatchesLabels(field, schema))
+        ) {
+          aliases.add(irAlias(target, labelField));
         }
       }
     }

@@ -291,31 +291,49 @@ Non-matching values cannot crowd them out, and under `facet_query`
 exact.
 
 A **reference** facet’s values are IRIs, which `facet_query` would match
-instead of the labels someone types. It takes two steps:
+instead of the labels someone types. Its documents therefore carry a
+label-match companion, `${name}_match`: one value per referent the facet
+counts, holding the labels the referring graph states for it and then its id
+([ADR 43](../decisions/0043-select-a-reference-facets-matches-by-the-labels-its-documents-carry.md)).
+A query takes two steps:
 
-1. Search the collection of each type the reference names with the query,
-   using that type’s own free-text search – its searchable fields, weights,
-   typo tolerance and prefix matching – and take at most
-   `maxFacetQueryCandidates` ids from each. These are the candidates.
-2. Count each candidate with a search of its own: the facet’s search – the
-   query’s documents without the facet’s own filter – plus that candidate
-   selected, asking for no document. The facet keeps the candidates that
-   occur, the highest counts first, capped at the limit.
+1. Run the facet’s search – the query’s documents without the facet’s own
+   filter – with `facet_query` on the companion, asking for at most
+   `maxFacetQueryCandidates` values. Typesense returns the matching values
+   with the highest counts, of referents those documents carry. Their ids are
+   the candidates.
+2. Count each candidate with a search of its own: the facet’s search plus that
+   candidate selected, asking for no document. The facet keeps the candidates
+   that occur, the highest counts first, capped at the limit.
 
-Counting each candidate apart is what keeps the answer exact. A single facet
-search over the documents carrying any candidate would count their other
-values too, which can outnumber every candidate and crowd it out of the
-buckets – a match on two works that also carry twenty prolific creators would
-fall out of a top-ten – and fetching all of them instead makes the response
-grow with the data. The counts travel in `multi_search` requests of 50, so with the default cap
-of 50 a query costs one request of counts per type the reference names, beside
-step one’s: on a local index of 19694 works, 50 counts took 13 ms against
-10 ms for one facet search. A reference naming two types (`Person`,
-`Organization`) can need 100 counts.
+The companion’s own counts are not the answer, because a referent’s label is
+whatever each referring graph states. One referent may carry “Boerenbont” on
+some documents, “Boerenbont decor” on others and nothing on the rest, which
+splits it over several values and leaves some documents out. Counting each
+candidate on the facet field makes its count exact anyway. Ranking is the one
+place the split shows: when more values match than the cap holds, a referent
+spread over several labels can rank below a smaller one labelled the same
+everywhere.
+
+Counting each candidate apart also keeps a match from being crowded out. A
+single facet search over the documents carrying any candidate would count their
+other values too, which can outnumber every candidate – a match on two works
+that also carry twenty prolific creators would fall out of a top-ten – and
+fetching all of them instead makes the response grow with the data. The counts
+travel in `multi_search` requests of 50, so with the default cap of 50 a query
+costs step one’s search and one request of counts: on a local index of 19694
+works, 50 counts took 13 ms against 10 ms for one facet search.
+
+Each companion value is built so `facet_query` matches its labels and nothing
+else. Punctuation in a label becomes a space, so “sphinx” matches
+“Regout/Sphinx)”. The id follows a separator and a guard – digits alternating
+with letters – which make it one word no query starts with or comes within a
+typo of, so “https” or a path segment does not match every value. The collection declares no
+`token_separators` on the companion, as they would split the id into words.
 
 `totalValues` is the number of candidates that occur in the documents. It is
-exact only when no step-one search filled its cap; when one did, more
-referents may match than were found, and `totalValues` is absent.
+exact only when step one returned every matching value; when it filled its
+cap, more referents may match than were found, and `totalValues` is absent.
 
 ### Engine options
 
@@ -338,9 +356,9 @@ Beyond `collections`, `TypesenseSearchEngineOptions` carries:
   [facet policy](./search#facet-policy) keeps out of the facet – sent
   together in as few `multi_search` requests as Typesense accepts (50
   searches each).
-- **`maxFacetQueryCandidates`** – how many referents a query on a reference
-  facet may match, per type the reference names (default 50, at most 250:
-  Typesense’s `per_page` cap). Each candidate costs a count search. See [facet queries](#facet-queries).
+- **`maxFacetQueryCandidates`** – how many label-match values a query on a
+  reference facet selects (default 50, at most 250). Each candidate costs a
+  count search. See [facet queries](#facet-queries).
 - **`onLabelError`** – called when reference-label resolution fails; the
   search then degrades to id-only references (and reference-facet buckets to
   unlabelled ones) rather than failing. Omit it and the degradation is

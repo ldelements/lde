@@ -167,6 +167,11 @@ describe('registry-sourced extraction: scoped to the dataset’s own graph', () 
         description_nl: 'Een dataset over vaandels.',
         description_search_nl: 'een dataset over vaandels.',
         publisher: ['https://ex/org/trace'],
+        // The publisher’s label, read off it in the same graph, for a query on
+        // the publisher facet to match.
+        publisher_match: [
+          'Tracé Limburgs Samenlevingsarchief \u001f0q0x0z0https://ex/org/trace',
+        ],
         license: ['https://creativecommons.org/licenses/by-nc-nd/4.0/'],
         landingPage: 'https://ex/a/',
       },

@@ -702,6 +702,18 @@ describe('faceting a local lookup over several targets', () => {
     ]);
   });
 
+  it('pairs each admitted endpoint’s label with its key, for a facet searched by label', () => {
+    expect(physicalFields(creator, directSchema).match).toBe(
+      'creator_id_match',
+    );
+    // One value per key, though two nodes name Rembrandt; the unknown
+    // creator is kept out by Person’s policy, as from the facet.
+    expect(document.creator_id_match).toEqual([
+      `Rembrandt \u001f0q0x0z0${RKD}`,
+      'Zusters Benedictinessen \u001f0q0x0z0https://id.example/zusters',
+    ]);
+  });
+
   it('stores a referent without an id, and leaves it out of the facet', () => {
     const gemeente = (document.creator as readonly SearchDocument[]).find(
       (entry) => entry.name_und === 'Gemeente',
@@ -808,5 +820,90 @@ describe('validating a projection over several targets', () => {
     ).toEqual([
       { part: 'resolve', field: 'creator.deathDate', reason: 'unknown-field' },
     ]);
+  });
+});
+
+describe('a facet searched by label inside a local lookup’s endpoint', () => {
+  const town = defineSearchType({
+    name: 'Town',
+    class: `${SCHEMA_ORG}City`,
+    labelField: 'name',
+    fields: [
+      {
+        name: 'name',
+        kind: 'text',
+        path: `${SCHEMA_ORG}name`,
+        locales: ['und'],
+        output: true,
+        searchable: { weight: 1 },
+      },
+    ],
+  });
+  const artist = defineSearchType({
+    name: 'Artist',
+    class: `${SCHEMA_ORG}Person`,
+    labelField: 'name',
+    fields: [
+      {
+        name: 'name',
+        kind: 'text',
+        path: `${SCHEMA_ORG}name`,
+        locales: ['und'],
+        output: true,
+        searchable: { weight: 1 },
+      },
+      {
+        name: 'birthPlace',
+        kind: 'reference',
+        path: `${SCHEMA_ORG}birthPlace`,
+        output: true,
+        facetable: true,
+        ref: { strategy: 'lookup', target: 'Town' },
+      },
+    ],
+  });
+  const painting = defineSearchType({
+    name: 'Painting',
+    class: `${SCHEMA_ORG}Painting`,
+    fields: [
+      {
+        name: 'creator',
+        kind: 'reference',
+        path: `${SCHEMA_ORG}creator`,
+        array: true,
+        output: true,
+        facetable: true,
+        ref: { strategy: 'lookup', target: 'Artist', local: true },
+      },
+    ],
+  });
+
+  it('writes the companion on the root document only, which a collection declares', () => {
+    const document = projectDocument(
+      {
+        '@id': 'https://ex/painting/1',
+        [alias('Painting', 'creator')]: [
+          {
+            '@id': 'https://ex/rembrandt',
+            [alias('Artist', 'name')]: [{ '@value': 'Rembrandt' }],
+            [alias('Artist', 'birthPlace')]: [
+              {
+                '@id': 'https://ex/leiden',
+                [alias('Town', 'name')]: [{ '@value': 'Leiden' }],
+              },
+            ],
+          },
+        ],
+      },
+      painting,
+      searchSchema(painting, artist, town),
+    );
+
+    expect(document.creator_id_match).toEqual([
+      'Rembrandt \u001f0q0x0z0https://ex/rembrandt',
+    ]);
+    const [endpoint] = document.creator as SearchDocument[];
+    expect(endpoint?.birthPlace).toBe('https://ex/leiden');
+    expect(endpoint).not.toHaveProperty('birthPlace_match');
   });
 });

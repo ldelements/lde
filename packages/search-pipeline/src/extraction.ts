@@ -13,6 +13,7 @@ import { Parser } from '@traqula/parser-sparql-1-1';
 import { Generator } from '@traqula/generator-sparql-1-1';
 import {
   endpointFieldOf,
+  facetMatchesLabels,
   fieldNamed,
   irAlias,
   isInlineReference,
@@ -145,18 +146,20 @@ export function extractionQueryString(
 /**
  * The fields a reference reads off a referent of a target it does not expand
  * `local`ly: the target’s key field, where it is keyed; – for a `searchable`
- * reference – its label field, by which the reference is searched; and each of
- * the reference’s presence leaves, whose companions say whether any referent
- * holds one. Each field once, though it plays several of these parts.
+ * reference, or one whose facet is searched by label – its label field; and
+ * each of the reference’s presence leaves, whose companions say whether any
+ * referent holds one. Each field once, though it plays several of these parts.
  */
 export function referentHopFields(
   field: SearchField,
   target: RootType,
+  schema: SearchSchema,
 ): PathField[] {
   const hopFields = [
     keyedFieldOf(target),
-    // `searchSchema` guarantees a searchable reference’s label a path.
-    field.searchable === undefined
+    // `searchSchema` guarantees a searchable reference’s label a path, and
+    // `facetMatchesLabels` admits only labels with one.
+    field.searchable === undefined && !facetMatchesLabels(field, schema)
       ? undefined
       : (labelFieldOf(target) as PathField),
     // …and a lookup’s target each presence leaf, with a path.
@@ -476,7 +479,7 @@ function buildReferentHops(
       // is one of them, so emitting the hop as well would state it twice.
       // A searchable reference is searched by its referents’ labels, so it
       // reads them off the referent beside the key.
-      for (const hopField of referentHopFields(field, target)) {
+      for (const hopField of referentHopFields(field, target, schema)) {
         const built = buildFieldHop(target, hopField, referent, counter);
         template.push(built.triple);
         expansions.push(built.pattern);

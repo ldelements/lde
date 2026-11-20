@@ -276,6 +276,10 @@ describe('facet policy end to end (integration)', () => {
     <https://b/work/4> <urn:lde:CreativeWork/title> "The other Kessel" .
     <https://b/work/4> <urn:lde:CreativeWork/locationCreated> <${OTHER_KESSEL}> .
     <${VENLO_NODE}> <urn:lde:Place/_sameAs> <${VENLO}> .
+    <${VENLO_NODE}> <urn:lde:Place/name> "Venlo" .
+    <${KESSEL}> <urn:lde:Place/name> "Kessel" .
+    <${KESSEL_CENTRUM}> <urn:lde:Place/name> "Kessel-Centrum" .
+    <${OTHER_KESSEL}> <urn:lde:Place/name> "Kessel" .
   `;
 
   async function project(
@@ -382,8 +386,8 @@ describe('facet policy end to end (integration)', () => {
   });
 
   it('leaves a value the policy keeps out of the facet out of a facet query too', async () => {
-    // Every Kessel matches “kes” in the place collection, and works carry
-    // them, but the policy admits none of them as a bucket.
+    // Every Kessel matches “kes” by the label its work carries, but the
+    // policy admits none of them as a bucket.
     const [kessel, venlo] = await engine.searchFacets(work, [
       {
         ...baseQuery,

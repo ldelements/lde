@@ -9,7 +9,7 @@ import {
   type SearchType,
   type TextField,
 } from '@lde/search';
-import { physicalFields } from '@lde/search/adapter';
+import { labelMatchValue, physicalFields } from '@lde/search/adapter';
 import { buildCollectionDefinition } from '../src/collection-definition.js';
 import { createTypesenseSearchEngine } from '../src/search.js';
 import { TypesenseContainer } from './typesense-container.js';
@@ -96,14 +96,42 @@ const rembrandt = 'https://ex/rembrandt';
 const rembert = 'https://ex/rembert';
 const harmen = 'https://ex/harmen';
 const remonstrants = 'https://ex/remonstrants';
+// Another referent its documents call “Rembrandt van Rijn” too.
+const namesake = 'https://ex/rembrandt-namesake';
+const timor = 'https://ex/timor';
 // Twenty people who share every work Rembert made, and have made more.
 const others = Array.from({ length: 20 }, (_, index) => `https://ex/p${index}`);
+
+/** The label each work’s graph states for a creator, as the projection
+ *  copies it into the label-match companion. */
+const labels: Readonly<Record<string, string>> = {
+  [rembrandt]: 'Rembrandt van Rijn',
+  [rembert]: 'Rembert Dodoens',
+  [harmen]: 'Harmen Gerritsz',
+  [remonstrants]: 'Remonstrantse Broederschap',
+  [namesake]: 'Rembrandt van Rijn',
+  [timor]: 'Timor (Petrus Regout/Sphinx)',
+  ...Object.fromEntries(
+    others.map((id, index) => [id, `Painter ${index}`] as const),
+  ),
+};
+
+/** A work document with the label-match companion its creators’ labels give. */
+const workDocument = (id: string, keyword: string[], creator: string[]) => ({
+  id,
+  keyword,
+  creator,
+  creator_match: creator.map(
+    (iri) => labelMatchValue([labels[iri] as string], iri) as string,
+  ),
+});
 
 /**
  * A facet’s values searched by text (`facetQueries`), end to end through a
  * real Typesense: a literal facet through `facet_query`, a reference facet in
- * two steps – the referents matching the text in their own collections, then
- * the facet counted over those.
+ * two steps – the referents whose labels on the documents match the text,
+ * through `facet_query` on the label-match companion, then each counted over
+ * the facet field.
  */
 describe('a facet query', () => {
   const container = new TypesenseContainer();
@@ -171,8 +199,10 @@ describe('a facet query', () => {
           [
             named(person, rembrandt, 'Rembrandt van Rijn'),
             named(person, rembert, 'Rembert Dodoens'),
-            // Found by “rem” through the alternate name alone.
+            // Called “Remmert” only in the people collection, as enrichment
+            // supplies it: no work carries the name, so no query finds it.
             named(person, harmen, 'Harmen Gerritsz', 'Remmert'),
+            named(person, namesake, 'Rembrandt van Rijn'),
             ...others.map((id, index) => named(person, id, `Painter ${index}`)),
           ],
           { action: 'create' },
@@ -181,7 +211,10 @@ describe('a facet query', () => {
         .collections('organizations')
         .documents()
         .import(
-          [named(organization, remonstrants, 'Remonstrantse Broederschap')],
+          [
+            named(organization, remonstrants, 'Remonstrantse Broederschap'),
+            named(organization, timor, 'Timor (Petrus Regout/Sphinx)'),
+          ],
           {
             action: 'create',
           },
@@ -192,34 +225,48 @@ describe('a facet query', () => {
         .import(
           [
             ...[1, 2, 3].map((index) => ({
-              id: `https://ex/painting-${index}`,
-              keyword: ['schilderij'],
-              creator: [rembrandt],
+              ...workDocument(
+                `https://ex/painting-${index}`,
+                ['schilderij'],
+                [rembrandt],
+              ),
               genre: ['https://ex/portrait'],
             })),
-            ...[1, 2].map((index) => ({
-              id: `https://ex/herbal-${index}`,
-              keyword:
+            // Rembrandt under another label, and stated by IRI alone: still
+            // his works, which his bucket counts.
+            {
+              id: 'https://ex/etching-1',
+              keyword: ['ets'],
+              creator: [rembrandt],
+              creator_match: [
+                labelMatchValue(['Rembrandt Harmenszoon'], rembrandt),
+              ],
+            },
+            {
+              id: 'https://ex/etching-2',
+              keyword: ['ets'],
+              creator: [rembrandt],
+            },
+            workDocument('https://ex/etching-3', ['ets'], [namesake]),
+            ...[1, 2].map((index) =>
+              workDocument(
+                `https://ex/herbal-${index}`,
                 index === 1
                   ? ['boek', 'kruid', 'kruidenboek']
                   : ['boek', 'kruid'],
-              creator: [rembert, ...others],
-            })),
-            ...[1, 2, 3].map((index) => ({
-              id: `https://ex/other-${index}`,
-              keyword: ['boek'],
-              creator: others,
-            })),
-            {
-              id: 'https://ex/pamphlet',
-              keyword: ['pamflet'],
-              creator: [remonstrants],
-            },
-            {
-              id: 'https://ex/drawing',
-              keyword: ['schilderij'],
-              creator: [harmen, ...others],
-            },
+                [rembert, ...others],
+              ),
+            ),
+            ...[1, 2, 3].map((index) =>
+              workDocument(`https://ex/other-${index}`, ['boek'], others),
+            ),
+            workDocument('https://ex/pamphlet', ['pamflet'], [remonstrants]),
+            workDocument(
+              'https://ex/drawing',
+              ['schilderij'],
+              [harmen, ...others],
+            ),
+            workDocument('https://ex/plate', ['servies'], [timor]),
           ],
           { action: 'create' },
         ),
@@ -248,27 +295,90 @@ describe('a facet query', () => {
     expect(facet.totalValues).toBe(2);
   });
 
-  it('finds a referent by its label, an alternate name and in every target type', async () => {
+  it('finds a referent by the label its documents carry, in every target type', async () => {
     const [outcome] = await engine.searchFacets(work, [
       { ...base, facets: ['creator'], facetQueries: { creator: 'rem' } },
     ]);
     const facet = facetOf(outcome, 'creator');
 
     expect(counts(facet)).toEqual([
-      [rembrandt, 3],
+      [rembrandt, 5],
       [rembert, 2],
       // Equal counts come in the engine’s order.
       ...counts(facet).slice(2),
     ]);
+    // Not Harmen: “Remmert” is a name only the people collection holds.
     expect(
       new Set(
         counts(facet)
           .slice(2)
           .map(([value]) => value),
       ),
-    ).toEqual(new Set([harmen, remonstrants]));
+    ).toEqual(new Set([remonstrants, namesake]));
     expect(facet.totalValues).toBe(4);
     expect(facet.buckets[0]?.label).toEqual({ und: ['Rembrandt van Rijn'] });
+  });
+
+  it('counts every work carrying a matched referent, whichever label it carries, or none', async () => {
+    const [outcome] = await engine.searchFacets(work, [
+      {
+        ...base,
+        facets: ['creator'],
+        facetQueries: { creator: 'harmenszoon' },
+      },
+    ]);
+    const facet = facetOf(outcome, 'creator');
+
+    // One work carries the label that matched; Rembrandt is on five, and the
+    // facet without a query says so too.
+    expect(counts(facet)).toEqual([[rembrandt, 5]]);
+    expect(facet.totalValues).toBe(1);
+  });
+
+  it('keeps two referents sharing a label apart', async () => {
+    const [outcome] = await engine.searchFacets(work, [
+      { ...base, facets: ['creator'], facetQueries: { creator: 'rijn' } },
+    ]);
+
+    expect(counts(facetOf(outcome, 'creator'))).toEqual([
+      [rembrandt, 5],
+      [namesake, 1],
+    ]);
+  });
+
+  it('matches a word its label’s punctuation joins, and never the id', async () => {
+    const [sphinx, scheme, segment, nearGuard] = await engine.searchFacets(
+      work,
+      [
+        { ...base, facets: ['creator'], facetQueries: { creator: 'sphinx' } },
+        { ...base, facets: ['creator'], facetQueries: { creator: 'https' } },
+        { ...base, facets: ['creator'], facetQueries: { creator: 'namesake' } },
+        // A word, as a person types one: no typo brings it to the guard the
+        // id starts with.
+        { ...base, facets: ['creator'], facetQueries: { creator: 'olde' } },
+      ],
+    );
+
+    expect(counts(facetOf(sphinx, 'creator'))).toEqual([[timor, 1]]);
+    expect(counts(facetOf(scheme, 'creator'))).toEqual([]);
+    expect(counts(facetOf(segment, 'creator'))).toEqual([]);
+    expect(counts(facetOf(nearGuard, 'creator'))).toEqual([]);
+  });
+
+  it('answers a query over documents no filter leaves with an empty facet', async () => {
+    const [outcome] = await engine.searchFacets(work, [
+      {
+        ...base,
+        where: [{ or: [{ field: 'keyword', in: ['nergens'] }] }],
+        facets: ['creator'],
+        facetQueries: { creator: 'rem' },
+      },
+    ]);
+
+    expect(facetOf(outcome, 'creator')).toEqual({
+      buckets: [],
+      totalValues: 0,
+    });
   });
 
   it('keeps a match that co-occurs with many values that outnumber it', async () => {
@@ -286,7 +396,7 @@ describe('a facet query', () => {
     const facet = facetOf(outcome, 'creator');
 
     expect(counts(facet)).toEqual([
-      [rembrandt, 3],
+      [rembrandt, 5],
       [rembert, 2],
     ]);
     expect(facet.totalValues).toBe(4);
@@ -353,8 +463,8 @@ describe('a facet query', () => {
     ]);
     const facet = facetOf(outcome, 'creator');
 
-    // One person and one organization: the best match of each.
-    expect(facet.buckets.length).toBeLessThanOrEqual(2);
+    // The one most frequent match, and no telling how many more there are.
+    expect(counts(facet)).toEqual([[rembrandt, 5]]);
     expect(facet.totalValues).toBeUndefined();
   });
 
@@ -377,7 +487,7 @@ describe('a facet query', () => {
       facetQueries: { creator: 'dodoens' },
     });
 
-    expect(result.total).toBe(10);
+    expect(result.total).toBe(14);
     expect(counts(result.facets.creator as Facet)).toEqual([[rembert, 2]]);
     expect(counts(result.facets.keyword as Facet)).toContainEqual(['boek', 5]);
   });

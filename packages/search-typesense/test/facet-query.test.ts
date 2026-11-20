@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { searchSchema, type SearchQuery, type SearchType } from '@lde/search';
+import { labelMatchValue } from '@lde/search/adapter';
 import { createTypesenseSearchEngine } from '../src/search.js';
 import { fakeTypesenseClient } from './fake-typesense-client.js';
 
@@ -14,6 +15,7 @@ const person: SearchType = {
     {
       name: 'label',
       kind: 'text',
+      path: '<https://schema.org/name>',
       locales: ['und'],
       output: true,
       searchable: { weight: 1 },
@@ -28,6 +30,7 @@ const work: SearchType = {
     {
       name: 'creator',
       kind: 'reference',
+      path: '<https://schema.org/creator>',
       array: true,
       facetable: true,
       ref: { strategy: 'idOnly' },
@@ -50,9 +53,9 @@ const query: SearchQuery = {
   locale: 'und',
 };
 
-/** Step one’s search: the referents, in the target’s collection. */
+/** Step one’s search: the facet’s label-match values matching the query. */
 const isCandidateSearch = (search: Record<string, unknown>) =>
-  search.collection === 'people' && search.include_fields === 'id';
+  search.collection === 'works' && search.facet_by === 'creator_match';
 
 /** A step-two search: one candidate counted, no facet and no hits. */
 const isCountSearch = (search: Record<string, unknown>) =>
@@ -67,15 +70,24 @@ const occurrences: Record<string, number> = {
   'https://ex/remco': 0,
 };
 
-/** Answers step one with three referents, and each count with how many works
- *  carry that referent. */
+/** Answers step one with three matching values, and each count with how many
+ *  works carry that referent. */
 function answer(search: Record<string, unknown>): Record<string, unknown> {
   if (isCandidateSearch(search)) {
     return {
-      found: 3,
-      hits: Object.keys(occurrences)
-        .slice(0, Number(search.per_page))
-        .map((id) => ({ document: { id } })),
+      found: 7,
+      facet_counts: [
+        {
+          field_name: 'creator_match',
+          counts: Object.entries(occurrences)
+            .slice(0, Number(search.max_facet_values))
+            .map(([id, count]) => ({
+              value: labelMatchValue(['Rem'], id),
+              count,
+            })),
+          stats: { total_values: 3 },
+        },
+      ],
     };
   }
   if (isCountSearch(search)) {
@@ -116,7 +128,7 @@ describe('a query on a reference facet', () => {
 
     expect(queried).toEqual({
       error: new Error(
-        'Typesense search of “people” for values of facet “creator” failed (404): Not found',
+        'Typesense search of “works” for values of facet “creator” failed (404): Not found',
       ),
     });
     expect(unqueried).not.toHaveProperty('error');
@@ -174,12 +186,20 @@ describe('a query on a reference facet', () => {
     });
     const sent = performs.flat();
     expect(sent.filter(isCountSearch)).toHaveLength(3);
-    // No facet search over the works: the counts answer the facet.
+    // No facet search over the works but step one’s: the counts answer the
+    // facet.
     expect(
-      sent.some(
+      sent.filter(
         (search) => search.collection === 'works' && 'facet_by' in search,
       ),
-    ).toBe(false);
+    ).toEqual([
+      expect.objectContaining({
+        facet_by: 'creator_match',
+        facet_query: 'creator_match:rem',
+        max_facet_values: 50,
+        per_page: 0,
+      }),
+    ]);
   });
 
   it('reports no total when step one left referents out', async () => {
@@ -191,7 +211,33 @@ describe('a query on a reference facet', () => {
 
     const [outcome] = await engine.searchFacets(work, [query]);
 
-    // Three referents match and two were counted: the total is unknown.
+    // Three values match and two were counted: the total is unknown.
+    expect(outcome).toEqual({
+      facets: {
+        creator: { buckets: [{ value: 'https://ex/rembrandt', count: 5 }] },
+      },
+    });
+  });
+
+  it('reports no total when step one filled its cap without counting every match', async () => {
+    const { client } = fakeTypesenseClient({
+      multiSearch: (search) => {
+        const answered = answer(search);
+        if (!isCandidateSearch(search)) {
+          return answered;
+        }
+        // No `stats`: nothing says how many values match beyond those returned.
+        const [facet] = answered.facet_counts as { counts: unknown[] }[];
+        return { ...answered, facet_counts: [{ counts: facet?.counts }] };
+      },
+    });
+    const engine = createTypesenseSearchEngine(client, schema, {
+      collections,
+      maxFacetQueryCandidates: 3,
+    });
+
+    const [outcome] = await engine.searchFacets(work, [query]);
+
     expect(outcome).toEqual({
       facets: {
         creator: { buckets: [{ value: 'https://ex/rembrandt', count: 5 }] },
