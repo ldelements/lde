@@ -374,10 +374,16 @@ role: { in: ["etser"] } } }` asks for _this person in this role_, where the
     it draws at. A field with
     [`facetRanges`](./search#range-facets) returns the
     `‹Kind›BinnedRangeFacet` variant instead, whose buckets hold one bucket
-    per declared half-open `[min, max)` bin, carrying `min`/`max` (null on an
-    open end) and `count`, with no `value` or `label`: `[RangeBucket!]!` for a
-    number, `[DateRangeBucket!]!` for a date, whose bounds are served at the
-    precision they were declared in (`1900`, not `1900-01-01T00:00:00Z`);
+    per declared bin, carrying `min`/`max` (null on an open end) and `count`,
+    with no `value` or `label`. Like the extent, a bin’s bounds are in the
+    type the field’s range filter takes: `[IntRangeBucket!]!`,
+    `[FloatRangeBucket!]!` or `[DateRangeBucket!]!`. `Int` is 32-bit, so
+    building the schema fails on an `integer` bin whose bound is fractional
+    or outside the signed 32-bit range. An `integer` or `number` bin is
+    half-open `[min, max)` while the range filter is inclusive, so the filter
+    built from such a bin also matches values equal to its `max`. A date bin is inclusive like the filter, and its bounds are served
+    at the precision they were declared in (`1900`, not
+    `1900-01-01T00:00:00Z`);
   - a `boolean` field returns `[BooleanBucket!]!` – `value: Boolean!` +
     `count`, and **no `label` field at all**. The value is a real boolean, so
     the bucket a client selects is exactly the term the `where` filter takes

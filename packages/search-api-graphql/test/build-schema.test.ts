@@ -511,12 +511,14 @@ describe('buildGraphQLSchema', () => {
       } } }`,
       { engine, acceptLanguage: ['nl'] },
     );
+    // The bounds serialize as Int without erroring the facet.
+    expect(result.errors).toBeUndefined();
     const facets = (result.data?.datasets as Record<string, unknown>)
       .facets as {
       size: { buckets: unknown[] };
       keyword: unknown[];
     };
-    // RangeBuckets carry their half-open bounds (max null = open-ended top bin).
+    // IntRangeBuckets carry their half-open bounds (max null = open-ended top bin).
     expect(facets.size.buckets).toEqual([
       { min: 1, max: 10, count: 2 },
       { min: 10, max: null, count: 5 },
@@ -1342,8 +1344,14 @@ describe('buildGraphQLSchema', () => {
     // where the field declares bins and per distinct value where it doesn’t.
     expect(sdl).toMatch(/size: IntBinnedRangeFacet!/);
     expect(sdl).toMatch(
-      /type IntBinnedRangeFacet {[^}]*all: IntExtent\n[^}]*matching: IntExtent\n[^}]*buckets: \[RangeBucket!\]!/,
+      /type IntBinnedRangeFacet {[^}]*all: IntExtent\n[^}]*matching: IntExtent\n[^}]*buckets: \[IntRangeBucket!\]!/,
     );
+    // A bin’s bounds are in the type the field’s range filter takes, so an
+    // integer bin feeds straight back into IntRange.
+    expect(sdl).toMatch(
+      /type IntRangeBucket \{\s+min: Int\s+max: Int\s+count: Int!/,
+    );
+    expect(sdl).not.toMatch(/\bRangeBucket\b/);
     expect(sdl).toMatch(/datePosted: DateRangeFacet!/);
     expect(sdl).toMatch(/type DateRangeFacet {[^}]*buckets: \[DateBucket!\]!/);
     expect(sdl).toMatch(/type DateBucket \{\s+value: ISO8601Date!/);
@@ -1354,6 +1362,105 @@ describe('buildGraphQLSchema', () => {
     expect(sdl).toMatch(/input DatasetWhere/);
     expect(sdl).toMatch(/status: KeywordFilter/);
     expect(sdl).toMatch(/size: IntRange/);
+  });
+
+  it('rejects an integer bin bound that GraphQL’s Int cannot hold', () => {
+    const withSizeBin = (
+      bin: { min?: number; max?: number },
+      presence = false,
+    ) =>
+      buildGraphQLSchema(
+        searchSchema(
+          {
+            ...schema,
+            fields: schema.fields.map((field): SearchField =>
+              field.name === 'size'
+                ? {
+                    name: 'size',
+                    kind: 'integer',
+                    facetable: true,
+                    ...(presence && { presence: true }),
+                    facetRanges: [{ key: 'big', ...bin }],
+                  }
+                : field,
+            ),
+          },
+          organization,
+          term,
+        ),
+        datasetOptions,
+      );
+    expect(() => withSizeBin({ min: -(2 ** 31) })).not.toThrow();
+    expect(() => withSizeBin({ max: 2 ** 31 - 1 })).not.toThrow();
+    for (const bound of [1.5, 2 ** 31, -(2 ** 31) - 1]) {
+      const message = `Facet “size” has bin “big” with bound ${bound}, which GraphQL’s Int cannot hold`;
+      expect(() => withSizeBin({ min: bound })).toThrow(message);
+      expect(() => withSizeBin({ max: bound })).toThrow(message);
+    }
+    // A field counting its presence too is built as a facet object of its own.
+    expect(() => withSizeBin({ max: 1.5 }, true)).toThrow(
+      'Facet “size” has bin “big” with bound 1.5',
+    );
+  });
+
+  it('serves a binned number facet’s bounds as Float, the type FloatRange takes', async () => {
+    const binned: SearchType = {
+      ...schema,
+      fields: schema.fields.map((field): SearchField =>
+        field.name === 'score'
+          ? {
+              name: 'score',
+              kind: 'number',
+              facetable: true,
+              output: true,
+              facetRanges: [
+                { key: 'low', max: 0.5 },
+                { key: 'high', min: 0.5 },
+              ],
+            }
+          : field,
+      ),
+    };
+    const searchSchemaWithBins = searchSchema(binned, organization, term);
+    const built = buildGraphQLSchema(searchSchemaWithBins, datasetOptions);
+    const sdl = printSchema(built);
+    expect(sdl).toMatch(
+      /type FloatBinnedRangeFacet {[^}]*all: FloatExtent\n[^}]*buckets: \[FloatRangeBucket!\]!/,
+    );
+    expect(sdl).toMatch(
+      /type FloatRangeBucket \{\s+min: Float\s+max: Float\s+count: Int!/,
+    );
+    const facets: SearchResult['facets'] = {
+      score: {
+        buckets: [
+          { value: 'low', count: 3, max: 0.5 },
+          { value: 'high', count: 1, min: 0.5 },
+        ],
+      },
+    };
+    const engine: SearchEngine = {
+      schema: searchSchemaWithBins,
+      search: async () => ({ total: 0, hits: [], facets }),
+      searchFacets: async (_searchType, queries) =>
+        queries.map(() => ({ facets })),
+    };
+    const result = await graphql({
+      schema: built,
+      source: `{ datasets { facets { score { buckets { min max count } } } } }`,
+      contextValue: { engine, acceptLanguage: ['nl'] },
+    });
+    // A fractional bound serializes as Float, where Int would error the facet.
+    expect(result.errors).toBeUndefined();
+    expect(
+      (
+        (result.data?.datasets as Record<string, unknown>).facets as {
+          score: { buckets: unknown[] };
+        }
+      ).score.buckets,
+    ).toEqual([
+      { min: null, max: 0.5, count: 3 },
+      { min: 0.5, max: null, count: 1 },
+    ]);
   });
 
   it('buckets a reference facet on IRI, so a bucket feeds the filter that selects it', () => {
