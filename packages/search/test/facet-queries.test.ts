@@ -5,6 +5,7 @@ import {
   type SearchQuery,
 } from '../src/query.js';
 import {
+  facetMatchField,
   facetNamed,
   isQueryableFacet,
   searchSchema,
@@ -109,8 +110,17 @@ describe('isQueryableFacet', () => {
     expect(isQueryableFacet(facet('subtitle.exists'), schema)).toBe(false);
   });
 
-  it('refuses a reference whose label source derives its label, which no referent can be read for', () => {
-    expect(isQueryableFacet(facet('about'), schema)).toBe(false);
+  it('admits a reference whose label source derives its label, searched through that type', () => {
+    expect(isQueryableFacet(facet('about'), schema)).toBe(true);
+  });
+});
+
+describe('facetMatchField', () => {
+  it('names the label-match companion only where the documents store labels', () => {
+    expect(facetMatchField(facet('creator'), schema)).toBe('creator_match');
+    // Its label source derives its label: searched through that type.
+    expect(facetMatchField(facet('about'), schema)).toBeUndefined();
+    expect(facetMatchField(facet('subtitle.exists'), schema)).toBeUndefined();
   });
 });
 

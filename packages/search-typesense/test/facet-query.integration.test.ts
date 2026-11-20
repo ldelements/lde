@@ -80,6 +80,19 @@ const work = defineSearchType({
       labelSource: ['Person', 'Organization'],
     },
     {
+      // Derived, so its documents store no labels: a query searches the
+      // people collection instead.
+      name: 'subjectOf',
+      kind: 'reference',
+      array: true,
+      output: true,
+      filterable: true,
+      facetable: true,
+      ref: { strategy: 'idOnly' },
+      labelSource: 'Person',
+      derive: () => [],
+    },
+    {
       name: 'genre',
       kind: 'reference',
       path: `${SCHEMA_ORG}genre`,
@@ -261,11 +274,14 @@ describe('a facet query', () => {
               workDocument(`https://ex/other-${index}`, ['boek'], others),
             ),
             workDocument('https://ex/pamphlet', ['pamflet'], [remonstrants]),
-            workDocument(
-              'https://ex/drawing',
-              ['schilderij'],
-              [harmen, ...others],
-            ),
+            {
+              ...workDocument(
+                'https://ex/drawing',
+                ['schilderij'],
+                [harmen, ...others],
+              ),
+              subjectOf: [harmen],
+            },
             workDocument('https://ex/plate', ['servies'], [timor]),
           ],
           { action: 'create' },
@@ -381,6 +397,21 @@ describe('a facet query', () => {
       buckets: [],
       totalValues: 0,
     });
+  });
+
+  it('searches the referenced collection for a facet whose documents store no labels', async () => {
+    const [outcome] = await engine.searchFacets(work, [
+      {
+        ...base,
+        facets: ['subjectOf'],
+        facetQueries: { subjectOf: 'remmert' },
+      },
+    ]);
+    const facet = facetOf(outcome, 'subjectOf');
+
+    // Found by the alternate name only the people collection holds.
+    expect(counts(facet)).toEqual([[harmen, 1]]);
+    expect(facet.totalValues).toBe(1);
   });
 
   it('answers a query over documents no filter leaves with an empty facet', async () => {

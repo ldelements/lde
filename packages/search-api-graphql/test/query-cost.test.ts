@@ -106,10 +106,13 @@ const work: SearchType = {
       ref: { strategy: 'lookup', target: 'Person' },
     },
     {
+      // Read off no path, so its documents store no labels: a query searches
+      // both target types.
       name: 'creator',
       kind: 'reference',
       array: true,
       output: true,
+      facetable: true,
       ref: { strategy: 'lookup', target: ['Person', 'Organization'] },
     },
     // Fields whose facet counts more than their own values, served as one
@@ -233,6 +236,14 @@ describe('the cost of a query', () => {
         '{ creativeWorks(perPage: 0) { facets { author(query: "re") { totalValues } } } }',
       ),
     ).toBe(1 + 1);
+  });
+
+  it('charges a query on a facet whose documents store no labels one more per target type', async () => {
+    expect(
+      await costOf(
+        '{ creativeWorks(perPage: 0) { facets { creator(query: "rem") { totalValues } } } }',
+      ),
+    ).toBe(1 + (1 + 2));
   });
 
   it('charges one per selected facet key', async () => {

@@ -297,11 +297,15 @@ counts, holding the labels the referring graph states for it and then its id
 ([ADR 43](../decisions/0043-select-a-reference-facets-matches-by-the-labels-its-documents-carry.md)).
 A query takes two steps:
 
-1. Run the facet’s search – the query’s documents without the facet’s own
+1. Where the documents carry the companion, run the facet’s search – the query’s documents without the facet’s own
    filter – with `facet_query` on the companion, asking for at most
    `maxFacetQueryCandidates` values. Typesense returns the matching values
    with the highest counts, of referents those documents carry. Their ids are
-   the candidates.
+   the candidates. Where they carry none – a facet whose values the run
+   derives, an inline reference’s identity, a faceted leaf – search the
+   collection of each type the reference names with the query, with that
+   type’s own free-text search, and take at most `maxFacetQueryCandidates`
+   ids from each ([ADR 44](../decisions/0044-search-the-target-types-for-a-facet-whose-documents-store-no-labels.md)).
 2. Count each candidate with a search of its own: the facet’s search plus that
    candidate selected, asking for no document. The facet keeps the candidates
    that occur, the highest counts first, capped at the limit.
@@ -357,9 +361,11 @@ Beyond `collections`, `TypesenseSearchEngineOptions` carries:
   [facet policy](./search#facet-policy) keeps out of the facet – sent
   together in as few `multi_search` requests as Typesense accepts (50
   searches each).
-- **`maxFacetQueryCandidates`** – how many label-match values a query on a
-  reference facet selects (default 50, at most 250). Each candidate costs a
-  count search. See [facet queries](#facet-queries).
+- **`maxFacetQueryCandidates`** – how many candidates each step-one search
+  of a query on a reference facet selects: one search of the label-match
+  companion, or one per target type where the documents store no labels
+  (default 50, at most 250). Each candidate costs a count search. See
+  [facet queries](#facet-queries).
 - **`onLabelError`** – called when reference-label resolution fails; the
   search then degrades to id-only references (and reference-facet buckets to
   unlabelled ones) rather than failing. Omit it and the degradation is

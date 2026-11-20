@@ -3289,11 +3289,13 @@ export function facetNamed(
  * Whether a facet takes a query (`SearchQuery.facetQueries`) – text to
  * search its values with. A facet whose values are text a person can type
  * against does: a `keyword` facet, matched on its values’ own text, and a
- * reference facet of the type’s own searched by its referents’ labels
- * ({@link facetMatchesLabels}), matched on the labels its documents store
- * beside each id. Any other reference holds bare IRIs as far as a query can
- * see – a faceted leaf or an inline reference’s identity stores no labels –
- * and a boolean, range or presence facet has no values to search.
+ * reference facet whose values have a label source ({@link labelTargetNamesOf}).
+ * Where the documents store their referents’ labels ({@link facetMatchesLabels})
+ * it is matched on those; elsewhere – a facet whose values the run derives, an
+ * inline reference’s identity, a faceted leaf – by the free-text search of the
+ * types its values belong to. A reference without a label source holds bare
+ * IRIs, which nobody types; a boolean, range or presence facet has no values to
+ * search.
  */
 export function isQueryableFacet(
   facet: FacetDeclaration,
@@ -3304,8 +3306,23 @@ export function isQueryableFacet(
   }
   return (
     facet.field.kind === 'keyword' ||
-    (facet.reference === undefined && facetMatchesLabels(facet.field, schema))
+    labelTargetNamesOf(facet.field, schema).length > 0
   );
+}
+
+/**
+ * The {@link PhysicalFields.match label-match companion} a facet’s query
+ * searches, or `undefined` where its documents store none: a facet of the
+ * type’s own reference searched by label ({@link facetMatchesLabels}). Any
+ * other queryable reference facet is searched through the types it names.
+ */
+export function facetMatchField(
+  facet: FacetDeclaration,
+  schema: SearchSchema | undefined,
+): string | undefined {
+  return facet.reference === undefined && facet.presence !== true
+    ? physicalFields(facet.field, schema).match
+    : undefined;
 }
 
 /** The logical name of the facet counting whether a field declaring

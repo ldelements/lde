@@ -59,7 +59,7 @@ export function queryCostPlugin(maxCost: number): Plugin {
         setResultAndStopExecution({
           errors: [
             new GraphQLError(
-              `Query costs ${cost}; at most ${maxCost} is allowed. Each search, facet calculation and joined reference lookup per target type costs ${operationCost}, and a query on a reference facet ${operationCost} more.`,
+              `Query costs ${cost}; at most ${maxCost} is allowed. Each search, facet calculation and joined reference lookup per target type costs ${operationCost}, and a query on a reference facet ${operationCost} more per search it takes to find its candidates.`,
             ),
           ],
         });
@@ -83,11 +83,13 @@ export function costExtensions(
 
 /**
  * The field extensions of a reference facet that takes a `query`: `own` facet
- * calculations, and under a query one more – the search for its candidates and
- * the request that counts them.
+ * calculations, and under a query one more per search that finds its
+ * candidates – `searches` of them – which also covers the request that counts
+ * them.
  */
 export function facetQueryCostExtensions(
   own: number,
+  searches: number,
 ): GraphQLFieldExtensions<unknown, unknown> {
   return {
     complexity: ({
@@ -99,7 +101,10 @@ export function facetQueryCostExtensions(
     }) =>
       childComplexity +
       operationCost *
-        (own + (facetQueryText(args.query ?? undefined) === undefined ? 0 : 1)),
+        (own +
+          (facetQueryText(args.query ?? undefined) === undefined
+            ? 0
+            : searches)),
   };
 }
 
