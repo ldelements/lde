@@ -190,6 +190,24 @@ export interface StageOptions<Out = Quad> {
   /** Child stages that chain off this stage's output. */
   stages?: Stage[];
   /**
+   * Which outputs of this stage’s chain reach the pipeline’s writers:
+   *
+   * - `'all'` – this stage’s output and that of every chained stage. Use it
+   *   when each stage adds to the result, such as a chained stage that
+   *   enriches this stage’s output with data from another source.
+   * - `'last'` – only the last chained stage’s output. Use it when the earlier
+   *   stages produce working graphs that only feed the next stage, such as a
+   *   normalisation that a shared mapping then reads: they still write their
+   *   scratch files for the next stage to query, but the chain leaves them out
+   *   of what it writes. Their validation still runs and is reported.
+   *
+   * Requires {@link StageOptions.stages}: a stage without them is no chain, and
+   * its output is always written.
+   *
+   * @default 'all'
+   */
+  chainOutput?: 'all' | 'last';
+  /**
    * Treat a supported stage that produces no quads as a hard failure (throws),
    * rather than a legitimately empty result.
    *
@@ -272,6 +290,9 @@ export class Stage<Out = Quad> {
   /** Whether this stage reads a source of its own rather than the dataset’s
    *  resolved distribution. @see {@link StageOptions.sourceFor} */
   readonly sourcesOwnData: boolean;
+  /** Which outputs of this stage’s chain reach the pipeline’s writers.
+   *  @see {@link StageOptions.chainOutput} */
+  readonly chainOutput: 'all' | 'last';
   /** Maximum concurrent in-flight SPARQL queries. @see {@link StageOptions.maxConcurrency} */
   readonly maxConcurrency: number;
   private readonly readers: NormalizedReader[];
@@ -295,6 +316,11 @@ export class Stage<Out = Quad> {
         `Stage '${options.name}': 'project' cannot combine with chained 'stages' – a chained stage serializes to N-Triples, which a projected item cannot.`,
       );
     }
+    if (options.chainOutput && !options.stages?.length) {
+      throw new Error(
+        `Stage '${options.name}': 'chainOutput' requires chained 'stages' – set it on the stage that starts the chain.`,
+      );
+    }
     // A child is handed its parent's output as its distribution; a `sourceFor`
     // would substitute that away, silently reading elsewhere instead of
     // continuing the chain. Caught here rather than at run time, where it looks
@@ -303,6 +329,30 @@ export class Stage<Out = Quad> {
     if (sourcedChild) {
       throw new Error(
         `Stage '${options.name}': chained stage '${sourcedChild.name}' declares 'sourceFor' – a chained stage reads its parent's output, so it cannot source its own data.`,
+      );
+    }
+    // A chain is one line: the pipeline runs only the direct children, so a
+    // child's own `stages` would silently never run.
+    const nestingChild = options.stages?.find(
+      (child) => child.stages.length > 0,
+    );
+    if (nestingChild) {
+      throw new Error(
+        `Stage '${options.name}': chained stage '${nestingChild.name}' declares 'stages' – a chain is one line, so list its stages under '${options.name}' instead.`,
+      );
+    }
+    // Each stage in a chain writes its scratch file under its own name, so two
+    // stages with one name would overwrite each other's output.
+    const chainNames = [
+      options.name,
+      ...(options.stages ?? []).map((child) => child.name),
+    ];
+    const duplicateName = chainNames.find(
+      (name, index) => chainNames.indexOf(name) !== index,
+    );
+    if (duplicateName) {
+      throw new Error(
+        `Stage '${options.name}': two stages in the chain are named '${duplicateName}' – each writes its scratch file under its name, so the names must differ.`,
       );
     }
     this.name = options.name;
@@ -319,6 +369,7 @@ export class Stage<Out = Quad> {
     this.queueCapacity = options.queueCapacity;
     this.sourceFor = options.sourceFor;
     this.sourcesOwnData = options.sourceFor !== undefined;
+    this.chainOutput = options.chainOutput ?? 'all';
   }
 
   /** The validator for this stage, if configured. */

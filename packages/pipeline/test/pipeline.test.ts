@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
-import { mkdtemp, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -8,8 +8,12 @@ import {
   type PipelinePlugin,
 } from '../src/pipeline.js';
 import { Dataset, Distribution } from '@lde/dataset';
-import { Stage } from '../src/stage.js';
-import { NoItemsSelected, NotSupported } from '../src/sparql/reader.js';
+import { Stage, type StageOptions } from '../src/stage.js';
+import {
+  NoItemsSelected,
+  NotSupported,
+  type Reader,
+} from '../src/sparql/reader.js';
 import {
   ResolvedDistribution,
   NoDistributionAvailable,
@@ -1119,6 +1123,254 @@ describe('Pipeline', () => {
       // The concat to the user writer never runs, and resources are cleaned up.
       expect(writer.runWriter.write).not.toHaveBeenCalled();
       expect(stageOutputResolver.cleanup).toHaveBeenCalledTimes(1);
+    });
+
+    describe('chainOutput', () => {
+      /**
+       * A stage whose run writes one quad with subject `http://<name>`, or no
+       * quads when `empty` is set.
+       */
+      function writingStage(
+        name: string,
+        {
+          empty = false,
+          ...options
+        }: {
+          chainOutput?: StageOptions['chainOutput'];
+          stages?: Stage[];
+          empty?: boolean;
+        } = {},
+      ): Stage {
+        const stage = new Stage({ name, readers: [], ...options });
+        vi.spyOn(stage, 'run').mockImplementation(
+          async (staged, _distribution, stageWriter) => {
+            await stageWriter.write(
+              staged,
+              (async function* () {
+                if (empty) return;
+                yield DataFactory.quad(
+                  DataFactory.namedNode(`http://${name}`),
+                  DataFactory.namedNode('http://p'),
+                  DataFactory.namedNode('http://o'),
+                );
+              })(),
+            );
+          },
+        );
+        return stage;
+      }
+
+      /**
+       * Run `parent` as a chain and return the subjects the writers got.
+       * `inspect` sees the scratch directory before it is removed.
+       */
+      async function writtenSubjects(
+        parent: Stage,
+        inspect?: (outputDir: string) => Promise<void>,
+      ): Promise<string[]> {
+        const outputDir = await mkdtemp(
+          join(tmpdir(), 'pipeline-chain-output-test-'),
+        );
+        const subjects: string[] = [];
+        writer.runWriter.write.mockImplementation(
+          async (_dataset: Dataset, quads: AsyncIterable<Quad>) => {
+            for await (const quad of quads) subjects.push(quad.subject.value);
+          },
+        );
+        const pipeline = new Pipeline({
+          datasetSelector: makeDatasetSelector(dataset),
+          stages: [parent],
+          writers: writer,
+          distributionResolver: makeResolver(makeResolvedDistribution()),
+          chaining: {
+            stageOutputResolver: makeStageOutputResolver(),
+            outputDir,
+          },
+        });
+        try {
+          await pipeline.run();
+          await inspect?.(outputDir);
+        } finally {
+          await rm(outputDir, { recursive: true, force: true });
+        }
+        return subjects;
+      }
+
+      it('writes the output of every stage in a chain by default', async () => {
+        const parent = writingStage('parent', {
+          stages: [writingStage('child')],
+        });
+
+        expect(await writtenSubjects(parent)).toEqual([
+          'http://parent',
+          'http://child',
+        ]);
+      });
+
+      it('writes only the last chained stage’s output when set to last, while every stage still runs', async () => {
+        const middle = writingStage('middle');
+        const last = writingStage('last');
+        const parent = writingStage('parent', {
+          chainOutput: 'last',
+          stages: [middle, last],
+        });
+
+        expect(await writtenSubjects(parent)).toEqual(['http://last']);
+        expect(parent.run).toHaveBeenCalledTimes(1);
+        expect(middle.run).toHaveBeenCalledTimes(1);
+        expect(last.run).toHaveBeenCalledTimes(1);
+      });
+
+      it('lets a chained stage select from its parent’s output and read another source', async () => {
+        const otherSource = Distribution.sparql(
+          new URL('http://other.example.org/sparql'),
+        );
+        const otherSourceQuery = {
+          read: vi.fn<Reader['read']>(
+            async (_dataset, _distribution, options) =>
+              (async function* () {
+                for (const row of options?.bindings ?? []) {
+                  yield DataFactory.quad(
+                    row['this'],
+                    DataFactory.namedNode('http://label'),
+                    DataFactory.literal('enriched'),
+                  );
+                }
+              })(),
+          ),
+        };
+        const enrich = new Stage({
+          name: 'enrich',
+          itemSelector: {
+            async *select() {
+              yield { this: DataFactory.namedNode('http://parent') };
+            },
+          },
+          readers: {
+            read: (staged, _distribution, options) =>
+              otherSourceQuery.read(staged, otherSource, options),
+          },
+        });
+        const parent = writingStage('parent', { stages: [enrich] });
+
+        expect(await writtenSubjects(parent)).toEqual([
+          'http://parent',
+          'http://parent',
+        ]);
+        expect(otherSourceQuery.read).toHaveBeenCalledWith(
+          dataset,
+          otherSource,
+          expect.objectContaining({
+            bindings: [{ this: DataFactory.namedNode('http://parent') }],
+          }),
+        );
+      });
+
+      it('writes the parent’s output when a chained stage selects nothing', async () => {
+        const enrich = new Stage({ name: 'enrich', readers: [] });
+        vi.spyOn(enrich, 'run').mockResolvedValue(new NoItemsSelected());
+        const parent = writingStage('parent', { stages: [enrich] });
+
+        expect(await writtenSubjects(parent)).toEqual(['http://parent']);
+        expect(writer.runWriter.flush).toHaveBeenCalledWith(dataset, 'success');
+      });
+
+      it('keeps the scratch file of every stage it leaves out of the written output', async () => {
+        const parent = writingStage('parent', {
+          chainOutput: 'last',
+          stages: [writingStage('middle'), writingStage('last')],
+        });
+
+        const scratch: Record<string, string> = {};
+        await writtenSubjects(parent, async (outputDir) => {
+          for (const name of ['parent', 'middle']) {
+            const [file] = await readdir(join(outputDir, name));
+            scratch[name] = await readFile(join(outputDir, name, file), 'utf8');
+          }
+        });
+
+        expect(scratch['parent']).toContain('<http://parent>');
+        expect(scratch['middle']).toContain('<http://middle>');
+      });
+
+      it('never writes a previous run’s output for a stage that produced nothing this run', async () => {
+        const outputDir = await mkdtemp(
+          join(tmpdir(), 'pipeline-chain-output-test-'),
+        );
+        const subjects: string[] = [];
+        writer.runWriter.write.mockImplementation(
+          async (_dataset: Dataset, quads: AsyncIterable<Quad>) => {
+            for await (const quad of quads) subjects.push(quad.subject.value);
+          },
+        );
+        const runChain = (last: Stage) =>
+          new Pipeline({
+            datasetSelector: makeDatasetSelector(dataset),
+            stages: [
+              writingStage('parent', { chainOutput: 'last', stages: [last] }),
+            ],
+            writers: writer,
+            distributionResolver: makeResolver(makeResolvedDistribution()),
+            chaining: {
+              stageOutputResolver: makeStageOutputResolver(),
+              outputDir,
+            },
+          }).run();
+
+        try {
+          await runChain(writingStage('last'));
+          subjects.length = 0;
+          await runChain(writingStage('last', { empty: true }));
+        } finally {
+          await rm(outputDir, { recursive: true, force: true });
+        }
+
+        expect(subjects).toEqual([]);
+      });
+
+      it('hands the next stage an empty file when a stage produced nothing', async () => {
+        const outputDir = await mkdtemp(
+          join(tmpdir(), 'pipeline-chain-output-test-'),
+        );
+        const stageOutputResolver = makeStageOutputResolver();
+        const resolvedContents: string[] = [];
+        stageOutputResolver.resolve.mockImplementation(async (outputPath) => {
+          resolvedContents.push(await readFile(outputPath, 'utf8'));
+          return Distribution.sparql(
+            new URL('http://resolved.example.org/sparql'),
+          );
+        });
+        const pipeline = new Pipeline({
+          datasetSelector: makeDatasetSelector(dataset),
+          stages: [
+            writingStage('parent', {
+              empty: true,
+              stages: [writingStage('child')],
+            }),
+          ],
+          writers: writer,
+          distributionResolver: makeResolver(makeResolvedDistribution()),
+          chaining: { stageOutputResolver, outputDir },
+        });
+
+        try {
+          await pipeline.run();
+        } finally {
+          await rm(outputDir, { recursive: true, force: true });
+        }
+
+        expect(resolvedContents).toEqual(['']);
+      });
+
+      it('writes nothing, without failing, when the last chained stage’s output is empty', async () => {
+        const parent = writingStage('parent', {
+          chainOutput: 'last',
+          stages: [writingStage('last', { empty: true })],
+        });
+
+        expect(await writtenSubjects(parent)).toEqual([]);
+        expect(writer.runWriter.flush).toHaveBeenCalledWith(dataset, 'success');
+      });
     });
 
     it('validates chaining is required for sub-stages', () => {

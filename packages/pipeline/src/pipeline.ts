@@ -1,4 +1,6 @@
 import { createReadStream } from 'node:fs';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Dataset, Distribution } from '@lde/dataset';
 import {
@@ -146,6 +148,13 @@ export interface PipelineOptions<Out = Quad> {
   distributionResolver?: DistributionResolver;
   chaining?: {
     stageOutputResolver: StageOutputResolver;
+    /**
+     * Where every chained stage writes its output, as N-Triples at
+     * `<outputDir>/<stage name>/<dataset>.nt`, for the next stage to query.
+     * The files stay after the run – including those a chain with
+     * `chainOutput: 'last'` leaves out of what it writes – so each step can be
+     * inspected; the next run of the dataset overwrites them.
+     */
     outputDir: string;
   };
   /** Reporter(s) handed every {@link PipelineEvent} of a run, in array order. */
@@ -1065,8 +1074,8 @@ export class Pipeline<Out = Quad> {
   }
 
   /**
-   * Run a stage with reporting and return whether it was supported.
-   * Returns `true` if the stage produced results, `false` if NotSupported.
+   * Run a stage with reporting. Returns the {@link NotSupported} reason when
+   * the stage was skipped, and nothing when it ran.
    */
   private async runStage<Item>(
     runId: string,
@@ -1077,7 +1086,7 @@ export class Pipeline<Out = Quad> {
     source: SourceKind,
     timeout?: TimeoutPolicy,
     unread?: UnreadValueTally,
-  ): Promise<boolean> {
+  ): Promise<NotSupported | undefined> {
     this.report(runId, { type: 'stageStart', dataset, stage: stage.name });
     const stageStart = Date.now();
 
@@ -1131,7 +1140,7 @@ export class Pipeline<Out = Quad> {
           message: result.message,
         },
       });
-      return false;
+      return result;
     }
 
     this.report(runId, {
@@ -1143,11 +1152,14 @@ export class Pipeline<Out = Quad> {
       durationMs: Date.now() - stageStart,
       ...summary,
     });
-
-    return true;
+    return undefined;
   }
 
-  /** Run a stage in chained mode, throwing if the stage is not supported. */
+  /**
+   * Run a stage in chained mode. A stage whose item selector selects nothing
+   * produced empty output, which the next stage can still read; any other
+   * NotSupported throws, because the chain cannot continue without the stage.
+   */
   private async runChainedStage<Item>(
     runId: string,
     dataset: Dataset,
@@ -1157,7 +1169,7 @@ export class Pipeline<Out = Quad> {
     source: SourceKind,
     timeout?: TimeoutPolicy,
   ): Promise<void> {
-    const supported = await this.runStage(
+    const skipped = await this.runStage(
       runId,
       dataset,
       distribution,
@@ -1166,7 +1178,7 @@ export class Pipeline<Out = Quad> {
       source,
       timeout,
     );
-    if (!supported) {
+    if (skipped && !(skipped instanceof NoItemsSelected)) {
       throw new Error(
         `Stage '${stage.name}' returned NotSupported in chained mode`,
       );
@@ -1183,6 +1195,8 @@ export class Pipeline<Out = Quad> {
     timeout?: TimeoutPolicy,
   ): Promise<void> {
     const { stageOutputResolver, outputDir } = this.chaining!;
+    // Scratch files of every stage in the chain, in order; `chainOutput`
+    // decides which of them reach the writers.
     const outputFiles: string[] = [];
 
     // Chaining is a quad-only concern: every stage in a chain writes N-Triples
@@ -1200,6 +1214,10 @@ export class Pipeline<Out = Quad> {
         outputDir: `${outputDir}/${chainedStage.name}`,
         format: 'n-triples',
       });
+      const outputPath = scratchWriter.getOutputPath(dataset);
+      // The FileWriter writes no file for empty output, so remove the previous
+      // run's file first: it must never stand in for this run's output.
+      await rm(outputPath, { force: true });
       const scratchRun = await scratchWriter.openRun(context);
       try {
         await this.runChainedStage(
@@ -1217,7 +1235,11 @@ export class Pipeline<Out = Quad> {
         await scratchRun.abort(error);
         throw error;
       }
-      return scratchWriter.getOutputPath(dataset);
+      // A stage that produced nothing leaves an empty file, so the next stage
+      // and the writers read an empty graph rather than a missing file.
+      await mkdir(dirname(outputPath), { recursive: true });
+      await writeFile(outputPath, '', { flag: 'a' });
+      return outputPath;
     };
 
     try {
@@ -1246,13 +1268,16 @@ export class Pipeline<Out = Quad> {
         }
       }
 
-      // 3. Concatenate all output files → the open run, applying the plugins'
-      // beforeStageWrite transforms once for the chain under the parent stage.
-      // The concatenation is quads (per the quad-only contract above), written
-      // to the `Out`-typed run writer – sound because chaining implies `Quad`.
+      // 3. Concatenate the output files `chainOutput` selects → the open run,
+      // applying the plugins' beforeStageWrite transforms once for the chain
+      // under the parent stage. The concatenation is quads (per the quad-only
+      // contract above), written to the `Out`-typed run writer – sound because
+      // chaining implies `Quad`.
+      const emitted =
+        stage.chainOutput === 'last' ? outputFiles.slice(-1) : outputFiles;
       await this.stageWriter(runWriter, stage.name).write(
         dataset,
-        this.readFiles(outputFiles) as unknown as AsyncIterable<Out>,
+        this.readFiles(emitted) as unknown as AsyncIterable<Out>,
       );
     } finally {
       await stageOutputResolver.cleanup();

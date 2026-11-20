@@ -183,7 +183,7 @@ Set it for scalar aggregates such as `SELECT (COUNT(*) AS ?n)`, which always ret
 
 #### Skipped stages
 
-A stage that cannot run against a dataset is skipped, not failed: when every reader returns `NotSupported`, or the item selector yields no items, the pipeline reports `stageSkipped` and moves on. The selector is peeked before the writer’s first write, so a destructive writer – `SparqlUpdateWriter` issues `CLEAR GRAPH` on first write – does not clear anything for a stage that turns out to be empty. Inside a [chain](#chaining-stages), `NotSupported` fails the chain instead.
+A stage that cannot run against a dataset is skipped, not failed: when every reader returns `NotSupported`, or the item selector yields no items, the pipeline reports `stageSkipped` and moves on. The selector is peeked before the writer’s first write, so a destructive writer – `SparqlUpdateWriter` issues `CLEAR GRAPH` on first write – does not clear anything for a stage that turns out to be empty. Inside a [chain](#chaining-stages), a stage whose selector yields no items produces empty output and the chain continues; any other `NotSupported` fails the chain.
 
 ### Chaining stages
 
@@ -201,7 +201,18 @@ new Pipeline({
 });
 ```
 
-Because the scratch files are N-Triples, chains are quad-only: a stage with `stages` cannot `project`. A chained stage that returns `NotSupported` fails the chain rather than being skipped. See the how-to guide [Chain stage outputs](../guide/chain-stage-outputs).
+Because the scratch files are N-Triples, chains are quad-only: a stage with `stages` cannot `project`. A chained stage cannot have `stages` of its own, and the stages in a chain need distinct names. A chained stage whose selector yields no items produces empty output; any other `NotSupported` fails the chain rather than being skipped.
+
+The parent stage’s `chainOutput` option decides which stages’ output reaches the writers:
+
+| `chainOutput`     | Writes                        | Use when                                                                                                                   |
+| ----------------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `'all'` (default) | every stage’s output          | each stage adds to the result, such as a chained stage that enriches the parent’s output with labels from another endpoint |
+| `'last'`          | only the last chained stage’s | the earlier stages only produce input for the next, such as a normalisation that a shared mapping then reads               |
+
+Either way, every stage’s scratch file stays at `<outputDir>/<stage name>/<dataset>.nt` after the run, so you can inspect what each stage produced; the next run of the dataset overwrites it.
+
+See the how-to guide [Chain stage outputs](../guide/chain-stage-outputs).
 
 ### Item Selector
 
