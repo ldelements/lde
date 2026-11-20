@@ -30,6 +30,7 @@ export {
   facetsOf,
   isQueryableFacet,
   facetMatchesLabels,
+  facetMatchField,
   presenceFacetName,
   holdsNoIds,
   identityFieldOf,

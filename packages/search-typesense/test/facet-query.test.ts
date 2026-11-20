@@ -36,6 +36,17 @@ const work: SearchType = {
       ref: { strategy: 'idOnly' },
       labelSource: 'Person',
     },
+    {
+      // Read off no graph, so its documents store no labels: a query
+      // searches the people collection for its candidates.
+      name: 'subjectOf',
+      kind: 'reference',
+      array: true,
+      facetable: true,
+      ref: { strategy: 'idOnly' },
+      labelSource: 'Person',
+      derive: () => [],
+    },
   ],
 };
 
@@ -282,5 +293,62 @@ describe('a query on a reference facet', () => {
     const [outcome] = await engine.searchFacets(work, [query]);
 
     expect(outcome).toEqual({ error: new Error('Connection reset') });
+  });
+});
+
+describe('a query on a reference facet whose documents store no labels', () => {
+  const subjectQuery: SearchQuery = {
+    ...query,
+    facets: ['subjectOf'],
+    facetQueries: { subjectOf: 'rem' },
+    facetLimits: { subjectOf: 1 },
+  };
+  /** Step one’s search: the referents, in the people collection. */
+  const isPeopleSearch = (search: Record<string, unknown>) =>
+    search.collection === 'people' && search.include_fields === 'id';
+
+  it('counts the referents a search of the people collection finds', async () => {
+    const { client, performs } = fakeTypesenseClient({
+      multiSearch: (search) =>
+        isPeopleSearch(search)
+          ? {
+              found: 3,
+              hits: Object.keys(occurrences).map((id) => ({
+                document: { id },
+              })),
+            }
+          : answer(search),
+    });
+    const engine = createTypesenseSearchEngine(client, schema, { collections });
+
+    const [outcome] = await engine.searchFacets(work, [subjectQuery]);
+
+    expect(outcome).toEqual({
+      facets: {
+        subjectOf: {
+          buckets: [{ value: 'https://ex/rembrandt', count: 5 }],
+          totalValues: 2,
+        },
+      },
+    });
+    expect(performs.flat().filter(isPeopleSearch)).toHaveLength(1);
+  });
+
+  it('fails exactly its own query when the people search fails', async () => {
+    const { client } = fakeTypesenseClient({
+      multiSearch: (search) =>
+        isPeopleSearch(search)
+          ? { error: 'Not found', code: 404 }
+          : answer(search),
+    });
+    const engine = createTypesenseSearchEngine(client, schema, { collections });
+
+    const [queried] = await engine.searchFacets(work, [subjectQuery]);
+
+    expect(queried).toEqual({
+      error: new Error(
+        'Typesense search of “people” for values of facet “subjectOf” failed (404): Not found',
+      ),
+    });
   });
 });

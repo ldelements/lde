@@ -1,11 +1,7 @@
 import type { Client } from 'typesense';
 import type { CollectionFieldSchema } from 'typesense/lib/Typesense/Collection.js';
 import type { SearchSchema, SearchType } from '@lde/search';
-import {
-  facetsOf,
-  isQueryableFacet,
-  physicalFields,
-} from '@lde/search/adapter';
+import { facetMatchField, facetsOf } from '@lde/search/adapter';
 import type { Dataset } from '@lde/dataset';
 import type {
   DatasetOutcome,
@@ -282,9 +278,7 @@ function facetCompanionsOf(
   schema: SearchSchema | undefined,
 ): readonly string[] {
   return facetsOf(searchType, schema).flatMap((facet) => {
-    const match = isQueryableFacet(facet, schema)
-      ? physicalFields(facet.field, schema).match
-      : undefined;
+    const match = facetMatchField(facet, schema);
     return [
       facet.engineField === facet.field.name ? undefined : facet.engineField,
       match,

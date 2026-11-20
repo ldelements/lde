@@ -1173,19 +1173,20 @@ A facet that takes a query is one whose values are text someone can type
 (`isQueryableFacet`):
 
 - a **`keyword`** facet, matched on its values’ own text;
-- a **reference** facet of the type’s own whose label sources read their
-  label from a `path` (`facetMatchesLabels`): a `lookup`, `local` or not, or
-  an `idOnly` reference naming a [label source](#field-model). It is matched
-  on the labels the referring graph states for each referent, which the
-  projection stores beside the referent’s id in a label-match companion
-  (`${name}_match`, [ADR 43](../decisions/0043-select-a-reference-facets-matches-by-the-labels-its-documents-carry.md)).
-  Only those labels match: an alternate name, a label only an enrichment
-  supplies to the target’s collection, or a referent its documents state by
-  IRI alone is not found, though the facet without a query still counts it.
+- a **reference** facet whose values have a [label source](#field-model).
+  Where its documents store their referents’ labels – a facet of the type’s
+  own reference whose label sources read their label from a `path`
+  (`facetMatchesLabels`) – it is matched on those labels, stored beside each
+  referent’s id in a label-match companion (`${name}_match`,
+  [ADR 43](../decisions/0043-select-a-reference-facets-matches-by-the-labels-its-documents-carry.md)):
+  an alternate name or a label only an enrichment supplies is not found there.
+  Every other reference facet – one whose values the run derives, an inline
+  reference’s identity, a faceted leaf – is matched by the free-text search of
+  the types its values belong to, as a search of that type for the same text
+  would ([ADR 44](../decisions/0044-search-the-target-types-for-a-facet-whose-documents-store-no-labels.md)).
 
-A reference without a label source holds bare IRIs nobody types, nor does an
-inline reference’s identity or a faceted leaf store labels beside its ids; a
-boolean, range or presence facet has no values to search. `validateQuery`
+A reference without a label source holds bare IRIs nobody types, and a
+boolean, range or presence facet has no values to search, so `validateQuery`
 rejects a query on any of them (`not-queryable`). Text shorter than three
 characters, once trimmed (`MIN_FACET_QUERY_LENGTH`), is no query: below that,
 prefix and typo matching match next to nothing or nearly everything.
