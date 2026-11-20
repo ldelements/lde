@@ -33,7 +33,7 @@
     "c12": "^3.3.4",
     "commander": "^15.0.0",
     "cron": "^4.1.0",
-    "drizzle-kit": "1.0.0-rc.5-5935859",
+    "drizzle-kit": "1.0.0-rc.5",
     "drizzle-orm": "1.0.0-rc.5",
     "postgres": "^4.1.1",
     "tslib": "^2.3.0"
