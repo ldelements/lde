@@ -190,16 +190,19 @@ export interface StageOptions<Out = Quad> {
   /** Child stages that chain off this stage's output. */
   stages?: Stage[];
   /**
-   * Which outputs of this stage's chain reach the pipeline's writers:
+   * Which outputs of this stage’s chain reach the pipeline’s writers:
    *
-   * - `'all'` – this stage's output and that of every chained stage;
-   * - `'last'` – only the last chained stage's output. Set it when the earlier
-   *   stages produce working graphs that only feed the next stage: they still
-   *   write their scratch files for the next stage to query, but the chain
-   *   leaves them out of what it writes.
+   * - `'all'` – this stage’s output and that of every chained stage. Use it
+   *   when each stage adds to the result, such as a chained stage that
+   *   enriches this stage’s output with data from another source.
+   * - `'last'` – only the last chained stage’s output. Use it when the earlier
+   *   stages produce working graphs that only feed the next stage, such as a
+   *   normalisation that a shared mapping then reads: they still write their
+   *   scratch files for the next stage to query, but the chain leaves them out
+   *   of what it writes. Their validation still runs and is reported.
    *
-   * Only meaningful with {@link StageOptions.stages}: a stage without them is
-   * no chain, and its output is always written.
+   * Requires {@link StageOptions.stages}: a stage without them is no chain, and
+   * its output is always written.
    *
    * @default 'all'
    */
@@ -311,6 +314,11 @@ export class Stage<Out = Quad> {
     if (options.project && (options.stages?.length ?? 0) > 0) {
       throw new Error(
         `Stage '${options.name}': 'project' cannot combine with chained 'stages' – a chained stage serializes to N-Triples, which a projected item cannot.`,
+      );
+    }
+    if (options.chainOutput && !options.stages?.length) {
+      throw new Error(
+        `Stage '${options.name}': 'chainOutput' requires chained 'stages' – set it on the stage that starts the chain.`,
       );
     }
     // A child is handed its parent's output as its distribution; a `sourceFor`

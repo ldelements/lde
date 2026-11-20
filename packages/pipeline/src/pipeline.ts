@@ -1,4 +1,6 @@
 import { createReadStream } from 'node:fs';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Dataset, Distribution } from '@lde/dataset';
 import {
@@ -146,6 +148,13 @@ export interface PipelineOptions<Out = Quad> {
   distributionResolver?: DistributionResolver;
   chaining?: {
     stageOutputResolver: StageOutputResolver;
+    /**
+     * Where every chained stage writes its output, as N-Triples at
+     * `<outputDir>/<stage name>/<dataset>.nt`, for the next stage to query.
+     * The files stay after the run – including those a chain with
+     * `chainOutput: 'last'` leaves out of what it writes – so each step can be
+     * inspected; the next run of the dataset overwrites them.
+     */
     outputDir: string;
   };
   /** Reporter(s) handed every {@link PipelineEvent} of a run, in array order. */
@@ -1202,6 +1211,10 @@ export class Pipeline<Out = Quad> {
         outputDir: `${outputDir}/${chainedStage.name}`,
         format: 'n-triples',
       });
+      const outputPath = scratchWriter.getOutputPath(dataset);
+      // The FileWriter writes no file for empty output, so remove the previous
+      // run's file first: it must never stand in for this run's output.
+      await rm(outputPath, { force: true });
       const scratchRun = await scratchWriter.openRun(context);
       try {
         await this.runChainedStage(
@@ -1219,7 +1232,11 @@ export class Pipeline<Out = Quad> {
         await scratchRun.abort(error);
         throw error;
       }
-      return scratchWriter.getOutputPath(dataset);
+      // A stage that produced nothing leaves an empty file, so the next stage
+      // and the writers read an empty graph rather than a missing file.
+      await mkdir(dirname(outputPath), { recursive: true });
+      await writeFile(outputPath, '', { flag: 'a' });
+      return outputPath;
     };
 
     try {

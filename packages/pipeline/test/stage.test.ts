@@ -1303,6 +1303,19 @@ describe('Stage', () => {
     });
   });
 
+  describe('chainOutput', () => {
+    it('rejects chainOutput on a stage without chained stages at construction', () => {
+      expect(
+        () =>
+          new Stage({
+            name: 'aggregate',
+            readers: mockExecutor([q1]),
+            chainOutput: 'last',
+          }),
+      ).toThrow(/'chainOutput' requires chained 'stages'/);
+    });
+  });
+
   describe('batchSize per source kind', () => {
     /** The batch size a stage hands its item selector when run with `options`. */
     async function selectedBatchSize(

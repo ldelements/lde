@@ -203,7 +203,14 @@ new Pipeline({
 
 Because the scratch files are N-Triples, chains are quad-only: a stage with `stages` cannot `project`. A chained stage that returns `NotSupported` fails the chain rather than being skipped.
 
-By default the output of every stage in the chain reaches the pipeline’s writers. Set `chainOutput: 'last'` on the parent stage when the earlier stages only produce working graphs for the next stage to query: they still write their scratch files, but only the last chained stage’s output is written.
+The parent stage’s `chainOutput` option decides which stages’ output reaches the writers:
+
+| `chainOutput`     | Writes                        | Use when                                                                                                                   |
+| ----------------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `'all'` (default) | every stage’s output          | each stage adds to the result, such as a chained stage that enriches the parent’s output with labels from another endpoint |
+| `'last'`          | only the last chained stage’s | the earlier stages only produce input for the next, such as a normalisation that a shared mapping then reads               |
+
+Either way, every stage’s scratch file stays at `<outputDir>/<stage name>/<dataset>.nt` after the run, so you can inspect what each stage produced; the next run of the dataset overwrites it.
 
 See the how-to guide [Chain stage outputs](../guide/chain-stage-outputs).
 
