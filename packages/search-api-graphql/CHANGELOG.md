@@ -1,3 +1,67 @@
+## 0.54.0 (2026-11-20)
+
+### 🩹 Fixes
+
+- ⚠️  **search:** select a reference facet query’s matches by the labels its documents carry ([#1109](https://github.com/ldelements/lde/pull/1109))
+
+### ⚠️  Breaking Changes
+
+- **search:** select a reference facet query’s matches by the labels its documents carry  ([#1109](https://github.com/ldelements/lde/pull/1109))
+  a facet query on a reference matches the labels its documents store, not
+  the target type’s free-text search, so alternate names and labels only enrichment supplies no
+  longer find a value. Reindex every collection (rebuild an in-place one) before facet queries
+  find anything. isQueryableFacet refuses inline-reference identity facets, faceted leaves and
+  derived-label sources, so their GraphQL facets lose the query argument.
+  maxFacetQueryCandidates caps the matching values step one returns instead of the referents
+  per target type. referentHopFields takes the schema; facetQueryCostExtensions drops targets.
+  * fix(search): match typed punctuation and every node’s labels in a facet query
+  - Split a facet query’s text into words as the label-match companion stores them, so a label
+    typed as shown matches; text with no word in it matches nothing
+  - Merge the labels of every local-lookup endpoint keyed to one id, not only the first’s
+  - Read and transform referents’ labels for a facet only on the root type’s own references,
+    the only place the companion is written
+  - Describe matching on the documents’ labels in the facetQueries JSDoc and GraphQL argument
+  - Let the engine contract check a reference facet query by what matches, and give the
+    Typesense fixture’s publisher a path so the contract exercises one"
+  A	docs/decisions/0043-select-a-reference-facets-matches-by-the-labels-its-documents-carry.md
+  M	docs/reference/search-api-graphql.md
+  M	docs/reference/search-pipeline.md
+  M	docs/reference/search-typesense.md
+  M	docs/reference/search.md
+  M	packages/search-api-graphql/src/build-schema.ts
+  M	packages/search-api-graphql/src/query-cost.ts
+  M	packages/search-api-graphql/test/build-schema.test.ts
+  M	packages/search-api-graphql/test/handler.test.ts
+  M	packages/search-api-graphql/test/query-cost.test.ts
+  M	packages/search-pipeline/src/extraction.ts
+  M	packages/search-pipeline/src/search-stages.ts
+  M	packages/search-pipeline/test/extraction.test.ts
+  M	packages/search-pipeline/test/registry-extraction.integration.test.ts
+  M	packages/search-typesense/src/collection-definition.ts
+  M	packages/search-typesense/src/in-place-rebuild.ts
+  M	packages/search-typesense/src/query-compiler.ts
+  M	packages/search-typesense/src/search.ts
+  M	packages/search-typesense/test/facet-policy.test.ts
+  M	packages/search-typesense/test/facet-query.integration.test.ts
+  M	packages/search-typesense/test/facet-query.test.ts
+  M	packages/search-typesense/test/identity-facet.integration.test.ts
+  M	packages/search-typesense/test/polymorphic-lookup.test.ts
+  M	packages/search-typesense/test/search-engine.test.ts
+  M	packages/search/src/adapter.ts
+  A	packages/search/src/label-match.ts
+  M	packages/search/src/project.ts
+  M	packages/search/src/query.ts
+  M	packages/search/src/schema.ts
+  M	packages/search/src/testing.ts
+  M	packages/search/test/facet-queries.test.ts
+  A	packages/search/test/label-match.test.ts
+  M	packages/search/test/polymorphic-lookup.test.ts
+  M	packages/search/test/project.test.ts
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search to 0.50.0
+
 ## 0.53.1 (2026-11-17)
 
 ### 🚀 Features
