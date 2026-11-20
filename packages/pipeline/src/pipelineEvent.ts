@@ -199,6 +199,8 @@ export interface StageProgressEvent
 export interface StageCompleteEvent extends DatasetEventEnvelope<'stageComplete'> {
   stage: string;
   itemsProcessed: number;
+  /** The quads this stage generated – including those of a chained stage
+   *  that `chainOutput: 'last'` leaves out of what the chain writes. */
   quadsGenerated: number;
   durationMs: number;
   /** Where the stage spent its time. Always set by the pipeline; optional so
