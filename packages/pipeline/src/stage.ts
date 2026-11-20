@@ -331,6 +331,30 @@ export class Stage<Out = Quad> {
         `Stage '${options.name}': chained stage '${sourcedChild.name}' declares 'sourceFor' – a chained stage reads its parent's output, so it cannot source its own data.`,
       );
     }
+    // A chain is one line: the pipeline runs only the direct children, so a
+    // child's own `stages` would silently never run.
+    const nestingChild = options.stages?.find(
+      (child) => child.stages.length > 0,
+    );
+    if (nestingChild) {
+      throw new Error(
+        `Stage '${options.name}': chained stage '${nestingChild.name}' declares 'stages' – a chain is one line, so list its stages under '${options.name}' instead.`,
+      );
+    }
+    // Each stage in a chain writes its scratch file under its own name, so two
+    // stages with one name would overwrite each other's output.
+    const chainNames = [
+      options.name,
+      ...(options.stages ?? []).map((child) => child.name),
+    ];
+    const duplicateName = chainNames.find(
+      (name, index) => chainNames.indexOf(name) !== index,
+    );
+    if (duplicateName) {
+      throw new Error(
+        `Stage '${options.name}': two stages in the chain are named '${duplicateName}' – each writes its scratch file under its name, so the names must differ.`,
+      );
+    }
     this.name = options.name;
     this.stages = options.stages ?? [];
     this.readers = normalizeReaders(options.readers);

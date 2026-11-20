@@ -1074,8 +1074,8 @@ export class Pipeline<Out = Quad> {
   }
 
   /**
-   * Run a stage with reporting and return whether it was supported.
-   * Returns `true` if the stage produced results, `false` if NotSupported.
+   * Run a stage with reporting. Returns the {@link NotSupported} reason when
+   * the stage was skipped, and nothing when it ran.
    */
   private async runStage<Item>(
     runId: string,
@@ -1086,7 +1086,7 @@ export class Pipeline<Out = Quad> {
     source: SourceKind,
     timeout?: TimeoutPolicy,
     unread?: UnreadValueTally,
-  ): Promise<boolean> {
+  ): Promise<NotSupported | undefined> {
     this.report(runId, { type: 'stageStart', dataset, stage: stage.name });
     const stageStart = Date.now();
 
@@ -1140,7 +1140,7 @@ export class Pipeline<Out = Quad> {
           message: result.message,
         },
       });
-      return false;
+      return result;
     }
 
     this.report(runId, {
@@ -1152,11 +1152,14 @@ export class Pipeline<Out = Quad> {
       durationMs: Date.now() - stageStart,
       ...summary,
     });
-
-    return true;
+    return undefined;
   }
 
-  /** Run a stage in chained mode, throwing if the stage is not supported. */
+  /**
+   * Run a stage in chained mode. A stage whose item selector selects nothing
+   * produced empty output, which the next stage can still read; any other
+   * NotSupported throws, because the chain cannot continue without the stage.
+   */
   private async runChainedStage<Item>(
     runId: string,
     dataset: Dataset,
@@ -1166,7 +1169,7 @@ export class Pipeline<Out = Quad> {
     source: SourceKind,
     timeout?: TimeoutPolicy,
   ): Promise<void> {
-    const supported = await this.runStage(
+    const skipped = await this.runStage(
       runId,
       dataset,
       distribution,
@@ -1175,7 +1178,7 @@ export class Pipeline<Out = Quad> {
       source,
       timeout,
     );
-    if (!supported) {
+    if (skipped && !(skipped instanceof NoItemsSelected)) {
       throw new Error(
         `Stage '${stage.name}' returned NotSupported in chained mode`,
       );

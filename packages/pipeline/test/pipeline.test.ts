@@ -1266,6 +1266,15 @@ describe('Pipeline', () => {
         );
       });
 
+      it('writes the parent’s output when a chained stage selects nothing', async () => {
+        const enrich = new Stage({ name: 'enrich', readers: [] });
+        vi.spyOn(enrich, 'run').mockResolvedValue(new NoItemsSelected());
+        const parent = writingStage('parent', { stages: [enrich] });
+
+        expect(await writtenSubjects(parent)).toEqual(['http://parent']);
+        expect(writer.runWriter.flush).toHaveBeenCalledWith(dataset, 'success');
+      });
+
       it('keeps the scratch file of every stage it leaves out of the written output', async () => {
         const parent = writingStage('parent', {
           chainOutput: 'last',

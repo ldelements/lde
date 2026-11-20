@@ -60,12 +60,18 @@ const parent = new Stage({
           'SELECT DISTINCT ?this WHERE { ?record <https://schema.org/about> ?this } ORDER BY ?this',
       }),
       readers: termLabels,
+      // Chained stages are tuned for the pipeline’s own store; set
+      // what suits the remote endpoint.
+      batchSize: 50,
+      maxConcurrency: 2,
     }),
   ],
 });
 ```
 
-The writers get the mapped data and the labels together.
+The writers get the mapped data and the labels together. If the mapped data links to no terms, the enrich stage selects nothing and the writers get the mapped data alone.
+
+A chained stage runs with the batch size and concurrency meant for the store that serves its parent’s output. A stage whose reader queries a remote endpoint should set `batchSize` and `maxConcurrency` for that endpoint, as above.
 
 ### Normalise, then map: write only the last stage
 
@@ -148,4 +154,5 @@ For each dataset:
 Two constraints apply:
 
 - Chains are quad-only: a stage with `stages` cannot `project`, because a chained stage serialises to N-Triples, which a projected item cannot (see [ADR 13](../decisions/0013-project-inside-the-batch-per-root-type)).
-- A chained stage that returns `NotSupported` – for example, its item selector selects nothing – fails the whole chain instead of being skipped, because a later stage cannot chain off missing output.
+- A chain is one line: a chained stage cannot have `stages` of its own, and the stages in a chain need distinct names, because each writes its scratch file under its name.
+- A chained stage whose item selector selects nothing produces empty output, and the chain continues. Any other `NotSupported` – every reader returning it – fails the whole chain instead of being skipped, because the stage produced no output for the next one to read.

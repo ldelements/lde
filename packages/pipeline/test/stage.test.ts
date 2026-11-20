@@ -1316,6 +1316,26 @@ describe('Stage', () => {
     });
   });
 
+  describe('chain shape', () => {
+    const stage = (name: string, stages?: Stage[]) =>
+      new Stage({ name, readers: mockExecutor([q1]), stages });
+
+    it('rejects a chained stage that has stages of its own', () => {
+      expect(() =>
+        stage('parent', [stage('child', [stage('grandchild')])]),
+      ).toThrow(/chained stage 'child' declares 'stages'/);
+    });
+
+    it('rejects two stages with one name in a chain', () => {
+      expect(() => stage('map', [stage('enrich'), stage('enrich')])).toThrow(
+        /two stages in the chain are named 'enrich'/,
+      );
+      expect(() => stage('map', [stage('map')])).toThrow(
+        /two stages in the chain are named 'map'/,
+      );
+    });
+  });
+
   describe('batchSize per source kind', () => {
     /** The batch size a stage hands its item selector when run with `options`. */
     async function selectedBatchSize(
