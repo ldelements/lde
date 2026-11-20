@@ -1,3 +1,35 @@
+## 0.55.0 (2026-11-20)
+
+### 🩹 Fixes
+
+- ⚠️  **search-api-graphql:** serve a range bucket’s bounds in the type its field’s range filter takes ([#1078](https://github.com/ldelements/lde/pull/1078))
+
+### ⚠️  Breaking Changes
+
+- **search-api-graphql:** serve a range bucket’s bounds in the type its field’s range filter takes  ([#1078](https://github.com/ldelements/lde/pull/1078))
+  RangeBucket is gone. A binned integer facet’s buckets are
+  IntRangeBucket (min/max: Int) and a binned number facet’s are FloatRangeBucket
+  (min/max: Float); rename RangeBucket in fragments and client types accordingly.
+  * fix(search-api-graphql): say a number bin is half-open where the range filter is inclusive
+  A number bin’s max is exclusive, so the filter built from its bounds also matches values on the
+  edge; the comment and docs claimed it fed straight back into the filter that selects it. Folds the
+  per-kind prefix, extent and bin type into one record, and tests that binned integer and fractional
+  number facets resolve.
+  * fix(search-api-graphql)!: reject an integer bin bound that Int cannot hold
+  IntRangeBucket serves an integer bin’s bounds as GraphQL Int, which is 32-bit and whole, so a
+  fractional bound or one outside the signed 32-bit range errored the whole facet at query time.
+  Building the schema now fails on such a bound instead.
+  BREAKING CHANGE: buildGraphQLSchema throws for an integer field whose facetRanges has a
+  fractional or out-of-range bound; declare the field as number or fix the bound.
+  * docs(search-api-graphql): say integer bins are half-open too, and only they
+  - Drop “half-open” from the lead-in on binned buckets: a date bin is inclusive
+  - Name integer bins next to number bins where a bin’s exclusive max is explained
+  - Test a bin’s max bound, and a binned field that also counts its presence"
+  M	docs/reference/search-api-graphql.md
+  M	packages/search-api-graphql/src/build-schema.ts
+  M	packages/search-api-graphql/test/build-schema.test.ts
+  M	packages/search-api-graphql/vite.config.ts
+
 ## 0.54.0 (2026-11-20)
 
 ### 🩹 Fixes
