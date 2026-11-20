@@ -372,14 +372,14 @@ role: { in: ["etser"] } } }` asks for _this person in this role_, where the
     it draws at. A field with
     [`facetRanges`](./search#range-facets) returns the
     `‹Kind›BinnedRangeFacet` variant instead, whose buckets hold one bucket
-    per declared half-open `[min, max)` bin, carrying `min`/`max` (null on an
-    open end) and `count`, with no `value` or `label`. Like the extent, a
-    bin’s bounds are in the type the field’s range filter takes:
-    `[IntRangeBucket!]!`, `[FloatRangeBucket!]!` or `[DateRangeBucket!]!`.
-    `Int` is 32-bit, so building the schema fails on an `integer` bin whose
-    bound is fractional or outside the signed 32-bit range. A number bin’s `max` is exclusive while the range filter’s is inclusive, so
-    the filter built from a number bin also matches values equal to its
-    `max`. A date bin is inclusive like the filter, and its bounds are served
+    per declared bin, carrying `min`/`max` (null on an open end) and `count`,
+    with no `value` or `label`. Like the extent, a bin’s bounds are in the
+    type the field’s range filter takes: `[IntRangeBucket!]!`,
+    `[FloatRangeBucket!]!` or `[DateRangeBucket!]!`. `Int` is 32-bit, so
+    building the schema fails on an `integer` bin whose bound is fractional
+    or outside the signed 32-bit range. An `integer` or `number` bin is
+    half-open `[min, max)` while the range filter is inclusive, so the filter
+    built from such a bin also matches values equal to its `max`. A date bin is inclusive like the filter, and its bounds are served
     at the precision they were declared in (`1900`, not
     `1900-01-01T00:00:00Z`);
   - a `boolean` field returns `[BooleanBucket!]!` – `value: Boolean!` +

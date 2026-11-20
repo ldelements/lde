@@ -1361,7 +1361,10 @@ describe('buildGraphQLSchema', () => {
   });
 
   it('rejects an integer bin bound that GraphQL’s Int cannot hold', () => {
-    const withSizeBound = (bound: number) =>
+    const withSizeBin = (
+      bin: { min?: number; max?: number },
+      presence = false,
+    ) =>
       buildGraphQLSchema(
         searchSchema(
           {
@@ -1372,7 +1375,8 @@ describe('buildGraphQLSchema', () => {
                     name: 'size',
                     kind: 'integer',
                     facetable: true,
-                    facetRanges: [{ key: 'big', min: bound }],
+                    ...(presence && { presence: true }),
+                    facetRanges: [{ key: 'big', ...bin }],
                   }
                 : field,
             ),
@@ -1382,13 +1386,17 @@ describe('buildGraphQLSchema', () => {
         ),
         datasetOptions,
       );
-    expect(() => withSizeBound(-(2 ** 31))).not.toThrow();
-    expect(() => withSizeBound(2 ** 31 - 1)).not.toThrow();
+    expect(() => withSizeBin({ min: -(2 ** 31) })).not.toThrow();
+    expect(() => withSizeBin({ max: 2 ** 31 - 1 })).not.toThrow();
     for (const bound of [1.5, 2 ** 31, -(2 ** 31) - 1]) {
-      expect(() => withSizeBound(bound)).toThrow(
-        `Facet “size” has bin “big” with bound ${bound}, which GraphQL’s Int cannot hold`,
-      );
+      const message = `Facet “size” has bin “big” with bound ${bound}, which GraphQL’s Int cannot hold`;
+      expect(() => withSizeBin({ min: bound })).toThrow(message);
+      expect(() => withSizeBin({ max: bound })).toThrow(message);
     }
+    // A field counting its presence too is built as a facet object of its own.
+    expect(() => withSizeBin({ max: 1.5 }, true)).toThrow(
+      'Facet “size” has bin “big” with bound 1.5',
+    );
   });
 
   it('serves a binned number facet’s bounds as Float, the type FloatRange takes', async () => {

@@ -480,9 +480,9 @@ export function buildGraphQLSchema(
   // and a client draws the slider at whatever grain it chooses.
   //
   // A bin carries its bounds (null on an open end) and the count of documents
-  // in it. A number bin is half-open `[min, max)` while the inclusive range
-  // filter is not, so sending a number bin back as the filter also matches
-  // values equal to its `max`. A date bin is inclusive like the filter, and
+  // in it. An integer or number bin is half-open `[min, max)` while the
+  // inclusive range filter is not, so sending such a bin back as the filter
+  // also matches values equal to its `max`. A date bin is inclusive like the filter, and
   // its bounds are served as the ISO 8601 it was declared in.
   const rangeKinds = {
     integer: {
