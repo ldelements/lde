@@ -84,7 +84,7 @@ media, creators and materials. A sample of bare instances finds nothing to
 check, so it conforms whatever the described ones get wrong.
 
 The selector first asks for the first `samplesPerClass` instances in IRI
-order. If the class has no more instances than that, they are the sample,
+order. If the class has fewer instances than that, they are the sample,
 and selection took one request.
 
 For a larger class, the selector takes first the instances that use a path

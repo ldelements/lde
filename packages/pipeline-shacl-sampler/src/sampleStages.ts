@@ -139,7 +139,7 @@ export async function shaclSampleStages(
 /**
  * Select up to `limit` instances of the shape’s target class, taking first
  * the instances that use a path the shape checks in depth, one query per path,
- * and filling up with the first instances by IRI. A class of no more than
+ * and filling up with the first instances by IRI. A class of fewer than
  * `limit` instances is sampled whole, in one request. See “Which instances are
  * sampled” in the package docs.
  */
@@ -151,48 +151,43 @@ function subjectSelector(
 ): ItemSelector {
   const { targetClass } = shape;
   assertSafeIri(targetClass.value);
-  const firstPaths = shape.pathChains.flatMap((chain) => chain.slice(0, 1));
-  const preferredPaths = [
-    ...new Set(firstPaths.map((firstPath) => firstPath.value)),
-  ].map((path) => aliasVariants(path, namespaceAliases));
+  const firstPaths = shape.pathChains.flatMap((chain) =>
+    chain.slice(0, 1).map((path) => path.value),
+  );
+  const preferredPaths = [...new Set(firstPaths)].map((path) =>
+    aliasVariants(path, namespaceAliases),
+  );
   return {
     // Forward `options` so the Pipeline’s per-dataset TimeoutPolicy
     // reaches the inner SparqlItemSelector – without this the adaptive
     // budget is silently bypassed for subject selection.
     async *select(distribution, batchSize, options) {
-      const queryOptions = {
-        targetClass,
-        subjectFilter: distribution.subjectFilter,
-        namedGraph: distribution.namedGraph,
-        namespaceAliases,
-        excludeFilter,
-      };
-      // One row more than the sample tells a class of exactly `limit`
-      // instances, which is sampled whole, from a larger one.
+      const instances = (usingPath?: string[]) =>
+        new SparqlItemSelector({
+          query: buildSubjectSelectorQuery({
+            targetClass,
+            subjectFilter: distribution.subjectFilter,
+            namedGraph: distribution.namedGraph,
+            namespaceAliases,
+            excludeFilter,
+            usingPath,
+          }),
+          maxResults: limit,
+          pageSize: limit,
+        }).select(distribution, batchSize, options);
+
       const firstByIri: VariableBindings[] = [];
-      for await (const row of new SparqlItemSelector({
-        query: buildSubjectSelectorQuery(queryOptions),
-        maxResults: limit + 1,
-        pageSize: limit + 1,
-      }).select(distribution, batchSize, options)) {
-        firstByIri.push(row);
-      }
-      if (firstByIri.length <= limit) {
+      for await (const row of instances()) firstByIri.push(row);
+      if (firstByIri.length < limit) {
         yield* firstByIri;
         return;
       }
 
       async function* candidates(): AsyncGenerator<VariableBindings> {
         try {
-          for (const usingPath of preferredPaths) {
-            // A path query may repeat instances already selected, but no more
-            // than there are, so `limit` rows always leave enough new ones.
-            yield* new SparqlItemSelector({
-              query: buildSubjectSelectorQuery({ ...queryOptions, usingPath }),
-              maxResults: limit,
-              pageSize: limit,
-            }).select(distribution, batchSize, options);
-          }
+          // A path query may repeat instances already selected, but no more
+          // than there are, so `limit` rows always leave enough new ones.
+          for (const usingPath of preferredPaths) yield* instances(usingPath);
         } catch {
           // The paths only order the sample: when a path query fails, say on
           // a timeout, fill up with the instances the first query returned.

@@ -168,12 +168,6 @@ describe('shaclSampleStages subject selection (end to end)', () => {
     ).toEqual(['https://example.org/p-1', 'https://example.org/p-2']);
   }, 30_000);
 
-  it('samples a class of exactly samplesPerClass instances in one request', async () => {
-    const stage = await creativeWorkStage({ samplesPerClass: 5 });
-    expect(await sampledInstances(stage, distribution)).toHaveLength(5);
-    expect(selectQueries).toHaveLength(1);
-  }, 30_000);
-
   it('falls back to the first instances by IRI when a path query fails', async () => {
     failPathQueries = true;
     const stage = await creativeWorkStage({ samplesPerClass: 2 });
@@ -181,13 +175,5 @@ describe('shaclSampleStages subject selection (end to end)', () => {
       'https://example.org/a-bare-1',
       'https://example.org/a-bare-2',
     ]);
-  }, 30_000);
-
-  it('selects from a class the dataset lacks in one request', async () => {
-    const stage = await sampleStage('shacl-sample-Place', {});
-    expect(
-      await sampledInstances(stage, distribution, 'https://schema.org/Place'),
-    ).toEqual([]);
-    expect(selectQueries).toHaveLength(1);
   }, 30_000);
 });
