@@ -8,7 +8,10 @@ import {
   type SearchField,
   type SearchType,
 } from '@lde/search';
-import { buildSearchParams } from '../src/query-compiler.js';
+import {
+  buildSearchParams,
+  MAX_PREFIX_CANDIDATES,
+} from '../src/query-compiler.js';
 
 const schema: SearchType = {
   name: 'Dataset',
@@ -717,6 +720,32 @@ describe('buildSearchParams', () => {
         schema,
       ).facet_query,
     ).toBe('keyword:van rijn');
+  });
+
+  it('forgives no typo in a facet query, and expands its prefixes widely', () => {
+    const { facet_query_num_typos, max_candidates } = buildSearchParams(
+      { ...base, facets: ['keyword'], facetQueries: { keyword: 'kaarten' } },
+      schema,
+    );
+
+    expect({ facet_query_num_typos, max_candidates }).toEqual({
+      facet_query_num_typos: 0,
+      max_candidates: MAX_PREFIX_CANDIDATES,
+    });
+  });
+
+  it('leaves prefix expansion at the default under free text, which it would widen too', () => {
+    expect(
+      buildSearchParams(
+        {
+          ...base,
+          text: 'amsterdam',
+          facets: ['keyword'],
+          facetQueries: { keyword: 'kaa' },
+        },
+        schema,
+      ),
+    ).not.toHaveProperty('max_candidates');
   });
 
   it('leaves a reference facet’s query to the engine, which matches referents', () => {

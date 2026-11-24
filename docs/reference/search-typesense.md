@@ -282,13 +282,27 @@ A query searching a facet’s values ([`facetQueries`](./search#searching-a-face
 compiles by what the facet holds.
 
 A **literal** (`keyword`) facet compiles to Typesense’s `facet_query` on the
-facet’s own search: Typesense matches the values by prefix, with typo
-tolerance, and returns the matching values with the highest counts. A colon
+facet’s own search: Typesense matches the values by prefix, and returns the
+matching values with the highest counts. A colon
 in the text separates words like a space, because Typesense reads one as the
-separator between field and text.
-Non-matching values cannot crowd them out, and under `facet_query`
+separator between field and text. Non-matching values cannot crowd the matching ones out, and under `facet_query`
 `stats.total_values` counts the matching values only, so `totalValues` is
 exact.
+
+Two Typesense defaults are overridden on every `facet_query`, literal or on the
+label-match companion below:
+
+- **No typos** (`facet_query_num_typos: 0`). Typesense allows two at any
+  length in a facet query, and scales none by word length there, so “rem”
+  matched every value with a word starting with “reg”. Someone filtering a
+  facet sees a typo as an empty list at once; a wrong match is harder to spot.
+- **A prefix expands to up to 1000 words** (`max_candidates`), in a search
+  without free text. The default of 4 keeps only the words a prefix most often
+  starts, so “p” found 9 of the 18 materials with a word starting with “p”.
+  Measured on 10040 terms, 1000 expands every one-letter prefix completely, at
+  up to 190 ms per search. The setting widens the free text too, so under a
+  text query it stays at the default, and the facet counts the documents the
+  hits come from.
 
 A **reference** facet’s values are IRIs, which `facet_query` would match
 instead of the labels someone types. Its documents therefore carry a
