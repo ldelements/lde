@@ -414,7 +414,7 @@ describe('a facet query', () => {
     expect(facet.totalValues).toBe(1);
   });
 
-  it('forgives no typo in a word shorter than four characters', async () => {
+  it('forgives no typo', async () => {
     const [reference, literal] = await engine.searchFacets(work, [
       // One typo from “rem”, which starts Rembrandt, Rembert and Remonstrantse.
       { ...base, facets: ['creator'], facetQueries: { creator: 'rex' } },

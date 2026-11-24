@@ -282,8 +282,8 @@ A query searching a facet’s values ([`facetQueries`](./search#searching-a-face
 compiles by what the facet holds.
 
 A **literal** (`keyword`) facet compiles to Typesense’s `facet_query` on the
-facet’s own search: Typesense matches the values by prefix, with typo
-tolerance, and returns the matching values with the highest counts. A colon
+facet’s own search: Typesense matches the values by prefix, and returns the
+matching values with the highest counts. A colon
 in the text separates words like a space, because Typesense reads one as the
 separator between field and text. Non-matching values cannot crowd the matching ones out, and under `facet_query`
 `stats.total_values` counts the matching values only, so `totalValues` is
@@ -292,12 +292,10 @@ exact.
 Two Typesense defaults are overridden on every `facet_query`, literal or on the
 label-match companion below:
 
-- **Typos scale with the shortest word** (`facet_query_num_typos`): none
-  below 4 characters, one below 7, two from there, Typesense’s own search’s
-  thresholds. Typesense takes one number for the whole facet query, so the
-  shortest word decides, or “pa” in “pa rijn” would match by typo. Its
-  default of two at any length made “rem” match every value with a word
-  starting with “reg”.
+- **No typos** (`facet_query_num_typos: 0`). Typesense allows two at any
+  length in a facet query, and scales none by word length there, so “rem”
+  matched every value with a word starting with “reg”. Someone filtering a
+  facet sees a typo as an empty list at once; a wrong match is harder to spot.
 - **A prefix expands to up to 1000 words** (`max_candidates`), in a search
   without free text. The default of 4 keeps only the words a prefix most often
   starts, so “p” found 9 of the 18 materials with a word starting with “p”.

@@ -185,13 +185,10 @@ export function buildSearchParams(
  *
  * - **`facet_query`.** Typesense reads a colon as the field separator, so one
  *   in the text would break the match; it separates words like a space does.
- * - **`facet_query_num_typos`, by the length of the text’s shortest word**:
- *   none below 4 characters, one below 7, two from there, Typesense’s own
- *   search’s thresholds. Typesense takes one number for the whole facet query
- *   where its search scales typos per word, so the shortest word decides: a
- *   longer one’s count would let “pa” in “pa rijn” match by typo. Typesense’s
- *   default allows two at any length, so “rem” matched every value with a
- *   word starting with “reg”.
+ * - **No typos.** Typesense allows two in a facet query however short the
+ *   text, and scales none by word length there, so “rem” matched every value
+ *   with a word starting with “reg”. A person filtering a facet sees a typo as
+ *   an empty list at once; a wrong match is harder to spot.
  * - **`max_candidates`, in a search without free text.** Typesense expands a
  *   prefix to the few words it most often starts, 4 by default, so “p” found
  *   9 of the 18 materials with a word starting with “p”;
@@ -205,15 +202,12 @@ export function facetQueryParams(
   q: string | undefined,
 ): {
   facet_query: string;
-  facet_query_num_typos: number;
+  facet_query_num_typos: 0;
   max_candidates?: number;
 } {
-  const words = text.replaceAll(':', ' ').trim().split(/\s+/);
-  // In characters, as Typesense counts them, not UTF-16 code units.
-  const shortest = Math.min(...words.map((word) => [...word].length));
   return {
-    facet_query: `${field}:${words.join(' ')}`,
-    facet_query_num_typos: shortest < 4 ? 0 : shortest < 7 ? 1 : 2,
+    facet_query: `${field}:${text.replaceAll(':', ' ')}`,
+    facet_query_num_typos: 0,
     ...(q === '*' && { max_candidates: MAX_PREFIX_CANDIDATES }),
   };
 }
