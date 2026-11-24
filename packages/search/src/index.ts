@@ -9,10 +9,16 @@
 // never the graph, so the IR readers stay internal to projection.
 export { projectRoots } from './project.js';
 export type {
+  FilterMatcher,
   ProjectedNode,
   ProjectionContext,
   SearchDocument,
 } from './project.js';
+
+// Stored filters: CQL2 JSON kept outside the schema, tested against each
+// document as it is projected, to mark the documents that match.
+export { compileStoredFilters } from './stored-filter.js';
+export type { StoredFilter } from './stored-filter.js';
 
 // Unified field model: one declaration drives projection, engine collection
 // schema, query semantics and the GraphQL surface – a discriminated union by

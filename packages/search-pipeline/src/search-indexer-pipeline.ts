@@ -11,7 +11,12 @@ import {
   type ReaderContext,
   type Writer,
 } from '@lde/pipeline';
-import type { RootType, SearchDocument, SearchSchema } from '@lde/search';
+import type {
+  RootType,
+  SearchDocument,
+  SearchSchema,
+  StoredFilter,
+} from '@lde/search';
 import { searchIndexWriter } from './search-index-writer.js';
 import {
   defaultBatchSize,
@@ -137,6 +142,14 @@ export interface SearchIndexerPipelineOptions {
    */
   restrictRoots?: Readonly<Record<string, string>>;
   /**
+   * {@link StoredFilter}s that mark the documents they match
+   * ({@link SearchStagesOptions.storedFilters}). A filter the schema cannot
+   * serve throws at wiring time. The filters are part of the version a
+   * {@link provenanceStore} keys its skips by, so changing one re-indexes every
+   * dataset.
+   */
+  storedFilters?: readonly StoredFilter[];
+  /**
    * {@link ExtractionTuning} for every root type’s stage, such as a larger
    * batch for a deployment that only reads imported dumps.
    */
@@ -242,12 +255,13 @@ export function searchIndexerPipeline(
         transform: transforms?.[searchType.name],
         ...tuningFor(searchType, tuning, tuningByType),
       })),
+      storedFilters: options.storedFilters,
     }),
     writers: searchIndexWriter({ schema, writerFor: options.writerFor }),
     provenanceStore: options.provenanceStore,
-    pipelineVersion: versionWithRestrictions(
-      options.pipelineVersion,
-      restrictRoots,
+    pipelineVersion: versionWithStoredFilters(
+      versionWithRestrictions(options.pipelineVersion, restrictRoots),
+      options.storedFilters,
     ),
     reporter: options.reporter,
   });
@@ -332,6 +346,22 @@ function versionWithRestrictions(
     Object.keys(restrictRoots).length === 0
     ? pipelineVersion
     : `${pipelineVersion}+restrictRoots=${JSON.stringify(restrictRoots)}`;
+}
+
+/**
+ * The pipeline version extended with the stored filters, for the same reason
+ * as {@link versionWithRestrictions}: a dataset skipped after a filter changed
+ * would keep the values of the old one.
+ */
+function versionWithStoredFilters(
+  pipelineVersion: string | undefined,
+  storedFilters: readonly StoredFilter[] | undefined,
+): string | undefined {
+  return pipelineVersion === undefined ||
+    storedFilters === undefined ||
+    storedFilters.length === 0
+    ? pipelineVersion
+    : `${pipelineVersion}+storedFilters=${JSON.stringify(storedFilters)}`;
 }
 
 /** The type’s stage tuning: each {@link ExtractionTuning} field from

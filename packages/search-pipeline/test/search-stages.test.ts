@@ -11,7 +11,12 @@ import {
   type Reader,
   type VariableBindings,
 } from '@lde/pipeline';
-import { projectRoots, searchSchema, type RootType } from '@lde/search';
+import {
+  projectRoots,
+  searchSchema,
+  type RootType,
+  type StoredFilter,
+} from '@lde/search';
 import { irAlias } from '@lde/search/adapter';
 import {
   registrySource,
@@ -155,6 +160,60 @@ describe('searchStages', () => {
 
     expect(received[0].document.dataset).toBe('http://example.org/dataset/1');
     expect(received[0].document.fromDataset).toBe('yes');
+  });
+
+  it('marks each document with the stored filters it matches', async () => {
+    const marked = searchSchema({
+      name: 'Person',
+      class: PERSON,
+      fields: [
+        { name: 'name', kind: 'keyword', path: NAME, output: true },
+        {
+          name: 'selections',
+          kind: 'keyword',
+          array: true,
+          from: 'matchedFilters',
+          filterable: true,
+        },
+      ],
+    });
+    const named = (root: string): StoredFilter => ({
+      type: 'Person',
+      value: `named-after-${root}`,
+      filter: { op: '=', args: [{ property: 'name' }, `Name ${root}`] },
+    });
+    const [stage] = searchStages({
+      schema: marked,
+      types: [
+        {
+          searchType: marked.get(PERSON) as RootType,
+          rootVariable: 'root',
+          itemSelector: rootsSelector(['https://ex/p/1', 'https://ex/p/2']),
+          readers: nameReader,
+        },
+      ],
+      storedFilters: [named('https://ex/p/1'), named('https://ex/p/9')],
+    });
+
+    const received: TypedSearchDocument[] = [];
+    const writer: DatasetWriter<TypedSearchDocument> = {
+      write: async (_dataset, items) => {
+        for await (const item of items) {
+          received.push(item);
+        }
+      },
+    };
+
+    await stage.run(dataset, distribution, writer);
+
+    expect(received.map((item) => item.document)).toEqual([
+      {
+        id: 'https://ex/p/1',
+        name: 'Name https://ex/p/1',
+        selections: ['named-after-https://ex/p/1'],
+      },
+      { id: 'https://ex/p/2', name: 'Name https://ex/p/2' },
+    ]);
   });
 
   it('passes what a field could not read on to the pipeline, under the type’s name', async () => {

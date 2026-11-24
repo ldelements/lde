@@ -43,6 +43,7 @@ graph TD
   subgraph Publication
     fastify-rdf
     docgen
+    search --> cql2
     search --> text-normalization
     search-api-graphql --> search
     search-api-server --> search-api-graphql

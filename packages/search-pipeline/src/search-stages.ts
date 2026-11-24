@@ -13,6 +13,7 @@ import {
   type StageReaders,
 } from '@lde/pipeline';
 import {
+  compileStoredFilters,
   projectRoots,
   type ReferenceType,
   type RootType,
@@ -20,6 +21,7 @@ import {
   type SearchField,
   type SearchSchema,
   type SearchType,
+  type StoredFilter,
 } from '@lde/search';
 import {
   endpointFieldOf,
@@ -132,6 +134,14 @@ export interface SearchStagesOptions {
   schema: SearchSchema;
   /** One entry per root type to index, each its own stage. */
   types: readonly SearchStageType[];
+  /**
+   * {@link StoredFilter}s: every document is tested against the filters that
+   * name its type as it is projected, and gets the value of each one it
+   * matches in the type’s field declared `from: 'matchedFilters'`. A filter the
+   * schema cannot serve throws here, before any stage runs
+   * ({@link compileStoredFilters}).
+   */
+  storedFilters?: readonly StoredFilter[];
 }
 
 /**
@@ -164,6 +174,10 @@ export function searchStages(
   options: SearchStagesOptions,
 ): Stage<TypedSearchDocument>[] {
   const { schema, types } = options;
+  const matchedFilters =
+    options.storedFilters === undefined
+      ? undefined
+      : compileStoredFilters(schema, options.storedFilters);
   // The schema holds one root type per class, so at most one stage matches.
   const isDatasetType = (type: SearchStageType) =>
     type.searchType.class === DCAT_DATASET;
@@ -264,6 +278,7 @@ export function searchStages(
           searchType,
           {
             dataset: datasetIri,
+            matchedFilters,
             // Only for other types: the dataset type’s own batches would
             // otherwise see it or not depending on which batch ran first.
             datasetDocument:

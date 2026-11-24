@@ -1,3 +1,6 @@
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Pipeline } from '@lde/pipeline';
 import { describe, expect, it } from 'vitest';
@@ -71,6 +74,68 @@ describe('createSearchIndexer', () => {
         }),
       ),
     ).rejects.toThrowError(/Unknown restricted root type\(s\) “Publisher”/);
+  });
+
+  describe('STORED_FILTERS_FILE', () => {
+    const withFile = async (content: string) => {
+      const directory = await mkdtemp(join(tmpdir(), 'stored-filters-'));
+      const path = join(directory, 'stored-filters.json');
+      await writeFile(path, content);
+      return createSearchIndexer(
+        configFromEnvironment({
+          ...minimal,
+          SCHEMA_MODULE: fixture,
+          STORED_FILTERS_FILE: path,
+        }),
+      );
+    };
+
+    it('fails the boot on a filter the schema cannot serve', async () => {
+      // Proves the file reaches the pipeline: the fixture’s type declares no
+      // field to hold a filter’s value.
+      await expect(
+        withFile(
+          JSON.stringify([
+            {
+              type: 'Dataset',
+              value: 'open',
+              filter: {
+                op: 'a_contains',
+                args: [{ property: 'keyword' }, ['open']],
+              },
+            },
+          ]),
+        ),
+      ).rejects.toThrowError(
+        /Stored filter 1 names type “Dataset”, which declares no field/,
+      );
+    });
+
+    it('fails the boot on a file that is not JSON, naming it', async () => {
+      await expect(withFile('{oops')).rejects.toThrowError(
+        /STORED_FILTERS_FILE “.*stored-filters\.json” is not valid JSON/,
+      );
+    });
+
+    it('fails the boot on a file that holds no list, naming it', async () => {
+      await expect(withFile('{"filters": []}')).rejects.toThrowError(
+        /STORED_FILTERS_FILE “.*stored-filters\.json” must hold a JSON array/,
+      );
+    });
+
+    it('fails the boot on a file it cannot read, naming it', async () => {
+      await expect(
+        createSearchIndexer(
+          configFromEnvironment({
+            ...minimal,
+            SCHEMA_MODULE: fixture,
+            STORED_FILTERS_FILE: '/nowhere/stored-filters.json',
+          }),
+        ),
+      ).rejects.toThrowError(
+        /STORED_FILTERS_FILE “\/nowhere\/stored-filters\.json” cannot be read/,
+      );
+    });
   });
 
   it('fails the boot on a tuned type the schema does not declare', async () => {

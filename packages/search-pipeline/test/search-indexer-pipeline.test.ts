@@ -7,7 +7,12 @@ import {
   type ProvenanceStore,
   type Writer,
 } from '@lde/pipeline';
-import { searchSchema, type RootType, type SearchDocument } from '@lde/search';
+import {
+  searchSchema,
+  type RootType,
+  type SearchDocument,
+  type StoredFilter,
+} from '@lde/search';
 import type { Quad } from '@rdfjs/types';
 import { searchIndexerPipeline } from '../src/search-indexer-pipeline.js';
 
@@ -518,6 +523,125 @@ describe('searchIndexerPipeline', () => {
           restrictRoots: { Organization: '?root <unclosed' },
         }),
       ).toThrow(/restrictRoots for “Organization”/);
+    });
+  });
+
+  describe('storedFilters', () => {
+    const marked = searchSchema({
+      name: 'Organization',
+      class: ORGANIZATION,
+      fields: [
+        {
+          name: 'name',
+          kind: 'keyword',
+          path: '<https://example.org/name>',
+          output: true,
+        },
+        {
+          name: 'selections',
+          kind: 'keyword',
+          array: true,
+          from: 'matchedFilters',
+          filterable: true,
+        },
+      ],
+    });
+    const named = (name: string): StoredFilter => ({
+      type: 'Organization',
+      value: `named-${name}`,
+      filter: { op: '=', args: [{ property: 'name' }, name] },
+    });
+
+    it('rejects a filter the schema cannot serve, before any run', () => {
+      expect(() =>
+        searchIndexerPipeline({
+          schema: marked,
+          datasets: [],
+          writerFor: () => engineWriter,
+          storedFilters: [{ ...named('ACME'), type: 'Organisation' }],
+        }),
+      ).toThrow(
+        /Stored filter 1 names type “Organisation”, which is not a root type/,
+      );
+    });
+
+    it('re-indexes every dataset when a filter changes', async () => {
+      // As for a restriction: a dataset skipped after a filter changed would
+      // keep the values of the old one.
+      const versions: string[] = [];
+      const provenanceStore: ProvenanceStore = {
+        get: async () => null,
+        set: async (_dataset, record) => {
+          versions.push(record.pipelineVersion);
+        },
+      };
+      nock('http://refiltered.example.org')
+        .post('/sparql')
+        .times(2)
+        .reply(
+          200,
+          { head: { vars: ['root'] }, results: { bindings: [] } },
+          { 'Content-Type': 'application/sparql-results+json' },
+        );
+
+      await searchIndexerPipeline({
+        schema: marked,
+        datasets: [
+          new Dataset({
+            iri: new URL('http://example.org/dataset/1'),
+            distributions: [
+              Distribution.sparql(
+                new URL('http://refiltered.example.org/sparql'),
+              ),
+            ],
+          }),
+        ],
+        writerFor: () => engineWriter,
+        provenanceStore,
+        pipelineVersion: '1',
+        storedFilters: [named('ACME')],
+      }).run();
+
+      expect(versions[0]).toMatch(/^1\+storedFilters=/);
+      expect(versions[0]).toContain('named-ACME');
+    });
+
+    it('leaves the version alone for an empty list', async () => {
+      const versions: string[] = [];
+      const provenanceStore: ProvenanceStore = {
+        get: async () => null,
+        set: async (_dataset, record) => {
+          versions.push(record.pipelineVersion);
+        },
+      };
+      nock('http://unfiltered.example.org')
+        .post('/sparql')
+        .times(2)
+        .reply(
+          200,
+          { head: { vars: ['root'] }, results: { bindings: [] } },
+          { 'Content-Type': 'application/sparql-results+json' },
+        );
+
+      await searchIndexerPipeline({
+        schema: marked,
+        datasets: [
+          new Dataset({
+            iri: new URL('http://example.org/dataset/1'),
+            distributions: [
+              Distribution.sparql(
+                new URL('http://unfiltered.example.org/sparql'),
+              ),
+            ],
+          }),
+        ],
+        writerFor: () => engineWriter,
+        provenanceStore,
+        pipelineVersion: '1',
+        storedFilters: [],
+      }).run();
+
+      expect(versions[0]).toBe('1');
     });
   });
 });

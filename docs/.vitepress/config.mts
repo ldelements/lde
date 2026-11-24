@@ -50,6 +50,7 @@ const packageGroups: Record<string, string[]> = {
   ],
   Publication: [
     'change-detection',
+    'cql2',
     'fastify-rdf',
     'docgen',
     'search',

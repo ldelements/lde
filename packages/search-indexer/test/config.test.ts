@@ -50,6 +50,7 @@ describe('configFromEnvironment', () => {
       IMPORT_STRATEGY: 'import',
       DATA_DIR: '/mnt/data',
       RESTRICT_ROOTS: '{"CreativeWork": "?root a ?type"}',
+      STORED_FILTERS_FILE: '/mnt/stored-filters.json',
       EXTRACTION_BATCH_SIZE: '100',
       EXTRACTION_CONCURRENCY: '4',
       EXTRACTION_TUNING: '{"CreativeWork": {"batchSize": 200}}',
@@ -60,6 +61,7 @@ describe('configFromEnvironment', () => {
       registryRootTypes: ['Dataset', 'Publisher'],
       datasetCriteria: {},
       restrictRoots: { CreativeWork: '?root a ?type' },
+      storedFiltersPath: '/mnt/stored-filters.json',
       extraction: {
         batchSize: 100,
         maxConcurrency: 4,

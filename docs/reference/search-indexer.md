@@ -73,6 +73,7 @@ images.
 | `DATASETS`               | all registry datasets        | Dataset IRIs and `file:` URLs of local data to index (whitespace- or comma-separated; see below)                                                      |
 | `DATASET_CRITERIA`       | all registry datasets        | Search criteria as a JSON object, in [`@lde/dataset-registry-client`](./dataset-registry-client)’s criteria format (mutually exclusive w/ `DATASETS`) |
 | `RESTRICT_ROOTS`         | none                         | JSON object mapping root type names to a SPARQL graph pattern over `?root`; only matching roots are indexed (see below)                               |
+| `STORED_FILTERS_FILE`    | none                         | Path of a JSON file with stored filters; each document gets the value of every filter it matches (see below)                                          |
 | `EXTRACTION_BATCH_SIZE`  | `100`                        | Roots per extraction query from an imported dump, for every type; a live endpoint always takes 10 (see below)                                         |
 | `EXTRACTION_CONCURRENCY` | `10`                         | Concurrent queries per type’s stage; also sets how many queries an imported QLever answers at once, up to 4 (see below)                               |
 | `EXTRACTION_TUNING`      | none                         | JSON object mapping root type names to `batchSize` and `maxConcurrency`, overriding the two variables above for that type                             |
@@ -244,6 +245,34 @@ the dataset, not its records), a pattern that does not mention `?root` or one
 that does not parse fails the boot. With `PROVENANCE_FILE`, changing a
 restriction re-indexes every dataset: the restrictions are part of the version
 skips are keyed by.
+
+## Stored filters
+
+To mark the documents that belong to a named subset, mount a JSON file and
+name it in `STORED_FILTERS_FILE`:
+
+```json
+[
+  {
+    "type": "CreativeWork",
+    "value": "https://example.org/selections/pottery",
+    "filter": {
+      "op": "a_contains",
+      "args": [{ "property": "about" }, ["https://example.org/terms/pottery"]]
+    }
+  }
+]
+```
+
+Every `CreativeWork` whose `about` holds that term gets the value in the field
+its type declares `from: 'matchedFilters'`. The filter is CQL2 JSON;
+[`@lde/search`](./search.md#stored-filters) lists what it may contain.
+
+Unlike `RESTRICT_ROOTS`, this leaves the index whole: one index serves every
+subset and the full set. A file that cannot be read, is not JSON, or holds a
+filter the mounted schema cannot serve fails the boot. A changed file takes
+effect at the next run. With `PROVENANCE_FILE`, it re-indexes every dataset:
+the filters are part of the version skips are keyed by.
 
 ## The QLever import path
 
