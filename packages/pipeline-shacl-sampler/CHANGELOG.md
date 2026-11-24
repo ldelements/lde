@@ -1,3 +1,9 @@
+## 0.25.2 (2026-11-24)
+
+### 🩹 Fixes
+
+- **pipeline-shacl-sampler:** sample instances that use the shape’s paths first ([#1115](https://github.com/ldelements/lde/pull/1115))
+
 ## 0.25.1 (2026-11-20)
 
 ### 🧱 Updated Dependencies
