@@ -1,3 +1,9 @@
+## 0.66.2 (2026-11-24)
+
+### 🩹 Fixes
+
+- **search-typesense:** forgive no typo in a facet query, and expand its prefixes fully ([#1114](https://github.com/ldelements/lde/pull/1114))
+
 ## 0.66.1 (2026-11-20)
 
 ### 🚀 Features
