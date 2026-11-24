@@ -205,6 +205,28 @@ describe('serving a lookup over several targets', () => {
     );
   });
 
+  it('deprecates a shared field on the interface only where every target deprecates it', () => {
+    const deprecating = (searchType: SearchType): SearchType => ({
+      ...searchType,
+      fields: searchType.fields.map((declared) =>
+        declared.name === 'homepage'
+          ? ({ ...declared, deprecated: 'Use url.' } as SearchField)
+          : declared,
+      ),
+    });
+    const interfaceHomepage = (...targets: SearchType[]) =>
+      printSchema(
+        buildGraphQLSchema(searchSchema(work, ...targets, place)),
+      ).match(/interface PersonOrOrganizationReference \{[^}]*/)?.[0];
+    expect(
+      interfaceHomepage(deprecating(person), deprecating(organization)),
+    ).toMatch(/homepage: String @deprecated\(reason: "Use url\."\)/);
+    // One target still serves it as current, so the interface does too.
+    expect(interfaceHomepage(deprecating(person), organization)).not.toMatch(
+      /@deprecated/,
+    );
+  });
+
   it('refuses a declaration spelling the derived name itself', () => {
     // A Reference Type named `PersonOrOrganization` would put its filter
     // under the interface's filter name; refused rather than served wrongly.

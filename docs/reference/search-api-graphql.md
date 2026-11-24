@@ -185,7 +185,9 @@ const gqlSchema = buildGraphQLSchema(searchSchema(DATASET, PERSON));
 A field’s [`description`](./search#describing-a-field) is carried onto both the
 output field and the `where` key of the same name, so an explanation written on
 the declaration reaches a consumer in the playground, in introspection and in an
-editor.
+editor. A field declared [`deprecated`](./search#deprecating-a-field) is marked
+`@deprecated(reason: …)` on its output field, its `where` key, its `orderBy`
+value and its facet key.
 
 - **Output type** (the `SearchType`’s `name`): localized text → best-first `[LanguageString!]!`
   (`[0].language` is the language actually served); references → named per-shape

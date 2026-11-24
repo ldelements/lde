@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { graphql, printSchema } from 'graphql';
+import {
+  graphql,
+  printSchema,
+  validateSchema,
+  type GraphQLEnumType,
+  type GraphQLInputObjectType,
+  type GraphQLObjectType,
+} from 'graphql';
 import {
   isoToUnixSeconds,
   searchSchema,
@@ -2052,6 +2059,162 @@ describe('field descriptions', () => {
     // or this would pass whether or not one had been emitted.
     expect(sdl()).not.toMatch(/"""[^"]*"""\s+label: \[LanguageString/);
     expect(sdl()).toMatch(/\n {2}label: \[LanguageString!\]!/);
+  });
+});
+
+describe('deprecated fields', () => {
+  // A field on its way out has to be flagged wherever a consumer can use it,
+  // or a client filtering or sorting on it is the one that never hears.
+  const reason = 'Use image.exists. Removed after 2027-03-01.';
+  const work = {
+    name: 'Work',
+    class: 'https://schema.org/CreativeWork',
+    fields: [
+      {
+        name: 'label',
+        kind: 'text',
+        locales: ['nl'],
+        output: true,
+        searchable: { weight: 5 },
+      },
+      {
+        name: 'hasImage',
+        kind: 'boolean',
+        path: 'https://schema.org/image',
+        output: true,
+        filterable: true,
+        facetable: true,
+        deprecated: reason,
+      },
+      {
+        name: 'dateCreated',
+        kind: 'date',
+        path: 'https://schema.org/dateCreated',
+        output: true,
+        sortable: true,
+        deprecated: reason,
+      },
+      {
+        name: 'media',
+        kind: 'reference',
+        path: 'https://schema.org/associatedMedia',
+        array: true,
+        output: true,
+        filterable: true,
+        ref: {
+          strategy: 'inline',
+          typeName: 'MediaObject',
+          facetedLeaves: ['encodingFormat'],
+        },
+      },
+      {
+        name: 'creator',
+        kind: 'reference',
+        path: 'https://schema.org/creator',
+        array: true,
+        output: true,
+        filterable: true,
+        ref: {
+          strategy: 'lookup',
+          target: 'Person',
+          presenceLeaves: ['birthDate'],
+        },
+      },
+    ],
+  } satisfies SearchType;
+  const mediaObject = {
+    name: 'MediaObject',
+    fields: [
+      {
+        name: 'encodingFormat',
+        kind: 'keyword',
+        path: 'https://schema.org/encodingFormat',
+        output: true,
+        filterable: true,
+        deprecated: reason,
+      },
+    ],
+  } satisfies SearchType;
+  const person = {
+    name: 'Person',
+    class: 'https://schema.org/Person',
+    fields: [
+      {
+        name: 'label',
+        kind: 'text',
+        locales: ['nl'],
+        output: true,
+        searchable: { weight: 5 },
+      },
+      {
+        name: 'birthDate',
+        kind: 'date',
+        path: 'https://schema.org/birthDate',
+        output: true,
+        description: 'When the person was born.',
+        deprecated: reason,
+      },
+    ],
+  } satisfies SearchType;
+
+  const built = buildGraphQLSchema(searchSchema(work, mediaObject, person));
+  const fieldsOf = (typeName: string) =>
+    (
+      built.getType(typeName) as GraphQLObjectType | GraphQLInputObjectType
+    ).getFields();
+
+  it('is still a valid schema', () => {
+    // GraphQL refuses a deprecated input field that is required; every key a
+    // field produces must be optional for its deprecation to be legal.
+    expect(validateSchema(built)).toEqual([]);
+  });
+
+  it('deprecates the output field', () => {
+    expect(fieldsOf('Work').hasImage.deprecationReason).toBe(reason);
+    expect(fieldsOf('MediaObject').encodingFormat.deprecationReason).toBe(
+      reason,
+    );
+    expect(fieldsOf('Person').birthDate.deprecationReason).toBe(reason);
+  });
+
+  it('deprecates the where key, at every level of where', () => {
+    expect(fieldsOf('WorkWhere').hasImage.deprecationReason).toBe(reason);
+    expect(fieldsOf('WorkCriterion').hasImage.deprecationReason).toBe(reason);
+    expect(fieldsOf('WorkMediaWhere').encodingFormat.deprecationReason).toBe(
+      reason,
+    );
+    // A lookup’s presence leaf is named by the target, which declares it.
+    const birthDate = fieldsOf('WorkCreatorWhere').birthDate;
+    expect(birthDate.deprecationReason).toBe(reason);
+    expect(birthDate.description).toBe('When the person was born.');
+  });
+
+  it('deprecates the sort value', () => {
+    const sortField = built.getType('WorkSortField') as GraphQLEnumType;
+    expect(sortField.getValue('DATE_CREATED')?.deprecationReason).toBe(reason);
+    expect(sortField.getValue('RELEVANCE')?.deprecationReason).toBeUndefined();
+  });
+
+  it('deprecates the facet key, and a faceted leaf’s', () => {
+    expect(fieldsOf('WorkFacets').hasImage.deprecationReason).toBe(reason);
+    expect(fieldsOf('WorkMediaFacet').encodingFormat.deprecationReason).toBe(
+      reason,
+    );
+    expect(fieldsOf('WorkCreatorFacet').birthDate.deprecationReason).toBe(
+      reason,
+    );
+  });
+
+  it('prints the deprecation in the SDL', () => {
+    expect(printSchema(built)).toContain(
+      `hasImage: Boolean @deprecated(reason: "${reason}")`,
+    );
+  });
+
+  it('leaves a field without one undeprecated', () => {
+    expect(fieldsOf('Work').label.deprecationReason).toBeUndefined();
+    expect(fieldsOf('WorkFacets').media.deprecationReason).toBeUndefined();
+    expect(fieldsOf('WorkWhere').media.deprecationReason).toBeUndefined();
   });
 });
 

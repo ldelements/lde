@@ -633,6 +633,27 @@ describe('validateSearchType', () => {
     ).toEqual([{ field: 'v1.2', reason: 'invalid-field-name' }]);
   });
 
+  it('rejects a deprecation that gives no reason', () => {
+    // The reason is what tells a consumer where to go; an empty one, or one
+    // that is no text, would reach the API surface saying nothing.
+    for (const deprecated of ['', '  ', true]) {
+      expect(
+        validateSearchType(
+          typeWith({ name: 'hasImage', kind: 'boolean', deprecated }),
+        ),
+      ).toEqual([{ field: 'hasImage', reason: 'deprecated-without-reason' }]);
+    }
+    expect(
+      validateSearchType(
+        typeWith({
+          name: 'hasImage',
+          kind: 'boolean',
+          deprecated: 'Use image.exists.',
+        }),
+      ),
+    ).toEqual([]);
+  });
+
   it('rejects a field named `id`, which every document already carries', () => {
     // The IRI is surfaced and filtered under that name for every type; a
     // declared `id` would shadow it and answer a different question. A domain
