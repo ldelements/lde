@@ -75,6 +75,36 @@ and excludes blank-node subjects at the endpoint: the selector would drop
 them client-side anyway (no stable identity), but only after fetching
 them.
 
+## Which instances are sampled
+
+A class can hold both described instances and bare ones. In a heritage
+dataset, for example, people and materials may be published as
+`schema:CreativeWork`s with only a name, next to the objects that carry
+media, creators and materials. A sample of bare instances finds nothing to
+check, so it conforms whatever the described ones get wrong.
+
+The selector first asks for the first `samplesPerClass` instances in IRI
+order. If the class has no more instances than that, they are the sample,
+and selection took one request.
+
+For a larger class, the selector takes first the instances that use a path
+the shape checks in depth: the first step of each of the shape’s path
+chains, such as `schema:associatedMedia` or `schema:creator`. It asks for
+the instances using each path in turn, in IRI order, and stops as soon as
+it has `samplesPerClass`. If the paths run out first, or a path query
+fails, it fills up with the first instances in IRI order. Each instance is
+sampled once.
+
+Querying one path at a time keeps selection cheap. Each query is a join on
+the endpoint’s sorted index, and the first path usually fills the sample.
+On QLever, for 12 million instances, a path query took 0.7 seconds against
+0.6 for the plain one. A single `UNION` over twelve paths took 10 seconds,
+because it has to deduplicate and sort every instance that uses any of
+them.
+
+The sample is not random. The paths are tried in a fixed order, so
+instances using the paths tried first are the most likely to be checked.
+
 ## Other exports
 
 Besides `shaclSampleStages`, the package exports its building blocks:

@@ -129,6 +129,30 @@ describe('buildSubjectSelectorQuery', () => {
     expect(minusIndex).toBeGreaterThan(typeIndex);
   });
 
+  it('restricts to subjects that use one of the path’s variants when usingPath is given', () => {
+    const query = buildSubjectSelectorQuery({
+      targetClass,
+      usingPath: ['https://schema.org/creator', 'http://schema.org/creator'],
+    });
+    expect(query).toContain(
+      '{ ?s <https://schema.org/creator> [] } UNION { ?s <http://schema.org/creator> [] }',
+    );
+  });
+
+  it('leaves the WHERE clause free of a path pattern when no usingPath is given', () => {
+    const query = buildSubjectSelectorQuery({ targetClass });
+    expect(query).not.toContain('UNION');
+  });
+
+  it('rejects an unsafe IRI in usingPath', () => {
+    expect(() =>
+      buildSubjectSelectorQuery({
+        targetClass,
+        usingPath: ['https://schema.org/creator> } #'],
+      }),
+    ).toThrow();
+  });
+
   it('leaves the WHERE clause free of MINUS when no excludeFilter is given', () => {
     const query = buildSubjectSelectorQuery({ targetClass });
     expect(query).not.toMatch(/\bMINUS\b/);

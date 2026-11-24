@@ -1,0 +1,28 @@
+@prefix schema: <https://schema.org/> .
+@prefix http-schema: <http://schema.org/> .
+@prefix ex: <https://example.org/> .
+
+# Bare records sort first by IRI and use none of the paths the CreativeWork
+# shape checks in depth.
+ex:a-bare-1 a schema:CreativeWork ; schema:name "Bare 1"@en .
+ex:a-bare-2 a schema:CreativeWork ; schema:name "Bare 2"@en .
+ex:a-bare-3 a schema:CreativeWork ; schema:name "Bare 3"@en .
+
+# Described works sort last by IRI. One uses the http:// alias namespace for
+# its path.
+ex:z-described-1 a schema:CreativeWork ;
+    schema:name "Described 1"@en ;
+    schema:creator ex:person .
+ex:z-described-2 a schema:CreativeWork ;
+    schema:name "Described 2"@en ;
+    http-schema:creator ex:person .
+
+ex:person a schema:Person ; schema:name "Person"@en .
+
+# A person who sorts first and uses two of the paths the Person shape checks.
+ex:p-1 a schema:Person ;
+    schema:name "Person 1"@en ;
+    schema:birthDate "1900-01-01" ;
+    schema:deathDate "1980-01-01" .
+ex:p-2 a schema:Person ; schema:name "Person 2"@en .
+ex:p-3 a schema:Person ; schema:name "Person 3"@en .
