@@ -9,6 +9,7 @@ import {
   type ValidationReport,
   type ValidationResult,
   type Validator,
+  type VariableBindings,
 } from '@lde/pipeline';
 import { assertSafeIri, type Dataset } from '@lde/dataset';
 import type { NamedNode, Quad } from '@rdfjs/types';
@@ -120,7 +121,7 @@ export async function shaclSampleStages(
       new Stage({
         name: `shacl-sample-${localName(shape.targetClass.value)}`,
         itemSelector: subjectSelector(
-          shape.targetClass,
+          shape,
           samplesPerClass,
           namespaceAliases,
           options.excludeResources?.(shape.targetClass),
@@ -135,29 +136,73 @@ export async function shaclSampleStages(
   );
 }
 
+/**
+ * Select up to `limit` instances of the shape’s target class, taking first
+ * the instances that use a path the shape checks in depth, one query per path,
+ * and filling up with the first instances by IRI. A class of fewer than
+ * `limit` instances is sampled whole, in one request. See “Which instances are
+ * sampled” in the package docs.
+ */
 function subjectSelector(
-  targetClass: NamedNode,
+  shape: TargetShape,
   limit: number,
   namespaceAliases: NamespaceAlias[],
   excludeFilter?: string,
 ): ItemSelector {
+  const { targetClass } = shape;
   assertSafeIri(targetClass.value);
+  const firstPaths = shape.pathChains.flatMap((chain) =>
+    chain.slice(0, 1).map((path) => path.value),
+  );
+  const preferredPaths = [...new Set(firstPaths)].map((path) =>
+    aliasVariants(path, namespaceAliases),
+  );
   return {
     // Forward `options` so the Pipeline’s per-dataset TimeoutPolicy
     // reaches the inner SparqlItemSelector – without this the adaptive
     // budget is silently bypassed for subject selection.
-    select(distribution, batchSize, options) {
-      const query = buildSubjectSelectorQuery({
-        targetClass,
-        subjectFilter: distribution.subjectFilter,
-        namedGraph: distribution.namedGraph,
-        namespaceAliases,
-        excludeFilter,
-      });
-      return new SparqlItemSelector({
-        query,
-        maxResults: limit,
-      }).select(distribution, batchSize, options);
+    async *select(distribution, batchSize, options) {
+      const instances = (usingPath?: string[]) =>
+        new SparqlItemSelector({
+          query: buildSubjectSelectorQuery({
+            targetClass,
+            subjectFilter: distribution.subjectFilter,
+            namedGraph: distribution.namedGraph,
+            namespaceAliases,
+            excludeFilter,
+            usingPath,
+          }),
+          maxResults: limit,
+          pageSize: limit,
+        }).select(distribution, batchSize, options);
+
+      const firstByIri: VariableBindings[] = [];
+      for await (const row of instances()) firstByIri.push(row);
+      if (firstByIri.length < limit) {
+        yield* firstByIri;
+        return;
+      }
+
+      async function* candidates(): AsyncGenerator<VariableBindings> {
+        try {
+          // A path query may repeat instances already selected, but no more
+          // than there are, so `limit` rows always leave enough new ones.
+          for (const usingPath of preferredPaths) yield* instances(usingPath);
+        } catch {
+          // The paths only order the sample: when a path query fails, say on
+          // a timeout, fill up with the instances the first query returned.
+        }
+        yield* firstByIri;
+      }
+
+      const selected = new Set<string | undefined>();
+      for await (const row of candidates()) {
+        const subject = row['s']?.value;
+        if (selected.has(subject)) continue;
+        selected.add(subject);
+        yield row;
+        if (selected.size >= limit) return;
+      }
     },
   };
 }
@@ -178,6 +223,12 @@ export interface SubjectSelectorQueryOptions {
    * `MINUS { … }` clause). @default ''
    */
   excludeFilter?: string;
+  /**
+   * Restrict to subjects that use this path: the predicate IRI and its alias
+   * variants, of which a subject must use at least one, matched verbatim.
+   * @default [] (no restriction)
+   */
+  usingPath?: string[];
 }
 
 export function buildSubjectSelectorQuery({
@@ -186,6 +237,7 @@ export function buildSubjectSelectorQuery({
   namedGraph,
   namespaceAliases = [],
   excludeFilter,
+  usingPath = [],
 }: SubjectSelectorQueryOptions): string {
   let fromClause = '';
   if (namedGraph) {
@@ -193,6 +245,12 @@ export function buildSubjectSelectorQuery({
     fromClause = `FROM <${namedGraph}>`;
   }
   const typePattern = buildTypePattern(targetClass, namespaceAliases);
+  for (const variant of usingPath) assertSafeIri(variant);
+  // A blank node, not a variable, so the pattern cannot join with a caller’s
+  // subjectFilter or excludeFilter.
+  const pathPattern = usingPath
+    .map((variant) => `{ ?s <${variant}> [] }`)
+    .join(' UNION ');
   // Exclude blank-node subjects at the endpoint: the selector would drop them
   // client-side anyway (no stable identity), but only after fetching them –
   // and a class instantiated by many blank nodes would then be walked to the
@@ -201,7 +259,7 @@ export function buildSubjectSelectorQuery({
   return [
     'SELECT DISTINCT ?s',
     fromClause,
-    `WHERE { ${subjectFilter ?? ''} ${typePattern} FILTER(!isBlank(?s)) ${excludeFilter ?? ''} }`,
+    `WHERE { ${subjectFilter ?? ''} ${typePattern} FILTER(!isBlank(?s)) ${pathPattern} ${excludeFilter ?? ''} }`,
     'ORDER BY ?s',
   ].join('\n');
 }
