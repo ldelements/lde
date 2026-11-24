@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { searchSchema, type SearchQuery, type SearchType } from '@lde/search';
 import { labelMatchValue } from '@lde/search/adapter';
+import { MAX_PREFIX_CANDIDATES } from '../src/query-compiler.js';
 import { createTypesenseSearchEngine } from '../src/search.js';
 import { fakeTypesenseClient } from './fake-typesense-client.js';
 
@@ -207,6 +208,8 @@ describe('a query on a reference facet', () => {
       expect.objectContaining({
         facet_by: 'creator_match',
         facet_query: 'creator_match:rem',
+        facet_query_num_typos: 0,
+        max_candidates: MAX_PREFIX_CANDIDATES,
         max_facet_values: 50,
         per_page: 0,
       }),

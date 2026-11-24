@@ -166,21 +166,62 @@ export function buildSearchParams(
       facetQuery !== undefined &&
       facetQuery.facet.field.kind !== 'reference'
     ) {
-      params.facet_query = facetQueryParam(
-        facetQuery.facet.engineField,
-        facetQuery.text,
+      Object.assign(
+        params,
+        facetQueryParams(
+          facetQuery.facet.engineField,
+          facetQuery.text,
+          params.q,
+        ),
       );
     }
   }
   return params;
 }
 
-/** The `facet_query` searching `field`’s values for `text`. Typesense reads a
- *  colon as the field separator, so one in the text would break the match; it
- *  separates words like a space does. */
-export function facetQueryParam(field: string, text: string): string {
-  return `${field}:${text.replaceAll(':', ' ')}`;
+/**
+ * The Typesense parameters searching `field`’s values for `text`, in a search
+ * whose free text is `q`:
+ *
+ * - **`facet_query`.** Typesense reads a colon as the field separator, so one
+ *   in the text would break the match; it separates words like a space does.
+ * - **`facet_query_num_typos`, by the length of the text’s shortest word**:
+ *   none below 4 characters, one below 7, two from there, Typesense’s own
+ *   search’s thresholds. Typesense takes one number for the whole facet query
+ *   where its search scales typos per word, so the shortest word decides: a
+ *   longer one’s count would let “pa” in “pa rijn” match by typo. Typesense’s
+ *   default allows two at any length, so “rem” matched every value with a
+ *   word starting with “reg”.
+ * - **`max_candidates`, in a search without free text.** Typesense expands a
+ *   prefix to the few words it most often starts, 4 by default, so “p” found
+ *   9 of the 18 materials with a word starting with “p”;
+ *   {@link MAX_PREFIX_CANDIDATES} expands it to every word in all but the
+ *   largest facets. It widens `q` as well, so under free text it is left at
+ *   the default: the facet then counts the documents the hits come from.
+ */
+export function facetQueryParams(
+  field: string,
+  text: string,
+  q: string | undefined,
+): {
+  facet_query: string;
+  facet_query_num_typos: number;
+  max_candidates?: number;
+} {
+  const words = text.replaceAll(':', ' ').trim().split(/\s+/);
+  // In characters, as Typesense counts them, not UTF-16 code units.
+  const shortest = Math.min(...words.map((word) => [...word].length));
+  return {
+    facet_query: `${field}:${words.join(' ')}`,
+    facet_query_num_typos: shortest < 4 ? 0 : shortest < 7 ? 1 : 2,
+    ...(q === '*' && { max_candidates: MAX_PREFIX_CANDIDATES }),
+  };
 }
+
+/** How many words a facet query’s prefix may expand to. Measured on 10040
+ *  `about` terms, 1000 expanded every one-letter prefix completely, at up to
+ *  190 ms for the facet search. */
+export const MAX_PREFIX_CANDIDATES = 1000;
 
 /**
  * The facet a query searches the values of, with the text it searches them

@@ -8,7 +8,10 @@ import {
   type SearchField,
   type SearchType,
 } from '@lde/search';
-import { buildSearchParams } from '../src/query-compiler.js';
+import {
+  buildSearchParams,
+  MAX_PREFIX_CANDIDATES,
+} from '../src/query-compiler.js';
 
 const schema: SearchType = {
   name: 'Dataset',
@@ -717,6 +720,39 @@ describe('buildSearchParams', () => {
         schema,
       ).facet_query,
     ).toBe('keyword:van rijn');
+  });
+
+  it('allows typos by the length of the facet query’s shortest word, and expands its prefixes widely', () => {
+    const paramsFor = (text: string) => {
+      const { facet_query_num_typos, max_candidates } = buildSearchParams(
+        { ...base, facets: ['keyword'], facetQueries: { keyword: text } },
+        schema,
+      );
+      return { facet_query_num_typos, max_candidates };
+    };
+
+    // “rem” must not match every value starting with “reg”.
+    expect(paramsFor('rem')).toEqual({
+      facet_query_num_typos: 0,
+      max_candidates: MAX_PREFIX_CANDIDATES,
+    });
+    expect(paramsFor('kaart').facet_query_num_typos).toBe(1);
+    expect(paramsFor('kaarten').facet_query_num_typos).toBe(2);
+    expect(paramsFor('kaarten van').facet_query_num_typos).toBe(0);
+  });
+
+  it('leaves prefix expansion at the default under free text, which it would widen too', () => {
+    expect(
+      buildSearchParams(
+        {
+          ...base,
+          text: 'amsterdam',
+          facets: ['keyword'],
+          facetQueries: { keyword: 'kaa' },
+        },
+        schema,
+      ),
+    ).not.toHaveProperty('max_candidates');
   });
 
   it('leaves a reference facet’s query to the engine, which matches referents', () => {

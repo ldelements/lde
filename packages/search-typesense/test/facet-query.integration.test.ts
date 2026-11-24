@@ -414,6 +414,18 @@ describe('a facet query', () => {
     expect(facet.totalValues).toBe(1);
   });
 
+  it('forgives no typo in a word shorter than four characters', async () => {
+    const [reference, literal] = await engine.searchFacets(work, [
+      // One typo from “rem”, which starts Rembrandt, Rembert and Remonstrantse.
+      { ...base, facets: ['creator'], facetQueries: { creator: 'rex' } },
+      // One typo from “boek”.
+      { ...base, facets: ['keyword'], facetQueries: { keyword: 'bok' } },
+    ]);
+
+    expect(counts(facetOf(reference, 'creator'))).toEqual([]);
+    expect(counts(facetOf(literal, 'keyword'))).toEqual([]);
+  });
+
   it('answers a query over documents no filter leaves with an empty facet', async () => {
     const [outcome] = await engine.searchFacets(work, [
       {

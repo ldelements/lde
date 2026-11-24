@@ -59,7 +59,7 @@ import {
   escapeFilterValue,
   facetCapOf,
   facetQueryOf,
-  facetQueryParam,
+  facetQueryParams,
   type BuildSearchParamsOptions,
 } from './query-compiler.js';
 import { deriveCollectionName } from './collection-name.js';
@@ -635,23 +635,7 @@ export function createTypesenseSearchEngine<
       return {
         facet: facetQuery.facet,
         collections: [collection],
-        searches:
-          text === ''
-            ? []
-            : [
-                {
-                  collection,
-                  ...buildSearchParams(
-                    { ...query, facets: [], orderBy: [], limit: 0, offset: 0 },
-                    searchType,
-                    searchParamsOptions,
-                  ),
-                  facet_by: match,
-                  facet_query: facetQueryParam(match, text),
-                  max_facet_values: maxCandidates,
-                  facet_strategy: 'exhaustive',
-                },
-              ],
+        searches: text === '' ? [] : [companionSearch(query, match, text)],
         read: ([result]) => {
           if (result === undefined) {
             return { iris: new Set(), capped: false };
@@ -675,6 +659,27 @@ export function createTypesenseSearchEngine<
               : total > matched.counts.length;
           return { iris, capped };
         },
+      };
+    }
+
+    /** The facet’s own search, faceting the companion on the text. */
+    function companionSearch(
+      query: Omit<SearchQuery, 'facetQueries'>,
+      match: string,
+      text: string,
+    ): Record<string, unknown> {
+      const params = buildSearchParams(
+        { ...query, facets: [], orderBy: [], limit: 0, offset: 0 },
+        searchType,
+        searchParamsOptions,
+      );
+      return {
+        collection,
+        ...params,
+        facet_by: match,
+        ...facetQueryParams(match, text, params.q),
+        max_facet_values: maxCandidates,
+        facet_strategy: 'exhaustive',
       };
     }
 
