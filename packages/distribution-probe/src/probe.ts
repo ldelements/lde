@@ -22,7 +22,9 @@ export interface ProbeOptions {
   timeoutMs?: number;
   /**
    * Extra HTTP headers to send with the request. Merged with probe-generated
-   * headers; caller-supplied values take precedence on conflict.
+   * headers; caller-supplied values take precedence on conflict. Pass a
+   * `User-Agent` to replace the default
+   * `lde-distribution-probe (+https://github.com/ldelements/lde)`.
    */
   headers?: Headers;
   /**
@@ -111,6 +113,13 @@ export interface ProbeManyOptions extends ProbeOptions {
 const DEFAULT_SPARQL_QUERY = 'SELECT * { ?s ?p ?o } LIMIT 1';
 const DEFAULT_TIMEOUT_MS = 5000;
 const DEFAULT_RETRIES = 2;
+/**
+ * Sent unless the caller passes its own `User-Agent` in {@link ProbeOptions.headers}. Servers such
+ * as Zenodo and Wikidata answer Node’s default `node` with a 403, which would report a working
+ * distribution as AuthRequired.
+ */
+const DEFAULT_USER_AGENT =
+  'lde-distribution-probe (+https://github.com/ldelements/lde)';
 const DEFAULT_PROBE_CONCURRENCY = 20;
 const DEFAULT_PROBE_PER_HOST_CONCURRENCY = 4;
 
@@ -527,6 +536,7 @@ async function probeSparqlEndpoint(
   const headers = new Headers({
     'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
     Accept: acceptHeader(acceptedContentTypes),
+    'User-Agent': DEFAULT_USER_AGENT,
   });
   for (const [key, value] of authHeaders) {
     headers.set(key, value);
@@ -660,6 +670,7 @@ async function probeDataDump(
       ? `${distribution.mimeType}, */*;q=0.5`
       : '*/*',
     'Accept-Encoding': 'identity',
+    'User-Agent': DEFAULT_USER_AGENT,
   });
   for (const [key, value] of authHeaders) {
     headers.set(key, value);
