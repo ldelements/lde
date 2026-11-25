@@ -1,6 +1,6 @@
 {
   "name": "@lde/distribution-probe",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
     "directory": "packages/distribution-probe"

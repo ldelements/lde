@@ -1,3 +1,9 @@
+## 0.8.1 (2026-11-25)
+
+### 🩹 Fixes
+
+- **distribution-probe:** send a descriptive default User-Agent ([#1122](https://github.com/ldelements/lde/pull/1122))
+
 ## 0.8.0 (2026-11-13)
 
 ### 🧱 Updated Dependencies
