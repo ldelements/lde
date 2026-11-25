@@ -9,7 +9,6 @@
 // never the graph, so the IR readers stay internal to projection.
 export { projectRoots } from './project.js';
 export type {
-  FilterMatcher,
   ProjectedNode,
   ProjectionContext,
   SearchDocument,

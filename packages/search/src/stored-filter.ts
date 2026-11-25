@@ -1,10 +1,9 @@
 import {
   compileFilter,
   type Cql2Expression,
-  type FilterTest,
   type QueryableLookup,
 } from '@lde/cql2';
-import type { FilterMatcher } from './project.js';
+import type { FilterMatcher, ProjectedNode } from './project.js';
 import {
   isAbsoluteIri,
   isInlineReference,
@@ -84,7 +83,7 @@ export function compileStoredFilters(
 interface CompiledStoredFilter {
   readonly type: string;
   readonly value: string;
-  readonly matches: FilterTest;
+  readonly matches: (document: ProjectedNode) => boolean;
 }
 
 const STORED_FILTER_KEYS: readonly string[] = ['type', 'value', 'filter'];
