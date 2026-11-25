@@ -66,6 +66,18 @@ crashed at startup (dataset-register#2128/#2130). We adopt its end state.
     `package.json` against the fallback lockfile and drops every entry the
     app’s dependencies do not reach – from 3116 entries to 327 for this
     image. `npm ci` in the Dockerfile then installs exactly that lockfile.
+  - **It first moves the lockfile to the image’s layout.** The fallback
+    lockfile keys a workspace package by `packages/<directory>`; the image
+    holds it at `workspace_modules/<name>`. npm finds no entry at the staged
+    path, resolves that module’s dependencies from the registry and takes
+    the newest version in range. That shipped versions no test ran against,
+    and on 2026-11-24 a half-upgraded `@traqula` that crashed the indexer at
+    boot. `tools/image-lockfile.mjs relocate` renames the entries, so npm
+    keeps the workspace’s versions.
+  - **It fails on a version the workspace lockfile does not hold.**
+    `tools/image-lockfile.mjs verify` compares the tarballs of the two
+    lockfiles after npm has written the image’s. A new way for npm to resolve
+    afresh then fails the build, not the image.
   - **It drops dev dependencies first.** The image never installs them, but
     npm resolves them for a `file:` dependency, so a copied module’s test
     dependency on a package bumped in the same release would be looked up on
