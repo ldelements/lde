@@ -292,6 +292,62 @@ describe('probe', () => {
     });
   });
 
+  describe('User-Agent', () => {
+    // Servers such as Zenodo and Wikidata refuse Node’s default `node`
+    // User-Agent with a 403, which would report a working distribution as
+    // AuthRequired.
+    function userAgentOf(call: number): string | null {
+      return new Headers(vi.mocked(fetch).mock.calls[call][1]?.headers).get(
+        'User-Agent',
+      );
+    }
+
+    it('identifies itself to a SPARQL endpoint', async () => {
+      vi.mocked(fetch).mockResolvedValue(
+        new Response('{"results": {"bindings": []}}', {
+          status: 200,
+          headers: { 'Content-Type': 'application/sparql-results+json' },
+        }),
+      );
+
+      await probe(Distribution.sparql(new URL('http://example.org/sparql')));
+
+      expect(userAgentOf(0)).toBe(
+        'lde-distribution-probe (+https://github.com/ldelements/lde)',
+      );
+    });
+
+    it('identifies itself to a data dump', async () => {
+      vi.mocked(fetch).mockResolvedValue(
+        new Response('', {
+          status: 200,
+          headers: { 'Content-Length': '12345' },
+        }),
+      );
+
+      await probe(new Distribution(new URL('http://example.org/file')));
+
+      expect(userAgentOf(0)).toBe(
+        'lde-distribution-probe (+https://github.com/ldelements/lde)',
+      );
+    });
+
+    it('lets the caller override it', async () => {
+      vi.mocked(fetch).mockResolvedValue(
+        new Response('', {
+          status: 200,
+          headers: { 'Content-Length': '12345' },
+        }),
+      );
+
+      await probe(new Distribution(new URL('http://example.org/file')), {
+        headers: new Headers({ 'User-Agent': 'my-crawler/1.0' }),
+      });
+
+      expect(userAgentOf(0)).toBe('my-crawler/1.0');
+    });
+  });
+
   describe('data dump', () => {
     it('returns DataDumpProbeResult with metadata', async () => {
       vi.mocked(fetch).mockResolvedValue(
