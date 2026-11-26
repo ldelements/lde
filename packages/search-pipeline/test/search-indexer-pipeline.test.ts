@@ -602,8 +602,7 @@ describe('searchIndexerPipeline', () => {
         storedFilters: [named('ACME')],
       }).run();
 
-      expect(versions[0]).toMatch(/^1\+storedFilters=/);
-      expect(versions[0]).toContain('named-ACME');
+      expect(versions[0]).toMatch(/^1\+storedFilters=[0-9a-f]{64}$/);
     });
 
     it('leaves the version alone for an empty list', async () => {

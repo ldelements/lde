@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { Dataset } from '@lde/dataset';
 import {
   ManualDatasetSelection,
@@ -351,7 +352,8 @@ function versionWithRestrictions(
 /**
  * The pipeline version extended with the stored filters, for the same reason
  * as {@link versionWithRestrictions}: a dataset skipped after a filter changed
- * would keep the values of the old one.
+ * would keep the values of the old one. As a hash: the version is kept in
+ * every dataset’s provenance record, and the filters may be many.
  */
 function versionWithStoredFilters(
   pipelineVersion: string | undefined,
@@ -361,7 +363,9 @@ function versionWithStoredFilters(
     storedFilters === undefined ||
     storedFilters.length === 0
     ? pipelineVersion
-    : `${pipelineVersion}+storedFilters=${JSON.stringify(storedFilters)}`;
+    : `${pipelineVersion}+storedFilters=${createHash('sha256')
+        .update(JSON.stringify(storedFilters))
+        .digest('hex')}`;
 }
 
 /** The type’s stage tuning: each {@link ExtractionTuning} field from
