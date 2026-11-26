@@ -114,6 +114,4 @@ operator checks would have been ours either way.
 - A document is marked where it is projected as itself. A copy nested in a
   referrer by a `local` lookup carries no values: it holds only what the
   referrer’s extraction read, so a filter could answer differently there.
-- The field takes no `transform`, which would rewrite a value after it was
-  checked.
 - Each stored filter costs one test per document of its type.

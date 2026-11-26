@@ -185,15 +185,6 @@ function queryablesOf(
         reason: `field “${name}” cannot be filtered on; a stored filter reads keyword fields and references that are not inline.`,
       };
     }
-    if (
-      field.path === undefined &&
-      field.derive === undefined &&
-      !('from' in field && field.from !== undefined)
-    ) {
-      return {
-        reason: `field “${name}” is filled outside the projection, so it has no value when the filter is tested.`,
-      };
-    }
     return {
       array: field.array === true,
       read: (document) => storedValues(document[name]),

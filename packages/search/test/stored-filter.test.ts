@@ -74,8 +74,6 @@ const work = defineSearchType({
       ref: { typeName: 'MediaObject', strategy: 'inline' },
     },
     { name: 'dataset', kind: 'keyword', from: 'dataset', filterable: true },
-    // Filled by a writer, not by the projection.
-    { name: 'status', kind: 'keyword', filterable: true },
     {
       name: 'subject',
       kind: 'reference',
@@ -513,9 +511,6 @@ describe('stored filters the schema cannot serve', () => {
     ]);
     expect(on('name')).toEqual([
       'Stored filter 1: field “name” cannot be filtered on; a stored filter reads keyword fields and references that are not inline.',
-    ]);
-    expect(on('status')).toEqual([
-      'Stored filter 1: field “status” is filled outside the projection, so it has no value when the filter is tested.',
     ]);
     expect(on('media')).toEqual([
       'Stored filter 1: field “media” cannot be filtered on; a stored filter reads keyword fields and references that are not inline.',

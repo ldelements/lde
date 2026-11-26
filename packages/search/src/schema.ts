@@ -2260,7 +2260,6 @@ export interface SearchTypeIssue {
     | 'from-with-derive'
     | 'from-with-inline-ref'
     | 'matched-filters-not-array'
-    | 'matched-filters-with-transform'
     | 'unknown-projection-value'
     | 'duplicate-projection-value'
     | 'text-not-filterable'
@@ -2445,8 +2444,7 @@ const LOCALE_PATTERN = /^[A-Za-z0-9]+(-[A-Za-z0-9]+)*$/;
  *   a bare IRI, with no referent to carry fields from), and no two fields
  *   declare the same projection value – which would leave a consumer reading
  *   the dataset off a declaration no rule picks between; one over
- *   `matchedFilters` is an `array`, since a document may pass several filters,
- *   and has no `transform`, which would rewrite a value after it was checked;
+ *   `matchedFilters` is an `array`, since a document may pass several filters;
  * - a {@link RootType.key} names a declared, `path`-bearing, `array`,
  *   non-`inline` `reference` field of this type, and its `pick` is a function
  *   ({@link keyIssues}); a {@link ReferenceType} declares no key at all;
@@ -2710,11 +2708,6 @@ export function validateSearchType(
       // would keep the value of only the first.
       if (field.from === 'matchedFilters' && field.array !== true) {
         issue('matched-filters-not-array');
-      }
-      // A stored filter’s value is checked as written; a transform would
-      // rewrite it afterwards, or drop it where the result is no IRI.
-      if (field.from === 'matchedFilters' && field.transform !== undefined) {
-        issue('matched-filters-with-transform');
       }
     }
   }

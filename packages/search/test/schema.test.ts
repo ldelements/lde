@@ -1024,24 +1024,6 @@ describe('validateSearchType', () => {
     ]);
   });
 
-  it('rejects a transform on a field over the matched filters', () => {
-    // A stored filter’s value is checked as written; a transform would
-    // rewrite it after the check.
-    expect(
-      validateSearchType(
-        typeWith({
-          name: 'selections',
-          kind: 'reference',
-          array: true,
-          from: 'matchedFilters',
-          transform: (value: string) => value.toLowerCase(),
-        }),
-      ),
-    ).toEqual([
-      { field: 'selections', reason: 'matched-filters-with-transform' },
-    ]);
-  });
-
   it('rejects two fields over the same projection value', () => {
     expect(
       validateSearchType(
