@@ -76,7 +76,8 @@ compileFilter(filter, (property) => {
   if (property === 'maker') {
     return {
       array: true,
-      read: (record) => record.maker.map((maker) => maker.id),
+      read: (record) =>
+        (record.maker as { id: string }[] | undefined)?.map(({ id }) => id),
     };
   }
   if (property === 'internalNote') {

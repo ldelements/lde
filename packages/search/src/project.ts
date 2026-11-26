@@ -88,7 +88,7 @@ export type FilterMatcher = (
  * left unpopulated, exactly as a `path` that matched nothing is.
  */
 export interface ProjectionContext extends Partial<
-  Readonly<ProjectionValueSources>
+  Readonly<Record<ProjectionValue, unknown>>
 > {
   /** The IRI of the dataset being indexed. */
   readonly dataset?: string;
@@ -116,14 +116,6 @@ export interface ProjectionContext extends Partial<
    * docs’ “Copy a field of the dataset” for when it is absent.
    */
   readonly datasetDocument?: SearchDocument;
-}
-
-/** What the context carries for each {@link ProjectionValue}: a value no
- *  context key holds, or of another type than its field reads, fails to
- *  compile. */
-interface ProjectionValueSources extends Record<ProjectionValue, unknown> {
-  dataset: string;
-  matchedFilters: FilterMatcher;
 }
 
 /** A value a typed field could not read ({@link ProjectionContext.onUnreadable}). */
