@@ -112,6 +112,9 @@
     },
     {
       "path": "./packages/change-detection"
+    },
+    {
+      "path": "./packages/cql2"
     }
   ],
   "compilerOptions": {

@@ -1709,6 +1709,63 @@ datasets, not works (see
 a role on the dataset type. It is absent when the schema has no `dcat:Dataset` type, when the
 dataset’s description is missing, and for documents of the dataset type itself.
 
+### Stored filters
+
+A stored filter marks every document it matches with a value. It is kept
+outside the schema, in a file or in an application that lets people save a
+search, so the subsets of an index can change without a new schema module
+([ADR 45](../decisions/0045-mark-a-document-with-the-stored-filters-it-matches.md)).
+
+The type declares where the values go, with the projection value
+`matchedFilters`:
+
+```ts
+{
+  name: 'selections',
+  kind: 'reference',
+  array: true,
+  from: 'matchedFilters',
+  filterable: true,
+}
+```
+
+A stored filter names the type, the value and a condition in
+[CQL2 JSON](https://docs.ogc.org/is/21-065r2/21-065r2.html):
+
+```json
+{
+  "type": "CreativeWork",
+  "value": "https://example.org/selections/pottery",
+  "filter": {
+    "op": "a_contains",
+    "args": [{ "property": "about" }, ["https://example.org/terms/pottery"]]
+  }
+}
+```
+
+`compileStoredFilters(schema, filters)` checks the filters against the schema
+and returns the function a projection runs with, as `matchedFilters` in the
+projection context. `@lde/search-pipeline` does both when given
+`storedFilters`.
+
+The filter is read by [`@lde/cql2`](./cql2.md), which lists the operators.
+
+- A property is a field of the type, by its declared `name`: a `keyword`, or a
+  `reference` that is not inline. A reference is compared by what it stores, so
+  for a target with a [document key](#document-key) that is the key.
+- The filter reads the document as populated so far, like a `derive`. Declare
+  the `matchedFilters` field after the fields the filters read.
+- A type with a [document key](#document-key) takes no stored filters: several
+  roots share one of its documents, which would hold the values of whichever
+  was written last.
+- Several filters may share a value; a document matching any of them gets it
+  once.
+
+To show one subset with correct counts on every facet, declare the field
+`filterable` and not `facetable`, and select the subset with a `where` clause
+on it. A facet counts under every clause but its own, and no facet owns this
+one.
+
 ## Locales
 
 `locales` declares the languages a `text` field wants **indexed** (`und` =

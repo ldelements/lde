@@ -1003,6 +1003,27 @@ describe('validateSearchType', () => {
     ).toEqual([{ field: 'dataset', reason: 'from-with-inline-ref' }]);
   });
 
+  it('rejects a single-valued field over the matched filters', () => {
+    // A document may match several stored filters; one value would keep the
+    // first and drop the rest.
+    expect(
+      validateSearchType(
+        typeWith(
+          { name: 'one', kind: 'reference', from: 'matchedFilters' },
+          {
+            name: 'many',
+            kind: 'reference',
+            array: true,
+            from: 'matchedFilters',
+          },
+        ),
+      ),
+    ).toEqual([
+      { field: 'one', reason: 'matched-filters-not-array' },
+      { field: 'many', reason: 'duplicate-projection-value' },
+    ]);
+  });
+
   it('rejects two fields over the same projection value', () => {
     expect(
       validateSearchType(

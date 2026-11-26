@@ -209,8 +209,15 @@ export interface SearchFieldBase {
  * `filterable`, `facetable`, and – for a `reference` – a
  * {@link ReferenceField.labelSource `labelSource`} that resolves the IRI to a
  * readable label at query time.
+ *
+ * `matchedFilters` is the value of every stored filter the document matches
+ * (`compileStoredFilters`): a run is handed filters kept outside the schema,
+ * each naming a value, and a document that passes one is marked with it. So the
+ * field is an `array` – a document may pass several – and it is declared after
+ * the fields those filters read, because a filter reads the document as
+ * populated so far, exactly as a `derive` does.
  */
-export type ProjectionValue = 'dataset';
+export type ProjectionValue = 'dataset' | 'matchedFilters';
 
 /** Full-text inclusion with a `query_by` weight (folded; per-locale for
  *  localized text). Presence is what makes a field searchable. A reference
@@ -2252,6 +2259,7 @@ export interface SearchTypeIssue {
     | 'from-with-path'
     | 'from-with-derive'
     | 'from-with-inline-ref'
+    | 'matched-filters-not-array'
     | 'unknown-projection-value'
     | 'duplicate-projection-value'
     | 'text-not-filterable'
@@ -2368,7 +2376,7 @@ const TRANSFORMABLE_KINDS: readonly FieldKind[] = ['keyword', 'reference'];
 const FROM_KINDS: readonly FieldKind[] = ['keyword', 'reference'];
 
 /** The {@link ProjectionValue}s a declaration may name. */
-const PROJECTION_VALUES: readonly string[] = ['dataset'];
+const PROJECTION_VALUES: readonly string[] = ['dataset', 'matchedFilters'];
 
 /**
  * A safe logical field name: a GraphQL-style identifier. The name is
@@ -2435,7 +2443,8 @@ const LOCALE_PATTERN = /^[A-Za-z0-9]+(-[A-Za-z0-9]+)*$/;
  *   field has exactly one), is not an `inline` reference (a projection value is
  *   a bare IRI, with no referent to carry fields from), and no two fields
  *   declare the same projection value – which would leave a consumer reading
- *   the dataset off a declaration no rule picks between;
+ *   the dataset off a declaration no rule picks between; one over
+ *   `matchedFilters` is an `array`, since a document may pass several filters;
  * - a {@link RootType.key} names a declared, `path`-bearing, `array`,
  *   non-`inline` `reference` field of this type, and its `pick` is a function
  *   ({@link keyIssues}); a {@link ReferenceType} declares no key at all;
@@ -2694,6 +2703,11 @@ export function validateSearchType(
       // document import would fail.
       if (field.ref?.strategy === 'inline') {
         issue('from-with-inline-ref');
+      }
+      // A document may pass several stored filters, and a single-valued field
+      // would keep the value of only the first.
+      if (field.from === 'matchedFilters' && field.array !== true) {
+        issue('matched-filters-not-array');
       }
     }
   }

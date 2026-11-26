@@ -14,6 +14,11 @@ export type {
   SearchDocument,
 } from './project.js';
 
+// Stored filters: CQL2 JSON kept outside the schema, tested against each
+// document as it is projected, to mark the documents that match.
+export { compileStoredFilters } from './stored-filter.js';
+export type { StoredFilter } from './stored-filter.js';
+
 // Unified field model: one declaration drives projection, engine collection
 // schema, query semantics and the GraphQL surface – a discriminated union by
 // `kind`, validated again at runtime when the schema is built.

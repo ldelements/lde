@@ -141,6 +141,32 @@ registry-sourced type, a pattern that does not mention `?root` or one that does
 not parse throws at wiring time. The restrictions extend `pipelineVersion`, so
 changing one re-indexes every dataset instead of skipping it.
 
+To mark the documents of a named subset and keep the index whole, pass
+`storedFilters`. Each document gets the value of every filter it matches, in
+the field its type declares `from: 'matchedFilters'`
+([`@lde/search`](./search.md#stored-filters)):
+
+```ts
+searchIndexerPipeline({
+  schema,
+  datasets,
+  writerFor,
+  storedFilters: [
+    {
+      type: 'Object',
+      value: 'https://example.org/selections/pottery',
+      filter: {
+        op: 'a_contains',
+        args: [{ property: 'about' }, ['https://example.org/terms/pottery']],
+      },
+    },
+  ],
+});
+```
+
+A filter the schema cannot serve throws at wiring time. The filters extend
+`pipelineVersion`, as the restrictions do.
+
 To change how the stages read, pass `tuning` for every type and `tuningByType`
 per type name: a `batchSize` (roots per Extraction CONSTRUCT) and a
 `maxConcurrency` (see [per-stage tuning](#per-stage-tuning)). A field set per

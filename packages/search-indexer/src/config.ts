@@ -39,6 +39,14 @@ export interface IndexerConfig {
    */
   readonly restrictRoots: Readonly<Record<string, string>>;
   /**
+   * Path of a JSON file holding the stored filters (`STORED_FILTERS_FILE`): a
+   * list of `{ "type", "value", "filter" }`, the filter in CQL2 JSON. Every
+   * document gets the value of each filter it matches, in its type’s field
+   * declared `from: 'matchedFilters'`. Unset, that field stays empty. The file
+   * is read and checked against the mounted schema when the pipeline is wired.
+   */
+  readonly storedFiltersPath?: string;
+  /**
    * How each root type’s stage reads: roots per Extraction CONSTRUCT
    * (`EXTRACTION_BATCH_SIZE`) and concurrent queries
    * (`EXTRACTION_CONCURRENCY`) for every type, and either per type
@@ -238,6 +246,8 @@ export function configFromEnvironment(
     registryRootTypes: names(environment['REGISTRY_ROOT_TYPES']),
     datasetCriteria,
     restrictRoots: restrictRootsFromEnvironment(environment, problems),
+    // An empty value, as a template renders an unset one, counts as unset.
+    storedFiltersPath: environment['STORED_FILTERS_FILE'] || undefined,
     extraction: extractionFromEnvironment(environment, problems),
     localSources,
     typesense: {

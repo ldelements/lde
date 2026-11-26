@@ -11,6 +11,9 @@
   "include": ["src/**/*.ts"],
   "references": [
     {
+      "path": "../cql2/tsconfig.lib.json"
+    },
+    {
       "path": "../text-normalization/tsconfig.lib.json"
     }
   ],

@@ -5,12 +5,14 @@ import {
   type ReaderContext,
 } from '@lde/pipeline';
 import { ConsoleReporter } from '@lde/pipeline-console-reporter';
+import type { StoredFilter } from '@lde/search';
 import { loadSchemaModule } from '@lde/search/module';
 import {
   searchIndexerPipeline,
   type TypedSearchDocument,
 } from '@lde/search-pipeline';
 import type { QleverOptions } from '@lde/sparql-qlever';
+import { readFile } from 'node:fs/promises';
 import { Client } from 'typesense';
 import {
   datasetSelectorFrom,
@@ -57,8 +59,8 @@ export interface SearchIndexerExtensions {
  * mounts), select datasets from the registry, bind the Typesense rebuild
  * writers, and wire the optional QLever import path and provenance store into
  * `searchIndexerPipeline`. Every misconfiguration – an invalid schema, an
- * underivable collection name, a transform naming an undeclared type – throws
- * here, at boot, never mid-run.
+ * underivable collection name, a transform naming an undeclared type, a stored
+ * filter the schema cannot serve – throws here, at boot, never mid-run.
  *
  * `extensions` carries the domain behaviour a deployment adds on top
  * ({@link SearchIndexerExtensions}); everything else about a deployment is
@@ -69,6 +71,10 @@ export async function createSearchIndexer(
   extensions: SearchIndexerExtensions = {},
 ): Promise<Pipeline<TypedSearchDocument>> {
   const { schema } = await loadSchemaModule(config.schemaModulePath);
+  const storedFilters =
+    config.storedFiltersPath === undefined
+      ? undefined
+      : await readStoredFilters(config.storedFiltersPath);
   const client = new Client({
     nodes: [
       {
@@ -101,7 +107,40 @@ export async function createSearchIndexer(
     reporter: new ConsoleReporter(),
     transforms: extensions.transforms,
     restrictRoots: config.restrictRoots,
+    storedFilters,
     tuning: config.extraction,
     tuningByType: config.extraction.byType,
   });
+}
+
+/**
+ * The stored filters in the file at `path`. Only that it is a JSON list is
+ * checked here; what the JSON says is checked against the schema when the pipeline
+ * compiles it, so the cast promises nothing the compiler relies on.
+ */
+async function readStoredFilters(
+  path: string,
+): Promise<readonly StoredFilter[]> {
+  let json: string;
+  try {
+    json = await readFile(path, 'utf8');
+  } catch (cause) {
+    throw new Error(
+      `STORED_FILTERS_FILE “${path}” cannot be read: ${(cause as Error).message}`,
+      { cause },
+    );
+  }
+  let filters: unknown;
+  try {
+    filters = JSON.parse(json);
+  } catch (cause) {
+    throw new Error(
+      `STORED_FILTERS_FILE “${path}” is not valid JSON: ${(cause as Error).message}`,
+      { cause },
+    );
+  }
+  if (!Array.isArray(filters)) {
+    throw new Error(`STORED_FILTERS_FILE “${path}” must hold a JSON array.`);
+  }
+  return filters as readonly StoredFilter[];
 }

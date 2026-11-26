@@ -44,6 +44,7 @@
     "!**/*.tsbuildinfo"
   ],
   "dependencies": {
+    "@lde/cql2": "^0.0.0",
     "@lde/text-normalization": "^0.3.0",
     "@rdfjs/types": "^2.0.1",
     "inflection": "^3.0.2",

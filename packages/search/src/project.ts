@@ -67,6 +67,16 @@ export type ProjectedNode = Record<string, unknown>;
 export type SearchDocument = { id: string } & ProjectedNode;
 
 /**
+ * Tests one document against the stored filters of a run and returns the value
+ * of every filter it matches – none for a type no filter names. The document is
+ * the one being projected, populated up to the field that asks.
+ */
+export type FilterMatcher = (
+  searchType: SearchType,
+  document: ProjectedNode,
+) => readonly string[];
+
+/**
  * What the projection knows that the graph does not say: the values a run
  * carries about the *indexing* rather than about the data. They reach a
  * declaration two ways – a field declaring {@link KeywordField.from `from`} is
@@ -78,10 +88,17 @@ export type SearchDocument = { id: string } & ProjectedNode;
  * left unpopulated, exactly as a `path` that matched nothing is.
  */
 export interface ProjectionContext extends Partial<
-  Readonly<Record<ProjectionValue, string>>
+  Readonly<Record<ProjectionValue, unknown>>
 > {
   /** The IRI of the dataset being indexed. */
   readonly dataset?: string;
+  /**
+   * The stored filters of the run, compiled (`compileStoredFilters`): called
+   * for a field declared `from: 'matchedFilters'` with the document as
+   * populated so far, it returns the value of every filter the document
+   * matches.
+   */
+  readonly matchedFilters?: FilterMatcher;
   /**
    * Called once for each value a typed field could not read and so left out:
    * a `date` over `Z.j`, an `integer` over `onbekend`, a `period` over
@@ -594,7 +611,15 @@ function applyField(
     (field.kind === 'keyword' || field.kind === 'reference') &&
     field.from !== undefined
   ) {
-    return applyProjectionValue(document, field, field.from, context, schema);
+    return applyProjectionValue(
+      document,
+      field,
+      field.from,
+      searchType,
+      context,
+      schema,
+      nested,
+    );
   }
   if (field.derive !== undefined) {
     const derived = field.derive(document, context);
@@ -1309,13 +1334,27 @@ function applyProjectionValue(
   document: ProjectedNode,
   field: KeywordField | ReferenceField,
   from: ProjectionValue,
+  searchType: SearchType,
   context: ProjectionContext,
   schema: SearchSchema | undefined,
+  nested: boolean,
 ): void {
   // `ProjectionContext` is keyed by `ProjectionValue`, so the declaration reads
   // the context directly: a projection value that has no context key, or a
   // context key no declaration can name, is a compile error rather than a
   // silently unpopulated field.
+  if (from === 'matchedFilters') {
+    // Only on the document itself. A copy nested in a referrer holds what the
+    // referrer’s extraction carried, so a filter could answer differently
+    // there than on the document its values are served from.
+    if (nested) {
+      return;
+    }
+    // Read here, at the field’s own place in the declaration order, so the
+    // filters see the fields declared before it and nothing after.
+    const values = context.matchedFilters?.(searchType, document) ?? [];
+    return applyFacet(document, values, field, schema);
+  }
   const value = context[from];
   applyFacet(document, value === undefined ? [] : [value], field, schema);
 }

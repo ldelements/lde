@@ -45,6 +45,7 @@ Serve and document your data.
 | [@lde/search-indexer](./search-indexer)         | The search indexer as a bootable process and prebuilt Docker image                                                                                                             |
 | [@lde/search-pipeline](./search-pipeline)       | Applies the @lde/search projection inside an @lde/pipeline run                                                                                                                 |
 | [@lde/search-typesense](./search-typesense)     | Typesense engine adapter: transactional Blue/green and In-place rebuild writers                                                                                                |
+| [@lde/cql2](./cql2)                             | Reader for a subset of CQL2 JSON filters: checks a filter against the properties it may name and tests records against it                                                      |
 | [@lde/text-normalization](./text-normalization) | Text folding (diacritic stripping and transliteration) for search index and query normalization                                                                                |
 
 ## Monitoring

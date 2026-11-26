@@ -168,6 +168,10 @@ await pipeline.run();
   <td>Typesense engine adapter: transactional Blue/green (build fresh, swap atomically) and In-place (update the live index) rebuild writers</td>
 </tr>
 <tr>
+  <td><a href="packages/cql2">@lde/cql2</a><br><a href="https://www.npmjs.com/package/@lde/cql2"><img src="https://img.shields.io/npm/v/@lde/cql2" alt="npm"></a></td>
+  <td>Reader for a subset of CQL2 JSON filters: checks a filter against the properties it may name and tests records against it</td>
+</tr>
+<tr>
   <td><a href="packages/text-normalization">@lde/text-normalization</a><br><a href="https://www.npmjs.com/package/@lde/text-normalization"><img src="https://img.shields.io/npm/v/@lde/text-normalization" alt="npm"></a></td>
   <td>Text folding (diacritic stripping and transliteration) for search index and query normalization</td>
 </tr>
