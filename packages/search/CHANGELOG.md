@@ -1,3 +1,13 @@
+## 0.50.2 (2026-11-26)
+
+### 🚀 Features
+
+- **search:** mark a document with the stored filters it matches ([#1119](https://github.com/ldelements/lde/pull/1119))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/cql2 to 0.0.1
+
 ## 0.50.1 (2026-11-20)
 
 ### 🚀 Features

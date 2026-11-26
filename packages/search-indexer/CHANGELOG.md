@@ -1,3 +1,15 @@
+## 0.54.4 (2026-11-26)
+
+### 🚀 Features
+
+- **search:** mark a document with the stored filters it matches ([#1119](https://github.com/ldelements/lde/pull/1119))
+
+### 🧱 Updated Dependencies
+
+- Updated @lde/search-typesense to 0.66.4
+- Updated @lde/search-pipeline to 0.64.4
+- Updated @lde/search to 0.50.2
+
 ## 0.54.3 (2026-11-25)
 
 ### 🧱 Updated Dependencies

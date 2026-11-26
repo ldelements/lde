@@ -1,6 +1,6 @@
 {
   "name": "@lde/cql2",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "Reader for a subset of CQL2 JSON filters: checks a filter against the properties it may name and tests records against it",
   "repository": {
     "url": "git+https://github.com/ldelements/lde.git",
