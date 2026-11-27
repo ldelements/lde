@@ -2,8 +2,25 @@ import process from 'node:process';
 import { ChildTasks, TaskRunner } from '@lde/task-runner';
 import Docker, { Container, ContainerCreateOptions } from 'dockerode';
 
+/**
+ * When to pull a {@link DockerTaskRunnerOptions.image} before starting a task,
+ * after Docker’s own `--pull` values.
+ */
+export type PullPolicy = 'always' | 'missing' | 'never';
+
 export interface DockerTaskRunnerOptions {
   image: string;
+  /**
+   * When to pull `image` before starting a task:
+   * - `'always'`: on every run, so the container runs the newest image of its
+   *   tag.
+   * - `'missing'`: only when the image is not available locally, so an image
+   *   built locally runs as it is.
+   * - `'never'`: not at all; starting a task fails when the image is not
+   *   available locally.
+   * @default 'always'
+   */
+  pullPolicy?: PullPolicy;
   /**
    * Name for the container. Other containers on a `network` address it by this
    * name, so it belongs to one container at a time: a runner that has it runs
@@ -104,13 +121,7 @@ export class DockerTaskRunner implements TaskRunner<Container> {
       }
     }
 
-    const pull = await this.options.docker.pull(this.options.image);
-    const err = await new Promise<Error | null>((resolve) =>
-      this.options.docker.modem.followProgress(pull, resolve),
-    );
-    if (err) {
-      throw err;
-    }
+    await this.pullImage();
 
     const containerOptions: ContainerCreateOptions = {
       Entrypoint: ['sh', '-c'],
@@ -160,6 +171,34 @@ export class DockerTaskRunner implements TaskRunner<Container> {
     }
 
     return container;
+  }
+
+  /** Pulls the image, if {@link DockerTaskRunnerOptions.pullPolicy} asks for it. */
+  private async pullImage(): Promise<void> {
+    const { docker, image, pullPolicy = 'always' } = this.options;
+    if (pullPolicy === 'never') {
+      return;
+    }
+    if (pullPolicy === 'missing') {
+      try {
+        await docker.getImage(image).inspect();
+        return;
+      } catch (error) {
+        // Only a 404 says the image is missing: any other failure, such as an
+        // unreachable daemon, is not a reason to pull.
+        if ((error as { statusCode?: number }).statusCode !== 404) {
+          throw error;
+        }
+      }
+    }
+
+    const pull = await docker.pull(image);
+    const err = await new Promise<Error | null>((resolve) =>
+      docker.modem.followProgress(pull, resolve),
+    );
+    if (err) {
+      throw err;
+    }
   }
 
   /**
