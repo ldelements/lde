@@ -219,6 +219,17 @@ export interface SearchFieldBase {
  */
 export type ProjectionValue = 'dataset' | 'matchedFilters';
 
+/**
+ * Where a field declaring `from` takes its values: a {@link ProjectionValue},
+ * or a field of the dataset being indexed – `{ dataset: 'publisher' }` copies
+ * the `publisher` of the dataset’s own document onto every document indexed
+ * from it, labels included, so a facet over it is searched by them like any
+ * other. The dataset’s document is the one the schema’s `dcat:Dataset` Root
+ * Type ({@link datasetTypeOf}) projects for the dataset itself, which must
+ * declare the named field with the same `kind`.
+ */
+export type ProjectionSource = ProjectionValue | { readonly dataset: string };
+
 /** Full-text inclusion with a `query_by` weight (folded; per-locale for
  *  localized text). Presence is what makes a field searchable. A reference
  *  naming a label source is searched by its referents’ labels, read off each
@@ -256,9 +267,9 @@ export interface KeywordField extends SearchFieldBase, Searchable {
   /** Projection-time value transform (e.g. strip a media-type prefix). */
   readonly transform?: (value: string) => string;
   readonly facetRanges?: never;
-  /** Populate from a {@link ProjectionValue} instead of the graph. Mutually
+  /** Populate from a {@link ProjectionSource} instead of the graph. Mutually
    *  exclusive with `path` and `derive`. */
-  readonly from?: ProjectionValue;
+  readonly from?: ProjectionSource;
 }
 
 /**
@@ -488,11 +499,18 @@ export interface ReferenceField extends SearchFieldBase, Searchable {
   /** Projection-time value transform. */
   readonly transform?: (value: string) => string;
   readonly facetRanges?: never;
-  /** Populate from a {@link ProjectionValue} instead of the graph – a
+  /** Populate from a {@link ProjectionSource} instead of the graph – a
    *  `dataset` reference is how a type declares the dataset it was indexed
-   *  from, resolvable to a label like any other reference. Mutually exclusive
-   *  with `path` and `derive`. */
-  readonly from?: ProjectionValue;
+   *  from, resolvable to a label like any other reference, and
+   *  `{ dataset: 'publisher' }` copies a reference of that dataset. Mutually
+   *  exclusive with `path` and `derive`. */
+  readonly from?: ProjectionSource;
+  /**
+   * Leave out the dataset being indexed, where the path reaches it: a record
+   * stating it is part of the dataset that publishes it says nothing a filter
+   * on the dataset does not. Only on a reference read from a `path`.
+   */
+  readonly excludeDataset?: true;
   /**
    * The `name` of the Root Type whose collection labels this reference’s facet
    * buckets – or several, in order of precedence, where the referent may be
@@ -1000,6 +1018,7 @@ export function searchSchema<const Types extends readonly SearchType[]>(
   );
   assertResolvableLabelSources(types, schema);
   assertUnnarrowedFacetedLeaves(rootTypes, schema);
+  assertCopiedDatasetFields(types, schema);
   // Build the join graph eagerly and discard it: it is cached per schema, and
   // building it is what enforces the schema-wide join rules (one joinable
   // reference per target, every target an indexed Root Type, no cycles). A
@@ -1007,6 +1026,101 @@ export function searchSchema<const Types extends readonly SearchType[]>(
   // query or – worse – halfway through the first rebuild.
   joinGraph(schema);
   return schema;
+}
+
+/** The class of a Root Type describing the dataset being indexed. */
+const DCAT_DATASET = 'http://www.w3.org/ns/dcat#Dataset';
+
+/**
+ * The Root Type describing the dataset being indexed – the schema’s
+ * `dcat:Dataset` type – or `undefined` where the schema declares none. Its
+ * document for the dataset itself is what a field declaring
+ * `from: { dataset: … }` copies from ({@link ProjectionSource}).
+ */
+export function datasetTypeOf(schema: SearchSchema): RootType | undefined {
+  return schema.get(DCAT_DATASET);
+}
+
+/**
+ * The field of the dataset type a field declaring `from: { dataset: … }`
+ * copies, or `undefined` for every other field (and where the schema cannot
+ * resolve it, which {@link searchSchema} refuses).
+ */
+export function copiedDatasetFieldOf(
+  field: SearchField,
+  schema: SearchSchema | undefined,
+): KeywordField | ReferenceField | undefined {
+  if (
+    schema === undefined ||
+    (field.kind !== 'keyword' && field.kind !== 'reference') ||
+    field.from === undefined ||
+    typeof field.from === 'string'
+  ) {
+    return undefined;
+  }
+  const datasetType = datasetTypeOf(schema);
+  const copied =
+    datasetType === undefined
+      ? undefined
+      : fieldNamed(datasetType, field.from.dataset);
+  return copied?.kind === field.kind
+    ? (copied as KeywordField | ReferenceField)
+    : undefined;
+}
+
+/**
+ * Every field declaring `from: { dataset: … }` must name a field the schema’s
+ * dataset type declares, of the same kind: there is no other document to copy
+ * it from, and a kind that changed on the way would store values the field’s
+ * collection declaration does not expect.
+ */
+function assertCopiedDatasetFields(
+  types: readonly SearchType[],
+  schema: SearchSchema,
+): void {
+  const datasetType = datasetTypeOf(schema);
+  for (const searchType of types) {
+    for (const field of searchType.fields) {
+      if (
+        (field.kind !== 'keyword' && field.kind !== 'reference') ||
+        field.from === undefined ||
+        typeof field.from === 'string'
+      ) {
+        continue;
+      }
+      const where = `Field “${searchType.name}.${field.name}” copies dataset field “${field.from.dataset}”`;
+      // A Reference Type is nested in its referrer, and the dataset type
+      // would copy from itself: neither has a dataset document to copy from.
+      if (!isRootType(searchType) || searchType === datasetType) {
+        throw new Error(
+          `${where}, but only a Root Type other than the dataset type can copy a field of the dataset.`,
+        );
+      }
+      const copied = copiedDatasetFieldOf(field, schema);
+      if (copied === undefined) {
+        throw new Error(
+          datasetType === undefined
+            ? `${where}, but the schema declares no type of class “${DCAT_DATASET}” to copy it from.`
+            : `${where}, which the dataset type does not declare as a ${field.kind}.`,
+        );
+      }
+      // A nested field stores objects, not the ids a copy stores.
+      if (
+        isInlineReference(copied) ||
+        localLookupTargetsOf(copied, schema).length > 0
+      ) {
+        throw new Error(
+          `${where}, which stores nested documents rather than ids.`,
+        );
+      }
+      // The copied values are already transformed, as the dataset stores them.
+      if (field.transform !== undefined) {
+        throw new Error(
+          `${where} and declares a “transform”, which the copied field already applied.`,
+        );
+      }
+    }
+  }
 }
 
 /**
@@ -2259,6 +2373,7 @@ export interface SearchTypeIssue {
     | 'from-with-path'
     | 'from-with-derive'
     | 'from-with-inline-ref'
+    | 'exclude-dataset-without-path'
     | 'matched-filters-not-array'
     | 'unknown-projection-value'
     | 'duplicate-projection-value'
@@ -2677,16 +2792,27 @@ export function validateSearchType(
     if (field.derive !== undefined && field.path !== undefined) {
       issue('derive-with-path');
     }
+    if (
+      field.kind === 'reference' &&
+      field.excludeDataset === true &&
+      field.path === undefined
+    ) {
+      issue('exclude-dataset-without-path');
+    }
     if (field.from !== undefined) {
-      if (!PROJECTION_VALUES.includes(field.from)) {
-        issue('unknown-projection-value');
-      } else if (seenProjectionValues.has(field.from)) {
-        // Two fields over one projection value leaves every consumer that
-        // resolves the value back to a declaration – the writer’s provenance
-        // field, above all – with no rule to pick between them.
-        issue('duplicate-projection-value');
+      // A field of the dataset is checked against the schema’s dataset type
+      // (`searchSchema`), which one type cannot see.
+      if (typeof field.from === 'string') {
+        if (!PROJECTION_VALUES.includes(field.from)) {
+          issue('unknown-projection-value');
+        } else if (seenProjectionValues.has(field.from)) {
+          // Two fields over one projection value leaves every consumer that
+          // resolves the value back to a declaration – the writer’s provenance
+          // field, above all – with no rule to pick between them.
+          issue('duplicate-projection-value');
+        }
+        seenProjectionValues.add(field.from);
       }
-      seenProjectionValues.add(field.from);
       if (!FROM_KINDS.includes(field.kind)) {
         issue('from-not-allowed');
       }
@@ -2803,7 +2929,8 @@ interface FlatField extends SearchFieldBase, Searchable, RangeFacetable {
   readonly locales?: readonly string[];
   readonly ref?: ReferenceField['ref'];
   readonly transform?: (value: string) => string;
-  readonly from?: ProjectionValue;
+  readonly from?: ProjectionSource;
+  readonly excludeDataset?: true;
   readonly labelSource?: string;
   readonly joinable?: boolean;
 }
@@ -2955,13 +3082,22 @@ export function identityFieldName(name: string): string {
 /**
  * Whether a reference’s facet is searched by its referents’ labels, which the
  * referring document then stores in a {@link PhysicalFields.match label-match
- * companion}: a facetable reference read off the graph (a `path`, no
- * `derive`) that stores ids at the top level – a `lookup`, `local` or not, or
- * an `idOnly` naming a `labelSource`, never an inline reference – and whose
- * every label source reads its label from a path, so the extraction can read
- * each referent’s label beside its id. The one reading the extraction (which
- * reads the labels), the projection (which writes the companion), a collection
- * definition (which declares it) and {@link isQueryableFacet} share.
+ * companion}. Each way a facetable reference gets its values has a place to
+ * get their labels:
+ *
+ * - **read off the graph** ({@link readsReferentLabels}): the label the
+ *   referring graph states for each referent;
+ * - **the dataset being indexed** (`from: 'dataset'`): the label of the
+ *   dataset’s own document;
+ * - **a field of the dataset** (`from: { dataset: … }`): the labels that field
+ *   stores on the dataset’s own document, where it does;
+ * - **an inline reference’s `local` identity**: the labels its entries’
+ *   endpoints carry, read off the graph like any other referent’s.
+ *
+ * A `derive`d reference computes its values, so nothing states labels for
+ * them, and a reference naming no label source has none to match. The one
+ * reading the projection (which writes the companion), a collection definition
+ * (which declares it) and {@link isQueryableFacet} share.
  */
 export function facetMatchesLabels(
   field: SearchField,
@@ -2970,10 +3106,67 @@ export function facetMatchesLabels(
   if (
     field.kind !== 'reference' ||
     field.facetable !== true ||
-    field.path === undefined ||
-    field.derive !== undefined ||
-    isInlineReference(field)
+    field.derive !== undefined
   ) {
+    return false;
+  }
+  if (readsReferentLabels(field, schema)) {
+    return true;
+  }
+  // The dataset type’s own documents are projected before any dataset
+  // document exists to take labels from.
+  const datasetType = schema === undefined ? undefined : datasetTypeOf(schema);
+  if (field.from === 'dataset') {
+    return (
+      datasetType !== undefined &&
+      !datasetType.fields.includes(field) &&
+      referencedTargetsOf(field, schema).length > 0
+    );
+  }
+  const copied = copiedDatasetFieldOf(field, schema);
+  if (copied !== undefined) {
+    return (
+      referencedTargetsOf(field, schema).length > 0 &&
+      facetMatchesLabels(copied, schema)
+    );
+  }
+  // A `local` identity’s endpoints carry their target’s fields, label
+  // included; a bare id carries none.
+  const identity = identityFieldOf(field, schema);
+  return (
+    identity !== undefined &&
+    localLookupTargetsOf(identity, schema).length > 0 &&
+    labelsReadable(identity, schema)
+  );
+}
+
+/**
+ * Whether the extraction reads each referent’s label beside its id, for a
+ * facet searched by label ({@link facetMatchesLabels}): a facetable reference
+ * read off the graph (a `path`) that stores ids at the top level – a `lookup`,
+ * `local` or not, or an `idOnly` naming a `labelSource`, never an inline
+ * reference – and whose every label source reads its label from a path.
+ */
+export function readsReferentLabels(
+  field: SearchField,
+  schema: SearchSchema | undefined,
+): boolean {
+  return (
+    field.kind === 'reference' &&
+    field.facetable === true &&
+    field.derive === undefined &&
+    !isInlineReference(field) &&
+    labelsReadable(field, schema)
+  );
+}
+
+/** Whether a reference read off a path names label sources that each read
+ *  their label from a path, so a referent’s label can be read beside it. */
+function labelsReadable(
+  field: SearchField,
+  schema: SearchSchema | undefined,
+): boolean {
+  if (field.kind !== 'reference' || field.path === undefined) {
     return false;
   }
   const targets = referencedTargetsOf(field, schema);

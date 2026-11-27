@@ -8,6 +8,8 @@ import {
 } from './frame-by-type.js';
 import {
   companionNames,
+  copiedDatasetFieldOf,
+  datasetTypeOf,
   assertTypeInSchema,
   displayFieldName,
   displayLangOf,
@@ -33,6 +35,7 @@ import {
   unixSecondsToIso,
   type KeywordField,
   type PhysicalFields,
+  type ProjectionSource,
   type ProjectionValue,
   type FacetKeys,
   type ReferenceField,
@@ -44,7 +47,11 @@ import {
   type StoredDate,
   type TextField,
 } from './schema.js';
-import { labelMatchValue } from './label-match.js';
+import {
+  idOfLabelMatch,
+  labelMatchValue,
+  labelsOfLabelMatch,
+} from './label-match.js';
 import { periodCovering, periodOf, type StoredPeriod } from './period.js';
 import {
   describeValue,
@@ -717,24 +724,18 @@ function applyField(
     case 'keyword':
       return applyFacet(document, literalsOf(node, alias), field, schema);
     case 'reference': {
+      const values = withoutDataset(valuesOf(node, alias), field, context);
       if (literalKindOf(field) === 'period') {
         return applyReferentsOrPeriods(
           document,
-          valuesOf(node, alias),
+          values,
           field,
           schema,
           unread,
           nested,
         );
       }
-      return applyReferents(
-        document,
-        valuesOf(node, alias),
-        field,
-        schema,
-        unread,
-        nested,
-      );
+      return applyReferents(document, values, field, schema, unread, nested);
     }
     case 'integer':
     case 'number':
@@ -1276,7 +1277,8 @@ function applyFacet(
       ? []
       : labelMatches(
           inherited ? admitted : stored,
-          (id) => labelsOfStored.get(id) as readonly string[],
+          // None for a value no label source stated one for.
+          (id) => labelsOfStored.get(id) ?? [],
         );
   if (field.array === true) {
     setArray(document, field.name, stored);
@@ -1333,12 +1335,18 @@ function labelMatches(
 function applyProjectionValue(
   document: ProjectedNode,
   field: KeywordField | ReferenceField,
-  from: ProjectionValue,
+  from: ProjectionSource,
   searchType: SearchType,
   context: ProjectionContext,
   schema: SearchSchema | undefined,
   nested: boolean,
 ): void {
+  // A facet searched by label pairs each id with its referent’s labels – on a
+  // root document only: the companion counts root documents.
+  const match = nested ? undefined : physicalFields(field, schema).match;
+  if (typeof from !== 'string') {
+    return applyDatasetCopy(document, field, context, schema, match);
+  }
   // `ProjectionContext` is keyed by `ProjectionValue`, so the declaration reads
   // the context directly: a projection value that has no context key, or a
   // context key no declaration can name, is a compile error rather than a
@@ -1356,7 +1364,78 @@ function applyProjectionValue(
     return applyFacet(document, values, field, schema);
   }
   const value = context[from];
-  applyFacet(document, value === undefined ? [] : [value], field, schema);
+  if (value === undefined) {
+    return;
+  }
+  // The dataset’s own document names it.
+  const dataset = context.datasetDocument;
+  const labels =
+    match === undefined || dataset?.id !== value
+      ? undefined
+      : new Map([
+          [
+            value,
+            // `facetMatchesLabels` names a match only where the schema has a
+            // dataset type, whose document this is.
+            endpointLabels(
+              dataset,
+              datasetTypeOf(schema as SearchSchema) as RootType,
+            ),
+          ],
+        ]);
+  applyFacet(document, [value], field, schema, undefined, labels, match);
+}
+
+/** A reference’s read values without the dataset being indexed, where the
+ *  field leaves it out ({@link ReferenceField.excludeDataset}). */
+function withoutDataset(
+  values: readonly unknown[],
+  field: ReferenceField,
+  context: ProjectionContext,
+): readonly unknown[] {
+  return field.excludeDataset === true
+    ? values.filter((value) => iriString(value) !== context.dataset)
+    : values;
+}
+
+/**
+ * Copy a field of the dataset being indexed (`from: { dataset: … }`): its
+ * values on the dataset’s own document, and – for a facet searched by label –
+ * the labels its label-match companion pairs them with there. A document
+ * projected without the dataset’s (outside a pipeline, or the dataset type’s
+ * own) copies nothing, exactly as a `path` that matched nothing.
+ */
+function applyDatasetCopy(
+  document: ProjectedNode,
+  field: KeywordField | ReferenceField,
+  context: ProjectionContext,
+  schema: SearchSchema | undefined,
+  match: string | undefined,
+): void {
+  // `searchSchema` guarantees the dataset type declares the copied field.
+  const copied = copiedDatasetFieldOf(field, schema) as
+    KeywordField | ReferenceField;
+  const dataset = context.datasetDocument;
+  if (dataset === undefined) {
+    return;
+  }
+  const values = [dataset[copied.name]]
+    .flat()
+    .filter((value): value is string => typeof value === 'string');
+  let labels: Map<string, string[]> | undefined;
+  const source = physicalFields(copied, schema).match;
+  if (match !== undefined && source !== undefined) {
+    labels = new Map(values.map((value) => [value, []]));
+    // The companion is a list of strings the projection wrote; a value it
+    // did not write decodes to no id.
+    for (const stored of [dataset[source]].flat() as string[]) {
+      const id = idOfLabelMatch(stored);
+      if (id !== undefined && labels.has(id)) {
+        (labels.get(id) as string[]).push(labelsOfLabelMatch(stored) as string);
+      }
+    }
+  }
+  applyFacet(document, values, field, schema, undefined, labels, match);
 }
 
 /**
@@ -1492,7 +1571,8 @@ function applyNarrowedFacet(
   nested: boolean,
 ): void {
   const names = physicalFields(field, schema);
-  if (nested || names.facet === undefined || names.facet === names.filter) {
+  const narrowed = names.facet !== undefined && names.facet !== names.filter;
+  if (nested || (!narrowed && names.match === undefined)) {
     return;
   }
   const identity = (field.ref as { readonly identity: string }).identity;
@@ -1520,15 +1600,45 @@ function applyNarrowedFacet(
         : remembered?.get(id)?.name,
     );
   }
+  const targets = referencedTargetsOf(
+    identityFieldOf(field, schema) as SearchField,
+    schema,
+  );
   writeNarrowedFacet(
     document,
     names,
     targetById,
     field,
-    referencedTargetsOf(identityFieldOf(field, schema) as SearchField, schema),
+    targets,
     schema,
     nested,
   );
+  // A facet searched by label pairs each admitted id with the labels its
+  // endpoint carries: a `local` identity’s, projected through its target.
+  if (names.match !== undefined) {
+    const labelsById = new Map<string, string[]>();
+    for (const referent of stored) {
+      const value = referent[identity];
+      const id = identityValue(value);
+      if (id !== undefined && isObject(value)) {
+        labelsById.set(id, [
+          ...(labelsById.get(id) ?? []),
+          ...endpointLabels(value, storedTargetOf(value, targets)),
+        ]);
+      }
+    }
+    setArray(
+      document,
+      names.match,
+      labelMatches(
+        // An id stored without its endpoint has no labels to pair.
+        admittedIds(targetById, field, targets, schema).filter((id) =>
+          labelsById.has(id),
+        ),
+        (id) => labelsById.get(id) as readonly string[],
+      ),
+    );
+  }
 }
 
 /**

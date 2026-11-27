@@ -1174,16 +1174,25 @@ A facet that takes a query is one whose values are text someone can type
 
 - a **`keyword`** facet, matched on its values’ own text;
 - a **reference** facet whose values have a [label source](#field-model).
-  Where its documents store their referents’ labels – a facet of the type’s
-  own reference whose label sources read their label from a `path`
-  (`facetMatchesLabels`) – it is matched on those labels, stored beside each
-  referent’s id in a label-match companion (`${name}_match`,
+  Where its documents store their referents’ labels (`facetMatchesLabels`), it
+  is matched on those, stored beside each referent’s id in a label-match
+  companion (`${name}_match`,
   [ADR 43](../decisions/0043-select-a-reference-facets-matches-by-the-labels-its-documents-carry.md)):
   an alternate name or a label only an enrichment supplies is not found there.
-  Every other reference facet – one whose values the run derives, an inline
-  reference’s identity, a faceted leaf – is matched by the free-text search of
-  the types its values belong to, as a search of that type for the same text
-  would ([ADR 44](../decisions/0044-search-the-target-types-for-a-facet-whose-documents-store-no-labels.md)).
+  The documents store them wherever the values come with labels
+  ([ADR 46](../decisions/0046-declare-where-a-references-values-come-from.md)):
+  - a reference read from a `path`, by the label the graph states for each
+    referent;
+  - `from: 'dataset'`, by the dataset’s own name;
+  - `from: { dataset: … }`, by the labels the copied field stores on the
+    dataset’s document;
+  - an inline reference’s `local` identity, by the labels its entries’
+    endpoints carry.
+
+  Any other reference facet – one a `derive` computes, a faceted leaf – is
+  matched by the free-text search of the types its values belong to, as a
+  search of that type for the same text would
+  ([ADR 44](../decisions/0044-search-the-target-types-for-a-facet-whose-documents-store-no-labels.md)).
 
 A reference without a label source holds bare IRIs nobody types, and a
 boolean, range or presence facet has no values to search, so `validateQuery`
@@ -1683,9 +1692,9 @@ root type whose `class` is `dcat:Dataset`: that type’s stage runs first for ea
 dataset, and the document it projects for the dataset itself – the one whose
 `id` is the dataset IRI – reaches every other stage.
 
-A `derive` uses it to copy a field of the dataset onto each document indexed
-from it. The copy is an ordinary stored field, so it filters, facets and counts
-per document:
+Declare `from: { dataset: '…' }` to copy a field of the dataset onto each
+document indexed from it. The copy is an ordinary stored field, so it filters,
+facets and counts per document:
 
 ```ts
 {
@@ -1694,9 +1703,17 @@ per document:
   output: true,
   facetable: true,
   ref: { strategy: 'lookup', target: 'Publisher' },
-  derive: (_document, context) => context.datasetDocument?.publisher,
+  from: { dataset: 'publisher' },
 }
 ```
+
+The dataset type must declare the named field, of the same `kind`. Where that
+field’s facet is searched by label, the copy takes its labels along, so a
+[facet query](#searching-a-facet-s-values) on the copy matches what the
+dataset states its publishers are called
+([ADR 46](../decisions/0046-declare-where-a-references-values-come-from.md)).
+A `derive` reading `context.datasetDocument` copies the values too, but no
+labels, so its facet takes no query.
 
 A facet on `publisher` then counts works per publisher of their dataset. A
 facet through a join cannot: Typesense counts the distinct _referenced_
@@ -1706,7 +1723,24 @@ datasets, not works (see
 
 `datasetDocument` is the dataset’s document as written, so the dataset type’s
 [internal fields](#field-model) are not in it: a field you copy must declare
-a role on the dataset type. It is absent when the schema has no `dcat:Dataset` type, when the
+a role on the dataset type.
+
+A record may also state that it is part of the dataset that publishes it, as
+it may state it is part of a collection within that dataset. Declare
+`excludeDataset: true` on a reference read from a `path` to leave the dataset
+itself out, so the field holds only the collections:
+
+````ts
+{
+  name: 'isPartOf',
+  kind: 'reference',
+  array: true,
+  path: '<https://schema.org/isPartOf>',
+  excludeDataset: true,
+  facetable: true,
+  ref: { strategy: 'lookup', target: 'Collection' },
+}
+``` It is absent when the schema has no `dcat:Dataset` type, when the
 dataset’s description is missing, and for documents of the dataset type itself.
 
 ### Stored filters
@@ -1727,7 +1761,7 @@ The type declares where the values go, with the projection value
   from: 'matchedFilters',
   filterable: true,
 }
-```
+````
 
 A stored filter names the type, the value and a condition in
 [CQL2 JSON](https://docs.ogc.org/is/21-065r2/21-065r2.html):

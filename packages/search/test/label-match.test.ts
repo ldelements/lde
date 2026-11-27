@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   idOfLabelMatch,
   labelMatchText,
+  labelsOfLabelMatch,
   labelMatchValue,
 } from '../src/label-match.js';
 
@@ -43,5 +44,14 @@ describe('labelMatchText', () => {
   it('splits typed text into words as the values store them', () => {
     expect(labelMatchText(' Regout/Sphinx) ')).toBe('Regout Sphinx');
     expect(labelMatchText('(-)')).toBe('');
+  });
+});
+
+describe('labelsOfLabelMatch', () => {
+  it('reads back the labels a value pairs with its id, and nothing from another value', () => {
+    expect(
+      labelsOfLabelMatch(labelMatchValue(['Tracé (Limburg)'], IRI) as string),
+    ).toBe('Tracé Limburg');
+    expect(labelsOfLabelMatch('Tracé')).toBeUndefined();
   });
 });

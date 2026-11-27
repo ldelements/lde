@@ -17,7 +17,7 @@ import {
   type RootType,
   type StoredFilter,
 } from '@lde/search';
-import { irAlias } from '@lde/search/adapter';
+import { irAlias, labelMatchValue } from '@lde/search/adapter';
 import {
   registrySource,
   searchStages,
@@ -388,6 +388,149 @@ describe('searchStages', () => {
     received.length = 0;
     await stages[1].run(other, distribution, writer);
     expect(publishersOfWorks()).toEqual([undefined, undefined]);
+  });
+
+  it('copies a field of the dataset onto every work, with the labels the dataset states for it', async () => {
+    const DATASET = 'http://www.w3.org/ns/dcat#Dataset';
+    const WORK = 'https://example.org/Work';
+    const PUBLISHER = 'https://example.org/publisher';
+    const publisherType = {
+      name: 'Publisher',
+      class: 'https://example.org/Organization',
+      fields: [
+        {
+          name: 'label',
+          kind: 'text',
+          locales: ['und'],
+          path: NAME,
+          output: true,
+          searchable: { weight: 1 },
+        },
+      ],
+    } as const;
+    const withCopy = searchSchema(
+      publisherType,
+      {
+        name: 'Dataset',
+        class: DATASET,
+        fields: [
+          {
+            name: 'label',
+            kind: 'text',
+            locales: ['und'],
+            path: NAME,
+            output: true,
+            searchable: { weight: 1 },
+          },
+          {
+            name: 'publisher',
+            kind: 'reference',
+            path: PUBLISHER,
+            facetable: true,
+            ref: { strategy: 'lookup', target: 'Publisher' },
+          },
+        ],
+      },
+      {
+        name: 'Work',
+        class: WORK,
+        fields: [
+          { name: 'name', kind: 'keyword', path: NAME, output: true },
+          {
+            name: 'dataset',
+            kind: 'reference',
+            from: 'dataset',
+            facetable: true,
+            ref: { strategy: 'lookup', target: 'Dataset' },
+          },
+          {
+            name: 'publisher',
+            kind: 'reference',
+            from: { dataset: 'publisher' },
+            facetable: true,
+            ref: { strategy: 'lookup', target: 'Publisher' },
+          },
+        ],
+      },
+    );
+    const datasetType = withCopy.get(DATASET) as RootType;
+    const workType = withCopy.get(WORK) as RootType;
+    const publisher = withCopy.get(publisherType.class) as RootType;
+    const datasetIri = dataset.iri.toString();
+    const datasetReader: Reader = {
+      read: () =>
+        Promise.resolve(
+          stream([
+            quad(
+              namedNode(datasetIri),
+              namedNode(irAlias(datasetType, datasetType.fields[0])),
+              literal('Decoraties'),
+            ),
+            quad(
+              namedNode(datasetIri),
+              namedNode(irAlias(datasetType, datasetType.fields[1])),
+              namedNode('https://ex/publisher/1'),
+            ),
+            quad(
+              namedNode('https://ex/publisher/1'),
+              namedNode(irAlias(publisher, publisher.fields[0])),
+              literal('Tracé'),
+            ),
+          ]),
+        ),
+    };
+    const workReader: Reader = {
+      read: (_dataset, _distribution, options) =>
+        Promise.resolve(
+          stream(
+            (options?.bindings ?? []).map((binding) =>
+              quad(
+                namedNode(binding.root.value),
+                namedNode(irAlias(workType, workType.fields[0])),
+                literal('A work'),
+              ),
+            ),
+          ),
+        ),
+    };
+    const received: TypedSearchDocument[] = [];
+    const writer: DatasetWriter<TypedSearchDocument> = {
+      write: async (_dataset, items) => {
+        for await (const item of items) {
+          received.push(item);
+        }
+      },
+    };
+    const stages = searchStages({
+      schema: withCopy,
+      types: [
+        {
+          searchType: datasetType,
+          rootVariable: 'root',
+          itemSelector: rootsSelector([datasetIri]),
+          readers: datasetReader,
+        },
+        {
+          searchType: workType,
+          rootVariable: 'root',
+          itemSelector: rootsSelector(['https://ex/w/1']),
+          readers: workReader,
+        },
+      ],
+    });
+    for (const stage of stages) {
+      await stage.run(dataset, distribution, writer);
+    }
+
+    const work = received.find((item) => item.searchType === workType)
+      ?.document as Record<string, unknown>;
+    expect(work.publisher).toBe('https://ex/publisher/1');
+    expect(work.publisher_match).toBe(
+      labelMatchValue(['Tracé'], 'https://ex/publisher/1'),
+    );
+    expect(work.dataset_match).toBe(
+      labelMatchValue(['Decoraties'], datasetIri),
+    );
   });
 
   it('names each stage after its type and yields one stage per type', () => {
