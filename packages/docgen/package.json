@@ -38,7 +38,7 @@
     "@rdfjs/prefix-map": "^0.1.2",
     "@rdfjs/serializer-turtle": "^1.1.6",
     "@rdfjs/types": "^2.0.1",
-    "@tpluscode/rdf-ns-builders": "^5.0.0",
+    "@tpluscode/rdf-ns-builders": "^7.0.0",
     "commander": "^15.0.0",
     "jsonld": "^9.0.0",
     "liquidjs": "^10.30.0",
