@@ -36,6 +36,7 @@ await runner.stop(container);
 | Option          | Type     | Required | Description                                                                                                                        |
 | --------------- | -------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | `image`         | `string` | Yes      | Docker image to use                                                                                                                |
+| `pullPolicy`    | `string` | No       | When to pull `image`: `'always'` (default), `'missing'` or `'never'`; see [Pulling images](#pulling-images)                        |
 | `containerName` | `string` | No       | Name for the container (auto-removed on restart). One task at a time; see [Naming containers](#naming-containers)                  |
 | `mountDir`      | `string` | No       | Host directory to mount at `/mount` in the container                                                                               |
 | `port`          | `number` | No       | Port to expose from the container                                                                                                  |
@@ -44,7 +45,7 @@ await runner.stop(container);
 
 ## Features
 
-- Pulls the Docker image on every `run()` call, so the container always runs the latest version of its tag
+- Pulls the Docker image on every `run()` call by default, so the container always runs the latest version of its tag; see [Pulling images](#pulling-images)
 - Runs the command through a shell: the container’s entrypoint is `['sh', '-c']`, so pipelines and redirection work
 - Mounts a host directory as `/mount` (also the working directory) with the `mountDir` option
 - Runs commands as the current user (UID/GID) for file permissions
@@ -52,6 +53,18 @@ await runner.stop(container);
 - Stops containers (without removing) so logs remain available via `docker logs`
 - Stops running containers when this process is interrupted – see [Tasks end with the process](./task-runner#tasks-end-with-the-process)
 - Removes previous containers with the same name on restart
+
+## Pulling images
+
+`pullPolicy` decides when the runner pulls `image` before starting a task. Its values are those of `docker run --pull`:
+
+| Value       | Pulls                                                                                      |
+| ----------- | ------------------------------------------------------------------------------------------ |
+| `'always'`  | On every `run()` (the default), so the container runs the newest image of its tag          |
+| `'missing'` | Only when the image is not available locally, so an image you built yourself runs as it is |
+| `'never'`   | Never; `run()` fails when the image is not available locally                               |
+
+With `'missing'`, only Docker reporting the image as not found leads to a pull. Any other failure to look the image up, such as an unreachable Docker daemon, makes `run()` fail instead.
 
 ## Output and errors
 

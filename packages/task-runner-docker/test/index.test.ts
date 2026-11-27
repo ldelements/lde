@@ -3,20 +3,57 @@ import type Docker from 'dockerode';
 import type { ContainerCreateOptions } from 'dockerode';
 import { DockerTaskRunner } from '../src/index.js';
 
-/** A fake Docker daemon that records the container options passed to it. */
-function createFakeDocker(): Docker & {
+type FakeDocker = Docker & {
   created: ContainerCreateOptions[];
   failNextCreate: boolean;
   failNextWait: boolean;
   stopped: number;
-} {
+  pulls: number;
+  /**
+   * What looking up the image finds: it is there; it is missing (a 404); the
+   * daemon cannot be reached (an error without a status code, as dockerode
+   * gives for a refused connection); or the daemon fails (a 500).
+   */
+  localImage: 'present' | 'missing' | 'refused' | 'server-error';
+};
+
+/** A fake Docker daemon that records the container options passed to it. */
+function createFakeDocker(): FakeDocker {
   const fake = {
     created: [] as ContainerCreateOptions[],
     stopped: 0,
     failNextCreate: false,
     failNextWait: false,
+    pulls: 0,
+    localImage: 'missing' as FakeDocker['localImage'],
     async pull() {
+      fake.pulls++;
       return {};
+    },
+    getImage() {
+      return {
+        inspect: () => {
+          switch (fake.localImage) {
+            case 'present':
+              return Promise.resolve({});
+            case 'missing':
+              return Promise.reject(
+                Object.assign(new Error('no such image'), { statusCode: 404 }),
+              );
+            case 'refused':
+              return Promise.reject(
+                Object.assign(
+                  new Error('connect ECONNREFUSED /var/run/docker.sock'),
+                  { code: 'ECONNREFUSED' },
+                ),
+              );
+            case 'server-error':
+              return Promise.reject(
+                Object.assign(new Error('server error'), { statusCode: 500 }),
+              );
+          }
+        },
+      };
     },
     modem: {
       followProgress(
@@ -51,12 +88,7 @@ function createFakeDocker(): Docker & {
       };
     },
   };
-  return fake as unknown as Docker & {
-    created: ContainerCreateOptions[];
-    failNextCreate: boolean;
-    failNextWait: boolean;
-    stopped: number;
-  };
+  return fake as unknown as FakeDocker;
 }
 
 describe('DockerTaskRunner', () => {
@@ -190,6 +222,81 @@ describe('DockerTaskRunner', () => {
 
     // Starting a task again stays idempotent: each removes what the last left.
     expect(docker.created).toHaveLength(3);
+  });
+
+  it('pulls the image on every run by default', async () => {
+    const docker = createFakeDocker();
+    docker.localImage = 'present';
+    const runner = new DockerTaskRunner({ image: 'example/image', docker });
+
+    await runner.run('first');
+    await runner.run('second');
+
+    expect(docker.pulls).toBe(2);
+  });
+
+  it('runs a local image as it is when the pull policy is missing', async () => {
+    const docker = createFakeDocker();
+    docker.localImage = 'present';
+    const runner = new DockerTaskRunner({
+      image: 'example/image',
+      pullPolicy: 'missing',
+      docker,
+    });
+
+    await runner.run('true');
+
+    expect(docker.pulls).toBe(0);
+    expect(docker.created).toHaveLength(1);
+  });
+
+  it('pulls an image not available locally when the pull policy is missing', async () => {
+    const docker = createFakeDocker();
+    docker.localImage = 'missing';
+    const runner = new DockerTaskRunner({
+      image: 'example/image',
+      pullPolicy: 'missing',
+      docker,
+    });
+
+    await runner.run('true');
+
+    expect(docker.pulls).toBe(1);
+  });
+
+  it.each([
+    ['the daemon cannot be reached', 'refused', 'ECONNREFUSED'],
+    ['the daemon fails', 'server-error', 'server error'],
+  ] as const)(
+    'fails without pulling when looking up the image fails because %s',
+    async (_reason, localImage, message) => {
+      const docker = createFakeDocker();
+      docker.localImage = localImage;
+      const runner = new DockerTaskRunner({
+        image: 'example/image',
+        pullPolicy: 'missing',
+        docker,
+      });
+
+      // Only a 404 says the image is missing; any other failure is reported
+      // as it is, rather than answered with a pull.
+      await expect(runner.run('true')).rejects.toThrow(message);
+      expect(docker.pulls).toBe(0);
+    },
+  );
+
+  it('never pulls when the pull policy is never', async () => {
+    const docker = createFakeDocker();
+    docker.localImage = 'missing';
+    const runner = new DockerTaskRunner({
+      image: 'example/image',
+      pullPolicy: 'never',
+      docker,
+    });
+
+    await runner.run('true');
+
+    expect(docker.pulls).toBe(0);
   });
 
   it('stops a running container when this process is interrupted', async () => {
