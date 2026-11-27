@@ -25,7 +25,7 @@ import {
 } from '@lde/search';
 import {
   endpointFieldOf,
-  facetMatchesLabels,
+  readsReferentLabels,
   irAlias,
   localLookupTargetsOf,
   physicalFields,
@@ -621,7 +621,7 @@ function describedReferences(
     return field.kind === 'reference' &&
       (field.searchable !== undefined ||
         (root &&
-          facetMatchesLabels(field, schema) &&
+          readsReferentLabels(field, schema) &&
           localLookupTargetsOf(field, schema).length === 0) ||
         physicalFields(field).leafExists.length > 0)
       ? [{ alias: irAlias(owner, field), field, root }]

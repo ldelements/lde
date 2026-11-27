@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import { labelMatchValue } from '../src/label-match.js';
 import { projectDocument, type SearchDocument } from '../src/project.js';
 import {
   defineSearchType,
   inlineFramingDepth,
   labelTargetNamesOf,
   physicalFields,
+  facetMatchesLabels,
   searchSchema,
 } from '../src/schema.js';
 import { resolvePath, validateQuery, type SearchQuery } from '../src/query.js';
@@ -115,6 +117,14 @@ const entriesOf = (document: SearchDocument) =>
   document.creator as readonly SearchDocument[];
 
 describe('an edge that carries data and resolves a lookup', () => {
+  it('pairs each identified endpoint’s label with its key, for a facet searched by label', () => {
+    expect(facetMatchesLabels(work.fields[0], schema)).toBe(true);
+    // The unidentified creator has no key for a facet to count.
+    expect(projectDocument(node, work, schema).creator_match).toEqual([
+      labelMatchValue(['Rembrandt van Rijn'], RKD),
+    ]);
+  });
+
   it('nests one entry per edge, carrying the edge’s own value', () => {
     const entries = entriesOf(projectDocument(node, work, schema));
 

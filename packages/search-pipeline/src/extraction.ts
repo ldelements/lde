@@ -13,7 +13,7 @@ import { Parser } from '@traqula/parser-sparql-1-1';
 import { Generator } from '@traqula/generator-sparql-1-1';
 import {
   endpointFieldOf,
-  facetMatchesLabels,
+  readsReferentLabels,
   fieldNamed,
   irAlias,
   isInlineReference,
@@ -161,9 +161,9 @@ export function referentHopFields(
   const hopFields = [
     keyedFieldOf(target),
     // `searchSchema` guarantees a searchable reference’s label a path, and
-    // `facetMatchesLabels` admits only labels with one.
+    // `readsReferentLabels` admits only labels with one.
     field.searchable !== undefined ||
-    (root && facetMatchesLabels(field, schema))
+    (root && readsReferentLabels(field, schema))
       ? (labelFieldOf(target) as PathField)
       : undefined,
     // …and a lookup’s target each presence leaf, with a path.

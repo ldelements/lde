@@ -38,6 +38,13 @@ export function labelMatchText(text: string): string {
   return text.replace(NOT_A_WORD, ' ').trim();
 }
 
+/** The labels a {@link labelMatchValue} pairs with its id, as one text, or
+ *  `undefined` for a value it did not write. */
+export function labelsOfLabelMatch(value: string): string | undefined {
+  const at = value.lastIndexOf(`${SEPARATOR}${GUARD}`);
+  return at === -1 ? undefined : value.slice(0, at).trim();
+}
+
 /** The id a {@link labelMatchValue} pairs its labels with, or `undefined` for a
  *  value it did not write. */
 export function idOfLabelMatch(value: string): string | undefined {

@@ -6,6 +6,7 @@ import {
   type SearchEngine,
   type SearchQuery,
 } from '@lde/search';
+import { labelMatchValue } from '@lde/search/adapter';
 import { buildCollectionDefinition } from '../src/collection-definition.js';
 import { createTypesenseSearchEngine } from '../src/search.js';
 import { TypesenseContainer } from './typesense-container.js';
@@ -102,10 +103,20 @@ describe('an identity faceted on its nested leaf', () => {
   const createdBy = (id: string) => ({
     or: [{ field: 'creator', in: [id] }],
   });
+  const names: Readonly<Record<string, string>> = {
+    'https://ex/anna': 'Anna Visscher',
+    'https://ex/bram': 'Bram de Bie',
+  };
   const entry = (role: string, id: string) => ({
     role,
-    creator: { id, label_und: id },
+    creator: { id, label_und: names[id] },
     creator_id: id,
+  });
+  /** The label-match companion the projection writes from the entries. */
+  const matches = (...ids: string[]) => ({
+    creator_match: ids.map(
+      (id) => labelMatchValue([names[id] as string], id) as string,
+    ),
   });
 
   beforeAll(async () => {
@@ -140,11 +151,13 @@ describe('an identity faceted on its nested leaf', () => {
               entry('drukker', 'https://ex/anna'),
               entry('drukker', 'https://ex/bram'),
             ],
+            ...matches('https://ex/anna', 'https://ex/bram'),
           },
           {
             id: 'https://ex/print',
             title: 'print',
             creator: [entry('drukker', 'https://ex/bram')],
+            ...matches('https://ex/bram'),
           },
           { id: 'https://ex/anonymous', title: 'anonymous' },
         ],
@@ -209,27 +222,7 @@ describe('an identity faceted on its nested leaf', () => {
     });
   });
 
-  it('searches the facet’s values through the people collection, as its entries store no labels', async () => {
-    const people = await client
-      .collections('people')
-      .documents()
-      .import(
-        [
-          {
-            id: 'https://ex/anna',
-            label_und: 'Anna Visscher',
-            label_search_und: 'anna visscher',
-          },
-          {
-            id: 'https://ex/bram',
-            label_und: 'Bram de Bie',
-            label_search_und: 'bram de bie',
-          },
-        ],
-        { action: 'create' },
-      );
-    expect(people.every((result) => result.success)).toBe(true);
-
+  it('searches the facet’s values by the labels its entries’ endpoints carry', async () => {
     const result = await engine.search(work, {
       ...base,
       where: [createdBy('https://ex/bram')],

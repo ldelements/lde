@@ -66,6 +66,7 @@ export type {
   FacetRange,
   DateFacetRange,
   ProjectionValue,
+  ProjectionSource,
   DatePrecision,
   StoredDate,
 } from './schema.js';
