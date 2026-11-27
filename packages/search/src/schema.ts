@@ -115,6 +115,21 @@ export interface SearchFieldBase {
    * – the shape is already in the declaration.
    */
   readonly description?: string;
+  /**
+   * Mark the field as on its way out, and say why: what to use instead and
+   * when it goes – `'Use image.exists. Removed after 2027-03-01.'`. Carried to
+   * every API surface the field produces – GraphQL renders it as
+   * `@deprecated(reason: …)` on the output field, its `where` key, its
+   * `orderBy` value and its facet key – so a consumer’s playground and editor
+   * flag it wherever they use it.
+   *
+   * Nothing else changes: a deprecated field is indexed, filtered, faceted and
+   * served exactly as before, which is what lets it live beside its
+   * replacement for a transition period. A non-empty reason is required
+   * ({@link validateSearchType}), since a deprecation that names no
+   * replacement leaves a consumer nowhere to go.
+   */
+  readonly deprecated?: string;
   /** Framed-IR predicate IRI to project from. Omit for a field populated by
    *  {@link SearchFieldBase.derive} (or outside the projection entirely). */
   readonly path?: string;
@@ -2243,6 +2258,7 @@ export interface SearchTypeIssue {
   readonly reason:
     | 'duplicate-field-name'
     | 'invalid-field-name'
+    | 'deprecated-without-reason'
     | 'unknown-kind'
     | 'invalid-locale'
     | 'missing-ref'
@@ -2507,6 +2523,14 @@ export function validateSearchType(
     // pattern, so it must be a metacharacter-free identifier.
     if (!FIELD_NAME_PATTERN.test(field.name)) {
       issue('invalid-field-name');
+    }
+    // A deprecation is only worth declaring with somewhere to go, and a
+    // non-string would reach the API surface as a reason that is no text.
+    if (
+      field.deprecated !== undefined &&
+      (typeof field.deprecated !== 'string' || field.deprecated.trim() === '')
+    ) {
+      issue('deprecated-without-reason');
     }
     // `id` is the document’s IRI, surfaced and filtered for every type, and
     // `and`/`or` are the `where` combinators; a declared field of any of those

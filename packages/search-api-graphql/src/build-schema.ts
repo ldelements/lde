@@ -68,6 +68,7 @@ import {
   pageForOffset,
   isInlineReference,
   physicalFields,
+  referencedTargetsOf,
   sortableFields,
   unixSecondsToIso,
   type FacetDeclaration,
@@ -1087,7 +1088,17 @@ export function buildGraphQLSchema(
     // A shared reference field is served as one emitted type on every
     // member: `searchSchema` holds the targets to the same strategy and the
     // same referent for a name they share, so nothing is checked here.
-    return { ...declared, required: false } as SearchField;
+    // Deprecated on the interface only where every member deprecates it: a
+    // consumer selecting it on the interface is still served by the rest.
+    return {
+      ...declared,
+      required: false,
+      deprecated: counterparts.every(
+        (counterpart) => counterpart?.deprecated !== undefined,
+      )
+        ? declared.deprecated
+        : undefined,
+    } as SearchField;
   }
 
   /** Register the object type one referenced shape is served as, under
@@ -1204,12 +1215,17 @@ export function buildGraphQLSchema(
   }
 
   /** A field's config, plus the declared {@link SearchFieldBase.description}
-   *  wherever the field surfaces – so one sentence written on the declaration
-   *  reaches the playground, introspection and an editor alike. */
+   *  and {@link SearchFieldBase.deprecated} wherever the field surfaces – so
+   *  what is written on the declaration reaches the playground, introspection
+   *  and an editor alike. */
   function outputFieldConfig(
     field: SearchField,
   ): GraphQLFieldConfig<Source, SearchContext> {
-    return { ...outputFieldType(field), description: field.description };
+    return {
+      ...outputFieldType(field),
+      description: field.description,
+      deprecationReason: field.deprecated,
+    };
   }
 
   /**
@@ -1437,10 +1453,22 @@ export function buildGraphQLSchema(
         nested === undefined
           ? 'Whether any referent holds a value for a leaf. Sibling keys are combined with AND.'
           : 'Sibling keys are combined with AND, and all of them must hold of the SAME entry.',
-      fields: () =>
-        nested === undefined
+      fields: () => {
+        // A lookup names one target, which declares every leaf.
+        const target = referencedTargetsOf(field, schema)[0];
+        return nested === undefined
           ? Object.fromEntries(
-              presenceLeaves.map((leaf) => [leaf, { type: existsFilter }]),
+              presenceLeaves.map((leaf) => {
+                const declared = fieldNamed(target, leaf);
+                return [
+                  leaf,
+                  {
+                    type: existsFilter,
+                    description: declared?.description,
+                    deprecationReason: declared?.deprecated,
+                  },
+                ];
+              }),
             )
           : Object.fromEntries(
               whereFieldsOf(nested, presenceLeaves).map((leaf) => [
@@ -1450,9 +1478,11 @@ export function buildGraphQLSchema(
                     ? presenceFilterFor(leaf, nested)
                     : whereFieldType(leaf, nested),
                   description: leaf.description,
+                  deprecationReason: leaf.deprecated,
                 },
               ]),
-            ),
+            );
+      },
     });
     const ids =
       nested === undefined || labelTargetNamesOf(field, schema).length > 0;
@@ -1535,6 +1565,7 @@ export function buildGraphQLSchema(
             {
               type: whereFieldType(nestedField, referenceType),
               description: nestedField.description,
+              deprecationReason: nestedField.deprecated,
             },
           ]),
         ),
@@ -1645,6 +1676,7 @@ export function buildGraphQLSchema(
             ? presenceFilterFor(field, searchType)
             : whereFieldType(field, searchType, joined),
         description: field.description,
+        deprecationReason: field.deprecated,
       };
     }
     return fields;
@@ -1757,7 +1789,10 @@ export function buildGraphQLSchema(
       RELEVANCE: { value: 'relevance' },
     };
     for (const field of sortableFields(searchType)) {
-      sortValues[screamingSnake(field.name)] = { value: field.name };
+      sortValues[screamingSnake(field.name)] = {
+        value: field.name,
+        deprecationReason: field.deprecated,
+      };
     }
     const sortField = new GraphQLEnumType({
       name: `${typeName}SortField`,
@@ -1907,8 +1942,12 @@ export function buildGraphQLSchema(
   ): GraphQLObjectType {
     const groups = new Map<string, FacetGroup>();
     for (const facet of facets) {
-      const name = facet.reference?.name ?? facet.field.name;
-      const group: FacetGroup = groups.get(name) ?? { leaves: new Map() };
+      const owner = facet.reference ?? facet.field;
+      const name = owner.name;
+      const group: FacetGroup = groups.get(name) ?? {
+        owner,
+        leaves: new Map(),
+      };
       groups.set(name, group);
       if (facet.reference !== undefined) {
         const leaf = group.leaves.get(facet.field.name) ?? {};
@@ -1930,9 +1969,12 @@ export function buildGraphQLSchema(
         Object.fromEntries(
           [...groups].map(([name, group]) => [
             name,
-            group.presence === undefined && group.leaves.size === 0
-              ? valueFacetFieldFor(group.values as FacetDeclaration)
-              : fieldFacetFor(`${typeName}${capitalized(name)}`, group),
+            {
+              ...(group.presence === undefined && group.leaves.size === 0
+                ? valueFacetFieldFor(group.values as FacetDeclaration)
+                : fieldFacetFor(`${typeName}${capitalized(name)}`, group)),
+              deprecationReason: group.owner.deprecated,
+            },
           ]),
         ),
     });
@@ -1978,14 +2020,19 @@ export function buildGraphQLSchema(
       fields.exists = existsFieldFor(group.presence);
     }
     for (const [leafName, leaf] of group.leaves) {
-      fields[leafName] =
-        leaf.presence === undefined
+      // Every leaf entry holds at least one of the two.
+      const owner = (leaf.values ?? leaf.presence)?.field as SearchField;
+      fields[leafName] = {
+        ...(leaf.presence === undefined
           ? valueFacetFieldFor(leaf.values as FacetDeclaration)
           : fieldFacetFor(`${baseName}${capitalized(leafName)}`, {
+              owner,
               values: leaf.values,
               presence: leaf.presence,
               leaves: new Map(),
-            });
+            })),
+        deprecationReason: owner.deprecated,
+      };
     }
     const name = `${baseName}Facet`;
     return {
@@ -2769,6 +2816,8 @@ function presenceLeavesOf(field: SearchField): readonly string[] {
  *  own values, its presence, and – per leaf of its referents – the leaf’s
  *  values and presence. */
 interface FacetGroup {
+  /** The declared field the group’s key is named after. */
+  readonly owner: SearchField;
   values?: FacetDeclaration;
   presence?: FacetDeclaration;
   readonly leaves: Map<

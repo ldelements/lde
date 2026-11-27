@@ -1124,6 +1124,31 @@ The declaration is the only place to say so. The module a served API mounts is
 plain data, and there is no hook to annotate the built schema afterwards – so the
 sentence written here is the one that reaches the reader.
 
+### Deprecating a field
+
+Renaming or removing a field breaks every client that asks for it, in the same
+release. To give clients a transition period instead, keep the old field and
+mark it `deprecated`, with a reason that says what to use and when it goes:
+
+```ts
+{
+  name: 'hasImage',
+  // …
+  deprecated: 'Use `image.exists`. Removed after 2027-03-01.',
+}
+```
+
+GraphQL renders it as `@deprecated(reason: …)` on every key the field produces:
+the output field, its `where` key, its `orderBy` value and its facet key, so a
+client sees it in introspection, the playground and its editor. A field shared
+by every type of a multi-target lookup is deprecated on the interface only when
+every type deprecates it.
+
+A deprecated field is still indexed, filtered, faceted and served, so old and
+new can be queried side by side until the date in the reason. A deprecation
+needs a reason: `searchSchema` rejects an empty one as
+`deprecated-without-reason`.
+
 ### Facet buckets
 
 A query’s facets come back as one `Facet` per requested field: its `buckets`,
